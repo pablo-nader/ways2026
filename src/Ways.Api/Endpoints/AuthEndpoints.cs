@@ -59,13 +59,14 @@ public static class AuthEndpoints
             TenantActualDeSesion tenantActual,
             HttpContext contexto,
             IRelojDelSistema reloj,
+            FormateadorDeTicketBearer formateadorBearer,
             CancellationToken ct) =>
         {
             // El dispositivo se resuelve en modo Login (RLS dispositivos_login_lectura, mismo
             // patrón que usuarios_login_lectura): todavía no hay tenant resuelto.
             tenantActual.Establecer(ModoDeAcceso.Login, idTenant: null);
 
-            var secreto = contexto.Request.Cookies[CookiesWays.Dispositivo];
+            var secreto = ResolucionDeCredencialDeDispositivo.Resolver(contexto);
             var (idDispositivo, idTenantDispositivo) =
                 await servicioDispositivos.ResolverIdentidadAsync(secreto, ct);
 
@@ -101,10 +102,41 @@ public static class AuthEndpoints
 
             await servicioDispositivos.RegistrarUsoAsync(idDispositivo, ct);
 
-            return Results.Ok(usuario);
+            // Slice bearer: el token SOLO se emite si el llamador lo pide explícito
+            // (SolicitudDeLoginDeDispositivo.SolicitarBearer) — un caller que no lo pide (el
+            // navegador de hoy) recibe exactamente el mismo Results.Ok(usuario) que antes de
+            // este slice, cero cambio de forma.
+            //
+            // Vencimiento: FIJO a 365 días desde ahora, sin refresh deslizante — a propósito,
+            // distinto de la cookie (que SÍ desliza en cada request, ver Program.cs). Un bearer
+            // no tiene una request de "refresh" propia en este slice y la revocación real no
+            // depende del vencimiento del token sino de ValidadorDeSesion (corre contra la base
+            // en cada request, esté el token vencido o no) — un vencimiento fijo alcanza para
+            // que un token filtrado/perdido no sea válido para siempre, sin necesitar todavía un
+            // endpoint de refresh. 365 días replica la misma decisión de producto que ya rige la
+            // cookie de dispositivo (AuthEndpoints, más arriba: "la sesión no vence hasta que se
+            // cierra a mano"); si algún día hace falta invalidar el token antes de esa fecha sin
+            // pasar por ValidadorDeSesion, ahí sí va a hacer falta un mecanismo de refresh/
+            // revocación de tokens — no es parte de este slice.
+            if (!solicitud.SolicitarBearer)
+            {
+                return Results.Ok(usuario);
+            }
+
+            var identidadBearer = new ClaimsIdentity(claims, EsquemasWays.Bearer);
+            var expiraToken = reloj.Ahora.AddDays(365);
+            var ticketBearer = new AuthenticationTicket(
+                new ClaimsPrincipal(identidadBearer),
+                new AuthenticationProperties { ExpiresUtc = expiraToken },
+                EsquemasWays.Bearer);
+            var tokenBearer = formateadorBearer.Formato.Protect(ticketBearer);
+
+            return Results.Ok(new SesionDeDispositivoConBearer(usuario, tokenBearer, expiraToken));
         })
         .AllowAnonymous()
-        .WithSummary("Login de cajero contra un dispositivo vinculado; sesión persistente de 365 días.");
+        .WithSummary(
+            "Login de cajero contra un dispositivo vinculado; sesión persistente de 365 días. " +
+            "Con SolicitarBearer=true, además devuelve un token bearer equivalente.");
 
         grupo.MapPost("/logout", async (HttpContext contexto) =>
         {
@@ -125,6 +157,12 @@ public static class AuthEndpoints
 
         return app;
     }
+
+    /// <summary>Cuerpo de <c>POST /api/auth/login-dispositivo</c> cuando el llamador pidió
+    /// <c>SolicitarBearer=true</c> — el mismo <see cref="UsuarioAutenticado"/> de siempre, más el
+    /// token bearer y su vencimiento (para que el cliente sepa cuándo va a tener que volver a
+    /// loguear sin necesidad de decodificar el token, que es opaco).</summary>
+    private record SesionDeDispositivoConBearer(UsuarioAutenticado Usuario, string Token, DateTimeOffset ExpiraEl);
 
     /// <summary>Claims base compartidas por <c>/login</c> y <c>/login-dispositivo</c>.</summary>
     private static List<Claim> ConstruirClaims(UsuarioAutenticado usuario)

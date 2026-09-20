@@ -61,7 +61,7 @@ public class DispositivoRevocadoYGuardDeUsoTests(WaysApiFixture fixture) : IClas
         var altaDispositivo = await admin.PostAsJsonAsync(
             "/api/dispositivos", new AltaDispositivo(resultado.IdPuntoVenta, "Caja 1"));
         Assert.Equal(HttpStatusCode.Created, altaDispositivo.StatusCode);
-        var dispositivo = (await altaDispositivo.Content.ReadFromJsonAsync<DispositivoActual>())!;
+        var dispositivo = (await altaDispositivo.Content.ReadFromJsonAsync<DispositivoVinculado>())!.Datos;
 
         // Revocado — deleted_at seteado, baja lógica.
         var revocar = await admin.DeleteAsync($"/api/dispositivos/{dispositivo.Id}");

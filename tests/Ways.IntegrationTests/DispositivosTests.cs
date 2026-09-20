@@ -129,6 +129,22 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         return await cliente.SendAsync(request);
     }
 
+    /// <summary>Espejo de <see cref="EnviarConCookieDeDispositivoAsync"/> para el segundo
+    /// transporte del secreto de dispositivo (slice bearer, <c>ResolucionDeCredencialDeDispositivo</c>):
+    /// el header <c>Authorization: Dispositivo &lt;secreto&gt;</c>, nunca una cookie.</summary>
+    private static async Task<HttpResponseMessage> EnviarConHeaderDeDispositivoAsync(
+        HttpClient cliente, HttpMethod metodo, string ruta, string secretoDispositivo, object? contenido = null)
+    {
+        using var request = new HttpRequestMessage(metodo, ruta);
+        if (contenido is not null)
+        {
+            request.Content = JsonContent.Create(contenido);
+        }
+
+        request.Headers.Add("Authorization", $"Dispositivo {secretoDispositivo}");
+        return await cliente.SendAsync(request);
+    }
+
     [Fact]
     public async Task UnAdminVinculaUnDispositivoYRecibeLaCookieConElCuerpoEsperado()
     {
@@ -140,18 +156,24 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             "/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
-        Assert.Contains(
+        var cookieDispositivo = Assert.Single(
             respuesta.Headers.GetValues("Set-Cookie"),
             v => v.StartsWith($"{CookieDispositivo}=", StringComparison.Ordinal));
 
-        var actual = await respuesta.Content.ReadFromJsonAsync<DispositivoActual>();
-        Assert.NotNull(actual);
-        Assert.Equal("Caja 1", actual!.Nombre);
+        var vinculado = await respuesta.Content.ReadFromJsonAsync<DispositivoVinculado>();
+        Assert.NotNull(vinculado);
+        var actual = vinculado!.Datos;
+        Assert.Equal("Caja 1", actual.Nombre);
         Assert.Equal(idPuntoVenta, actual.IdPuntoVenta);
         Assert.Equal(idPuntoVenta, actual.PuntoVenta.Numero);
         Assert.Equal("Local 1", actual.PuntoVenta.Nombre);
         Assert.Equal(
             $"Empresa {nameof(UnAdminVinculaUnDispositivoYRecibeLaCookieConElCuerpoEsperado)}", actual.Empresa.Nombre);
+
+        // Slice bearer: el secreto en texto plano viaja en el CUERPO (para que el shell de
+        // escritorio lo persista) Y en la cookie — los dos tienen que ser el mismo secreto.
+        Assert.False(string.IsNullOrEmpty(vinculado.Secreto));
+        Assert.Contains($"{CookieDispositivo}={vinculado.Secreto};", cookieDispositivo + ";");
 
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var fila = await db.Dispositivos.FirstOrDefaultAsync(d => d.Id == actual.Id);
@@ -288,6 +310,76 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
+    /// <summary>
+    /// Slice bearer — <c>ResolucionDeCredencialDeDispositivo</c>: el header
+    /// <c>Authorization: Dispositivo &lt;secreto&gt;</c> autentica el dispositivo exactamente
+    /// igual que la cookie, sin ninguna cookie presente (el shell de escritorio remoto de la
+    /// slice 3 nunca va a tener la cookie, solo el header).
+    /// </summary>
+    [Fact]
+    public async Task ActualConHeaderDeDispositivoFuncionaSinCookie()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(ActualConHeaderDeDispositivoFuncionaSinCookie));
+        var alta = await cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var vinculado = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!;
+        cliente.Dispose();
+
+        using var anonimo = fixture.CreateClient();
+        var respuesta = await EnviarConHeaderDeDispositivoAsync(
+            anonimo, HttpMethod.Get, "/api/dispositivos/actual", vinculado.Secreto);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actual = await respuesta.Content.ReadFromJsonAsync<DispositivoActual>();
+        Assert.Equal(vinculado.Datos.Id, actual!.Id);
+    }
+
+    /// <summary>Espejo exacto de <see cref="ActualConCookieDesconocidaDaDispositivoNoVinculado"/>
+    /// pero por el header — mismo 404 uniforme <c>dispositivo_no_vinculado</c>, nunca un código
+    /// distinto que delate que el secreto llegó por header en vez de por cookie.</summary>
+    [Fact]
+    public async Task ActualConHeaderDeDispositivoDesconocidoDaDispositivoNoVinculado()
+    {
+        using var cliente = fixture.CreateClient();
+
+        var respuesta = await EnviarConHeaderDeDispositivoAsync(
+            cliente, HttpMethod.Get, "/api/dispositivos/actual", "secreto-que-nunca-existio");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("dispositivo_no_vinculado", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>
+    /// Precedencia explícita de <c>ResolucionDeCredencialDeDispositivo</c> (documentada en su
+    /// doc-comment): el header gana si está presente. Acá el header lleva un dispositivo VÁLIDO
+    /// y la cookie lleva un secreto que NUNCA existió — si la cookie ganara o se promediaran los
+    /// dos, esto daría 404; con el header ganando, tiene que dar 200 con los datos del
+    /// dispositivo del header.
+    /// </summary>
+    [Fact]
+    public async Task ElHeaderDeDispositivoGanaSobreUnaCookieDeDispositivoInvalida()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(ElHeaderDeDispositivoGanaSobreUnaCookieDeDispositivoInvalida));
+        var alta = await cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var vinculado = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!;
+        cliente.Dispose();
+
+        using var anonimo = fixture.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/dispositivos/actual");
+        request.Headers.Add("Authorization", $"Dispositivo {vinculado.Secreto}");
+        request.Headers.Add("Cookie", $"{CookieDispositivo}=secreto-que-nunca-existio");
+
+        var respuesta = await anonimo.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actual = await respuesta.Content.ReadFromJsonAsync<DispositivoActual>();
+        Assert.Equal(vinculado.Datos.Id, actual!.Id);
+    }
+
     [Fact]
     public async Task ActualConDispositivoRevocadoDaDispositivoNoVinculado()
     {
@@ -297,7 +389,7 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         var alta = await cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
-        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoActual>())!;
+        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!.Datos;
         var cookieDispositivo = ExtraerCookieDeDispositivo(alta);
 
         var revocar = await cliente.DeleteAsync($"/api/dispositivos/{actual.Id}");
@@ -318,7 +410,7 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         var alta = await adminCliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
-        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoActual>())!;
+        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!.Datos;
         var cookieDispositivo = ExtraerCookieDeDispositivo(alta);
         adminCliente.Dispose();
 
@@ -344,6 +436,35 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var fila = await db.Dispositivos.FirstAsync(d => d.Id == actual.Id);
         Assert.NotNull(fila.UltimoUsoAt);
+    }
+
+    /// <summary>Mismo camino feliz que
+    /// <see cref="LoginDeDispositivoConUsuarioValidoFuncionaYRegistraElUso"/>, pero resolviendo
+    /// el dispositivo por el header (slice bearer) en vez de la cookie — prueba que
+    /// <c>ResolucionDeCredencialDeDispositivo</c> también gobierna este segundo call site
+    /// (<c>AuthEndpoints</c>), no solo <c>GET /actual</c>.</summary>
+    [Fact]
+    public async Task LoginDeDispositivoConHeaderDeDispositivoFuncionaSinCookie()
+    {
+        var (adminCliente, idTenant, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(LoginDeDispositivoConHeaderDeDispositivoFuncionaSinCookie));
+
+        var alta = await adminCliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var vinculado = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!;
+        adminCliente.Dispose();
+
+        await SembrarCajeroAsync(idTenant, "cajero1", PasswordCajero);
+
+        using var cajero = fixture.CreateClient();
+        var login = await EnviarConHeaderDeDispositivoAsync(
+            cajero, HttpMethod.Post, "/api/auth/login-dispositivo", vinculado.Secreto,
+            new SolicitudDeLoginDeDispositivo("cajero1", PasswordCajero));
+
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var usuario = await login.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.NotNull(usuario);
+        Assert.Equal(idTenant, usuario!.IdTenant);
     }
 
     [Fact]
@@ -458,7 +579,7 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var (adminCliente, idTenant, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
             nameof(RevocarElDispositivoCortaUnaSesionDeCajeroYaAbierta));
         var alta = await adminCliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja 1"));
-        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoActual>())!;
+        var actual = (await alta.Content.ReadFromJsonAsync<DispositivoVinculado>())!.Datos;
         var cookieDispositivo = ExtraerCookieDeDispositivo(alta);
 
         await SembrarCajeroAsync(idTenant, "cajero1", PasswordCajero);

@@ -18,6 +18,14 @@ public record DispositivoActual(
     PuntoVentaDeDispositivo PuntoVenta,
     EmpresaDeDispositivo Empresa);
 
+/// <summary>Cuerpo de respuesta de <c>POST /api/dispositivos</c> ÚNICAMENTE — envuelve
+/// <see cref="DispositivoActual"/> (la misma forma que ya devuelve <c>GET /actual</c>) más el
+/// secreto en texto plano, que existe en un cuerpo de respuesta en este único momento
+/// (<c>ServicioDeDispositivos.CrearAsync</c>, dto-contract-honesty): la cookie sigue
+/// escribiéndose igual, esto es un canal ADICIONAL para que el shell de escritorio (Tauri,
+/// slice 3, que no puede leer una cookie HttpOnly) lo persista del lado de Rust.</summary>
+public record DispositivoVinculado(DispositivoActual Datos, string Secreto);
+
 /// <summary>Fila de <c>GET /api/dispositivos</c> (Admin) — dispositivos activos del tenant.</summary>
 public record DispositivoListado(
     int Id,

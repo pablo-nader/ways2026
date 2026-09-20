@@ -27,7 +27,7 @@ public static class DispositivosEndpoints
             // deje leer la fila sin tenant resuelto todavía.
             tenantActual.Establecer(ModoDeAcceso.Login, idTenant: null);
 
-            var secreto = contexto.Request.Cookies[CookiesWays.Dispositivo];
+            var secreto = ResolucionDeCredencialDeDispositivo.Resolver(contexto);
             var actual = await servicio.ResolverActualAsync(secreto, ct);
             return Results.Ok(actual);
         })
@@ -48,7 +48,15 @@ public static class DispositivosEndpoints
         {
             var (actual, secreto) = await servicio.CrearAsync(datos, ct);
             EscribirCookieDeDispositivo(contexto, secreto);
-            return Results.Created($"/api/dispositivos/{actual.Id}", actual);
+
+            // stage-desktop-pos, slice bearer: el secreto en texto plano viaja UNA sola vez en
+            // este cuerpo de respuesta, además de la cookie — el shell de escritorio (Tauri,
+            // slice 3) no puede leer una cookie HttpOnly, así que necesita este único momento
+            // para persistirlo del lado de Rust (ver ResolucionDeCredencialDeDispositivo). Esta
+            // respuesta es SENSIBLE Y DE UNA SOLA VEZ: ningún otro endpoint vuelve a devolver el
+            // secreto (ni siquiera GET /actual, que solo confirma la identidad, nunca el
+            // secreto en sí) — quien no lo capture acá tiene que revocar y vincular de nuevo.
+            return Results.Created($"/api/dispositivos/{actual.Id}", new DispositivoVinculado(actual, secreto));
         })
         .WithSummary("Vincula un dispositivo nuevo a un punto de venta del tenant.");
 
