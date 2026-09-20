@@ -102,6 +102,25 @@ public class CorsPosLocalTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     [Fact]
+    public async Task Una_respuesta_real_al_origen_de_tauri_expone_content_disposition()
+    {
+        // judgment-day ronda 1 (FIX 2): sin `WithExposedHeaders("Content-Disposition")` en la
+        // politica, el header no esta en la lista CORS-safelisted -- el navegador lo recibe pero
+        // lo esconde de `respuesta.headers.get(...)` en JS, y `cliente.ts` (`nombreDeArchivo`)
+        // siempre cae al nombre generico. Esta prueba corre contra el pipeline real: si alguien
+        // vuelve a sacar `WithExposedHeaders`, este assert se rompe.
+        using var cliente = fixture.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/salud");
+        request.Headers.Add("Origin", OrigenTauri);
+
+        using var respuesta = await cliente.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var headersExpuestos = string.Join(",", respuesta.Headers.GetValues("Access-Control-Expose-Headers"));
+        Assert.Contains("Content-Disposition", headersExpuestos, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task El_metodo_bearer_authorization_esta_permitido_en_el_preflight_del_origen_de_tauri()
     {
         // El cliente de Tauri manda `Authorization: Bearer <token>` (ver `cliente.ts`) — sin

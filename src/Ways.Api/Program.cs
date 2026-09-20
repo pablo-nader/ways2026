@@ -155,7 +155,11 @@ builder.Services.AddCors(opciones =>
         politica
             .WithOrigins("http://tauri.localhost")
             .WithMethods("GET", "POST", "PUT", "DELETE")
-            .WithHeaders("Content-Type", "Authorization", "Accept"));
+            .WithHeaders("Content-Type", "Authorization", "Accept")
+            // Content-Disposition no esta en la lista CORS-safelisted de headers de respuesta:
+            // sin exponerlo, el JS del shell de escritorio (`cliente.ts`, `nombreDeArchivo`) no
+            // puede leerlo y toda descarga (por ejemplo la Caja Z XLSX) cae al nombre generico.
+            .WithExposedHeaders("Content-Disposition"));
 });
 
 // No hay zonas públicas: todo pide sesión salvo lo marcado con AllowAnonymous.

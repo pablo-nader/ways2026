@@ -212,9 +212,11 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
   })
 
-  it('un error de red CON credencial local guardada pero un 404 dispositivo_no_vinculado EXPLÍCITO igual manda a vincular', async () => {
-    // El 404 explícito siempre gana, aunque haya una credencial local — la base es la única
-    // fuente de verdad (ver doc-comment de `AppPos`, paso 1).
+  it('un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular aunque haya una credencial local guardada, sin consultarla', async () => {
+    // Esto NO es un error de red: el servidor respondió con un 404 explícito
+    // (`ErrorApi(404, 'dispositivo_no_vinculado', ...)`), la misma rama que el test de más abajo
+    // sin credencial. El 404 explícito siempre gana, aunque haya una credencial local — la base
+    // es la única fuente de verdad (ver doc-comment de `AppPos`, paso 1).
     leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual'

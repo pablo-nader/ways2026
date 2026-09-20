@@ -59,14 +59,60 @@ Al iniciar, si no existe `config.json` en el directorio de configuracion de
 la app (`%APPDATA%/site.aipos.pos/config.json` en Windows), se muestra `main`.
 Si ya existe, se muestra `pos` directamente. Guardar la configuracion, o usar
 "Volver al POS", pasa de `main` a `pos` (creandola la primera vez); el boton
-"Configuración" del POS o `abrir_configuracion` hacen el camino inverso. Cada
-vez que se vuelve a mostrar una ventana que YA EXISTIA (no en su primera
-creacion, que ya carga todo de cero) se la recarga (`window.location.reload()`)
-para no operar con estado cacheado de una configuracion vieja.
+"Configuración" del POS o `abrir_configuracion` hacen el camino inverso. Si
+una ventana ya destruida (por ejemplo, cerrada con el boton nativo "X" -- no
+hay `prevent_close` en este crate) se vuelve a pedir, se la reconstruye en vez
+de fallar.
+
+La ventana `main` se recarga siempre que se vuelve a mostrar (su pagina solo
+lee su estado en `DOMContentLoaded`, que no vuelve a disparar si ya existia).
+La ventana `pos`, en cambio, solo se recarga cuando la URL del servidor
+cambio desde la ultima vez que se mostro -- recargar sin necesidad tirar[ia]
+el token bearer en memoria y el carrito en curso del cajero (ver
+`entornoTauri.ts`). En ambos casos la recarga la dispara Rust con la API nativa
+`WebviewWindow::reload()` (equivalente en efecto a que la propia pagina
+llamara a `window.location.reload()`, pero sin inyectar ese ni ningun otro
+script): la CSP (`script-src 'self'` sin `unsafe-eval`) podria bloquear un
+script inyectado segun como WebView2 la aplique, asi que la API nativa evita
+depender de eso.
 
 La pagina del POS no tiene permiso para invocar `leer_configuracion`: la URL
 del servidor le llega por el campo `url_servidor` de `info_app` (que si tiene
 permitido), no por un comando nuevo.
+
+## CSP y el alcance de `connect-src`
+
+La CSP declarada en `tauri.conf.json` restringe `connect-src` a
+`'self' https: http://localhost:* http://127.0.0.1:*` -- el esquema `https:`
+sin un host especifico, no un origen exacto. Esto es deliberado, no un
+descuido: la URL real del servidor la elige el usuario en tiempo de
+ejecucion (pagina de configuracion, `config::normalizar_url_servidor`), y esa
+URL recien se conoce despues de que Tauri ya arranco.
+
+Investigado contra la fuente de `tauri` 2.11.5 (version pineada en
+`Cargo.lock`): el crate SI expone un hook capaz de reescribir headers de
+respuesta por request, `WebviewBuilder::on_web_resource_request` (ver el
+ejemplo oficial embebido en `tauri::webview::WebviewBuilder`), que podria
+angostar `connect-src` al origen exacto ya configurado. Pero la ventana
+`main` se crea, en el primer arranque de la app (antes de que exista
+`config.json`), a partir del array `windows` estatico de `tauri.conf.json` --
+Tauri la construye internamente (`WebviewWindowBuilder::from_config`) ANTES
+de que corra el closure `.setup()` de este crate, asi que no hay ningun punto
+de este codigo desde el que colgarle ese hook a esa ventana en ese momento.
+Aplicarlo de forma consistente exigiria sacar `main` del array estatico y
+construirla siempre desde Rust (como ya se hace con `pos`) -- un cambio
+estructural mas grande que el alcance de esta ronda, que no se puede
+verificar en este entorno contra un WebView2 real. Por eso se deja `https:`
+en vez de angostarlo a medias (que seria peor: dar una falsa sensacion de
+"ya esta resuelto").
+
+Que protege el `connect-src` actual: cualquier `fetch`/XHR a un esquema
+distinto de `https`/`http(s)://localhost`/`127.0.0.1` (por ejemplo `ws:`,
+`file:`, o un origen `http://` remoto). Que NO protege: un script bundleado
+comprometido (supply-chain de una dependencia de `Ways.Web`) puede mandar el
+token bearer en memoria o la credencial de dispositivo (ver
+`entornoTauri.ts`, `credencial::leer`) a CUALQUIER host `https`, porque el
+esquema no restringe el destino.
 
 ## Atajo de teclado
 

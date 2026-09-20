@@ -8,7 +8,6 @@
   "permissions": [
     "core:default",
     "allow-imprimir-raw",
-    "allow-listar-impresoras",
     "allow-abrir-configuracion",
     "allow-info-app",
     "allow-guardar-credencial-de-dispositivo",
