@@ -363,14 +363,16 @@ public class ServicioDeVentas(
         // duplica una fila (design decisión 2: "gaps are accepted", nunca duplicados).
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): con NumeroPreasignado el
         // contador YA avanzó al reservar el bloque (ServicioDeReservasDeNumeracion) — acá solo se
-        // verifica pertenencia (ExigirNumeroPreasignadoPropioAsync), nunca se vuelve a asignar.
-        // estrategiaNumeracion se sigue declarando IGUAL en los dos casos (nunca una segunda
-        // llamada nueva) — EscriturasSinReintentoEstructuralesTests audita el conteo exacto de
-        // esa expresión sobre el cuerpo entero del método, comentarios incluidos.
-        var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
+        // LEE pertenencia (ExigirNumeroPreasignadoPropioAsync — ver su doc-comment sobre qué
+        // garantiza exactamente esa lectura y qué no), nunca se vuelve a asignar.
+        // judgment-day (WARNING, ronda 1): la estrategia de numeración se construye ACÁ ADENTRO,
+        // solo en el branch que la usa — antes se declaraba afuera, sin uso, también en el branch
+        // de NumeroPreasignado, nomás para que EscriturasSinReintentoEstructuralesTests contara la
+        // expresión sobre el cuerpo entero del método; el test se adaptó para auditar la forma
+        // nueva en vez de forzar la vieja.
         var numero = solicitud.NumeroPreasignado is { } numeroPreasignado
             ? await ExigirNumeroPreasignadoPropioAsync(numeroPreasignado, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct)
-            : await estrategiaNumeracion.ExecuteAsync(async () =>
+            : await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
                 await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
 
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
@@ -412,16 +414,68 @@ public class ServicioDeVentas(
         // ya lo protege de un duplicado silencioso aunque este sitio no reintentara solo —la
         // ganancia del reintento automático para ESE actor es más chica: evita que un commit
         // ambiguo transitorio le devuelva un 500 espurio sobre una venta que en verdad sí quedó
-        // emitida.
+        // emitida. La clave (punto de venta + tipo + número) es lo único que esa guarda compara —
+        // judgment-day (CRITICAL, ronda 1): ExigirMismoContenido, más abajo, es lo que impide que
+        // un reenvío MANUAL con un carrito DISTINTO bajo ese mismo número reciba en silencio el
+        // comprobante de la primera venta.
         var estrategia = db.Database.CreateExecutionStrategy();
 
         return await estrategia.ExecuteAsync(async () =>
         {
             db.ChangeTracker.Clear();
 
-            return await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
-                ?? await EjecutarTransaccionAsync(plan, numero, ct);
+            var existente = await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct);
+            if (existente is null)
+            {
+                return await EjecutarTransaccionAsync(plan, numero, ct);
+            }
+
+            // judgment-day (CRITICAL, ronda 1): BuscarPorNumeroComprometidoAsync compara solo la
+            // CLAVE (punto de venta + tipo + número), nunca el contenido — para el reintento
+            // INTERNO de EnableRetryOnFailure eso alcanza, porque reenvía el MISMO plan (closure
+            // de esta lambda), nunca uno distinto. Para NumeroPreasignado no alcanza: ahí el
+            // número lo trae un reenvío MANUAL del dispositivo, dos requests HTTP independientes
+            // sin ninguna garantía de que traigan el mismo carrito. Por eso el chequeo de
+            // contenido corre SOLO en ese camino (es el único con dos llamadores reales
+            // distintos) — el camino server-asignado nunca reutiliza un número entre requests,
+            // así que no puede llegar acá con un plan distinto bajo el mismo número.
+            if (solicitud.NumeroPreasignado is not null)
+            {
+                ExigirMismoContenido(existente, plan);
+            }
+
+            return existente;
         });
+    }
+
+    /// <summary>judgment-day (CRITICAL, ronda 1): guarda de contenido del camino
+    /// NumeroPreasignado — sin esto, un reenvío con un carrito DISTINTO bajo el mismo número
+    /// pre-asignado recibía en silencio el comprobante de la PRIMERA venta (contenido y total
+    /// ajenos al pedido que en verdad llegó). Compara lo material — el total y el conjunto
+    /// (idArticulo, cantidad) de líneas — contra el plan recién decidido; sin coincidencia, 409 en
+    /// vez de sustituir en silencio. Sin columna nueva: compara contra los propios items/total ya
+    /// persistidos del comprobante encontrado.</summary>
+    private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
+    {
+        var lineasExistentes = existente.Items
+            .Select(i => (i.IdArticulo, i.Cantidad))
+            .OrderBy(l => l.IdArticulo)
+            .ThenBy(l => l.Cantidad)
+            .ToList();
+
+        var lineasSolicitadas = plan.Items
+            .Select(i => ((int?)i.IdArticulo, i.Cantidad))
+            .OrderBy(l => l.Item1)
+            .ThenBy(l => l.Item2)
+            .ToList();
+
+        if (existente.Total != plan.Total || !lineasExistentes.SequenceEqual(lineasSolicitadas))
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_con_otro_contenido",
+                $"El número {existente.Numero} ya tiene un comprobante emitido con contenido distinto.",
+                409);
+        }
     }
 
     /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre
@@ -1291,8 +1345,24 @@ public class ServicioDeVentas(
     /// comprometido — el bloque que lo contiene avanzó <c>numeraciones_comprobante</c> al
     /// reservarse (<c>ServicioDeReservasDeNumeracion</c>). Acá solo se verifica PERTENENCIA,
     /// nunca se vuelve a tocar el contador. 409, no 400: el número está bien formado, lo que
-    /// falta es una reserva VIGENTE que lo respalde (pudo haberse abandonado al pedir un bloque
-    /// nuevo, o nunca haber existido).</summary>
+    /// falta es CUALQUIER reserva de este dispositivo/punto de venta/tipo que lo haya contenido.
+    ///
+    /// judgment-day (CRITICAL, ronda 1): a propósito NO exige <c>AbandonadaAt IS NULL</c> — ver el
+    /// doc-comment de <see cref="AsignadorDeNumeroComprobante.ReservarBloqueAsync"/>. Abandonar un
+    /// bloque gobierna de qué bloque este dispositivo puede sacar números NUEVOS, nunca cuáles
+    /// acepta el servidor: un número que en verdad se reservó para este dispositivo sigue siendo
+    /// suyo aunque esa reserva ya no esté vigente, porque el ticket físico ya pudo haber quedado
+    /// en manos del cliente antes de que el bloque se abandonara. Las otras tres cláusulas
+    /// (dispositivo, punto de venta, tipo) SÍ siguen siendo de aislamiento — no las toca este
+    /// cambio (ver los tests de <c>ReservaDeNumeracionEndpointsTests</c> que aíslan cada una).
+    ///
+    /// judgment-day (WARNING, ronda 1, juez B): esta es una LECTURA SIN LOCK que corre ANTES de
+    /// abrir ninguna transacción de escritura y nunca se re-chequea al momento del INSERT — no es
+    /// una verificación atómica con la emisión. Eso ya no es una carrera peligrosa: como
+    /// abandonar un bloque no invalida ningún número (párrafo anterior), no hay ningún estado que
+    /// pueda cambiar entre esta lectura y el INSERT que vuelva incorrecto el resultado ya leído.
+    /// El doble uso del número lo previene <c>ux_comprobantes_venta_numero</c> más la guarda de
+    /// idempotencia (<see cref="BuscarPorNumeroComprometidoAsync"/>), no este chequeo.</summary>
     private async Task<long> ExigirNumeroPreasignadoPropioAsync(
         long numero, int idPuntoVenta, string codigoTipoComprobante, CancellationToken ct)
     {
@@ -1307,7 +1377,6 @@ public class ServicioDeVentas(
             r => r.IdDispositivo == idDispositivo
                 && r.IdPuntoVenta == idPuntoVenta
                 && r.TipoComprobante == codigoTipoComprobante
-                && r.AbandonadaAt == null
                 && numero >= r.Desde
                 && numero <= r.Hasta,
             ct);
@@ -1316,7 +1385,7 @@ public class ServicioDeVentas(
         {
             throw new ErrorDominio(
                 "numero_preasignado_no_reservado",
-                $"El número {numero} no pertenece a ninguna reserva vigente de este dispositivo.",
+                $"El número {numero} no pertenece a ninguna reserva de este dispositivo.",
                 409);
         }
 

@@ -1445,13 +1445,13 @@ cuáles se imprimieron y se perdieron con la cola local — reemitir esos númer
 duplicado en el bolsillo de un cliente, y los huecos ya son aceptados en este sistema (§4). El
 bloque abandonado nunca se reactiva ni se reparte de nuevo.
 
-**Supuesto no verificado (riesgo abierto):** si el dispositivo pierde el conteo de consumo del
-bloque pero conserva intacta una cola local de ventas ya confirmadas al operador y pendientes de
-sincronizar, ese resync fallaría con `409 numero_preasignado_no_reservado` en cuanto su número
-caiga en el bloque recién abandonado — el ticket físico ya está en manos del cliente, y el
-servidor lo rechazaría igual. Se asume (sin confirmar contra el cliente Tauri) que la cola de
-sincronización y el contador de consumo viven en el mismo almacenamiento local y se pierden
-juntos.
+**Abandonar un bloque no invalida los números que ya salieron de él (judgment-day, riesgo
+cerrado).** `abandonada_at` gobierna de qué bloque este dispositivo puede sacar números NUEVOS de
+acá en adelante — nunca gobierna qué números acepta el servidor. Si el dispositivo pierde el
+conteo de consumo del bloque pero conserva intacta una cola local de ventas ya confirmadas al
+operador y pendientes de sincronizar, ese resync YA NO falla solo porque el bloque que contenía su
+número fue abandonado mientras tanto: el ticket físico pudo haber quedado en manos del cliente
+antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenencia más abajo).
 
 **Consumo: `POST /api/ventas` acepta un número pre-asignado.** `SolicitudDeVenta.NumeroPreasignado`
 (opcional) es el número que el dispositivo ya reservó. Reglas:
@@ -1459,16 +1459,22 @@ juntos.
 - Un actor **web** (sin claim `ways:id_dispositivo`) que lo manda recibe `400
   numero_preasignado_no_admitido` — el servidor sigue siendo la única autoridad de numeración en
   ese camino.
-- Un actor de **dispositivo** que lo manda tiene que poseerlo: tiene que existir una fila VIVA
-  (`abandonada_at IS NULL`) de ESE dispositivo/punto de venta/tipo cuyo `[desde, hasta]` lo
-  contenga — si no, `409 numero_preasignado_no_reservado`.
+- Un actor de **dispositivo** que lo manda tiene que poseerlo: tiene que existir ALGUNA fila
+  (vigente o ya abandonada) de ESE dispositivo/punto de venta/tipo cuyo `[desde, hasta]` lo
+  contenga — si no, `409 numero_preasignado_no_reservado`. `abandonada_at` no participa de este
+  chequeo (párrafo anterior); el aislamiento sigue siendo por dispositivo, punto de venta y tipo.
 - Un dispositivo puede seguir omitiendo el número (está online): se asigna como siempre.
 - **Idempotencia:** si ya existe un comprobante con ese `(id_punto_venta, id_tipo_comprobante,
   numero)`, se devuelve ESE comprobante en vez de fallar — reusa la misma guarda de commit
   ambiguo que ya usa el reintento automático del camino server-asignado
-  (`BuscarPorNumeroComprometidoAsync`), no una segunda. Un payload distinto bajo el mismo número
-  es un bug del dispositivo que el índice único `ux_comprobantes_venta_numero` ya blinda —
-  devolver el comprobante guardado, sin comparar, es el trade-off deliberado.
+  (`BuscarPorNumeroComprometidoAsync`), no una segunda. Esa guarda compara solo la clave (punto de
+  venta + tipo + número), nunca el contenido — `ux_comprobantes_venta_numero` NO blinda un
+  payload distinto bajo el mismo número en este camino: el lookup encuentra la fila existente y
+  devuelve antes de llegar a ningún INSERT, así que ese índice nunca se ejercita acá. Lo que
+  blinda un reenvío con carrito distinto es una comparación explícita de contenido
+  (`ServicioDeVentas.ExigirMismoContenido`: total + el conjunto (idArticulo, cantidad) de líneas)
+  contra el comprobante ya guardado — sin coincidencia, `409 numero_preasignado_con_otro_contenido`
+  en vez de devolver la venta ajena en silencio.
 
 **Endpoint dedicado — `POST /api/ventas/reservas-numeracion`.** Solo un dispositivo
 (`Politicas.RequiereDispositivo`, apilada sobre `OperacionDePos`) puede pedir un bloque, y solo

@@ -183,7 +183,13 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         var ahora = DateTimeOffset.UtcNow;
 
-        var area = new Area { IdTenant = idTenant, Nombre = "Ventas", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
+        // Nombre único por llamada (Guid): ux_areas_nombre_compartido choca si este helper se
+        // llama dos veces para el mismo tenant (necesario para sembrar dos artículos con precios
+        // distintos en un mismo test, ver ReenviarConUnContenidoDistintoBajoElMismoNumeroPreasignadoEs409).
+        var area = new Area
+        {
+            IdTenant = idTenant, Nombre = $"Ventas-{Guid.NewGuid():N}", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora
+        };
         db.Areas.Add(area);
         await db.SaveChangesAsync();
 
@@ -610,9 +616,19 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
     /// <summary>LOS DOS CONJUNTOS del rango, <c>numero &gt;= Desde</c> y <c>numero &lt;= Hasta</c>,
     /// cada uno aislado (mutation-proof-tests regla 3, "enumerar los conjuntos") — a diferencia de
     /// <see cref="UnDispositivoNoPuedeUsarUnNumeroQueNoReservo"/> (sin NINGUNA reserva, donde los
-    /// seis conjuntos fallan a la vez y no aíslan nada), acá SÍ hay una reserva viva del
-    /// dispositivo/PV/tipo correctos — un número apenas por encima y otro apenas por debajo del
-    /// rango, cada uno matando solo su propio conjunto.</summary>
+    /// cinco conjuntos fallan a la vez y no aíslan nada), acá SÍ hay una reserva propia y vigente
+    /// del dispositivo/PV/tipo correctos — un número apenas por encima y otro apenas por debajo
+    /// del rango, cada uno matando solo su propio conjunto.
+    ///
+    /// judgment-day (FIX 1, ronda 1 — reescrito): el bloque descartable [1,9] que arma el "apenas
+    /// por debajo" ahora lo quema un dispositivo DISTINTO, revocado antes de vincular al
+    /// dispositivo bajo prueba — nunca el MISMO dispositivo. Desde que
+    /// <c>ExigirNumeroPreasignadoPropioAsync</c> dejó de exigir <c>AbandonadaAt IS NULL</c> (FIX
+    /// 1), un bloque descartable propio y ABANDONADO seguiría perteneciendo al dispositivo bajo
+    /// prueba, y el número 9 pasaría a aceptarse por esa fila en vez de rechazarse — dejando de
+    /// aislar nada. Con el descartable en otro dispositivo, el dispositivo bajo prueba tiene una
+    /// única fila propia — [10,15], vigente — así que 9 y 16 solo pueden fallar por el rango.
+    /// </summary>
     [Theory]
     [InlineData(9L)]  // apenas por debajo de Desde=10 — mata "numero >= Desde".
     [InlineData(16L)] // apenas por encima de Hasta=15 — mata "numero <= Hasta".
@@ -623,14 +639,24 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         await AbrirTurnoAsync(idTenant, idPuntoVenta);
         var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
 
-        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "fuera-de-rango");
+        // Bloque descartable [1,9], quemado por un dispositivo DISTINTO del que está bajo prueba
+        // (revocado antes de que ese otro se vincule) — ver el doc-comment de arriba.
+        var (descartable, idDispositivoDescartable) = await LoguearComoCajeroDeDispositivoAsync(
+            admin, idTenant, idPuntoVenta, $"descartable-{numeroFueraDeRango}");
+        using (descartable)
+        {
+            await descartable.PostAsJsonAsync(
+                "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 9));
+        }
+        var revocacion = await admin.DeleteAsync($"/api/dispositivos/{idDispositivoDescartable}");
+        Assert.Equal(HttpStatusCode.NoContent, revocacion.StatusCode);
+
+        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(
+            admin, idTenant, idPuntoVenta, $"fuera-de-rango-{numeroFueraDeRango}");
         using var _cajero = cajero;
         admin.Dispose();
 
-        // Reserva [10,15] vigente (bloque de 6 arrancando en 10: la serie empieza en 1, así que
-        // primero hay que quemar 9 con un bloque descartable).
-        await cajero.PostAsJsonAsync(
-            "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 9));
+        // Bloque propio del dispositivo bajo prueba, vigente: [10,15].
         await cajero.PostAsJsonAsync(
             "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 6));
 
@@ -643,18 +669,22 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
     }
 
-    /// <summary>LA CLÁUSULA: <c>AbandonadaAt == null</c> del chequeo de pertenencia — un número que
-    /// perteneció a un bloque YA abandonado (el dispositivo pidió uno nuevo) no sirve más, aunque
-    /// el rango numérico lo siga conteniendo.</summary>
+    /// <summary>judgment-day (CRITICAL, ronda 1 — invierte la premisa original de este test, que
+    /// afirmaba 409 acá): abandonar un bloque gobierna de qué bloque el DISPOSITIVO puede sacar
+    /// números NUEVOS, nunca cuáles acepta el SERVIDOR — un número que en verdad se reservó para
+    /// este dispositivo sigue siendo suyo aunque el bloque que lo contenía ya no esté vigente,
+    /// porque el ticket físico ya pudo haber quedado en manos del cliente antes del abandono. El
+    /// doble uso lo sigue previniendo <c>ux_comprobantes_venta_numero</c> más la guarda de
+    /// idempotencia, no <c>abandonada_at</c>.</summary>
     [Fact]
-    public async Task UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaAbandonada()
+    public async Task UnDispositivoPuedeUsarUnNumeroDeUnaReservaAbandonada()
     {
         var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
-            nameof(UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaAbandonada));
+            nameof(UnDispositivoPuedeUsarUnNumeroDeUnaReservaAbandonada));
         await AbrirTurnoAsync(idTenant, idPuntoVenta);
         var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
 
-        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "abandonada");
+        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "abandonada-ok");
         using var _cajero = cajero;
         admin.Dispose();
 
@@ -664,12 +694,13 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         await cajero.PostAsJsonAsync(
             "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 5));
 
+        // Un número del bloque YA ABANDONADO [1,5] — antes rechazado con 409, ahora aceptado.
         var respuesta = await cajero.PostAsJsonAsync(
             "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 3));
 
-        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
-        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(3, emitido.Numero);
     }
 
     /// <summary>Happy path + prueba de que el contador NO se vuelve a bumpear: una venta
@@ -707,6 +738,12 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(11, bloqueSiguiente.Desde);
     }
 
+    /// <summary>judgment-day (CRITICAL, ronda 1): reenvía dos <see cref="SolicitudDeVenta"/>
+    /// EQUIVALENTES pero construidas por separado (dos llamadas a <see cref="SolicitudDeServicio"/>,
+    /// nunca la misma instancia reusada) — antes este test reenviaba el MISMO objeto, así que
+    /// pasaba aunque la comparación de contenido de <c>EmitirAsync</c> comparara por identidad de
+    /// referencia en vez de por valor; con dos instancias separadas, solo sigue en verde si la
+    /// comparación es de verdad por contenido.</summary>
     [Fact]
     public async Task ReenviarLaMismaVentaConElMismoNumeroPreasignadoDevuelveElMismoComprobante()
     {
@@ -722,10 +759,10 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         await cajero.PostAsJsonAsync(
             "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 5));
 
-        var solicitud = SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 1);
-
-        var primera = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
-        var segunda = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
+        var primera = await cajero.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 1));
+        var segunda = await cajero.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 1));
 
         Assert.Equal(HttpStatusCode.Created, primera.StatusCode);
         Assert.Equal(HttpStatusCode.Created, segunda.StatusCode);
@@ -734,6 +771,46 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         var emitido2 = (await segunda.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
         Assert.Equal(emitido1.Id, emitido2.Id);
         Assert.Equal(emitido1.Numero, emitido2.Numero);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var cantidad = await db.ComprobantesVenta
+            .CountAsync(c => c.IdPuntoVenta == idPuntoVenta && c.Numero == 1);
+        Assert.Equal(1, cantidad);
+    }
+
+    /// <summary>judgment-day (CRITICAL, ronda 1): el reenvío ahora trae un carrito DISTINTO
+    /// (otro artículo, otro precio) bajo el MISMO número pre-asignado — antes de este fix
+    /// <c>BuscarPorNumeroComprometidoAsync</c> devolvía en silencio la PRIMERA venta, con el total
+    /// y los items de otro cliente. <see cref="ServicioDeVentas.ExigirMismoContenido"/> tiene que
+    /// cortar esto con 409, nunca con un 201 que entregue una venta ajena.</summary>
+    [Fact]
+    public async Task ReenviarConUnContenidoDistintoBajoElMismoNumeroPreasignadoEs409()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(ReenviarConUnContenidoDistintoBajoElMismoNumeroPreasignadoEs409));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo1, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var (idArticulo2, _) = await SembrarServicioYMedioEfectivoAsync(idTenant, 50m);
+
+        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "replay-distinto");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        await cajero.PostAsJsonAsync(
+            "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 5));
+
+        var primera = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudDeServicio(idPuntoVenta, idArticulo1, idMedioEfectivo, 100m, numeroPreasignado: 1));
+        Assert.Equal(HttpStatusCode.Created, primera.StatusCode);
+
+        var segunda = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudDeServicio(idPuntoVenta, idArticulo2, idMedioEfectivo, 50m, numeroPreasignado: 1));
+
+        Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);
+        var problema = await segunda.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_con_otro_contenido", problema.GetProperty("codigo").GetString());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         var cantidad = await db.ComprobantesVenta

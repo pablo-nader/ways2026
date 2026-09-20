@@ -128,14 +128,16 @@ public static class AsignadorDeNumeroComprobante
     /// la numeración de a uno, ver <see cref="AsignarBloqueAsync"/>), un número duplicado no lo es
     /// (spec, comentario de <c>ServicioDeVentas.cs:342-349</c>).
     ///
-    /// SUPUESTO no verificado en esta slice (asumido, no confirmado con el cliente de escritorio):
-    /// si el dispositivo perdió el conteo de cuánto reservó pero conserva intacta una cola local
-    /// de ventas YA CONFIRMADAS al operador y pendientes de sincronizar, ese resync fallaría con
-    /// 409 <c>numero_preasignado_no_reservado</c> en cuanto su número caiga en un bloque ya
-    /// abandonado — el ticket físico ya está en manos del cliente, pero el servidor lo rechaza. Se
-    /// asume que la cola de sincronización y el contador de consumo del bloque viven en el MISMO
-    /// almacenamiento local y se pierden juntos (spec, punto 2, tal como está escrita) — nunca se
-    /// validó si el cliente Tauri puede perder uno sin el otro.
+    /// judgment-day (CRITICAL, ronda 1 — riesgo cerrado, ya no es un supuesto abierto):
+    /// <c>abandonada_at</c> solo gobierna de qué bloque este dispositivo puede sacar números
+    /// NUEVOS de acá en adelante — nunca gobierna qué números acepta el SERVIDOR después.
+    /// <c>ServicioDeVentas.ExigirNumeroPreasignadoPropioAsync</c> ya no exige
+    /// <c>AbandonadaAt IS NULL</c>: un número que en verdad cayó dentro de ALGUNA reserva de este
+    /// dispositivo/punto de venta/tipo sigue siendo suyo aunque ese bloque ya no esté vigente, así
+    /// que una venta encolada offline que sincroniza tarde (después de que el dispositivo pidió un
+    /// bloque nuevo) ya no se rechaza con 409 solo por eso. El doble uso lo sigue previniendo
+    /// <c>ux_comprobantes_venta_numero</c> más la guarda de idempotencia de
+    /// <c>BuscarPorNumeroComprometidoAsync</c>, no este campo.
     ///
     /// Ese abandono ANTES del INSERT (misma transacción) es también lo que hace inofensivo un
     /// reintento sobre un commit ambiguo: si el intento anterior en verdad comiteó, el reintento
