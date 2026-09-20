@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -56,6 +56,19 @@ public class ServicioDeVentas(
         // actor autenticado — SolicitudDeVenta no tiene ningún campo de empleado que pueda
         // pisar esto.
         var idEmpleado = contexto.UsuarioId;
+
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): solo un dispositivo puede
+        // traer un número pre-asignado (lo reservó offline vía ServicioDeReservasDeNumeracion) —
+        // un actor web nunca tiene un bloque que reservar, así que el campo es apócrifo en su
+        // boca. Chequeo temprano, antes de resolver precio/oferta/turno: el servidor sigue siendo
+        // la única autoridad de numeración en el camino web, sin excepción.
+        if (solicitud.NumeroPreasignado is not null && contexto.IdDispositivo is null)
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_no_admitido",
+                "Solo un dispositivo puede indicar un número pre-asignado.",
+                400);
+        }
 
         // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59"): con
         // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
@@ -214,8 +227,8 @@ public class ServicioDeVentas(
         }
 
         if (lineasConLote.Count > 0)   // ← la ÚNICA query nueva del camino caliente: 16 → 17 (spec
-                                        // lotes-y-vencimientos: "Module on with a lot-controlled
-                                        // articulo nets zero round-trip change")
+                                       // lotes-y-vencimientos: "Module on with a lot-controlled
+                                       // articulo nets zero round-trip change")
         {
             var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo).Distinct().ToList();
             var idsLotePedidos = lineasConLote
@@ -348,9 +361,19 @@ public class ServicioDeVentas(
         // transacción es inofensivo: si en verdad comiteó, el contador ya avanzó; si el cliente
         // reintenta (execution strategy), reservar de nuevo solo vuelve a avanzarlo — nunca
         // duplica una fila (design decisión 2: "gaps are accepted", nunca duplicados).
-        var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
-        var numero = await estrategiaNumeracion.ExecuteAsync(async () =>
-            await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): con NumeroPreasignado el
+        // contador YA avanzó al reservar el bloque (ServicioDeReservasDeNumeracion) — acá solo se
+        // LEE pertenencia (ExigirNumeroPreasignadoPropioAsync — ver su doc-comment sobre qué
+        // garantiza exactamente esa lectura y qué no), nunca se vuelve a asignar.
+        // judgment-day (WARNING, ronda 1): la estrategia de numeración se construye ACÁ ADENTRO,
+        // solo en el branch que la usa — antes se declaraba afuera, sin uso, también en el branch
+        // de NumeroPreasignado, nomás para que EscriturasSinReintentoEstructuralesTests contara la
+        // expresión sobre el cuerpo entero del método; el test se adaptó para auditar la forma
+        // nueva en vez de forzar la vieja.
+        var numero = solicitud.NumeroPreasignado is { } numeroPreasignado
+            ? await ExigirNumeroPreasignadoPropioAsync(numeroPreasignado, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct)
+            : await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
 
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
         // transacción se abre ACÁ ADENTRO — EnableRetryOnFailure exige que la apertura viva
@@ -378,20 +401,126 @@ public class ServicioDeVentas(
         //     contra ux_comprobantes_venta_numero.
         //
         // Por eso este sitio NO usa FabricaDeEstrategiaSinReintento, a diferencia de AnularAsync:
-        // el reintento automático es el ÚNICO consumidor de esa clave de idempotencia. Sin él, un
-        // commit ambiguo saldría como 500 con el carrito intacto y el cajero volvería a apretar
-        // Cobrar; SolicitudDeVenta no lleva número, así que ese reenvío sortearía un número NUEVO
-        // y emitiría un SEGUNDO comprobante, con su segundo descuento de stock, su segundo
-        // movimiento de caja y su segundo movimiento de cuenta corriente.
+        // el reintento automático es el consumidor PRINCIPAL de esa clave de idempotencia para un
+        // actor SIN NumeroPreasignado (web, o dispositivo online) — sin él, un commit ambiguo
+        // saldría como 500 con el carrito intacto, el cajero volvería a apretar Cobrar, y ese
+        // reenvío (una SolicitudDeVenta nueva) pasaría otra vez por la numeración: como esa
+        // asignación siempre avanza, sortearía un número NUEVO y emitiría un SEGUNDO comprobante
+        // completo, con su segundo descuento de stock, su segundo movimiento de caja y su segundo
+        // movimiento de cuenta corriente.
+        //
+        // stage-pos-reserva-de-numeracion: un actor CON NumeroPreasignado reenvía el MISMO número
+        // en cada resend manual (nunca se vuelve a sortear), así que BuscarPorNumeroComprometidoAsync
+        // ya lo protege de un duplicado silencioso aunque este sitio no reintentara solo —la
+        // ganancia del reintento automático para ESE actor es más chica: evita que un commit
+        // ambiguo transitorio le devuelva un 500 espurio sobre una venta que en verdad sí quedó
+        // emitida. La clave (punto de venta + tipo + número) es lo único que esa guarda compara —
+        // judgment-day (CRITICAL, ronda 1): ExigirMismoContenido, más abajo, es lo que impide que
+        // un reenvío MANUAL con un carrito DISTINTO bajo ese mismo número reciba en silencio el
+        // comprobante de la primera venta.
         var estrategia = db.Database.CreateExecutionStrategy();
 
         return await estrategia.ExecuteAsync(async () =>
         {
             db.ChangeTracker.Clear();
 
-            return await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
-                ?? await EjecutarTransaccionAsync(plan, numero, ct);
+            var existente = await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct);
+            if (existente is null)
+            {
+                return await EjecutarTransaccionAsync(plan, numero, ct);
+            }
+
+            // judgment-day (CRITICAL, ronda 1): BuscarPorNumeroComprometidoAsync compara solo la
+            // CLAVE (punto de venta + tipo + número), nunca el contenido — para el reintento
+            // INTERNO de EnableRetryOnFailure eso alcanza, porque reenvía el MISMO plan (closure
+            // de esta lambda), nunca uno distinto. Para NumeroPreasignado no alcanza: ahí el
+            // número lo trae un reenvío MANUAL del dispositivo, dos requests HTTP independientes
+            // sin ninguna garantía de que traigan el mismo carrito. Por eso el chequeo de
+            // contenido corre SOLO en ese camino (es el único con dos llamadores reales
+            // distintos) — el camino server-asignado nunca reutiliza un número entre requests,
+            // así que no puede llegar acá con un plan distinto bajo el mismo número.
+            if (solicitud.NumeroPreasignado is not null)
+            {
+                ExigirMismoContenido(existente, plan);
+            }
+
+            return existente;
         });
+    }
+
+    /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
+    /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
+    /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
+    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero: el conjunto (idArticulo,
+    /// cantidad) de líneas, idCliente, idComprobanteAsociado y la composición de pagos
+    /// (idMedioPago, importe, referencia) — nunca el total ni el precio de ningún item (ver el comentario
+    /// dentro del método), y tampoco <c>Observaciones</c> (idem, ver el comentario dentro del
+    /// método: es metadata, no identidad). Sin columna nueva: compara contra los propios
+    /// items/pagos ya persistidos del comprobante encontrado.</summary>
+    private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
+    {
+        var lineasExistentes = existente.Items
+            .Select(i => (i.IdArticulo, i.Cantidad))
+            .OrderBy(l => l.IdArticulo)
+            .ThenBy(l => l.Cantidad)
+            .ToList();
+
+        var lineasSolicitadas = plan.Items
+            .Select(i => ((int?)i.IdArticulo, i.Cantidad))
+            .OrderBy(l => l.Item1)
+            .ThenBy(l => l.Item2)
+            .ToList();
+
+        // La referencia entra en la identidad y observaciones no, aunque las dos sean texto:
+        // ValidadorDePagos la exige para los medios con RequiereReferencia, o sea que identifica
+        // una transaccion bancaria concreta. Dos transferencias del mismo importe con
+        // autorizaciones distintas son dos cobros distintos, no el mismo reenviado.
+        var pagosExistentes = existente.Pagos
+            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ToList();
+
+        var pagosSolicitados = plan.Pagos
+            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
+            .ToList();
+
+        // El total queda AFUERA de esta comparación a propósito: es server-derived
+        // (servicioDeOfertas.ResolverAsync lo recalcula en cada request, a precio/oferta del
+        // momento), así que puede legítimamente cambiar entre dos intentos del MISMO pedido —
+        // comparar dinero convertiría un resync legítimo (p.ej. un dispositivo offline que
+        // sincroniza horas después, ya con otro precio vigente) en un 409 espurio sobre TODA su
+        // cola. Lo que distingue una venta ajena de un reenvío del mismo pedido es su identidad,
+        // no lo que costó: mismas líneas, mismo cliente, mismo comprobante asociado y misma
+        // composición de pagos.
+        // TODO(offline-sale/outbox, no implementado acá): sacar el total de esta guarda no cierra
+        // un gap distinto y más profundo — el servidor re-precia al momento del sync, así que una
+        // venta offline sincronizada después queda registrada al precio ACTUAL en vez del
+        // impreso en el ticket del cliente; esa solicitud va a tener que viajar con los precios
+        // que cobró. Anotado como pendiente en docs/10-modelo-de-datos.md §9.2.
+        //
+        // Observaciones tampoco entra: a diferencia de idCliente/idComprobanteAsociado/líneas/pagos
+        // —que SON el contenido de la venta (quién, qué, cómo pagó)— es una nota de texto libre,
+        // metadata incidental sobre el pedido, no un rasgo que distinga un pedido de otro. Un
+        // reenvío MANUAL (dos requests HTTP independientes, ver el comentario de arriba) puede
+        // perfectamente traer la nota retipeada o corregida sin que eso signifique "esta es otra
+        // venta" — comparar texto libre por igualdad exacta reproduciría el mismo modo de falla
+        // que ya se descartó para el total: rechazar la MISMA venta por una diferencia que no hace
+        // a su sustancia.
+        if (existente.IdCliente != plan.IdCliente
+            || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
+            || !lineasExistentes.SequenceEqual(lineasSolicitadas)
+            || !pagosExistentes.SequenceEqual(pagosSolicitados))
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_con_otro_contenido",
+                $"El número {existente.Numero} ya tiene un comprobante emitido con contenido distinto.",
+                409);
+        }
     }
 
     /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre
@@ -1255,6 +1384,57 @@ public class ServicioDeVentas(
         }
 
         return tipo;
+    }
+
+    /// <summary>stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): el número YA está
+    /// comprometido — el bloque que lo contiene avanzó <c>numeraciones_comprobante</c> al
+    /// reservarse (<c>ServicioDeReservasDeNumeracion</c>). Acá solo se verifica PERTENENCIA,
+    /// nunca se vuelve a tocar el contador. 409, no 400: el número está bien formado, lo que
+    /// falta es CUALQUIER reserva de este dispositivo/punto de venta/tipo que lo haya contenido.
+    ///
+    /// judgment-day (CRITICAL, ronda 1): a propósito NO exige <c>AbandonadaAt IS NULL</c> — ver el
+    /// doc-comment de <see cref="AsignadorDeNumeroComprobante.ReservarBloqueAsync"/>. Abandonar un
+    /// bloque gobierna de qué bloque este dispositivo puede sacar números NUEVOS, nunca cuáles
+    /// acepta el servidor: un número que en verdad se reservó para este dispositivo sigue siendo
+    /// suyo aunque esa reserva ya no esté vigente, porque el ticket físico ya pudo haber quedado
+    /// en manos del cliente antes de que el bloque se abandonara. Las otras tres cláusulas
+    /// (dispositivo, punto de venta, tipo) SÍ siguen siendo de aislamiento — no las toca este
+    /// cambio (ver los tests de <c>ReservaDeNumeracionEndpointsTests</c> que aíslan cada una).
+    ///
+    /// judgment-day (WARNING, ronda 1, juez B): esta es una LECTURA SIN LOCK que corre ANTES de
+    /// abrir ninguna transacción de escritura y nunca se re-chequea al momento del INSERT — no es
+    /// una verificación atómica con la emisión. Eso ya no es una carrera peligrosa: como
+    /// abandonar un bloque no invalida ningún número (párrafo anterior), no hay ningún estado que
+    /// pueda cambiar entre esta lectura y el INSERT que vuelva incorrecto el resultado ya leído.
+    /// El doble uso del número lo previene <c>ux_comprobantes_venta_numero</c> más la guarda de
+    /// idempotencia (<see cref="BuscarPorNumeroComprometidoAsync"/>), no este chequeo.</summary>
+    private async Task<long> ExigirNumeroPreasignadoPropioAsync(
+        long numero, int idPuntoVenta, string codigoTipoComprobante, CancellationToken ct)
+    {
+        var idDispositivo = contexto.IdDispositivo
+            // El guard temprano de EmitirAsync ya lo garantiza (400 numero_preasignado_no_admitido
+            // para un actor sin claim de dispositivo) — defensa en profundidad, mismo criterio
+            // que ExigirTenantDeLaSesion.
+            ?? throw new InvalidOperationException(
+                $"{nameof(ExigirNumeroPreasignadoPropioAsync)} requiere un actor de dispositivo.");
+
+        var esPropio = await db.ReservasNumeracion.AnyAsync(
+            r => r.IdDispositivo == idDispositivo
+                && r.IdPuntoVenta == idPuntoVenta
+                && r.TipoComprobante == codigoTipoComprobante
+                && numero >= r.Desde
+                && numero <= r.Hasta,
+            ct);
+
+        if (!esPropio)
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_no_reservado",
+                $"El número {numero} no pertenece a ninguna reserva de este dispositivo.",
+                409);
+        }
+
+        return numero;
     }
 
     private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)

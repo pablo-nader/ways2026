@@ -152,6 +152,15 @@ public interface IWaysDbContext
     // (slice 4) recibe el IWaysDbContext concreto por parámetro y opera con ADO.NET crudo.
     DbSet<CertificadoFiscal> CertificadosFiscales { get; }
 
+    // stage-pos-reserva-de-numeracion: expuesto desde esta slice — ServicioDeVentas.
+    // ExigirNumeroPreasignadoPropioAsync (chequeo de pertenencia del número pre-asignado, vía
+    // LINQ) es el único consumidor de lectura de Application hoy;
+    // ServicioDeReservasDeNumeracion no lo necesita (delega toda la escritura/lectura del bloque
+    // a AsignadorDeNumeroComprobante.ReservarBloqueAsync, que opera con ADO.NET crudo, no vía
+    // este DbSet — mismo criterio que NumeracionesComprobante, que por eso sigue sin exponerse
+    // acá).
+    DbSet<ReservaNumeracion> ReservasNumeracion { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

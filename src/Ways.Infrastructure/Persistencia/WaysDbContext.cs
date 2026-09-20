@@ -166,6 +166,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<CertificadoFiscal> CertificadosFiscales => Set<CertificadoFiscal>();
     public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
 
+    // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): expuesto desde esta slice —
+    // ServicioDeVentas.ExigirNumeroPreasignadoPropioAsync es el único consumidor de lectura de
+    // Application hoy (vía LINQ). El único escritor legítimo
+    // (AsignadorDeNumeroComprobante.ReservarBloqueAsync) opera con ADO.NET crudo, no vía este
+    // DbSet — mismo criterio que NumeracionesComprobante.
+    public DbSet<ReservaNumeracion> ReservasNumeracion => Set<ReservaNumeracion>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -248,6 +255,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
         AplicarFiltroDeTenantEnAuditoria(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionFiscal(modelBuilder);
+        AplicarFiltroDeTenantEnReservaNumeracion(modelBuilder);
     }
 
     /// <summary>
@@ -291,6 +299,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         RechazarEscriturasDeNumeracionArticulo();
         RechazarEscriturasDeNumeracionComprobante();
         RechazarEscriturasDeNumeracionFiscal();
+        RechazarEscriturasDeReservaNumeracion();
 
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
@@ -417,6 +426,27 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                 throw new InvalidOperationException(
                     "numeraciones_fiscales solo se escribe con SQL crudo, vía " +
                     "AsignadorDeNumeroFiscal — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): mismo guard que
+    /// <see cref="RechazarEscriturasDeNumeracionFiscal"/>, acá para
+    /// <see cref="ReservaNumeracion"/> — <see cref="AsignadorDeNumeroComprobante"/> es su único
+    /// punto de escritura legítimo (abandono del bloque anterior, bump del contador e inserción
+    /// del bloque nuevo, las tres con SQL crudo dentro de la misma transacción).
+    /// </summary>
+    private void RechazarEscriturasDeReservaNumeracion()
+    {
+        foreach (var entrada in ChangeTracker.Entries<ReservaNumeracion>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "reservas_numeracion solo se escribe con SQL crudo, vía " +
+                    $"{nameof(AsignadorDeNumeroComprobante)} — nunca por " +
                     $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
@@ -638,6 +668,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(NumeracionFiscal), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionFiscal.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): <see cref="ReservaNumeracion"/>
+    /// no hereda de <see cref="EntidadTenant"/> (sin <c>deleted_at</c>: <c>AbandonadaAt</c> ya es
+    /// su único ciclo de vida, ver su doc-comment), así que necesita la misma variante escrita a
+    /// mano que <see cref="NumeracionComprobante"/>/<see cref="NumeracionFiscal"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnReservaNumeracion(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(ReservaNumeracion))!;
+
+        var parametro = Expression.Parameter(typeof(ReservaNumeracion), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(ReservaNumeracion.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

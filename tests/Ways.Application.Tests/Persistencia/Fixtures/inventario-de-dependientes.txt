@@ -32,6 +32,7 @@ Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | proveedores | id_empresa,id_tenant | marcado
 Empresa | puntos_venta | id_empresa,id_tenant | marcado
 Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -70,6 +71,7 @@ PuntoVenta | ordenes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | parametros | id_punto_venta,id_tenant | marcado
 PuntoVenta | presupuestos | id_punto_venta,id_tenant | marcado
 PuntoVenta | remitos | id_punto_venta,id_tenant | marcado
+PuntoVenta | reservas_numeracion | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | stock | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | stock_lotes | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | turnos_caja | id_punto_venta,id_tenant | marcado
@@ -116,6 +118,7 @@ Tenant | presupuestos | id_tenant | marcado
 Tenant | proveedores | id_tenant | marcado
 Tenant | puntos_venta | id_tenant | marcado
 Tenant | remitos | id_tenant | marcado
+Tenant | reservas_numeracion | id_tenant | sinmarca
 Tenant | stock | id_tenant | sinmarca
 Tenant | stock_lotes | id_tenant | sinmarca
 Tenant | turnos_caja | id_tenant | marcado

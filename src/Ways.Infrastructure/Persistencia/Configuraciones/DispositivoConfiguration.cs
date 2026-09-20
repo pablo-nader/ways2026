@@ -26,6 +26,13 @@ public class DispositivoConfiguration : IEntityTypeConfiguration<Dispositivo>
         builder.Property(d => d.IdTenant).HasColumnName("id_tenant").IsRequired();
         builder.Property(d => d.IdPuntoVenta).HasColumnName("id_punto_venta").IsRequired();
 
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): por si el día de mañana algo
+        // cuelga de un dispositivo con FK compuesta — mismo motivo que
+        // ak_puntos_venta_id_punto_venta_id_tenant. Primer consumidor: reservas_numeracion
+        // (ReservaNumeracionConfiguration.fk_reservas_numeracion_dispositivo), ADR-9.
+        builder.HasAlternateKey(d => new { d.Id, d.IdTenant })
+            .HasName("ak_dispositivos_id_dispositivo_id_tenant");
+
         builder.Property(d => d.Nombre)
             .HasColumnName("nombre")
             .HasMaxLength(NombreDeDispositivo.LargoMaximo)

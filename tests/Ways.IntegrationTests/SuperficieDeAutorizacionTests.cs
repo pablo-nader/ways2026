@@ -49,6 +49,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloque offline —
+        // mismo grupo /api/ventas, mismo criterio que "/api/ventas/" (OperacionDePos, sin
+        // GestionDeCatalogo apilado: un Vendedor/cajero de dispositivo tiene que poder pedir su
+        // propio bloque). Apila RequiereDispositivo en su lugar (Politicas.cs) — el positivo por
+        // rol real (un cajero Vendedor logueado por dispositivo reservando con éxito) lo cubre
+        // ReservaDeNumeracionEndpointsTests.ReservarUnBloqueDevuelveElRangoYCreaUnaFilaViva.
+        ("POST", "/api/ventas/reservas-numeracion"),
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
@@ -270,6 +277,53 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
             Assert.True(
                 policies.Contains(policyExigida, StringComparer.Ordinal),
                 $"{metodo} {ruta} no apila {policyExigida}; apila [{string.Join(", ", policies)}].");
+        }
+    }
+
+    /// <summary>
+    /// QUINTO guard (judgment-day, stage-pos-reserva-de-numeracion, GAP 2): <c>POST
+    /// /api/ventas/reservas-numeracion</c> apila DOS policies por AND —
+    /// <see cref="Politicas.OperacionDePos"/>, heredada del grupo <c>/api/ventas</c>, Y
+    /// <see cref="Politicas.RequiereDispositivo"/>, declarada por esta ruta— y ninguno de los tres
+    /// guards de arriba mira la SEGUNDA: el primero la salta por el allowlist (ya no necesita
+    /// <see cref="Politicas.GestionDeCatalogo"/>) y los otros dos no la miran porque no es GET.
+    /// Sin este walker, sacarle el <c>.RequireAuthorization(Politicas.RequiereDispositivo)</c> a
+    /// esa ruta en <c>VentasEndpoints.cs</c> deja la superficie entera en verde — mismo punto
+    /// ciego que <see cref="RutasSinPolicyDeGrupo"/>, pero para una policy ADICIONAL sobre un
+    /// grupo que sí tiene la suya (por eso es una lista propia, no la misma). El 403 observable
+    /// (un actor sin claim de dispositivo sigue recibiendo 403 igual, por la guarda propia del
+    /// servicio — ver el doc-comment de
+    /// <c>ReservaDeNumeracionEndpointsTests.UnActorWebNoPuedeReservarUnBloque</c>) NO prueba que
+    /// esta declaración exista; este walker sí.
+    /// </summary>
+    private static readonly (string Metodo, string Ruta, string PolicyAdicionalExigida)[] RutasConPolicyAdicionalSobreSuGrupo =
+    [
+        ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo)
+    ];
+
+    [Fact]
+    public void CadaRutaConPolicyAdicionalSobreSuGrupoLaApila()
+    {
+        var fuente = fixture.Services.GetRequiredService<EndpointDataSource>();
+
+        foreach (var (metodo, ruta, policyAdicional) in RutasConPolicyAdicionalSobreSuGrupo)
+        {
+            var endpoint = fuente.Endpoints
+                .OfType<RouteEndpoint>()
+                .SingleOrDefault(e =>
+                    string.Equals(e.RoutePattern.RawText, ruta, StringComparison.Ordinal)
+                    && e.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(metodo) == true);
+
+            Assert.True(endpoint is not null, $"No existe el endpoint {metodo} {ruta}.");
+
+            var policies = endpoint!.Metadata
+                .GetOrderedMetadata<IAuthorizeData>()
+                .Select(dato => dato.Policy)
+                .ToList();
+
+            Assert.True(
+                policies.Contains(policyAdicional, StringComparer.Ordinal),
+                $"{metodo} {ruta} no apila {policyAdicional}; apila [{string.Join(", ", policies)}].");
         }
     }
 

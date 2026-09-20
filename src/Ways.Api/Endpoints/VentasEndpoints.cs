@@ -31,6 +31,18 @@ public static class VentasEndpoints
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo.");
 
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): RequiereDispositivo apilado
+        // sobre OperacionDePos (AND) — solo una sesión de dispositivo puede reservar un bloque
+        // offline, y sigue necesitando un rol de venta. Bajo el mismo grupo /api/ventas por ser
+        // el mismo espacio de numeración que el checkout, no un ABM aparte.
+        grupo.MapPost("/reservas-numeracion", async (
+            ServicioDeReservasDeNumeracion servicio, SolicitudDeReservaDeNumeracion solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.ReservarAsync(solicitud, ct)))
+        .RequireAuthorization(Politicas.RequiereDispositivo)
+        .WithSummary(
+            "Reserva un bloque de números para vender offline. Pedir uno nuevo con un bloque " +
+            "vigente lo abandona (pérdida de almacenamiento local) y entrega uno fresco.");
+
         // stage-desktop-pos ("Ventas del turno"): listado dedicado, no el paginado genérico de
         // abajo — filtrado por idTurno (que ese no expone), incluye anuladas, y trae
         // cliente/medios de pago porque el conjunto de un turno está acotado (ver doc-comment de

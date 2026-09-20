@@ -341,6 +341,21 @@ public class ManejadorDeErrores(
                     "Este punto de venta ya tiene un dispositivo vinculado.",
                     "punto_venta_ya_tiene_dispositivo"),
 
+            // stage-pos-reserva-de-numeracion (db-error-backstops): ux_reservas_numeracion_dispositivo_activo
+            // — invariante "a lo sumo un bloque vivo por dispositivo y serie" (DB CHANGE GATE
+            // aprobado). Exact-match, sin ordering trap: "_dispositivo_activo" no colisiona con
+            // ninguna substring de ClasificarUnicidad. AsignadorDeNumeroComprobante.
+            // ReservarBloqueAsync abandona el bloque anterior ANTES de insertar el nuevo, en la
+            // MISMA transacción, así que el camino normal nunca choca acá — el backstop real es
+            // la carrera de dos pedidos concurrentes del mismo dispositivo (mismo criterio que
+            // ux_dispositivos_punto_venta_activo).
+            { SqlState: "23505", ConstraintName: string uxReservaActiva }
+                when string.Equals(
+                    uxReservaActiva, "ux_reservas_numeracion_dispositivo_activo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Este dispositivo ya tiene una reserva de numeración vigente para esa serie.",
+                    "reserva_de_numeracion_duplicada"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -375,6 +390,16 @@ public class ManejadorDeErrores(
             // ck_clientes_cf_protegido).
             { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } =>
                 (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
+
+            // stage-pos-reserva-de-numeracion (db-error-backstops, DB CHANGE GATE aprobado):
+            // ck_reservas_numeracion_rango ("hasta >= desde"). AsignadorDeNumeroComprobante.
+            // ReservarBloqueAsync ya lo garantiza por construcción (hasta = desde + cantidad - 1,
+            // con cantidad >= 1 validado en ServicioDeReservasDeNumeracion ANTES de reservar) —
+            // bajo operación normal esta rama es inalcanzable, queda como backstop de esquema
+            // puro ante una escritura cruda/fuera de banda, misma familia que
+            // ck_precios_ventana_valida.
+            { SqlState: "23514", ConstraintName: "ck_reservas_numeracion_rango" } =>
+                (StatusCodes.Status400BadRequest, "hasta no puede ser anterior a desde.", "rango_de_reserva_invalido"),
 
             // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
             // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que

@@ -94,6 +94,13 @@ puntos_venta (
 > (scoping operativa: `id_tenant` + `id_empresa`/`id_punto_venta` no-nulos). `numeraciones_fiscales`
 > es scoping **operativa** estándar (`id_tenant` + `id_punto_venta`), sin desvío — mismo criterio
 > que `numeraciones_comprobante`.
+>
+> **Estado (stage-pos-reserva-de-numeracion — implementada, DB CHANGE GATE aprobado):**
+> `reservas_numeracion` (migración `ReservaDeNumeracion`) — scoping **operativa** estándar
+> (`id_tenant` + `id_punto_venta`), mismo criterio que `numeraciones_comprobante`; agrega además
+> `id_dispositivo` (FK compuesta hacia `dispositivos`, que gana la alternate key
+> `ak_dispositivos_id_dispositivo_id_tenant` en esta misma migración). Detalle completo en doc 10
+> §9.1 ("Reserva de numeración para venta offline").
 
 ## Regla de scoping por tipo de tabla
 
@@ -104,7 +111,7 @@ lo primero es decidir en cuál está:
 |---|---|---|
 | **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas` |
 | **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios` |
-| **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante` |
+| **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante`, `reservas_numeracion` |
 | **Global** | sin tenant | `roles`, `permisos`, planes/facturación del SaaS |
 
 La categoría **Tenant-wide** resuelve la misma pregunta de negocio ("¿comparten empresas

@@ -101,6 +101,16 @@ public static class Politicas
     /// <see cref="OperacionDePos"/> — esta policy es solo la puerta de configuración/ABM.</summary>
     public const string AdministracionFiscal = "administracion_fiscal";
 
+    /// <summary>Exige la claim <see cref="ClaimsWays.IdDispositivo"/> (cualquier valor) — la
+    /// puerta de <c>POST /api/ventas/reservas-numeracion</c> (stage-pos-reserva-de-numeracion, DB
+    /// CHANGE GATE aprobado): solo una sesión abierta por <c>POST /api/auth/login-dispositivo</c>
+    /// puede reservar un bloque offline, nunca una sesión web normal (login por mail). Se apila
+    /// sobre <see cref="OperacionDePos"/> (ASP.NET Core compone políticas con AND, mismo criterio
+    /// que <see cref="GestionDeCatalogo"/> sobre <see cref="OperacionDePos"/> en otros endpoints
+    /// de escritura) — sigue haciendo falta un rol de venta (Vendedor/Supervisor/Admin), la claim
+    /// de dispositivo es una condición ADICIONAL, no un reemplazo del rol.</summary>
+    public const string RequiereDispositivo = "requiere_dispositivo";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -163,6 +173,9 @@ public static class Politicas
                             ((int)RolConocido.Admin).ToString()))
             .AddPolicy(AdministracionFiscal, politica =>
                 politica.RequireAuthenticatedUser()
-                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()));
+                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(RequiereDispositivo, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(ClaimsWays.IdDispositivo));
     }
 }

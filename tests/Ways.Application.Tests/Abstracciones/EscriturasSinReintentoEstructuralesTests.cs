@@ -137,6 +137,19 @@ public class EscriturasSinReintentoEstructuralesTests
     /// guarda CONTIGUOS y en ese orden justo después de abrir el lambda, así que mover el
     /// <c>Clear</c> abajo de la guarda, meter cualquier otra sentencia antes, o borrarlo, dejan la
     /// prueba en rojo. Se afirma además que hay EXACTAMENTE DOS <c>CreateExecutionStrategy</c>.
+    ///
+    /// judgment-day (WARNING, ronda 1): esta prueba ya NO exige una variable
+    /// <c>estrategiaNumeracion</c> declarada afuera del ternario y usada igual en los dos
+    /// casos — esa forma obligaba a construir una estrategia reintentable que el branch
+    /// <c>NumeroPreasignado</c> nunca usa, solo para que este conteo textual la viera. La forma
+    /// nueva construye la estrategia INLINE, dentro del <c>:</c> del ternario — el
+    /// <see cref="Regex"/> de <c>ramaDeNumeracion</c> de abajo audita exactamente eso: que el
+    /// branch <c>NumeroPreasignado</c> llama a <c>ExigirNumeroPreasignadoPropioAsync</c> sin pasar
+    /// por ninguna estrategia, y que el otro branch envuelve
+    /// <c>AsignadorDeNumeroComprobante.AsignarComprometidoAsync</c> con
+    /// <c>db.Database.CreateExecutionStrategy()</c>, nunca con la fábrica sin reintento —
+    /// mutar cualquiera de las dos mitades del ternario (borrar el wrap, o cambiarlo por
+    /// <c>FabricaDeEstrategiaSinReintento</c>) pone esta prueba en rojo.
     /// </summary>
     [Fact]
     public void LaVentaNumeraYEscribeConReintentoConElTrackerLimpioAntesDeLaGuardaDeCommitAmbiguo()
@@ -152,16 +165,22 @@ public class EscriturasSinReintentoEstructuralesTests
         // usa la fábrica, y nombrarla ahí no la invoca.
         Assert.DoesNotContain(
             "FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(", cuerpo, StringComparison.Ordinal);
-        Assert.Contains(
-            "var estrategiaNumeracion = db.Database.CreateExecutionStrategy();",
-            cuerpo,
-            StringComparison.Ordinal);
+
+        var ramaDeNumeracion = new Regex(
+            @"solicitud\.NumeroPreasignado is \{ \} numeroPreasignado\s*"
+            + @"\?\s*await ExigirNumeroPreasignadoPropioAsync\([^;]*?\)\s*"
+            + @":\s*await db\.Database\.CreateExecutionStrategy\(\)\.ExecuteAsync\(async \(\) =>\s*"
+            + @"await AsignadorDeNumeroComprobante\.AsignarComprometidoAsync\(",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(5));
+        Assert.Matches(ramaDeNumeracion, cuerpo);
+
         Assert.Contains(
             "var estrategia = db.Database.CreateExecutionStrategy();",
             cuerpo,
             StringComparison.Ordinal);
 
-        var numeracion = Posicion(cuerpo, "var estrategiaNumeracion = db.Database.CreateExecutionStrategy();");
+        var numeracion = Posicion(cuerpo, "var numero = solicitud.NumeroPreasignado is { } numeroPreasignado");
         var escritura = Posicion(cuerpo, "var estrategia = db.Database.CreateExecutionStrategy();");
         var limpieza = Posicion(cuerpo, "db.ChangeTracker.Clear();");
         var guarda = Posicion(cuerpo, "await BuscarPorNumeroComprometidoAsync(");
@@ -175,7 +194,7 @@ public class EscriturasSinReintentoEstructuralesTests
         Assert.Matches(
             new Regex(
                 @"estrategia\.ExecuteAsync\(async \(\) =>\s*\{\s*db\.ChangeTracker\.Clear\(\);\s*"
-                + @"return await BuscarPorNumeroComprometidoAsync\(",
+                + @"var existente = await BuscarPorNumeroComprometidoAsync\(",
                 RegexOptions.None,
                 TimeSpan.FromSeconds(5)),
             cuerpo);
