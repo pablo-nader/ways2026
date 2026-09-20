@@ -1,16 +1,19 @@
+import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
-import { ErrorApi } from '../api/cliente'
+import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
 import type {
+  ArticuloDeInstantanea,
   ArticuloEscaneado,
   ArticuloListado,
   ClienteListado,
   ComprobanteEmitido,
+  InstantaneaDePos,
   MedioPagoListado,
   PaginaDe,
   ParametroResuelto,
@@ -20,6 +23,9 @@ import type {
   ResumenDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
+import { crearAlmacenIndexedDb } from '../pos/almacenPos'
+import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
+import { agregarAOutbox, guardarBloque } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
@@ -68,6 +74,17 @@ vi.mock('../api/cliente', () => ({
       super(mensaje)
       this.estado = estado
       this.codigo = codigo
+    }
+  },
+  // stage-pos-venta-offline-web: `Pos.tsx` (vía `useSincronizacionOffline`/`escanear`/`cobrar`)
+  // ahora hace `instanceof ErrorDeRed` — sin este mock, el símbolo importado por el módulo real
+  // queda `undefined` bajo este `vi.mock`, y ese `instanceof` tira `TypeError` en CUALQUIER test
+  // que dispare un catch, no solo los nuevos de offline.
+  ErrorDeRed: class ErrorDeRedMock extends Error {
+    causa: unknown
+    constructor(causa: unknown) {
+      super('No se pudo contactar al servidor. Revisá tu conexión.')
+      this.causa = causa
     }
   },
 }))
@@ -208,6 +225,43 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
   }
 }
 
+function articuloDeInstantaneaFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+  return {
+    idArticulo: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Coca Cola 1L',
+    codigosBarra: ['7790001234567'],
+    precioOriginal: 100,
+    precioFinal: 100,
+    descuentoUnitario: 0,
+    aplicadas: [],
+    idAlicuotaIva: 1,
+    porcentajeIva: 21,
+    ...sobrescribir,
+  }
+}
+
+function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): InstantaneaDePos {
+  return {
+    momento: '2026-09-20T09:00:00.000Z',
+    idPuntoVenta: 7,
+    articulos: [articuloDeInstantaneaFixture()],
+    mediosDePago: [],
+    toleranciaPago: 0,
+    ...sobrescribir,
+  }
+}
+
+/** Deja el almacén offline listo ANTES de montar `Pos` — mismo criterio que goal A ("sobrevive
+ * un restart"): el hook lee del almacén al montar, sin esperar ningún fetch. */
+async function prepararAlmacenOffline(params: { instantanea?: InstantaneaDePos; bloque?: { desde: number; hasta: number; proximo: number } } = {}) {
+  const almacen = crearAlmacenIndexedDb()
+  await guardarInstantaneaLocal(almacen, params.instantanea ?? instantaneaFixture())
+  if (params.bloque) {
+    await guardarBloque(almacen, { idPuntoVenta: 7, codigoTipoComprobante: 'TX', ...params.bloque })
+  }
+}
+
 function turnoAbiertoFixture(sobrescribir: Partial<TurnoResumen> = {}): TurnoResumen {
   return {
     id: 900,
@@ -307,7 +361,19 @@ function mockearApiGet(sobrescribir?: (ruta: string) => Promise<unknown> | undef
   })
 }
 
-beforeEach(() => {
+/** Borra la base fake entre tests — sin esto, un outbox/instantánea persistido por un test
+ * filtraría al siguiente (el mismo `fake-indexeddb` vive para todo el archivo). Mismo criterio
+ * que `CierreDeCaja.test.tsx`. */
+function borrarAlmacenOffline(): Promise<void> {
+  return new Promise((resolve) => {
+    const solicitud = indexedDB.deleteDatabase('ways-pos-offline')
+    solicitud.onsuccess = () => resolve()
+    solicitud.onerror = () => resolve()
+    solicitud.onblocked = () => resolve()
+  })
+}
+
+beforeEach(async () => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
@@ -324,6 +390,7 @@ beforeEach(() => {
     }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
+  await borrarAlmacenOffline()
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -4097,6 +4164,229 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       expect(screen.queryByRole('dialog', { name: '¿Querés cerrar el turno?' })).not.toBeInTheDocument()
       // "Cerrar caja" ni siquiera llegó a consultar el turno: la guarda corta antes del `await`.
       expect(consultasDeTurnoAbierto).toBe(consultasDelMontaje)
+    })
+  })
+})
+
+describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
+  /** Cash-only por defecto en todos estos tests: alcanza para no chocar con el filtro de
+   * cuenta-corriente preexistente (`medioDisponibleParaCliente`) y con la regla nueva
+   * (`medioAdmitidoOffline`) a la vez. */
+  async function cobrarConEfectivo(importe: string) {
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const campoImporte = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(campoImporte, importe)
+  }
+
+  describe('badge "Sin sincronizar" (goal C: siempre visible)', () => {
+    it('está visible desde el primer render, en 0, incluso antes de que la instantánea cargue', async () => {
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      expect(await screen.findByText('Sin sincronizar: 0')).toBeInTheDocument()
+    })
+  })
+
+  describe('escaneo offline (Parte B): el camino online no cambia, el fallback solo corre ante ErrorDeRed', () => {
+    it('con una instantánea local y el escaneo online caído por red, agrega la línea desde la instantánea', async () => {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+    })
+
+    it('un código que no está ni online ni en la instantánea local sigue mostrando un error, nunca agrega nada', async () => {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '9999999999999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      expect(await screen.findByText('Sin conexión: no se encontró ese código en la última instantánea local.')).toBeInTheDocument()
+      expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+    })
+
+    it('un ErrorApi real (ej. 404 del servidor) NUNCA dispara el fallback offline — sigue siendo un error normal', async () => {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) {
+          return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 7790001234567.'))
+        }
+        return undefined
+      })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      // Mismo código que SÍ está en la instantánea (fixture) — si el fallback disparara acá, la
+      // línea se agregaría igual. No se agrega: prueba que el catch distingue ErrorApi de ErrorDeRed.
+      expect(await screen.findByText('No se encontró un artículo activo para el código 7790001234567.')).toBeInTheDocument()
+      expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('vista previa de precio offline (Parte B)', () => {
+    it('con la resolución online caída por red, muestra el precio de la instantánea en vez de "no se pudo calcular"', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture({ precioOriginal: 120, precioFinal: 100, descuentoUnitario: 20 })] }) })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === '/ofertas/resolver') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      // Dispara una nueva resolución sin depender del debounce de edición.
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(screen.queryByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('gating proactivo de la UI cuando enLinea pasa a false (Parte D/E)', () => {
+    async function llegarConEnLineaFalse() {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Sin conexión: solo se puede vender al Consumidor Final.')
+    }
+
+    it('oculta el buscador de "otro cliente" (solo se puede vender al Consumidor Final)', async () => {
+      await llegarConEnLineaFalse()
+      expect(screen.queryByLabelText('Buscar cliente')).not.toBeInTheDocument()
+    })
+
+    it('el selector de medio de pago solo ofrece Efectivo — nunca Tarjeta ni Cuenta corriente', async () => {
+      await llegarConEnLineaFalse()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
+      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre])
+    })
+
+    it('también muestra la vejez de la instantánea y la limitación de ofertas por cantidad', async () => {
+      await llegarConEnLineaFalse()
+      expect(screen.getByText(/Sin conexión: vendiendo con la instantánea local/)).toBeInTheDocument()
+      expect(screen.getByText(/No refleja ofertas por cantidad mínima mayor a 1\./)).toBeInTheDocument()
+    })
+  })
+
+  describe('checkout offline (Parte B/C): encola en el outbox, muestra "guardada sin conexión", el badge sube', () => {
+    it('con el checkout online caído por red, encola la venta y el modal avisa que está pendiente de sincronizar', async () => {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      mockearApiGet()
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('100')
+
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === '/ventas') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada sin conexión')).toBeInTheDocument()
+      expect(screen.getByText(/0007-00000500/)).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: /Aceptar/ }))
+      expect(await screen.findByText('Sin sincronizar: 1')).toBeInTheDocument()
+    })
+
+    it('rechaza el checkout offline de un cliente que no es Consumidor Final, sin encolar nada', async () => {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      mockearApiGet()
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      // Cambia al cliente que no es Consumidor Final, MIENTRAS todavía hay red (mismo camino que
+      // el test preexistente "buscar y elegir otro cliente lo deja seleccionado") — la red se
+      // corta recién después, solo para `/ventas`.
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('100')
+
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === '/ventas') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText(/Sin conexión solo se puede vender al Consumidor Final/)).toBeInTheDocument()
+      expect(screen.queryByText('Guardada sin conexión')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('"Cerrar caja" bloqueado con el outbox no vacío (Parte D, regla dura)', () => {
+    it('con una venta sin sincronizar, "Cerrar caja" no navega y muestra el motivo', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await agregarAOutbox(almacen, {
+        idLocal: 'pendiente-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      })
+      // El drenado en segundo plano NUNCA debe ser lo que vacíe el outbox de este test — se
+      // corta la red de `/ventas` para que la venta encolada quede ahí (mismo escenario real:
+      // sigue sin señal, por eso el outbox no está vacío todavía).
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Sin sincronizar: 1')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta\(s\) sin sincronizar/)).toBeInTheDocument()
+      expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
     })
   })
 })

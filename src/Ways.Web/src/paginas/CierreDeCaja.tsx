@@ -8,6 +8,8 @@ import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, TurnoConArqueos }
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
+import { crearAlmacenIndexedDb } from '../pos/almacenPos'
+import { leerOutbox } from '../pos/outboxOffline'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -79,6 +81,25 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
   // por una falla ajena al cierre en sí).
   const [zReporte, setZReporte] = useState<TurnoConArqueos | null>(null)
 
+  // stage-pos-venta-offline-web (Parte D, regla dura: "no cerrar turno con el outbox no vacío"):
+  // este es EL OTRO camino de cierre (además del choke point de `irACerrarCaja` en `Pos.tsx`) —
+  // una venta encolada que drena después de que este cierre ya corrió queda huérfana, con su
+  // ticket ya en la mano de un cliente. `null` mientras se lee (fail-closed: no se asume "0" sin
+  // haber confirmado, mismo criterio que `bloqueadoPorTurno` en Pos.tsx).
+  const [outboxCount, setOutboxCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    let vigente = true
+    const almacen = crearAlmacenIndexedDb()
+    leerOutbox(almacen).then((outbox) => {
+      if (!vigente) return
+      setOutboxCount(outbox.length)
+    })
+    return () => {
+      vigente = false
+    }
+  }, [])
+
   const medioPorId = useMemo(() => {
     const indice: Record<number, MedioPagoListado> = {}
     for (const m of medios ?? []) indice[m.id] = m
@@ -130,8 +151,12 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
 
   const errorCarga = errorMedios || errorResumen
   const cargaLista = !cargandoResumen && resumen !== null && medios !== null
+  // fail-closed (mismo criterio que `bloqueadoPorTurno` de Pos.tsx): `outboxCount === null`
+  // ("todavía no se confirmó") bloquea igual que un outbox realmente no vacío — nunca se asume
+  // "0" sin haber leído el almacén local.
+  const outboxBloqueaCierre = outboxCount === null || outboxCount > 0
   const puedeFinalizar =
-    cargaLista && errorCarga === '' && confirmado && conteosCompletos(resumen?.medios ?? [], conteos) && !cerrando
+    cargaLista && errorCarga === '' && confirmado && conteosCompletos(resumen?.medios ?? [], conteos) && !cerrando && !outboxBloqueaCierre
 
   async function finalizarCierre() {
     // regla 9: guard de reentrancia de primera línea — un doble click en el mismo tick le gana

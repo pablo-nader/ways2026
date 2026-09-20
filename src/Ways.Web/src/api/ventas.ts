@@ -8,6 +8,7 @@ import { api } from './cliente'
 import type { LineaCarrito } from './carrito'
 import type {
   ArticuloEscaneado,
+  BloqueDeNumeracionReservado,
   ComprobanteEmitido,
   EstadoDeVencimiento,
   LineaDeResolucion,
@@ -15,6 +16,7 @@ import type {
   LoteListado,
   PagoDeVenta,
   ResultadoDeResolucion,
+  SolicitudDeReservaDeNumeracion,
   SolicitudDeVenta,
   VentaDeTurnoListado,
 } from './tipos'
@@ -33,6 +35,10 @@ export const clienteDeVentas = {
   /** `POST /api/ventas/{id}/anulacion` (stage-desktop-pos): sin cuerpo — el servidor no acepta
    * `motivo`, revierte stock y cuenta corriente en la misma transacción. Nunca hay "restaurar". */
   anular: (id: number) => api.post<ComprobanteEmitido>(`/ventas/${id}/anulacion`),
+  /** `POST /api/ventas/reservas-numeracion` (stage-pos-reserva-de-numeracion): un dispositivo pide
+   * un bloque de números para repartir localmente mientras vende sin red. */
+  reservarNumeracion: (solicitud: SolicitudDeReservaDeNumeracion) =>
+    api.post<BloqueDeNumeracionReservado>('/ventas/reservas-numeracion', solicitud),
 }
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:

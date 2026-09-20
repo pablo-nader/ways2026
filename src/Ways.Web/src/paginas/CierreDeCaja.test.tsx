@@ -1,9 +1,12 @@
+import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
+import { crearAlmacenIndexedDb } from '../pos/almacenPos'
+import { agregarAOutbox } from '../pos/outboxOffline'
 import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -91,9 +94,21 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
   })
 }
 
-beforeEach(() => {
+/** Borra la base fake entre tests — sin esto, un outbox encolado por un test filtraría al
+ * siguiente (el mismo `fake-indexeddb` vive para todo el archivo). */
+function borrarAlmacenOffline(): Promise<void> {
+  return new Promise((resolve) => {
+    const solicitud = indexedDB.deleteDatabase('ways-pos-offline')
+    solicitud.onsuccess = () => resolve()
+    solicitud.onerror = () => resolve()
+    solicitud.onblocked = () => resolve()
+  })
+}
+
+beforeEach(async () => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  await borrarAlmacenOffline()
 })
 
 function renderCierreConSeams(props: { rutaVolver?: string } = {}) {
@@ -369,5 +384,41 @@ describe('CierreDeCaja — seams del POS de escritorio (stage-desktop-pos)', () 
 
     expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
     expect(screen.queryByText(/No se pudo imprimir/)).not.toBeInTheDocument()
+  })
+})
+
+describe('CierreDeCaja — regla dura del outbox offline (stage-pos-venta-offline-web, Parte D)', () => {
+  it('con el outbox NO vacío, "Finalizar cierre" queda deshabilitado aunque todo lo demás esté completo', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await agregarAOutbox(almacen, {
+      idLocal: 'a',
+      numeroPreasignado: 100,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+    })
+
+    mockearRutasBase()
+    renderCierre()
+    await screen.findByText('Efectivo')
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+
+    // Nunca se habilita, ni esperando: a diferencia de "Cargando…", no hay ningún estado
+    // posterior en el que este bloqueo se levante solo — necesita que el outbox drene primero.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+  })
+
+  it('con el outbox vacío, "Finalizar cierre" se habilita normalmente (comportamiento preexistente intacto)', async () => {
+    mockearRutasBase()
+    renderCierre()
+    await screen.findByText('Efectivo')
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
   })
 })

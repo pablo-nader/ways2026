@@ -779,6 +779,48 @@ export type ResultadoDeResolucion = {
   aplicadas: OfertaAplicada[]
 }
 
+// --- POS: instantánea offline (stage-pos-venta-offline-web) ---
+// Espejo de `Ways.Application.Pos.Contratos` — catálogo con precio ya resuelto y congelado que el
+// POS de escritorio persiste localmente para vender sin red. `precioOriginal`/`precioFinal` NUNCA
+// son `null` acá (a diferencia de `ResultadoDeResolucion`): el servicio ya omite del todo cualquier
+// artículo sin precio vigente, así que la instantánea nunca ofrece algo que no podría cobrar.
+
+/** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Sin `idArea`: ese
+ * campo lo resuelve el servidor del artículo FRESCO al sincronizar, nunca la instantánea local
+ * (mismo motivo que el propio contrato del backend documenta). */
+export type ArticuloDeInstantanea = {
+  idArticulo: number
+  codigoInterno: string
+  nombre: string
+  codigosBarra: string[]
+  precioOriginal: number
+  precioFinal: number
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+  idAlicuotaIva: number
+  porcentajeIva: number
+}
+
+/** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */
+export type MedioPagoDeInstantanea = {
+  idMedioPago: number
+  nombre: string
+  comportamiento: ComportamientoMedioPago
+  admiteVuelto: boolean
+  requiereReferencia: boolean
+}
+
+/** Respuesta de `GET /api/pos/instantanea` — espejo de `InstantaneaDePos`. `momento` es la única
+ * marca de vejez real: se muestra al cajero (`formatearVejezDeInstantanea`) para acotar el riesgo
+ * de vender con un precio congelado desde hace rato. */
+export type InstantaneaDePos = {
+  momento: string
+  idPuntoVenta: number
+  articulos: ArticuloDeInstantanea[]
+  mediosDePago: MedioPagoDeInstantanea[]
+  toleranciaPago: number
+}
+
 // --- Caja: turnos, movimientos y resumen (stage-6-turnos-caja, Slice 6) ---
 // Espejo de `Ways.Application.Caja.Contratos` — apertura, movimientos físicos fuera de la venta
 // (retiro/refuerzo/apertura de cajón) y el resumen parcial (misma derivación que va a usar el
@@ -1156,8 +1198,21 @@ export type MinimosDeStock = {
 
 /** `idLote` (stage-12-lotes-vencimientos, Slice 14): `null` es el camino feliz de cero tecleo
  * (design decisión 19) — el servidor resuelve FEFO solo; solo viaja no-nulo cuando el cajero
- * eligió explícitamente un lote distinto del sugerido en el picker. */
-export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null; idLote: number | null }
+ * eligió explícitamente un lote distinto del sugerido en el picker.
+ *
+ * stage-pos-venta-offline-web: `precioUnitario`/`descuentoUnitario` (espejo de la ampliación de
+ * `Ways.Application.Ventas.LineaDeVenta`) SOLO viajan junto a `SolicitudDeVenta.numeroPreasignado`
+ * — el precio que el dispositivo ya cobró offline desde su última instantánea. El camino
+ * web/online sigue sin mandarlos nunca (quedan `undefined`), la única fuente de precio sigue
+ * siendo `POST /api/ofertas/resolver` server-side. */
+export type LineaDeVenta = {
+  idArticulo: number
+  cantidad: number
+  codigoBarra: string | null
+  idLote: number | null
+  precioUnitario?: number
+  descuentoUnitario?: number
+}
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
 /** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
@@ -1166,6 +1221,10 @@ export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: st
  * `idCliente` se omite para que el servidor lo derive del presupuesto (mandar uno en conflicto se
  * rechaza en vez de sobreescribirse en silencio — espejo de `SolicitudDeVenta.IdCliente` en
  * `Ways.Application.Ventas.Contratos`). Una venta común sigue mandando ambos como siempre. */
+/** stage-pos-venta-offline-web: `numeroPreasignado` es el número que el dispositivo ya reservó
+ * (`POST /api/ventas/reservas-numeracion`) y consumió para vender sin red — presente SOLO en un
+ * reenvío del outbox offline; el camino web/online nunca lo manda (queda `undefined`, el servidor
+ * sigue asignando como siempre). */
 export type SolicitudDeVenta = {
   idPuntoVenta: number
   idCliente?: number
@@ -1176,6 +1235,21 @@ export type SolicitudDeVenta = {
   direccionEntrega: string | null
   observaciones: string | null
   idPresupuestoOrigen?: number | null
+  numeroPreasignado?: number
+}
+
+// --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---
+// Espejo de `SolicitudDeReservaDeNumeracion`/`BloqueDeNumeracionReservado`.
+
+export type SolicitudDeReservaDeNumeracion = { idPuntoVenta: number; codigoTipoComprobante: string; cantidad: number }
+
+/** `desde`/`hasta` inclusive — el rango que el dispositivo reparte localmente hasta agotarlo o
+ * hasta pedir uno nuevo (que abandona este). */
+export type BloqueDeNumeracionReservado = {
+  desde: number
+  hasta: number
+  idPuntoVenta: number
+  codigoTipoComprobante: string
 }
 
 export type EstadoComprobante = 'Emitido' | 'Anulado'
@@ -1201,6 +1275,13 @@ export type ItemEmitido = {
   idLote: number | null
   codigoLote: string | null
   loteVencido: boolean
+  /** stage-pos-venta-offline-web: warning, nunca bloqueo (mismo criterio que `loteVencido`) —
+   * `true` cuando el precio que el dispositivo cobró offline difere de lo que el servidor
+   * hubiera resuelto al sincronizar. Espejo de `ItemEmitido.PrecioDiscrepante`; `false`/ausente
+   * para cualquier línea online, y para una relectura/reprint (nunca se persiste). Opcional (no
+   * `false` fijo) para no forzar a cada fixture preexistente de `ItemEmitido` en el resto de la
+   * suite a declararlo — un consumidor lo trata como `?? false`. */
+  precioDiscrepante?: boolean
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */

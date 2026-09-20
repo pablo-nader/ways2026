@@ -42,6 +42,28 @@ export class ErrorApi extends Error {
   }
 }
 
+/**
+ * stage-pos-venta-offline-backend (Parte C): lanzado cuando `fetch` mismo rechaza — sin red, DNS
+ * caído, conexión rechazada, CORS bloqueado — es decir, cuando el servidor NUNCA llegó a
+ * participar. A diferencia de `ErrorApi`, que siempre nace de una `Response` real (aunque sea un
+ * 5xx), `ErrorDeRed` no tiene `estado`/`codigo` porque no hay nada del servidor que leer: "el
+ * servidor dijo que no" y "no hubo servidor" son hechos distintos, y hasta esta clase todo call
+ * site que hacía `e instanceof ErrorApi ? ... : 'generic'` los colapsaba en el mismo string
+ * genérico (ver `bajas.ts`, `copiaDeFalloDeBaja`, que ya distinguía "resultado incierto" de un
+ * `ErrorApi` confirmado pero sin poder nombrar la causa: red vs. excepción rara). `causa` guarda
+ * el error crudo (típicamente un `TypeError` con mensaje "Failed to fetch") para diagnóstico, sin
+ * asumir su forma — un motor de navegador distinto puede lanzar otra cosa.
+ */
+export class ErrorDeRed extends Error {
+  readonly causa: unknown
+
+  constructor(causa: unknown) {
+    super('No se pudo contactar al servidor. Revisá tu conexión.')
+    this.name = 'ErrorDeRed'
+    this.causa = causa
+  }
+}
+
 type ProblemDetails = {
   title?: string
   detail?: string
@@ -97,8 +119,24 @@ function headerBearerSiCorresponde(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/**
+ * stage-pos-venta-offline-backend (Parte C): el ÚNICO lugar que llama a `fetch` crudo — tanto
+ * `pedir` como `descargar` pasan por acá para compartir el mismo camino de error (mismo motivo
+ * que `exigirRespuestaOk` está extraída, arriba). Sin este `try/catch`, un `fetch` que rechaza
+ * (sin red) propaga un `TypeError` crudo indistinguible de un bug de programación — con él, se
+ * relanza como `ErrorDeRed`, así que todo llamador puede `instanceof`-earlo exactamente como ya
+ * hace con `ErrorApi`.
+ */
+async function ejecutarFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    throw new ErrorDeRed(error)
+  }
+}
+
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
-  const respuesta = await fetch(`${urlBaseApi()}/api${ruta}`, {
+  const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     ...init,
     credentials: corriendoEnTauri() ? 'omit' : 'include',
     headers: {
@@ -144,7 +182,7 @@ export function nombreDeArchivo(respuesta: Response): string {
  * Open Questions).
  */
 async function descargar(ruta: string): Promise<void> {
-  const respuesta = await fetch(`${urlBaseApi()}/api${ruta}`, {
+  const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     credentials: corriendoEnTauri() ? 'omit' : 'include',
     headers: headerBearerSiCorresponde(),
   })
