@@ -420,6 +420,7 @@ describe('ReporteDeArticulos — link a la edición del artículo', () => {
 
     renderReporte()
 
+    expect(await screen.findByRole('columnheader', { name: 'Acciones' })).toBeInTheDocument()
     const filaSiete = (await screen.findByText('COD-7')).closest('tr')
     const filaDoce = (await screen.findByText('COD-12')).closest('tr')
     if (!filaSiete || !filaDoce) throw new Error('No se encontraron las filas del reporte')
