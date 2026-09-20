@@ -82,37 +82,76 @@ permitido), no por un comando nuevo.
 
 ## CSP y el alcance de `connect-src`
 
-La CSP declarada en `tauri.conf.json` restringe `connect-src` a
-`'self' https: http://localhost:* http://127.0.0.1:*` -- el esquema `https:`
-sin un host especifico, no un origen exacto. Esto es deliberado, no un
-descuido: la URL real del servidor la elige el usuario en tiempo de
-ejecucion (pagina de configuracion, `config::normalizar_url_servidor`), y esa
-URL recien se conoce despues de que Tauri ya arranco.
+La CSP declarada en `tauri.conf.json` (base para ambas ventanas) restringe
+`connect-src` a `'self' https: http://localhost:* http://127.0.0.1:*` -- el
+esquema `https:` sin un host especifico, no un origen exacto. Esto es
+deliberado para la CSP ESTATICA: la URL real del servidor la elige el
+usuario en tiempo de ejecucion (pagina de configuracion,
+`config::normalizar_url_servidor`), y esa URL recien se conoce despues de
+que Tauri ya arranco, mucho despues de que `tauri.conf.json` se congelo en
+tiempo de compilacion.
 
-Investigado contra la fuente de `tauri` 2.11.5 (version pineada en
-`Cargo.lock`): el crate SI expone un hook capaz de reescribir headers de
-respuesta por request, `WebviewBuilder::on_web_resource_request` (ver el
-ejemplo oficial embebido en `tauri::webview::WebviewBuilder`), que podria
-angostar `connect-src` al origen exacto ya configurado. Pero la ventana
-`main` se crea, en el primer arranque de la app (antes de que exista
-`config.json`), a partir del array `windows` estatico de `tauri.conf.json` --
-Tauri la construye internamente (`WebviewWindowBuilder::from_config`) ANTES
-de que corra el closure `.setup()` de este crate, asi que no hay ningun punto
-de este codigo desde el que colgarle ese hook a esa ventana en ese momento.
-Aplicarlo de forma consistente exigiria sacar `main` del array estatico y
-construirla siempre desde Rust (como ya se hace con `pos`) -- un cambio
-estructural mas grande que el alcance de esta ronda, que no se puede
-verificar en este entorno contra un WebView2 real. Por eso se deja `https:`
-en vez de angostarlo a medias (que seria peor: dar una falsa sensacion de
-"ya esta resuelto").
+Las DOS ventanas parten de esa misma CSP estatica, pero terminan con alcance
+distinto porque solo una de las dos se puede angostar en runtime:
 
-Que protege el `connect-src` actual: cualquier `fetch`/XHR a un esquema
-distinto de `https`/`http(s)://localhost`/`127.0.0.1` (por ejemplo `ws:`,
-`file:`, o un origen `http://` remoto). Que NO protege: un script bundleado
-comprometido (supply-chain de una dependencia de `Ways.Web`) puede mandar el
-token bearer en memoria o la credencial de dispositivo (ver
-`entornoTauri.ts`, `credencial::leer`) a CUALQUIER host `https`, porque el
-esquema no restringe el destino.
+- **`pos`** (la que sostiene el token bearer en memoria, ver
+  `entornoTauri.ts`, y puede leer la credencial de dispositivo, ver
+  `credencial::leer`) SI se angosta: `mostrar_ventana_pos` le cuelga
+  `WebviewWindowBuilder::on_web_resource_request` (confirmado contra
+  `tauri-2.11.5/src/webview/webview_window.rs:235` y el ejemplo oficial
+  embebido ahi) antes de `.build()`, porque esta ventana SIEMPRE se
+  construye desde Rust (nunca desde el array estatico de `tauri.conf.json`).
+  El hook reescribe el header `Content-Security-Policy` de la respuesta de
+  `pos.html` (`csp_con_connect_src_angostado`) reemplazando
+  `connect-src 'self' https: ...` por `connect-src 'self' <origen exacto>`,
+  con `<origen exacto>` = la URL del servidor ya validada por
+  `config::normalizar_url_servidor` (por ejemplo
+  `https://empresa.aipos.site`, o `http://localhost:5173` en desarrollo).
+  Confirmado contra `tauri-2.11.5/src/protocol/tauri.rs::get_response`: para
+  las respuestas `tauri://` de un asset HTML, Tauri pone el header
+  `Content-Security-Policy` ANTES de invocar `on_web_resource_request`, asi
+  que el hook llega a tiempo para sobreescribirlo. La ventana se reconstruye
+  (y el hook se vuelve a colgar con el origen nuevo) cada vez que la URL
+  configurada cambia -- ver `necesita_recargar_pos`.
+- **`main`** (pagina de configuracion) se queda con la CSP estatica
+  `https:` sin angostar, a proposito: no sostiene el token bearer ni puede
+  leer la credencial de dispositivo (ver "Dos ventanas, dos capacidades" mas
+  arriba), asi que angostar su `connect-src` no protege nada que no este ya
+  protegido por el split de capacidades. Ademas, a diferencia de `pos`,
+  `main` se construye en el primer arranque (antes de que exista
+  `config.json`) desde el array `windows` estatico de `tauri.conf.json` --
+  Tauri la crea internamente (`WebviewWindowBuilder::from_config`) ANTES de
+  que corra el closure `.setup()` de este crate, asi que en ese primer
+  arranque no hay ningun punto de este codigo desde el que colgarle el hook
+  a esa instancia. (En arranques posteriores, cuando `main` se reconstruye
+  desde `mostrar_ventana_configuracion`, SI se construye desde Rust -- pero
+  no se le agrego el hook ahi porque no hace falta: ver el punto anterior.)
+
+Que protege el `connect-src` angostado de `pos`: cualquier `fetch`/XHR desde
+esa pagina a un host distinto del origen configurado, incluyendo otro host
+`https` cualquiera (antes permitido por el `https:` sin restriccion de host).
+Que NO protege, ni en `pos` ni en `main`: un script bundleado comprometido
+(supply-chain de una dependencia de `Ways.Web`, para `pos`) que se ejecuta
+DENTRO del origen ya permitido puede seguir mandando el token bearer en
+memoria o la credencial de dispositivo a ESE MISMO origen configurado --
+angostar `connect-src` reduce a DONDE puede mandarlo un script comprometido
+(ya no a cualquier host `https`), no si puede mandarlo al servidor legitimo
+en si. `main` sigue exactamente como antes (esquema `https:` sin host): no
+sostiene ningun secreto, asi que ese alcance mas amplio no agrega riesgo
+nuevo.
+
+**Lo que no se pudo verificar en este entorno** (no hay WebView2 real
+disponible aca): que el header reescrito efectivamente llegue a WebView2 y
+se aplique como CSP activa en tiempo de ejecucion, en vez de quedarse solo
+en la respuesta HTTP interna de Tauri. La evidencia de codigo (arriba) es
+consistente con que si se aplica -- es el mismo mecanismo que usa el ejemplo
+oficial de Tauri para reescribir CSP, y corre sobre el mismo protocolo
+`tauri://` que sirve `pos.html` -- pero falta una verificacion manual: abrir
+la ventana `pos` con la app empaquetada, inspeccionar el header
+`Content-Security-Policy` real (DevTools → Network, o
+`webview.eval("fetch('https://otro-host-https-cualquiera').catch(e => alert(e))")`
+apuntando a un host `https` que NO sea el configurado) y confirmar que la
+llamada es bloqueada por CSP.
 
 ## Atajo de teclado
 

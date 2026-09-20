@@ -63,23 +63,79 @@ pub fn ejecutar() {
         .expect("error al ejecutar la aplicacion de Ways POS");
 }
 
+/// Busca la ventana `etiqueta` y, si existe, le aplica `f` sobre una referencia -- devuelve
+/// `Some(f(&ventana))`, o `None` si la ventana no existe (por ejemplo, destruida al cerrarla con
+/// el boton nativo "X": no hay `prevent_close`/`CloseRequested` en este crate).
+///
+/// judgment-day ronda 2 (FIX 2): es la UNICA funcion de este archivo que puede llamar a
+/// `AppHandle::get_webview_window` -- el test `get_webview_window_tiene_un_unico_punto_de_llamado`
+/// de mas abajo hace cumplir eso escaneando el codigo de produccion. A diferencia del guard de la
+/// ronda 1 (que buscaba `.expect(`/`.unwrap(` en el MISMO statement que la busqueda por handle, y
+/// que por eso un `let` intermedio evadia con solo separar ambas llamadas en dos statements), este
+/// guard no le importa donde este el `.expect()`/`.unwrap()`: si aparece una SEGUNDA busqueda por
+/// handle en cualquier lado del archivo (la unica forma de volver a tener, en algun
+/// punto del codigo, un `Option<WebviewWindow>` suelto sobre el que encadenar un panic), el conteo
+/// deja de ser 1 y el guard lo detecta sin importar la forma sintactica de la evasion.
+///
+/// Ademas, y mas fuerte que el guard textual: el `Option<WebviewWindow>` que devuelve la API de
+/// Tauri NUNCA escapa de este cuerpo. Esta funcion devuelve `Option<T>` para el `T` que elige cada
+/// llamador (nunca `WebviewWindow`), y la referencia `&WebviewWindow` que recibe `f` no puede
+/// sobrevivir a la duracion de esta llamada (la ventana local se dropea al salir de `map`). Ningun
+/// llamador puede escribir `alguna_funcion(...).expect(...)` sobre una ventana: el tipo no lo
+/// permite, no depende de que nadie se acuerde de no hacerlo.
+fn con_ventana<T>(
+    app: &tauri::AppHandle,
+    etiqueta: &str,
+    f: impl FnOnce(&tauri::WebviewWindow) -> T,
+) -> Option<T> {
+    app.get_webview_window(etiqueta).map(|ventana| f(&ventana))
+}
+
 /// Enfoca la ventana que esta actualmente visible (la del POS si existe y esta visible, si no la
 /// de configuracion) cuando el usuario vuelve a abrir la app con `tauri-plugin-single-instance`.
 fn enfocar_ventana_activa(app: &tauri::AppHandle) {
-    if let Some(pos) = app.get_webview_window(ETIQUETA_VENTANA_POS) {
-        if pos.is_visible().unwrap_or(false) {
+    let ya_enfoco_pos = con_ventana(app, ETIQUETA_VENTANA_POS, |pos| {
+        let visible = pos.is_visible().unwrap_or(false);
+        if visible {
             let _ = pos.unminimize();
             let _ = pos.show();
             let _ = pos.set_focus();
-            return;
         }
+        visible
+    })
+    .unwrap_or(false);
+
+    if ya_enfoco_pos {
+        return;
     }
 
-    if let Some(configuracion) = app.get_webview_window(ETIQUETA_VENTANA_CONFIGURACION) {
+    con_ventana(app, ETIQUETA_VENTANA_CONFIGURACION, |configuracion| {
         let _ = configuracion.unminimize();
         let _ = configuracion.show();
         let _ = configuracion.set_focus();
-    }
+    });
+}
+
+/// Devuelve `csp` con la directiva `connect-src` angostada al origen exacto del servidor
+/// configurado (`origen`), en vez del esquema `https:` sin host que trae `tauri.conf.json` (ver
+/// README, seccion "CSP y el alcance de connect-src"). Si `origen` es `None` (no deberia pasar
+/// para la ventana `pos`: solo se construye cuando `config::leer` ya devolvio `Some`, ver
+/// `mostrar_ventana_pos`) el resultado no agrega ningun host externo -- mas restrictivo que
+/// antes, nunca menos.
+///
+/// Funcion pura de texto (sin `http::Response` real) para poder probarla con fixtures --
+/// ver los tests de mas abajo. El llamado real esta en `on_web_resource_request` dentro de
+/// `mostrar_ventana_pos`.
+fn csp_con_connect_src_angostado(csp: &str, origen: Option<&str>) -> String {
+    const CONNECT_SRC_ORIGINAL: &str =
+        "connect-src 'self' https: http://localhost:* http://127.0.0.1:*";
+
+    let angostado = match origen {
+        Some(origen) => format!("connect-src 'self' {origen}"),
+        None => "connect-src 'self'".to_string(),
+    };
+
+    csp.replace(CONNECT_SRC_ORIGINAL, &angostado)
 }
 
 /// Muestra la ventana `pos` (pagina LOCAL bundleada `pos.html`, ver `capabilities/pos.json`) y
@@ -90,35 +146,65 @@ fn enfocar_ventana_activa(app: &tauri::AppHandle) {
 /// `comandos::info_app`) con el servidor nuevo. Si nada relevante cambio, recargar tiraria sin
 /// necesidad el token bearer en memoria y el carrito en curso del cajero (ver `entornoTauri.ts`),
 /// por eso alcanza con `show()` + `set_focus()`.
+///
+/// Al construir la ventana por primera vez, le cuelga `on_web_resource_request` para angostar su
+/// `Content-Security-Policy` (`csp_con_connect_src_angostado`) al origen exacto ya configurado --
+/// esta ventana, a diferencia de `main`, SI sostiene el token bearer en memoria y puede leer la
+/// credencial de dispositivo (ver README, seccion "CSP y el alcance de connect-src").
 pub(crate) fn mostrar_ventana_pos(app: &tauri::AppHandle) -> tauri::Result<()> {
-    if let Some(configuracion) = app.get_webview_window(ETIQUETA_VENTANA_CONFIGURACION) {
+    con_ventana(app, ETIQUETA_VENTANA_CONFIGURACION, |configuracion| {
         let _ = configuracion.hide();
-    }
+    });
 
     let url_actual = config::leer(app).map(|c| c.url_servidor);
     let estado = app.state::<UrlServidorCargadaEnPos>();
     let mut url_cargada = estado.0.lock().unwrap();
 
-    if let Some(pos) = app.get_webview_window(ETIQUETA_VENTANA_POS) {
-        if necesita_recargar_pos(url_cargada.as_deref(), url_actual.as_deref()) {
-            // reload() nativo y no eval(): la CSP declara script-src 'self' sin unsafe-eval,
-            // asi que un script inyectado en la pagina podria quedar bloqueado segun como
-            // WebView2 aplique la politica. La API nativa no inyecta nada.
-            pos.reload()?;
+    let resultado_sobre_existente =
+        con_ventana(app, ETIQUETA_VENTANA_POS, |pos| -> tauri::Result<()> {
+            if necesita_recargar_pos(url_cargada.as_deref(), url_actual.as_deref()) {
+                // reload() nativo y no eval(): la CSP declara script-src 'self' sin unsafe-eval,
+                // asi que un script inyectado en la pagina podria quedar bloqueado segun como
+                // WebView2 aplique la politica. La API nativa no inyecta nada.
+                pos.reload()?;
+            }
+            pos.show()?;
+            pos.set_focus()?;
+            Ok(())
+        });
+
+    match resultado_sobre_existente {
+        Some(resultado) => resultado?,
+        None => {
+            let origen_configurado = url_actual.clone();
+            WebviewWindowBuilder::new(
+                app,
+                ETIQUETA_VENTANA_POS,
+                WebviewUrl::App("pos.html".into()),
+            )
+            .title("Ways POS")
+            .maximized(true)
+            .min_inner_size(1024.0, 700.0)
+            .resizable(true)
+            .on_web_resource_request(move |_request, response| {
+                let csp_original = response
+                    .headers()
+                    .get(tauri::http::header::CONTENT_SECURITY_POLICY)
+                    .and_then(|valor| valor.to_str().ok())
+                    .map(|valor| valor.to_string());
+
+                if let Some(csp_original) = csp_original {
+                    let csp_angostada =
+                        csp_con_connect_src_angostado(&csp_original, origen_configurado.as_deref());
+                    if let Ok(header) = tauri::http::HeaderValue::from_str(&csp_angostada) {
+                        response
+                            .headers_mut()
+                            .insert(tauri::http::header::CONTENT_SECURITY_POLICY, header);
+                    }
+                }
+            })
+            .build()?;
         }
-        pos.show()?;
-        pos.set_focus()?;
-    } else {
-        WebviewWindowBuilder::new(
-            app,
-            ETIQUETA_VENTANA_POS,
-            WebviewUrl::App("pos.html".into()),
-        )
-        .title("Ways POS")
-        .maximized(true)
-        .min_inner_size(1024.0, 700.0)
-        .resizable(true)
-        .build()?;
     }
 
     *url_cargada = url_actual;
@@ -141,27 +227,39 @@ fn necesita_recargar_pos(url_anterior: Option<&str>, url_actual: Option<&str>) -
 /// existe -- Tauri la destruye al cerrarla con el boton nativo "X" (no hay
 /// `prevent_close`/`CloseRequested` en este crate, asi que nunca hay que asumir que sigue viva) --
 /// se la reconstruye con `WebviewWindowBuilder`, igual que hace `mostrar_ventana_pos` con `pos`.
+/// No se le cuelga ningun `on_web_resource_request`: `main` no sostiene el token bearer ni puede
+/// leer la credencial de dispositivo (ver README), asi que angostar su CSP no protege nada nuevo.
 pub(crate) fn mostrar_ventana_configuracion(app: &tauri::AppHandle) -> tauri::Result<()> {
-    if let Some(pos) = app.get_webview_window(ETIQUETA_VENTANA_POS) {
+    con_ventana(app, ETIQUETA_VENTANA_POS, |pos| {
         let _ = pos.hide();
-    }
+    });
 
-    if let Some(configuracion) = app.get_webview_window(ETIQUETA_VENTANA_CONFIGURACION) {
-        // Idem: reload() nativo, no eval() — ver el comentario en mostrar_ventana_pos.
-        configuracion.reload()?;
-        configuracion.show()?;
-        configuracion.set_focus()?;
-    } else {
-        WebviewWindowBuilder::new(
-            app,
-            ETIQUETA_VENTANA_CONFIGURACION,
-            WebviewUrl::App("index.html".into()),
-        )
-        .title("Ways POS")
-        .maximized(true)
-        .min_inner_size(1024.0, 700.0)
-        .resizable(true)
-        .build()?;
+    let resultado_sobre_existente = con_ventana(
+        app,
+        ETIQUETA_VENTANA_CONFIGURACION,
+        |configuracion| -> tauri::Result<()> {
+            // Idem: reload() nativo, no eval() — ver el comentario en mostrar_ventana_pos.
+            configuracion.reload()?;
+            configuracion.show()?;
+            configuracion.set_focus()?;
+            Ok(())
+        },
+    );
+
+    match resultado_sobre_existente {
+        Some(resultado) => resultado?,
+        None => {
+            WebviewWindowBuilder::new(
+                app,
+                ETIQUETA_VENTANA_CONFIGURACION,
+                WebviewUrl::App("index.html".into()),
+            )
+            .title("Ways POS")
+            .maximized(true)
+            .min_inner_size(1024.0, 700.0)
+            .resizable(true)
+            .build()?;
+        }
     }
 
     Ok(())
@@ -195,42 +293,113 @@ mod tests {
         assert!(!necesita_recargar_pos(None, None));
     }
 
-    /// judgment-day ronda 1 (FIX 1): antes, `mostrar_ventana_configuracion` hacia
-    /// `.get_webview_window(...).expect(...)` sobre la ventana `main`. Como Tauri DESTRUYE una
-    /// ventana al cerrarla con el boton nativo "X" (no hay `prevent_close`/`CloseRequested` en
-    /// este crate), cualquier llamado posterior a esa funcion (el atajo global o "Configuración"
-    /// desde el POS) paniqueaba la app entera, de forma permanente.
-    ///
-    /// No se puede armar un `tauri::AppHandle` real (`Wry`) en un test unitario para ejercer ese
-    /// camino de punta a punta: ni `mostrar_ventana_pos` ni `mostrar_ventana_configuracion` son
-    /// genericas sobre `R: Runtime` (mismo limite ya documentado abajo, en el test de
-    /// capacidades, para `tauri::test::MockRuntime`), y crear una ventana `Wry` real exige un
-    /// entorno de GUI que no es razonable levantar en un test automatizado.
-    ///
-    /// Lo que ESTA prueba prueba, en cambio, en el codigo fuente tal cual esta en disco: que
-    /// ninguna busqueda de ventana por handle (`get_webview_window`) tiene un `.expect(` ni un
-    /// `.unwrap(` encadenado -- la fuente concreta del panic de esta ronda. Solo se analiza el
-    /// codigo de PRODUCCION (todo lo que esta antes de `#[cfg(test)]`): de lo contrario, el texto
-    /// crudo de esta misma prueba (que menciona `get_webview_window(` y `.expect(` en sus propios
-    /// strings/comentarios para poder chequearlos) se detectaria a si mismo. Limite deliberado:
-    /// esta prueba no puede probar que el camino "reconstruir la ventana" funciona en runtime,
-    /// solo que la clausula que paniqueaba ya no esta en el archivo.
+    /// judgment-day ronda 2 (FIX 1): `csp_con_connect_src_angostado` es la clausula pura que
+    /// arma el header angostado -- prueba el caso real (origen configurado, con otras directivas
+    /// alrededor tal cual las serializa `Csp::DirectiveMap` de Tauri).
     #[test]
-    fn ninguna_busqueda_de_ventana_usa_expect_o_unwrap() {
+    fn angosta_connect_src_al_origen_configurado() {
+        let csp = "default-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; script-src 'self'";
+
+        let resultado = csp_con_connect_src_angostado(csp, Some("https://empresa.aipos.site"));
+
+        assert!(resultado.contains("connect-src 'self' https://empresa.aipos.site"));
+        assert!(!resultado.contains("https: http://localhost"));
+        assert!(resultado.contains("default-src 'self'"));
+        assert!(resultado.contains("script-src 'self'"));
+    }
+
+    /// Caso defensivo (no deberia ocurrir en runtime, ver el comentario de la funcion): sin
+    /// origen configurado, el resultado no agrega ningun host externo -- mas restrictivo que el
+    /// `https:` original, nunca menos.
+    #[test]
+    fn sin_origen_configurado_no_agrega_ningun_host_externo() {
+        let csp = "connect-src 'self' https: http://localhost:* http://127.0.0.1:*";
+
+        let resultado = csp_con_connect_src_angostado(csp, None);
+
+        assert_eq!(resultado, "connect-src 'self'");
+    }
+
+    /// Limite documentado: si el `connect-src` original de `tauri.conf.json` cambia de texto,
+    /// esta funcion no encuentra el substring exacto y deja la CSP intacta en vez de romperla a
+    /// medias -- por eso hay que revisar `csp_con_connect_src_angostado` a mano si se toca ese
+    /// valor en `tauri.conf.json`.
+    #[test]
+    fn si_no_encuentra_el_connect_src_original_deja_la_csp_intacta() {
+        let csp = "default-src 'self'";
+
+        let resultado = csp_con_connect_src_angostado(csp, Some("https://empresa.aipos.site"));
+
+        assert_eq!(resultado, csp);
+    }
+
+    /// judgment-day ronda 1 (FIX 1) y ronda 2 (FIX 2): antes, `mostrar_ventana_configuracion`
+    /// hacia `.get_webview_window(...).expect(...)` sobre la ventana `main`. Como Tauri DESTRUYE
+    /// una ventana al cerrarla con el boton nativo "X" (no hay `prevent_close`/`CloseRequested`
+    /// en este crate), cualquier llamado posterior a esa funcion (el atajo global o
+    /// "Configuración" desde el POS) paniqueaba la app entera, de forma permanente.
+    ///
+    /// El guard de la ronda 1 buscaba `.expect(`/`.unwrap(` en el MISMO statement (separado por
+    /// `;`) que `get_webview_window(`. Eso lo evadia con solo partir la busqueda y el panic en
+    /// dos statements:
+    ///
+    /// ```ignore
+    /// let ventana = app.get_webview_window(ETIQUETA_VENTANA_CONFIGURACION);
+    /// let c = ventana.expect("deberia existir siempre");
+    /// ```
+    ///
+    /// Este guard, en cambio, no mira `.expect(`/`.unwrap(` en absoluto: cuenta cuantas veces el
+    /// codigo de PRODUCCION llama directo a `get_webview_window(`. Gracias a `con_ventana` (ver
+    /// mas arriba), TODO el archivo llama a esa API una sola vez -- desde adentro de
+    /// `con_ventana`, que nunca deja escapar el `Option<WebviewWindow>` resultante. Cualquier
+    /// segunda llamada directa, sin importar como este partida en statements, sube el conteo por
+    /// encima de 1 y el guard la detecta (ver el test de mutacion de abajo, que reproduce la
+    /// evasion exacta de la ronda 2).
+    ///
+    /// Solo se analiza el codigo de PRODUCCION (todo lo que esta antes de `#[cfg(test)]`): de lo
+    /// contrario, el texto crudo de este modulo de tests (que menciona `get_webview_window(` en
+    /// sus propios strings/comentarios para poder chequearlo) se detectaria a si mismo.
+    #[test]
+    fn get_webview_window_tiene_un_unico_punto_de_llamado() {
         let fuente = include_str!("lib.rs");
         let codigo_de_produccion = fuente
             .split_once("#[cfg(test)]")
             .map(|(produccion, _resto)| produccion)
             .unwrap_or(fuente);
 
-        for statement in codigo_de_produccion.split(';') {
-            if statement.contains("get_webview_window(") {
-                assert!(
-                    !statement.contains(".expect(") && !statement.contains(".unwrap("),
-                    "no debe haber .expect()/.unwrap() encadenado a get_webview_window(): {statement}"
-                );
+        assert_eq!(
+            codigo_de_produccion.matches("get_webview_window(").count(),
+            1,
+            "get_webview_window( debe llamarse desde un unico lugar (con_ventana); cualquier \
+             otra llamada reabre la posibilidad de un .expect()/.unwrap() directo sobre su \
+             Option, la causa del panic de la ronda 1 de judgment-day (FIX 1)"
+        );
+    }
+
+    /// Prueba de mutacion para el guard de arriba: reproduce, en un fixture (no en el archivo
+    /// real), la evasion exacta que motivo esta ronda -- un segundo llamado a
+    /// `get_webview_window(` fuera de `con_ventana`, con el panic partido en dos statements. El
+    /// guard debe dejar de aceptarla (el conteo ya no es 1).
+    #[test]
+    fn el_guard_detecta_la_evasion_de_la_ronda_2() {
+        let codigo_con_evasion = r#"
+            fn con_ventana(app: &tauri::AppHandle, etiqueta: &str) {
+                let _ = app.get_webview_window(etiqueta);
             }
-        }
+
+            fn mostrar_ventana_configuracion(app: &tauri::AppHandle) -> tauri::Result<()> {
+                let ventana = app.get_webview_window(ETIQUETA_VENTANA_CONFIGURACION);
+                let c = ventana.expect("deberia existir siempre");
+                Ok(())
+            }
+        "#;
+
+        assert_ne!(
+            codigo_con_evasion.matches("get_webview_window(").count(),
+            1,
+            "el fixture reintroduce un segundo llamado directo (la forma exacta de evasion de \
+             la ronda 2 de judgment-day) y el guard debe dejar de aceptarlo"
+        );
     }
 
     /// stage-desktop-pos, slice 3: prueba que las dos capacidades LOCALES (`configuracion.json`,
@@ -254,36 +423,56 @@ mod tests {
     /// antes de que Tauri los cargue, esta prueba deja de ser un espejo fiel y hay que revisarla a
     /// mano.
     ///
-    /// judgment-day ronda 1 (FIX 6): la pregunta de fondo detras de este split es si `core:window`
-    /// (parte de `core:default`, otorgado por las dos capacidades) deja que la ventana de UNA le
-    /// de show/hide/close/focus a la OTRA a pesar del split de `windows`. Resuelto de forma
-    /// definitiva contra la fuente real de `tauri` 2.11.5 (crate vendorizado en
-    /// `~/.cargo/registry/src/.../tauri-2.11.5/src/window/plugin.rs`, no solo el schema):
+    /// judgment-day ronda 1 (FIX 6) y ronda 2 (FIX 3): la pregunta de fondo detras de este split
+    /// es si algun permiso de `core:default` (otorgado por las dos capacidades) deja que la
+    /// ventana de UNA le haga algo a la OTRA a pesar del split de `windows`. `core:default` es la
+    /// union de NUEVE sets namespaced (confirmado contra el esquema generado de este mismo
+    /// proyecto, `gen/schemas/desktop-schema.json`, linea ~339: `core:path:default`,
+    /// `core:event:default`, `core:window:default`, `core:webview:default`, `core:app:default`,
+    /// `core:image:default`, `core:resources:default`, `core:menu:default`, `core:tray:default`).
+    /// La ronda 1 solo audito `core:window:default`; esta ronda completa `core:webview:default` y
+    /// `core:app:default` contra la fuente real de `tauri` 2.11.5 (crate vendorizado en
+    /// `~/.cargo/registry/src/.../tauri-2.11.5/`):
     ///
-    /// 1. TODOS los comandos generados por los macros `getter!`/`setter!` de ese plugin (incluidos
-    ///    `show`, `hide`, `close`, `set_focus`, `destroy`, `minimize`, `maximize`, ...) aceptan un
-    ///    `label: Option<String>` y, si viene un label no vacio, `get_window` busca ESA ventana con
-    ///    `window.manager().get_window(&l)` -- ignorando por completo desde que ventana se invoco
-    ///    el comando. El split de `windows` en las capacidades NO restringe ese argumento: solo
-    ///    controla que ventana puede invocar el permiso, no a que ventana apunta despues.
-    /// 2. PERO `core:window:default` (lo que realmente trae `core:default`, confirmado contra
-    ///    `permissions/window/autogenerated/reference.md` del mismo crate) NO incluye `allow-show`,
-    ///    `allow-hide`, `allow-close`, `allow-set-focus`, `allow-destroy`, ni ningun
-    ///    minimize/maximize -- esos exigen su propio `core:window:allow-*` explicito, y NINGUNA de
-    ///    las dos capacidades de este proyecto lo otorga. La preocupacion del punto 1 (una ventana
-    ///    mostrando/ocultando/cerrando/enfocando a la otra) NO es explotable con la configuracion
-    ///    actual.
-    /// 3. Lo que `core:window:default` SI otorga y SI acepta `label` cruzado: getters de solo
-    ///    lectura (posicion/tamano/titulo/monitor/tema/flags is_visible|is_focused|is_maximized|...)
-    ///    y un unico comando que muta estado, `internal_toggle_maximize` (el equivalente a
-    ///    doble-click en la barra de titulo). Ninguno de los dos frontends de esta app invoca hoy
-    ///    ningun comando `core:window` (`rg` sobre `Ways.Desktop` no encuentra ningun uso de
-    ///    `@tauri-apps/api/window` ni de `internal_toggle_maximize`) -- es superficie otorgada pero
-    ///    dormida, no algo que el codigo propio ejercite.
+    /// 1. `core:window:default` (ver detalle ya documentado en el historial de este archivo): NO
+    ///    incluye ningun `allow-show`/`allow-hide`/`allow-close`/`allow-set-focus`/`allow-destroy`
+    ///    ni minimize/maximize -- los getters cross-window de solo lectura y
+    ///    `internal_toggle_maximize` que SI trae no son ejercitados por ningun frontend de esta
+    ///    app (`rg` sobre `Ways.Desktop` no encuentra uso de `@tauri-apps/api/window`).
+    /// 2. `core:webview:default` (`src/webview/plugin.rs`, `permissions/webview/autogenerated/
+    ///    reference.md`) SI incluye `allow-internal-toggle-devtools`, y el comando
+    ///    `internal_toggle_devtools(webview, label: Option<String>)` usa el MISMO patron de
+    ///    `get_webview(webview, label)` que ignora la ventana que invoco el comando y busca la
+    ///    que indique `label` -- la misma forma de cruce que el punto 1, pero esta vez con un
+    ///    permiso `allow-*` que SI esta en el default otorgado. Sin embargo el comando entero esta
+    ///    `#[cfg(any(debug_assertions, feature = "devtools"))]` (`src/webview/plugin.rs:180`).
+    ///    `Cargo.toml` declara `tauri = { version = "2", features = [] }` -- sin `"devtools"` --
+    ///    y `Cargo.lock` no trae esa feature por ninguna otra dependencia. Eso significa: en un
+    ///    build de RELEASE (`cargo build --release` / `npm run build`, el instalador NSIS;
+    ///    `debug_assertions` es `false` y la feature no esta) el comando NO SE COMPILA -- invocar
+    ///    `plugin:webview|internal_toggle_devtools` falla con "command not found", el permiso
+    ///    otorgado queda inerte en el binario que se distribuye. En un build de DEV (`cargo build`
+    ///    / `npm run dev`, `debug_assertions` es `true`) el comando SI se compila y SI es
+    ///    alcanzable cruzado: cualquiera de las dos ventanas locales podria invocarlo con el
+    ///    `label` de la OTRA y abrirle las devtools. No filtra el token bearer ni la credencial
+    ///    directamente, pero devtools es en si un primitivo poderoso (consola JS completa sobre
+    ///    el origen/estado de la ventana destino) -- gap real pero acotado a builds de desarrollo,
+    ///    no shippeado. No se angosta en esta ronda (ver el punto de alcance mas abajo).
+    /// 3. `core:app:default` (`src/app/plugin.rs`, `permissions/app/autogenerated/reference.md`):
+    ///    `allow-version`, `allow-name`, `allow-tauri-version`, `allow-identifier`,
+    ///    `allow-bundle-type`, `allow-register-listener`, `allow-remove-listener`,
+    ///    `allow-supports-multiple-windows`. NINGUNO de esos comandos toma un `label` ni ningun
+    ///    otro parametro que identifique una ventana/webview puntual -- todos operan sobre
+    ///    `AppHandle<R>` a nivel de app entera (version/nombre/identifier globales, listeners de
+    ///    eventos globales, soporte de multiples ventanas). No hay ningun `get_window`/
+    ///    `get_webview` por label en este plugin: `core:app:default` no reproduce el patron de
+    ///    cruce de los puntos 1 y 2, no porque este bien acotado por permisos, sino porque su
+    ///    forma es otra (nunca apunta a una ventana especifica).
+    ///
     /// No se angosta `core:default` en esta ronda: hacerlo bien exigiria enumerar a mano el resto
-    /// de los permisos que si hacen falta (`core:path`, `core:event`, `core:webview`, `core:app`,
-    /// `core:image`, `core:resources`, `core:menu`, `core:tray`) sin poder probarlo contra un
-    /// runtime real en este entorno, mas riesgo que el que justifica esta severidad (SUGGESTION).
+    /// de los permisos que si hacen falta (`core:path`, `core:event`, `core:image`,
+    /// `core:resources`, `core:menu`, `core:tray`) sin poder probarlo contra un runtime real en
+    /// este entorno, mas riesgo que el que justifica esta severidad (SUGGESTION en ambas rondas).
     #[test]
     fn las_capacidades_locales_no_se_solapan_en_los_comandos_sensibles() {
         let configuracion: serde_json::Value =
