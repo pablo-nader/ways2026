@@ -11,7 +11,9 @@ namespace Ways.Application.Ventas;
 /// comprobante (design decisiones 8 y 9, clon de
 /// <see cref="Clientes.AsignadorDeNumeroCliente"/>): <c>INSERT ... ON CONFLICT DO NOTHING</c>
 /// (creación perezosa de la fila, sin backfill) seguido de <c>UPDATE numeraciones_comprobante
-/// SET proximo_numero = proximo_numero + 1 ... RETURNING</c>, vía ADO.NET crudo sobre la
+/// SET proximo_numero = proximo_numero + $1 ... RETURNING</c> (<see cref="AsignarBloqueAsync"/> —
+/// <c>$1</c> es 1 para <see cref="AsignarSiguienteAsync"/>, la cantidad del bloque para
+/// <see cref="ReservarBloqueAsync"/>, stage-pos-reserva-de-numeracion), vía ADO.NET crudo sobre la
 /// conexión/transacción activa de <paramref name="db"/> — nunca <c>Database.SqlQuery&lt;T&gt;()</c>/
 /// <c>FromSqlRaw&lt;T&gt;()</c> (mismo hallazgo de stage-1-slice-2 que documentan
 /// <see cref="Clientes.AsignadorDeNumeroCliente"/>/<see cref="Articulos.AsignadorDeCodigoInternoArticulo"/>).
@@ -73,17 +75,28 @@ public static class AsignadorDeNumeroComprobante
         await comando.ExecuteNonQueryAsync(ct);
     }
 
-    public static async Task<long> AsignarSiguienteAsync(
-        IWaysDbContext db, int idPuntoVenta, string tipoComprobante, CancellationToken ct = default)
+    public static Task<long> AsignarSiguienteAsync(
+        IWaysDbContext db, int idPuntoVenta, string tipoComprobante, CancellationToken ct = default) =>
+        AsignarBloqueAsync(db, idPuntoVenta, tipoComprobante, cantidad: 1, ct);
+
+    /// <summary>stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): generalización de
+    /// <see cref="AsignarSiguienteAsync"/> — <c>+ $1</c> en vez de <c>+ 1</c>, mismo statement,
+    /// devuelve el PRIMER número del bloque (<c>[resultado, resultado + cantidad - 1]</c>). La
+    /// fila la sigue teniendo que existir (<see cref="AsegurarContadorAsync"/> antes), y el mismo
+    /// row lock del <c>UPDATE ... RETURNING</c> serializa esto contra cualquier otra asignación
+    /// (de a uno o en bloque) sobre el mismo <c>(idPuntoVenta, tipoComprobante)</c>.</summary>
+    public static async Task<long> AsignarBloqueAsync(
+        IWaysDbContext db, int idPuntoVenta, string tipoComprobante, int cantidad, CancellationToken ct = default)
     {
         var conexion = await ObtenerConexionAbiertaAsync(db, ct);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
-            "UPDATE numeraciones_comprobante SET proximo_numero = proximo_numero + 1 " +
-            "WHERE id_punto_venta = $1 AND tipo_comprobante = $2 RETURNING proximo_numero - 1";
+            "UPDATE numeraciones_comprobante SET proximo_numero = proximo_numero + $1 " +
+            "WHERE id_punto_venta = $2 AND tipo_comprobante = $3 RETURNING proximo_numero - $1";
 
+        ParametrosDeComando.Agregar(comando, cantidad);
         ParametrosDeComando.Agregar(comando, idPuntoVenta);
         ParametrosDeComando.Agregar(comando, tipoComprobante);
 
@@ -93,6 +106,104 @@ public static class AsignadorDeNumeroComprobante
                 $"tipo {tipoComprobante}: llamá a {nameof(AsegurarContadorAsync)} antes de asignar.");
 
         return Convert.ToInt64(resultado);
+    }
+
+    /// <summary>stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva un bloque de
+    /// <paramref name="cantidad"/> números para que <paramref name="idDispositivo"/> los reparta
+    /// offline (spec: el POS de escritorio no puede tocar el contador sin conexión, así que pide
+    /// un bloque por adelantado y lo consume localmente). Propia transacción chica, comprometida
+    /// ANTES de que el llamador haga nada más — mismo criterio que <see cref="AsignarComprometidoAsync"/>,
+    /// cuyo doc-comment de clase explica por qué (Failure Semantics).
+    ///
+    /// El PRIMER paso de la transacción — no un chequeo aparte del llamador — es abandonar
+    /// cualquier bloque vivo de ESTE dispositivo para esta serie, INCONDICIONALMENTE: el motivo
+    /// típico (spec, punto 2) es que el dispositivo perdió su almacenamiento local y ya no sabe
+    /// cuánto de ese bloque llegó a imprimir, pero el mecanismo no distingue esa causa de un
+    /// simple reenvío de red del mismo pedido — abandona igual en cualquier caso, porque el
+    /// resultado correcto (nunca reemitir un número) es el mismo. Este servicio conoce qué
+    /// números LLEGARON (comprobantes_venta), pero no cuáles se imprimieron y se perdieron con la
+    /// cola local — adivinar el punto de corte arriesga reemitir un número que ya está en el
+    /// bolsillo de un cliente. Por eso el bloque anterior se abandona ENTERO, aunque le queden
+    /// números sin usar: un hueco más es aceptable (ya lo son los que deja un rollback/retry de
+    /// la numeración de a uno, ver <see cref="AsignarBloqueAsync"/>), un número duplicado no lo es
+    /// (spec, comentario de <c>ServicioDeVentas.cs:342-349</c>).
+    ///
+    /// SUPUESTO no verificado en esta slice (asumido, no confirmado con el cliente de escritorio):
+    /// si el dispositivo perdió el conteo de cuánto reservó pero conserva intacta una cola local
+    /// de ventas YA CONFIRMADAS al operador y pendientes de sincronizar, ese resync fallaría con
+    /// 409 <c>numero_preasignado_no_reservado</c> en cuanto su número caiga en un bloque ya
+    /// abandonado — el ticket físico ya está en manos del cliente, pero el servidor lo rechaza. Se
+    /// asume que la cola de sincronización y el contador de consumo del bloque viven en el MISMO
+    /// almacenamiento local y se pierden juntos (spec, punto 2, tal como está escrita) — nunca se
+    /// validó si el cliente Tauri puede perder uno sin el otro.
+    ///
+    /// Ese abandono ANTES del INSERT (misma transacción) es también lo que hace inofensivo un
+    /// reintento sobre un commit ambiguo: si el intento anterior en verdad comiteó, el reintento
+    /// abandona ESE bloque recién comiteado (nunca lo deja vivo dos veces) y reparte uno nuevo —
+    /// el llamador siempre recibe el rango que quedó realmente vigente al final, nunca uno
+    /// stale.</summary>
+    public static async Task<(long Desde, long Hasta)> ReservarBloqueAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo,
+        int cantidad, DateTimeOffset momento, CancellationToken ct = default)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await AbandonarReservaVivaAsync(db, idTenant, idPuntoVenta, tipoComprobante, idDispositivo, momento, ct);
+
+        await AsegurarContadorAsync(db, idTenant, idPuntoVenta, tipoComprobante, ct);
+        var desde = await AsignarBloqueAsync(db, idPuntoVenta, tipoComprobante, cantidad, ct);
+        var hasta = desde + cantidad - 1;
+
+        await InsertarReservaAsync(db, idTenant, idPuntoVenta, tipoComprobante, idDispositivo, desde, hasta, momento, ct);
+
+        await transaccion.CommitAsync(ct);
+        return (desde, hasta);
+    }
+
+    private static async Task AbandonarReservaVivaAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(db, ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE reservas_numeracion SET abandonada_at = $1, updated_at = $1 " +
+            "WHERE id_tenant = $2 AND id_punto_venta = $3 AND tipo_comprobante = $4 AND id_dispositivo = $5 " +
+            "AND abandonada_at IS NULL";
+
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, tipoComprobante);
+        ParametrosDeComando.Agregar(comando, idDispositivo);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task InsertarReservaAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo,
+        long desde, long hasta, DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(db, ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $7)";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, tipoComprobante);
+        ParametrosDeComando.Agregar(comando, idDispositivo);
+        ParametrosDeComando.Agregar(comando, desde);
+        ParametrosDeComando.Agregar(comando, hasta);
+        ParametrosDeComando.Agregar(comando, momento);
+
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<DbConnection> ObtenerConexionAbiertaAsync(IWaysDbContext db, CancellationToken ct)

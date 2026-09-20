@@ -20,7 +20,13 @@ namespace Ways.Application.Ventas;
 /// <c>items_presupuesto</c>, nunca de <see cref="Ofertas.ServicioDeOfertas.ResolverAsync"/>.
 /// Parámetro opcional al final (default <c>null</c>) — preserva el constructor posicional de
 /// todo call site preexistente de una venta común.
-/// </summary>
+///
+/// stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): <see cref="NumeroPreasignado"/> es
+/// el número que un dispositivo YA reservó offline (<c>ServicioDeReservasDeNumeracion</c>) y
+/// quiere consumir ahora. Solo un actor con claim de dispositivo puede traerlo (400
+/// <c>numero_preasignado_no_admitido</c> para un actor web) y tiene que pertenecerle (409
+/// <c>numero_preasignado_no_reservado</c> si no hay una reserva viva que lo contenga) — ver
+/// <c>ServicioDeVentas.EmitirAsync</c>. Ausente, el servidor sigue asignando como hoy.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -30,7 +36,8 @@ public sealed record SolicitudDeVenta(
     IReadOnlyList<PagoDeVenta>? Pagos,
     string? DireccionEntrega,
     string? Observaciones,
-    int? IdPresupuestoOrigen = null);
+    int? IdPresupuestoOrigen = null,
+    long? NumeroPreasignado = null);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>
@@ -157,3 +164,18 @@ public sealed record VentaDeTurnoListado(
 /// Reemplaza el <c>IReadOnlyList&lt;string&gt;</c> anterior de solo nombres — la pantalla necesita
 /// el monto para totalizar por medio, no solo listar los nombres usados.</summary>
 public sealed record MedioDeVentaNeto(int IdMedioPago, string Nombre, decimal Importe);
+
+/// <summary>Cuerpo de <c>POST /api/ventas/reservas-numeracion</c> (stage-pos-reserva-de-numeracion,
+/// DB CHANGE GATE aprobado) — solo un dispositivo (claim <c>ways:id_dispositivo</c>) puede pedir
+/// un bloque, y solo para SU propio punto de venta (<c>PoliticaDeModoDePuntoVenta</c>, mismo
+/// criterio que <c>SolicitudDeVenta.IdPuntoVenta</c>). <see cref="Cantidad"/> tiene un tope
+/// (<c>ServicioDeReservasDeNumeracion.CantidadMaxima</c>) — 400 <c>cantidad_invalida</c> fuera de
+/// rango.</summary>
+public sealed record SolicitudDeReservaDeNumeracion(int IdPuntoVenta, string CodigoTipoComprobante, int Cantidad);
+
+/// <summary>Respuesta de <c>POST /api/ventas/reservas-numeracion</c> — <see cref="Desde"/>/
+/// <see cref="Hasta"/> inclusive, el rango que el dispositivo puede repartir localmente hasta
+/// agotarlo o hasta pedir uno nuevo (que abandona este, ver <c>AsignadorDeNumeroComprobante.
+/// ReservarBloqueAsync</c>).</summary>
+public sealed record BloqueDeNumeracionReservado(
+    long Desde, long Hasta, int IdPuntoVenta, string CodigoTipoComprobante);

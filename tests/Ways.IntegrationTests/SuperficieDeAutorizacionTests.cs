@@ -49,6 +49,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloque offline —
+        // mismo grupo /api/ventas, mismo criterio que "/api/ventas/" (OperacionDePos, sin
+        // GestionDeCatalogo apilado: un Vendedor/cajero de dispositivo tiene que poder pedir su
+        // propio bloque). Apila RequiereDispositivo en su lugar (Politicas.cs) — el positivo por
+        // rol real (un cajero Vendedor logueado por dispositivo reservando con éxito) lo cubre
+        // ReservaDeNumeracionEndpointsTests.ReservarUnBloqueDevuelveElRangoYCreaUnaFilaViva.
+        ("POST", "/api/ventas/reservas-numeracion"),
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que

@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -56,6 +56,19 @@ public class ServicioDeVentas(
         // actor autenticado — SolicitudDeVenta no tiene ningún campo de empleado que pueda
         // pisar esto.
         var idEmpleado = contexto.UsuarioId;
+
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): solo un dispositivo puede
+        // traer un número pre-asignado (lo reservó offline vía ServicioDeReservasDeNumeracion) —
+        // un actor web nunca tiene un bloque que reservar, así que el campo es apócrifo en su
+        // boca. Chequeo temprano, antes de resolver precio/oferta/turno: el servidor sigue siendo
+        // la única autoridad de numeración en el camino web, sin excepción.
+        if (solicitud.NumeroPreasignado is not null && contexto.IdDispositivo is null)
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_no_admitido",
+                "Solo un dispositivo puede indicar un número pre-asignado.",
+                400);
+        }
 
         // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59"): con
         // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
@@ -214,8 +227,8 @@ public class ServicioDeVentas(
         }
 
         if (lineasConLote.Count > 0)   // ← la ÚNICA query nueva del camino caliente: 16 → 17 (spec
-                                        // lotes-y-vencimientos: "Module on with a lot-controlled
-                                        // articulo nets zero round-trip change")
+                                       // lotes-y-vencimientos: "Module on with a lot-controlled
+                                       // articulo nets zero round-trip change")
         {
             var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo).Distinct().ToList();
             var idsLotePedidos = lineasConLote
@@ -348,9 +361,17 @@ public class ServicioDeVentas(
         // transacción es inofensivo: si en verdad comiteó, el contador ya avanzó; si el cliente
         // reintenta (execution strategy), reservar de nuevo solo vuelve a avanzarlo — nunca
         // duplica una fila (design decisión 2: "gaps are accepted", nunca duplicados).
+        // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): con NumeroPreasignado el
+        // contador YA avanzó al reservar el bloque (ServicioDeReservasDeNumeracion) — acá solo se
+        // verifica pertenencia (ExigirNumeroPreasignadoPropioAsync), nunca se vuelve a asignar.
+        // estrategiaNumeracion se sigue declarando IGUAL en los dos casos (nunca una segunda
+        // llamada nueva) — EscriturasSinReintentoEstructuralesTests audita el conteo exacto de
+        // esa expresión sobre el cuerpo entero del método, comentarios incluidos.
         var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
-        var numero = await estrategiaNumeracion.ExecuteAsync(async () =>
-            await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
+        var numero = solicitud.NumeroPreasignado is { } numeroPreasignado
+            ? await ExigirNumeroPreasignadoPropioAsync(numeroPreasignado, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct)
+            : await estrategiaNumeracion.ExecuteAsync(async () =>
+                await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
 
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
         // transacción se abre ACÁ ADENTRO — EnableRetryOnFailure exige que la apertura viva
@@ -378,11 +399,20 @@ public class ServicioDeVentas(
         //     contra ux_comprobantes_venta_numero.
         //
         // Por eso este sitio NO usa FabricaDeEstrategiaSinReintento, a diferencia de AnularAsync:
-        // el reintento automático es el ÚNICO consumidor de esa clave de idempotencia. Sin él, un
-        // commit ambiguo saldría como 500 con el carrito intacto y el cajero volvería a apretar
-        // Cobrar; SolicitudDeVenta no lleva número, así que ese reenvío sortearía un número NUEVO
-        // y emitiría un SEGUNDO comprobante, con su segundo descuento de stock, su segundo
-        // movimiento de caja y su segundo movimiento de cuenta corriente.
+        // el reintento automático es el consumidor PRINCIPAL de esa clave de idempotencia para un
+        // actor SIN NumeroPreasignado (web, o dispositivo online) — sin él, un commit ambiguo
+        // saldría como 500 con el carrito intacto, el cajero volvería a apretar Cobrar, y ese
+        // reenvío (una SolicitudDeVenta nueva) pasaría otra vez por la numeración: como esa
+        // asignación siempre avanza, sortearía un número NUEVO y emitiría un SEGUNDO comprobante
+        // completo, con su segundo descuento de stock, su segundo movimiento de caja y su segundo
+        // movimiento de cuenta corriente.
+        //
+        // stage-pos-reserva-de-numeracion: un actor CON NumeroPreasignado reenvía el MISMO número
+        // en cada resend manual (nunca se vuelve a sortear), así que BuscarPorNumeroComprometidoAsync
+        // ya lo protege de un duplicado silencioso aunque este sitio no reintentara solo —la
+        // ganancia del reintento automático para ESE actor es más chica: evita que un commit
+        // ambiguo transitorio le devuelva un 500 espurio sobre una venta que en verdad sí quedó
+        // emitida.
         var estrategia = db.Database.CreateExecutionStrategy();
 
         return await estrategia.ExecuteAsync(async () =>
@@ -1255,6 +1285,42 @@ public class ServicioDeVentas(
         }
 
         return tipo;
+    }
+
+    /// <summary>stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): el número YA está
+    /// comprometido — el bloque que lo contiene avanzó <c>numeraciones_comprobante</c> al
+    /// reservarse (<c>ServicioDeReservasDeNumeracion</c>). Acá solo se verifica PERTENENCIA,
+    /// nunca se vuelve a tocar el contador. 409, no 400: el número está bien formado, lo que
+    /// falta es una reserva VIGENTE que lo respalde (pudo haberse abandonado al pedir un bloque
+    /// nuevo, o nunca haber existido).</summary>
+    private async Task<long> ExigirNumeroPreasignadoPropioAsync(
+        long numero, int idPuntoVenta, string codigoTipoComprobante, CancellationToken ct)
+    {
+        var idDispositivo = contexto.IdDispositivo
+            // El guard temprano de EmitirAsync ya lo garantiza (400 numero_preasignado_no_admitido
+            // para un actor sin claim de dispositivo) — defensa en profundidad, mismo criterio
+            // que ExigirTenantDeLaSesion.
+            ?? throw new InvalidOperationException(
+                $"{nameof(ExigirNumeroPreasignadoPropioAsync)} requiere un actor de dispositivo.");
+
+        var esPropio = await db.ReservasNumeracion.AnyAsync(
+            r => r.IdDispositivo == idDispositivo
+                && r.IdPuntoVenta == idPuntoVenta
+                && r.TipoComprobante == codigoTipoComprobante
+                && r.AbandonadaAt == null
+                && numero >= r.Desde
+                && numero <= r.Hasta,
+            ct);
+
+        if (!esPropio)
+        {
+            throw new ErrorDominio(
+                "numero_preasignado_no_reservado",
+                $"El número {numero} no pertenece a ninguna reserva vigente de este dispositivo.",
+                409);
+        }
+
+        return numero;
     }
 
     private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
