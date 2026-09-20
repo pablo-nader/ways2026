@@ -54,8 +54,8 @@ pub fn normalizar_url_servidor(entrada: &str) -> Result<String, String> {
 
     let esquema = url.scheme();
     let es_https = esquema == "https";
-    let es_localhost_dev = esquema == "http"
-        && (host_normalizado == "localhost" || host_normalizado == "127.0.0.1");
+    let es_localhost_dev =
+        esquema == "http" && (host_normalizado == "localhost" || host_normalizado == "127.0.0.1");
 
     if !es_https && !es_localhost_dev {
         return Err(
@@ -83,29 +83,6 @@ pub fn normalizar_url_servidor(entrada: &str) -> Result<String, String> {
 
     let puerto = url.port().map(|p| format!(":{p}")).unwrap_or_default();
     Ok(format!("{esquema}://{host_normalizado}{puerto}"))
-}
-
-/// Arma la URL completa de la pagina POS a partir del servidor configurado.
-pub fn url_pos(url_servidor: &str) -> String {
-    format!("{url_servidor}/pos.html")
-}
-
-/// Arma la URL local de la pagina de configuracion empaquetada (`ui/index.html`).
-///
-/// Replica la resolucion que Tauri hace internamente para `WebviewUrl::App`
-/// cuando, como en este proyecto, no hay `build.devUrl` ni `build.frontendDist`
-/// remoto configurados (ver `tauri.conf.json`): en Windows/Android usa
-/// `http(s)://tauri.localhost/` (segun `useHttpsScheme`), y en el resto de
-/// plataformas usa `tauri://localhost/`. Al ser una funcion pura derivada de
-/// la configuracion, evita depender de una URL capturada en tiempo de
-/// ejecucion (que puede no reflejar aun la navegacion real de la ventana).
-pub fn url_configuracion_local(es_windows_o_android: bool, usa_https: bool) -> String {
-    if es_windows_o_android {
-        let esquema = if usa_https { "https" } else { "http" };
-        format!("{esquema}://tauri.localhost/")
-    } else {
-        "tauri://localhost/".to_string()
-    }
 }
 
 fn ruta_archivo_configuracion(app: &AppHandle) -> Result<PathBuf, String> {
@@ -149,8 +126,7 @@ pub fn guardar(app: &AppHandle, config: &Configuracion) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&config)
         .map_err(|error| format!("No se pudo serializar la configuracion: {error}"))?;
 
-    fs::write(&ruta, json)
-        .map_err(|error| format!("No se pudo guardar la configuracion: {error}"))
+    fs::write(&ruta, json).map_err(|error| format!("No se pudo guardar la configuracion: {error}"))
 }
 
 #[cfg(test)]
@@ -248,35 +224,5 @@ mod tests {
     fn normaliza_host_a_minusculas() {
         let resultado = normalizar_url_servidor("https://EMPRESA.AIPOS.SITE").unwrap();
         assert_eq!(resultado, "https://empresa.aipos.site");
-    }
-
-    #[test]
-    fn arma_url_de_pos() {
-        assert_eq!(
-            url_pos("https://empresa.aipos.site"),
-            "https://empresa.aipos.site/pos.html"
-        );
-    }
-
-    #[test]
-    fn arma_url_local_http_en_windows_por_defecto() {
-        assert_eq!(
-            url_configuracion_local(true, false),
-            "http://tauri.localhost/"
-        );
-    }
-
-    #[test]
-    fn arma_url_local_https_en_windows_si_esta_habilitado() {
-        assert_eq!(
-            url_configuracion_local(true, true),
-            "https://tauri.localhost/"
-        );
-    }
-
-    #[test]
-    fn arma_url_local_con_esquema_tauri_fuera_de_windows_o_android() {
-        assert_eq!(url_configuracion_local(false, false), "tauri://localhost/");
-        assert_eq!(url_configuracion_local(false, true), "tauri://localhost/");
     }
 }

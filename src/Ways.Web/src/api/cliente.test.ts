@@ -4,12 +4,15 @@ const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
 
 const { alPerderLaSesion, api, ErrorApi, nombreDeArchivo } = await import('./cliente')
-const { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } = await import('./entornoTauri')
+const { establecerTokenDeSesionBearer, inicializarUrlServidor, tokenDeSesionBearerActual } = await import('./entornoTauri')
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: unknown }
 
-function instalarPuenteTauri() {
-  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: vi.fn() } }
+/** `invokeImpl` opcional para los tests que necesitan que `info_app` (`inicializarUrlServidor`)
+ * devuelva algo específico — por defecto resuelve `undefined`, suficiente para los tests que solo
+ * necesitan que `corriendoEnTauri()` sea `true`. */
+function instalarPuenteTauri(invokeImpl: (comando: string) => unknown = () => Promise.resolve(undefined)) {
+  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: vi.fn(invokeImpl) } }
 }
 
 function quitarPuenteTauri() {
@@ -95,6 +98,59 @@ describe('header Authorization bajo Tauri (slice bearer)', () => {
 
     await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
     expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+})
+
+describe('URL base y credentials bajo Tauri (slice 3: pos.html local, cross-site respecto de la API)', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  afterEach(() => {
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('bajo Tauri antepone la URL cacheada del servidor a /api${ruta} y usa credentials: "omit" en pedir (api.get)', async () => {
+    instalarPuenteTauri(() => Promise.resolve({ url_servidor: 'https://empresa.aipos.site' }))
+    await inicializarUrlServidor()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://empresa.aipos.site/api/algo')
+    expect(init.credentials).toBe('omit')
+  })
+
+  it('bajo Tauri antepone la URL cacheada y usa credentials: "omit" también en descargar', async () => {
+    instalarPuenteTauri(() => Promise.resolve({ url_servidor: 'https://empresa.aipos.site' }))
+    await inicializarUrlServidor()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, blob: () => Promise.resolve(new Blob()) }))
+
+    await api.descargar('/algo/export')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://empresa.aipos.site/api/algo/export')
+    expect(init.credentials).toBe('omit')
+  })
+
+  it('en el navegador normal la URL sigue relativa y credentials sigue "include", aunque haya quedado una URL cacheada de un uso previo bajo Tauri', async () => {
+    // Nunca puede haber una regresión donde "omit"/absoluta se filtre al camino del navegador
+    // normal: se cachea una URL real bajo Tauri primero para que, si `pedir`/`descargar` alguna
+    // vez dejaran de chequear `corriendoEnTauri()` y leyeran el caché directo, este test lo vea.
+    instalarPuenteTauri(() => Promise.resolve({ url_servidor: 'https://empresa.aipos.site' }))
+    await inicializarUrlServidor()
+    quitarPuenteTauri()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/algo')
+    expect(init.credentials).toBe('include')
   })
 })
 

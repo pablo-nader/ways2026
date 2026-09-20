@@ -3,8 +3,10 @@ import {
   corriendoEnTauri,
   establecerTokenDeSesionBearer,
   guardarCredencialDeDispositivo,
+  inicializarUrlServidor,
   leerCredencialDeDispositivo,
   tokenDeSesionBearerActual,
+  urlBaseApi,
 } from './entornoTauri'
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
@@ -70,6 +72,52 @@ describe('leerCredencialDeDispositivo', () => {
     instalarPuenteTauri()
     invokeMock.mockRejectedValue(new Error('IPC falló'))
     expect(await leerCredencialDeDispositivo()).toBeNull()
+  })
+})
+
+describe('inicializarUrlServidor/urlBaseApi', () => {
+  it('urlBaseApi es "" fuera de Tauri, aunque haya quedado una URL cacheada de un llamado previo bajo Tauri', async () => {
+    // Cachea una URL real primero (bajo Tauri) para que el gate de `corriendoEnTauri()` sea lo
+    // único que puede explicar la diferencia — con el caché en null desde el arranque, esta
+    // prueba pasaría igual sin ese gate (confound, ver skill mutation-proof-tests regla 3).
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue({ url_servidor: 'https://empresa.aipos.site' })
+    await inicializarUrlServidor()
+    expect(urlBaseApi()).toBe('https://empresa.aipos.site')
+
+    quitarPuenteTauri()
+    expect(urlBaseApi()).toBe('')
+  })
+
+  it('inicializarUrlServidor no invoca nada fuera de Tauri', async () => {
+    await inicializarUrlServidor()
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('cachea el url_servidor que devuelve info_app, y urlBaseApi lo antepone bajo Tauri', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue({ version: '1.0.0', impresora: null, url_servidor: 'https://empresa.aipos.site' })
+    await inicializarUrlServidor()
+    expect(invokeMock).toHaveBeenCalledWith('info_app')
+    expect(urlBaseApi()).toBe('https://empresa.aipos.site')
+  })
+
+  it('cachea null si info_app no devuelve url_servidor', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue({ version: '1.0.0', impresora: null })
+    await inicializarUrlServidor()
+    expect(urlBaseApi()).toBe('')
+  })
+
+  it('deja el cache en null (nunca lanza) si el comando falla, aunque antes hubiera una URL cacheada', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue({ url_servidor: 'https://empresa.aipos.site' })
+    await inicializarUrlServidor()
+    expect(urlBaseApi()).toBe('https://empresa.aipos.site')
+
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    await expect(inicializarUrlServidor()).resolves.toBeUndefined()
+    expect(urlBaseApi()).toBe('')
   })
 })
 

@@ -1,3 +1,10 @@
 /node_modules
 /src-tauri/target
 /src-tauri/gen
+
+# Generados por scripts/sync-frontend-local.mjs a partir del build de Ways.Web (ver ese script).
+# index.html, setup.js y styles.css son la pagina de configuracion, escrita a mano: no se ignoran.
+/ui/pos.html
+/ui/assets/
+/ui/favicon.png
+/ui/fonts/
