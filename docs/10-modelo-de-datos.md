@@ -1496,12 +1496,124 @@ antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenenci
 para SU propio punto de venta (`PoliticaDeModoDePuntoVenta`, misma regla que el checkout —
 §9.1). `cantidad` tiene un tope (`ServicioDeReservasDeNumeracion.CantidadMaxima = 500`).
 
-**Pendiente (abierto, judgment-day ronda 2): repricing al sincronizar una venta offline.** El
-servidor re-precia siempre al momento del request (`servicioDeOfertas.ResolverAsync` sobre
-`momento` actual), nunca al momento en que el operador cerró la venta en el dispositivo. Una
-venta offline que se sincroniza horas después queda registrada al precio/oferta VIGENTE en ese
-sync, no al que se imprimió en el ticket del cliente. `ExigirMismoContenido` no cierra esto —
-compara identidad, no precio, a propósito. Cierre correcto: trabajo de venta offline/outbox,
-donde la solicitud tendrá que viajar con los precios que efectivamente cobró el dispositivo.
+**Cerrado (stage-pos-venta-offline-backend, ver §9.3): repricing al sincronizar una venta
+offline.** El riesgo que este ítem describía — el servidor re-preciaba siempre al momento del
+sync, nunca al momento en que el operador cerró la venta en el dispositivo, así que una venta
+offline sincronizada horas después quedaba registrada al precio/oferta VIGENTE en ese sync, no al
+impreso en el ticket del cliente — se cierra con la decisión del dueño de §9.3: la solicitud
+ahora VIAJA con los precios que el dispositivo efectivamente cobró (`LineaDeVenta.PrecioUnitario`/
+`DescuentoUnitario`), y el servidor los registra tal cual en vez de re-derivarlos.
+`ExigirMismoContenido` sigue sin comparar precio en un reenvío — eso sigue siendo correcto (el
+motivo de fondo no cambió: el total es server-derived y puede legítimamente diferir entre dos
+resoluciones online), pero ya no es la guarda relevante para el riesgo de este ítem, porque una
+venta offline nunca vuelve a re-derivar su precio al sincronizar.
 
 **Estado (stage-pos-reserva-de-numeracion): implementada.** Migración `ReservaDeNumeracion`.
+
+### 9.3 Venta offline: instantánea de catálogo y precios congelados (stage-pos-venta-offline-backend)
+
+Con el bloque de numeración (§9.2) el dispositivo puede identificar una venta offline; le
+faltaba poder VENDER sin red: saber qué artículos existen, a qué precio (ya resuelto contra
+ofertas), con qué IVA, y contra qué medios de pago — y, al sincronizar, que el servidor no le
+recalculara el precio a espaldas del ticket que el cliente ya tiene en la mano. Decisión del
+dueño (no una decisión de arquitectura libre): **la venta offline carga sus precios** — inversión
+deliberada de la decisión 3 original de `SolicitudDeVenta` (§9.1/`Contratos.cs`: "sin ningún
+campo de dinero"), que sigue exactamente igual para el camino online/web.
+
+**`GET /api/pos/instantanea` — sin cambio de esquema, solo lectura.** Device-only (`Politicas.
+RequiereDispositivo` + `PoliticaDeModoDePuntoVenta`, misma regla que el checkout), siempre para
+el punto de venta PROPIO del dispositivo — sin parámetro `idPuntoVenta`, se deriva de
+`dispositivos.id_punto_venta`. Contenido, derivado de lo que el checkout online REALMENTE lee
+(`Pos.tsx`/`ServicioDeEscaneo`/`ServicioDeOfertas.ResolverAsync`/`ServicioDeVentas.
+EmitirAsync`/`ServicioDePrecios`), nunca "por si acaso":
+
+- Por artículo activo (`ArticuloDeInstantanea`): identidad (`idArticulo`, `codigoInterno`,
+  `nombre`), todos sus `codigosBarra`, el precio YA RESUELTO por `ServicioDeOfertas.ResolverAsync`
+  a `cantidad = 1` contra la lista de precio del Consumidor Final del tenant y la empresa del
+  punto de venta (`precioOriginal`/`precioFinal`/`descuentoUnitario`/`aplicadas`, mismo shape que
+  `ResultadoDeResolucion`), más `idAlicuotaIva`/`porcentajeIva` — el cliente nunca los había visto
+  antes de esta etapa, y los necesita para imprimir el ticket. Un artículo SIN precio vigente hoy
+  se omite (mismo motivo que el 400 `articulo_sin_precio_vigente` online: ofrecerlo sin poder
+  cobrarlo no tiene sentido). `idArea`/`idListaPrecio`/`idOferta`/`esProducto`/`controlaLote`
+  quedan afuera a propósito: el servidor los resuelve FRESCOS al sincronizar
+  (`ServicioDeVentas.EmitirAsync` ya los lee de `articulos`/`alicuotas_iva` en el momento del
+  emit, nunca del request), y el default FEFO ya cubre lotes sin que el dispositivo necesite
+  saber nada de ellos.
+- Medios de pago activos (recorte de flags: nombre, comportamiento, admite vuelto, requiere
+  referencia) y `tolerancia_pago` resuelta con la MISMA precedencia (punto de venta > empresa >
+  default) que el checkout.
+- `momento`: el instante en que el servidor resolvió TODO lo de arriba — el dispositivo lo
+  muestra para que el operador sepa cuán vieja es su última instantánea.
+
+**Sin paginar, sin refresco incremental — decisión explícita, no un olvido.** Paginar (aun
+reusando el tope de `ServicioDeArticulos.TamanioMaximoDePagina` de la grilla interactiva)
+exigiría N requests secuenciales para un catálogo de referencia de ~6000 artículos (legacy); un
+precio que cambia entre la página 3 y la 4 volvería la instantánea INCONSISTENTE contra sí
+misma — exactamente lo que este endpoint existe para evitar (el único invariante real de la
+respuesta es que TODO se resolvió contra el mismo `momento`). Con los ~10 campos mínimos por
+artículo, el JSON completo de 6000 artículos pesa un puñado de cientos de KB — un solo response,
+aceptable para un pull en background ocasional sobre Wi-Fi/LAN de local. Tampoco hay
+`If-Modified-Since`/ETag: no existe change-tracking entre `articulos`/`precios`/`ofertas`/
+`codigos_barra` como para construir un delta correcto sin infraestructura nueva, y el propio
+diseño de esta etapa encuadra la vejez como "acotada por el intervalo de refresco" (el
+dispositivo vuelve a pedir la instantánea COMPLETA cada vez que tiene señal), no por el tamaño de
+un delta — agregar eso ahora sería optimización especulativa sin un problema de tamaño medido.
+
+**`POST /api/ventas` — precio de línea, solo junto a `NumeroPreasignado`.**
+`LineaDeVenta.PrecioUnitario`/`DescuentoUnitario` (opcionales, `null` en el 100% del tráfico
+online/web) son el precio que el DISPOSITIVO ya cobró offline, tomado de su última instantánea —
+nunca lo que `ServicioDeOfertas.ResolverAsync` resolvería HOY al sincronizar. Reglas
+(`ServicioDeVentas.ExigirPreciosOfflineValidos`):
+
+- Con algún precio de línea presente y sin `NumeroPreasignado`: `400
+  precio_offline_no_admitido` — el camino web/online sigue siendo la ÚNICA autoridad de precio,
+  sin excepción.
+- Todas las líneas con precio, o ninguna: `400 precio_offline_incompleto` en cualquier mezcla —
+  no hay un tercer estado "algunas sí, algunas no", que dejaría media venta al precio de hoy y
+  media al precio congelado sin ningún significado económico.
+- `descuentoUnitario` sin `precioUnitario` tampoco tiene destino: mismo código
+  (`dto-contract-honesty`).
+- Precio o descuento negativo: `400 precio_offline_invalido`.
+
+**El servidor RECORDS los precios recibidos** (`ServicioDeVentas.MaterializarItems`): con precio
+offline, `precio_unitario`/`descuento`/`total` de `items_comprobante_venta` salen de la línea, no
+de `ResolverAsync` — y por construcción, `ValidadorDePagos` (que sigue corriendo, sin excepción)
+valida los pagos contra ESE total, nunca contra el que el servidor hubiera resuelto hoy. Sin
+precio vigente hoy (el artículo pudo perder su precio entre el cobro offline y el sync), la venta
+sincroniza igual — nunca el 400 `articulo_sin_precio_vigente` del camino online, porque el ticket
+ya se le dio al cliente.
+
+**Discrepancia visible, nunca silenciosa — auditoría, NO una columna nueva (DB CHANGE GATE
+evitado a propósito).** El servidor sigue corriendo `ServicioDeOfertas.ResolverAsync` (como
+siempre) y compara, por línea, lo que HUBIERA cobrado contra lo que el dispositivo cobró
+(`NetoDeLinea`, mismo redondeo que `CalculadorDeTotales`, nunca una segunda autoridad de dinero:
+la comparación es puramente diagnóstica, nunca alimenta `totales`/`ValidadorDePagos`/lo
+persistido). Si difieren, dos señales, ninguna bloqueante (mismo criterio "warning, nunca
+bloqueo" que `ItemComprobanteVenta.LoteVencido`):
+
+1. `ItemEmitido.PrecioDiscrepante` (`true`/`false`) en la respuesta del emit — visible solo en el
+   checkout fresco que detectó la discrepancia, como `LoteVencido`; una relectura/reprint no lo
+   recalcula (siempre `false` ahí).
+2. Una fila en `auditoria` (`AccionAuditada.VentaDiscrepancia = ("venta.discrepancia",
+   "comprobante_venta")`, catálogo de 17 entradas) con el número/id del comprobante y, por línea
+   discrepante, artículo/cantidad/precio y descuento cobrados vs. esperados — durable, consultable
+   vía `GET /api/auditoria`. Se escribe UNA fila por comprobante (no una por línea), solo cuando
+   hay al menos una línea discrepante.
+
+Se descartó agregar `precio_unitario_esperado`/`descuento_esperado`/un `precio_discrepante
+GENERATED` a `items_comprobante_venta` (el patrón de `ArqueoTurno.Diferencia`, que hubiera sido la
+alternativa más consultable) porque el DB CHANGE GATE de este proyecto exige presentar el modelo
+y esperar aprobación explícita antes de aplicar cualquier migración — no pre-otorgada para un
+modelo que el dueño todavía no vio. Auditoría cierra el requisito ("hacer visible, nunca
+silenciosa") sin ese riesgo; si el volumen de discrepancias justifica más adelante un reporte
+dedicado, ESE es el momento de proponer las columnas y pedir la aprobación.
+
+**El camino online/web queda byte-idéntico.** Ningún actor sin `NumeroPreasignado` puede mandar
+precio de línea (guard arriba); sin precio de línea, `MaterializarItems` sigue exactamente la
+rama de siempre (`resultado.PrecioOriginal`/`DescuentoUnitario` de `ResolverAsync`), cero queries
+nuevas, cero columnas nuevas escritas.
+
+**Estado (stage-pos-venta-offline-backend): backend implementado — Parte A (instantánea) y Parte
+B (precio offline + discrepancia auditada). Sin migración: ningún cambio de esquema en esta
+etapa. Pendiente: el consumo desde el shell Tauri/React del dispositivo (outbox local, reintento
+de sync, UI de discrepancia) — etapa separada.

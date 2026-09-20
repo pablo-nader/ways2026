@@ -15,6 +15,7 @@ using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
+using Ways.Application.Pos;
 using Ways.Application.Precios;
 using Ways.Application.Proveedores;
 using Ways.Application.Reportes;
@@ -77,6 +78,10 @@ public static class DependencyInjection
         // stage-pos-reserva-de-numeracion (DB CHANGE GATE aprobado): reserva de bloques offline,
         // registrado junto a ServicioDeVentas por compartir el mismo espacio de numeración.
         services.AddScoped<ServicioDeReservasDeNumeracion>();
+
+        // stage-pos-venta-offline-backend (Parte A): instantánea de venta offline — compone
+        // ServicioDeOfertas (precio en lote), registrado junto al resto de Ventas/POS.
+        services.AddScoped<ServicioDeInstantaneaDePos>();
 
         services.AddScoped<ServicioDeStock>();
         services.AddScoped<ServicioDeLotes>();

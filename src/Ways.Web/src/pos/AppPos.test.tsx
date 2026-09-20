@@ -55,6 +55,16 @@ vi.mock('../api/cliente', () => ({
       return this.estado === 401
     }
   },
+  // stage-pos-venta-offline-web: este árbol monta `Pos.tsx` (vía `ShellPos`, ruta `/vender`), que
+  // ahora hace `instanceof ErrorDeRed` (`useSincronizacionOffline`) — sin este mock el símbolo
+  // importado queda `undefined` bajo este `vi.mock` y ese `instanceof` tira `TypeError`.
+  ErrorDeRed: class ErrorDeRedMock extends Error {
+    causa: unknown
+    constructor(causa: unknown) {
+      super('No se pudo contactar al servidor. Revisá tu conexión.')
+      this.causa = causa
+    }
+  },
 }))
 
 const DISPOSITIVO = {

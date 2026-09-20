@@ -85,10 +85,22 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <see cref="PuntoVentaBaja"/>.</summary>
     public static readonly AccionAuditada PuntoVentaModo = new("pv.modo", "punto_venta");
 
-    /// <summary>Las 16 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
-    /// tres bajas de organización de la etapa 20 slice 4, más el flip de modo de stage-desktop-pos)
-    /// — usada por el catálogo genérico de tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>,
-    /// sin duplicados) y por cualquier consumidor que necesite iterarlas todas.</summary>
+    /// <summary>stage-pos-venta-offline-backend: <c>Ventas/ServicioDeVentas.cs</c>,
+    /// <c>EjecutarTransaccionAsync</c> — una venta offline (<c>NumeroPreasignado</c> + precios
+    /// congelados por el dispositivo, ver <see cref="Ways.Application.Ventas.Contratos"/>) cuyo
+    /// precio recibido difiere del que <c>ServicioDeOfertas.ResolverAsync</c> hubiera cobrado al
+    /// momento del sync. Warning, nunca bloqueo (mismo criterio que
+    /// <c>ItemComprobanteVenta.LoteVencido</c>): la venta ya se cobró en el dispositivo con el
+    /// precio que el ticket le imprimió al cliente — el servidor solo deja rastro auditable de la
+    /// diferencia, nunca la rechaza ni la recalcula en el comprobante. Cierra/acota el ítem
+    /// pendiente de docs/10-modelo-de-datos.md §9.2 (repricing al sincronizar).</summary>
+    public static readonly AccionAuditada VentaDiscrepanciaDePrecio = new("venta.discrepancia", "comprobante_venta");
+
+    /// <summary>Las 17 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, más
+    /// la discrepancia de precio offline de stage-pos-venta-offline-backend) — usada por el
+    /// catálogo genérico de tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados)
+    /// y por cualquier consumidor que necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
     [
         PrecioCambio,
@@ -106,6 +118,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         TenantBaja,
         EmpresaBaja,
         PuntoVentaBaja,
-        PuntoVentaModo
+        PuntoVentaModo,
+        VentaDiscrepanciaDePrecio
     ];
 }

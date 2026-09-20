@@ -1083,8 +1083,9 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             db, reloj, contexto, lectorDeTurno,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeTurno));
         var lotes = new ServicioDeLotes(db, reloj, contexto);
+        var auditoria = new ServicioDeAuditoria(db, reloj, contexto);
 
-        return new ServicioDeVentas(db, reloj, contexto, ofertas, turnos, lotes);
+        return new ServicioDeVentas(db, reloj, contexto, ofertas, turnos, lotes, auditoria);
     }
 
     private async Task SembrarPrecioAsync(Sembrado s, int idArticulo, decimal monto)

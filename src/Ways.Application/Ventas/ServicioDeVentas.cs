@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
@@ -11,6 +12,7 @@ using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -46,7 +48,7 @@ namespace Ways.Application.Ventas;
 /// </summary>
 public class ServicioDeVentas(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas,
-    ServicioDeTurnos servicioDeTurnos, ServicioDeLotes servicioDeLotes)
+    ServicioDeTurnos servicioDeTurnos, ServicioDeLotes servicioDeLotes, ServicioDeAuditoria servicioDeAuditoria)
 {
     public async Task<ComprobanteEmitido> EmitirAsync(SolicitudDeVenta solicitud, CancellationToken ct = default)
     {
@@ -78,6 +80,15 @@ public class ServicioDeVentas(
             ? ExigirLineasValidas(solicitud.Lineas)
             : ExigirSinLineas(solicitud.Lineas);
         var pagos = solicitud.Pagos ?? [];
+
+        // stage-pos-venta-offline-backend (decisión del dueño: "la venta offline carga sus
+        // precios" — inversión deliberada de la decisión 3 original, ver el doc-comment de
+        // LineaDeVenta): un precioUnitario de línea es apócrifo en la boca de cualquiera que no
+        // sea un dispositivo con NumeroPreasignado — mismo criterio y mismo lugar que el guard de
+        // NumeroPreasignado de arriba, antes de cualquier trabajo de precio/oferta. Un
+        // descuentoUnitario sin precioUnitario no tiene destino (dto-contract-honesty): se
+        // rechaza en vez de tragárselo en silencio.
+        ExigirPreciosOfflineValidos(lineas, solicitud.NumeroPreasignado);
 
         // Pineado UNA sola vez acá — nunca se vuelve a leer dentro de la lambda reintentable
         // (design: The Sale Transaction, "momento := reloj.Ahora (pinned; never re-read on
@@ -1296,6 +1307,44 @@ public class ServicioDeVentas(
 
         await db.SaveChangesAsync(ct);
 
+        // 4.5. stage-pos-venta-offline-backend: rastro auditable (nunca un bloqueo, nunca una
+        // recomputación silenciosa del comprobante) de cada línea offline cuyo precio congelado
+        // no coincide con lo que ResolverAsync hubiera cobrado HOY — ver
+        // MaterializarItems/NetoDeLinea. Decisión explícita (docs/10 §9.2, ítem cerrado por esta
+        // etapa): auditoria en vez de una columna nueva en items_comprobante_venta — cero DB
+        // CHANGE GATE, reusa el writer/lector ya existentes (GET /api/auditoria), y "warning,
+        // nunca bloqueo" es exactamente el criterio que ya tiene ItemComprobanteVenta.LoteVencido.
+        // UNA fila por comprobante (nunca una por línea): valor_nuevo.items lleva la lista
+        // completa de líneas afectadas.
+        var lineasDiscrepantes = plan.Items.Where(i => i.PrecioDiscrepante).ToList();
+        if (lineasDiscrepantes.Count > 0)
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["numero_comprobante"] = comprobante.Numero,
+                ["numero_visible"] = NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
+                ["items"] = lineasDiscrepantes
+                    .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                    {
+                        ["id_articulo"] = i.IdArticulo,
+                        ["cantidad"] = i.Cantidad,
+                        ["precio_cobrado"] = i.PrecioUnitario,
+                        ["descuento_cobrado"] = i.Descuento,
+                        ["total_cobrado"] = i.Total,
+                        ["precio_esperado"] = i.PrecioEsperado,
+                        ["descuento_esperado"] = i.DescuentoEsperado
+                    })
+                    .ToList()
+            };
+
+            await servicioDeAuditoria.RegistrarAsync(
+                conexion, transaccionCruda,
+                new RegistroDeAuditoria(
+                    plan.IdTenant, plan.IdPuntoVenta, AccionAuditada.VentaDiscrepanciaDePrecio, comprobante.Id,
+                    valorAnterior: null, valorNuevo: payload),
+                ct);
+        }
+
         // 5. Stock — ORDEN ASCENDENTE por (id_articulo, id_lote NULLS FIRST) (design decisión 2/8/9,
         // no negociable): el upsert de abajo toma su propio row lock de forma implícita, así que
         // dos ventas que comparten artículos/lotes en orden distinto se deadlockearían sin este
@@ -1688,17 +1737,31 @@ public class ServicioDeVentas(
 
         for (var i = 0; i < lineas.Count; i++)
         {
+            var linea = lineas[i];
             var resultado = resolucion[i];
+            var cantidadConSigno = signoTipoComprobante > 0 ? linea.Cantidad : -linea.Cantidad;
+
+            // stage-pos-venta-offline-backend (decisión del dueño, no una re-derivación
+            // server-side: "la venta offline carga sus precios"): con precioUnitario en la línea
+            // (validado ANTES de llegar acá — ExigirPreciosOfflineValidos, todas o ninguna), el
+            // precio/descuento que factura la línea son los que el DISPOSITIVO ya cobró, nunca
+            // los de ResolverAsync — ni siquiera cuando ResolverAsync no encuentra un precio
+            // vigente (el artículo pudo perder su precio entre el momento en que el dispositivo
+            // cobró offline y este sync; el ticket que el cliente ya tiene en la mano sigue siendo
+            // el contrato). Sin precio offline, sigue siendo el único camino de siempre.
+            if (linea.PrecioUnitario is { } precioOffline)
+            {
+                lineasParaCalcular.Add(new LineaParaCalcular(cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m));
+                continue;
+            }
 
             if (resultado.PrecioOriginal is null)
             {
                 throw new ErrorDominio(
                     "articulo_sin_precio_vigente",
-                    $"El artículo {lineas[i].IdArticulo} no tiene un precio vigente en la lista del cliente.",
+                    $"El artículo {linea.IdArticulo} no tiene un precio vigente en la lista del cliente.",
                     400);
             }
-
-            var cantidadConSigno = signoTipoComprobante > 0 ? lineas[i].Cantidad : -lineas[i].Cantidad;
 
             lineasParaCalcular.Add(new LineaParaCalcular(
                 cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario));
@@ -1726,14 +1789,42 @@ public class ServicioDeVentas(
             // no se pierde.
             var idOferta = resultado.Aplicadas.Count > 0 ? resultado.Aplicadas[0].IdOferta : (int?)null;
 
+            // stage-pos-venta-offline-backend: "lo que el servidor HUBIERA cobrado" HOY, solo
+            // para DETECTAR (nunca bloquear ni recalcular) una discrepancia — nunca se persiste
+            // en una columna nueva (DB CHANGE GATE evitado a propósito: el rastro vive en
+            // auditoria, ver EjecutarTransaccionAsync/ServicioDeAuditoria). Sin precio vigente HOY
+            // (el artículo pudo perder su precio entre el cobro offline y este sync) no hay
+            // expectativa que comparar: PrecioDiscrepante queda false, nunca un falso positivo
+            // contra un "esperado" inventado. NetoDeLinea reusa el MISMO redondeo/orden de
+            // CalculadorDeTotales — nunca una segunda autoridad de dinero, esta cuenta no
+            // alimenta totales/ValidadorDePagos/persistencia.
+            var esLineaOffline = linea.PrecioUnitario is not null;
+            var discrepante = esLineaOffline
+                && resultado.PrecioOriginal is not null
+                && NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario) != calculado.Total;
+
             items.Add(new LineaDelPlan(
                 articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, idListaPrecio, idOferta,
                 articulo.IdAlicuotaIva, porcentajePorAlicuota[articulo.IdAlicuotaIva],
                 calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
-                articulo.EsProducto, articulo.CostoNominal));
+                articulo.EsProducto, articulo.CostoNominal,
+                PrecioDiscrepante: discrepante,
+                PrecioEsperado: discrepante ? resultado.PrecioOriginal : null,
+                DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null));
         }
 
         return (items, totales);
+    }
+
+    /// <summary>Mismo redondeo/orden que <see cref="CalculadorDeTotales.Calcular"/> (design:
+    /// Checkout Contract) — a propósito NUNCA una segunda autoridad de dinero: esta función solo
+    /// alimenta el diagnóstico de discrepancia de precio offline de <see cref="MaterializarItems"/>,
+    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste.</summary>
+    private static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario)
+    {
+        var bruto = Math.Round(cantidadConSigno * precioUnitario, 2, MidpointRounding.AwayFromZero);
+        var descuento = Math.Round(descuentoUnitario * cantidadConSigno, 2, MidpointRounding.AwayFromZero);
+        return bruto - descuento;
     }
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que
@@ -1900,6 +1991,69 @@ public class ServicioDeVentas(
         return [];
     }
 
+    /// <summary>stage-pos-venta-offline-backend: precio de línea SOLO junto a
+    /// <see cref="SolicitudDeVenta.NumeroPreasignado"/> (400 <c>precio_offline_no_admitido</c> en
+    /// cualquier otro caso — el camino web/online sigue siendo la única autoridad de precio, sin
+    /// excepción) y SIEMPRE completo: todas las líneas con precio, o ninguna (400
+    /// <c>precio_offline_incompleto</c>) — una mezcla dejaría media venta al precio de HOY y media
+    /// al precio congelado del dispositivo, sin ningún significado económico ni una regla que
+    /// diga cuál de las dos mitades es la verdad. Un <c>descuentoUnitario</c> sin
+    /// <c>precioUnitario</c> tampoco tiene destino (dto-contract-honesty regla 1): mismo código,
+    /// se rechaza en vez de ignorarse. Negativo en cualquiera de los dos ⇒ 400
+    /// <c>precio_offline_invalido</c>.
+    ///
+    /// judgment-day ronda 2 (SUGGESTION, defecto real descubierto al escribir la cobertura de
+    /// borde): un <c>descuentoUnitario</c> MAYOR que su <c>precioUnitario</c> también cae en
+    /// <c>precio_offline_invalido</c> — sin este chequeo, <c>CalculadorDeTotales.Calcular</c>
+    /// persistía un total de línea NEGATIVO (bruto − descuento &lt; 0) y nada aguas abajo lo
+    /// rechazaba (<c>ValidadorDePagos</c> regla 2 solo exige que el pago cubra el total; con un
+    /// total negativo, un pago de $0 la "cubre"). El camino online nunca puede llegar a esto
+    /// (<c>ResolvedorDeOfertas</c> clampea el descuento a <c>[0, precioOriginal]</c>), pero el
+    /// offline recibe el precio ya calculado por el dispositivo, sin ese clamp — un descuento
+    /// igual al precio SÍ se admite (línea gratis, total 0, caso de negocio válido).</summary>
+    private static void ExigirPreciosOfflineValidos(IReadOnlyList<LineaDeVenta> lineas, long? numeroPreasignado)
+    {
+        if (lineas.Any(l => l.PrecioUnitario is null && l.DescuentoUnitario is not null))
+        {
+            throw new ErrorDominio(
+                "precio_offline_incompleto",
+                "descuentoUnitario sin precioUnitario no tiene destino: toda línea con descuento offline " +
+                "tiene que traer también su precio.",
+                400);
+        }
+
+        if (lineas.All(l => l.PrecioUnitario is null))
+        {
+            return;
+        }
+
+        if (numeroPreasignado is null)
+        {
+            throw new ErrorDominio(
+                "precio_offline_no_admitido",
+                "El precio de una línea solo se admite junto con un número pre-asignado (venta offline).",
+                400);
+        }
+
+        if (lineas.Any(l => l.PrecioUnitario is null))
+        {
+            throw new ErrorDominio(
+                "precio_offline_incompleto",
+                "Con precio offline, todas las líneas tienen que traer su precio; no se admite una mezcla.",
+                400);
+        }
+
+        if (lineas.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0
+                || (l.DescuentoUnitario ?? 0m) > l.PrecioUnitario!.Value))
+        {
+            throw new ErrorDominio(
+                "precio_offline_invalido",
+                "El precio y el descuento offline de cada línea tienen que ser mayores o iguales a cero, " +
+                "y el descuento no puede superar al precio (un total de línea negativo no es válido).",
+                400);
+        }
+    }
+
     private static string? NormalizarOpcional(string? valor)
     {
         var limpio = valor?.Trim();
@@ -1938,7 +2092,8 @@ public class ServicioDeVentas(
                 return new ItemEmitido(
                     i.Orden, i.IdArticulo, i.Descripcion, i.CodigoBarra, i.IdArea, i.IdListaPrecio, i.IdOferta,
                     i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
-                    planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false);
+                    planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false,
+                    planItem?.PrecioDiscrepante ?? false);
             })
             .ToList();
 
@@ -1971,11 +2126,18 @@ public class ServicioDeVentas(
 
     // ---- El plan inmutable (design: "PlanDeVenta(immutable)") --------------------------------
 
+    /// <summary><see cref="PrecioDiscrepante"/>/<see cref="PrecioEsperado"/>/
+    /// <see cref="DescuentoEsperado"/> (stage-pos-venta-offline-backend): diagnóstico EN MEMORIA
+    /// de una venta offline cuyo precio congelado no coincide con lo que el servidor hubiera
+    /// cobrado HOY — nunca una columna nueva de <c>items_comprobante_venta</c> (DB CHANGE GATE
+    /// evitado a propósito). <c>false</c>/<c>null</c> para toda línea online, mismo default que
+    /// <see cref="LoteVencido"/> para no exigirle nada a los call sites preexistentes.</summary>
     private readonly record struct LineaDelPlan(
         int IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
         decimal Total, bool EsProducto, decimal? CostoUnitario,
-        int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false);
+        int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
+        bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);

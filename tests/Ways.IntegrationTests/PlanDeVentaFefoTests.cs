@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Stock;
@@ -431,7 +432,8 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         await servicioDeVentas.EmitirAsync(SolicitudSimple(ctx, idArticulo, 1m, idLote));
 

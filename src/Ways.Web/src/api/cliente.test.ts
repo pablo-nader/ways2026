@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
 
-const { alPerderLaSesion, api, ErrorApi, nombreDeArchivo } = await import('./cliente')
+const { alPerderLaSesion, api, ErrorApi, ErrorDeRed, nombreDeArchivo } = await import('./cliente')
 const { establecerTokenDeSesionBearer, inicializarUrlServidor, tokenDeSesionBearerActual } = await import('./entornoTauri')
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: unknown }
@@ -98,6 +98,71 @@ describe('header Authorization bajo Tauri (slice bearer)', () => {
 
     await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
     expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+})
+
+describe('ErrorDeRed (stage-pos-venta-offline-backend, Parte C: "el servidor dijo que no" vs. "no hubo servidor")', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('un fetch que rechaza (sin red) en api.get lanza ErrorDeRed, nunca ErrorApi', async () => {
+    const fallaDeRed = new TypeError('Failed to fetch')
+    fetchMock.mockRejectedValue(fallaDeRed)
+
+    const error = await api.get('/algo').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ErrorDeRed)
+    expect(error).not.toBeInstanceOf(ErrorApi)
+  })
+
+  it('ErrorDeRed conserva la excepción cruda de fetch en causa, sin asumir su forma', async () => {
+    const fallaDeRed = new TypeError('Failed to fetch')
+    fetchMock.mockRejectedValue(fallaDeRed)
+
+    const error = (await api.get('/algo').catch((e: unknown) => e)) as InstanceType<typeof ErrorDeRed>
+
+    expect(error.causa).toBe(fallaDeRed)
+    expect(error.message).toBe('No se pudo contactar al servidor. Revisá tu conexión.')
+  })
+
+  it('una falla de red NUNCA dispara alPerderLaSesion — a diferencia de un 401 real, el servidor ni participó', async () => {
+    const observador = vi.fn()
+    const dejarDeEscuchar = alPerderLaSesion(observador)
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorDeRed)
+    expect(observador).not.toHaveBeenCalled()
+
+    dejarDeEscuchar()
+  })
+
+  it('api.post/put/delete también relanzan una falla de red como ErrorDeRed', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(api.post('/algo', { x: 1 })).rejects.toBeInstanceOf(ErrorDeRed)
+    await expect(api.put('/algo', { x: 1 })).rejects.toBeInstanceOf(ErrorDeRed)
+    await expect(api.delete('/algo')).rejects.toBeInstanceOf(ErrorDeRed)
+  })
+
+  it('api.descargar también relanza una falla de red como ErrorDeRed, sin crear ningún object URL', async () => {
+    const crearUrlMock = vi.fn(() => 'blob:mock-url')
+    URL.createObjectURL = crearUrlMock as unknown as typeof URL.createObjectURL
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(api.descargar('/algo/export')).rejects.toBeInstanceOf(ErrorDeRed)
+    expect(crearUrlMock).not.toHaveBeenCalled()
+  })
+
+  it('una respuesta del servidor (aunque sea 500) sigue siendo ErrorApi, nunca ErrorDeRed — el servidor SÍ participó', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 500, ok: false, json: () => Promise.resolve({ codigo: 'error_interno' }) }))
+
+    const error = await api.get('/algo').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ErrorApi)
+    expect(error).not.toBeInstanceOf(ErrorDeRed)
   })
 })
 

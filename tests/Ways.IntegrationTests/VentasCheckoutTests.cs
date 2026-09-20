@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Auditoria;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
@@ -922,7 +923,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         await servicioDeVentas.ObtenerAsync(idComprobante);
 
@@ -1123,7 +1125,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
@@ -1217,7 +1220,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null, lineas,
