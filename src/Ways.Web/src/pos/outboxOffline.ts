@@ -69,11 +69,22 @@ export async function agregarAOutbox(almacen: AlmacenClaveValor, venta: VentaEnC
   return relectura
 }
 
+/** judgment-day ronda 2 (WARNING): verifica la extracción releyendo, mismo criterio que
+ * `agregarAOutbox`/`agregarARechazada` — antes de este fix ignoraba el booleano de
+ * `guardarOutbox` y devolvía el array filtrado en memoria sin confirmar que la escritura
+ * realmente aplicó. Una escritura perdida dejaba la venta durablemente en el outbox mientras el
+ * llamador (`drenarOutbox`) seguía como si ya hubiera salido — posible duplicado real si esa
+ * misma venta también quedaba archivada en `ventasRechazadas`. Tira `ErrorDePersistenciaOffline`
+ * si la relectura todavía trae el `idLocal` después de intentar sacarlo. */
 export async function quitarDeOutbox(almacen: AlmacenClaveValor, idLocal: string): Promise<VentaEnCola[]> {
   const actual = await leerOutbox(almacen)
   const siguiente = actual.filter((v) => v.idLocal !== idLocal)
   await guardarOutbox(almacen, siguiente)
-  return siguiente
+  const relectura = await leerOutbox(almacen)
+  if (relectura.some((v) => v.idLocal === idLocal)) {
+    throw new ErrorDePersistenciaOffline('No se pudo quitar la venta del outbox de forma durable.')
+  }
+  return relectura
 }
 
 export function leerBloque(almacen: AlmacenClaveValor): Promise<BloqueDeNumeracionLocal | null> {
@@ -86,10 +97,13 @@ export async function guardarBloque(almacen: AlmacenClaveValor, bloque: BloqueDe
 
 const CLAVE_RECHAZADAS = 'ventasRechazadas'
 
-/** Una venta que el servidor rechazó de forma PERMANENTE al drenar (nunca un `ErrorDeRed`
- * transitorio) — se saca del outbox para no bloquear el drenado de las ventas posteriores, pero
- * se conserva acá con su error real: es una venta real, con su ticket ya entregado, que nunca se
- * descarta en silencio (judgment-day ronda 1, CRITICAL — "needs attention", nunca "se perdió"). */
+/** Una venta que el servidor rechazó de forma PERMANENTE al drenar (un 4xx real — nunca un 5xx ni
+ * un `ErrorDeRed`, ambos transitorios, ver `useSincronizacionOffline.drenarOutbox`) — se saca del
+ * outbox para no bloquear el drenado de las ventas posteriores, pero se conserva acá con su error
+ * real: es una venta real, con su ticket ya entregado, que nunca se descarta en silencio
+ * (judgment-day ronda 1, CRITICAL — "needs attention", nunca "se perdió"). Se resuelve a mano con
+ * `reintentarVentaConError`/`descartarVentaConError` de `useSincronizacionOffline.ts`, nunca
+ * queda huérfana sin salida (judgment-day ronda 2, WARNING). */
 export type VentaRechazada = VentaEnCola & { mensaje: string }
 
 export function leerRechazadas(almacen: AlmacenClaveValor): Promise<VentaRechazada[]> {
@@ -102,14 +116,34 @@ function guardarRechazadas(almacen: AlmacenClaveValor, rechazadas: VentaRechazad
 
 /** Encola al FINAL, mismo criterio que `agregarAOutbox` (incluida la verificación por relectura:
  * esta venta YA estaba durablemente guardada en el outbox, moverla de acá sin confirmar dónde
- * queda sería perderla). */
+ * queda sería perderla). Idempotente por `idLocal` (judgment-day ronda 2, WARNING): una repetición
+ * de la misma secuencia de archivado — interrumpida entre este `agregarARechazada` y el
+ * `quitarDeOutbox` que le sigue en `drenarOutbox` — no debe duplicar la entrada archivada al
+ * reintentar desde el mismo punto. */
 export async function agregarARechazada(almacen: AlmacenClaveValor, rechazada: VentaRechazada): Promise<VentaRechazada[]> {
   const actual = await leerRechazadas(almacen)
+  if (actual.some((v) => v.idLocal === rechazada.idLocal)) return actual
+
   const siguiente = [...actual, rechazada]
   const escrito = await guardarRechazadas(almacen, siguiente)
   const relectura = escrito ? await leerRechazadas(almacen) : []
   if (!relectura.some((v) => v.idLocal === rechazada.idLocal)) {
     throw new ErrorDePersistenciaOffline('No se pudo archivar la venta rechazada de forma durable.')
+  }
+  return relectura
+}
+
+/** judgment-day ronda 2 (WARNING): contraparte verificada de `agregarARechazada` — usada por
+ * `reintentarVentaConError`/`descartarVentaConError` para sacar una venta de `ventasRechazadas`
+ * sin asumir que la escritura aplicó. Mismo criterio de verificación por relectura que
+ * `quitarDeOutbox`. Tira `ErrorDePersistenciaOffline` si la relectura todavía trae el `idLocal`. */
+export async function quitarDeRechazada(almacen: AlmacenClaveValor, idLocal: string): Promise<VentaRechazada[]> {
+  const actual = await leerRechazadas(almacen)
+  const siguiente = actual.filter((v) => v.idLocal !== idLocal)
+  await guardarRechazadas(almacen, siguiente)
+  const relectura = await leerRechazadas(almacen)
+  if (relectura.some((v) => v.idLocal === idLocal)) {
+    throw new ErrorDePersistenciaOffline('No se pudo quitar la venta rechazada de forma durable.')
   }
   return relectura
 }

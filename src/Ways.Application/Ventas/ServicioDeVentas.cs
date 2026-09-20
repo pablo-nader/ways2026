@@ -2000,7 +2000,17 @@ public class ServicioDeVentas(
     /// diga cuál de las dos mitades es la verdad. Un <c>descuentoUnitario</c> sin
     /// <c>precioUnitario</c> tampoco tiene destino (dto-contract-honesty regla 1): mismo código,
     /// se rechaza en vez de ignorarse. Negativo en cualquiera de los dos ⇒ 400
-    /// <c>precio_offline_invalido</c>.</summary>
+    /// <c>precio_offline_invalido</c>.
+    ///
+    /// judgment-day ronda 2 (SUGGESTION, defecto real descubierto al escribir la cobertura de
+    /// borde): un <c>descuentoUnitario</c> MAYOR que su <c>precioUnitario</c> también cae en
+    /// <c>precio_offline_invalido</c> — sin este chequeo, <c>CalculadorDeTotales.Calcular</c>
+    /// persistía un total de línea NEGATIVO (bruto − descuento &lt; 0) y nada aguas abajo lo
+    /// rechazaba (<c>ValidadorDePagos</c> regla 2 solo exige que el pago cubra el total; con un
+    /// total negativo, un pago de $0 la "cubre"). El camino online nunca puede llegar a esto
+    /// (<c>ResolvedorDeOfertas</c> clampea el descuento a <c>[0, precioOriginal]</c>), pero el
+    /// offline recibe el precio ya calculado por el dispositivo, sin ese clamp — un descuento
+    /// igual al precio SÍ se admite (línea gratis, total 0, caso de negocio válido).</summary>
     private static void ExigirPreciosOfflineValidos(IReadOnlyList<LineaDeVenta> lineas, long? numeroPreasignado)
     {
         if (lineas.Any(l => l.PrecioUnitario is null && l.DescuentoUnitario is not null))
@@ -2033,11 +2043,13 @@ public class ServicioDeVentas(
                 400);
         }
 
-        if (lineas.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0))
+        if (lineas.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0
+                || (l.DescuentoUnitario ?? 0m) > l.PrecioUnitario!.Value))
         {
             throw new ErrorDominio(
                 "precio_offline_invalido",
-                "El precio y el descuento offline de cada línea tienen que ser mayores o iguales a cero.",
+                "El precio y el descuento offline de cada línea tienen que ser mayores o iguales a cero, " +
+                "y el descuento no puede superar al precio (un total de línea negativo no es válido).",
                 400);
         }
     }

@@ -348,6 +348,36 @@ public class VentaOfflinePrecioTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal("precio_offline_invalido", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>judgment-day ronda 2 (SUGGESTION — defecto real descubierto al escribir esta
+    /// cobertura de borde, no académico: reportado y cerrado en el mismo pase). ANTES de este fix,
+    /// un <c>descuentoUnitario</c> mayor que <c>precioUnitario</c> pasaba
+    /// <c>ExigirPreciosOfflineValidos</c> sin chequeo, <c>CalculadorDeTotales.Calcular</c>
+    /// persistía un total de línea NEGATIVO, y <c>ValidadorDePagos</c> lo aceptaba igual con un
+    /// pago de $0 (su regla 2 solo exige "el pago cubre el total"; un total negativo lo cubre con
+    /// cualquier cosa, incluido nada). Ahora se rechaza con el mismo código que el resto de los
+    /// precios/descuentos inválidos.</summary>
+    [Fact]
+    public async Task UnDescuentoOfflineMayorQueElPrecioEsInvalido()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnDescuentoOfflineMayorQueElPrecioEsInvalido));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "descuento-mayor");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudConPrecioOffline(idPuntoVenta, idArticulo, idMedio, 0m, numeroPreasignado: 1,
+                precioUnitarioOffline: 100m, descuentoUnitarioOffline: 150m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("precio_offline_invalido", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- El precio offline se registra, y el servidor todavía valida los pagos contra ÉL ------
 
     /// <summary>El test central de la Parte B: el artículo VALE HOY 150 (server-current), pero el
@@ -435,6 +465,130 @@ public class VentaOfflinePrecioTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(150m, persistido.PrecioUnitario);
         Assert.Equal(30m, persistido.Descuento);
         Assert.Equal(120m, persistido.Total);
+    }
+
+    /// <summary>judgment-day ronda 2 (SUGGESTION): borde EQUAL de la validación nueva de
+    /// <c>UnDescuentoOfflineMayorQueElPrecioEsInvalido</c> — un descuento IGUAL al precio es un
+    /// caso de negocio válido (línea gratis, ej. una promoción "llevate uno gratis"), total 0,
+    /// nunca rechazado.</summary>
+    [Fact]
+    public async Task LaVentaOfflineConDescuentoIgualAlPrecioRegistraUnaLineaGratis()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVentaOfflineConDescuentoIgualAlPrecioRegistraUnaLineaGratis));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "descuento-igual");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudConPrecioOffline(idPuntoVenta, idArticulo, idMedio, 0m, numeroPreasignado: 1,
+                precioUnitarioOffline: 100m, descuentoUnitarioOffline: 100m));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(0m, emitido.Total);
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(100m, item.PrecioUnitario);
+        Assert.Equal(100m, item.Descuento);
+        Assert.Equal(0m, item.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var persistido = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id).Select(i => i.Total).SingleAsync();
+        Assert.Equal(0m, persistido);
+    }
+
+    /// <summary>judgment-day ronda 2 (SUGGESTION): la cobertura previa de precio offline con
+    /// descuento solo probaba cantidad 1 — acá el descuento tiene que multiplicarse por la
+    /// cantidad exactamente como <c>CalculadorDeTotales.Calcular</c> lo hace (<c>descuentoUnitario
+    /// × cantidad</c>), no una sola vez sin importar cuántas unidades.</summary>
+    [Fact]
+    public async Task LaVentaOfflineConCantidadMayorAUnoMultiplicaElDescuentoPorLaCantidad()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVentaOfflineConCantidadMayorAUnoMultiplicaElDescuentoPorLaCantidad));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 50m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "cantidad-mayor");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        // 3 unidades a 50 (lista) con 10 de descuento CADA UNA: bruto = 3*50 = 150; descuento =
+        // 3*10 = 30; total = 120.
+        var solicitud = new SolicitudDeVenta(
+            idPuntoVenta, null, "TX", null,
+            [new LineaDeVenta(idArticulo, 3m, null, IdLote: null, PrecioUnitario: 50m, DescuentoUnitario: 10m)],
+            [new PagoDeVenta(idMedio, 120m, null, 0m)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+
+        var respuesta = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(120m, emitido.Total);
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(3m, item.Cantidad);
+        Assert.Equal(30m, item.Descuento);
+        Assert.Equal(120m, item.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var persistido = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id)
+            .Select(i => new { i.Cantidad, i.Descuento, i.Total })
+            .SingleAsync();
+        Assert.Equal(3m, persistido.Cantidad);
+        Assert.Equal(30m, persistido.Descuento);
+        Assert.Equal(120m, persistido.Total);
+    }
+
+    /// <summary>judgment-day ronda 2 (SUGGESTION): un carrito offline multi-línea con descuentos
+    /// MIXTOS (una línea sin descuento, otra con) — cada línea persiste su propio total
+    /// independiente y el total general es la suma exacta, igual que el comprobante sintético que
+    /// el ticket ya le mostró al cajero (<c>comprobanteOfflineSintetico.ts</c>).</summary>
+    [Fact]
+    public async Task UnCarritoOfflineConVariasLineasYDescuentosMixtosRegistraElTotalDeCadaLineaYElGeneral()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnCarritoOfflineConVariasLineasYDescuentosMixtosRegistraElTotalDeCadaLineaYElGeneral));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo1, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var (idArticulo2, _) = await SembrarServicioYMedioEfectivoAsync(idTenant, 80m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "mixto");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        // Línea 1: 1 unidad a 100, SIN descuento → 100. Línea 2: 2 unidades a 80 con 10 de
+        // descuento cada una → bruto 160, descuento 20, total 140. General: 100 + 140 = 240.
+        var solicitud = new SolicitudDeVenta(
+            idPuntoVenta, null, "TX", null,
+            [
+                new LineaDeVenta(idArticulo1, 1m, null, IdLote: null, PrecioUnitario: 100m, DescuentoUnitario: 0m),
+                new LineaDeVenta(idArticulo2, 2m, null, IdLote: null, PrecioUnitario: 80m, DescuentoUnitario: 10m)
+            ],
+            [new PagoDeVenta(idMedio, 240m, null, 0m)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+
+        var respuesta = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(240m, emitido.Total);
+        Assert.Equal(2, emitido.Items.Count);
+        var item1 = emitido.Items.Single(i => i.IdArticulo == idArticulo1);
+        var item2 = emitido.Items.Single(i => i.IdArticulo == idArticulo2);
+        Assert.Equal(100m, item1.Total);
+        Assert.Equal(140m, item2.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var totalPersistido = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id).SumAsync(i => i.Total);
+        Assert.Equal(240m, totalPersistido);
     }
 
     /// <summary>Rastro auditable de la discrepancia — nunca una columna nueva (DB CHANGE GATE

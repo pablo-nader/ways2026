@@ -26,6 +26,7 @@ import {
   necesitaReponerBloque,
   numerosDisponibles,
   quitarDeOutbox,
+  quitarDeRechazada,
   tomarProximoNumero,
   type BloqueDeNumeracionLocal,
   type MotivoRechazoOffline,
@@ -34,7 +35,7 @@ import {
 } from './outboxOffline'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
-import { ErrorDeRed } from '../api/cliente'
+import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeVenta } from '../api/tipos'
 
 /** Ciclo de sincronización oportunista — cada 20s alcanza para reponer el bloque y drenar el
@@ -73,12 +74,15 @@ export type ResultadoDeSincronizacionOffline = {
    * checkout (esa sigue siendo el `ErrorDeRed` real de cada intento) — solo gatea qué opciones
    * mostrar antes de intentar. */
   enLinea: boolean
-  /** Ventas que el servidor rechazó de forma PERMANENTE al drenar (un 409/400 real, nunca un
-   * simple "sin conexión") — se sacaron del outbox para no bloquear el drenado del resto de la
-   * cola, pero NUNCA se descartan: quedan acá, visibles con su error real, hasta que un humano
-   * las resuelva (judgment-day ronda 1, CRITICAL — antes de este fix, una sola de estas ventas
-   * frenaba el drenado entero para siempre). Bloquea el cierre de turno igual que `outboxCount`
-   * (ver `irACerrarCaja` en `Pos.tsx` y el gate de `CierreDeCaja.tsx`). `[]` sin ninguna pendiente. */
+  /** Ventas que el servidor rechazó de forma PERMANENTE al drenar (un 4xx real — nunca un 5xx ni
+   * un `ErrorDeRed`, ambos transitorios, ver `drenarOutbox`) — se sacaron del outbox para no
+   * bloquear el drenado del resto de la cola, pero NUNCA se descartan en silencio: quedan acá,
+   * visibles con su error real, hasta que el cajero las resuelva a mano con
+   * `reintentarVentaConError` (reenvío idéntico — seguro por `numeroPreasignado` + contenido) o
+   * `descartarVentaConError` (judgment-day ronda 2, WARNING — antes de este fix no existía
+   * ninguna función para resolver una entrada de esta lista). Bloquea el cierre de turno igual
+   * que `outboxCount` (ver `irACerrarCaja` en `Pos.tsx` y el gate de `CierreDeCaja.tsx`). `[]` sin
+   * ninguna pendiente. */
   ventasConError: readonly VentaRechazada[]
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
@@ -93,6 +97,21 @@ export type ResultadoDeSincronizacionOffline = {
      * previa propia que congelar (p. ej. los tests de este mismo hook). */
     instantaneaCongelada?: InstantaneaDePos | null
   }) => Promise<EncoladoOffline>
+  /** judgment-day ronda 2 (WARNING): la salida real que `ventasConError` prometía y no tenía —
+   * re-encola la venta rechazada AL FINAL del outbox para que el próximo drenado la reintente. Es
+   * seguro incluso si el rechazo original fue real y persiste (el servidor la va a rechazar otra
+   * vez con el mismo error, sin duplicar nada — `ExigirMismoContenido` dedupea por
+   * `numeroPreasignado` + contenido). Idempotente por `idLocal`: si ya no está en `ventasConError`
+   * (resuelta por otro reintento/otra pestaña), es un no-op que resuelve `true`. `false` si no se
+   * pudo persistir el movimiento de forma durable — la venta queda intacta en `ventasConError`,
+   * nunca se pierde. */
+  reintentarVentaConError: (idLocal: string) => Promise<boolean>
+  /** judgment-day ronda 2 (WARNING): la otra mitad de la salida real — descarta definitivamente
+   * una venta que nunca va a sincronizar (un rechazo real que un reintento no va a curar). Nunca
+   * se llama sin que el cajero haya confirmado explícitamente qué se descarta (la puerta de
+   * confirmación vive en `Pos.tsx`, esta función no pregunta nada por su cuenta). `false` si no se
+   * pudo persistir la baja de forma durable — la venta sigue visible en `ventasConError`. */
+  descartarVentaConError: (idLocal: string) => Promise<boolean>
 }
 
 /** Enriquece cada línea con el precio congelado de la instantánea — `null` si CUALQUIER línea no
@@ -151,17 +170,24 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
         setOutboxCount(outbox.length)
       } catch (e) {
-        if (e instanceof ErrorDeRed) {
-          // Transitorio ("reintentar más tarde, mantener el orden") — sigue sin señal, se
-          // reintenta TODO en el próximo ciclo: nunca se descarta ni se saca nada del outbox.
+        // judgment-day ronda 2 (CRITICAL — regresión de la ronda 1): un 5xx (`ManejadorDeErrores.
+        // RespuestaDeFalloTransitorio`, típicamente `resultado_incierto`) significa "no se pudo
+        // confirmar si la escritura llegó a pasar", NUNCA un rechazo — la venta puede estar YA
+        // comprometida en el servidor, y reenviar el MISMO `numeroPreasignado` + contenido es el
+        // camino de recuperación seguro (`ServicioDeVentas.BuscarPorNumeroComprometidoAsync` +
+        // `ExigirMismoContenido` dedupean por eso). Tratarlo como rechazo permanente (como hacía
+        // esta rama antes de este fix) sacaba del outbox una venta real y ya ticketeada sin
+        // ninguna vía de recuperación. Mismo criterio que `ErrorDeRed`: sigue sin señal clara, se
+        // reintenta TODO en el próximo ciclo, nunca se descarta ni se saca nada del outbox.
+        if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado >= 500)) {
           return
         }
-        // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo (ej.
-        // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`) — nunca se descarta (la
-        // venta es real, con ticket ya entregado): se archiva como "necesita atención" con su
-        // error real y se saca del outbox para que el drenado pueda seguir con el resto de la
-        // cola, en vez de quedar rehén de un solo ítem trabado para siempre (judgment-day ronda
-        // 1, CRITICAL).
+        // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo — un 4xx real (ej.
+        // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`, una validación) — nunca se
+        // descarta (la venta es real, con ticket ya entregado): se archiva como "necesita
+        // atención" con su error real y se saca del outbox para que el drenado pueda seguir con
+        // el resto de la cola, en vez de quedar rehén de un solo ítem trabado para siempre
+        // (judgment-day ronda 1, CRITICAL).
         const mensaje =
           e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.'
         try {
@@ -172,7 +198,16 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           // reintenta desde el mismo punto.
           return
         }
-        outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
+        try {
+          outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
+        } catch {
+          // judgment-day ronda 2 (WARNING): se archivó como rechazada (confirmado arriba), pero
+          // la extracción del outbox no se pudo confirmar — el ítem queda temporalmente en AMBOS
+          // stores. Se corta esta pasada sin tocar el estado de React todavía: `agregarARechazada`
+          // es idempotente por `idLocal` (ver `outboxOffline.ts`), así que el próximo ciclo
+          // reintenta `quitarDeOutbox` sin duplicar el archivo, y converge a un solo store.
+          return
+        }
         setOutboxCount(outbox.length)
         setVentasConError(await leerRechazadas(almacenRef.current))
       }
@@ -355,5 +390,62 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     })
   }
 
-  return { instantanea, outboxCount, ventasConError, enLinea, encolarVentaOffline }
+  /** judgment-day ronda 2 (WARNING): ver el doc-comment de `reintentarVentaConError` en
+   * `ResultadoDeSincronizacionOffline` — encolada bajo `encolarOperacion` para serializarse con
+   * el drenado y con `encolarVentaOffline`, mismo criterio que el resto de las mutaciones del
+   * outbox/rechazadas de este hook. */
+  async function reintentarVentaConError(idLocal: string): Promise<boolean> {
+    return encolarOperacion(async () => {
+      const rechazadas = await leerRechazadas(almacenRef.current)
+      const rechazada = rechazadas.find((v) => v.idLocal === idLocal)
+      if (!rechazada) return true // ya no está — no-op idempotente (resuelta por otra vía).
+
+      const outboxActual = await leerOutbox(almacenRef.current)
+      if (!outboxActual.some((v) => v.idLocal === idLocal)) {
+        const ventaEnCola: VentaEnCola = {
+          idLocal: rechazada.idLocal,
+          numeroPreasignado: rechazada.numeroPreasignado,
+          idPuntoVenta: rechazada.idPuntoVenta,
+          creadoEn: rechazada.creadoEn,
+          solicitud: rechazada.solicitud,
+        }
+        try {
+          await agregarAOutbox(almacenRef.current, ventaEnCola)
+        } catch {
+          // No se pudo re-encolar de forma durable — la venta sigue intacta en `ventasConError`,
+          // nunca se pierde; el cajero puede reintentar de nuevo.
+          return false
+        }
+      }
+
+      try {
+        await quitarDeRechazada(almacenRef.current, idLocal)
+      } catch {
+        // Ya está en el outbox (confirmado arriba) pero la salida de `ventasConError` no se pudo
+        // confirmar — queda temporalmente en AMBOS stores. La próxima llamada (idempotente arriba,
+        // el `idLocal` ya está en el outbox) solo reintenta esta salida, sin duplicar nada.
+        setOutboxCount((await leerOutbox(almacenRef.current)).length)
+        return false
+      }
+
+      setOutboxCount((await leerOutbox(almacenRef.current)).length)
+      setVentasConError(await leerRechazadas(almacenRef.current))
+      return true
+    })
+  }
+
+  /** judgment-day ronda 2 (WARNING): ver el doc-comment de `descartarVentaConError` en
+   * `ResultadoDeSincronizacionOffline`. */
+  async function descartarVentaConError(idLocal: string): Promise<boolean> {
+    return encolarOperacion(async () => {
+      try {
+        setVentasConError(await quitarDeRechazada(almacenRef.current, idLocal))
+        return true
+      } catch {
+        return false
+      }
+    })
+  }
+
+  return { instantanea, outboxCount, ventasConError, enLinea, encolarVentaOffline, reintentarVentaConError, descartarVentaConError }
 }

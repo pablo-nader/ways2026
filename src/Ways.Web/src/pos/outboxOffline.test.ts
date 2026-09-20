@@ -14,6 +14,7 @@ import {
   necesitaReponerBloque,
   numerosDisponibles,
   quitarDeOutbox,
+  quitarDeRechazada,
   tomarProximoNumero,
   UMBRAL_DE_REPOSICION,
   type BloqueDeNumeracionLocal,
@@ -195,6 +196,24 @@ describe('outbox — leer/agregar/quitar, en orden', () => {
     await expect(quitarDeOutbox(almacen, 'no-existe')).resolves.toEqual(expect.objectContaining({ length: 1 }))
   })
 
+  // judgment-day ronda 2 (WARNING): antes de este fix, `quitarDeOutbox` ignoraba el booleano de
+  // `guardarOutbox` y devolvía el array filtrado EN MEMORIA sin releer — una escritura perdida
+  // dejaba la venta durablemente en el outbox mientras el llamador seguía como si ya hubiera
+  // salido. Este almacén "miente": dice que escribió pero nunca actualiza lo que `leer` devuelve.
+  it('quitarDeOutbox tira ErrorDePersistenciaOffline si la relectura todavía trae la venta (escritura no confirmada)', async () => {
+    const datos = new Map<string, unknown>()
+    datos.set('outbox', [ventaFixture({ idLocal: 'a' })])
+    const almacenQueMiente: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+      },
+      async escribir() {
+        return true // nunca toca `datos` — la relectura sigue trayendo 'a'.
+      },
+    }
+    await expect(quitarDeOutbox(almacenQueMiente, 'a')).rejects.toThrow(ErrorDePersistenciaOffline)
+  })
+
   it('guardarBloque/leerBloque hacen round-trip', async () => {
     const almacen = almacenFake()
     await guardarBloque(almacen, bloqueFixture())
@@ -262,5 +281,93 @@ describe('ventasRechazadas — needs-attention, nunca se descarta (judgment-day 
       },
     }
     await expect(agregarARechazada(almacenDegradado, { ...ventaFixture(), mensaje: 'rechazo' })).rejects.toThrow(ErrorDePersistenciaOffline)
+  })
+
+  // judgment-day ronda 2 (WARNING): sin esto, repetir la secuencia "archivar + quitar del outbox"
+  // de `drenarOutbox` tras una interrupción entre ambos pasos duplicaba la entrada archivada.
+  it('agregarARechazada es idempotente por idLocal — una repetición no duplica la entrada ya archivada', async () => {
+    const almacen = almacenFake()
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'primer intento' })
+    const siguiente = await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'segundo intento' })
+    expect(siguiente).toHaveLength(1)
+    // Conserva el mensaje YA archivado — un reintento del mismo drenado no lo pisa.
+    expect(siguiente[0].mensaje).toBe('primer intento')
+  })
+})
+
+describe('quitarDeRechazada — contraparte verificada de agregarARechazada (judgment-day ronda 2, WARNING)', () => {
+  it('saca solo la venta indicada, preservando el orden de las demás', async () => {
+    const almacen = almacenFake()
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'x' })
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'b' }), mensaje: 'y' })
+    const siguiente = await quitarDeRechazada(almacen, 'a')
+    expect(siguiente.map((v) => v.idLocal)).toEqual(['b'])
+  })
+
+  it('quitar una venta inexistente es un no-op (nunca lanza)', async () => {
+    const almacen = almacenFake()
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'x' })
+    await expect(quitarDeRechazada(almacen, 'no-existe')).resolves.toEqual(expect.objectContaining({ length: 1 }))
+  })
+
+  it('tira ErrorDePersistenciaOffline si la relectura todavía trae la venta (escritura no confirmada)', async () => {
+    const datos = new Map<string, unknown>()
+    datos.set('ventasRechazadas', [{ ...ventaFixture({ idLocal: 'a' }), mensaje: 'x' }])
+    const almacenQueMiente: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+      },
+      async escribir() {
+        return true
+      },
+    }
+    await expect(quitarDeRechazada(almacenQueMiente, 'a')).rejects.toThrow(ErrorDePersistenciaOffline)
+  })
+})
+
+// judgment-day ronda 2 (WARNING): "archivar como rechazada" + "quitar del outbox" son DOS
+// escrituras — antes de este fix, una interrupción entre ambas (la segunda pierde su escritura)
+// podía dejar la misma venta en AMBOS stores o, con una relectura ausente, perderla del todo.
+describe('secuencia archivar+quitar — converge a un solo store aunque se interrumpa (judgment-day ronda 2, WARNING)', () => {
+  it('si quitarDeOutbox falla después de archivar, la venta queda temporalmente en ambos stores; repetir la secuencia converge a rechazadas únicamente, sin duplicar', async () => {
+    const datosOutbox = new Map<string, unknown>()
+    const datosRechazadas = new Map<string, unknown>()
+    // Seed directo (bypass de `escribir`) — simula el outbox que YA tenía la venta antes de que
+    // el drenado la intente.
+    datosOutbox.set('outbox', [ventaFixture({ idLocal: 'a' })])
+    let falloLaProximaEscrituraDeOutbox = true
+
+    const almacen: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        if (clave === 'outbox') return (datosOutbox.get('outbox') as T) ?? ([] as unknown as T)
+        if (clave === 'ventasRechazadas') return (datosRechazadas.get('ventasRechazadas') as T) ?? ([] as unknown as T)
+        return null as T | null
+      },
+      async escribir<T>(clave: string, valor: T) {
+        if (clave === 'outbox' && falloLaProximaEscrituraDeOutbox) {
+          falloLaProximaEscrituraDeOutbox = false
+          return false
+        }
+        if (clave === 'outbox') datosOutbox.set('outbox', valor)
+        if (clave === 'ventasRechazadas') datosRechazadas.set('ventasRechazadas', valor)
+        return true
+      },
+    }
+
+    // Paso 1 (archivar): escribe 'ventasRechazadas', nunca toca el flag de 'outbox'.
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'rechazo' })
+    // Paso 2 (quitar del outbox): la escritura se pierde una vez — queda en AMBOS stores.
+    await expect(quitarDeOutbox(almacen, 'a')).rejects.toThrow(ErrorDePersistenciaOffline)
+    await expect(leerOutbox(almacen)).resolves.toHaveLength(1)
+    await expect(leerRechazadas(almacen)).resolves.toHaveLength(1)
+
+    // Repetir la secuencia completa (mismo criterio que el próximo ciclo de `drenarOutbox`):
+    // `agregarARechazada` es idempotente (no duplica) y esta vez `quitarDeOutbox` confirma.
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'rechazo' })
+    await expect(quitarDeOutbox(almacen, 'a')).resolves.toEqual([])
+
+    // Converge a UNA sola entrada, en UN solo store.
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+    await expect(leerRechazadas(almacen)).resolves.toHaveLength(1)
   })
 })

@@ -55,7 +55,7 @@ import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresio
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
 import { buscarArticuloOffline, formatearVejezDeInstantanea, resolverPreciosOffline } from '../pos/instantaneaOffline'
-import { mensajeDeRechazoOffline } from '../pos/outboxOffline'
+import { construirNumeroVisible, mensajeDeRechazoOffline } from '../pos/outboxOffline'
 import { medioAdmitidoOffline } from '../pos/reglasOffline'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
@@ -80,6 +80,13 @@ function etiquetaDeCliente(c: ClienteListado): string {
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
+}
+
+/** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
+ * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
+ * atención" es agramatical). */
+function fraseVentasNecesitanAtencion(cantidad: number): string {
+  return cantidad === 1 ? '1 venta necesita atención' : `${cantidad} ventas necesitan atención`
 }
 
 /** Etiqueta de un campo de una fila de pago: el nombre del medio solo no alcanza (dos filas
@@ -823,6 +830,46 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     activo: !modoPresupuesto,
   })
 
+  // judgment-day ronda 2 (WARNING): salida real para una venta que "necesita atención" —
+  // reintentar (seguro, idempotente por número preasignado + contenido) o descartar (con
+  // confirmación explícita, nunca silenciosa — `react-async-state` regla 7: la copia de
+  // `ventasConError` promete una resolución, así que el `disabled` que la habilita/deshabilita
+  // tiene que estar de verdad enchufado). Guarda de reentrancia por `ref` (regla 11) y por
+  // ENTIDAD (`idLocal`), no por pantalla completa: cada venta rechazada es independiente de las
+  // demás (regla 5), así que reintentar una no debe inhabilitar el botón de otra.
+  const idLocalesEnAccionRef = useRef<Set<string>>(new Set())
+  const [idLocalEnAccion, setIdLocalEnAccion] = useState<string | null>(null)
+  const [idLocalConfirmandoDescarte, setIdLocalConfirmandoDescarte] = useState<string | null>(null)
+
+  async function onReintentarVentaConError(idLocal: string) {
+    if (idLocalesEnAccionRef.current.has(idLocal)) return
+    idLocalesEnAccionRef.current.add(idLocal)
+    setIdLocalEnAccion(idLocal)
+    try {
+      await sincronizacionOffline.reintentarVentaConError(idLocal)
+    } finally {
+      idLocalesEnAccionRef.current.delete(idLocal)
+      setIdLocalEnAccion(null)
+    }
+  }
+
+  function onCancelarDescarteDeVenta() {
+    setIdLocalConfirmandoDescarte(null)
+  }
+
+  async function onConfirmarDescarteDeVenta(idLocal: string) {
+    if (idLocalesEnAccionRef.current.has(idLocal)) return
+    idLocalesEnAccionRef.current.add(idLocal)
+    setIdLocalEnAccion(idLocal)
+    try {
+      await sincronizacionOffline.descartarVentaConError(idLocal)
+    } finally {
+      idLocalesEnAccionRef.current.delete(idLocal)
+      setIdLocalEnAccion(null)
+      setIdLocalConfirmandoDescarte(null)
+    }
+  }
+
   // Carga inicial: clientes (para encontrar el Consumidor Final por defecto, spec: "Omitted
   // idCliente defaults to Consumidor Final") y medios de pago (panel de pagos, Slice 7). Cada uno
   // con su propio try/catch: que uno falle no bloquea al otro.
@@ -1040,7 +1087,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (cantidadPendiente > 0 || cantidadConError > 0) {
       const partes: string[] = []
       if (cantidadPendiente > 0) partes.push(`${cantidadPendiente} venta(s) sin sincronizar`)
-      if (cantidadConError > 0) partes.push(`${cantidadConError} venta(s) necesitan atención`)
+      if (cantidadConError > 0) partes.push(fraseVentasNecesitanAtencion(cantidadConError))
       setAvisoCerrarCaja(`No se puede cerrar la caja: hay ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return
     }
@@ -1896,12 +1943,69 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           {/* judgment-day ronda 1 (CRITICAL): reemplaza al viejo `errorDeDrenado` (un string único
               para el ítem más viejo, que además frenaba TODO el drenado) — ahora cada venta
               rechazada de forma permanente queda visible con su propio error real, sin bloquear
-              el resto de la cola. */}
+              el resto de la cola.
+              judgment-day ronda 2 (WARNING): cada venta ahora trae una salida real — "Reintentar"
+              (seguro, idempotente por número preasignado + contenido) y "Descartar" (con
+              confirmación explícita que nombra la venta, nunca silenciosa) — antes esta lista no
+              tenía ninguna acción y la copia prometía una resolución que no existía
+              (`claims-match-code`). */}
           {sincronizacionOffline.ventasConError.length > 0 && (
-            <span className="alert alert-danger rounded-0 py-1 px-2 small mb-0" role="alert">
-              {sincronizacionOffline.ventasConError.length} venta(s) necesitan atención:{' '}
-              {sincronizacionOffline.ventasConError.map((v) => v.mensaje).join(' — ')}
-            </span>
+            <div className="d-flex flex-column gap-1">
+              <span className="badge bg-danger">{fraseVentasNecesitanAtencion(sincronizacionOffline.ventasConError.length)}</span>
+              {sincronizacionOffline.ventasConError.map((venta) => {
+                const numeroVisible = construirNumeroVisible(venta.idPuntoVenta, venta.numeroPreasignado)
+                const enAccion = idLocalEnAccion === venta.idLocal
+                return (
+                  <span
+                    key={venta.idLocal}
+                    className="alert alert-danger rounded-0 py-1 px-2 small d-flex flex-wrap align-items-center gap-2 mb-0"
+                    role="alert"
+                  >
+                    <span>{venta.mensaje}</span>
+                    {idLocalConfirmandoDescarte === venta.idLocal ? (
+                      <>
+                        <span>¿Descartar la venta {numeroVisible}? Nunca se va a sincronizar con el servidor.</span>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger rounded-0"
+                          disabled={enAccion}
+                          onClick={() => onConfirmarDescarteDeVenta(venta.idLocal)}
+                        >
+                          {enAccion ? 'Descartando…' : 'Confirmar descarte'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          disabled={enAccion}
+                          onClick={onCancelarDescarteDeVenta}
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger rounded-0"
+                          disabled={enAccion}
+                          onClick={() => onReintentarVentaConError(venta.idLocal)}
+                        >
+                          {enAccion ? 'Reintentando…' : 'Reintentar'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          disabled={enAccion}
+                          onClick={() => setIdLocalConfirmandoDescarte(venta.idLocal)}
+                        >
+                          Descartar
+                        </button>
+                      </>
+                    )}
+                  </span>
+                )
+              })}
+            </div>
           )}
           {cargandoTurno ? (
             <span className="text-muted small">Consultando turno…</span>

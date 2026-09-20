@@ -4407,13 +4407,84 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText(/1 venta\(s\) necesitan atención/)
+      // judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
+      // atención" era agramatical para cantidad 1; con una sola venta rechazada el texto real es
+      // "1 venta necesita atención" (ver `fraseVentasNecesitanAtencion` en `Pos.tsx`).
+      await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
-      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta\(s\) necesitan atención/)).toBeInTheDocument()
+      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta necesita atención/)).toBeInTheDocument()
       expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    })
+  })
+
+  // judgment-day ronda 2 (WARNING): antes de este fix `ventasConError` no tenía ninguna salida —
+  // el comentario de `outboxOffline.ts` prometía que un humano las resolvía y no había ninguna
+  // función para hacerlo (`claims-match-code`). Ahora "Reintentar" y "Descartar" son reales.
+  describe('venta que necesita atención — reintentar/descartar (judgment-day ronda 2, WARNING)', () => {
+    async function prepararVentaRechazada() {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await agregarARechazada(almacen, {
+        idLocal: 'rechazada-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        mensaje: 'La venta 0007-00000500 no se pudo sincronizar: rechazo del servidor.',
+      })
+      mockearApiGet()
+    }
+
+    it('"Reintentar" saca la venta de "necesita atención" y la vuelve a poner en el outbox', async () => {
+      await prepararVentaRechazada()
+      // La red de `/ventas` sigue sin señal — el reintento solo tiene que RE-ENCOLARLA, nunca
+      // drenarla solo por haber tocado el botón (eso lo hace el próximo ciclo de `drenarOutbox`).
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+      await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+      await screen.findByText('Sin sincronizar: 1')
+    })
+
+    it('"Descartar" exige confirmación explícita que nombra la venta — "Cancelar" no cambia nada', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      expect(await screen.findByText(/¿Descartar la venta 0007-00000500\?/)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+      expect(screen.queryByText(/¿Descartar la venta 0007-00000500\?/)).not.toBeInTheDocument()
+      // Nunca se descartó en silencio: sigue "necesitando atención" y bloqueando el cierre.
+      expect(screen.getByText('1 venta necesita atención')).toBeInTheDocument()
+    })
+
+    it('"Confirmar descarte" la saca de "necesita atención" para siempre y deja cerrar la caja', async () => {
+      await prepararVentaRechazada()
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('1 venta necesita atención')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
+      await screen.findByText(/¿Descartar la venta 0007-00000500\?/)
+      await userEvent.click(screen.getByRole('button', { name: 'Confirmar descarte' }))
+
+      await waitFor(() => expect(screen.queryByText('1 venta necesita atención')).not.toBeInTheDocument())
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
     })
   })
 
