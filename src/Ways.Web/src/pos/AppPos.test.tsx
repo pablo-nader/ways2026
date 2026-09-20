@@ -9,6 +9,17 @@ import type { ClienteListado, MedioPagoListado, PaginaDe, ParametroResuelto, Pun
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 
+// `dispositivos.ts` (no mockeado en este archivo, corre real) también importa de aca
+// (`corriendoEnTauri`/`establecerTokenDeSesionBearer`) — el mock tiene que cubrir TODO lo que el
+// módulo real exporta, o esos imports quedan `undefined` en cualquier módulo que lo importe
+// (Vitest mockea por path resuelto, no por import individual).
+vi.mock('../api/entornoTauri', () => ({
+  corriendoEnTauri: () => false,
+  establecerTokenDeSesionBearer: () => {},
+  guardarCredencialDeDispositivo: () => Promise.resolve(),
+  tokenDeSesionBearerActual: () => null,
+}))
+
 /** Espejo mínimo del observador real de `../api/cliente`: `dispararPerdidaDeSesion` simula lo que
  * `exigirRespuestaOk` hace en producción ante CUALQUIER 401 (`AuthContext` se suscribe igual, acá
  * se prueba que `AppPos` también reacciona). */
@@ -163,6 +174,30 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
   })
 
+  it('un error de red (no un 404 explícito) muestra el error genérico', async () => {
+    // judgment-day ronda 1: la pantalla remota ya no puede preguntarle a Rust si hay una
+    // credencial local guardada (perdió el permiso de lectura, ver `lib.rs`) — un error de red
+    // siempre muestra el mensaje genérico, sin distinguir "ya vinculado localmente".
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText('No se pudo determinar el dispositivo.')).toBeInTheDocument()
+    expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
+  })
+
+  it('un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular (la base es la fuente de verdad)', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual'
+        ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
+  })
+
   it('dispositivo vinculado sin sesión (GET /auth/me 401) muestra el login del dispositivo con empresa/PV/nombre', async () => {
     mockearRutasComunes((ruta) => (ruta === '/dispositivos/actual' ? Promise.resolve(DISPOSITIVO) : undefined))
     render(<AppPos />)
@@ -183,7 +218,15 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     await userEvent.type(screen.getByPlaceholderText('Contraseña'), 'secreta123')
     await userEvent.click(screen.getByRole('button', { name: 'Ingresar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/auth/login-dispositivo', { usuario: 'jperez', password: 'secreta123' }))
+    // solicitarBearer: false porque corriendoEnTauri() está mockeado en false en este archivo
+    // (jsdom, sin window.__TAURI__) — el contrato del navegador normal no cambia.
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/auth/login-dispositivo', {
+        usuario: 'jperez',
+        password: 'secreta123',
+        solicitarBearer: false,
+      }),
+    )
   })
 
   it('con sesión llega al shell: header con empresa/PV/cajero y "Vender" ya montado (Pos con el PV fijo)', async () => {

@@ -103,8 +103,17 @@ export function AppPos() {
       if (generacionRef.current !== generacion) return
 
       if (error instanceof ErrorApi && error.codigo === 'dispositivo_no_vinculado') {
+        // 404 explícito y alcanzable: el servidor confirmó "no vinculado" — se respeta siempre,
+        // aunque haya una credencial local (sería el caso de un dispositivo revocado del lado
+        // del servidor; la fuente de verdad es la base, nunca el archivo local).
         setEstado({ fase: 'sin-vincular' })
       } else {
+        // La llamada no dio una respuesta concluyente (red caída, error inesperado del
+        // servidor). judgment-day ronda 1: esta pantalla ya no puede preguntarle a Rust si hay
+        // una credencial local guardada — la capacidad remota perdió el permiso de LECTURA del
+        // secreto de dispositivo a propósito (ver `lib.rs`, `PERMISOS_REMOTOS`), así que siempre
+        // muestra el mensaje genérico. La distinción "sin red pero ya vinculado" vuelve cuando la
+        // slice 3 mueva esta pantalla a una página local con permiso de lectura.
         setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
       }
     }

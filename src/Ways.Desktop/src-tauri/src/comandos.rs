@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::config::{self, Configuracion};
+use crate::credencial;
 use crate::impresion;
 
 #[derive(Serialize)]
@@ -128,4 +129,24 @@ pub fn info_app(app: AppHandle) -> InfoApp {
         version: app.package_info().version.to_string(),
         impresora: configuracion.and_then(|c| c.impresora),
     }
+}
+
+/// Guarda el secreto de dispositivo (stage-desktop-pos, slice bearer) que devuelve UNA sola vez
+/// `POST /api/dispositivos` en su cuerpo de respuesta — la pagina de vinculacion lo entrega aca
+/// para que Rust lo persista en su propio archivo (`credencial::guardar`, nunca en
+/// `config.json`), en vez de guardarlo en `localStorage` del lado de JS.
+#[tauri::command]
+pub fn guardar_credencial_de_dispositivo(app: AppHandle, secreto: String) -> Result<(), String> {
+    credencial::guardar(&app, &secreto)
+}
+
+/// Devuelve el secreto de dispositivo guardado, si hay uno.
+///
+/// judgment-day ronda 1 (hallazgo BLOCKER): este comando SIGUE existiendo (lo va a necesitar la
+/// slice 3, cuando `/pos.html` pase a ser una pagina LOCAL) pero deliberadamente no esta en
+/// `PERMISOS_REMOTOS` (ver `lib.rs`) — la pagina remota de hoy ya no puede invocarlo. `AppPos.tsx`
+/// dejo de llamarlo por ese motivo.
+#[tauri::command]
+pub fn leer_credencial_de_dispositivo(app: AppHandle) -> Option<String> {
+    credencial::leer(&app)
 }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Testcontainers.PostgreSql;
+using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
@@ -150,12 +152,14 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         public void Dispose() => fixture.InterceptorDelHost = null;
     }
 
-    /// <summary>Reloj OPCIONAL del handler de autenticación por cookie (<c>null</c> por default:
-    /// <c>TimeProvider.System</c>, cero cambio de comportamiento para el resto de la suite) — el
-    /// único asiento posible para probar la expiración deslizante de una sesión de dispositivo
-    /// (365 días) sin esperar 200 días de verdad: el reloj de negocio (<see cref="IRelojDelSistema"/>)
-    /// no lo mueve, es el propio <c>CookieAuthenticationHandler</c> el que necesita adelantarse.
-    /// Se setea con <see cref="ConRelojDeAutenticacionEnElHost"/>, que garantiza el reset.</summary>
+    /// <summary>Reloj OPCIONAL de los DOS handlers de autenticación de sesión —cookie y bearer,
+    /// slice bearer— (<c>null</c> por default: <c>TimeProvider.System</c>, cero cambio de
+    /// comportamiento para el resto de la suite) — el único asiento posible para probar la
+    /// expiración de una sesión de dispositivo (365 días, deslizante en la cookie / fija en el
+    /// bearer) sin esperar 365 días de verdad: el reloj de negocio (<see cref="IRelojDelSistema"/>)
+    /// no los mueve, son los propios <c>CookieAuthenticationHandler</c>/<c>ManejadorBearerDeSesion</c>
+    /// los que necesitan adelantarse. Se setea con <see cref="ConRelojDeAutenticacionEnElHost"/>,
+    /// que garantiza el reset.</summary>
     public TimeProvider? RelojDeAutenticacionDelHost { get; private set; }
 
     public IDisposable ConRelojDeAutenticacionEnElHost(TimeProvider reloj)
@@ -246,11 +250,20 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 });
 
             // Ver el doc-comment de RelojDeAutenticacionDelHost: PostConfigure corre DESPUÉS de
-            // que Program.cs terminó de configurar el esquema de cookie, así que esto solo
-            // AGREGA el reloj cuando una prueba lo pidió — nunca reemplaza nada de la
+            // que Program.cs terminó de configurar los esquemas de cookie y bearer, así que esto
+            // solo AGREGA el reloj cuando una prueba lo pidió — nunca reemplaza nada de la
             // configuración de producción.
             services.PostConfigure<CookieAuthenticationOptions>(
                 CookieAuthenticationDefaults.AuthenticationScheme,
+                opciones =>
+                {
+                    if (RelojDeAutenticacionDelHost is { } reloj)
+                    {
+                        opciones.TimeProvider = reloj;
+                    }
+                });
+            services.PostConfigure<AuthenticationSchemeOptions>(
+                EsquemasWays.Bearer,
                 opciones =>
                 {
                     if (RelojDeAutenticacionDelHost is { } reloj)

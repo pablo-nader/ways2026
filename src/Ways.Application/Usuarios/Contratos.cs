@@ -9,8 +9,12 @@ public record SolicitudDeLogin(string Mail, string Password);
 
 /// <summary>Login de cajero contra un dispositivo ya vinculado (stage-desktop-pos,
 /// <c>POST /api/auth/login-dispositivo</c>): por <c>usuario</c>, no por <c>mail</c> — el
-/// dispositivo ya fija el tenant, así que no hace falta un identificador global.</summary>
-public record SolicitudDeLoginDeDispositivo(string Usuario, string Password);
+/// dispositivo ya fija el tenant, así que no hace falta un identificador global.
+/// <paramref name="SolicitarBearer"/> (slice bearer): <c>false</c> por default — el llamador
+/// web/de hoy no lo manda y sigue recibiendo únicamente la cookie <c>ways.sesion</c>, sin
+/// cambio de forma en la respuesta. El shell de escritorio (Tauri, slice 3) lo pone en
+/// <c>true</c> para además recibir el token bearer en el cuerpo (<c>AuthEndpoints</c>).</summary>
+public record SolicitudDeLoginDeDispositivo(string Usuario, string Password, bool SolicitarBearer = false);
 
 public record UsuarioAutenticado(
     int Id,

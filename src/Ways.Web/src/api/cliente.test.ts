@@ -4,6 +4,17 @@ const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
 
 const { alPerderLaSesion, api, ErrorApi, nombreDeArchivo } = await import('./cliente')
+const { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } = await import('./entornoTauri')
+
+type GlobalConTauri = typeof globalThis & { __TAURI__?: unknown }
+
+function instalarPuenteTauri() {
+  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: vi.fn() } }
+}
+
+function quitarPuenteTauri() {
+  delete (globalThis as GlobalConTauri).__TAURI__
+}
 
 function respuestaMock(init: {
   status: number
@@ -20,6 +31,72 @@ function respuestaMock(init: {
     json: init.json ?? (() => Promise.resolve({})),
   } as unknown as Response
 }
+
+describe('header Authorization bajo Tauri (slice bearer)', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  afterEach(() => {
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('fuera de Tauri nunca adjunta Authorization, aunque haya un token guardado', async () => {
+    establecerTokenDeSesionBearer('un-token')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('bajo Tauri sin token guardado tampoco adjunta Authorization', async () => {
+    instalarPuenteTauri()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('bajo Tauri CON token guardado adjunta Authorization: Bearer <token> en pedir (api.get/post)', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token-de-sesion')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer un-token-de-sesion')
+  })
+
+  it('bajo Tauri CON token guardado adjunta Authorization: Bearer <token> en descargar', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token-de-sesion')
+    fetchMock.mockResolvedValue(
+      respuestaMock({ status: 200, ok: true, blob: () => Promise.resolve(new Blob()) }),
+    )
+
+    await api.descargar('/algo/export')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer un-token-de-sesion')
+  })
+
+  it('un 401 limpia el token bearer guardado (ya no sirve)', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token-vencido')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 401, ok: false }))
+
+    await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+})
 
 describe('nombreDeArchivo', () => {
   it('filename* (RFC 5987, UTF-8) gana sobre filename cuando ambos están presentes', () => {
@@ -83,7 +160,12 @@ describe('api.descargar', () => {
     await vi.runAllTimersAsync()
     await promesa
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/reportes/ventas/resumen/export?formato=xlsx', { credentials: 'include' })
+    // headers: {} porque el test corre fuera de Tauri (jsdom, sin window.__TAURI__) — ver
+    // 'adjunta el header Authorization…' más abajo para el camino CON Tauri.
+    expect(fetchMock).toHaveBeenCalledWith('/api/reportes/ventas/resumen/export?formato=xlsx', {
+      credentials: 'include',
+      headers: {},
+    })
     expect(crearUrlMock).toHaveBeenCalledWith(blob)
     expect(revocarUrlMock).toHaveBeenCalledWith('blob:mock-url')
   })

@@ -11,6 +11,8 @@ fn main() {
         "abrir_configuracion",
         "volver_a_pos",
         "info_app",
+        "guardar_credencial_de_dispositivo",
+        "leer_credencial_de_dispositivo",
     ]);
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

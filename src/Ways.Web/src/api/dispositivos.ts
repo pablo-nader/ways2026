@@ -7,6 +7,7 @@
  * el camino esperado la primera vez, o si el dispositivo fue desvinculado del lado del servidor.
  */
 import { api } from './cliente'
+import { corriendoEnTauri, establecerTokenDeSesionBearer } from './entornoTauri'
 import type { UsuarioAutenticado } from './tipos'
 
 export type DispositivoActual = {
@@ -21,13 +22,47 @@ export type DispositivoActual = {
  * dispositivo en la respuesta. */
 export type AltaDispositivo = { idPuntoVenta: number; nombre: string }
 
+/** Espejo de `Ways.Application.Dispositivos.DispositivoVinculado` — el secreto viaja en el
+ * cuerpo UNA sola vez, además de la cookie, para que el shell de escritorio lo persista del lado
+ * de Rust (`entornoTauri.ts`). */
+export type DispositivoVinculado = { datos: DispositivoActual; secreto: string }
+
 export type CredencialesDeDispositivo = { usuario: string; password: string }
+
+/** Espejo de `AuthEndpoints.SesionDeDispositivoConBearer` — solo llega cuando la solicitud pidió
+ * `solicitarBearer: true` (ver `iniciarSesion`); el resto de los casos siguen devolviendo
+ * `UsuarioAutenticado` a secas. */
+type RespuestaLoginDeDispositivo = UsuarioAutenticado | { usuario: UsuarioAutenticado; token: string; expiraEl: string }
+
+function esRespuestaConBearer(
+  respuesta: RespuestaLoginDeDispositivo,
+): respuesta is { usuario: UsuarioAutenticado; token: string; expiraEl: string } {
+  return 'token' in respuesta
+}
 
 export const clienteDeDispositivos = {
   obtenerActual: () => api.get<DispositivoActual>('/dispositivos/actual'),
-  vincular: (datos: AltaDispositivo) => api.post<DispositivoActual>('/dispositivos', datos),
-  /** `POST /auth/login-dispositivo` — misma forma de respuesta que `POST /auth/login`, pero
-   * exige la cookie de dispositivo (nunca funciona en la app web normal). */
-  iniciarSesion: (credenciales: CredencialesDeDispositivo) =>
-    api.post<UsuarioAutenticado>('/auth/login-dispositivo', credenciales),
+  /** Devuelve el sobre completo (`DispositivoVinculado`, datos + secreto) — a propósito, no solo
+   * `DispositivoActual`: es responsabilidad del LLAMADOR (`PantallaDeVinculacion.tsx`) decidir
+   * qué hacer con el secreto (persistirlo del lado de Rust bajo Tauri), no de este cliente. */
+  vincular: (datos: AltaDispositivo) => api.post<DispositivoVinculado>('/dispositivos', datos),
+  /** `POST /auth/login-dispositivo` — misma forma de respuesta que `POST /auth/login` para el
+   * navegador normal (exige la cookie de dispositivo, nunca funciona en la app web sin ella).
+   * Bajo Tauri pide ADEMÁS el token bearer (`solicitarBearer: true`) y lo guarda en memoria
+   * (`entornoTauri.ts`) para que `cliente.ts` lo adjunte en las requests siguientes — preparación
+   * para la slice 3, donde la cookie va a dejar de viajar por ser cross-site. */
+  iniciarSesion: async (credenciales: CredencialesDeDispositivo): Promise<UsuarioAutenticado> => {
+    const solicitarBearer = corriendoEnTauri()
+    const respuesta = await api.post<RespuestaLoginDeDispositivo>('/auth/login-dispositivo', {
+      ...credenciales,
+      solicitarBearer,
+    })
+
+    if (esRespuestaConBearer(respuesta)) {
+      establecerTokenDeSesionBearer(respuesta.token)
+      return respuesta.usuario
+    }
+
+    return respuesta
+  },
 }
