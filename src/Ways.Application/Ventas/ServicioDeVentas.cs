@@ -448,13 +448,15 @@ public class ServicioDeVentas(
         });
     }
 
-    /// <summary>judgment-day (CRITICAL, ronda 1): guarda de contenido del camino
-    /// NumeroPreasignado — sin esto, un reenvío con un carrito DISTINTO bajo el mismo número
-    /// pre-asignado recibía en silencio el comprobante de la PRIMERA venta (contenido y total
-    /// ajenos al pedido que en verdad llegó). Compara lo material — el total y el conjunto
-    /// (idArticulo, cantidad) de líneas — contra el plan recién decidido; sin coincidencia, 409 en
-    /// vez de sustituir en silencio. Sin columna nueva: compara contra los propios items/total ya
-    /// persistidos del comprobante encontrado.</summary>
+    /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
+    /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
+    /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
+    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero: el conjunto (idArticulo,
+    /// cantidad) de líneas, idCliente, idComprobanteAsociado y la composición de pagos
+    /// (idMedioPago, importe) — nunca el total ni el precio de ningún item (ver el comentario
+    /// dentro del método), y tampoco <c>Observaciones</c> (idem, ver el comentario dentro del
+    /// método: es metadata, no identidad). Sin columna nueva: compara contra los propios
+    /// items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
     {
         var lineasExistentes = existente.Items
@@ -469,7 +471,44 @@ public class ServicioDeVentas(
             .ThenBy(l => l.Item2)
             .ToList();
 
-        if (existente.Total != plan.Total || !lineasExistentes.SequenceEqual(lineasSolicitadas))
+        var pagosExistentes = existente.Pagos
+            .Select(p => (p.IdMedioPago, p.Importe))
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ToList();
+
+        var pagosSolicitados = plan.Pagos
+            .Select(p => (p.IdMedioPago, p.Importe))
+            .OrderBy(p => p.IdMedioPago)
+            .ThenBy(p => p.Importe)
+            .ToList();
+
+        // El total queda AFUERA de esta comparación a propósito: es server-derived
+        // (servicioDeOfertas.ResolverAsync lo recalcula en cada request, a precio/oferta del
+        // momento), así que puede legítimamente cambiar entre dos intentos del MISMO pedido —
+        // comparar dinero convertiría un resync legítimo (p.ej. un dispositivo offline que
+        // sincroniza horas después, ya con otro precio vigente) en un 409 espurio sobre TODA su
+        // cola. Lo que distingue una venta ajena de un reenvío del mismo pedido es su identidad,
+        // no lo que costó: mismas líneas, mismo cliente, mismo comprobante asociado y misma
+        // composición de pagos.
+        // TODO(offline-sale/outbox, no implementado acá): sacar el total de esta guarda no cierra
+        // un gap distinto y más profundo — el servidor re-precia al momento del sync, así que una
+        // venta offline sincronizada después queda registrada al precio ACTUAL en vez del
+        // impreso en el ticket del cliente; esa solicitud va a tener que viajar con los precios
+        // que cobró. Anotado como pendiente en docs/10-modelo-de-datos.md §9.2.
+        //
+        // Observaciones tampoco entra: a diferencia de idCliente/idComprobanteAsociado/líneas/pagos
+        // —que SON el contenido de la venta (quién, qué, cómo pagó)— es una nota de texto libre,
+        // metadata incidental sobre el pedido, no un rasgo que distinga un pedido de otro. Un
+        // reenvío MANUAL (dos requests HTTP independientes, ver el comentario de arriba) puede
+        // perfectamente traer la nota retipeada o corregida sin que eso signifique "esta es otra
+        // venta" — comparar texto libre por igualdad exacta reproduciría el mismo modo de falla
+        // que ya se descartó para el total: rechazar la MISMA venta por una diferencia que no hace
+        // a su sustancia.
+        if (existente.IdCliente != plan.IdCliente
+            || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
+            || !lineasExistentes.SequenceEqual(lineasSolicitadas)
+            || !pagosExistentes.SequenceEqual(pagosSolicitados))
         {
             throw new ErrorDominio(
                 "numero_preasignado_con_otro_contenido",

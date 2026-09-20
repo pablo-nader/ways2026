@@ -1471,14 +1471,32 @@ antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenenci
   venta + tipo + número), nunca el contenido — `ux_comprobantes_venta_numero` NO blinda un
   payload distinto bajo el mismo número en este camino: el lookup encuentra la fila existente y
   devuelve antes de llegar a ningún INSERT, así que ese índice nunca se ejercita acá. Lo que
-  blinda un reenvío con carrito distinto es una comparación explícita de contenido
-  (`ServicioDeVentas.ExigirMismoContenido`: total + el conjunto (idArticulo, cantidad) de líneas)
-  contra el comprobante ya guardado — sin coincidencia, `409 numero_preasignado_con_otro_contenido`
-  en vez de devolver la venta ajena en silencio.
+  blinda un reenvío con contenido distinto es una comparación explícita de IDENTIDAD
+  (`ServicioDeVentas.ExigirMismoContenido`: el conjunto (idArticulo, cantidad) de líneas,
+  idCliente, idComprobanteAsociado y la composición de pagos) contra el comprobante ya guardado
+  — sin coincidencia, `409 numero_preasignado_con_otro_contenido` en vez de devolver la venta
+  ajena en silencio. A propósito NO compara el total ni el precio de ningún item (judgment-day,
+  ronda 2): son server-derived y pueden cambiar legítimamente entre dos intentos del mismo pedido
+  (p.ej. un dispositivo offline que sincroniza horas después, con otro precio vigente) — comparar
+  dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. Tampoco compara
+  `observaciones` (judgment-day, ronda 2): es una nota de texto libre, metadata incidental sobre
+  el pedido, no un rasgo que distinga una venta de otra — un reenvío manual puede traerla
+  retipeada sin que eso signifique otra venta. Esta guarda cierra el riesgo de identidad (recibir
+  en silencio el comprobante de OTRA venta) pero no el de precio: una venta offline sincronizada
+  tarde queda registrada al precio ACTUAL, no al impreso en el ticket del cliente — riesgo
+  abierto, ver el ítem pendiente al final de esta sección.
 
 **Endpoint dedicado — `POST /api/ventas/reservas-numeracion`.** Solo un dispositivo
 (`Politicas.RequiereDispositivo`, apilada sobre `OperacionDePos`) puede pedir un bloque, y solo
 para SU propio punto de venta (`PoliticaDeModoDePuntoVenta`, misma regla que el checkout —
 §9.1). `cantidad` tiene un tope (`ServicioDeReservasDeNumeracion.CantidadMaxima = 500`).
+
+**Pendiente (abierto, judgment-day ronda 2): repricing al sincronizar una venta offline.** El
+servidor re-precia siempre al momento del request (`servicioDeOfertas.ResolverAsync` sobre
+`momento` actual), nunca al momento en que el operador cerró la venta en el dispositivo. Una
+venta offline que se sincroniza horas después queda registrada al precio/oferta VIGENTE en ese
+sync, no al que se imprimió en el ticket del cliente. `ExigirMismoContenido` no cierra esto —
+compara identidad, no precio, a propósito. Cierre correcto: trabajo de venta offline/outbox,
+donde la solicitud tendrá que viajar con los precios que efectivamente cobró el dispositivo.
 
 **Estado (stage-pos-reserva-de-numeracion): implementada.** Migración `ReservaDeNumeracion`.
