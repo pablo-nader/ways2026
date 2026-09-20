@@ -4,7 +4,7 @@ description: "Trigger: writing a test whose PURPOSE is to prove one specific cla
 license: Apache-2.0
 metadata:
   author: ways-project
-  version: "1.2"
+  version: "1.3"
 ---
 
 ## Activation Contract
@@ -213,6 +213,26 @@ so deleting the clause under test changes nothing the test can see.
    `soloIncompletos` only for proveedor; 9 of 12 export params; the stale gate only on
    `.then`; debounce only on Código — every one a SURVIVED mutant in judgment-day.)
 
+16. **An allowlist entry is not a test — it DELETES the only structural guard that
+   watched that route.** `SuperficieDeAutorizacionTests` walks the real
+   `EndpointDataSource` and `continue`s on every allowlisted `(metodo, RawText)`
+   tuple BEFORE reading any authorization metadata. So the moment a route is
+   allowlisted, stacking an extra policy on it (`GestionDeCatalogo` on a POS route)
+   becomes invisible to that walker — and invisible to everything else too, because
+   the negative test typically uses Root, which the stricter policy ALSO rejects, and
+   every happy path drives the route as Admin, who satisfies both. Net result: a
+   Vendedor silently loses the operation with the whole suite green. The allowlist
+   records "this route does not need GestionDeCatalogo"; it never records "a Vendedor
+   can call it". Every allowlist entry therefore ships with its positive per-role
+   test — the real role the route exists for, asserting a discriminating value from
+   the response (who performed it, the derived total), not only the status code. The
+   mutation to run is: stack the stricter policy on that exact mapping and confirm
+   the new test is the one that dies. (2026-09-19, cierre por retiro: both judges
+   raised it independently; the mutant survived 28/28 before the test existed and
+   28/28 of its siblings after. Residual: `POST /api/caja/turnos/{id}/cierre` — the
+   classic cierre — carries the identical hole and no Vendedor test; close it when
+   that route is next touched.)
+
 ## Decision Gate
 
 | Situation | Action |
@@ -225,4 +245,5 @@ so deleting the clause under test changes nothing the test can see.
 | Clause compares against a date | Fixture row ON the boundary under a pinned clock (rule 14) |
 | Guarded UPDATE with several conjuncts | Enumerate them; one kill per conjunct (rule 3) |
 | Same clause in N sibling components/params/branches | Parameterize over all siblings; mutate a non-representative one (rule 15) |
+| A route is added to an authorization allowlist | Ship its positive per-role test in the same PR; mutate by stacking the stricter policy (rule 16) |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |

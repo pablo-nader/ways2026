@@ -458,11 +458,13 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             {
                 var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
                 // Aplica TODAS las pendientes, no solo la migración bajo prueba: desde
-            // CuentaCorrienteDeProveedoresEtapa15 hasta la última del repo. El backfill que este
-            // test mide es el de la primera, pero las de más arriba corren igual sobre la misma
-            // fixture — por eso cada siembra declara la lista de columnas del esquema al que migra
-            // (ver SembrarProveedorPreMigracionAsync y sus hermanas), y no el modelo de HEAD.
-            await migrador.MigrateAsync();
+                // CuentaCorrienteDeProveedoresEtapa15 hasta la última del repo. El backfill que
+                // este test mide es el de la primera, pero las de más arriba corren igual sobre la
+                // misma fixture — de ahí que cada tabla que alguna de ellas tocó se siembre con la
+                // lista de columnas del esquema al que se migró, y nunca vía EF (ver
+                // SembrarProveedorPreMigracionAsync y sus hermanas); el resto de la siembra sigue
+                // yendo por EF, que contra esas tablas coincide con el modelo de HEAD.
+                await migrador.MigrateAsync();
             }
 
             await using var verificacion = new NpgsqlConnection(f.CadenaNueva);
