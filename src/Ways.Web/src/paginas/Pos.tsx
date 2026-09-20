@@ -673,6 +673,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // recién después el monto a retirar (POST `Retiro`). `pasoRetiro` es el único dueño de "hay un
   // modal de este flujo abierto" — nunca dos booleanos separados que podrían desincronizarse.
   const [pasoRetiro, setPasoRetiro] = useState<'confirmarApertura' | 'monto' | null>(null)
+  // regla 11/14: espejo sincrónico de `pasoRetiro` para las guardas de reentrancia — el estado es
+  // el snapshot del render anterior y un click del mismo tick lo lee viejo. `cambiarPasoRetiro` es
+  // el único escritor del slot, así que el ref y el estado nunca divergen.
+  const pasoRetiroRef = useRef<'confirmarApertura' | 'monto' | null>(null)
+  function cambiarPasoRetiro(paso: 'confirmarApertura' | 'monto' | null) {
+    pasoRetiroRef.current = paso
+    setPasoRetiro(paso)
+  }
   const [registrandoAperturaRetiro, setRegistrandoAperturaRetiro] = useState(false)
   const registrandoAperturaRetiroRef = useRef(false)
   const [errorAperturaRetiro, setErrorAperturaRetiro] = useState('')
@@ -979,6 +987,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // regla 9/11: guarda de reentrancia de primera línea, liberada siempre en el `finally` sin
     // gate de generación (un doble click no debe disparar dos consultas).
     if (verificandoCierreRef.current) return
+    // Excluyente con "Retirar": si ese flujo ya está abierto, gana él. Por `ref` y no por
+    // `pasoRetiro` porque un click del mismo tick lee el snapshot del render anterior (regla 11).
+    if (pasoRetiroRef.current !== null) return
     if (!puntoVentaSeleccionada) return
 
     verificandoCierreRef.current = true
@@ -1023,15 +1034,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   /** Abre el primer modal del flujo "Retirar" — botón propio de los controles de turno, visible
    * solo con `cajaDeEscritorio` y un turno abierto (ver `controlesTurno`). */
   function abrirRetiro() {
+    // Excluyente con "Cerrar caja": mientras su consulta está en vuelo, `pasoCierre` sigue en
+    // `null`, así que el `disabled` compartido no alcanza para un click del mismo tick (regla 11).
+    // Esta guarda es además lo que hace imposible que `pasoRetiro` cambie entre ese `await` y el
+    // `setPasoCierre` posterior: `verificandoCierreRef` recién se libera en el `finally`.
+    if (verificandoCierreRef.current) return
     setErrorAperturaRetiro('')
     setAvisoRetiroOk('')
-    setPasoRetiro('confirmarApertura')
+    cambiarPasoRetiro('confirmarApertura')
   }
 
   /** "No" del primer modal, o Escape/backdrop/"X" (`Modal.onCerrar`) — nada se auditó todavía. */
   function cancelarRetiro() {
     if (registrandoAperturaRetiroRef.current) return
-    setPasoRetiro(null)
+    cambiarPasoRetiro(null)
   }
 
   /**
@@ -1056,7 +1072,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       })
       if (!montadoRef.current) return
       cajaDeEscritorio.encolarImpresion('la apertura de cajón', pulsoDeCajon())
-      setPasoRetiro('monto')
+      cambiarPasoRetiro('monto')
     } catch (e) {
       if (!montadoRef.current) return
       setErrorAperturaRetiro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la apertura de cajón.')
@@ -1070,7 +1086,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * cancelar acá es seguro: solo descarta el monto sin registrar ningún `Retiro`. */
   function cancelarMontoRetiro() {
     if (registrandoRetiroRef.current) return
-    setPasoRetiro(null)
+    cambiarPasoRetiro(null)
     setMontoRetiro(null)
     setErrorRetiro('')
   }
@@ -1097,7 +1113,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         'el ticket de retiro',
         ticketRetiroDeEfectivo({ fecha: new Date().toISOString(), importe: montoRetiro }, cajaDeEscritorio.contexto),
       )
-      setPasoRetiro(null)
+      cambiarPasoRetiro(null)
       setMontoRetiro(null)
       setAvisoRetiroOk('Retiro registrado.')
     } catch (e) {
@@ -1733,6 +1749,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // por retiro — cualquiera de los dos con un modal abierto declara la pantalla entera inerte.
   const pantallaCobroInerte = cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
 
+  // "Cerrar caja" y "Retirar" son excluyentes y comparten UN solo derivado, para que los dos
+  // hermanos no puedan volver a divergir: mientras `verificandoCierre` está en vuelo todavía no
+  // hay ningún modal abierto, así que `pantallaCobroInerte` por sí solo dejaría "Retirar" vivo.
+  const controlesDeCajaInertes = verificandoCierre || pantallaCobroInerte
+
   /**
    * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
    * antes en "Datos de la venta") — decisión del dueño: se mueve a una posición prominente,
@@ -1772,7 +1793,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   <button
                     type="button"
                     className="btn btn-danger btn-sm rounded-0"
-                    disabled={verificandoCierre || pantallaCobroInerte}
+                    disabled={controlesDeCajaInertes}
                     onClick={() => void irACerrarCaja()}
                   >
                     {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
@@ -1783,7 +1804,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     <button
                       type="button"
                       className="btn btn-outline-warning btn-sm rounded-0"
-                      disabled={pantallaCobroInerte}
+                      disabled={controlesDeCajaInertes}
                       onClick={abrirRetiro}
                     >
                       Retirar

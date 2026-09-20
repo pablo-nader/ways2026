@@ -4001,4 +4001,101 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       expect(modalMonto.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
     })
   })
+
+  /**
+   * "Retirar" y "Cerrar caja" son excluyentes: los dos abren el cajón (POST `AperturaCajon` + su
+   * pulso) y el cajero los vive como UNA sola acción, así que los dos modales nunca pueden quedar
+   * apilados. Cláusulas bajo prueba: el derivado compartido `controlesDeCajaInertes` en el
+   * `disabled` de AMBOS botones hermanos, la guarda `if (verificandoCierreRef.current) return` de
+   * `abrirRetiro` y la guarda `if (pasoRetiroRef.current !== null) return` de `irACerrarCaja`.
+   */
+  describe('"Retirar" y "Cerrar caja" son excluyentes', () => {
+    it('mientras "Cerrar caja" verifica el turno, los dos botones quedan deshabilitados', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+
+      let resolverConsulta: (t: TurnoResumen | null) => void = () => {}
+      const consultaPendiente = new Promise<TurnoResumen | null>((resolve) => {
+        resolverConsulta = resolve
+      })
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? consultaPendiente : undefined))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      // Con la consulta en vuelo `pasoCierre` sigue en `null`: sin el derivado compartido,
+      // `pantallaCobroInerte` por sí solo dejaría "Retirar" habilitado en plena verificación.
+      expect(screen.getByRole('button', { name: 'Retirar' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Verificando…' })).toBeDisabled()
+
+      await act(async () => {
+        resolverConsulta(turnoAbiertoFixture())
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' })).toBeInTheDocument()
+      expect(screen.queryAllByRole('dialog')).toHaveLength(1)
+      expect(screen.queryByRole('dialog', { name: '¿Querés retirar efectivo?' })).not.toBeInTheDocument()
+    })
+
+    it('clic en "Cerrar caja" y en "Retirar" en el mismo tick: solo se abre el flujo de cierre', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+
+      let resolverConsulta: (t: TurnoResumen | null) => void = () => {}
+      const consultaPendiente = new Promise<TurnoResumen | null>((resolve) => {
+        resolverConsulta = resolve
+      })
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? consultaPendiente : undefined))
+
+      // `.click()` nativo sobre los dos nodos dentro de UN solo `act`: no se intercala ningún
+      // re-render, así que el `disabled` todavía no llegó al DOM y solo la guarda de `ref` decide.
+      const botonCerrar = screen.getByRole('button', { name: 'Cerrar caja' })
+      const botonRetirar = screen.getByRole('button', { name: 'Retirar' })
+      await act(async () => {
+        botonCerrar.click()
+        botonRetirar.click()
+      })
+
+      expect(screen.queryByRole('dialog', { name: '¿Querés retirar efectivo?' })).not.toBeInTheDocument()
+
+      await act(async () => {
+        resolverConsulta(turnoAbiertoFixture())
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      // Un solo flujo en pantalla: nunca los dos modales apilados (dos POST `AperturaCajon` y dos
+      // pulsos de cajón para lo que el cajero vivió como una sola acción).
+      expect(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' })).toBeInTheDocument()
+      expect(screen.queryAllByRole('dialog')).toHaveLength(1)
+      expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(0)
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+    })
+
+    it('clic en "Retirar" y en "Cerrar caja" en el mismo tick: solo se abre el flujo de retiro', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      let consultasDeTurnoAbierto = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        consultasDeTurnoAbierto += 1
+        return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      })
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      const consultasDelMontaje = consultasDeTurnoAbierto
+
+      const botonRetirar = screen.getByRole('button', { name: 'Retirar' })
+      const botonCerrar = screen.getByRole('button', { name: 'Cerrar caja' })
+      await act(async () => {
+        botonRetirar.click()
+        botonCerrar.click()
+      })
+
+      expect(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' })).toBeInTheDocument()
+      expect(screen.queryAllByRole('dialog')).toHaveLength(1)
+      expect(screen.queryByRole('dialog', { name: '¿Querés cerrar el turno?' })).not.toBeInTheDocument()
+      // "Cerrar caja" ni siquiera llegó a consultar el turno: la guarda corta antes del `await`.
+      expect(consultasDeTurnoAbierto).toBe(consultasDelMontaje)
+    })
+  })
 })
