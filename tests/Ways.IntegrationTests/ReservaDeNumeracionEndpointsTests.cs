@@ -186,7 +186,7 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
 
         // Nombre único por llamada (Guid): ux_areas_nombre_compartido choca si este helper se
         // llama dos veces para el mismo tenant (necesario para sembrar dos artículos con precios
-        // distintos en un mismo test, ver ReenviarConUnContenidoDistintoBajoElMismoNumeroPreasignadoEs409).
+        // distintos en un mismo test, ver ReenviarConOtroArticuloBajoElMismoNumeroPreasignadoEs409).
         var area = new Area
         {
             IdTenant = idTenant, Nombre = $"Ventas-{Guid.NewGuid():N}", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora
@@ -974,6 +974,49 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
             idPuntoVenta, null, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
             [new PagoDeVenta(idMedioTransferencia, 100m, "ref-replay-pagos", 0m)], null, null,
             IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+        var segunda = await cajero.PostAsJsonAsync("/api/ventas", segundaSolicitud);
+
+        Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);
+        var problema = await segunda.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_con_otro_contenido", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day (CRITICAL, ronda final — juez final): aísla el disyunto de
+    /// <c>Referencia</c> dentro del pago de <see cref="ServicioDeVentas.ExigirMismoContenido"/>.
+    /// Mismo artículo, mismo cliente (Consumidor Final), mismo comprobante asociado (null), mismo
+    /// medio (Transferencia, <c>RequiereReferencia = true</c>) y mismo importe en las dos
+    /// solicitudes — la ÚNICA diferencia es la autorización bancaria (<c>Referencia</c>), así que
+    /// solo ese disyunto puede tirar el 409 acá: dos transferencias del mismo importe con
+    /// autorizaciones distintas son dos cobros distintos, no el mismo reenviado (evidencia de
+    /// mutación: borrar solo <c>Referencia</c> de las dos tuplas la pone en rojo; revertido,
+    /// vuelve a verde).</summary>
+    [Fact]
+    public async Task ReenviarConOtraReferenciaDePagoBajoElMismoNumeroPreasignadoEs409()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(ReenviarConOtraReferenciaDePagoBajoElMismoNumeroPreasignadoEs409));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, _) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var idMedioTransferencia = await ObtenerMedioElectronicoAsync(idTenant);
+
+        var (cajero, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "replay-referencia");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        await cajero.PostAsJsonAsync(
+            "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 5));
+
+        var primeraSolicitud = new SolicitudDeVenta(
+            idPuntoVenta, null, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(idMedioTransferencia, 100m, "autorizacion-banco-A", 0m)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+        var primera = await cajero.PostAsJsonAsync("/api/ventas", primeraSolicitud);
+        Assert.Equal(HttpStatusCode.Created, primera.StatusCode);
+
+        var segundaSolicitud = primeraSolicitud with
+        {
+            Pagos = [new PagoDeVenta(idMedioTransferencia, 100m, "autorizacion-banco-B", 0m)]
+        };
         var segunda = await cajero.PostAsJsonAsync("/api/ventas", segundaSolicitud);
 
         Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);

@@ -453,7 +453,7 @@ public class ServicioDeVentas(
     /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
     /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero: el conjunto (idArticulo,
     /// cantidad) de líneas, idCliente, idComprobanteAsociado y la composición de pagos
-    /// (idMedioPago, importe) — nunca el total ni el precio de ningún item (ver el comentario
+    /// (idMedioPago, importe, referencia) — nunca el total ni el precio de ningún item (ver el comentario
     /// dentro del método), y tampoco <c>Observaciones</c> (idem, ver el comentario dentro del
     /// método: es metadata, no identidad). Sin columna nueva: compara contra los propios
     /// items/pagos ya persistidos del comprobante encontrado.</summary>
@@ -471,16 +471,22 @@ public class ServicioDeVentas(
             .ThenBy(l => l.Item2)
             .ToList();
 
+        // La referencia entra en la identidad y observaciones no, aunque las dos sean texto:
+        // ValidadorDePagos la exige para los medios con RequiereReferencia, o sea que identifica
+        // una transaccion bancaria concreta. Dos transferencias del mismo importe con
+        // autorizaciones distintas son dos cobros distintos, no el mismo reenviado.
         var pagosExistentes = existente.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe))
+            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
             .OrderBy(p => p.IdMedioPago)
             .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
             .ToList();
 
         var pagosSolicitados = plan.Pagos
-            .Select(p => (p.IdMedioPago, p.Importe))
+            .Select(p => (p.IdMedioPago, p.Importe, p.Referencia))
             .OrderBy(p => p.IdMedioPago)
             .ThenBy(p => p.Importe)
+            .ThenBy(p => p.Referencia, StringComparer.Ordinal)
             .ToList();
 
         // El total queda AFUERA de esta comparación a propósito: es server-derived

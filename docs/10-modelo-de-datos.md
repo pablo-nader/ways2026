@@ -1481,8 +1481,13 @@ antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenenci
   dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. Tampoco compara
   `observaciones` (judgment-day, ronda 2): es una nota de texto libre, metadata incidental sobre
   el pedido, no un rasgo que distinga una venta de otra — un reenvío manual puede traerla
-  retipeada sin que eso signifique otra venta. Esta guarda cierra el riesgo de identidad (recibir
-  en silencio el comprobante de OTRA venta) pero no el de precio: una venta offline sincronizada
+  retipeada sin que eso signifique otra venta. La `referencia` de un pago SI entra, aunque tambien
+  sea texto: `ValidadorDePagos` la exige para los medios con `requiere_referencia`, o sea que
+  identifica una transaccion bancaria concreta, y dos transferencias del mismo importe con
+  autorizaciones distintas son dos cobros distintos. Lo que la guarda NO compara, ademas del
+  dinero: `id_lote` de cada linea — hoy el POS manda siempre `null`, asi que no distingue nada,
+  pero dejaria de ser cierto el dia que elija lote en el cliente. Con eso, cierra el riesgo de
+  identidad (recibir en silencio el comprobante de OTRA venta) pero no el de precio: una venta offline sincronizada
   tarde queda registrada al precio ACTUAL, no al impreso en el ticket del cliente — riesgo
   abierto, ver el ítem pendiente al final de esta sección.
 
