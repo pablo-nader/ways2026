@@ -345,6 +345,14 @@ export type EmpresaListado = {
 
 export type EmpresaEdicion = { razonSocial: string; nombreFantasia: string | null; cuit: string | null }
 
+/** stage-desktop-pos (DB CHANGE GATE aprobado): invariante "una PC-caja = un punto de venta" —
+ * `Escritorio` exige a lo sumo un dispositivo activo vinculado y que solo ese dispositivo pueda
+ * vender contra él; `Web` exige lo contrario (sesión sin dispositivo). Espejo de
+ * `Ways.Domain.Organizacion.ModoPuntoVenta`. */
+export type ModoPuntoVenta = 'Escritorio' | 'Web'
+
+export const MODOS_PUNTO_VENTA: ModoPuntoVenta[] = ['Escritorio', 'Web']
+
 /** Los dos nombres de dueño son nullable por el mismo criterio que `EmpresaListado.nombreTenant`
  * (design D13); `idTenant` e `idEmpresa` dejan de renderizarse y quedan como claves de los dos
  * filtros. */
@@ -361,10 +369,13 @@ export type PuntoVentaListado = {
   web: string | null
   nombreTenant: string | null
   razonSocialEmpresa: string | null
+  modo: ModoPuntoVenta
 }
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
- * backend, `Ways.Application.Organizacion.PuntoVentaEdicion`). */
+ * backend, `Ways.Application.Organizacion.PuntoVentaEdicion`). `modo` tampoco: tiene su propio
+ * flip dedicado (`PUT /api/puntos-venta/{id}/modo`, `PuntoVentaModoEdicion`), con su propia
+ * precondición (sin dispositivo activo) y su propio rastro de auditoría. */
 export type PuntoVentaEdicion = {
   nombre: string
   domicilio: string | null
@@ -374,6 +385,10 @@ export type PuntoVentaEdicion = {
   facebook: string | null
   web: string | null
 }
+
+/** Cuerpo de `POST /api/puntos-venta/{id}/modo` — espejo de
+ * `Ways.Application.Organizacion.PuntoVentaModoEdicion`. */
+export type PuntoVentaModoEdicion = { modo: ModoPuntoVenta }
 
 // --- Clientes (stage-2-clientes-proveedores, ADR-8) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): `numero` lo
@@ -721,6 +736,7 @@ export type SolicitudDeAprovisionamiento = {
   razonSocialEmpresa: string
   nombrePuntoVenta: string
   mailAdmin: string
+  modo: ModoPuntoVenta
 }
 
 /** `passwordTemporal` se muestra UNA sola vez: la API no la vuelve a exponer. */

@@ -66,6 +66,7 @@ const puntoVentaCentro: PuntoVentaListado = {
   web: null,
   nombreTenant: 'Tenant Demo',
   razonSocialEmpresa: 'Empresa Demo',
+  modo: 'Web',
 }
 
 const puntoVentaNorte: PuntoVentaListado = {
@@ -81,6 +82,7 @@ const puntoVentaNorte: PuntoVentaListado = {
   web: null,
   nombreTenant: 'Tenant Demo',
   razonSocialEmpresa: 'Empresa Demo',
+  modo: 'Web',
 }
 
 function filaFixture(sobrescribir: Partial<FilaExistencia> = {}): FilaExistencia {

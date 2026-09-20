@@ -12,6 +12,7 @@ import type {
   EstadoTenant,
   PuntoVentaEdicion,
   PuntoVentaListado,
+  PuntoVentaModoEdicion,
   TenantEdicion,
   TenantListado,
 } from './tipos'
@@ -34,6 +35,10 @@ export const clienteDeOrganizacion = {
   editarPuntoVenta: (id: number, datos: PuntoVentaEdicion) =>
     api.put<PuntoVentaListado>(`/puntos-venta/${id}`, datos),
   eliminarPuntoVenta: (id: number) => api.delete<void>(`/puntos-venta/${id}`),
+  // stage-desktop-pos (DB CHANGE GATE aprobado): flip de modo — 409 si el punto de venta tiene
+  // un dispositivo activo (revocalo primero desde la pantalla de dispositivos).
+  actualizarModoPuntoVenta: (id: number, datos: PuntoVentaModoEdicion) =>
+    api.post<PuntoVentaListado>(`/puntos-venta/${id}/modo`, datos),
 }
 
 // --- Filtros por dueño y etiquetas (stage-20, slice 2 · design D14, D15) ---

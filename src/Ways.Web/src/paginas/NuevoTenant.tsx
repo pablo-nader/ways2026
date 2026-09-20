@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ErrorApi } from '../api/cliente'
 import type { ResultadoAprovisionamiento, SolicitudDeAprovisionamiento } from '../api/tipos'
+import { MODOS_PUNTO_VENTA } from '../api/tipos'
 import { Box } from '../componentes/Box'
 
 const FORMULARIO_VACIO: SolicitudDeAprovisionamiento = {
@@ -9,6 +10,7 @@ const FORMULARIO_VACIO: SolicitudDeAprovisionamiento = {
   razonSocialEmpresa: '',
   nombrePuntoVenta: '',
   mailAdmin: '',
+  modo: 'Web',
 }
 
 /**
@@ -138,6 +140,26 @@ export function NuevoTenant() {
               onChange={(e) => setFormulario({ ...formulario, mailAdmin: e.target.value })}
               required
             />
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="nt-modo">
+              Modo del punto de venta
+            </label>
+            <select
+              id="nt-modo"
+              className="form-select rounded-0"
+              value={formulario.modo}
+              onChange={(e) =>
+                setFormulario({ ...formulario, modo: e.target.value as SolicitudDeAprovisionamiento['modo'] })
+              }
+            >
+              {MODOS_PUNTO_VENTA.map((modo) => (
+                <option key={modo} value={modo}>
+                  {modo}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="col-12">

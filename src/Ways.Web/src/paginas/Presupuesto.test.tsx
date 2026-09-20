@@ -41,6 +41,7 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
     web: null,
     nombreTenant: 'Tenant Demo',
     razonSocialEmpresa: 'Empresa Demo',
+    modo: 'Web',
     ...sobrescribir,
   }
 }

@@ -12,7 +12,8 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
-import type { PuntoVentaListado } from '../api/tipos'
+import type { ModoPuntoVenta, PuntoVentaListado } from '../api/tipos'
+import { MODOS_PUNTO_VENTA } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
@@ -54,6 +55,11 @@ export function PuntosVenta() {
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
+  /** Formulario del flip de modo — separado del de edición descriptiva: precondición y rastro de
+   * auditoría propios (ver `organizacion.ts`, `actualizarModoPuntoVenta`). */
+  const [formularioModo, setFormularioModo] = useState<{ id: number; nombre: string; modo: ModoPuntoVenta } | null>(
+    null,
+  )
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   const [filtroEmpresa, setFiltroEmpresa] = useState(SIN_FILTRO)
@@ -164,6 +170,34 @@ export function PuntosVenta() {
     }
   }
 
+  async function guardarModo() {
+    if (!formularioModo || ocupadoRef.current) return
+
+    const datos = formularioModo
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(datos.id)
+    setError('')
+    setAviso('')
+    try {
+      try {
+        await clienteDeOrganizacion.actualizarModoPuntoVenta(datos.id, { modo: datos.modo })
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo cambiar el modo.')
+
+        return
+      }
+
+      if (generacion.current !== token) return
+
+      setFormularioModo(null)
+      await refrescarTrasEscribir(token, `Se cambió el modo de "${datos.nombre}" a ${datos.modo}.`, AVISO_REFRESCO_FALLIDO)
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
    * Abrir NO acuña generación: no hay escritura todavía. */
   function pedirBaja(puntoVenta: PuntoVentaListado, disparador: HTMLElement | null) {
@@ -211,8 +245,10 @@ export function PuntosVenta() {
       // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
       setBaja(null)
       // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
-      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404. Mismo criterio
+      // para el formulario de modo.
       setFormulario((prev) => (prev?.id === fila.id ? null : prev))
+      setFormularioModo((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja el punto de venta "${fila.nombre}".`,
@@ -384,6 +420,56 @@ export function PuntosVenta() {
           </form>
         )}
 
+        {formularioModo && (
+          <form
+            className="row g-3 border p-3 mb-4 bg-white"
+            onSubmit={(e) => {
+              e.preventDefault()
+              guardarModo()
+            }}
+          >
+            <div className="col-12">
+              <strong>Modo de {formularioModo.nombre}</strong>
+              <p className="text-muted mb-0">
+                Escritorio exige a lo sumo un dispositivo vinculado y solo ese dispositivo puede vender contra este
+                punto de venta; Web exige sesión sin dispositivo. Si tiene un dispositivo vinculado, revocalo primero
+                desde la pantalla de Dispositivos.
+              </p>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="pv-modo">
+                Modo
+              </label>
+              <select
+                id="pv-modo"
+                className="form-select rounded-0"
+                value={formularioModo.modo}
+                onChange={(e) => setFormularioModo({ ...formularioModo, modo: e.target.value as ModoPuntoVenta })}
+                disabled={bloqueado}
+              >
+                {MODOS_PUNTO_VENTA.map((modo) => (
+                  <option key={modo} value={modo}>
+                    {modo}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-12 d-flex gap-2">
+              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+                {ocupado !== null ? 'Guardando…' : 'Guardar'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                onClick={() => setFormularioModo(null)}
+                disabled={bloqueado}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        )}
+
         {cargando ? (
           <Cargando />
         ) : (
@@ -443,6 +529,7 @@ export function PuntosVenta() {
                     <th>Empresa</th>
                     <th>Nombre</th>
                     <th>Domicilio</th>
+                    <th>Modo</th>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
@@ -454,7 +541,16 @@ export function PuntosVenta() {
                       <td>{p.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO}</td>
                       <td>{p.nombre}</td>
                       <td>{p.domicilio ?? '—'}</td>
+                      <td>{p.modo}</td>
                       <td className="text-end text-nowrap">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                          onClick={() => setFormularioModo({ id: p.id, nombre: p.nombre, modo: p.modo })}
+                          disabled={bloqueado}
+                        >
+                          Modo
+                        </button>
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-primary rounded-0 me-1"
@@ -487,7 +583,7 @@ export function PuntosVenta() {
                   ))}
                   {visibles.length === 0 && (
                     <tr>
-                      <td colSpan={esPlataforma ? 6 : 5} className="text-center text-muted py-4">
+                      <td colSpan={esPlataforma ? 7 : 6} className="text-center text-muted py-4">
                         No hay puntos de venta cargados.
                       </td>
                     </tr>
