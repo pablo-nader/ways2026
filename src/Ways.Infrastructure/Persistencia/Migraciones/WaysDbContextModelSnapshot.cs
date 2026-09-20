@@ -45,6 +45,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_turno", new[] { "abierto", "cerrado" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_usuario", new[] { "activo", "bloqueado", "inactivo" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_lista", new[] { "derivada", "fija" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "modo_punto_venta", new[] { "escritorio", "web" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "motivo_stock", new[] { "ajuste", "anulacion", "compra", "decomiso", "inventario", "reclasificacion", "remito", "transferencia", "venta" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "resultado_fiscal", new[] { "aprobado", "aprobado_con_observaciones", "pendiente", "rechazado" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_documento", new[] { "cuil", "cuit", "dni", "otro", "pasaporte" });
@@ -2220,7 +2221,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_dispositivos_punto_venta");
 
                     b.HasIndex("IdTenant", "IdPuntoVenta")
-                        .HasDatabaseName("ix_dispositivos_tenant_punto_venta");
+                        .IsUnique()
+                        .HasDatabaseName("ux_dispositivos_punto_venta_activo")
+                        .HasFilter("deleted_at IS NULL");
 
                     b.ToTable("dispositivos", (string)null);
                 });
@@ -2762,6 +2765,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")
                         .HasColumnName("instagram");
+
+                    b.Property<ModoPuntoVenta>("Modo")
+                        .HasColumnType("modo_punto_venta")
+                        .HasColumnName("modo");
 
                     b.Property<string>("Nombre")
                         .IsRequired()

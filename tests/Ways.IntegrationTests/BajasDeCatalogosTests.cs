@@ -14,6 +14,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -60,7 +61,8 @@ public class BajasDeCatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var respuesta = await root.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin));
+            new SolicitudDeAprovisionamiento(
+                unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin, ModoPuntoVenta.Web));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
         var resultado = await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>();

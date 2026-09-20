@@ -1331,7 +1331,11 @@ dispositivos (                -- [operativa] id_tenant + id_punto_venta, doc 09
     created_at, updated_at, deleted_at        -- baja = revocación, siempre lógica
 );
 -- UNIQUE (token_hash)                              -- ux_dispositivos_token_hash
--- INDEX  (id_tenant, id_punto_venta)                -- ix_dispositivos_tenant_punto_venta
+-- UNIQUE (id_tenant, id_punto_venta)                -- ux_dispositivos_punto_venta_activo
+--   WHERE deleted_at IS NULL                        -- (invariante "una PC-caja = un punto de
+--                                                    --  venta", ver más abajo; reemplaza el
+--                                                    --  ix_dispositivos_tenant_punto_venta
+--                                                    --  no-único de la migración original)
 ```
 
 **RLS con la misma excepción de login que `usuarios` (doc 09/doc 08).** El dispositivo se tiene
@@ -1352,3 +1356,45 @@ revocan (baja lógica). `POST /api/auth/login-dispositivo` reusa el núcleo de
 `OnValidatePrincipal`, revalida en cada request que ese dispositivo siga vigente (no revocado,
 su punto de venta no dado de baja), igual que ya revalida el usuario y el tenant. Detalle
 completo del flujo en doc 08 §"Login de dispositivo".
+
+### 9.1 Invariante "una PC-caja = un punto de venta" (stage-desktop-pos)
+
+`puntos_venta` gana la columna `modo`, tipo nativo `modo_punto_venta` (`escritorio`, `web`),
+`NOT NULL` y **sin default de base**: el modo se elige explícitamente al crear el punto de venta,
+nunca se infiere. Ortogonal a `numero_fiscal` — ninguno de los dos condiciona al otro.
+
+```sql
+puntos_venta (
+    ...,                          -- columnas preexistentes (doc 01/09)
+    modo   modo_punto_venta NOT NULL   -- 'escritorio' | 'web', sin default
+);
+```
+
+El backstop físico de "a lo sumo un dispositivo activo por punto de venta" es
+`ux_dispositivos_punto_venta_activo` (§9). La aplicación agrega dos capas más, ambas en
+`ServicioDeVentas.ResolverPuntoVentaAsync` (checkout) y `ServicioDeDispositivos.CrearAsync`
+(vinculación):
+
+- Un actor con la claim `ways:id_dispositivo` (sesión de dispositivo) solo puede vender contra el
+  punto de venta **Escritorio** que ESE dispositivo tiene vinculado — nunca otro, aunque sea del
+  mismo tenant.
+- Un actor sin esa claim (sesión web normal) solo puede vender contra un punto de venta **Web**.
+- Vincular un dispositivo nuevo exige que el punto de venta destino ya sea **Escritorio**.
+
+Cualquier otra combinación es `409 punto_venta_modo_incompatible` — nunca `404`: el punto de
+venta existe y es del tenant correcto, lo que falla es la compatibilidad de modo.
+
+El **flip administrativo** de modo (`POST /api/puntos-venta/{id}/modo`, `Politicas.
+GestionDeOrganizacion`) exige que el punto de venta NO tenga un dispositivo activo vinculado
+(`409 punto_venta_con_dispositivo_activo` si lo tiene — el admin lo revoca primero desde la
+pantalla de Dispositivos) y queda auditado vía `ServicioDeAuditoria` (`pv.modo`). Nota: cuando
+exista la cola de escritura offline del POS de escritorio, este flip además va a tener que exigir
+esa cola vacía — flipear a Web con ventas pendientes de sincronizar las dejaría huérfanas.
+
+**Backfill (migración `ModoPuntoVentaYDispositivoActivoUnico`):** un punto de venta con un
+dispositivo activo (`deleted_at IS NULL`) al momento de migrar pasa a `Escritorio`; cualquier
+otro, a `Web`. La migración también resuelve determinísticamente cualquier violación preexistente
+de la unicidad (conserva el dispositivo de mayor `ultimo_uso_at`, desempate por `created_at` y
+después `id_dispositivo`, ambos DESC) antes de crear el índice único.
+
+**Estado (stage-desktop-pos): implementada.**

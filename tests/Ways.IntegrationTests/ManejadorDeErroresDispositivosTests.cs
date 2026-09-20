@@ -11,9 +11,12 @@ namespace Ways.IntegrationTests;
 /// stage-desktop-pos (db-error-backstops): mismo patrón unit-style que
 /// <see cref="ManejadorDeErroresFiscalTests"/> — sin <c>WaysApiFixture</c> ni Postgres real, la
 /// <see cref="PostgresException"/> se construye "a mano" contra el <see cref="ManejadorDeErrores"/>
-/// real. Cubre la rama nueva de <c>ux_dispositivos_token_hash</c>. Sin prueba de carrera real: el
-/// secreto sale de <c>RandomNumberGenerator</c> sobre 32 bytes (2^256 valores), así que forzar una
-/// colisión real es impracticable — el backstop se prueba acá solo como traducción de esquema.
+/// real. Cubre la rama de <c>ux_dispositivos_token_hash</c> (sin prueba de carrera real: el
+/// secreto sale de <c>RandomNumberGenerator</c> sobre 32 bytes, forzar una colisión es
+/// impracticable) y la de <c>ux_dispositivos_punto_venta_activo</c> (stage-desktop-pos: invariante
+/// "una PC-caja = un punto de venta" — ESA sí tiene una prueba de carrera real, ver
+/// <c>DispositivosTests.LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador</c>,
+/// acá solo se prueba la traducción de esquema).
 /// </summary>
 public class ManejadorDeErroresDispositivosTests
 {
@@ -78,5 +81,15 @@ public class ManejadorDeErroresDispositivosTests
 
         Assert.Equal(StatusCodes.Status409Conflict, estado);
         Assert.Equal("dispositivo_token_duplicado", codigo);
+    }
+
+    [Fact]
+    public async Task UxDispositivosPuntoVentaActivoSeTraduceA409PuntoVentaYaTieneDispositivo()
+    {
+        var postgres = CrearExcepcion("23505", "ux_dispositivos_punto_venta_activo");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("dup", postgres));
+
+        Assert.Equal(StatusCodes.Status409Conflict, estado);
+        Assert.Equal("punto_venta_ya_tiene_dispositivo", codigo);
     }
 }

@@ -139,6 +139,7 @@ const puntoVentaCentro: PuntoVentaListado = {
   web: null,
   nombreTenant: 'Tenant Demo',
   razonSocialEmpresa: 'Empresa Demo',
+  modo: 'Web',
 }
 
 const medioEfectivo: MedioPagoListado = {

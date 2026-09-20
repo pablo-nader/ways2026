@@ -52,7 +52,7 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
 
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);

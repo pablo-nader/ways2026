@@ -217,7 +217,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
         var alta = await root.PostAsJsonAsync(
-            "/api/plataforma/tenants", new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin));
+            "/api/plataforma/tenants", new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var resultado = (await alta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 

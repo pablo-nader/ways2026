@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Organizacion;
 
 namespace Ways.IntegrationTests;
 
@@ -45,7 +46,8 @@ public class DispositivoRevocadoYGuardDeUsoTests(WaysApiFixture fixture) : IClas
             NombreTenant: nombre,
             RazonSocialEmpresa: $"Empresa {nombre}",
             NombrePuntoVenta: "Local 1",
-            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test");
+            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test",
+            Modo: ModoPuntoVenta.Escritorio);
 
         var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);

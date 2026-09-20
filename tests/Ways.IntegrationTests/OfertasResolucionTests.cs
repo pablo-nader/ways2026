@@ -79,7 +79,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
 
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
@@ -546,6 +546,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<UnidadVenta>("unidad_venta");
                 npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

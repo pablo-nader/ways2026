@@ -70,6 +70,7 @@ puntos_venta (
     nombre         citext NOT NULL,
     domicilio, horario, whatsapp, instagram, facebook, web, ...,   -- lo que ya define el doc 03
     numero_fiscal  integer NULL,             -- Etapa 19a: PtoVta ARCA, UNIQUE por empresa (1..99999)
+    modo           modo_punto_venta NOT NULL, -- stage-desktop-pos: 'escritorio' | 'web', sin default
     FOREIGN KEY (id_empresa, id_tenant) REFERENCES empresas (id_empresa, id_tenant),
     UNIQUE (id_punto_venta, id_tenant)
 );
@@ -80,6 +81,10 @@ puntos_venta (
 > `NULL` a propósito, sin default honesto (`openspec/changes/stage-19-fiscal-arca/proposal.md`
 > §B/§C). `numero_fiscal` es `UNIQUE (id_tenant, id_empresa, numero_fiscal)` PARCIAL — vuelve
 > inyectivo el mapa de la serie de ARCA `(PtoVta, CbteTipo)` a `(id_punto_venta, codigo_afip)`.
+>
+> **Estado (stage-desktop-pos — implementada):** `puntos_venta.modo` (migración
+> `ModoPuntoVentaYDispositivoActivoUnico`) — `NOT NULL` sin default, ortogonal a `numero_fiscal`.
+> Detalle completo del invariante "una PC-caja = un punto de venta" en doc 10 §9.1.
 >
 > Esta etapa también agrega `certificados_fiscales`, una **DESVIACIÓN DOCUMENTADA** de la forma
 > de catálogo de esta sección: mientras un catálogo de tenant lleva `id_empresa NULL` = *"vale

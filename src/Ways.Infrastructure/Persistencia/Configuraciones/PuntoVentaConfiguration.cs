@@ -51,6 +51,14 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
         // factura fiscalmente sigue siendo legal para siempre.
         builder.Property(p => p.NumeroFiscal).HasColumnName("numero_fiscal");
 
+        // stage-desktop-pos (DB CHANGE GATE aprobado): NOT NULL sin default de base — el modo se
+        // elige al crear el punto de venta, nunca se infiere. Enum nativo de Postgres, mismo
+        // criterio que TipoComprobanteConfiguration.Clase.
+        builder.Property(p => p.Modo)
+            .HasColumnName("modo")
+            .HasColumnType("modo_punto_venta")
+            .IsRequired();
+
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(p => p.DeletedAt).HasColumnName("deleted_at");

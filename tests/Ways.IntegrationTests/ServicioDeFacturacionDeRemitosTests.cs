@@ -64,7 +64,7 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
@@ -213,6 +213,63 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     private static SolicitudDeFacturacionDeRemitos SolicitudFacturacion(
         Contexto ctx, IReadOnlyList<int> idsRemito, decimal importe, int? idMedio = null) =>
         new(ctx.IdPuntoVenta, idsRemito, [new PagoDeVenta(idMedio ?? ctx.IdMedioEfectivo, importe, null, 0m)], "obs-txr");
+
+    // =============================================================================================
+    // judgment-day ronda 1 (hallazgo BLOCKER 2): TXR numera desde numeraciones_comprobante (mismo
+    // espacio que TX/NCX/RC), así que comparte PoliticaDeModoDePuntoVenta con ServicioDeVentas.
+    // =============================================================================================
+
+    /// <summary>El chequeo de modo corre en <c>ResolverPuntoVentaAsync</c>, ANTES de tocar
+    /// remitos: un id de remito inexistente (<c>[1]</c>) alcanza para aislar la cláusula, sin
+    /// sembrar nada más.</summary>
+    [Fact]
+    public async Task FacturarRemitosContraUnPuntoVentaEscritorioSinDispositivoDaModoIncompatible()
+    {
+        var ctx = await PrepararAsync(nameof(FacturarRemitosContraUnPuntoVentaEscritorioSinDispositivoDaModoIncompatible));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var puntoVenta = await db.PuntosVenta.FirstAsync(p => p.Id == ctx.IdPuntoVenta);
+            puntoVenta.Modo = ModoPuntoVenta.Escritorio;
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/remitos/facturacion", SolicitudFacturacion(ctx, [1], 100m));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day ronda 2 (residual test-quality): contraparte happy-path del guard de
+    /// arriba — sin esto, un mutante que hiciera <c>PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync</c>
+    /// lanzar SIEMPRE dejaba esta clase de tests en verde (solo había la rama de rechazo). El punto
+    /// de venta Web por default de <see cref="PrepararAsync"/> es la combinación COMPATIBLE con un
+    /// actor sin claim de dispositivo (mismo criterio que <c>VentasModoPuntoVentaTests.UnActorWebPuedeVenderContraUnPuntoVentaWeb</c>):
+    /// cuerpo devuelto (identidad + total) y fila real persistida en <c>comprobantes_venta</c>.</summary>
+    [Fact]
+    public async Task FacturarRemitosContraUnPuntoVentaWebDaCreatedYElTxrQuedaPersistido()
+    {
+        var ctx = await PrepararAsync(nameof(FacturarRemitosContraUnPuntoVentaWebDaCreatedYElTxrQuedaPersistido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Modo Compatible", 120m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(ctx.IdPuntoVenta, txr.IdPuntoVenta);
+        Assert.Equal(remito.Total, txr.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == txr.Id);
+        Assert.NotNull(fila);
+        Assert.Equal(txr.Numero, fila!.Numero);
+        Assert.Equal(remito.Total, fila.Total);
+    }
 
     // =============================================================================================
     // task 6.13: consolidación básica — itemless, total == Σ headers, cero movimientos_stock
@@ -407,6 +464,7 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

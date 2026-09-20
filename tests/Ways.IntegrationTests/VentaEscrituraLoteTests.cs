@@ -58,7 +58,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
@@ -358,6 +358,7 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
                 npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
                 npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

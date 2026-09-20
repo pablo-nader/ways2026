@@ -106,7 +106,8 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         var respuesta = await cliente.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test"));
+            new SolicitudDeAprovisionamiento(
+                unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test", ModoPuntoVenta.Web));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 

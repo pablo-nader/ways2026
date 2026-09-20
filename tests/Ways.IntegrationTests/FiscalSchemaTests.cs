@@ -911,6 +911,10 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                // stage-desktop-pos: este fixture migra hasta HEAD a propósito (Up-Down-Up y el
+                // Assert.False(HasPendingModelChanges()) más abajo lo exigen) — necesita conocer
+                // cada enum nuevo que aparezca, para siempre.
+                npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
             })
             .Options;
 
@@ -1210,40 +1214,14 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     // =========================================================================================
-    // Non-regression (task 1.48) — ServicioDeVentas.cs untouched this slice
-    // =========================================================================================
-
-    [Fact]
-    public void ServicioDeVentasQuedaByteIdenticoEnEstaSlice()
-    {
-        var salida = EjecutarGit("diff", "--exit-code", "--", "src/Ways.Application/Ventas/ServicioDeVentas.cs");
-        Assert.Equal(0, salida.CodigoDeSalida);
-    }
-
-    private static (int CodigoDeSalida, string Salida) EjecutarGit(params string[] argumentos)
-    {
-        var raiz = Path.Combine(Path.GetDirectoryName(RutaDeEsteArchivo())!, "..", "..");
-        var proceso = new System.Diagnostics.Process
-        {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = raiz,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            }
-        };
-        foreach (var argumento in argumentos)
-        {
-            proceso.StartInfo.ArgumentList.Add(argumento);
-        }
-        proceso.Start();
-        var salida = proceso.StandardOutput.ReadToEnd();
-        proceso.WaitForExit();
-        return (proceso.ExitCode, salida);
-    }
-
+    // Non-regression (task 1.48) — ServicioDeVentas.cs untouched this slice. RETIRADO
+    // (stage-desktop-pos, DB CHANGE GATE aprobado): el guard era correcto para la slice
+    // FiscalArcaEtapa19a (que efectivamente no tenía ningún motivo para tocar el checkout), pero
+    // un `git diff --exit-code` sin ref de comparación asertaba "sin cambios sin commitear en
+    // este archivo, para siempre" — una invariante que cualquier slice futura con una razón real
+    // para tocar ServicioDeVentas.cs (como esta, que agrega el enforcement de modo en
+    // ResolverPuntoVentaAsync) iba a romper por construcción, sin que eso implique una regresión.
+    // Mismo criterio que el ajuste ya documentado más abajo para "EsLaUltima".
     // =========================================================================================
     // GATE GUARD (task 1.49) — exactamente una migración, has-pending-model-changes limpio,
     // cero ALTER TYPE ADD VALUE, índices = 8, CHECKs = 8 — todo por definición

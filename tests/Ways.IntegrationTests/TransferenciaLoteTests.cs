@@ -62,7 +62,7 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
@@ -99,7 +99,7 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
         var puntoVentaDestino = new PuntoVenta
         {
             IdTenant = resultado.IdTenant, IdEmpresa = resultado.IdEmpresa, Nombre = "Local 2 (lote)",
-            CreatedAt = ahora, UpdatedAt = ahora
+            Modo = ModoPuntoVenta.Web, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.PuntosVenta.Add(puntoVentaDestino);
         await db.SaveChangesAsync();
@@ -861,6 +861,7 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

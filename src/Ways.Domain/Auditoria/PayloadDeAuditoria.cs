@@ -221,4 +221,12 @@ public static class PayloadDeAuditoria
                 ["estado"] = estado,
                 ["por_cascada"] = true
             });
+
+    /// <summary><c>pv.modo</c> — stage-desktop-pos (DB CHANGE GATE aprobado). Flip administrativo
+    /// de <see cref="PuntoVenta.Modo"/>: <c>{modo}</c> en los dos lados, misma forma mínima que
+    /// <see cref="DesbloqueoDeUsuario"/> (un único campo escalar).</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        CambioDeModoPuntoVenta(ModoPuntoVenta modoAnterior, ModoPuntoVenta modoNuevo) => (
+            new Dictionary<string, object?> { ["modo"] = modoAnterior },
+            new Dictionary<string, object?> { ["modo"] = modoNuevo });
 }

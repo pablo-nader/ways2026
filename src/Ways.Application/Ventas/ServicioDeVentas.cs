@@ -8,6 +8,7 @@ using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Ofertas;
+using Ways.Application.Organizacion;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -1256,11 +1257,20 @@ public class ServicioDeVentas(
         return tipo;
     }
 
-    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
-        await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
+    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var puntoVenta = await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
             // El filtro de EF (+ RLS) ya deja invisible un punto de venta de otro tenant — ADR-8:
             // mismo 404 para "no existe" y "es de otro tenant".
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+        // judgment-day ronda 1 (hallazgo BLOCKER 2): regla ÚNICA, extraída a
+        // PoliticaDeModoDePuntoVenta — ver su doc-comment para el resto de los emisores que ahora
+        // la comparten.
+        await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
+
+        return puntoVenta;
+    }
 
     private async Task<Cliente> ResolverClienteAsync(int? idCliente, CancellationToken ct)
     {

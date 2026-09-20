@@ -5,6 +5,7 @@ using Ways.Application.Catalogos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios; // SolicitudDeLogin
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Seguridad;
@@ -34,7 +35,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
 
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);

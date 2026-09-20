@@ -146,6 +146,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // acá: ver RutasSinPolicyDeGrupo más abajo (judgment-day ronda 1, hallazgo C4).
         ("DELETE", "/api/empresas/{id:int}"),
         ("DELETE", "/api/puntos-venta/{id:int}"),
+        // stage-desktop-pos (DB CHANGE GATE aprobado): flip de modo — MISMO grupo sin policy y
+        // MISMA GestionDeOrganizacion que el PUT/DELETE de arriba; también declarada por ruta, no
+        // por grupo, mismo motivo. Ver RutasSinPolicyDeGrupo más abajo.
+        ("POST", "/api/puntos-venta/{id:int}/modo"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
@@ -233,7 +237,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // policy—, así que sacarle su `.RequireAuthorization` también lo dejaba caer al fallback
         // autenticado-only con los tres walkers verdes. Cubrir uno de los dos y no el otro dejaba
         // media puerta abierta.
-        ("PUT", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion)
+        ("PUT", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion),
+        // stage-desktop-pos (DB CHANGE GATE aprobado): mismo punto ciego que el PUT/DELETE de
+        // arriba — el flip de modo vive en el mismo grupo sin policy y declara la suya por ruta.
+        ("POST", "/api/puntos-venta/{id:int}/modo", Politicas.GestionDeOrganizacion)
     ];
 
     [Fact]

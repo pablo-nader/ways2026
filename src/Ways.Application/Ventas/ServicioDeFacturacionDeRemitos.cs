@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
+using Ways.Application.Organizacion;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -297,9 +298,21 @@ public class ServicioDeFacturacionDeRemitos(
 
     // ---- Resolución de datos, fuera de la transacción -----------------------------------------
 
-    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
-        await db.PuntosVenta.AsNoTracking().FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
+    /// <summary>judgment-day ronda 1 (hallazgo BLOCKER 2): TXR numera desde
+    /// <c>numeraciones_comprobante</c> (mismo espacio que TX/NCX/RC — <see cref="AsignadorDeNumeroComprobante"/>,
+    /// llamado más arriba en <see cref="FacturarAsync"/>), así que comparte la MISMA regla de
+    /// compatibilidad de modo que <c>ServicioDeVentas</c> — <see cref="PoliticaDeModoDePuntoVenta"/>.
+    /// <c>AsNoTracking</c> preexistente: el chequeo solo lee <c>puntoVenta.Modo</c>, no lo
+    /// muta.</summary>
+    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+        await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
+
+        return puntoVenta;
+    }
 
     private async Task<TipoComprobante> ResolverTipoTxrAsync(CancellationToken ct) =>
         await db.TiposComprobante.AsNoTracking().FirstOrDefaultAsync(t => t.Codigo == "TXR", ct)

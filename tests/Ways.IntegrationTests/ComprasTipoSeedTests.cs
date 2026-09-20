@@ -142,6 +142,8 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    // stage-desktop-pos: mismo gap que arriba, ahora con modo_punto_venta.
+                    npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                 })
                 .Options;
 
@@ -172,7 +174,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
             {
                 var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
-                await migrador.MigrateAsync(); // aplica ComprasYTransferenciasEtapa8, la única pendiente
+                await migrador.MigrateAsync(); // aplica hasta HEAD (mismo criterio documentado arriba)
             }
 
             await using var verificacion = new NpgsqlConnection(cadenaNueva);

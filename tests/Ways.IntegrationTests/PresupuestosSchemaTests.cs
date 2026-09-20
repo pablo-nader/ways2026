@@ -706,6 +706,10 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
 
     private const string MigracionAnteriorAPresupuestosEtapa17 = "20260819042145_OrdenesDeCompraEtapa16";
 
+    /// <summary>La migración bajo prueba, pineada como target EXPLÍCITO (stage-desktop-pos: mismo
+    /// motivo que <c>TurnosCajaMedioPagoEfectivoMigracionTests.MigracionBajoPrueba</c>).</summary>
+    private const string MigracionPresupuestosEtapa17 = "20260819195638_PresupuestosEtapa17";
+
     /// <summary>GATE GUARD, net 1 (task 1.38, mutation target #11): una base YA MIGRADA
     /// (existente ANTES de esta etapa, con `PRE` ya sembrado ACTIVO — el estado real de
     /// cualquier instalación operando desde antes de la etapa 17) tiene que quedar con `PRE`
@@ -790,7 +794,7 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
             await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
             {
                 var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
-                await migrador.MigrateAsync(); // aplica PresupuestosEtapa17, la única pendiente — el seeder NUNCA corre acá
+                await migrador.MigrateAsync(MigracionPresupuestosEtapa17); // el seeder NUNCA corre acá
             }
 
             await using var verificacion = new NpgsqlConnection(cadenaNueva);
@@ -864,6 +868,10 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
                     npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                     npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                    // stage-desktop-pos: este fixture corre el inicializador real, que migra a
+                    // HEAD por dentro — necesita conocer cada enum nuevo que aparezca, para
+                    // siempre (mismo motivo que CuentaCorrienteProveedorBackfillTests).
+                    npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
                 })
                 .Options;
 

@@ -69,6 +69,7 @@ function pvFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaLis
     web: null,
     nombreTenant: 'Comercio Sur',
     razonSocialEmpresa: 'Sur SRL',
+    modo: 'Web',
     ...sobrescribir,
   }
 }

@@ -55,7 +55,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
@@ -132,6 +132,31 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     private static async Task<HttpResponseMessage> RegistrarPagoAsync(
         Contexto ctx, int idCliente, SolicitudDePagoACuenta solicitud) =>
         await ctx.Admin.PostAsJsonAsync($"/api/clientes/{idCliente}/cuenta-corriente/pagos", solicitud);
+
+    // ---- judgment-day ronda 1 (hallazgo BLOCKER 2): RC numera desde numeraciones_comprobante ----
+    // (mismo espacio que TX/NCX/TXR), así que comparte PoliticaDeModoDePuntoVenta con ServicioDeVentas.
+
+    /// <summary>El chequeo de modo corre ANTES de <c>ResolverTurnoAbiertoAsync</c>: no hace falta
+    /// abrir turno para aislar esta cláusula, mismo criterio que <c>VentasModoPuntoVentaTests</c>.</summary>
+    [Fact]
+    public async Task RegistrarPagoContraUnPuntoVentaEscritorioSinDispositivoDaModoIncompatible()
+    {
+        var ctx = await PrepararAsync(nameof(RegistrarPagoContraUnPuntoVentaEscritorioSinDispositivoDaModoIncompatible));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente modo incompatible");
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var puntoVenta = await db.PuntosVenta.FirstAsync(p => p.Id == ctx.IdPuntoVenta);
+            puntoVenta.Modo = ModoPuntoVenta.Escritorio;
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, SolicitudSimple(ctx, 100m));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+    }
 
     // ---- task 2.9: forma del comprobante RC, turno, medios, CF ------------------------------
 
@@ -719,6 +744,7 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

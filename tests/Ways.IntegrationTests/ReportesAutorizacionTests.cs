@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
 namespace Ways.IntegrationTests;
@@ -59,7 +60,7 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;

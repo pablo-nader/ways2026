@@ -5,6 +5,7 @@ using Ways.Api.Seguridad;
 using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Seguridad;
@@ -65,7 +66,8 @@ public class SesionDeDispositivoExpiracionTests(WaysApiFixture fixture) : IClass
             NombreTenant: nameof(LaSesionDeUnCajeroSigueVigenteMuchoMasAlladeUnaHoraTrasElRefreshDeslizante),
             RazonSocialEmpresa: "Empresa de prueba",
             NombrePuntoVenta: "Local 1",
-            MailAdmin: "expiracion-admin@ways.test");
+            MailAdmin: "expiracion-admin@ways.test",
+            Modo: ModoPuntoVenta.Escritorio);
         var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var resultado = (await alta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;

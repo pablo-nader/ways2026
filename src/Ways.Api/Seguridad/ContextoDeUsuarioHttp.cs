@@ -42,4 +42,9 @@ public class ContextoDeUsuarioHttp(IHttpContextAccessor accessor) : IContextoDeU
         int.TryParse(Principal?.FindFirstValue(ClaimsWays.IdTenant), out var idTenant)
             ? idTenant
             : null;
+
+    public int? IdDispositivo =>
+        int.TryParse(Principal?.FindFirstValue(ClaimsWays.IdDispositivo), out var idDispositivo)
+            ? idDispositivo
+            : null;
 }

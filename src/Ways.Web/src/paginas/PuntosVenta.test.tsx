@@ -12,12 +12,13 @@ import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
 const apiPutMock = vi.fn()
+const apiPostMock = vi.fn()
 const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
     put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
@@ -65,6 +66,7 @@ function pvFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaLis
     web: null,
     nombreTenant: 'Comercio Sur',
     razonSocialEmpresa: 'Sur SRL',
+    modo: 'Web',
     ...sobrescribir,
   }
 }
@@ -113,7 +115,7 @@ function montar(items: PuntoVentaListado[] = [pvSurCentro, pvSurAnexo, pvEste]) 
   return render(<PuntosVenta />)
 }
 
-/** Columnas (root): ID · Tenant · Empresa · Nombre · Domicilio · Acciones. */
+/** Columnas (root): ID · Tenant · Empresa · Nombre · Domicilio · Modo · Acciones. */
 function nombresVisibles() {
   return screen
     .getAllByRole('row')
@@ -723,5 +725,102 @@ describe('PuntosVenta — propagación al punto de venta de sesión', () => {
     await waitFor(() => expect(screen.getByText(/porque tiene 5 ventas/)).toBeInTheDocument())
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
     expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
+  })
+})
+
+// stage-desktop-pos (DB CHANGE GATE aprobado): el flip de modo — su propio botón, su propio
+// formulario, su propio endpoint (`POST /puntos-venta/{id}/modo`), independiente del de edición
+// descriptiva.
+
+describe('PuntosVenta — flip de modo', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  it('rinde el modo vigente en su columna', async () => {
+    montar([pvFixture({ modo: 'Escritorio' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    const celdas = within(screen.getByRole('row', { name: /PV Centro/ })).getAllByRole('cell')
+    expect(celdas.at(-2)).toHaveTextContent('Escritorio')
+  })
+
+  it('cambiar el modo llama al endpoint dedicado y refresca', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(pvFixture({ modo: 'Escritorio' }))
+    montar([pvFixture({ modo: 'Web' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta/100/modo', { modo: 'Escritorio' }),
+    )
+    await waitFor(() =>
+      expect(screen.getByText('Se cambió el modo de "PV Centro" a Escritorio.')).toBeInTheDocument(),
+    )
+    expect(screen.queryByLabelText('Modo')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `ocupadoRef`, la misma guarda de re-entrancia que `confirmarBaja`
+   * (ver "un segundo click sobre la confirmación en vuelo se descarta" más arriba) — acá sobre el
+   * submit de `guardarModo` (regla 9 de `react-async-state`). */
+  it('un segundo click sobre "Guardar" en vuelo se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montar([pvFixture({ modo: 'Web' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
+
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un 409 por dispositivo activo rinde el mensaje del servidor sin cerrar el formulario', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(
+      new ErrorApi(
+        409,
+        'punto_venta_con_dispositivo_activo',
+        'Este punto de venta tiene un dispositivo vinculado: revocalo antes de cambiar el modo.',
+      ),
+    )
+    montar([pvFixture({ modo: 'Web' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Este punto de venta tiene un dispositivo vinculado: revocalo antes de cambiar el modo.'),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.getByLabelText('Modo')).toBeInTheDocument()
+  })
+
+  it('cancelar cierra el formulario sin llamar a la API', async () => {
+    const usuario = userEvent.setup()
+    montar([pvFixture({ modo: 'Web' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByLabelText('Modo')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 })

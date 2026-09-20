@@ -61,7 +61,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
@@ -105,7 +105,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var puntoVenta2 = new PuntoVenta
         {
             IdTenant = resultado.IdTenant, IdEmpresa = resultado.IdEmpresa, Nombre = $"{nombre}-PV2",
-            CreatedAt = ahora, UpdatedAt = ahora
+            Modo = ModoPuntoVenta.Web, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.PuntosVenta.Add(puntoVenta2);
         await db.SaveChangesAsync();
@@ -954,6 +954,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

@@ -33,6 +33,8 @@ public class ServicioDeAprovisionamiento(
         var razonSocial = Normalizar(solicitud.RazonSocialEmpresa, "razon_social", "razón social", 150);
         var nombrePuntoVenta = Normalizar(solicitud.NombrePuntoVenta, "punto_venta", "punto de venta", 150);
         var mailAdmin = Normalizar(solicitud.MailAdmin, "mail_admin", "mail del admin", 255);
+        var modo = solicitud.Modo
+            ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
 
         // ADR-16: EnableRetryOnFailure ya está configurado (DependencyInjection); con una
         // estrategia de reintento, EF tira si se abre una transacción por fuera de
@@ -48,7 +50,7 @@ public class ServicioDeAprovisionamiento(
         try
         {
             return await EjecutarAprovisionamientoAsync(
-                estrategia, nombreTenant, razonSocial, nombrePuntoVenta, mailAdmin, ct);
+                estrategia, nombreTenant, razonSocial, nombrePuntoVenta, mailAdmin, modo, ct);
         }
         catch (Exception error) when (FallosTransitorios.EsTransitorioEnLaCadena(error))
         {
@@ -76,6 +78,7 @@ public class ServicioDeAprovisionamiento(
         string razonSocial,
         string nombrePuntoVenta,
         string mailAdmin,
+        ModoPuntoVenta modo,
         CancellationToken ct) =>
         await estrategia.ExecuteAsync(async () =>
         {
@@ -114,6 +117,7 @@ public class ServicioDeAprovisionamiento(
             {
                 IdEmpresa = empresa.Id,
                 Nombre = nombrePuntoVenta,
+                Modo = modo,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };

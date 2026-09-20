@@ -948,6 +948,10 @@ public class RemitosSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
     private const string MigracionAnteriorARemitosEtapa17 = "20260819195638_PresupuestosEtapa17";
 
+    /// <summary>La migración bajo prueba, pineada como target EXPLÍCITO (stage-desktop-pos: mismo
+    /// motivo que <c>TurnosCajaMedioPagoEfectivoMigracionTests.MigracionBajoPrueba</c>).</summary>
+    private const string MigracionRemitosEtapa17 = "20260820004658_RemitosEtapa17";
+
     /// <summary>GATE GUARD, data statement 2 (task 4.32): una base YA MIGRADA (con
     /// <c>tipos_comprobante</c> ya poblado ANTES de esta etapa) tiene que ganar la fila
     /// <c>TXR</c> — con <c>afecta_stock = false</c> — al aplicar <c>RemitosEtapa17</c>, SIN pasar
@@ -1019,7 +1023,7 @@ public class RemitosSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
             {
                 var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
-                await migrador.MigrateAsync(); // aplica RemitosEtapa17, la única pendiente — el seeder NUNCA corre acá
+                await migrador.MigrateAsync(MigracionRemitosEtapa17); // el seeder NUNCA corre acá
             }
 
             await using var verificacion = new NpgsqlConnection(cadenaNueva);

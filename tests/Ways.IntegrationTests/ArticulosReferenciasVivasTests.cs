@@ -11,6 +11,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Proveedores;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
+using Ways.Domain.Organizacion;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 
@@ -85,7 +86,8 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
 
         var respuesta = await root.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin));
+            new SolicitudDeAprovisionamiento(
+                unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin, ModoPuntoVenta.Web));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
         var resultado = await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>();

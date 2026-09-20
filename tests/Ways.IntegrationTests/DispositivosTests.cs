@@ -1,15 +1,20 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Ways.Application.Abstracciones;
 using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -37,9 +42,12 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     /// <summary>Aprovisiona un tenant completo (tenant + empresa + PV + admin) y devuelve un
-    /// HttpClient YA logueado como ese admin, más los ids relevantes.</summary>
+    /// HttpClient YA logueado como ese admin, más los ids relevantes. <paramref name="modo"/>
+    /// default Escritorio (el modo que necesita casi todo este archivo, que es sobre dispositivos);
+    /// judgment-day ronda 1 (hallazgo CRITICAL 4c) le agregó el parámetro para poder aprovisionar
+    /// también un punto de venta Web.</summary>
     private async Task<(HttpClient Cliente, int IdTenant, int IdPuntoVenta, string MailAdmin)>
-        AprovisionarYLoguearComoAdminAsync(string nombre)
+        AprovisionarYLoguearComoAdminAsync(string nombre, ModoPuntoVenta modo = ModoPuntoVenta.Escritorio)
     {
         using var root = await ClienteComoRootAsync();
 
@@ -47,7 +55,8 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             NombreTenant: nombre,
             RazonSocialEmpresa: $"Empresa {nombre}",
             NombrePuntoVenta: "Local 1",
-            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test");
+            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test",
+            Modo: modo);
 
         var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
@@ -149,6 +158,55 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.NotNull(fila);
         Assert.Equal(idTenant, fila!.IdTenant);
         Assert.Equal(64, fila.TokenHash.Length);
+    }
+
+    /// <summary>stage-desktop-pos (db-error-backstops): invariante "una PC-caja = un punto de
+    /// venta" — dos vinculaciones concurrentes al MISMO punto de venta chocan contra
+    /// <c>ux_dispositivos_punto_venta_activo</c>, ganando exactamente una. Mismo patrón de carrera
+    /// que <c>ArticulosEndpointsTests.LaCreacionConcurrenteConElMismoCodigoInternoProvistoDaExactamenteUnGanador</c>.</summary>
+    [Fact]
+    public async Task LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador));
+        using var _cliente = cliente;
+
+        var tareaA = cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja A"));
+        var tareaB = cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja B"));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+        var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+        Assert.Contains(HttpStatusCode.Created, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_ya_tiene_dispositivo", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4c): el guard de modo de
+    /// <c>ServicioDeDispositivos.CrearAsync</c> (409 <c>punto_venta_modo_incompatible</c>) no
+    /// tenía NINGÚN test. Este test cubre SOLO el pre-chequeo best-effort: con un punto de venta
+    /// que YA es Web al momento de leerlo, ese pre-chequeo lanza antes de que la transacción se
+    /// abra — el re-chequeo bajo <c>FOR UPDATE</c> de <c>BloquearYLeerModoDePuntoVentaAsync</c>
+    /// nunca se alcanza acá. La prueba de ESE statement es la rendezvous
+    /// <see cref="CrearDispositivoCuyaTransaccionYaArrancoCuandoElFlipDeModoComiteaSeRechazaBajoElRechequeo"/>,
+    /// que fuerza el flip de modo DESPUÉS del pre-chequeo, dentro de la ventana de la
+    /// transacción.</summary>
+    [Fact]
+    public async Task VincularUnDispositivoAUnPuntoVentaWebDaModoIncompatible()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(VincularUnDispositivoAUnPuntoVentaWebDaModoIncompatible), ModoPuntoVenta.Web);
+        using var _cliente = cliente;
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            "/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja web"));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]
@@ -470,5 +528,203 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var listadoB = await clienteB.GetFromJsonAsync<List<DispositivoListado>>("/api/dispositivos");
         Assert.NotNull(listadoB);
         Assert.Single(listadoB!);
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo BLOCKER 1): la carrera real entre
+    /// <c>ServicioDeDispositivos.CrearAsync</c> y <c>ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync</c>
+    /// sobre el MISMO punto de venta — sin el <c>FOR UPDATE</c> de fila que serializa a los dos, bajo
+    /// READ COMMITTED podían leer cada uno el estado PRE-escritura del otro y comitear los dos,
+    /// dejando un dispositivo activo vinculado a un punto de venta que acababa de pasar a Web (un
+    /// dispositivo que <c>ServicioDeVentas.ResolverPuntoVentaAsync</c> nunca vuelve a aceptar).
+    /// Mismo patrón que <see cref="LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador"/>:
+    /// dos requests concurrentes sobre el mismo cliente HTTP, <c>Task.WhenAll</c>, exactamente un
+    /// ganador — acá además se releé la fila para confirmar la invariante real (nunca modo Web CON
+    /// dispositivo activo), no solo los códigos de estado.</summary>
+    [Fact]
+    public async Task CrearDispositivoYCambiarModoAWebEnParaleloDaExactamenteUnGanadorYSostieneLaInvariante()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(CrearDispositivoYCambiarModoAWebEnParaleloDaExactamenteUnGanadorYSostieneLaInvariante));
+        using var _cliente = cliente;
+
+        var tareaDispositivo = cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja"));
+        var tareaModo = cliente.PostAsJsonAsync(
+            $"/api/puntos-venta/{idPuntoVenta}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        var respuestas = await Task.WhenAll(tareaDispositivo, tareaModo);
+        var (respuestaDispositivo, respuestaModo) = (respuestas[0], respuestas[1]);
+
+        if (respuestaDispositivo.StatusCode == HttpStatusCode.Created)
+        {
+            Assert.Equal(HttpStatusCode.Conflict, respuestaModo.StatusCode);
+            var problema = await respuestaModo.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("punto_venta_con_dispositivo_activo", problema.GetProperty("codigo").GetString());
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.Conflict, respuestaDispositivo.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, respuestaModo.StatusCode);
+            var problema = await respuestaDispositivo.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+        }
+
+        // La invariante real, releída DESPUÉS de que las dos transacciones en pugna comitearon:
+        // nunca un dispositivo activo colgado de un punto de venta en modo Web.
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var puntoVentaFinal = await db.PuntosVenta.FirstAsync(p => p.Id == idPuntoVenta);
+        var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == idPuntoVenta);
+
+        Assert.False(
+            puntoVentaFinal.Modo == ModoPuntoVenta.Web && tieneDispositivoActivo,
+            "Invariante violada: quedó un dispositivo activo vinculado a un punto de venta Web.");
+    }
+
+    /// <summary>Mismo patrón de rendezvous forzado que
+    /// <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c>: pausa
+    /// justo DESPUÉS de <c>BeginTransactionAsync</c> (antes del primer statement de la transacción),
+    /// hasta que el llamador libere <paramref name="puedeContinuar"/>. Reproduce
+    /// DETERMINÍSTICAMENTE el interleaving "el flip de modo gana la carrera y commitea ANTES de
+    /// que el re-chequeo bajo lock de <c>CrearAsync</c> corra" — la carrera libre por HTTP
+    /// (<see cref="CrearDispositivoYCambiarModoAWebEnParaleloDaExactamenteUnGanadorYSostieneLaInvariante"/>)
+    /// no puede garantizar esa interleaving en particular, así que este test es el que
+    /// efectivamente mata la ausencia del re-chequeo.</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo BLOCKER 1) — evidencia mutation-proof de que el
+    /// re-chequeo bajo lock de <c>ServicioDeDispositivos.CrearAsync</c>
+    /// (<c>BloquearYLeerModoDePuntoVentaAsync</c>) es lo que de verdad sostiene la invariante, no
+    /// el pre-chequeo best-effort de más arriba: la transacción de <c>CrearAsync</c> arranca y
+    /// queda PAUSADA (interceptor), el flip de modo a Web corre y COMITEA completo mientras
+    /// <c>CrearAsync</c> sigue esperando, y RECIÉN AHÍ se libera <c>CrearAsync</c> — que tiene que
+    /// re-leer <c>modo = 'web'</c> bajo su propio lock y rechazar, nunca insertar el
+    /// dispositivo.</summary>
+    [Fact]
+    public async Task CrearDispositivoCuyaTransaccionYaArrancoCuandoElFlipDeModoComiteaSeRechazaBajoElRechequeo()
+    {
+        using var root = await ClienteComoRootAsync();
+
+        var nombre = nameof(CrearDispositivoCuyaTransaccionYaArrancoCuandoElFlipDeModoComiteaSeRechazaBajoElRechequeo);
+        var mailAdmin = $"{nombre.ToLowerInvariant()}-admin@ways.test";
+        var solicitud = new SolicitudDeAprovisionamiento(
+            nombre, $"Empresa {nombre}", "Local 1", mailAdmin, ModoPuntoVenta.Escritorio);
+        var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var resultado = (await alta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteDispositivo = factory.CreateClient();
+        var loginDispositivo = await clienteDispositivo.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
+        Assert.Equal(HttpStatusCode.OK, loginDispositivo.StatusCode);
+
+        var tareaAlta = clienteDispositivo.PostAsJsonAsync(
+            "/api/dispositivos", new AltaDispositivo(resultado.IdPuntoVenta, "Caja race"));
+
+        await transaccionIniciada.Task;
+
+        // Con la transacción de CrearAsync ya abierta y PAUSADA (todavía sin tomar el lock de
+        // fila), el flip de modo corre COMPLETO en un host/cliente aparte y comitea.
+        using var clienteModo = fixture.CreateClient();
+        var loginModo = await clienteModo.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
+        Assert.Equal(HttpStatusCode.OK, loginModo.StatusCode);
+
+        var respuestaModo = await clienteModo.PostAsJsonAsync(
+            $"/api/puntos-venta/{resultado.IdPuntoVenta}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+        var cuerpoModo = await respuestaModo.Content.ReadAsStringAsync();
+        Assert.True(respuestaModo.StatusCode == HttpStatusCode.OK, cuerpoModo);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaAlta = await tareaAlta;
+
+        Assert.Equal(HttpStatusCode.Conflict, respuestaAlta.StatusCode);
+        var problema = await respuestaAlta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == resultado.IdPuntoVenta);
+        Assert.False(tieneDispositivoActivo);
+    }
+
+    /// <summary>El espejo exacto del test anterior, mismo rendezvous forzado — acá la transacción
+    /// PAUSADA es la del FLIP DE MODO, y la que corre y comitea completa mientras tanto es
+    /// <c>CrearAsync</c>: prueba que <c>ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync</c>
+    /// re-chequea "sin dispositivo activo" bajo su PROPIO lock (no el pre-chequeo best-effort de
+    /// más arriba) — sin ese re-chequeo, el flip a Web podía comitear sobre un punto de venta que
+    /// ACABA de recibir un dispositivo activo mientras la transacción del flip esperaba el
+    /// lock.</summary>
+    [Fact]
+    public async Task CambiarModoAWebCuyaTransaccionYaArrancoCuandoElAltaDeDispositivoComiteaSeRechazaBajoElRechequeo()
+    {
+        using var root = await ClienteComoRootAsync();
+
+        var nombre = nameof(CambiarModoAWebCuyaTransaccionYaArrancoCuandoElAltaDeDispositivoComiteaSeRechazaBajoElRechequeo);
+        var mailAdmin = $"{nombre.ToLowerInvariant()}-admin@ways.test";
+        var solicitud = new SolicitudDeAprovisionamiento(
+            nombre, $"Empresa {nombre}", "Local 1", mailAdmin, ModoPuntoVenta.Escritorio);
+        var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+        var resultado = (await alta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteModo = factory.CreateClient();
+        var loginModo = await clienteModo.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
+        Assert.Equal(HttpStatusCode.OK, loginModo.StatusCode);
+
+        var tareaModo = clienteModo.PostAsJsonAsync(
+            $"/api/puntos-venta/{resultado.IdPuntoVenta}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        await transaccionIniciada.Task;
+
+        // Con la transacción del flip ya abierta y PAUSADA (todavía sin tomar el lock de fila), el
+        // alta de dispositivo corre COMPLETA en un host/cliente aparte y comitea.
+        using var clienteDispositivo = fixture.CreateClient();
+        var loginDispositivo = await clienteDispositivo.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
+        Assert.Equal(HttpStatusCode.OK, loginDispositivo.StatusCode);
+
+        var respuestaAlta = await clienteDispositivo.PostAsJsonAsync(
+            "/api/dispositivos", new AltaDispositivo(resultado.IdPuntoVenta, "Caja race"));
+        var cuerpoAlta = await respuestaAlta.Content.ReadAsStringAsync();
+        Assert.True(respuestaAlta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaModo = await tareaModo;
+
+        Assert.Equal(HttpStatusCode.Conflict, respuestaModo.StatusCode);
+        var problema = await respuestaModo.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_con_dispositivo_activo", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var puntoVentaFinal = await db.PuntosVenta.FirstAsync(p => p.Id == resultado.IdPuntoVenta);
+        Assert.Equal(ModoPuntoVenta.Escritorio, puntoVentaFinal.Modo);
     }
 }

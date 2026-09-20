@@ -2,8 +2,19 @@ using Ways.Domain.Organizacion;
 
 namespace Ways.Application.Organizacion;
 
+/// <summary><paramref name="Modo"/> es OBLIGATORIO (skill <c>dto-contract-honesty</c>): docs/10
+/// §9.1 dice que el modo nunca se infiere y no tiene default de base. Es <c>nullable</c> a
+/// proposito — sin el <c>?</c>, un body JSON que omite <c>modo</c> liga el parametro al default
+/// del CLR, que es <see cref="ModoPuntoVenta.Escritorio"/> (valor 0), y el tenant nace con un
+/// punto de venta contra el que nadie puede vender: la web lo rechaza por modo y todavia no tiene
+/// dispositivo vinculado. El <c>?</c> hace distinguible "omitido" de "Escritorio" y deja que
+/// <c>ServicioDeAprovisionamiento</c> devuelva 400 en vez de aprovisionar algo inservible.</summary>
 public record SolicitudDeAprovisionamiento(
-    string NombreTenant, string RazonSocialEmpresa, string NombrePuntoVenta, string MailAdmin);
+    string NombreTenant,
+    string RazonSocialEmpresa,
+    string NombrePuntoVenta,
+    string MailAdmin,
+    ModoPuntoVenta? Modo);
 
 /// <summary><paramref name="PasswordTemporal"/> se devuelve UNA sola vez, en esta respuesta:
 /// no se persiste en texto plano en ningún lado (ADR-16) — solo el hash queda en
@@ -61,7 +72,17 @@ public record PuntoVentaListado(
     string? Facebook,
     string? Web,
     string? NombreTenant,
-    string? RazonSocialEmpresa);
+    string? RazonSocialEmpresa,
+    ModoPuntoVenta Modo);
+
+/// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/modo</c> (stage-desktop-pos, gate aprobado):
+/// el único campo editable acá es el modo — no comparte forma con <see cref="PuntoVentaEdicion"/>
+/// porque el flip tiene su propia precondición (sin dispositivo activo) y su propio rastro de
+/// auditoría, ninguno de los dos aplicable a la edición descriptiva.</summary>
+/// <c>Modo</c> es nullable por la misma razon que en <see cref="SolicitudDeAprovisionamiento"/>:
+/// un body que omite el campo ligaria el parametro a <see cref="ModoPuntoVenta.Escritorio"/>
+/// (valor 0 del CLR) y el flip mutaria el punto de venta en silencio en vez de rechazar el pedido.
+public record PuntoVentaModoEdicion(ModoPuntoVenta? Modo);
 
 /// <summary><see cref="PuntoVentaListado.IdEmpresa"/> no es editable acá: es estructural
 /// (a qué empresa pertenece), no descriptivo — moverlo de empresa queda fuera de esta
