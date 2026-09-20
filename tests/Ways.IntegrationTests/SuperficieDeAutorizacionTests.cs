@@ -59,9 +59,16 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // rutas de arriba (proposal decisión 2 ofrece tightening a Supervisor+Admin, flagged en
         // el gate; sigue OperacionDePos por ahora, sin decisión tomada).
         ("POST", "/api/caja/turnos/{id:int}/cierre"),
+        // etapa "cierre por retiro" (spec arqueo-de-cierre: Cierre Por Retiro): el SEGUNDO modo
+        // de cierre, mapeado en el MISMO grupo /api/caja/turnos y por lo tanto bajo la MISMA
+        // OperacionDePos que "/cierre" (CajaEndpoints.cs) — spec turnos-de-caja / Apertura And
+        // Cierre Authorization cubre a los dos modos por igual: es el cajero el que retira el
+        // efectivo contado y cierra, así que exigirle GestionDeCatalogo le sacaría a Vendedor la
+        // operación que este modo existe para modelar.
+        ("POST", "/api/caja/turnos/{id:int}/cierre-por-retiro"),
         // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
-        // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
-        // Vendedor tiene que poder registrar un gasto).
+        // apilado, mismo criterio que las rutas de caja de arriba (spec: gastos / Gasto
+        // Authorization, un Vendedor tiene que poder registrar un gasto).
         ("POST", "/api/gastos/"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan

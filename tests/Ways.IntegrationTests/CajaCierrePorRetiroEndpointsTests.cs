@@ -12,6 +12,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
@@ -29,6 +30,8 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
+    private const string PasswordVendedor = "una-contraseña-larga";
+    private const string NombreUsuarioVendedor = "vendedor-cierre";
 
     private static readonly JsonSerializerOptions OpcionesJson = new()
     {
@@ -495,6 +498,65 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
     }
 
     // ---- autorización -------------------------------------------------------------------------
+
+    private async Task<HttpClient> CrearVendedorAsync(Contexto ctx, string nombre)
+    {
+        var mailVendedor = $"{nombre.ToLowerInvariant()}-vendedor@ways.test";
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/usuarios",
+            new CrearUsuario(NombreUsuarioVendedor, mailVendedor, (int)RolConocido.Vendedor, PasswordVendedor));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        var vendedor = fixture.CreateClient();
+        var login = await vendedor.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailVendedor, PasswordVendedor));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return vendedor;
+    }
+
+    /// <summary>
+    /// judgment-day (jueces A y B, misma ocurrencia): la mitad POSITIVA del gate, sin la cual
+    /// apilarle <c>GestionDeCatalogo</c> a esta ruta es un mutante que sobrevive a TODA la suite.
+    /// <c>SuperficieDeAutorizacionTests</c> la saltea por estar en su allowlist; el test de rol
+    /// rechazado de acá abajo usa Root, que <c>GestionDeCatalogo</c> (solo Admin) también rechaza;
+    /// y el resto del archivo maneja el endpoint como Admin, que satisface las dos policies. Un
+    /// Vendedor perdería en silencio la operación que este modo existe para modelar (spec
+    /// turnos-de-caja / Apertura And Cierre Authorization: <c>OperacionDePos</c> gatea los dos
+    /// modos de cierre por igual).
+    /// <para>Cubre la mitad de CIERRE del escenario, no la de apertura: el turno lo abre el Admin
+    /// —<c>AbrirTurnoAsync</c> va por <c>ctx.Admin</c>—, así que <c>Vendedor</c> en el resumen es
+    /// el Admin y <c>EmpleadoCierre</c> es quien cerró. La apertura como Vendedor ya la cubre
+    /// <c>CajaTurnosEndpointsTests.UnVendedorAbreUnTurnoYRegistraUnMovimiento</c>.</para>
+    /// <para>mutation-proof-tests regla 15: el hermano <c>/cierre</c> comparte el hueco exacto
+    /// —ningún test lo ejercita como Vendedor—, anotado como seguimiento y no cerrado acá para no
+    /// mezclar alcances.</para>
+    /// </summary>
+    [Fact]
+    public async Task UnVendedorCierraPorRetiroUnTurnoYLeeElResumenDeCierre()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorCierraPorRetiroUnTurnoYLeeElResumenDeCierre));
+        var turno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, 300m);
+
+        using var vendedor = await CrearVendedorAsync(ctx, nameof(UnVendedorCierraPorRetiroUnTurnoYLeeElResumenDeCierre));
+
+        var cierre = await vendedor.PostAsJsonAsync(
+            $"/api/caja/turnos/{turno.Id}/cierre-por-retiro",
+            new SolicitudDeCierrePorRetiro(300m, "Cierre por retiro del vendedor"));
+        var cuerpoCierre = await cierre.Content.ReadAsStringAsync();
+        Assert.True(cierre.StatusCode == HttpStatusCode.OK, cuerpoCierre);
+
+        // Un 200 solo prueba que la policy dejó pasar; que el cierre lo haya hecho EL VENDEDOR lo
+        // dice EmpleadoCierre, y que sea un cierre de verdad —no un 200 vacío— la derivación:
+        // esperado del ancla = fondo 500 + efectivo 300 − retiro 300 = 500, declarado = fondo 500.
+        var resumenDelCierre = JsonSerializer.Deserialize<ResumenDeCierrePorRetiro>(cuerpoCierre, OpcionesJson)!;
+        Assert.Equal(NombreUsuarioVendedor, resumenDelCierre.EmpleadoCierre);
+        Assert.Equal(ctx.NombreAdmin, resumenDelCierre.Vendedor);
+        Assert.Equal(500m, resumenDelCierre.FondoInicial);
+        Assert.Equal(0m, resumenDelCierre.Diferencia);
+
+        var resumen = await vendedor.GetAsync($"/api/caja/turnos/{turno.Id}/resumen-de-cierre");
+        Assert.Equal(HttpStatusCode.OK, resumen.StatusCode);
+    }
 
     [Fact]
     public async Task UnRolFueraDeOperacionDePosEsRechazadoDelCierrePorRetiroYDelResumenDeCierre()
