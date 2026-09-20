@@ -60,7 +60,8 @@ public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixtur
 
         var respuesta = await cliente.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(nombre, $"{nombre} SRL", $"{nombre} - Local 1", $"{nombre}@ways.test"));
+            new SolicitudDeAprovisionamiento(
+                nombre, $"{nombre} SRL", $"{nombre} - Local 1", $"{nombre}@ways.test", ModoPuntoVenta.Web));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 

@@ -560,11 +560,19 @@ public class ServicioDeOrganizacion(
 
     /// <summary>
     /// Admin: flip de <see cref="PuntoVenta.Modo"/> (stage-desktop-pos, DB CHANGE GATE aprobado).
-    /// Precondición: SIN dispositivo activo — el mismo <c>AnyAsync</c> best-effort que
-    /// <c>ServicioDeDispositivos</c> usa para su propio chequeo simétrico (el backstop real de "a
-    /// lo sumo un dispositivo activo" es <c>ux_dispositivos_punto_venta_activo</c>, no esto). Si
-    /// hay uno vinculado, el admin lo revoca primero con la acción existente de
-    /// <c>DispositivosEndpoints</c>.
+    /// Precondición: SIN dispositivo activo.
+    ///
+    /// judgment-day ronda 1 (hallazgo BLOCKER 1): el chequeo de "sin dispositivo activo" YA NO es
+    /// un <c>AnyAsync</c> best-effort afuera de la transacción — bajo READ COMMITTED, ese chequeo
+    /// y el de <see cref="Ways.Application.Dispositivos.ServicioDeDispositivos.CrearAsync"/> podían
+    /// correr en paralelo, cada uno leyendo el estado PRE-escritura del otro, y los dos commitear:
+    /// un dispositivo activo quedaba vinculado a un punto de venta recién pasado a Web, que
+    /// <c>ServicioDeVentas.ResolverPuntoVentaAsync</c> nunca vuelve a aceptar de ese dispositivo.
+    /// Ahora el chequeo se RELEE bajo <see cref="TomarLockDePuntoVentaAsync"/> (<c>FOR UPDATE</c>
+    /// sobre la propia fila, dentro de la transacción de escritura) — el mismo lock que
+    /// <c>CrearAsync</c> toma antes de re-chequear <c>Modo == Escritorio</c>, así que los dos
+    /// escritores de esta invariante se serializan sobre la MISMA fila y el perdedor de la carrera
+    /// relee el estado ya comiteado por el ganador.
     ///
     /// Nota (stage futura, offline outbox): cuando exista la cola de escritura offline del POS de
     /// escritorio, este flip además va a tener que exigir esa cola vacía — flipear a Web con
@@ -579,23 +587,27 @@ public class ServicioDeOrganizacion(
     public async Task<PuntoVentaListado> ActualizarModoPuntoVentaAsync(
         int id, PuntoVentaModoEdicion datos, CancellationToken ct = default)
     {
+        var modo = datos.Modo
+            ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
         var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
-
-        var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == puntoVenta.Id, ct);
-        if (tieneDispositivoActivo)
-        {
-            throw ErrorDominio.Conflicto(
-                "punto_venta_con_dispositivo_activo",
-                "Este punto de venta tiene un dispositivo vinculado: revocalo antes de cambiar el modo.");
-        }
 
         return await EnUnaTransaccionDeBajaAsync(async () =>
         {
+            await TomarLockDePuntoVentaAsync(puntoVenta.Id, ct);
+
+            var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == puntoVenta.Id, ct);
+            if (tieneDispositivoActivo)
+            {
+                throw ErrorDominio.Conflicto(
+                    "punto_venta_con_dispositivo_activo",
+                    "Este punto de venta tiene un dispositivo vinculado: revocalo antes de cambiar el modo.");
+            }
+
             var modoAnterior = puntoVenta.Modo;
-            puntoVenta.Modo = datos.Modo;
+            puntoVenta.Modo = modo;
             puntoVenta.UpdatedAt = reloj.Ahora;
 
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDeModoPuntoVenta(modoAnterior, datos.Modo);
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDeModoPuntoVenta(modoAnterior, modo);
             auditoria.Registrar(new RegistroDeAuditoria(
                 puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaModo, puntoVenta.Id,
                 valorAnterior, valorNuevo));
@@ -717,6 +729,29 @@ public class ServicioDeOrganizacion(
         }
 
         return conexion;
+    }
+
+    /// <summary>
+    /// Lock de fila (<c>FOR UPDATE</c>) sobre el PROPIO punto de venta — judgment-day ronda 1
+    /// (hallazgo BLOCKER 1). Serializa <see cref="ActualizarModoPuntoVentaAsync"/> contra
+    /// <see cref="Ways.Application.Dispositivos.ServicioDeDispositivos.CrearAsync"/> (que toma el MISMO lock sobre
+    /// la misma fila antes de re-chequear <c>Modo == Escritorio</c>): el perdedor de la carrera
+    /// espera el commit del ganador y relee bajo el lock ya tomado, en vez de decidir sobre un
+    /// estado que la otra transacción está por pisar. A diferencia de
+    /// <see cref="TomarLockDeBajaAsync"/> (advisory, sobre el tenant), acá corresponde un lock de
+    /// FILA real: las dos escrituras en pugna son updates sobre <c>puntos_venta</c>/
+    /// <c>dispositivos</c>, no una baja en cascada que necesite serializarse contra hermanos.
+    /// </summary>
+    private async Task TomarLockDePuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText = "SELECT 1 FROM puntos_venta WHERE id_punto_venta = $1 FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+
+        await comando.ExecuteScalarAsync(ct);
     }
 
     /// <summary>

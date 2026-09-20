@@ -10,6 +10,7 @@ using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Reportes;
 using Ways.Domain.Usuarios;
@@ -54,7 +55,7 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;

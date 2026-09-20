@@ -11,6 +11,7 @@ using Ways.Application.Ventas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -48,7 +49,7 @@ public class SaldoLedgerInvarianteTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
         var mailAdmin = $"{nombre.ToLowerInvariant()}@ways.test";
-        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin);
+        var solicitud = new SolicitudDeAprovisionamiento(nombre, $"{nombre} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web);
         var respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;

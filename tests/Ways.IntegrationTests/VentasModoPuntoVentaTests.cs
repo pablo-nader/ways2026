@@ -7,8 +7,13 @@ using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
+using Ways.Domain.Articulos;
+using Ways.Domain.Caja;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Seguridad;
 
@@ -20,10 +25,15 @@ namespace Ways.IntegrationTests;
 /// puede vender contra SU PROPIO punto de venta Escritorio; un actor sin esa claim (sesión web
 /// normal) solo puede vender contra un punto de venta Web. Cualquier otra combinación es 409
 /// <c>punto_venta_modo_incompatible</c>, nunca 404 (el punto de venta existe y es del tenant
-/// correcto). Las tres pruebas rechazan ANTES de <c>ResolverTurnoAbiertoAsync</c> (design decisión
-/// 11: modo se resuelve inmediatamente después de existencia), así que no hace falta abrir turno
-/// ni sembrar artículo/cliente — <c>IdCliente: null</c> resuelve a Consumidor Final (ya
+/// correcto). Las pruebas de RECHAZO cortan ANTES de <c>ResolverTurnoAbiertoAsync</c> (design
+/// decisión 11: modo se resuelve inmediatamente después de existencia), así que no hace falta
+/// abrir turno ni sembrar artículo/cliente — <c>IdCliente: null</c> resuelve a Consumidor Final (ya
 /// aprovisionado) y el artículo nunca se llega a mirar.
+///
+/// judgment-day ronda 1 (hallazgo CRITICAL 4a): las pruebas de HAPPY PATH, agregadas después, sí
+/// necesitan turno abierto y un artículo con precio — <see cref="AbrirTurnoAsync"/> y
+/// <see cref="SembrarServicioYMedioEfectivoAsync"/> son el mínimo para eso (un servicio sin stock,
+/// mismo criterio que <c>VentasCheckoutTests.UnaVentaDeUnServicioNoGeneraMovimientoNiFilaDeStock</c>).
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -127,6 +137,77 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
         return cajero;
     }
 
+    /// <summary>Abre un turno de caja — a diferencia de las tres pruebas de rechazo de más abajo
+    /// (que nunca llegan a <c>ResolverTurnoAbiertoAsync</c>), los happy paths (judgment-day ronda
+    /// 1, hallazgo CRITICAL 4a) sí necesitan un turno abierto para llegar a emitir.</summary>
+    private async Task AbrirTurnoAsync(int idTenant, int idPuntoVenta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idEmpleadoApertura = await db.Usuarios
+            .Where(u => u.IdTenant == idTenant && u.NombreUsuario == "admin")
+            .Select(u => u.Id)
+            .FirstAsync();
+
+        db.TurnosCaja.Add(new TurnoCaja
+        {
+            IdTenant = idTenant,
+            IdPuntoVenta = idPuntoVenta,
+            IdEmpleadoApertura = idEmpleadoApertura,
+            FechaApertura = ahora,
+            FondoInicial = 0m,
+            Estado = EstadoTurno.Abierto,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Un servicio (<c>EsProducto = false</c>, sin stock) con precio en la lista general
+    /// default que el aprovisionamiento ya siembra — el mínimo para que un happy path de checkout
+    /// no tenga que sembrar stock/lotes. El medio Efectivo también viene sembrado por el
+    /// aprovisionamiento.</summary>
+    private async Task<(int IdArticulo, int IdMedioEfectivo)> SembrarServicioYMedioEfectivoAsync(
+        int idTenant, decimal precio)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var area = new Area
+        {
+            IdTenant = idTenant, Nombre = "Ventas", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Areas.Add(area);
+        await db.SaveChangesAsync();
+
+        var idAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync();
+        var idListaGeneral = await db.ListasPrecio.Where(l => l.EsDefault).Select(l => l.Id).FirstAsync();
+        var idMedioEfectivo = await db.MediosPago
+            .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
+
+        var articulo = new Articulo
+        {
+            IdTenant = idTenant, CodigoInterno = $"servicio-{Guid.NewGuid():N}", Nombre = "Servicio de prueba",
+            IdArea = area.Id, IdAlicuotaIva = idAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+
+        db.Precios.Add(new Precio
+        {
+            IdTenant = idTenant, IdArticulo = articulo.Id, IdListaPrecio = idListaGeneral,
+            Monto = precio, VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        return (articulo.Id, idMedioEfectivo);
+    }
+
+    private static SolicitudDeVenta SolicitudDeServicio(int idPuntoVenta, int idArticulo, int idMedioPago, decimal precio) =>
+        new(idPuntoVenta, null, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(idMedioPago, precio, null, 0m)], null, null);
+
     [Fact]
     public async Task UnActorSinClaimDeDispositivoNoPuedeVenderContraUnPuntoVentaEscritorio()
     {
@@ -173,5 +254,76 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4b): en la prueba de arriba, los dos
+    /// disjuntos de <c>puntoVenta.Modo != Escritorio || idPuntoVentaDelDispositivo != puntoVenta.Id</c>
+    /// son verdaderos a la vez (el PV Web NO es el suyo Y no es Escritorio) — un mutante que
+    /// borrara el disjunto de Modo seguiría en rojo por el de identidad, así que esa prueba sola
+    /// no lo aísla. Acá el dispositivo apunta a SU PROPIO punto de venta (mismo id — el segundo
+    /// disjunto es SIEMPRE falso) mientras ESE punto de venta pasa a Web — solo el disjunto de
+    /// Modo puede explicar el 409.</summary>
+    [Fact]
+    public async Task UnDispositivoNoPuedeVenderCuandoSuPropioPuntoVentaPasaAWeb()
+    {
+        var (admin, idTenant, idPuntoVentaPropio) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoNoPuedeVenderCuandoSuPropioPuntoVentaPasaAWeb), ModoPuntoVenta.Escritorio);
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVentaPropio, "propio");
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
+        {
+            var pv = await db.PuntosVenta.FirstAsync(p => p.Id == idPuntoVentaPropio);
+            pv.Modo = ModoPuntoVenta.Web;
+            await db.SaveChangesAsync();
+        }
+
+        admin.Dispose();
+
+        var respuesta = await cajero.PostAsJsonAsync("/api/ventas", SolicitudMinima(idPuntoVentaPropio));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4a): happy path — sin esto, un mutante que
+    /// hiciera <c>ExigirModoCompatibleConElActorAsync</c>/<c>PoliticaDeModoDePuntoVenta</c> lanzar
+    /// SIEMPRE dejaba la suite entera en verde (solo había ramas de rechazo).</summary>
+    [Fact]
+    public async Task UnDispositivoPuedeVenderContraSuPropioPuntoVentaEscritorio()
+    {
+        const decimal precio = 100m;
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoPuedeVenderContraSuPropioPuntoVentaEscritorio), ModoPuntoVenta.Escritorio);
+
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, precio);
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "escritorio-ok");
+        admin.Dispose();
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, precio));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4a): happy path simétrico del lado Web.</summary>
+    [Fact]
+    public async Task UnActorWebPuedeVenderContraUnPuntoVentaWeb()
+    {
+        const decimal precio = 100m;
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnActorWebPuedeVenderContraUnPuntoVentaWeb), ModoPuntoVenta.Web);
+        using var _admin = admin;
+
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, precio);
+
+        var respuesta = await admin.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, precio));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 }

@@ -54,6 +54,13 @@ public class ServicioDeFacturacionFiscal(
         var ambiente = ResolverAmbiente();
 
         // ---- Lecturas puras — CERO red, CERO transacción todavía (D10) ----
+
+        // judgment-day ronda 1 (hallazgo BLOCKER 2): EXENTA a propósito de
+        // PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync. Esta emisión numera desde
+        // numeraciones_fiscales (AsignadorDeNumeroFiscal, más abajo, D1) — un espacio TOTALMENTE
+        // distinto de numeraciones_comprobante, que es el que un futuro bloque reservado offline
+        // va a repartir entre Escritorio/Web. La compatibilidad de modo del actor no tiene nada
+        // que decir sobre un espacio de numeración que el POS de escritorio ni siquiera toca.
         var puntoVenta = await db.PuntosVenta.FirstOrDefaultAsync(p => p.Id == solicitud.IdPuntoVenta, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {solicitud.IdPuntoVenta}.");
 

@@ -118,9 +118,20 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             // (tenant 2/PV 3 y tenant 4/PV 5 con dos dispositivos activos cada uno — leftovers de
             // pruebas E2E). Resolución determinística ANTES de crear el índice, no un `ON CONFLICT`
             // ni un `DISTINCT ON` silencioso: por cada (id_tenant, id_punto_venta) con más de un
-            // dispositivo activo, se conserva el de `ultimo_uso_at` más reciente (NULLS LAST,
-            // desempate por `created_at` DESC y después `id_dispositivo` DESC) y se da de baja
-            // lógica el resto. Mismo tratamiento de GUC que el backfill de arriba
+            // dispositivo activo, se conserva el de `created_at` más reciente (desempate por
+            // `id_dispositivo` DESC) y se da de baja lógica el resto.
+            //
+            // judgment-day ronda 1 (hallazgo CRITICAL 3): `ultimo_uso_at` NO entra en este orden,
+            // a propósito — lo escribe ÚNICAMENTE `RegistrarUsoAsync`, llamado ÚNICAMENTE desde
+            // `POST /api/auth/login-dispositivo`. Con sesiones de 365 días, una caja que viene
+            // funcionando hace meses puede tener un `ultimo_uso_at` viejísimo (el cajero nunca
+            // volvió a loguearse, la cookie sigue viva) mientras que un dispositivo repareado hace
+            // un minuto ya tiene un login fresco: ordenar por `ultimo_uso_at` revocaría la caja
+            // REALMENTE en uso a favor de la que recién se emparejó. Un duplicado nace de repareear
+            // una PC sin revocar el registro viejo — la pareja MÁS RECIENTEMENTE CREADA es la que
+            // refleja la intención real del operador, así que `created_at DESC` (con
+            // `id_dispositivo DESC` como desempate de filas creadas en el mismo instante) es la
+            // única señal confiable acá. Mismo tratamiento de GUC que el backfill de arriba
             // (rls-migration-backfills) — `dispositivos` es tabla de tenant bajo RLS. Idempotente:
             // una corrida repetida ya no encuentra más de una fila activa por partición, así que
             // `orden > 1` nunca es cierto y el UPDATE no toca nada.
@@ -132,7 +143,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     SELECT id_dispositivo,
                            row_number() OVER (
                                PARTITION BY id_tenant, id_punto_venta
-                               ORDER BY ultimo_uso_at DESC NULLS LAST, created_at DESC, id_dispositivo DESC
+                               ORDER BY created_at DESC, id_dispositivo DESC
                            ) AS orden
                       FROM dispositivos
                      WHERE deleted_at IS NULL

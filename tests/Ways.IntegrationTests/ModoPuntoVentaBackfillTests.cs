@@ -36,6 +36,15 @@ namespace Ways.IntegrationTests;
 /// pre-migración a mano (mismo criterio que la prueba "ingenua" de <c>CostoCongeladoTests</c>,
 /// pero acá SÍ se ejercita <c>ways_app</c> porque el estado pre-migración no depende de RLS para
 /// existir).
+///
+/// judgment-day ronda 1 (hallazgo CRITICAL 3, mutation-proof-tests): el dedup ordena por
+/// <c>created_at DESC, id_dispositivo DESC</c> — <c>ultimo_uso_at</c> quedó afuera a propósito
+/// (ver el doc-comment de la migración). El grupo Escritorio prueba la primera dimensión
+/// INVIRTIENDO <c>ultimo_uso_at</c> respecto de <c>created_at</c> entre los dos duplicados: si un
+/// mutante reintrodujera <c>ultimo_uso_at</c> en el <c>ORDER BY</c>, el sobreviviente cambiaría y
+/// el test lo detecta. El grupo Empate prueba la segunda dimensión con dos duplicados que
+/// COMPARTEN el mismo <c>created_at</c> exacto — ahí <c>id_dispositivo DESC</c> es la ÚNICA señal
+/// que decide, así que invertir ese ASC/DESC también hace fallar el test.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -60,14 +69,18 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
          WHERE p.modo IS NULL;
         """;
 
-    /// <summary>El mismo statement que el paso 3 (dedup) de <c>ModoPuntoVentaYDispositivoActivoUnico.Up</c>.</summary>
+    /// <summary>El mismo statement que el paso 3 (dedup) de <c>ModoPuntoVentaYDispositivoActivoUnico.Up</c>
+    /// — sin <c>ultimo_uso_at</c> en el <c>ORDER BY</c> (judgment-day ronda 1, hallazgo CRITICAL 3):
+    /// lo escribe únicamente un login de dispositivo, así que con sesiones de 365 días puede
+    /// quedar viejísimo en la caja realmente en uso y revocar la que sigue vendiendo a favor de la
+    /// que recién se repareó.</summary>
     private const string SqlDedupDispositivos =
         """
         WITH duplicados AS (
             SELECT id_dispositivo,
                    row_number() OVER (
                        PARTITION BY id_tenant, id_punto_venta
-                       ORDER BY ultimo_uso_at DESC NULLS LAST, created_at DESC, id_dispositivo DESC
+                       ORDER BY created_at DESC, id_dispositivo DESC
                    ) AS orden
               FROM dispositivos
              WHERE deleted_at IS NULL
@@ -154,12 +167,25 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
 
             int idTenantEscritorio, idPuntoVentaEscritorio, idDispositivoViejo, idDispositivoNuevo;
             int idTenantWeb, idPuntoVentaWeb;
+            int idTenantEmpate, idPuntoVentaEmpate, idDispositivoEmpateBajo, idDispositivoEmpateAlto;
 
             // Semilla a mano, como dueño (bypassa RLS, sin necesidad de ningún GUC) — schema
-            // todavía sin `modo` ni el índice único. Tenant A: un punto de venta con DOS
-            // dispositivos activos duplicados (el hallazgo real de la base de desarrollo), donde
-            // el de mayor `ultimo_uso_at` tiene que sobrevivir. Tenant B: un punto de venta sin
-            // ningún dispositivo.
+            // todavía sin `modo` ni el índice único.
+            //
+            // Tenant Escritorio: un punto de venta con DOS dispositivos activos duplicados (el
+            // hallazgo real de la base de desarrollo) — acá `ultimo_uso_at` se INVIERTE a
+            // propósito respecto de `created_at` (judgment-day ronda 1, hallazgo CRITICAL 3): "Caja
+            // vieja" (pareja más antigua) tiene el login MÁS RECIENTE, "Caja nueva" (pareja más
+            // reciente) tiene el login MÁS VIEJO — el escenario real de una PC repareada que el
+            // cajero todavía no volvió a loguear. Si el dedup mirara `ultimo_uso_at` (el bug
+            // corregido), sobreviviría "Caja vieja"; con `created_at DESC` sobrevive "Caja nueva",
+            // que es la pareja vigente.
+            //
+            // Tenant Web: un punto de venta sin ningún dispositivo.
+            //
+            // Tenant Empate: un punto de venta con DOS dispositivos activos que comparten el MISMO
+            // `created_at` exacto — el único desempate posible es `id_dispositivo DESC`, así que
+            // este grupo es el que prueba esa segunda dimensión del ORDER BY en aislamiento.
             await using (var owner = new NpgsqlConnection(cadenaOwner))
             {
                 await owner.OpenAsync();
@@ -207,18 +233,23 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
                     "VALUES ($1, 'admin', $2, $3, 'hash', 'test', now(), now(), now()) RETURNING id_usuario",
                     idTenantEscritorio, "escritorio-admin@ways.test", (int)RolConocido.Admin);
 
+                // ultimo_uso_at INVERTIDO respecto de created_at (judgment-day ronda 1, hallazgo
+                // CRITICAL 3): "Caja vieja" es la pareja más ANTIGUA pero con el login MÁS
+                // RECIENTE; "Caja nueva" es la pareja más RECIENTE pero con el login MÁS VIEJO. Si
+                // el dedup mirara ultimo_uso_at, sobreviviría "Caja vieja" — con created_at DESC
+                // sobrevive "Caja nueva".
                 idDispositivoViejo = await EscalarAsync(
                     "INSERT INTO dispositivos (id_tenant, id_punto_venta, nombre, token_hash, id_usuario_alta, " +
                     "ultimo_uso_at, created_at, updated_at) " +
                     "VALUES ($1, $2, 'Caja vieja', $3, $4, $5, $6, $6) RETURNING id_dispositivo",
                     idTenantEscritorio, idPuntoVentaEscritorio, new string('a', 64), idUsuarioEscritorio,
-                    ahora.AddDays(-2), ahora.AddDays(-2));
+                    ahora.AddHours(-1), ahora.AddDays(-2));
                 idDispositivoNuevo = await EscalarAsync(
                     "INSERT INTO dispositivos (id_tenant, id_punto_venta, nombre, token_hash, id_usuario_alta, " +
                     "ultimo_uso_at, created_at, updated_at) " +
                     "VALUES ($1, $2, 'Caja nueva', $3, $4, $5, $6, $6) RETURNING id_dispositivo",
                     idTenantEscritorio, idPuntoVentaEscritorio, new string('b', 64), idUsuarioEscritorio,
-                    ahora.AddHours(-1), ahora.AddHours(-1));
+                    ahora.AddDays(-2), ahora.AddHours(-1));
 
                 idTenantWeb = await EscalarAsync(
                     "INSERT INTO tenants (nombre, estado, created_at, updated_at) " +
@@ -232,6 +263,39 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
                     "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, created_at, updated_at) " +
                     "VALUES ($1, $2, $3, now(), now()) RETURNING id_punto_venta",
                     idTenantWeb, idEmpresaWeb, "PV Web");
+
+                // Tenant Empate: DOS dispositivos activos con el MISMO created_at exacto — el
+                // único desempate posible es id_dispositivo DESC. ultimo_uso_at en NULL en los dos
+                // (irrelevante para este grupo: ya no entra en el ORDER BY).
+                idTenantEmpate = await EscalarAsync(
+                    "INSERT INTO tenants (nombre, estado, created_at, updated_at) " +
+                    "VALUES ($1, 'activo'::estado_tenant, now(), now()) RETURNING id_tenant",
+                    "Tenant Empate");
+                var idEmpresaEmpate = await EscalarAsync(
+                    "INSERT INTO empresas (id_tenant, razon_social, created_at, updated_at) " +
+                    "VALUES ($1, $2, now(), now()) RETURNING id_empresa",
+                    idTenantEmpate, "Empresa Empate");
+                idPuntoVentaEmpate = await EscalarAsync(
+                    "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, created_at, updated_at) " +
+                    "VALUES ($1, $2, $3, now(), now()) RETURNING id_punto_venta",
+                    idTenantEmpate, idEmpresaEmpate, "PV Empate");
+                var idUsuarioEmpate = await EscalarAsync(
+                    "INSERT INTO usuarios (id_tenant, usuario, mail, id_rol, password_hash, password_algoritmo, " +
+                    "password_actualizado_el, created_at, updated_at) " +
+                    "VALUES ($1, 'admin', $2, $3, 'hash', 'test', now(), now(), now()) RETURNING id_usuario",
+                    idTenantEmpate, "empate-admin@ways.test", (int)RolConocido.Admin);
+
+                var creadoEmpate = ahora.AddDays(-3);
+                idDispositivoEmpateBajo = await EscalarAsync(
+                    "INSERT INTO dispositivos (id_tenant, id_punto_venta, nombre, token_hash, id_usuario_alta, " +
+                    "ultimo_uso_at, created_at, updated_at) " +
+                    "VALUES ($1, $2, 'Caja empate 1', $3, $4, NULL, $5, $5) RETURNING id_dispositivo",
+                    idTenantEmpate, idPuntoVentaEmpate, new string('c', 64), idUsuarioEmpate, creadoEmpate);
+                idDispositivoEmpateAlto = await EscalarAsync(
+                    "INSERT INTO dispositivos (id_tenant, id_punto_venta, nombre, token_hash, id_usuario_alta, " +
+                    "ultimo_uso_at, created_at, updated_at) " +
+                    "VALUES ($1, $2, 'Caja empate 2', $3, $4, NULL, $5, $5) RETURNING id_dispositivo",
+                    idTenantEmpate, idPuntoVentaEmpate, new string('d', 64), idUsuarioEmpate, creadoEmpate);
 
                 // `modo` nullable a mano: es exactamente el primer paso de la migración real
                 // (AddColumn nullable), aislado del resto para poder ejercitar el backfill solo.
@@ -262,19 +326,21 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
                 Assert.Equal(0, await comandoDedup.ExecuteNonQueryAsync());
             }
 
-            // (b) CON el SET LOCAL, mismo bloque que la migración: alcanza los DOS tenants de una
-            // sola pasada.
+            // (b) CON el SET LOCAL, mismo bloque que la migración: alcanza los TRES tenants
+            // (Escritorio, Web, Empate) de una sola pasada.
             await using (var cruda = new NpgsqlConnection(cadenaApp))
             {
                 await cruda.OpenAsync();
 
                 await using var comandoModo = cruda.CreateCommand();
                 comandoModo.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlBackfillModo;
-                Assert.Equal(2, await comandoModo.ExecuteNonQueryAsync());
+                Assert.Equal(3, await comandoModo.ExecuteNonQueryAsync());
 
                 await using var comandoDedup = cruda.CreateCommand();
                 comandoDedup.CommandText = "SET LOCAL app.acceso = 'plataforma';\n" + SqlDedupDispositivos;
-                Assert.Equal(1, await comandoDedup.ExecuteNonQueryAsync());
+                // Un duplicado revocado por partición: Escritorio (created_at DESC) + Empate
+                // (id_dispositivo DESC de desempate) = 2.
+                Assert.Equal(2, await comandoDedup.ExecuteNonQueryAsync());
             }
 
             await using (var verificacion = new NpgsqlConnection(cadenaOwner))
@@ -291,6 +357,7 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
 
                 Assert.Equal("escritorio", await LeerModoAsync(idPuntoVentaEscritorio));
                 Assert.Equal("web", await LeerModoAsync(idPuntoVentaWeb));
+                Assert.Equal("escritorio", await LeerModoAsync(idPuntoVentaEmpate));
 
                 async Task<bool> EstaActivoAsync(int idDispositivo)
                 {
@@ -300,9 +367,17 @@ public class ModoPuntoVentaBackfillTests(WaysApiFixture fixture) : IClassFixture
                     return (bool)(await comando.ExecuteScalarAsync())!;
                 }
 
-                // Sobrevive el de MAYOR ultimo_uso_at ("Caja nueva"); "Caja vieja" queda de baja.
+                // Dimensión 1 (created_at DESC, ultimo_uso_at IGNORADO): sobrevive "Caja nueva"
+                // (pareja más reciente) aunque "Caja vieja" tenga el login más reciente — si un
+                // mutante reintrodujera ultimo_uso_at en el ORDER BY, este assert se invertiría.
                 Assert.False(await EstaActivoAsync(idDispositivoViejo));
                 Assert.True(await EstaActivoAsync(idDispositivoNuevo));
+
+                // Dimensión 2 (id_dispositivo DESC de desempate, mismo created_at exacto):
+                // sobrevive el de MAYOR id — si el ASC/DESC de este desempate se invirtiera, este
+                // assert se invertiría también.
+                Assert.False(await EstaActivoAsync(idDispositivoEmpateBajo));
+                Assert.True(await EstaActivoAsync(idDispositivoEmpateAlto));
             }
 
             // (c) Idempotencia: reejecutar con el mismo SET LOCAL ya no encuentra nada que tocar.

@@ -43,7 +43,8 @@ public class ClientesProvisioningYBackfillTests(WaysApiFixture fixture) : IClass
             NombreTenant: nameof(ProvisionarUnTenantCreaElConsumidorFinalYLaListaGeneral),
             RazonSocialEmpresa: "Empresa de prueba",
             NombrePuntoVenta: "Local 1",
-            MailAdmin: $"{nameof(ProvisionarUnTenantCreaElConsumidorFinalYLaListaGeneral)}@ways.test");
+            MailAdmin: $"{nameof(ProvisionarUnTenantCreaElConsumidorFinalYLaListaGeneral)}@ways.test",
+            Modo: ModoPuntoVenta.Web);
 
         var respuesta = await cliente.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);

@@ -766,6 +766,28 @@ describe('PuntosVenta — flip de modo', () => {
     expect(screen.queryByLabelText('Modo')).not.toBeInTheDocument()
   })
 
+  /** Cláusula bajo prueba: `ocupadoRef`, la misma guarda de re-entrancia que `confirmarBaja`
+   * (ver "un segundo click sobre la confirmación en vuelo se descarta" más arriba) — acá sobre el
+   * submit de `guardarModo` (regla 9 de `react-async-state`). */
+  it('un segundo click sobre "Guardar" en vuelo se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montar([pvFixture({ modo: 'Web' })])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Modo' }))
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
+
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
   it('un 409 por dispositivo activo rinde el mensaje del servidor sin cerrar el formulario', async () => {
     const usuario = userEvent.setup()
     apiPostMock.mockRejectedValue(

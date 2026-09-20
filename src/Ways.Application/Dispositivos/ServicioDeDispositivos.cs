@@ -1,4 +1,6 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
@@ -28,7 +30,19 @@ public class ServicioDeDispositivos(
     /// <summary>Admin: vincula un dispositivo nuevo a un punto de venta de su propio tenant.
     /// Devuelve el DTO de respuesta MÁS el secreto en texto plano — el único momento en que
     /// existe fuera de la cookie; el llamador (endpoint) lo escribe en <c>ways.dispositivo</c>
-    /// y lo descarta.</summary>
+    /// y lo descarta.
+    ///
+    /// judgment-day ronda 1 (hallazgo BLOCKER 1): el pre-chequeo de <c>puntoVenta.Modo</c> de más
+    /// abajo, hecho ANTES de abrir la transacción, es solo UX rápida (404 temprano si el punto de
+    /// venta ni siquiera existe) — la autoridad real es el RE-chequeo bajo
+    /// <see cref="BloquearYLeerModoDePuntoVentaAsync"/> (<c>FOR UPDATE</c> sobre la fila, dentro de
+    /// la MISMA transacción que el <c>INSERT</c>). Sin ese re-chequeo, esto y
+    /// <see cref="Ways.Application.Organizacion.ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync"/>
+    /// podían correr en paralelo bajo READ COMMITTED y comitear los dos — un dispositivo activo
+    /// vinculado a un punto de venta que el flip de modo acababa de pasar a Web. El lock lo toma
+    /// el MISMO statement que hace <c>ActualizarModoPuntoVentaAsync</c>
+    /// (<c>TomarLockDePuntoVentaAsync</c>) sobre la misma fila, así que las dos escrituras se
+    /// serializan.</summary>
     public async Task<(DispositivoActual Datos, string Secreto)> CrearAsync(
         AltaDispositivo datos, CancellationToken ct = default)
     {
@@ -45,7 +59,9 @@ public class ServicioDeDispositivos(
         // ResolverPuntoVentaAsync nunca aceptaría una venta de ese dispositivo contra ese punto de
         // venta (exige Escritorio). El backstop real de "a lo sumo un dispositivo activo" es
         // ux_dispositivos_punto_venta_activo (ManejadorDeErrores, 409 punto_venta_ya_tiene_dispositivo);
-        // este chequeo es el de COMPATIBILIDAD de modo, una dimensión distinta.
+        // este chequeo es el de COMPATIBILIDAD de modo, una dimensión distinta. Best-effort a
+        // propósito (solo evita abrir la transacción para un 404/409 obvio) — el RE-chequeo bajo
+        // lock, más abajo, es la autoridad real.
         if (puntoVenta.Modo != ModoPuntoVenta.Escritorio)
         {
             throw new ErrorDominio(
@@ -73,12 +89,61 @@ public class ServicioDeDispositivos(
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
         {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            var modoBajoLock = await BloquearYLeerModoDePuntoVentaAsync(puntoVenta.Id, ct);
+            if (modoBajoLock != ModoPuntoVenta.Escritorio)
+            {
+                throw new ErrorDominio(
+                    "punto_venta_modo_incompatible",
+                    "Solo un punto de venta en modo Escritorio puede tener un dispositivo vinculado.",
+                    409);
+            }
+
             db.Dispositivos.Add(dispositivo);
             await db.SaveChangesAsync(ct);
+
+            await transaccion.CommitAsync(ct);
         });
 
         var actual = await ProyectarDesdeDispositivoAsync(dispositivo, ct);
         return (actual, secreto);
+    }
+
+    /// <summary>
+    /// Lock de fila (<c>FOR UPDATE</c>) sobre el punto de venta + relectura de <c>modo</c> bajo
+    /// ese lock — el mismo statement, en espíritu, que
+    /// <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c> toma antes de re-chequear "sin
+    /// dispositivo activo". <c>modo::text</c> por el mismo motivo que el resto de los enums leídos
+    /// por ADO crudo en este repo (<c>ExigirTurnoAbiertoBajoLockAsync</c>): compara contra el
+    /// literal <c>'escritorio'</c>, nunca contra el enum nativo de Npgsql.</summary>
+    private async Task<ModoPuntoVenta> BloquearYLeerModoDePuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText = "SELECT modo::text FROM puntos_venta WHERE id_punto_venta = $1 FOR UPDATE";
+
+        var parametro = comando.CreateParameter();
+        parametro.Value = idPuntoVenta;
+        comando.Parameters.Add(parametro);
+
+        var modo = (string?)await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException(
+                $"El punto de venta {idPuntoVenta} desapareció bajo el lock — ya se validó su existencia " +
+                "afuera de esta transacción.");
+
+        return modo switch
+        {
+            "escritorio" => ModoPuntoVenta.Escritorio,
+            "web" => ModoPuntoVenta.Web,
+            _ => throw new InvalidOperationException($"Modo de punto de venta desconocido: '{modo}'.")
+        };
     }
 
     /// <summary>Admin: dispositivos activos (no revocados) del tenant en curso.</summary>

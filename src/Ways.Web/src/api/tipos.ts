@@ -374,7 +374,7 @@ export type PuntoVentaListado = {
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
  * backend, `Ways.Application.Organizacion.PuntoVentaEdicion`). `modo` tampoco: tiene su propio
- * flip dedicado (`PUT /api/puntos-venta/{id}/modo`, `PuntoVentaModoEdicion`), con su propia
+ * flip dedicado (`POST /api/puntos-venta/{id}/modo`, `PuntoVentaModoEdicion`), con su propia
  * precondición (sin dispositivo activo) y su propio rastro de auditoría. */
 export type PuntoVentaEdicion = {
   nombre: string

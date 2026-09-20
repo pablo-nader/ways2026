@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
+using Ways.Application.Organizacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
@@ -50,6 +51,12 @@ public class ServicioDeCuentaCorriente(
         }
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        // judgment-day ronda 1 (hallazgo BLOCKER 2): RC numera desde numeraciones_comprobante
+        // (AsignadorDeNumeroComprobante, más abajo) — mismo espacio que TX/NCX/TXR — así que
+        // comparte la MISMA regla de compatibilidad de modo que ServicioDeVentas. A diferencia de
+        // RegistrarAjusteAsync (no emite comprobante, no numera nada), esta sí tiene que exigirla.
+        await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
 
         // Turno resuelto server-side, ANTES de cualquier otro trabajo de negocio (spec: RC
         // Requires An Open Turno — "rejected before any other processing") — mismo criterio que
@@ -131,7 +138,10 @@ public class ServicioDeCuentaCorriente(
         }
 
         // 3. Punto de venta — provenance, no autoridad (design: Open Questions — el ajuste no
-        // tiene turno del que derivarlo).
+        // tiene turno del que derivarlo). EXENTO a propósito de PoliticaDeModoDePuntoVenta
+        // (judgment-day ronda 1, hallazgo BLOCKER 2): un ajuste manual no emite ningún
+        // comprobante_venta ni consume numeración — no hay nada de numeraciones_comprobante que
+        // este camino pueda desalinear entre Escritorio/Web.
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);

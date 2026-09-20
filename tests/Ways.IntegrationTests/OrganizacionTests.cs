@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
@@ -357,6 +358,41 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson);
         Assert.Equal(ModoPuntoVenta.Web, actualizado!.Modo);
+    }
+
+    /// <summary>(mutation-proof-tests) Prueba puntual del guard <c>datos.Modo ?? throw
+    /// ErrorDominio("modo_requerido", ...)</c> en <see cref="ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync"/>.
+    /// Mismo límite de binding que <c>SolicitudDeAprovisionamiento</c> (no representable con un
+    /// <see cref="PuntoVentaModoEdicion"/> tipado): el body crudo sin la clave "modo" liga a
+    /// <c>default(ModoPuntoVenta)</c> = Escritorio antes del guard. El punto de venta arranca en Web
+    /// (valor NO default) a propósito: si el guard se borrara, este request flipearía la fila a
+    /// Escritorio en silencio — la aserción de la fila sin cambios es la que mata esa mutación, no
+    /// el status code solo.</summary>
+    [Fact]
+    public async Task OmitirElCampoModoEnJsonCrudoAlCambiarElModoDevuelve400YNoCambiaNada()
+    {
+        var (_, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(
+            nameof(OmitirElCampoModoEnJsonCrudoAlCambiarElModoDevuelve400YNoCambiaNada));
+
+        await using (var contexto = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var pv = await contexto.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+            pv.Modo = ModoPuntoVenta.Web;
+            await contexto.SaveChangesAsync();
+        }
+
+        using var cliente = await ClienteComoAdminAsync(mailAdmin);
+
+        using var contenido = new StringContent("{}", Encoding.UTF8, "application/json");
+        var respuesta = await cliente.PostAsync($"/api/puntos-venta/{puntoVenta.Id}/modo", contenido);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("modo_requerido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var fila = await db.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+        Assert.Equal(ModoPuntoVenta.Web, fila.Modo);
     }
 
     [Fact]

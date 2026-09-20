@@ -127,7 +127,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         var respuesta = await root.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin));
+            new SolicitudDeAprovisionamiento(
+                unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin, ModoPuntoVenta.Web));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
         var resultado = await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>();
@@ -709,7 +710,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     {
         var nombre = $"tenant-sin-reintento-{Guid.NewGuid().ToString("N")[..8]}";
         var solicitud = new SolicitudDeAprovisionamiento(
-            nombre, $"{nombre} SRL", $"{nombre} - Local 1", $"{nombre}@ways.test");
+            nombre, $"{nombre} SRL", $"{nombre} - Local 1", $"{nombre}@ways.test", ModoPuntoVenta.Web);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("usuarios", SqlStateTransitorio);
 
@@ -1052,7 +1053,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         var unico = $"residual-aprov-{Guid.NewGuid().ToString("N")[..8]}";
         var solicitud = new SolicitudDeAprovisionamiento(
-            unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test");
+            unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test", ModoPuntoVenta.Web);
 
         HttpResponseMessage respuesta;
         using (fixture.ConInterceptorEnElHost(

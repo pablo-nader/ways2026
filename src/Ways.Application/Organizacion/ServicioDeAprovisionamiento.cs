@@ -33,7 +33,8 @@ public class ServicioDeAprovisionamiento(
         var razonSocial = Normalizar(solicitud.RazonSocialEmpresa, "razon_social", "razón social", 150);
         var nombrePuntoVenta = Normalizar(solicitud.NombrePuntoVenta, "punto_venta", "punto de venta", 150);
         var mailAdmin = Normalizar(solicitud.MailAdmin, "mail_admin", "mail del admin", 255);
-        var modo = solicitud.Modo;
+        var modo = solicitud.Modo
+            ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
 
         // ADR-16: EnableRetryOnFailure ya está configurado (DependencyInjection); con una
         // estrategia de reintento, EF tira si se abre una transacción por fuera de
