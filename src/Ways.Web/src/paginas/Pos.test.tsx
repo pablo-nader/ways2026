@@ -25,7 +25,7 @@ import type {
 } from '../api/tipos'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
-import { agregarAOutbox, guardarBloque } from '../pos/outboxOffline'
+import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
@@ -4387,6 +4387,103 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta\(s\) sin sincronizar/)).toBeInTheDocument()
       expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    })
+
+    // judgment-day ronda 1 (CRITICAL): una venta rechazada de forma permanente sale del outbox
+    // (goal: no bloquear el drenado del resto de la cola) pero sigue siendo real, con ticket
+    // entregado — "Cerrar caja" tiene que seguir bloqueado igual, mostrando el motivo real.
+    it('con una venta que necesita atención (outbox ya vacío), "Cerrar caja" no navega y muestra el motivo', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await agregarARechazada(almacen, {
+        idLocal: 'rechazada-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+        mensaje: 'La venta 0007-00000500 no se pudo sincronizar: rechazo del servidor.',
+      })
+      mockearApiGet()
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText(/1 venta\(s\) necesitan atención/)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText(/No se puede cerrar la caja: hay 1 venta\(s\) necesitan atención/)).toBeInTheDocument()
+      expect(screen.queryByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    })
+  })
+
+  // judgment-day ronda 1 (WARNING): "el precio que se mostró es el que se cobra" — la vista
+  // previa offline deliberadamente NO se re-corre con un refresco en segundo plano de la
+  // instantánea (mismo criterio documentado en el efecto de precios de `Pos.tsx`), así que un
+  // refresco que aterriza ENTRE la vista previa y el click de "Cobrar" no puede cambiar ni lo
+  // que se persiste ni lo que el ticket muestra.
+  describe('congelado del precio offline entre la vista previa y "Cobrar"', () => {
+    it('un refresco de instantánea en segundo plano después de la vista previa NO cambia el precio cobrado ni el del ticket', async () => {
+      const precioViejo = 100
+      const precioNuevo = 150
+      const instantaneaConPrecio = (precio: number) =>
+        instantaneaFixture({ articulos: [articuloDeInstantaneaFixture({ precioOriginal: precio, precioFinal: precio, descuentoUnitario: 0 })] })
+
+      await prepararAlmacenOffline({ instantanea: instantaneaConPrecio(precioViejo), bloque: { desde: 500, hasta: 599, proximo: 500 } })
+
+      let llamadasInstantanea = 0
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') {
+          llamadasInstantanea += 1
+          // La PRIMERA llamada (ciclo de montaje) devuelve el mismo precio ya persistido — recién
+          // la SEGUNDA (disparada más abajo por el evento `online`, el backstop del intervalo)
+          // trae el precio nuevo, simulando un cambio de catálogo server-side entre ambos ciclos.
+          return Promise.resolve(instantaneaConPrecio(llamadasInstantanea === 1 ? precioViejo : precioNuevo))
+        }
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ofertas/resolver' || ruta === '/ventas'
+          ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      // Vista previa offline con el precio VIEJO — lo que el cajero efectivamente ve en pantalla.
+      await waitFor(() => expect(screen.getByText(`$ ${precioViejo},00`, { selector: 'strong' })).toBeInTheDocument())
+
+      await cobrarConEfectivo(String(precioViejo))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+      // El evento `online` es un backstop documentado del propio hook (dispara un ciclo YA, sin
+      // esperar el intervalo) — refresca la instantánea del hook al precio NUEVO, sin tocar
+      // carrito/cliente/punto de venta, así que la vista previa NUNCA vuelve a correr.
+      await act(async () => {
+        window.dispatchEvent(new Event('online'))
+      })
+      await waitFor(() => expect(llamadasInstantanea).toBeGreaterThanOrEqual(2))
+
+      // La vista previa SIGUE mostrando el precio VIEJO — la prueba de que nunca se re-corrió.
+      expect(screen.getByText(`$ ${precioViejo},00`, { selector: 'strong' })).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada sin conexión')).toBeInTheDocument()
+      // El modal "Venta finalizada" (el ticket) muestra el TOTAL VIEJO — el que el cajero vio y cobró.
+      expect(screen.getByText(new RegExp(`Total: \\$ ${precioViejo},00`))).toBeInTheDocument()
+      expect(screen.queryByText(new RegExp(`Total: \\$ ${precioNuevo},00`))).not.toBeInTheDocument()
+
+      // Y lo persistido en el outbox (lo que de verdad se sincroniza) usa el precio VIEJO — nunca
+      // el nuevo que la instantánea del hook ya tiene para este momento.
+      const almacen = crearAlmacenIndexedDb()
+      const outbox = await leerOutbox(almacen)
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: precioViejo })
     })
   })
 })

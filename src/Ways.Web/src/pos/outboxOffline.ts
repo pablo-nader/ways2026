@@ -42,16 +42,31 @@ export function leerOutbox(almacen: AlmacenClaveValor): Promise<VentaEnCola[]> {
   return almacen.leer<VentaEnCola[]>(CLAVE_OUTBOX).then((v) => v ?? [])
 }
 
-function guardarOutbox(almacen: AlmacenClaveValor, ventas: VentaEnCola[]): Promise<void> {
+function guardarOutbox(almacen: AlmacenClaveValor, ventas: VentaEnCola[]): Promise<boolean> {
   return almacen.escribir(CLAVE_OUTBOX, ventas)
 }
 
-/** Encola al FINAL — el drenado siempre recorre desde el principio (regla "drena EN ORDEN"). */
+/** Se lanza cuando `agregarAOutbox` no puede CONFIRMAR (releyendo) que la venta que acaba de
+ * escribir de verdad quedó persistida — un almacén degradado (cuota agotada, modo privado,
+ * IndexedDB bloqueado) puede reportar una escritura fallida, o incluso "exitosa" sin haber
+ * grabado nada real. La venta ya tiene (o va a tener) un ticket entregado: nunca se puede asumir
+ * que quedó guardada solo porque la promesa de escritura no rechazó (judgment-day ronda 1,
+ * BLOCKER — antes de este fix, `encolarVentaOffline` devolvía `ok: true` sin verificar nada). */
+export class ErrorDePersistenciaOffline extends Error {}
+
+/** Encola al FINAL — el drenado siempre recorre desde el principio (regla "drena EN ORDEN").
+ * Nunca resuelve con `ok: true` sin haber releído el almacén y confirmado que la venta nueva está
+ * de verdad adentro — tira `ErrorDePersistenciaOffline` en cualquier otro caso (ver el
+ * doc-comment de la excepción). */
 export async function agregarAOutbox(almacen: AlmacenClaveValor, venta: VentaEnCola): Promise<VentaEnCola[]> {
   const actual = await leerOutbox(almacen)
   const siguiente = [...actual, venta]
-  await guardarOutbox(almacen, siguiente)
-  return siguiente
+  const escrito = await guardarOutbox(almacen, siguiente)
+  const relectura = escrito ? await leerOutbox(almacen) : []
+  if (!relectura.some((v) => v.idLocal === venta.idLocal)) {
+    throw new ErrorDePersistenciaOffline('No se pudo guardar la venta de forma durable en el outbox offline.')
+  }
+  return relectura
 }
 
 export async function quitarDeOutbox(almacen: AlmacenClaveValor, idLocal: string): Promise<VentaEnCola[]> {
@@ -65,8 +80,38 @@ export function leerBloque(almacen: AlmacenClaveValor): Promise<BloqueDeNumeraci
   return almacen.leer<BloqueDeNumeracionLocal>(CLAVE_BLOQUE)
 }
 
-export function guardarBloque(almacen: AlmacenClaveValor, bloque: BloqueDeNumeracionLocal): Promise<void> {
-  return almacen.escribir(CLAVE_BLOQUE, bloque)
+export async function guardarBloque(almacen: AlmacenClaveValor, bloque: BloqueDeNumeracionLocal): Promise<void> {
+  await almacen.escribir(CLAVE_BLOQUE, bloque)
+}
+
+const CLAVE_RECHAZADAS = 'ventasRechazadas'
+
+/** Una venta que el servidor rechazó de forma PERMANENTE al drenar (nunca un `ErrorDeRed`
+ * transitorio) — se saca del outbox para no bloquear el drenado de las ventas posteriores, pero
+ * se conserva acá con su error real: es una venta real, con su ticket ya entregado, que nunca se
+ * descarta en silencio (judgment-day ronda 1, CRITICAL — "needs attention", nunca "se perdió"). */
+export type VentaRechazada = VentaEnCola & { mensaje: string }
+
+export function leerRechazadas(almacen: AlmacenClaveValor): Promise<VentaRechazada[]> {
+  return almacen.leer<VentaRechazada[]>(CLAVE_RECHAZADAS).then((v) => v ?? [])
+}
+
+function guardarRechazadas(almacen: AlmacenClaveValor, rechazadas: VentaRechazada[]): Promise<boolean> {
+  return almacen.escribir(CLAVE_RECHAZADAS, rechazadas)
+}
+
+/** Encola al FINAL, mismo criterio que `agregarAOutbox` (incluida la verificación por relectura:
+ * esta venta YA estaba durablemente guardada en el outbox, moverla de acá sin confirmar dónde
+ * queda sería perderla). */
+export async function agregarARechazada(almacen: AlmacenClaveValor, rechazada: VentaRechazada): Promise<VentaRechazada[]> {
+  const actual = await leerRechazadas(almacen)
+  const siguiente = [...actual, rechazada]
+  const escrito = await guardarRechazadas(almacen, siguiente)
+  const relectura = escrito ? await leerRechazadas(almacen) : []
+  if (!relectura.some((v) => v.idLocal === rechazada.idLocal)) {
+    throw new ErrorDePersistenciaOffline('No se pudo archivar la venta rechazada de forma durable.')
+  }
+  return relectura
 }
 
 /** Cuántos números quedan sin repartir en el bloque — `0` (nunca negativo) sin bloque o agotado. */
@@ -102,7 +147,13 @@ export function construirNumeroVisible(idPuntoVenta: number, numero: number): st
   return `${String(idPuntoVenta).padStart(4, '0')}-${String(numero).padStart(8, '0')}`
 }
 
-export type MotivoRechazoOffline = 'cliente_no_admitido' | 'medio_no_admitido' | 'sin_instantanea' | 'linea_sin_precio' | 'sin_numeracion'
+export type MotivoRechazoOffline =
+  | 'cliente_no_admitido'
+  | 'medio_no_admitido'
+  | 'sin_instantanea'
+  | 'linea_sin_precio'
+  | 'sin_numeracion'
+  | 'error_al_guardar'
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final — la instantánea no tiene los precios de otro cliente.',
@@ -110,6 +161,10 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   sin_instantanea: 'No hay una instantánea local para vender sin conexión — recuperá la señal para descargarla.',
   linea_sin_precio: 'Un artículo del carrito no tiene precio en la última instantánea — no se puede vender sin conexión.',
   sin_numeracion: 'No quedan números reservados para vender sin conexión — recuperá la señal para reponer el bloque.',
+  // judgment-day ronda 1 (BLOCKER): la venta NO se guardó — nunca se le entrega el ticket al
+  // cliente con este motivo (a diferencia de los demás, que rechazan ANTES de intentar nada).
+  error_al_guardar:
+    'No se pudo guardar la venta de forma segura en este dispositivo — no quedó encolada, no le entregues el comprobante al cliente. Probá de nuevo; si persiste, puede ser que el almacenamiento del dispositivo esté lleno o bloqueado.',
 }
 
 export function mensajeDeRechazoOffline(motivo: MotivoRechazoOffline): string {

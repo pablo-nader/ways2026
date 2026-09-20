@@ -11,21 +11,26 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AlmacenClaveValor } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
-import { guardarInstantaneaLocal, leerInstantaneaLocal } from './instantaneaOffline'
+import { guardarInstantaneaLocal, leerInstantaneaLocal, todasLasLineasTienenPrecioOffline } from './instantaneaOffline'
 import {
   admisibilidadDeVentaOffline,
   agregarAOutbox,
+  agregarARechazada,
   construirNumeroVisible,
+  ErrorDePersistenciaOffline,
   generarIdLocal,
   guardarBloque,
   leerBloque,
   leerOutbox,
+  leerRechazadas,
   necesitaReponerBloque,
   numerosDisponibles,
   quitarDeOutbox,
   tomarProximoNumero,
   type BloqueDeNumeracionLocal,
   type MotivoRechazoOffline,
+  type VentaEnCola,
+  type VentaRechazada,
 } from './outboxOffline'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
@@ -68,28 +73,44 @@ export type ResultadoDeSincronizacionOffline = {
    * checkout (esa sigue siendo el `ErrorDeRed` real de cada intento) — solo gatea qué opciones
    * mostrar antes de intentar. */
   enLinea: boolean
-  /** Motivo del último intento de drenado que NO fue un simple "sin conexión" — un 409/400 real
-   * del servidor sobre el ítem más viejo del outbox, que por eso queda sin sacarse (nunca se
-   * salta el orden). `''` sin ningún error de ese tipo pendiente. */
-  errorDeDrenado: string
+  /** Ventas que el servidor rechazó de forma PERMANENTE al drenar (un 409/400 real, nunca un
+   * simple "sin conexión") — se sacaron del outbox para no bloquear el drenado del resto de la
+   * cola, pero NUNCA se descartan: quedan acá, visibles con su error real, hasta que un humano
+   * las resuelva (judgment-day ronda 1, CRITICAL — antes de este fix, una sola de estas ventas
+   * frenaba el drenado entero para siempre). Bloquea el cierre de turno igual que `outboxCount`
+   * (ver `irACerrarCaja` en `Pos.tsx` y el gate de `CierreDeCaja.tsx`). `[]` sin ninguna pendiente. */
+  ventasConError: readonly VentaRechazada[]
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
     pagos: readonly { comportamiento: ComportamientoMedioPago }[]
+    /** judgment-day ronda 1 (WARNING): la instantánea a usar para resolver precio/descuento de
+     * cada línea — inyectable a propósito para que `Pos.tsx` pueda pasar la MISMA instantánea que
+     * ya se usó para la vista previa que el cajero tiene en pantalla (congelada contra el refresco
+     * en segundo plano, ver `Pos.tsx`), en vez de que este hook lea su propio estado `instantanea`
+     * (que puede haberse refrescado DESPUÉS de esa vista previa). `undefined`/ausente cae al
+     * estado interno del hook — comportamiento preexistente intacto para quien no tenga una vista
+     * previa propia que congelar (p. ej. los tests de este mismo hook). */
+    instantaneaCongelada?: InstantaneaDePos | null
   }) => Promise<EncoladoOffline>
 }
 
 /** Enriquece cada línea con el precio congelado de la instantánea — `null` si CUALQUIER línea no
- * tiene artículo en la instantánea (all-or-nothing, mismo criterio que el servidor exige para
- * `precioUnitario`/`descuentoUnitario`: todas las líneas con precio, o el encolado se rechaza
- * antes de escribir nada). */
+ * tiene artículo en la instantánea. Defensa en profundidad únicamente: el gate real (todas o
+ * ninguna) es `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar
+ * esto (judgment-day ronda 1, SUGGESTION) — este `if (!articulo) return null` nunca debería
+ * disparar en la práctica, mismo criterio que `comprobanteOfflineSintetico.ts`. */
 function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos): LineaDeVenta[] | null {
   const porId = new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
   const enriquecidas: LineaDeVenta[] = []
   for (const linea of lineas) {
     const articulo = porId.get(linea.idArticulo)
     if (!articulo) return null
-    enriquecidas.push({ ...linea, precioUnitario: articulo.precioFinal, descuentoUnitario: articulo.descuentoUnitario })
+    // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
+    // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
+    // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
+    // (ya neto) restaba el descuento DOS VECES y sub-registraba toda venta offline con oferta.
+    enriquecidas.push({ ...linea, precioUnitario: articulo.precioOriginal, descuentoUnitario: articulo.descuentoUnitario })
   }
   return enriquecidas
 }
@@ -101,7 +122,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   const [instantanea, setInstantanea] = useState<InstantaneaDePos | null>(null)
   const [outboxCount, setOutboxCount] = useState(0)
-  const [errorDeDrenado, setErrorDeDrenado] = useState('')
+  const [ventasConError, setVentasConError] = useState<VentaRechazada[]>([])
   const [enLinea, setEnLinea] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
 
   // Fuente de verdad del bloque local — nunca se muestra en pantalla (goal C solo pide mostrar el
@@ -129,20 +150,31 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         await clienteDeVentas.emitir(primera.solicitud)
         outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
         setOutboxCount(outbox.length)
-        setErrorDeDrenado('')
       } catch (e) {
         if (e instanceof ErrorDeRed) {
-          // Sigue sin señal — se reintenta en el próximo ciclo, nunca se descarta ni se salta.
+          // Transitorio ("reintentar más tarde, mantener el orden") — sigue sin señal, se
+          // reintenta TODO en el próximo ciclo: nunca se descarta ni se saca nada del outbox.
           return
         }
-        // Rechazo REAL del servidor sobre el ítem más viejo (ej. `numero_preasignado_con_otro
-        // _contenido`, `turno_no_abierto`) — drenar en orden significa que ningún ítem posterior
-        // se envía mientras este siga trabado: saltarlo arriesgaría un número emitido fuera de
-        // orden. Se corta el ciclo y se deja visible para que un humano lo resuelva.
-        setErrorDeDrenado(
-          e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.',
-        )
-        return
+        // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo (ej.
+        // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`) — nunca se descarta (la
+        // venta es real, con ticket ya entregado): se archiva como "necesita atención" con su
+        // error real y se saca del outbox para que el drenado pueda seguir con el resto de la
+        // cola, en vez de quedar rehén de un solo ítem trabado para siempre (judgment-day ronda
+        // 1, CRITICAL).
+        const mensaje =
+          e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.'
+        try {
+          await agregarARechazada(almacenRef.current, { ...primera, mensaje })
+        } catch {
+          // No se pudo archivar de forma durable como rechazada — se deja el ítem en el outbox
+          // (nunca se saca sin confirmar dónde queda) y se corta esta pasada; el próximo ciclo
+          // reintenta desde el mismo punto.
+          return
+        }
+        outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
+        setOutboxCount(outbox.length)
+        setVentasConError(await leerRechazadas(almacenRef.current))
       }
     }
   }
@@ -205,7 +237,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     if (!activo || idPuntoVenta === null) {
       setInstantanea(null)
       setOutboxCount(0)
-      setErrorDeDrenado('')
+      setVentasConError([])
       setEnLinea(typeof navigator === 'undefined' || navigator.onLine)
       bloqueRef.current = null
       return
@@ -213,14 +245,18 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
     let vigente = true
 
-    Promise.all([leerInstantaneaLocal(almacenRef.current), leerOutbox(almacenRef.current), leerBloque(almacenRef.current)]).then(
-      ([instantaneaGuardada, outboxGuardado, bloqueGuardado]) => {
-        if (!vigente) return
-        setInstantanea(instantaneaGuardada)
-        setOutboxCount(outboxGuardado.length)
-        bloqueRef.current = bloqueGuardado
-      },
-    )
+    Promise.all([
+      leerInstantaneaLocal(almacenRef.current),
+      leerOutbox(almacenRef.current),
+      leerBloque(almacenRef.current),
+      leerRechazadas(almacenRef.current),
+    ]).then(([instantaneaGuardada, outboxGuardado, bloqueGuardado, rechazadasGuardadas]) => {
+      if (!vigente) return
+      setInstantanea(instantaneaGuardada)
+      setOutboxCount(outboxGuardado.length)
+      bloqueRef.current = bloqueGuardado
+      setVentasConError(rechazadasGuardadas)
+    })
 
     return () => {
       vigente = false
@@ -255,17 +291,27 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
     pagos: readonly { comportamiento: ComportamientoMedioPago }[]
+    instantaneaCongelada?: InstantaneaDePos | null
   }): Promise<EncoladoOffline> {
     return encolarOperacion(async () => {
-      const instantaneaActual = instantanea
+      // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
+      // misma que ya resolvió la vista previa en pantalla) cuando la pasa — nunca el estado
+      // `instantanea` de este hook, que puede haberse refrescado en segundo plano DESPUÉS de esa
+      // vista previa. Sin congelada explícita (p. ej. los tests de este hook, sin `Pos.tsx` de
+      // por medio), cae al estado interno de siempre.
+      const instantaneaActual = paramsVenta.instantaneaCongelada !== undefined ? paramsVenta.instantaneaCongelada : instantanea
       const lineasBase = paramsVenta.solicitudBase.lineas ?? []
-      const lineasEnriquecidas = instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual) : null
+      // judgment-day ronda 1 (SUGGESTION): único gate de la precondición "todas las líneas tienen
+      // precio" — antes reimplementado inline acá abajo (`lineasEnriquecidas !== null && ...`),
+      // ahora delegado a `todasLasLineasTienenPrecioOffline` para que no puedan divergir.
+      const todasConPrecio = instantaneaActual !== null && todasLasLineasTienenPrecioOffline(lineasBase, instantaneaActual)
+      const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual) : null
 
       const motivo = admisibilidadDeVentaOffline({
         esConsumidorFinal: paramsVenta.esConsumidorFinal,
         pagos: paramsVenta.pagos,
         hayInstantanea: instantaneaActual !== null,
-        todasLasLineasConPrecio: lineasEnriquecidas !== null && lineasEnriquecidas.length > 0,
+        todasLasLineasConPrecio: todasConPrecio,
         hayNumeroDisponible: numerosDisponibles(bloqueRef.current) > 0,
       })
 
@@ -284,18 +330,30 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         numeroPreasignado: tomado.numero,
       }
 
-      const nuevoOutbox = await agregarAOutbox(almacenRef.current, {
-        idLocal: generarIdLocal(),
-        numeroPreasignado: tomado.numero,
-        idPuntoVenta: paramsVenta.solicitudBase.idPuntoVenta,
-        creadoEn: new Date().toISOString(),
-        solicitud: solicitudFinal,
-      })
+      // judgment-day ronda 1 (BLOCKER): NUNCA se asume que la venta quedó guardada solo porque
+      // `agregarAOutbox` no rechazó — esa función misma verifica (releyendo) que la venta nueva
+      // está de verdad en el outbox, y tira `ErrorDePersistenciaOffline` si no puede confirmarlo.
+      // Ese fallo tiene que llegar al cajero ANTES de imprimir/mostrar ningún ticket: el llamador
+      // (`Pos.tsx`) recién construye el comprobante sintético cuando esta función devuelve
+      // `ok: true`, nunca antes.
+      let nuevoOutbox: VentaEnCola[]
+      try {
+        nuevoOutbox = await agregarAOutbox(almacenRef.current, {
+          idLocal: generarIdLocal(),
+          numeroPreasignado: tomado.numero,
+          idPuntoVenta: paramsVenta.solicitudBase.idPuntoVenta,
+          creadoEn: new Date().toISOString(),
+          solicitud: solicitudFinal,
+        })
+      } catch (e) {
+        if (!(e instanceof ErrorDePersistenciaOffline)) throw e
+        return { ok: false, motivo: 'error_al_guardar' }
+      }
       setOutboxCount(nuevoOutbox.length)
 
       return { ok: true, numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, tomado.numero), numero: tomado.numero }
     })
   }
 
-  return { instantanea, outboxCount, errorDeDrenado, enLinea, encolarVentaOffline }
+  return { instantanea, outboxCount, ventasConError, enLinea, encolarVentaOffline }
 }

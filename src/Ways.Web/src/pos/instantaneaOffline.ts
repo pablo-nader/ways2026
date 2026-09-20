@@ -117,8 +117,13 @@ export function resolverPreciosOffline(
 
 /** `true` si TODAS las líneas del carrito tienen precio resuelto en la instantánea — la
  * precondición que el checkout offline exige (todas con precio, o directamente rechazar en vez de
- * vender media venta a precio inventado). */
-export function todasLasLineasTienenPrecioOffline(lineas: LineaCarrito[], instantanea: InstantaneaDePos): boolean {
+ * vender media venta a precio inventado). ÚNICO gate para esa precondición (judgment-day ronda 1,
+ * SUGGESTION — antes de este fix, `useSincronizacionOffline.encolarVentaOffline` la reimplementaba
+ * inline en vez de llamar a esta función, dos copias de una precondición de dinero que podían
+ * divergir). Tipo de línea deliberadamente mínimo (`{ idArticulo }`, no `LineaCarrito` completo)
+ * para poder validar tanto el carrito en pantalla como un `LineaDeVenta[]` ya armado, sin
+ * conversiones. */
+export function todasLasLineasTienenPrecioOffline(lineas: readonly { idArticulo: number }[], instantanea: InstantaneaDePos): boolean {
   const porId = new Set(instantanea.articulos.map((a) => a.idArticulo))
   return lineas.length > 0 && lineas.every((l) => porId.has(l.idArticulo))
 }

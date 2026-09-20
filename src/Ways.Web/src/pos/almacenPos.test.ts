@@ -13,6 +13,11 @@ describe('almacenPos — IndexedDB real (fake-indexeddb)', () => {
     expect(leido).toEqual(valor)
   })
 
+  it('escribir devuelve true cuando la escritura de verdad persistió', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await expect(almacen.escribir('clave-ok', { x: 1 })).resolves.toBe(true)
+  })
+
   it('leer una clave nunca escrita devuelve null, no lanza', async () => {
     const almacen = crearAlmacenIndexedDb()
     await expect(almacen.leer('nunca-escrita')).resolves.toBeNull()
@@ -56,8 +61,8 @@ describe('almacenPos — degrada sin romper cuando IndexedDB no está disponible
     await expect(almacen.leer('cualquier-clave')).resolves.toBeNull()
   })
 
-  it('escribir sin IndexedDB resuelve (no-op) en vez de rechazar', async () => {
+  it('escribir sin IndexedDB resuelve false (no-op, nunca rechaza) — reporta que no persistió', async () => {
     const almacen = crearAlmacenIndexedDb()
-    await expect(almacen.escribir('cualquier-clave', { x: 1 })).resolves.toBeUndefined()
+    await expect(almacen.escribir('cualquier-clave', { x: 1 })).resolves.toBe(false)
   })
 })

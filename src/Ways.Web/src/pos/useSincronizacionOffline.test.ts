@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSincronizacionOffline } from './useSincronizacionOffline'
-import { agregarAOutbox, guardarBloque, leerBloque, leerOutbox, type BloqueDeNumeracionLocal, type VentaEnCola } from './outboxOffline'
+import { agregarAOutbox, guardarBloque, leerBloque, leerOutbox, leerRechazadas, type BloqueDeNumeracionLocal, type VentaEnCola } from './outboxOffline'
 import { guardarInstantaneaLocal } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -31,6 +31,25 @@ function almacenFake(): AlmacenClaveValor {
     },
     async escribir<T>(clave: string, valor: T) {
       datos.set(clave, valor)
+      return true
+    },
+  }
+}
+
+/** Igual que `almacenFake`, pero la escritura del outbox SIEMPRE se degrada (`false`) — simula
+ * cuota agotada / almacenamiento bloqueado justo al intentar encolar una venta nueva, con la
+ * instantánea y el bloque ya persistidos de antes (el escenario real: el dispositivo viene
+ * funcionando bien y el almacenamiento se llena recién ahora). */
+function almacenFakeConOutboxRoto(): AlmacenClaveValor {
+  const datos = new Map<string, unknown>()
+  return {
+    async leer<T>(clave: string) {
+      return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+    },
+    async escribir<T>(clave: string, valor: T) {
+      if (clave === 'outbox') return false
+      datos.set(clave, valor)
+      return true
     },
   }
 }
@@ -248,20 +267,33 @@ describe('useSincronizacionOffline — drenado del outbox, EN ORDEN', () => {
     await expect(leerOutbox(almacen)).resolves.toEqual([])
   })
 
-  it('un rechazo REAL (ErrorApi) del más viejo detiene el drenado — nunca salta al siguiente', async () => {
+  // judgment-day ronda 1 (CRITICAL): antes de este fix, un rechazo permanente del ítem más viejo
+  // frenaba el drenado ENTERO para siempre — 'b' (sano) quedaba rehén de 'a' (trabado) sin límite.
+  it('un rechazo REAL (ErrorApi) del más viejo se archiva como "necesita atención" y el drenado SIGUE con el resto de la cola', async () => {
     const almacen = almacenFake()
-    await outboxConDos(almacen)
-    emitirMock.mockRejectedValue(new ErrorApi(409, 'numero_preasignado_con_otro_contenido', 'Contenido distinto'))
+    const [a, b] = await outboxConDos(almacen)
+    emitirMock.mockImplementation((solicitud: SolicitudDeVenta) =>
+      solicitud.numeroPreasignado === a.numeroPreasignado
+        ? Promise.reject(new ErrorApi(409, 'numero_preasignado_con_otro_contenido', 'Contenido distinto'))
+        : Promise.resolve({ id: 1 }),
+    )
     obtenerInstantaneaMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
 
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
-    await waitFor(() => expect(result.current.errorDeDrenado).not.toBe(''))
-    expect(emitirMock).toHaveBeenCalledTimes(1)
-    expect(result.current.outboxCount).toBe(2)
+    // 'a' queda archivada como rechazada, visible con su error real — nunca descartada en silencio.
+    await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
+    expect(result.current.ventasConError[0]).toMatchObject({ idLocal: a.idLocal, numeroPreasignado: a.numeroPreasignado })
+    expect(result.current.ventasConError[0].mensaje).toContain(String(a.numeroPreasignado))
+
+    // 'b' (sano) SÍ se drenó — no quedó rehén de 'a'.
+    await waitFor(() => expect(result.current.outboxCount).toBe(0))
+    expect(emitirMock.mock.calls.map((c) => (c[0] as SolicitudDeVenta).numeroPreasignado)).toContain(b.numeroPreasignado)
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+    await expect(leerRechazadas(almacen)).resolves.toHaveLength(1)
   })
 
-  it('sin señal (ErrorDeRed) en el más viejo, deja el outbox intacto y sin marcar error de drenado', async () => {
+  it('sin señal (ErrorDeRed) en el más viejo, deja el outbox intacto — transitorio, nunca se archiva como rechazada', async () => {
     const almacen = almacenFake()
     await outboxConDos(almacen)
     emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
@@ -275,7 +307,7 @@ describe('useSincronizacionOffline — drenado del outbox, EN ORDEN', () => {
       await Promise.resolve()
     })
     expect(result.current.outboxCount).toBe(2)
-    expect(result.current.errorDeDrenado).toBe('')
+    expect(result.current.ventasConError).toEqual([])
   })
 })
 
@@ -290,6 +322,56 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       pagos: [{ comportamiento: 'Efectivo' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'sin_instantanea' })
+  })
+
+  // judgment-day ronda 1 (SUGGESTION): prueba que `todasLasLineasTienenPrecioOffline` está de
+  // verdad ENCHUFADA como el gate (antes, `encolarVentaOffline` reimplementaba la misma
+  // precondición inline sin llamar a esa función — ningún test de este archivo ejercitaba
+  // `linea_sin_precio` a este nivel).
+  it('rechaza con una línea cuyo artículo no está en la instantánea (linea_sin_precio)', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ idArticulo: 1 })] }))
+    await guardarBloque(almacen, bloqueFixture())
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    const resultado = await result.current.encolarVentaOffline({
+      solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 2, cantidad: 1, codigoBarra: null, idLote: null }] }),
+      esConsumidorFinal: true,
+      pagos: [{ comportamiento: 'Efectivo' }],
+    })
+    expect(resultado).toEqual({ ok: false, motivo: 'linea_sin_precio' })
+  })
+
+  // judgment-day ronda 1 (WARNING): la instantánea CONGELADA que `Pos.tsx` pasa (la que ya
+  // resolvió la vista previa en pantalla) manda sobre el estado interno del hook, aunque ese
+  // estado ya se haya refrescado en segundo plano — "el precio que se mostró es el que se cobra".
+  it('con instantaneaCongelada, usa ESA instantánea para el precio — nunca la más fresca del hook', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 200, precioFinal: 200, descuentoUnitario: 0 })] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea?.articulos[0].precioOriginal).toBe(200))
+
+    // La instantánea "congelada" (la vieja, la que el cajero vio en pantalla) trae un precio
+    // DISTINTO al que el hook tiene ahora — simula un refresco en segundo plano entre la vista
+    // previa y el click de "Cobrar".
+    const instantaneaVieja = instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 })] })
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture(),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+        instantaneaCongelada: instantaneaVieja,
+      })
+    })
+
+    expect(resultado).toMatchObject({ ok: true })
+    const outbox = await leerOutbox(almacen)
+    // 100 (la vieja, congelada) — NUNCA 200 (la fresca que el hook tiene ahora en su propio estado).
+    expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 100 })
   })
 
   it('rechaza cliente no-CF, aunque haya instantánea y números disponibles', async () => {
@@ -361,9 +443,36 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(outbox).toHaveLength(1)
     expect(outbox[0].numeroPreasignado).toBe(150)
     expect(outbox[0].solicitud.numeroPreasignado).toBe(150)
-    expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 100, descuentoUnitario: 20 })
+    // precioOriginal (bruto), NUNCA precioFinal (ya neto) — el backend resta descuentoUnitario de
+    // nuevo, así que mandar el neto lo restaría dos veces (ver el comentario de
+    // `enriquecerLineasConPrecioOffline`).
+    expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 120, descuentoUnitario: 20 })
 
     await waitFor(() => expect(result.current.outboxCount).toBe(1))
+  })
+
+  // judgment-day ronda 1 (BLOCKER): antes de este fix, `agregarAOutbox` tragaba CUALQUIER falla
+  // de escritura y `encolarVentaOffline` devolvía `ok: true` igual — la venta se mostraba
+  // "Guardada sin conexión", el ticket se imprimía, y no había nada guardado.
+  it('si el almacén no puede persistir la venta de forma durable, NUNCA devuelve ok — nada que imprimir ni entregar', async () => {
+    const almacen = almacenFakeConOutboxRoto()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture(),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    expect(resultado).toEqual({ ok: false, motivo: 'error_al_guardar' })
+    // Nunca subió el contador visible — nada que el cajero deba creer que quedó encolado.
+    expect(result.current.outboxCount).toBe(0)
   })
 
   it('no admite dos ventas consecutivas con el MISMO número (avanza el puntero cada vez)', async () => {

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
-import { agregarAOutbox } from '../pos/outboxOffline'
+import { agregarAOutbox, agregarARechazada } from '../pos/outboxOffline'
 import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -418,6 +418,94 @@ describe('CierreDeCaja — regla dura del outbox offline (stage-pos-venta-offlin
 
     await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
     await userEvent.click(screen.getByRole('checkbox'))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+  })
+
+  // judgment-day ronda 1 (CRITICAL): una venta rechazada de forma permanente sale del outbox
+  // (para no bloquear el drenado del resto de la cola) pero sigue siendo una venta real con
+  // ticket entregado — el cierre tiene que seguir bloqueado igual que con el outbox no vacío.
+  it('con una venta que necesita atención (outbox vacío), "Finalizar cierre" queda deshabilitado igual', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await agregarARechazada(almacen, {
+      idLocal: 'a',
+      numeroPreasignado: 100,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      mensaje: 'La venta 0007-00000100 no se pudo sincronizar: rechazo del servidor.',
+    })
+
+    mockearRutasBase()
+    renderCierre()
+    await screen.findByText('Efectivo')
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+  })
+})
+
+// judgment-day ronda 1 (WARNING): antes de este fix, `outboxCount`/`cantidadConError` se leían
+// UNA vez al montar y nunca más — un cambio de cualquiera de los dos, en cualquier sentido,
+// DESPUÉS de montar quedaba invisible para el resto de la vida de esta pantalla.
+describe('CierreDeCaja — re-lee el outbox/las rechazadas (nunca queda desactualizado)', () => {
+  it('una venta encolada DESPUÉS de montar (otra pestaña, o un drenado que la archivó) bloquea "Finalizar cierre" sin recargar la pantalla', async () => {
+    mockearRutasBase()
+    renderCierre()
+    await screen.findByText('Efectivo')
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+
+    // Otra pestaña (u otro ciclo de `useSincronizacionOffline`) encola una venta DESPUÉS de que
+    // esta pantalla ya montó y ya leyó "outbox vacío" una vez.
+    const almacen = crearAlmacenIndexedDb()
+    await agregarAOutbox(almacen, {
+      idLocal: 'tardia',
+      numeroPreasignado: 900,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:05:00.000Z',
+      solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+    })
+
+    // El foco de la ventana es el backstop inmediato (mismo criterio que el evento `online` del
+    // propio hook de sincronización) — nunca hace falta esperar el intervalo completo.
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled())
+  })
+
+  it('una venta que ya no está (drenó/se resolvió en otra pestaña) DESPUÉS de montar deja de bloquear sin recargar la pantalla', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await agregarAOutbox(almacen, {
+      idLocal: 'a',
+      numeroPreasignado: 100,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+    })
+
+    mockearRutasBase()
+    renderCierre()
+    await screen.findByText('Efectivo')
+
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+
+    // Otra pestaña (u otro ciclo) drena esa venta DESPUÉS de que esta pantalla ya la vio pendiente.
+    await borrarAlmacenOffline()
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
   })

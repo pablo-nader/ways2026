@@ -9,7 +9,8 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
-import { leerOutbox } from '../pos/outboxOffline'
+import { leerOutbox, leerRechazadas } from '../pos/outboxOffline'
+import { INTERVALO_DE_SINCRONIZACION_MS } from '../pos/useSincronizacionOffline'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -87,16 +88,38 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
   // ticket ya en la mano de un cliente. `null` mientras se lee (fail-closed: no se asume "0" sin
   // haber confirmado, mismo criterio que `bloqueadoPorTurno` en Pos.tsx).
   const [outboxCount, setOutboxCount] = useState<number | null>(null)
+  // judgment-day ronda 1 (CRITICAL): una venta que el servidor rechazó de forma PERMANENTE sale
+  // del outbox (para no bloquear el drenado del resto de la cola, ver
+  // `useSincronizacionOffline.drenarOutbox`) pero sigue siendo una venta real con ticket
+  // entregado — el mismo fail-closed de `outboxCount` aplica acá.
+  const [cantidadConError, setCantidadConError] = useState<number | null>(null)
 
+  // judgment-day ronda 1 (WARNING): un solo `leerOutbox`/`leerRechazadas` al montar dejaba esta
+  // pantalla desactualizada en cualquiera de los dos sentidos durante toda su vida — una venta
+  // encolada por OTRA pestaña (u otro drenado del mismo `useSincronizacionOffline`) DESPUÉS de
+  // montar quedaba invisible (el bloqueo debería prenderse y nunca lo hacía), y una que drenó
+  // mientras esta pantalla seguía abierta quedaba bloqueando de más. Re-lee periódicamente (mismo
+  // intervalo que el propio ciclo de sincronización, `INTERVALO_DE_SINCRONIZACION_MS`) y también
+  // apenas la pestaña recupera el foco (backstop inmediato, mismo criterio que el evento `online`
+  // de `useSincronizacionOffline` — un cajero que vuelve a esta pantalla no debería esperar el
+  // intervalo completo para ver el estado real).
   useEffect(() => {
     let vigente = true
     const almacen = crearAlmacenIndexedDb()
-    leerOutbox(almacen).then((outbox) => {
-      if (!vigente) return
-      setOutboxCount(outbox.length)
-    })
+    const releer = () => {
+      Promise.all([leerOutbox(almacen), leerRechazadas(almacen)]).then(([outbox, rechazadas]) => {
+        if (!vigente) return
+        setOutboxCount(outbox.length)
+        setCantidadConError(rechazadas.length)
+      })
+    }
+    releer()
+    const idIntervalo = setInterval(releer, INTERVALO_DE_SINCRONIZACION_MS)
+    window.addEventListener('focus', releer)
     return () => {
       vigente = false
+      clearInterval(idIntervalo)
+      window.removeEventListener('focus', releer)
     }
   }, [])
 
@@ -151,10 +174,12 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
 
   const errorCarga = errorMedios || errorResumen
   const cargaLista = !cargandoResumen && resumen !== null && medios !== null
-  // fail-closed (mismo criterio que `bloqueadoPorTurno` de Pos.tsx): `outboxCount === null`
-  // ("todavía no se confirmó") bloquea igual que un outbox realmente no vacío — nunca se asume
-  // "0" sin haber leído el almacén local.
-  const outboxBloqueaCierre = outboxCount === null || outboxCount > 0
+  // fail-closed (mismo criterio que `bloqueadoPorTurno` de Pos.tsx): `outboxCount`/`cantidadConError`
+  // `=== null` ("todavía no se confirmó") bloquea igual que un valor realmente no vacío — nunca se
+  // asume "0" sin haber leído el almacén local. `cantidadConError` (judgment-day ronda 1,
+  // CRITICAL): una venta rechazada de forma permanente sigue bloqueando el cierre igual que el
+  // outbox, aunque ya haya salido de él.
+  const outboxBloqueaCierre = outboxCount === null || outboxCount > 0 || cantidadConError === null || cantidadConError > 0
   const puedeFinalizar =
     cargaLista && errorCarga === '' && confirmado && conteosCompletos(resumen?.medios ?? [], conteos) && !cerrando && !outboxBloqueaCierre
 

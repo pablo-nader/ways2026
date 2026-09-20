@@ -13,11 +13,16 @@
  * independientes — un esquema multi-store indexado sería complejidad sin un problema medido que
  * la justifique (mismo criterio que el propio backend documenta para no paginar la instantánea).
  *
- * Toda operación está envuelta en `try/catch` y degrada a `null`/no-op (react-async-state,
- * "wrap every read and write so a failure degrades instead of crashing"): modo privado,
- * almacenamiento bloqueado por política, cuota agotada o `indexedDB` inexistente (un entorno de
- * test sin `fake-indexeddb`, o un navegador viejo) nunca puede tirar una excepción no controlada
- * hacia la pantalla de venta — la app sigue funcionando, solo sin persistencia offline.
+ * Toda operación está envuelta en `try/catch` — nunca tira una excepción no controlada hacia la
+ * pantalla de venta (react-async-state, "wrap every read and write so a failure degrades instead
+ * of crashing"): modo privado, almacenamiento bloqueado por política, cuota agotada o `indexedDB`
+ * inexistente (un entorno de test sin `fake-indexeddb`, o un navegador viejo) siempre resuelve en
+ * vez de rechazar. `leer` degrada a `null` (nunca hay nada mejor que devolver). `escribir` degrada
+ * a `false` — a diferencia de `leer`, una escritura fallida SÍ importa para quien la hizo: la
+ * instantánea puede tolerar perder una actualización (`instantaneaOffline.guardarInstantaneaLocal`
+ * ignora el resultado a propósito, mismo criterio que antes), pero el outbox de ventas NO puede
+ * asumir que "no tiró" significa "quedó guardada" (judgment-day ronda 1, BLOCKER — ver
+ * `outboxOffline.agregarAOutbox`, el único llamador que de verdad verifica este booleano).
  */
 
 const NOMBRE_DB = 'ways-pos-offline'
@@ -29,7 +34,9 @@ const OBJECT_STORE = 'kv'
  * IndexedDB real ni de `fake-indexeddb`. */
 export type AlmacenClaveValor = {
   leer<T>(clave: string): Promise<T | null>
-  escribir<T>(clave: string, valor: T): Promise<void>
+  /** `true` si la escritura de verdad persistió, `false` si se degradó (nunca rechaza) — el
+   * llamador decide si una escritura fallida es tolerable o tiene que bloquear la operación. */
+  escribir<T>(clave: string, valor: T): Promise<boolean>
 }
 
 function abrirDb(): Promise<IDBDatabase> {
@@ -81,11 +88,15 @@ export function crearAlmacenIndexedDb(): AlmacenClaveValor {
         return null
       }
     },
-    async escribir<T>(clave: string, valor: T): Promise<void> {
+    async escribir<T>(clave: string, valor: T): Promise<boolean> {
       try {
         await conTransaccion('readwrite', (store) => store.put(valor, clave))
+        return true
       } catch {
-        // Mismo criterio que `leer`: la venta sigue funcionando sin persistencia offline.
+        // Modo privado, cuota agotada, almacenamiento bloqueado por política, o IndexedDB
+        // inexistente — nunca rompe la pantalla de venta, pero SÍ reporta que no persistió: el
+        // llamador (`agregarAOutbox`) decide si eso es tolerable.
+        return false
       }
     },
   }

@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   admisibilidadDeVentaOffline,
   agregarAOutbox,
+  agregarARechazada,
   construirNumeroVisible,
+  ErrorDePersistenciaOffline,
   generarIdLocal,
   guardarBloque,
   leerBloque,
   leerOutbox,
+  leerRechazadas,
   mensajeDeRechazoOffline,
   necesitaReponerBloque,
   numerosDisponibles,
@@ -29,6 +32,7 @@ function almacenFake(): AlmacenClaveValor {
     },
     async escribir<T>(clave: string, valor: T) {
       datos.set(clave, valor)
+      return true
     },
   }
 }
@@ -142,7 +146,14 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
   })
 
   it('mensajeDeRechazoOffline devuelve un mensaje no vacío para cada motivo posible', () => {
-    const motivos = ['cliente_no_admitido', 'medio_no_admitido', 'sin_instantanea', 'linea_sin_precio', 'sin_numeracion'] as const
+    const motivos = [
+      'cliente_no_admitido',
+      'medio_no_admitido',
+      'sin_instantanea',
+      'linea_sin_precio',
+      'sin_numeracion',
+      'error_al_guardar',
+    ] as const
     for (const motivo of motivos) {
       expect(mensajeDeRechazoOffline(motivo).length).toBeGreaterThan(0)
     }
@@ -192,5 +203,64 @@ describe('outbox — leer/agregar/quitar, en orden', () => {
 
   it('leerBloque devuelve null sin nada guardado', async () => {
     await expect(leerBloque(almacenFake())).resolves.toBeNull()
+  })
+})
+
+describe('agregarAOutbox — nunca resuelve ok sin verificar la persistencia (judgment-day ronda 1, BLOCKER)', () => {
+  it('tira ErrorDePersistenciaOffline si `escribir` reporta la falla (cuota agotada, modo privado)', async () => {
+    const almacenDegradado: AlmacenClaveValor = {
+      async leer<T>() {
+        return null as T | null
+      },
+      async escribir() {
+        return false
+      },
+    }
+    await expect(agregarAOutbox(almacenDegradado, ventaFixture())).rejects.toThrow(ErrorDePersistenciaOffline)
+  })
+
+  it('tira ErrorDePersistenciaOffline si `escribir` reporta éxito pero la relectura NO trae la venta nueva (un almacén que miente)', async () => {
+    const almacenQueMiente: AlmacenClaveValor = {
+      async leer<T>() {
+        return null as T | null // nunca refleja lo escrito — simula un almacén degradado que igual resuelve `true`.
+      },
+      async escribir() {
+        return true
+      },
+    }
+    await expect(agregarAOutbox(almacenQueMiente, ventaFixture())).rejects.toThrow(ErrorDePersistenciaOffline)
+  })
+
+  it('con un almacén sano, resuelve con la venta adentro (comportamiento preexistente intacto)', async () => {
+    const almacen = almacenFake()
+    await expect(agregarAOutbox(almacen, ventaFixture({ idLocal: 'a' }))).resolves.toEqual([ventaFixture({ idLocal: 'a' })])
+  })
+})
+
+describe('ventasRechazadas — needs-attention, nunca se descarta (judgment-day ronda 1, CRITICAL)', () => {
+  it('leerRechazadas devuelve [] sin nada archivado', async () => {
+    await expect(leerRechazadas(almacenFake())).resolves.toEqual([])
+  })
+
+  it('agregarARechazada encola AL FINAL y preserva el mensaje real', async () => {
+    const almacen = almacenFake()
+    await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'a' }), mensaje: 'rechazo A' })
+    const siguiente = await agregarARechazada(almacen, { ...ventaFixture({ idLocal: 'b' }), mensaje: 'rechazo B' })
+    expect(siguiente.map((v) => ({ idLocal: v.idLocal, mensaje: v.mensaje }))).toEqual([
+      { idLocal: 'a', mensaje: 'rechazo A' },
+      { idLocal: 'b', mensaje: 'rechazo B' },
+    ])
+  })
+
+  it('tira ErrorDePersistenciaOffline si no puede archivar de forma durable — nunca la pierde en silencio', async () => {
+    const almacenDegradado: AlmacenClaveValor = {
+      async leer<T>() {
+        return null as T | null
+      },
+      async escribir() {
+        return false
+      },
+    }
+    await expect(agregarARechazada(almacenDegradado, { ...ventaFixture(), mensaje: 'rechazo' })).rejects.toThrow(ErrorDePersistenciaOffline)
   })
 })

@@ -27,6 +27,7 @@ import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
@@ -601,6 +602,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
   const generacionResolucionRef = useRef(0)
   const ultimaAccionEsEdicionRef = useRef(false)
+  // judgment-day ronda 1 (WARNING): la instantánea EXACTA que resolvió la vista previa offline
+  // actualmente en pantalla (`precios`) — nunca la más fresca que `sincronizacionOffline.instantanea`
+  // pueda tener en el momento del click. El efecto de abajo la fija SOLO cuando la vista previa
+  // cae al fallback offline; `null` en cualquier otro caso (vista previa online, o ninguna vista
+  // previa todavía) — "el precio que se mostró es el que se cobra", nunca una relectura al cobrar.
+  const instantaneaDeLaVistaPreviaRef = useRef<InstantaneaDePos | null>(null)
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
@@ -1025,10 +1032,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // chequeo en cada rama. Una venta que drena DESPUÉS de que el turno cerró la rechaza el
     // servidor — huérfana, con su ticket ya en la mano de un cliente (spec del dueño) — así que
     // se bloquea ANTES de tocar la red, ni siquiera hace falta consultar el turno primero.
-    if (sincronizacionOffline.outboxCount > 0) {
-      setAvisoCerrarCaja(
-        `No se puede cerrar la caja: hay ${sincronizacionOffline.outboxCount} venta(s) sin sincronizar. Esperá a que haya señal y sincronicen antes de cerrar.`,
-      )
+    // judgment-day ronda 1 (CRITICAL): el bloqueo cubre TAMBIÉN `ventasConError` — una venta que
+    // el servidor rechazó de forma permanente sigue siendo una venta real con ticket entregado,
+    // nunca algo que un cierre pueda ignorar solo porque ya salió del outbox.
+    const cantidadPendiente = sincronizacionOffline.outboxCount
+    const cantidadConError = sincronizacionOffline.ventasConError.length
+    if (cantidadPendiente > 0 || cantidadConError > 0) {
+      const partes: string[] = []
+      if (cantidadPendiente > 0) partes.push(`${cantidadPendiente} venta(s) sin sincronizar`)
+      if (cantidadConError > 0) partes.push(`${cantidadConError} venta(s) necesitan atención`)
+      setAvisoCerrarCaja(`No se puede cerrar la caja: hay ${partes.join(' y ')}. Resolvé la situación antes de cerrar.`)
       return
     }
 
@@ -1373,6 +1386,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setPrecios({})
       setAvisoPrecios('')
       setResolviendo(false)
+      instantaneaDeLaVistaPreviaRef.current = null
       return
     }
 
@@ -1393,6 +1407,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // generación ya no coincide). Sin este reset explícito, esta corrida temprana (ej. vaciar
       // el carrito, o que quede vacío tras cobrar) deja `resolviendo` en `true` para siempre.
       setResolviendo(false)
+      instantaneaDeLaVistaPreviaRef.current = null
       return
     }
 
@@ -1406,6 +1421,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         .then((resultados) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
           setPrecios(indexarResolucionPorArticulo(resultados))
+          // La vista previa es ONLINE (el servidor respondió) — ninguna instantánea offline
+          // queda "congelada" para el checkout: ese camino sigue leyendo la instantánea que
+          // tenga al momento del click (comportamiento preexistente, fuera del alcance de este
+          // fix — acá nunca hubo una vista previa offline que pudiera desalinearse).
+          instantaneaDeLaVistaPreviaRef.current = null
         })
         .catch((e) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
@@ -1418,6 +1438,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea && clienteSeleccionado) {
             setPrecios(resolverPreciosOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio))
             setAvisoPrecios('')
+            // judgment-day ronda 1 (WARNING): congela ACÁ la instantánea exacta que resolvió
+            // esta vista previa — "Cobrar" (más abajo) y el ticket sintético tienen que usar
+            // ESTA MISMA referencia, nunca una más fresca que `sincronizacionOffline.instantanea`
+            // pueda tener para cuando el cajero haga click (el refresco en segundo plano de
+            // `useSincronizacionOffline` no dispara este efecto a propósito, ver el comentario
+            // de más abajo — así que sin este freeze, cobrar podía leer una instantánea distinta
+            // de la que el cajero tiene en pantalla).
+            instantaneaDeLaVistaPreviaRef.current = sincronizacionOffline.instantanea
             return
           }
 
@@ -1427,6 +1455,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // un subtotal a medias es peor que ninguno (judgment-day R3, falso negativo de Judge B).
           setPrecios({})
           setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
+          instantaneaDeLaVistaPreviaRef.current = null
         })
         .finally(() => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
@@ -1445,7 +1474,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // punto de venta haya cambiado, exactamente lo que "el camino online no cambia" prohíbe. El
     // botón "Reintentar" (bumpea `reintentoPrecios`) sigue siendo el camino explícito para
     // recalcular con una instantánea más fresca si la primera resolución falló antes de que
-    // cargara.
+    // cargara. judgment-day ronda 1 (WARNING): esto es EXACTAMENTE lo que
+    // `instantaneaDeLaVistaPreviaRef` explota — como el refresco en segundo plano nunca reabre
+    // esta corrida, la instantánea que congela acá arriba es garantizado la misma que el cajero
+    // sigue viendo en pantalla hasta el próximo cambio real de carrito/cliente/punto de venta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineas, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios, modoPresupuesto])
 
@@ -1861,8 +1893,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           >
             Sin sincronizar: {sincronizacionOffline.outboxCount}
           </span>
-          {sincronizacionOffline.errorDeDrenado && (
-            <span className="alert alert-danger rounded-0 py-1 px-2 small mb-0">{sincronizacionOffline.errorDeDrenado}</span>
+          {/* judgment-day ronda 1 (CRITICAL): reemplaza al viejo `errorDeDrenado` (un string único
+              para el ítem más viejo, que además frenaba TODO el drenado) — ahora cada venta
+              rechazada de forma permanente queda visible con su propio error real, sin bloquear
+              el resto de la cola. */}
+          {sincronizacionOffline.ventasConError.length > 0 && (
+            <span className="alert alert-danger rounded-0 py-1 px-2 small mb-0" role="alert">
+              {sincronizacionOffline.ventasConError.length} venta(s) necesitan atención:{' '}
+              {sincronizacionOffline.ventasConError.map((v) => v.mensaje).join(' — ')}
+            </span>
           )}
           {cargandoTurno ? (
             <span className="text-muted small">Consultando turno…</span>
@@ -1989,10 +2028,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // hay nada que encolar). Cualquier otro caso se relanza tal cual, al catch de siempre.
         if (modoPresupuesto || !(e instanceof ErrorDeRed)) throw e
 
+        // judgment-day ronda 1 (WARNING): la MISMA instantánea que ya resolvió la vista previa
+        // en pantalla (`instantaneaDeLaVistaPreviaRef`, congelada por el efecto de arriba) — no
+        // la que `sincronizacionOffline.instantanea` tenga AHORA, que puede haberse refrescado en
+        // segundo plano entre que el cajero vio el precio y este click. Sin vista previa offline
+        // (venía resolviendo online, o recién ahora arranca) cae a la instantánea actual del
+        // hook — comportamiento preexistente, no hay nada que "el cajero ya vio" para congelar.
+        // La MISMA variable se usa para encolar Y para el ticket (más abajo): ambos tienen que
+        // coincidir entre sí tanto como con la pantalla.
+        const instantaneaParaOffline = instantaneaDeLaVistaPreviaRef.current ?? sincronizacionOffline.instantanea
+
         const resultadoOffline = await sincronizacionOffline.encolarVentaOffline({
           solicitudBase: solicitud,
           esConsumidorFinal: clienteSeleccionado.esConsumidorFinal,
           pagos: pagosConVuelto,
+          instantaneaCongelada: instantaneaParaOffline,
         })
         if (generacionCobroRef.current !== miGeneracion) return
 
@@ -2001,19 +2051,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           return
         }
 
-        // La venta YA quedó encolada de forma durable en este punto (nunca se pierde) — lo que
-        // sigue es solo armar el comprobante sintético para el modal/ticket. `instantanea` no
-        // puede ser `null` acá: `encolarVentaOffline` recién devolvió `ok: true`, que exige
-        // exactamente esa precondición sobre el mismo hook — el chequeo es defensa en
-        // profundidad, nunca se espera que dispare.
-        const sintetico = sincronizacionOffline.instantanea
+        // judgment-day ronda 1 (BLOCKER, claims-match-code): la venta YA quedó encolada de forma
+        // durable en este punto — no es una suposición, `encolarVentaOffline` solo devuelve
+        // `ok: true` DESPUÉS de releer el outbox y confirmar que la venta nueva está de verdad
+        // adentro (`agregarAOutbox`, con `ErrorDePersistenciaOffline` si no puede confirmarlo).
+        // Lo que sigue es solo armar el comprobante sintético para el modal/ticket, con la MISMA
+        // `instantaneaParaOffline` que acaba de encolar la venta (nunca una relectura de
+        // `sincronizacionOffline.instantanea`) — el ticket tiene que coincidir con lo que se
+        // cobró, no con lo que el catálogo diga en este instante. No puede ser `null` acá:
+        // `encolarVentaOffline` recién devolvió `ok: true`, que exige exactamente esa
+        // precondición sobre la misma instantánea — el chequeo es defensa en profundidad, nunca
+        // se espera que dispare.
+        const sintetico = instantaneaParaOffline
           ? construirComprobanteOfflineSintetico({
               numero: resultadoOffline.numero,
               numeroVisible: resultadoOffline.numeroVisible,
               idPuntoVenta: puntoVentaSeleccionada.id,
               idCliente: clienteSeleccionado.id,
               lineas,
-              instantanea: sincronizacionOffline.instantanea,
+              instantanea: instantaneaParaOffline,
               pagos: aPagosDeVenta(pagosConVuelto),
               ahora: new Date(),
             })

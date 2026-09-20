@@ -390,6 +390,53 @@ public class VentaOfflinePrecioTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(100m, persistido);
     }
 
+    /// <summary>judgment-day ronda 1 (BLOCKER): con descuento, <c>PrecioUnitario</c> viaja como el
+    /// precio de LISTA (bruto) y <c>DescuentoUnitario</c> por separado — exactamente lo que manda
+    /// el POS web (<c>enriquecerLineasConPrecioOffline</c>: <c>precioOriginal</c>/
+    /// <c>descuentoUnitario</c>, nunca <c>precioFinal</c> ya neto). El ticket mostró y el cajero
+    /// cobró 120 (150 de lista − 30 de descuento); el total persistido tiene que ser 120, calculado
+    /// por <c>CalculadorDeTotales</c> EXACTAMENTE como si <c>precioUnitarioOffline</c> fuera el
+    /// precio de lista (nunca ya neto) — si el emisor mandara el neto (120) como precio con el
+    /// mismo descuento de 30, el servidor restaría el descuento DOS VECES y persistiría 90 (el bug
+    /// real de este BLOCKER, reproducido y cerrado en el front por
+    /// <c>useSincronizacionOffline.test.ts</c>, que sí puede distinguir "mandó el bruto" de "mandó
+    /// el neto"); este test cubre que el SERVIDOR aplica ese contrato bruto/descuento
+    /// correctamente de punta a punta.</summary>
+    [Fact]
+    public async Task LaVentaOfflineConDescuentoRegistraElNetoQueElDispositivoCobro()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVentaOfflineConDescuentoRegistraElNetoQueElDispositivoCobro));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 150m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "con-descuento");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudConPrecioOffline(idPuntoVenta, idArticulo, idMedio, 120m, numeroPreasignado: 1,
+                precioUnitarioOffline: 150m, descuentoUnitarioOffline: 30m));
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(120m, emitido.Total);
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(150m, item.PrecioUnitario);
+        Assert.Equal(30m, item.Descuento);
+        Assert.Equal(120m, item.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var persistido = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id)
+            .Select(i => new { i.PrecioUnitario, i.Descuento, i.Total })
+            .SingleAsync();
+        Assert.Equal(150m, persistido.PrecioUnitario);
+        Assert.Equal(30m, persistido.Descuento);
+        Assert.Equal(120m, persistido.Total);
+    }
+
     /// <summary>Rastro auditable de la discrepancia — nunca una columna nueva (DB CHANGE GATE
     /// evitado a propósito). Mutación CORRIDA: neutralizar la condición
     /// <c>if (lineasDiscrepantes.Count &gt; 0)</c> de <c>EjecutarTransaccionAsync</c> (a
