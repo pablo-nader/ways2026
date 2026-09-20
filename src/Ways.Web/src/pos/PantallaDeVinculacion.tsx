@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
+import { guardarCredencialDeDispositivo } from '../api/entornoTauri'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { puedeGestionarCatalogos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
@@ -65,14 +66,17 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
     setError('')
 
     try {
-      const dispositivo = await clienteDeDispositivos.vincular({
+      const vinculado = await clienteDeDispositivos.vincular({
         idPuntoVenta: Number(idPuntoVenta),
         nombre: nombreDispositivo.trim(),
       })
+      // El secreto viaja en el cuerpo UNA sola vez (dto-contract-honesty) — se lo entrega a Rust
+      // para que lo persista en su propio archivo antes de seguir. No hace nada fuera de Tauri.
+      await guardarCredencialDeDispositivo(vinculado.secreto)
       // La sesión de admin ya cumplió su propósito: se cierra antes de avisar, así el próximo
       // paso (login del cajero) arranca sin ninguna sesión activa.
       await api.post('/auth/logout').catch(() => undefined)
-      alVinculado(dispositivo)
+      alVinculado(vinculado.datos)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el dispositivo.')
     } finally {

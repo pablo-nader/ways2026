@@ -26,9 +26,23 @@ describe('clienteDeDispositivos', () => {
     expect(apiPostMock).toHaveBeenCalledWith('/dispositivos', { idPuntoVenta: 7, nombre: 'Caja 1' })
   })
 
-  it('iniciarSesion pide POST /auth/login-dispositivo con usuario y password', () => {
-    apiPostMock.mockResolvedValue(undefined)
-    void clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
-    expect(apiPostMock).toHaveBeenCalledWith('/auth/login-dispositivo', { usuario: 'jperez', password: 'secreta' })
+  it('iniciarSesion pide POST /auth/login-dispositivo con usuario, password y solicitarBearer', async () => {
+    const usuario = { id: 1, usuario: 'jperez', mail: 'jperez@ways.test', rolId: 4, rol: 'Vendedor', ultimaConexion: null, idTenant: 1 }
+    apiPostMock.mockResolvedValue(usuario)
+    await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+    // Fuera de Tauri (este test corre en jsdom, sin window.__TAURI__) solicitarBearer es
+    // siempre false — el navegador normal sigue con la cookie, sin cambio de contrato.
+    expect(apiPostMock).toHaveBeenCalledWith('/auth/login-dispositivo', {
+      usuario: 'jperez',
+      password: 'secreta',
+      solicitarBearer: false,
+    })
+  })
+
+  it('iniciarSesion devuelve el usuario directo cuando la respuesta no trae token (contrato sin cambios)', async () => {
+    const usuario = { id: 1, usuario: 'jperez', mail: 'jperez@ways.test', rolId: 4, rol: 'Vendedor', ultimaConexion: null, idTenant: 1 }
+    apiPostMock.mockResolvedValue(usuario)
+    const resultado = await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+    expect(resultado).toBe(usuario)
   })
 })

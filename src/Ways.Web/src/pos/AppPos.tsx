@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
+import { leerCredencialDeDispositivo } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
@@ -19,6 +20,14 @@ type Estado =
   | { fase: 'con-sesion'; dispositivo: DispositivoActual; usuario: UsuarioAutenticado; puntoVenta: PuntoVentaListado }
 
 const MENSAJE_GENERICO = 'No se pudo determinar el dispositivo.'
+
+/** slice bearer: la llamada de red falló (no un 404 explícito — ese SIEMPRE se respeta como
+ * "no vinculado", ver `cargarDispositivo`), pero hay una credencial de dispositivo guardada
+ * localmente (Rust, Tauri). No se intenta armar un estado operable sin red (slice 6, offline
+ * real, hace eso) — solo se evita mandar al usuario a repetir la vinculación completa por un
+ * problema de conectividad cuando este equipo YA sabe que está vinculado. */
+const MENSAJE_SIN_RED_PERO_VINCULADO =
+  'No se pudo confirmar el dispositivo por red, pero este equipo ya está vinculado. Reintentá cuando haya conexión.'
 
 /**
  * Producto: la sesión del cajero NO vence hasta que se cierra a mano (`POST /auth/login-dispositivo`
@@ -103,9 +112,23 @@ export function AppPos() {
       if (generacionRef.current !== generacion) return
 
       if (error instanceof ErrorApi && error.codigo === 'dispositivo_no_vinculado') {
+        // 404 explícito y alcanzable: el servidor confirmó "no vinculado" — se respeta siempre,
+        // aunque haya una credencial local (sería el caso de un dispositivo revocado del lado
+        // del servidor; la fuente de verdad es la base, nunca el archivo local).
         setEstado({ fase: 'sin-vincular' })
       } else {
-        setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
+        // La llamada no dio una respuesta concluyente (red caída, error inesperado del
+        // servidor). Antes de este slice esto siempre mostraba MENSAJE_GENERICO — ahora, si
+        // hay una credencial de dispositivo guardada localmente, se lo dice así en vez de
+        // dejar sonar a que el equipo nunca se vinculó.
+        const credencialLocal = await leerCredencialDeDispositivo()
+        if (generacionRef.current !== generacion) return
+
+        if (credencialLocal) {
+          setEstado({ fase: 'error', mensaje: MENSAJE_SIN_RED_PERO_VINCULADO })
+        } else {
+          setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
+        }
       }
     }
   }, [])

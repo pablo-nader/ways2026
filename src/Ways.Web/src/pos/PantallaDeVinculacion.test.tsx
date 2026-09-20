@@ -113,7 +113,7 @@ describe('PantallaDeVinculacion', () => {
       puntoVenta: { numero: 1, nombre: 'Local Centro' },
       empresa: { nombre: 'Empresa Demo' },
     }
-    vincularMock.mockResolvedValue(dispositivo)
+    vincularMock.mockResolvedValue({ datos: dispositivo, secreto: 'un-secreto-de-prueba' })
     const alVinculado = vi.fn()
     render(<PantallaDeVinculacion alVinculado={alVinculado} />)
 

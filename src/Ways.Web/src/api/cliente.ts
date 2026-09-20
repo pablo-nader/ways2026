@@ -3,7 +3,14 @@
  *
  * Todas las llamadas van con `credentials: 'include'` porque la sesión vive en una
  * cookie HttpOnly: el token nunca pasa por JavaScript.
+ *
+ * stage-desktop-pos, slice bearer: bajo Tauri (`corriendoEnTauri`) se adjunta ADEMÁS el header
+ * `Authorization: Bearer <token>` cuando hay un token de sesión guardado (`entornoTauri.ts`) —
+ * preparación para la slice 3 (el shell va a pasar a `http://tauri.localhost`, cross-site
+ * respecto de la API, donde `SameSite=Lax` nunca manda la cookie). El camino del navegador
+ * normal queda intacto: sin Tauri, `corriendoEnTauri()` es `false` y esto es un no-op.
  */
+import { corriendoEnTauri, establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from './entornoTauri'
 
 export class ErrorApi extends Error {
   readonly estado: number
@@ -46,6 +53,9 @@ export function alPerderLaSesion(observador: ObservadorDeSesion) {
  */
 async function exigirRespuestaOk(respuesta: Response): Promise<void> {
   if (respuesta.status === 401) {
+    // El token bearer guardado (si había uno) ya no sirve — mismo motivo que borrar la cookie
+    // de sesión, pero acá no hay nada del lado del servidor que "cerrar": el bearer es stateless.
+    establecerTokenDeSesionBearer(null)
     observadores.forEach((o) => o())
     throw new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.')
   }
@@ -65,6 +75,14 @@ async function exigirRespuestaOk(respuesta: Response): Promise<void> {
   }
 }
 
+/** Header `Authorization: Bearer <token>` cuando corresponde (Tauri + token de sesión guardado)
+ * — objeto vacío en cualquier otro caso, para poder spread-earlo sin un `if` en cada llamada. */
+function headerBearerSiCorresponde(): Record<string, string> {
+  if (!corriendoEnTauri()) return {}
+  const token = tokenDeSesionBearerActual()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   const respuesta = await fetch(`/api${ruta}`, {
     ...init,
@@ -72,6 +90,7 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...headerBearerSiCorresponde(),
       ...init?.headers,
     },
   })
@@ -111,7 +130,7 @@ export function nombreDeArchivo(respuesta: Response): string {
  * Open Questions).
  */
 async function descargar(ruta: string): Promise<void> {
-  const respuesta = await fetch(`/api${ruta}`, { credentials: 'include' })
+  const respuesta = await fetch(`/api${ruta}`, { credentials: 'include', headers: headerBearerSiCorresponde() })
   await exigirRespuestaOk(respuesta)
 
   const blob = await respuesta.blob()
