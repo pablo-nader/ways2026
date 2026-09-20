@@ -40,6 +40,20 @@ public class ServicioDeDispositivos(
         var puntoVenta = await db.PuntosVenta.FirstOrDefaultAsync(p => p.Id == datos.IdPuntoVenta, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {datos.IdPuntoVenta}.");
 
+        // Invariante "una PC-caja = un punto de venta" (DB CHANGE GATE aprobado): vincular un
+        // dispositivo a un punto de venta Web dejaría una fila muerta — ServicioDeVentas.
+        // ResolverPuntoVentaAsync nunca aceptaría una venta de ese dispositivo contra ese punto de
+        // venta (exige Escritorio). El backstop real de "a lo sumo un dispositivo activo" es
+        // ux_dispositivos_punto_venta_activo (ManejadorDeErrores, 409 punto_venta_ya_tiene_dispositivo);
+        // este chequeo es el de COMPATIBILIDAD de modo, una dimensión distinta.
+        if (puntoVenta.Modo != ModoPuntoVenta.Escritorio)
+        {
+            throw new ErrorDominio(
+                "punto_venta_modo_incompatible",
+                "Solo un punto de venta en modo Escritorio puede tener un dispositivo vinculado.",
+                409);
+        }
+
         var (secreto, hash) = TokenDeDispositivo.GenerarNuevo();
         var ahora = reloj.Ahora;
 

@@ -451,7 +451,8 @@ public class ServicioDeOrganizacion(
             db.Empresas
                 .Where(e => e.Id == p.IdEmpresa && e.DeletedAt == null)
                 .Select(e => e.RazonSocial)
-                .FirstOrDefault());
+                .FirstOrDefault(),
+            p.Modo);
 
     public async Task<IReadOnlyList<PuntoVentaListado>> ListarPuntosVentaAsync(CancellationToken ct = default) =>
         await db.PuntosVenta
@@ -554,6 +555,58 @@ public class ServicioDeOrganizacion(
 
             await db.SaveChangesAsync(ct);
             return true;
+        }, ct);
+    }
+
+    /// <summary>
+    /// Admin: flip de <see cref="PuntoVenta.Modo"/> (stage-desktop-pos, DB CHANGE GATE aprobado).
+    /// Precondición: SIN dispositivo activo — el mismo <c>AnyAsync</c> best-effort que
+    /// <c>ServicioDeDispositivos</c> usa para su propio chequeo simétrico (el backstop real de "a
+    /// lo sumo un dispositivo activo" es <c>ux_dispositivos_punto_venta_activo</c>, no esto). Si
+    /// hay uno vinculado, el admin lo revoca primero con la acción existente de
+    /// <c>DispositivosEndpoints</c>.
+    ///
+    /// Nota (stage futura, offline outbox): cuando exista la cola de escritura offline del POS de
+    /// escritorio, este flip además va a tener que exigir esa cola vacía — flipear a Web con
+    /// ventas pendientes de sincronizar las dejaría huérfanas.
+    ///
+    /// <c>ef-retry-safe-writes</c>: usa <see cref="EnUnaTransaccionDeBajaAsync{T}"/> (SIN
+    /// reintento) y no <see cref="EnUnaTransaccionAsync{T}"/> — mismo motivo exacto que las tres
+    /// bajas de este archivo: <see cref="ServicioDeAuditoria.Registrar"/> hace <c>Add</c> de una
+    /// entidad nueva, y un reintento automático sobre el MISMO <c>ChangeTracker</c> duplicaría la
+    /// fila de auditoría en vez de reemplazarla.
+    /// </summary>
+    public async Task<PuntoVentaListado> ActualizarModoPuntoVentaAsync(
+        int id, PuntoVentaModoEdicion datos, CancellationToken ct = default)
+    {
+        var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
+
+        var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == puntoVenta.Id, ct);
+        if (tieneDispositivoActivo)
+        {
+            throw ErrorDominio.Conflicto(
+                "punto_venta_con_dispositivo_activo",
+                "Este punto de venta tiene un dispositivo vinculado: revocalo antes de cambiar el modo.");
+        }
+
+        return await EnUnaTransaccionDeBajaAsync(async () =>
+        {
+            var modoAnterior = puntoVenta.Modo;
+            puntoVenta.Modo = datos.Modo;
+            puntoVenta.UpdatedAt = reloj.Ahora;
+
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDeModoPuntoVenta(modoAnterior, datos.Modo);
+            auditoria.Registrar(new RegistroDeAuditoria(
+                puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaModo, puntoVenta.Id,
+                valorAnterior, valorNuevo));
+
+            await db.SaveChangesAsync(ct);
+
+            return await db.PuntosVenta
+                .Where(p => p.Id == puntoVenta.Id)
+                .Select(ProyeccionDePuntoVenta(db))
+                .FirstOrDefaultAsync(ct)
+                ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
         }, ct);
     }
 

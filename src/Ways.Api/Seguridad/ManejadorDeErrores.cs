@@ -328,6 +328,19 @@ public class ManejadorDeErrores(
                 when string.Equals(uxDispositivoToken, "ux_dispositivos_token_hash", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Colisión al generar el secreto del dispositivo, reintentá la vinculación.", "dispositivo_token_duplicado"),
 
+            // stage-desktop-pos (db-error-backstops): ux_dispositivos_punto_venta_activo —
+            // invariante "una PC-caja = un punto de venta" (DB CHANGE GATE aprobado). Exact-match,
+            // sin ordering trap: "_punto_venta_activo" no colisiona con ninguna substring de
+            // ClasificarUnicidad. ServicioDeDispositivos.CrearAsync no pre-chequea esto (no hace
+            // falta un ExigirDisponibilidadAsync-style: el 409 traducido acá YA es el contrato ante
+            // dos vinculaciones concurrentes al mismo punto de venta).
+            { SqlState: "23505", ConstraintName: string uxDispositivoPuntoVentaActivo }
+                when string.Equals(
+                    uxDispositivoPuntoVentaActivo, "ux_dispositivos_punto_venta_activo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Este punto de venta ya tiene un dispositivo vinculado.",
+                    "punto_venta_ya_tiene_dispositivo"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,

@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Dispositivos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -155,7 +157,7 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 "Local renovado", "Av. Siempre Viva 742", "9 a 20", "+54 11 5555-5555", null, null, null));
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>();
+        var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson);
         Assert.NotNull(actualizado);
         Assert.Equal("Local renovado", actualizado!.Nombre);
         Assert.Equal("Av. Siempre Viva 742", actualizado.Domicilio);
@@ -246,9 +248,115 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             new PuntoVentaEdicion("Local editado por plataforma", null, null, null, null, null, null));
         Assert.Equal(HttpStatusCode.OK, respuestaPv.StatusCode);
 
-        var puntoVentaActualizado = await respuestaPv.Content.ReadFromJsonAsync<PuntoVentaListado>();
+        var puntoVentaActualizado = await respuestaPv.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson);
         Assert.NotNull(puntoVentaActualizado);
         Assert.Equal("Local editado por plataforma", puntoVentaActualizado!.Nombre);
+    }
+
+    // ---- stage-desktop-pos (DB CHANGE GATE aprobado): POST /api/puntos-venta/{id}/modo --------
+
+    private async Task VincularDispositivoAsync(int idTenant, int idPuntoVenta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idUsuarioAlta = await db.Usuarios.Select(u => u.Id).FirstAsync();
+
+        db.Dispositivos.Add(new Dispositivo
+        {
+            IdPuntoVenta = idPuntoVenta,
+            Nombre = "Caja 1",
+            TokenHash = new string('a', 64),
+            IdUsuarioAlta = idUsuarioAlta,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task UnAdminCambiaElModoDeSuPropioPuntoDeVentaSinDispositivoYQuedaAuditado()
+    {
+        var (tenant, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(
+            nameof(UnAdminCambiaElModoDeSuPropioPuntoDeVentaSinDispositivoYQuedaAuditado));
+        using var cliente = await ClienteComoAdminAsync(mailAdmin);
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson);
+        Assert.NotNull(actualizado);
+        Assert.Equal(ModoPuntoVenta.Web, actualizado!.Modo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var fila = await db.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+        Assert.Equal(ModoPuntoVenta.Web, fila.Modo);
+
+        var auditoria = await db.Auditoria.IgnoreQueryFilters()
+            .Where(a => a.Accion == "pv.modo" && a.IdEntidad == puntoVenta.Id)
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(auditoria);
+        Assert.Equal(tenant.Id, auditoria!.IdTenant);
+        Assert.Equal(puntoVenta.Id, auditoria.IdPuntoVenta);
+    }
+
+    [Fact]
+    public async Task CambiarElModoConUnDispositivoActivoVinculadoEsRechazado409()
+    {
+        var (_, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(
+            nameof(CambiarElModoConUnDispositivoActivoVinculadoEsRechazado409));
+        await using (var contexto = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var pv = await contexto.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+            pv.Modo = ModoPuntoVenta.Escritorio;
+            await contexto.SaveChangesAsync();
+        }
+        await VincularDispositivoAsync(puntoVenta.IdTenant, puntoVenta.Id);
+
+        using var cliente = await ClienteComoAdminAsync(mailAdmin);
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_con_dispositivo_activo", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var fila = await db.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+        Assert.Equal(ModoPuntoVenta.Escritorio, fila.Modo);
+    }
+
+    [Fact]
+    public async Task UnAdminRecibe404AlCambiarElModoDelPuntoDeVentaDeOtroTenant()
+    {
+        var (_, _, _, mailAdminA) = await SembrarTenantAsync(
+            nameof(UnAdminRecibe404AlCambiarElModoDelPuntoDeVentaDeOtroTenant) + "-A");
+        var (_, _, puntoVentaB, _) = await SembrarTenantAsync(
+            nameof(UnAdminRecibe404AlCambiarElModoDelPuntoDeVentaDeOtroTenant) + "-B");
+
+        using var cliente = await ClienteComoAdminAsync(mailAdminA);
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVentaB.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task PlataformaCambiaElModoDeCualquierPuntoDeVenta()
+    {
+        var (_, _, puntoVenta, _) = await SembrarTenantAsync(nameof(PlataformaCambiaElModoDeCualquierPuntoDeVenta));
+
+        using var cliente = await ClienteComoRootAsync();
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>(OpcionesJson);
+        Assert.Equal(ModoPuntoVenta.Web, actualizado!.Modo);
     }
 
     [Fact]

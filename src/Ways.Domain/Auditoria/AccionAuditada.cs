@@ -79,10 +79,16 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>comprobante_venta</c>.</summary>
     public static readonly AccionAuditada PuntoVentaBaja = new("pv.baja", "punto_venta");
 
-    /// <summary>Las 15 acciones del catálogo (12 de la primera pasada, proposal decisión 5, más
-    /// las tres bajas de organización de la etapa 20 slice 4) — usada por el catálogo genérico de
-    /// tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier
-    /// consumidor que necesite iterarlas todas.</summary>
+    /// <summary>stage-desktop-pos (DB CHANGE GATE aprobado): flip administrativo de
+    /// <c>puntos_venta.modo</c> — <c>Organizacion/ServicioDeOrganizacion.cs</c>,
+    /// <c>ActualizarModoPuntoVentaAsync</c>. Mismo dominio abreviado <c>pv</c> que
+    /// <see cref="PuntoVentaBaja"/>.</summary>
+    public static readonly AccionAuditada PuntoVentaModo = new("pv.modo", "punto_venta");
+
+    /// <summary>Las 16 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// tres bajas de organización de la etapa 20 slice 4, más el flip de modo de stage-desktop-pos)
+    /// — usada por el catálogo genérico de tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>,
+    /// sin duplicados) y por cualquier consumidor que necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
     [
         PrecioCambio,
@@ -99,6 +105,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         UsuarioPassword,
         TenantBaja,
         EmpresaBaja,
-        PuntoVentaBaja
+        PuntoVentaBaja,
+        PuntoVentaModo
     ];
 }

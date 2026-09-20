@@ -2,8 +2,16 @@ using Ways.Domain.Organizacion;
 
 namespace Ways.Application.Organizacion;
 
+/// <summary><paramref name="Modo"/> por default <see cref="ModoPuntoVenta.Web"/> (stage-desktop-pos:
+/// la enorme mayoría de los tenants aprovisionados no son un POS de escritorio) — SOLO a nivel de
+/// este contrato/tests: la columna de base no tiene default (gate aprobado, "el modo se elige al
+/// crear el punto de venta"), y <c>NuevoTenant.tsx</c> siempre manda el campo explícito.</summary>
 public record SolicitudDeAprovisionamiento(
-    string NombreTenant, string RazonSocialEmpresa, string NombrePuntoVenta, string MailAdmin);
+    string NombreTenant,
+    string RazonSocialEmpresa,
+    string NombrePuntoVenta,
+    string MailAdmin,
+    ModoPuntoVenta Modo = ModoPuntoVenta.Web);
 
 /// <summary><paramref name="PasswordTemporal"/> se devuelve UNA sola vez, en esta respuesta:
 /// no se persiste en texto plano en ningún lado (ADR-16) — solo el hash queda en
@@ -61,7 +69,14 @@ public record PuntoVentaListado(
     string? Facebook,
     string? Web,
     string? NombreTenant,
-    string? RazonSocialEmpresa);
+    string? RazonSocialEmpresa,
+    ModoPuntoVenta Modo);
+
+/// <summary>Cuerpo de <c>POST /api/puntos-venta/{id}/modo</c> (stage-desktop-pos, gate aprobado):
+/// el único campo editable acá es el modo — no comparte forma con <see cref="PuntoVentaEdicion"/>
+/// porque el flip tiene su propia precondición (sin dispositivo activo) y su propio rastro de
+/// auditoría, ninguno de los dos aplicable a la edición descriptiva.</summary>
+public record PuntoVentaModoEdicion(ModoPuntoVenta Modo);
 
 /// <summary><see cref="PuntoVentaListado.IdEmpresa"/> no es editable acá: es estructural
 /// (a qué empresa pertenece), no descriptivo — moverlo de empresa queda fuera de esta

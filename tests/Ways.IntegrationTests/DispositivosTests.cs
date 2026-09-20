@@ -8,6 +8,7 @@ using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Seguridad;
@@ -47,7 +48,8 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             NombreTenant: nombre,
             RazonSocialEmpresa: $"Empresa {nombre}",
             NombrePuntoVenta: "Local 1",
-            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test");
+            MailAdmin: $"{nombre.ToLowerInvariant()}-admin@ways.test",
+            Modo: ModoPuntoVenta.Escritorio);
 
         var alta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
@@ -149,6 +151,31 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.NotNull(fila);
         Assert.Equal(idTenant, fila!.IdTenant);
         Assert.Equal(64, fila.TokenHash.Length);
+    }
+
+    /// <summary>stage-desktop-pos (db-error-backstops): invariante "una PC-caja = un punto de
+    /// venta" — dos vinculaciones concurrentes al MISMO punto de venta chocan contra
+    /// <c>ux_dispositivos_punto_venta_activo</c>, ganando exactamente una. Mismo patrón de carrera
+    /// que <c>ArticulosEndpointsTests.LaCreacionConcurrenteConElMismoCodigoInternoProvistoDaExactamenteUnGanador</c>.</summary>
+    [Fact]
+    public async Task LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador()
+    {
+        var (cliente, _, idPuntoVenta, _) = await AprovisionarYLoguearComoAdminAsync(
+            nameof(LaVinculacionConcurrenteDeDosDispositivosAlMismoPuntoDeVentaDaExactamenteUnGanador));
+        using var _cliente = cliente;
+
+        var tareaA = cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja A"));
+        var tareaB = cliente.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, "Caja B"));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+        var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+        Assert.Contains(HttpStatusCode.Created, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("punto_venta_ya_tiene_dispositivo", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]

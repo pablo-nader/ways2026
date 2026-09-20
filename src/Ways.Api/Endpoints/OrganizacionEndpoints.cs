@@ -99,6 +99,15 @@ public static class OrganizacionEndpoints
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Actualiza los datos descriptivos de un punto de venta.");
 
+        // stage-desktop-pos (DB CHANGE GATE aprobado): flip de modo, misma policy que el resto del
+        // ABM administrativo de puntos de venta — precondición sin dispositivo activo (409 si lo
+        // tiene), auditado.
+        puntosVenta.MapPost("/{id:int}/modo", (
+            ServicioDeOrganizacion servicio, int id, PuntoVentaModoEdicion datos, CancellationToken ct) =>
+            servicio.ActualizarModoPuntoVentaAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Cambia el modo (Escritorio/Web) de un punto de venta sin dispositivo activo.");
+
         puntosVenta.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
         {
             await servicio.EliminarPuntoVentaAsync(id, ct);

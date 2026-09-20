@@ -1256,11 +1256,53 @@ public class ServicioDeVentas(
         return tipo;
     }
 
-    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
-        await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
+    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var puntoVenta = await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
             // El filtro de EF (+ RLS) ya deja invisible un punto de venta de otro tenant — ADR-8:
             // mismo 404 para "no existe" y "es de otro tenant".
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+        await ExigirModoCompatibleConElActorAsync(puntoVenta, ct);
+
+        return puntoVenta;
+    }
+
+    /// <summary>Invariante "una PC-caja = un punto de venta" (DB CHANGE GATE aprobado, stage-
+    /// desktop-pos): un actor con claim de dispositivo (<see cref="IContextoDeUsuario.IdDispositivo"/>)
+    /// solo puede vender contra el punto de venta Escritorio que ESE dispositivo tiene vinculado
+    /// — nunca contra otro, aunque sea del mismo tenant; un actor sin esa claim (sesión web normal)
+    /// solo puede vender contra un punto de venta Web. Cualquier otra combinación es un 409, nunca
+    /// un 404: el punto de venta existe y es del tenant correcto, lo que falla es la compatibilidad
+    /// de modo.</summary>
+    private async Task ExigirModoCompatibleConElActorAsync(PuntoVenta puntoVenta, CancellationToken ct)
+    {
+        if (contexto.IdDispositivo is { } idDispositivo)
+        {
+            var idPuntoVentaDelDispositivo = await db.Dispositivos
+                .Where(d => d.Id == idDispositivo)
+                .Select(d => (int?)d.IdPuntoVenta)
+                .FirstOrDefaultAsync(ct);
+
+            if (puntoVenta.Modo != ModoPuntoVenta.Escritorio || idPuntoVentaDelDispositivo != puntoVenta.Id)
+            {
+                throw new ErrorDominio(
+                    "punto_venta_modo_incompatible",
+                    "Este dispositivo no puede vender contra ese punto de venta.",
+                    409);
+            }
+
+            return;
+        }
+
+        if (puntoVenta.Modo != ModoPuntoVenta.Web)
+        {
+            throw new ErrorDominio(
+                "punto_venta_modo_incompatible",
+                "Este punto de venta requiere un dispositivo de escritorio vinculado.",
+                409);
+        }
+    }
 
     private async Task<Cliente> ResolverClienteAsync(int? idCliente, CancellationToken ct)
     {
