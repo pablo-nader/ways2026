@@ -178,10 +178,14 @@ public class SesionBearerDeDispositivoTests(WaysApiFixture fixture) : IClassFixt
     }
 
     /// <summary>Precedencia explícita del selector de esquema (<c>Program.cs</c>,
-    /// <c>AddPolicyScheme</c>): si llega el header <c>Authorization</c>, la request autentica
-    /// EXCLUSIVAMENTE por bearer — nunca cae de vuelta a una cookie de sesión válida que el
-    /// mismo cliente también esté mandando. Un token corrupto en el header tiene que rechazar la
-    /// request aunque haya una sesión de cookie perfectamente vigente al lado.</summary>
+    /// <c>AddPolicyScheme</c>): el selector solo despacha a bearer cuando el header
+    /// <c>Authorization</c> empieza con el prefijo <c>Bearer </c> — este test manda justamente
+    /// ese prefijo, así que autentica por bearer y NUNCA cae de vuelta a una cookie de sesión
+    /// válida que el mismo cliente también esté mandando. Un token corrupto con prefijo
+    /// <c>Bearer </c> tiene que rechazar la request aunque haya una sesión de cookie
+    /// perfectamente vigente al lado. La otra mitad de la regla — un header con OTRO esquema
+    /// (<c>Basic</c>, <c>Dispositivo</c>, etc.) sigue yendo por cookie — la cubre
+    /// <see cref="UnHeaderAuthorizationConOtroEsquemaAutenticaPorLaCookie"/>.</summary>
     [Fact]
     public async Task UnHeaderAuthorizationInvalidoNoCaeALaCookieAunConSesionCookieValida()
     {
@@ -248,6 +252,91 @@ public class SesionBearerDeDispositivoTests(WaysApiFixture fixture) : IClassFixt
 
         _ = idTenant;
         _ = idPuntoVenta;
+    }
+
+    /// <summary>judgment-day ronda 2 (residual #3, ambos jueces): el selector de esquema
+    /// (<c>Program.cs</c>, <c>ForwardDefaultSelector</c>) y <c>ManejadorBearerDeSesion</c> leen el
+    /// mismo <c>Request.Headers["Authorization"].ToString()</c> — con DOS headers
+    /// <c>Authorization</c> en la misma request (el transporte HTTP lo permite a nivel de wire,
+    /// aunque ningún cliente legítimo de esta app lo haga), <c>StringValues.ToString()</c> los
+    /// junta con una coma SIN espacio: <c>"Bearer &lt;token&gt;,Basic xxx"</c>. Con el token bearer
+    /// GENUINO primero, la coma mete el segundo header dentro del "token" que
+    /// <c>ManejadorBearerDeSesion</c> extrae — deja de ser el string cifrado que <c>Unprotect</c>
+    /// puede decodificar, así que falla. Fail-closed: la forma multi-valor nunca autentica, nunca
+    /// es una vía de escalada.</summary>
+    [Fact]
+    public async Task DosHeadersAuthorizationBearerValidoLuegoBasicNoAutentica()
+    {
+        var (admin, _, _, _, secreto) = await PrepararDispositivoYCajeroAsync(
+            nameof(DosHeadersAuthorizationBearerValidoLuegoBasicNoAutentica));
+        admin.Dispose();
+
+        using var cajero = fixture.CreateClient();
+        var token = await LoguearComoCajeroYObtenerTokenAsync(cajero, secreto);
+
+        using var sinCookies = fixture.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.TryAddWithoutValidation(
+            "Authorization", new[] { $"Bearer {token}", "Basic dXNlcjpwYXNz" });
+
+        var respuesta = await sinCookies.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
+
+    /// <summary>Misma coma, orden invertido: el header unido queda
+    /// <c>"Basic xxx,Bearer &lt;token&gt;"</c>, que YA NO empieza con <c>"Bearer "</c> — el
+    /// selector despacha a la cookie en vez de al bearer, y sin cookie de sesión no hay nada que
+    /// autentique: el token genuino queda enterrado en el segundo valor y jamás se lee.
+    /// Fail-closed en los dos órdenes posibles.</summary>
+    [Fact]
+    public async Task DosHeadersAuthorizationBasicLuegoBearerValidoNoAutentica()
+    {
+        var (admin, _, _, _, secreto) = await PrepararDispositivoYCajeroAsync(
+            nameof(DosHeadersAuthorizationBasicLuegoBearerValidoNoAutentica));
+        admin.Dispose();
+
+        using var cajero = fixture.CreateClient();
+        var token = await LoguearComoCajeroYObtenerTokenAsync(cajero, secreto);
+
+        using var sinCookies = fixture.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.TryAddWithoutValidation(
+            "Authorization", new[] { "Basic dXNlcjpwYXNz", $"Bearer {token}" });
+
+        var respuesta = await sinCookies.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
+
+    /// <summary>Un solo header, con un espacio inicial antes de <c>"Bearer"</c> puesto a mano vía
+    /// <c>TryAddWithoutValidation</c> (fuera del formato que valida el parser normal de
+    /// <c>Authorization</c>). Comprobado en runtime (no asumido): el propio pipeline de
+    /// <c>HttpHeaders</c>/Kestrel recorta el espacio ANTES de que <c>Request.Headers["Authorization"]</c>
+    /// lo entregue — <c>StartsWith("Bearer ", ...)</c> del selector nunca lo ve, así que la
+    /// request autentica NORMALMENTE por bearer con el token genuino. No es una vía de escalada
+    /// (el token sigue siendo el mismo, válido, del mismo cajero) ni un caso especial de este
+    /// código: es tolerancia de espacios en blanco del transporte HTTP subyacente, ajena a
+    /// <c>ManejadorBearerDeSesion</c> y al selector.</summary>
+    [Fact]
+    public async Task UnHeaderAuthorizationConEspacioInicialAntesDeBearerAutenticaIgual()
+    {
+        var (admin, _, _, _, secreto) = await PrepararDispositivoYCajeroAsync(
+            nameof(UnHeaderAuthorizationConEspacioInicialAntesDeBearerAutenticaIgual));
+        admin.Dispose();
+
+        using var cajero = fixture.CreateClient();
+        var token = await LoguearComoCajeroYObtenerTokenAsync(cajero, secreto);
+
+        using var sinCookies = fixture.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.TryAddWithoutValidation("Authorization", $" Bearer {token}");
+
+        var respuesta = await sinCookies.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var usuario = await respuesta.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.Equal("cajero1", usuario!.Usuario);
     }
 
     [Fact]

@@ -45,19 +45,12 @@ public sealed class ManejadorBearerDeSesion(
             return AuthenticateResult.NoResult();
         }
 
-        AuthenticationTicket? ticket;
-        try
-        {
-            ticket = formateador.Formato.Unprotect(token);
-        }
-        catch
-        {
-            // Token corrupto o cifrado bajo otro propósito de protección (por ejemplo, un valor
-            // de la cookie ways.sesion reusado a mano) — mismo criterio que un JWT con firma
-            // inválida: se falla sin distinguir el motivo exacto.
-            return AuthenticateResult.Fail("Token bearer inválido.");
-        }
-
+        // Sin try/catch a propósito: Unprotect es un SecureDataFormat<AuthenticationTicket>
+        // (TicketDataFormat) que ya envuelve decode+unprotect+deserialize en su propio catch-all
+        // y devuelve null en vez de propagar — el chequeo de abajo es el que realmente rechaza un
+        // token corrupto o cifrado bajo otro propósito de protección (ver judgment-day, PR #257:
+        // una guarda que ningún test puede matar no se shippea como código vivo).
+        var ticket = formateador.Formato.Unprotect(token);
         if (ticket is null)
         {
             return AuthenticateResult.Fail("Token bearer inválido.");

@@ -203,5 +203,13 @@ describe('PantallaDeVinculacion', () => {
     expect(screen.getByText(/Revocalo desde Dispositivos y volvé a vincularlo/)).toBeInTheDocument()
     expect(alVinculado).not.toHaveBeenCalled()
     expect(apiPostMock).not.toHaveBeenCalledWith('/auth/logout')
+
+    // judgment-day ronda 2 (residual #5, juez A): el mensaje le dice al admin que revoque y
+    // vuelva a vincular en vez de reintentar a ciegas — este bloque prueba que la pantalla
+    // realmente lo hace imposible, no solo que lo diga. Ningún control de este paso (select,
+    // input, botón) puede sobrevivir al estado terminal.
+    expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre del equipo')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Vincular' })).not.toBeInTheDocument()
   })
 })

@@ -14,7 +14,15 @@ type Props = { alVinculado: (dispositivo: DispositivoActual) => void }
  * mail/password (el login normal de la app), después elige el punto de venta y le pone un nombre
  * al equipo. `elegir-pv` guarda la sesión de admin YA autenticada — de ahí sale `listarPuntosVenta`
  * sin pedir nada más. */
-type Paso = { paso: 'login' } | { paso: 'elegir-pv'; puntosVenta: PuntoVentaListado[] }
+type Paso =
+  | { paso: 'login' }
+  | { paso: 'elegir-pv'; puntosVenta: PuntoVentaListado[] }
+  // judgment-day ronda 2 (residual #5, juez A): estado terminal genuino para cuando `vincular`
+  // ya comprometió al servidor pero el guardado local de la credencial falló — reemplaza la
+  // pantalla entera (sin inputs ni botón) en vez de reactivar un formulario que el mensaje de
+  // error le pide al admin no volver a tocar (react-async-state regla 7: si el copy promete un
+  // bloqueo, el enforcement tiene que ser real).
+  | { paso: 'credencial-fallida' }
 
 /**
  * Pantalla de vinculación del POS de escritorio (stage-desktop-pos) — corre una única vez por
@@ -92,11 +100,15 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
     } catch {
       // El dispositivo YA quedó vinculado del lado del servidor; el secreto no se puede volver a
       // pedir. La salida es revocar este dispositivo y volver a vincularlo, nunca reintentar a
-      // ciegas desde esta misma pantalla.
+      // ciegas desde esta misma pantalla — judgment-day ronda 2 (residual #5, juez A): antes este
+      // catch solo reactivaba el mismo formulario (mismos valores, mismo botón habilitado), así
+      // que el mensaje de abajo prometía un bloqueo que el código no imponía. `credencial-fallida`
+      // saca la pantalla entera de circulación: sin select, sin input, sin botón que reenviar.
       setError(
         'El dispositivo quedó vinculado, pero no se pudo guardar la credencial en este equipo. ' +
           'Revocalo desde Dispositivos y volvé a vincularlo.',
       )
+      setPaso({ paso: 'credencial-fallida' })
       enviandoRef.current = false
       setEnviando(false)
       return
@@ -108,6 +120,19 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
     enviandoRef.current = false
     setEnviando(false)
     alVinculado(vinculado.datos)
+  }
+
+  if (paso.paso === 'credencial-fallida') {
+    return (
+      <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
+        <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+          <div className="card-body">
+            <h1 className="h4 text-center mb-4">Vincular este equipo</h1>
+            <div className="text-danger text-center mb-0">{error}</div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (paso.paso === 'elegir-pv') {

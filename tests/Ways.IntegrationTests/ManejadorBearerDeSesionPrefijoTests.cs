@@ -98,10 +98,12 @@ public sealed class ManejadorBearerDeSesionPrefijoTests : IAsyncLifetime
     /// <c>Microsoft.AspNetCore.Authentication.SecureDataFormat</c> envuelve TODO su cuerpo en un
     /// try/catch propio que traga la excepción y devuelve <c>default</c>): para un string basura,
     /// <c>Unprotect</c> NO tira — devuelve <c>null</c> directamente. La rama que de verdad atiende
-    /// un token corrupto es <c>if (ticket is null)</c>, no el try/catch de este archivo (que a su
-    /// vez queda como defensa adicional para un contrato que hoy no dispara). Este test aísla esa
-    /// rama en el mismo host mínimo de arriba, sin pasar por el try/catch de una forma que lo
-    /// pueda confundir con éste.
+    /// un token corrupto es <c>if (ticket is null)</c>. judgment-day ronda 2 (ambos jueces): al
+    /// estar probado que <c>Unprotect</c> nunca tira, el try/catch que rodeaba esa llamada en
+    /// <c>ManejadorBearerDeSesion.cs</c> quedó removido (precedente PR #257: una guarda que ningún
+    /// test puede matar no se shippea como código vivo) y reemplazado por un comentario que explica
+    /// por qué no hace falta. Este test aísla la rama <c>if (ticket is null)</c> en el mismo host
+    /// mínimo de arriba.
     ///
     /// Mutation-proof: comentando <c>if (ticket is null) return AuthenticateResult.Fail(...);</c>
     /// en <c>ManejadorBearerDeSesion.cs</c>, el build de <c>Ways.Api</c> pasó de compilar limpio a

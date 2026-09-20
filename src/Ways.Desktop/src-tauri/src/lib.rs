@@ -170,8 +170,25 @@ mod tests {
     /// judgment-day ronda 1 (hallazgo BLOCKER, ambos jueces): la capacidad remota tiene que poder
     /// ESCRIBIR el secreto de dispositivo pero nunca LEERLO — leerlo desde el origen remoto (con
     /// `withGlobalTauri: true` y `csp: null`) lo dejaria legible por cualquier script de ese
-    /// origen. Este test falla si alguien vuelve a agregar el permiso de lectura a
-    /// `PERMISOS_REMOTOS` sin revertir este comentario a proposito.
+    /// origen.
+    ///
+    /// judgment-day ronda 2 (residual #4, honestidad de cobertura): este test SOLO verifica la
+    /// pertenencia de dos strings a la constante `PERMISOS_REMOTOS` — no ejercita el ACL real de
+    /// Tauri (`CapabilityBuilder`, `RuntimeAuthority::resolve_access`) que de verdad decide si un
+    /// comando corre o no. Se investigo la alternativa (armar la `Capability` real y resolverla
+    /// contra el manifiesto de ACL, o correr un IPC de punta a punta contra `MockRuntime`) y no es
+    /// viable sin tocar produccion: `guardar_credencial_de_dispositivo` y
+    /// `leer_credencial_de_dispositivo` (`comandos.rs`) toman `AppHandle` sin parametro generico,
+    /// que Tauri fija al runtime real `Wry` por default — `tauri::test::MockRuntime` exige
+    /// comandos genericos sobre `R: Runtime`, así que no compilan contra el runtime mockeado, y
+    /// levantar una app real con ventana en un test unitario no es portable ni razonable para
+    /// esta suite. Esta prueba depende entonces, a proposito, de que
+    /// `registrar_capacidad_remota` (mas arriba en este archivo) siga siendo un espejo 1:1 y sin
+    /// filtro de `PERMISOS_REMOTOS` — itera la constante entera y llama `.permission(*permiso)`
+    /// por cada entrada, sin ninguna condicion que pueda dejar pasar o filtrar un permiso de forma
+    /// distinta a lo que este test ve. Si esa función deja de ser ese espejo exacto, este test ya
+    /// no prueba nada real sobre el runtime — revisar `registrar_capacidad_remota` a mano en cada
+    /// cambio hasta que exista una via practica de probar el ACL real.
     #[test]
     fn los_permisos_remotos_pueden_escribir_pero_no_leer_la_credencial_de_dispositivo() {
         assert!(PERMISOS_REMOTOS.contains(&"allow-guardar-credencial-de-dispositivo"));
