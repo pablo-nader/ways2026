@@ -118,7 +118,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
 
     private static SolicitudDeCompra SolicitudSimple(Contexto ctx, decimal costoUnitario = 100m, string? numeroExterno = null) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, numeroExterno ?? $"0001-{Guid.NewGuid():N}"[..14],
+            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, numeroExterno ?? DatosDePrueba.NumeroExternoUnico(),
             DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, true)]);
 

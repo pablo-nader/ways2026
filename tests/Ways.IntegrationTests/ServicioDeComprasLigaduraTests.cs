@@ -176,7 +176,7 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         Contexto ctx, decimal unidades = 10m, decimal costoUnitario = 100m, int? idArticulo = null,
         int? idOrdenCompra = null, string? numeroExterno = null) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno ?? $"0001-{Guid.NewGuid():N}"[..8], DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno ?? DatosDePrueba.NumeroExternoUnico(), DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(idArticulo ?? ctx.IdArticulo, "Item de recepción", unidades, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, false)],
             idOrdenCompra);
 
@@ -747,7 +747,7 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
             var comprobante = new ComprobanteCompra
             {
                 IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
-                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                NumeroExterno = DatosDePrueba.NumeroExternoUnico(), FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
                 FechaRecepcion = ahora, IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
                 Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
                 Estado = EstadoCompra.Confirmada, IdOrdenCompra = hermana.Id, CreatedAt = ahora, UpdatedAt = ahora
