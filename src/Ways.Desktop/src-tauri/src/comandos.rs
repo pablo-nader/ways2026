@@ -1,6 +1,7 @@
-//! Comandos Tauri invocables desde la pagina local de configuracion y,
-//! para el subconjunto habilitado por la capacidad remota, desde
-//! `{servidor}/pos.html`.
+//! Comandos Tauri invocables desde las dos paginas LOCALES de la app: la de
+//! configuracion (ventana `main`, `capabilities/configuracion.json`) y la del
+//! punto de venta (ventana `pos`, `capabilities/pos.json`) -- cada una con su
+//! propio subconjunto, ver esos dos archivos.
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -13,6 +14,12 @@ use crate::impresion;
 pub struct InfoApp {
     pub version: String,
     pub impresora: Option<String>,
+    /// stage-desktop-pos, slice 3: la pagina LOCAL del POS (`pos.html`) no tiene otra forma de
+    /// enterarse de la URL del servidor -- a diferencia de la vieja pagina remota, ya no corre
+    /// DENTRO de ese origen, y no tiene permiso para invocar `leer_configuracion` (exclusivo de la
+    /// ventana de configuracion, ver `capabilities/pos.json`). Se reusa `info_app`, que el POS ya
+    /// tenia permitido, en vez de agregar un comando nuevo solo para esto.
+    pub url_servidor: Option<String>,
 }
 
 /// Lista los nombres de las impresoras instaladas en Windows.
@@ -71,10 +78,8 @@ pub fn imprimir_prueba(app: AppHandle, impresora: Option<String>) -> Result<(), 
     impresion::imprimir_raw(&impresora, &ticket)
 }
 
-/// Guarda la configuracion (URL de servidor + impresora) y navega la
-/// ventana principal hacia `{servidor}/pos.html`. Rechaza guardar una
-/// impresora virtual/de documento, aunque la pagina ya deberia impedir
-/// seleccionarla.
+/// Guarda la configuracion (URL de servidor + impresora) y muestra la ventana `pos`. Rechaza
+/// guardar una impresora virtual/de documento, aunque la pagina ya deberia impedir seleccionarla.
 #[tauri::command]
 pub fn guardar_configuracion(app: AppHandle, configuracion: Configuracion) -> Result<(), String> {
     if let Some(nombre) = configuracion.impresora.as_deref() {
@@ -84,13 +89,10 @@ pub fn guardar_configuracion(app: AppHandle, configuracion: Configuracion) -> Re
     }
 
     config::guardar(&app, &configuracion)?;
-    let guardada = config::leer(&app)
+    config::leer(&app)
         .ok_or_else(|| "No se pudo releer la configuracion recien guardada.".to_string())?;
 
-    crate::registrar_capacidad_remota(&app, &guardada.url_servidor).map_err(|error| {
-        format!("La configuracion se guardo, pero no se pudo habilitar el acceso remoto: {error}")
-    })?;
-    crate::navegar_a_pos(&app, &guardada.url_servidor).map_err(|error| {
+    crate::mostrar_ventana_pos(&app).map_err(|error| {
         format!("La configuracion se guardo, pero no se pudo abrir el punto de venta: {error}")
     })
 }
@@ -101,33 +103,32 @@ pub fn leer_configuracion(app: AppHandle) -> Option<Configuracion> {
     config::leer(&app)
 }
 
-/// Vuelve a mostrar la pagina local de configuracion en la ventana
-/// principal.
+/// Vuelve a mostrar la ventana local de configuracion.
 #[tauri::command]
 pub fn abrir_configuracion(app: AppHandle) -> Result<(), String> {
-    crate::abrir_pagina_configuracion(&app)
+    crate::mostrar_ventana_configuracion(&app)
+        .map_err(|error| format!("No se pudo abrir la configuracion: {error}"))
 }
 
-/// Vuelve a mostrar el punto de venta (`{servidor}/pos.html`) usando la
-/// configuracion ya guardada, sin persistir ningun cambio. Se usa desde el
-/// boton "Volver al POS" de la pagina de configuracion, para no dejar al
-/// usuario atrapado ahi cuando solo quiere descartar la edicion en curso.
+/// Vuelve a mostrar la ventana del punto de venta usando la configuracion ya guardada, sin
+/// persistir ningun cambio. Se usa desde el boton "Volver al POS" de la pagina de configuracion,
+/// para no dejar al usuario atrapado ahi cuando solo quiere descartar la edicion en curso.
 #[tauri::command]
 pub fn volver_a_pos(app: AppHandle) -> Result<(), String> {
-    let configuracion = config::leer(&app)
-        .ok_or_else(|| "No hay una configuracion guardada.".to_string())?;
-    crate::navegar_a_pos(&app, &configuracion.url_servidor)
+    config::leer(&app).ok_or_else(|| "No hay una configuracion guardada.".to_string())?;
+    crate::mostrar_ventana_pos(&app)
         .map_err(|error| format!("No se pudo volver al punto de venta: {error}"))
 }
 
-/// Informacion basica de la app para mostrar en la pagina de configuracion
-/// o para diagnostico desde la pagina remota.
+/// Informacion basica de la app para mostrar en la pagina de configuracion o para diagnostico
+/// desde el POS -- incluye `url_servidor` (ver doc de `InfoApp::url_servidor`).
 #[tauri::command]
 pub fn info_app(app: AppHandle) -> InfoApp {
     let configuracion = config::leer(&app);
     InfoApp {
         version: app.package_info().version.to_string(),
-        impresora: configuracion.and_then(|c| c.impresora),
+        impresora: configuracion.as_ref().and_then(|c| c.impresora.clone()),
+        url_servidor: configuracion.map(|c| c.url_servidor),
     }
 }
 
@@ -142,10 +143,12 @@ pub fn guardar_credencial_de_dispositivo(app: AppHandle, secreto: String) -> Res
 
 /// Devuelve el secreto de dispositivo guardado, si hay uno.
 ///
-/// judgment-day ronda 1 (hallazgo BLOCKER): este comando SIGUE existiendo (lo va a necesitar la
-/// slice 3, cuando `/pos.html` pase a ser una pagina LOCAL) pero deliberadamente no esta en
-/// `PERMISOS_REMOTOS` (ver `lib.rs`) — la pagina remota de hoy ya no puede invocarlo. `AppPos.tsx`
-/// dejo de llamarlo por ese motivo.
+/// stage-desktop-pos, slice 3: otorgado a la capacidad LOCAL del POS (`capabilities/pos.json`) --
+/// la pagina remota anterior deliberadamente NO lo tenia (judgment-day ronda 1, ver historial de
+/// `lib.rs`), porque leerlo desde un origen remoto con `csp: null` lo dejaba expuesto a cualquier
+/// script de ese origen. Ahora que `pos.html` es una pagina LOCAL bundleada (nunca expuesta a
+/// script remoto) y la app tiene una CSP real (ver `tauri.conf.json`), `AppPos.tsx` lo usa para
+/// distinguir "sin red pero ya vinculado" de "nunca vinculado" (ver `AppPos.tsx`).
 #[tauri::command]
 pub fn leer_credencial_de_dispositivo(app: AppHandle) -> Option<String> {
     credencial::leer(&app)

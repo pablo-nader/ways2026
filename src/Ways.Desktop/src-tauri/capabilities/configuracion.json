@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "configuracion-local",
+  "description": "Permisos de la pagina LOCAL de configuracion (ventana 'main'): configurar servidor/impresora e imprimir un ticket de prueba. Nunca imprimir_raw, abrir_configuracion, ni las credenciales de dispositivo -- esos son exclusivos de la ventana 'pos' (ver capabilities/pos.json).",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-guardar-configuracion",
+    "allow-leer-configuracion",
+    "allow-imprimir-prueba",
+    "allow-listar-impresoras-con-detalle",
+    "allow-impresora-predeterminada-detallada",
+    "allow-volver-a-pos",
+    "allow-info-app"
+  ]
+}

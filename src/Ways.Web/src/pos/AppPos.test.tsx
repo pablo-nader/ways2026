@@ -8,6 +8,7 @@ import type { ClienteListado, MedioPagoListado, PaginaDe, ParametroResuelto, Pun
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const leerCredencialDeDispositivoMock = vi.fn()
 
 // `dispositivos.ts` (no mockeado en este archivo, corre real) también importa de aca
 // (`corriendoEnTauri`/`establecerTokenDeSesionBearer`) — el mock tiene que cubrir TODO lo que el
@@ -17,7 +18,10 @@ vi.mock('../api/entornoTauri', () => ({
   corriendoEnTauri: () => false,
   establecerTokenDeSesionBearer: () => {},
   guardarCredencialDeDispositivo: () => Promise.resolve(),
+  leerCredencialDeDispositivo: (...args: unknown[]) => leerCredencialDeDispositivoMock(...args),
   tokenDeSesionBearerActual: () => null,
+  urlBaseApi: () => '',
+  inicializarUrlServidor: () => Promise.resolve(),
 }))
 
 /** Espejo mínimo del observador real de `../api/cliente`: `dispararPerdidaDeSesion` simula lo que
@@ -160,6 +164,8 @@ beforeEach(() => {
   apiPostMock.mockReset()
   apiPostMock.mockResolvedValue(undefined)
   observadores = new Set()
+  leerCredencialDeDispositivoMock.mockReset()
+  leerCredencialDeDispositivoMock.mockResolvedValue(null)
 })
 
 describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-pos)', () => {
@@ -174,10 +180,11 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
   })
 
-  it('un error de red (no un 404 explícito) muestra el error genérico', async () => {
-    // judgment-day ronda 1: la pantalla remota ya no puede preguntarle a Rust si hay una
-    // credencial local guardada (perdió el permiso de lectura, ver `lib.rs`) — un error de red
-    // siempre muestra el mensaje genérico, sin distinguir "ya vinculado localmente".
+  it('un error de red (no un 404 explícito) SIN credencial local muestra el error genérico', async () => {
+    // stage-desktop-pos, slice 3: sin respuesta del servidor Y sin credencial local guardada
+    // (`leerCredencialDeDispositivoMock` resuelve null por defecto, ver beforeEach) no hay
+    // ninguna evidencia de nada — mensaje genérico, nunca "vincular" (esa pantalla exige un 404
+    // EXPLÍCITO del servidor, ver el test de más abajo).
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
     )
@@ -185,6 +192,54 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
 
     expect(await screen.findByText('No se pudo determinar el dispositivo.')).toBeInTheDocument()
     expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
+    expect(leerCredencialDeDispositivoMock).toHaveBeenCalled()
+  })
+
+  it('un error de red (no un 404 explícito) CON credencial local guardada distingue "sin red pero vinculado"', async () => {
+    // Punto F de la slice 3: la credencial local SOLO se consulta cuando al servidor no se le
+    // pudo ni preguntar (este caso) — nunca cuando respondió con un error real, y nunca puede
+    // pisar un 404 `dispositivo_no_vinculado` explícito (ver el test de más abajo, sin este
+    // mock). La base sigue siendo la única autoridad: esto es un mensaje MÁS específico, no un
+    // salto directo a "con sesión".
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
+    expect(screen.queryByText('No se pudo determinar el dispositivo.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
+  })
+
+  it('un error de red CON credencial local guardada pero un 404 dispositivo_no_vinculado EXPLÍCITO igual manda a vincular', async () => {
+    // El 404 explícito siempre gana, aunque haya una credencial local — la base es la única
+    // fuente de verdad (ver doc-comment de `AppPos`, paso 1).
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual'
+        ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
+    expect(leerCredencialDeDispositivoMock).not.toHaveBeenCalled()
+  })
+
+  it('un error del servidor RECHAZABLE (no un fallo de red) nunca consulta la credencial local, aunque haya una', async () => {
+    // El servidor SÍ respondió (con un error, pero respondió) — "no se pudo ni preguntar" no
+    // aplica, así que la credencial local no entra en juego aunque exista.
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual'
+        ? Promise.reject(new ErrorApi(500, 'error_interno', 'Error interno del servidor.'))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText('Error interno del servidor.')).toBeInTheDocument()
+    expect(leerCredencialDeDispositivoMock).not.toHaveBeenCalled()
   })
 
   it('un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular (la base es la fuente de verdad)', async () => {

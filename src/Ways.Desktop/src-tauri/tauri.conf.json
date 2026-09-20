@@ -4,7 +4,9 @@
   "version": "0.1.1",
   "identifier": "site.aipos.pos",
   "build": {
-    "frontendDist": "../ui"
+    "frontendDist": "../ui",
+    "beforeDevCommand": "node scripts/sync-frontend-local.mjs",
+    "beforeBuildCommand": "node scripts/sync-frontend-local.mjs"
   },
   "app": {
     "withGlobalTauri": true,
@@ -18,11 +20,12 @@
         "minWidth": 1024,
         "minHeight": 700,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {

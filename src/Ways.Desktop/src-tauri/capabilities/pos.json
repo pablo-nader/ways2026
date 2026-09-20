@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pos-local",
+  "description": "Permisos de la pagina LOCAL del punto de venta (ventana 'pos'): imprimir, abrir la configuracion y leer/escribir la credencial de dispositivo. Nunca guardar_configuracion ni leer_configuracion -- esos son exclusivos de la ventana 'main' (ver capabilities/configuracion.json). leer_credencial_de_dispositivo se otorga aca a proposito: esta pagina es local (bundleada con la app, nunca expuesta a un script remoto) y la necesita para saber si el dispositivo ya esta vinculado sin depender de la red (ver AppPos.tsx).",
+  "windows": [
+    "pos"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-imprimir-raw",
+    "allow-listar-impresoras",
+    "allow-abrir-configuracion",
+    "allow-info-app",
+    "allow-guardar-credencial-de-dispositivo",
+    "allow-leer-credencial-de-dispositivo"
+  ]
+}

@@ -1,16 +1,30 @@
 /**
  * Cliente HTTP de la API.
  *
- * Todas las llamadas van con `credentials: 'include'` porque la sesión vive en una
- * cookie HttpOnly: el token nunca pasa por JavaScript.
+ * En el navegador normal todas las llamadas van con `credentials: 'include'` porque la sesión
+ * vive en una cookie HttpOnly: el token nunca pasa por JavaScript.
  *
- * stage-desktop-pos, slice bearer: bajo Tauri (`corriendoEnTauri`) se adjunta ADEMÁS el header
- * `Authorization: Bearer <token>` cuando hay un token de sesión guardado (`entornoTauri.ts`) —
- * preparación para la slice 3 (el shell va a pasar a `http://tauri.localhost`, cross-site
- * respecto de la API, donde `SameSite=Lax` nunca manda la cookie). El camino del navegador
- * normal queda intacto: sin Tauri, `corriendoEnTauri()` es `false` y esto es un no-op.
+ * stage-desktop-pos, slice 3: bajo Tauri (`corriendoEnTauri`) el shell corre en
+ * `http://tauri.localhost`, cross-site respecto de la API — dos cosas cambian ahí, y solo ahí:
+ * 1. La URL se antepone con `urlBaseApi()` (`entornoTauri.ts`, cacheada desde `info_app`): una
+ *    ruta relativa a `http://tauri.localhost` la resuelve el protocolo de asset de Tauri, no la
+ *    red.
+ * 2. `credentials` pasa a `'omit'` en vez de `'include'`. La sesión bajo Tauri viaja por el
+ *    header `Authorization: Bearer <token>` (adjuntado abajo cuando hay uno guardado, ver
+ *    `entornoTauri.ts`) — nunca por cookie, a propósito: la API no habilita
+ *    `AllowCredentials` en su política CORS para ese origen (`Program.cs`), así que un fetch
+ *    cross-site con `credentials: 'include'` ahí haría fallar la respuesta completa por el
+ *    chequeo de credenciales de CORS, sin que la cookie siquiera existiera del otro lado.
+ *
+ * El camino del navegador normal queda intacto: sin Tauri, `corriendoEnTauri()` es `false` y las
+ * dos ramas de arriba son no-ops.
  */
-import { corriendoEnTauri, establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from './entornoTauri'
+import {
+  corriendoEnTauri,
+  establecerTokenDeSesionBearer,
+  tokenDeSesionBearerActual,
+  urlBaseApi,
+} from './entornoTauri'
 
 export class ErrorApi extends Error {
   readonly estado: number
@@ -84,9 +98,9 @@ function headerBearerSiCorresponde(): Record<string, string> {
 }
 
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
-  const respuesta = await fetch(`/api${ruta}`, {
+  const respuesta = await fetch(`${urlBaseApi()}/api${ruta}`, {
     ...init,
-    credentials: 'include',
+    credentials: corriendoEnTauri() ? 'omit' : 'include',
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -130,7 +144,10 @@ export function nombreDeArchivo(respuesta: Response): string {
  * Open Questions).
  */
 async function descargar(ruta: string): Promise<void> {
-  const respuesta = await fetch(`/api${ruta}`, { credentials: 'include', headers: headerBearerSiCorresponde() })
+  const respuesta = await fetch(`${urlBaseApi()}/api${ruta}`, {
+    credentials: corriendoEnTauri() ? 'omit' : 'include',
+    headers: headerBearerSiCorresponde(),
+  })
   await exigirRespuestaOk(respuesta)
 
   const blob = await respuesta.blob()

@@ -136,6 +136,28 @@ builder.Services
 
 builder.Services.AddSingleton<FormateadorDeTicketBearer>();
 
+// stage-desktop-pos, slice 3: el shell de escritorio (Tauri) pasa a servir el POS desde una
+// página LOCAL (`http://tauri.localhost` en Windows — confirmado contra la config de Tauri y su
+// documentación, ver `Ways.Desktop/src-tauri/src/config.rs`), que llama a esta API por red. Sin
+// esta política, ese `fetch` cross-site lo bloquea el navegador embebido antes de que la
+// respuesta llegue a JavaScript. Política DELIBERADAMENTE angosta: un solo origen exacto (nunca
+// `AllowAnyOrigin`/wildcard) y SIN `AllowCredentials` — la sesión bajo Tauri viaja por
+// `Authorization: Bearer <token>` (`ManejadorBearerDeSesion`), nunca por cookie, precisamente
+// para no depender de credenciales cross-site. Habilitar `AllowCredentials` acá no habilitaría
+// nada que el bearer no cubra ya, y sí ensancharía la superficie (un fetch con
+// `credentials: 'include'` desde ese origen podría, en teoría, viajar con cookies de la API si
+// alguna vez existieran). El navegador normal (same-origin, servido por esta misma API desde
+// `wwwroot`) nunca activa CORS: esta política no lo afecta.
+const string PoliticaCorsPosLocal = "pos-local";
+builder.Services.AddCors(opciones =>
+{
+    opciones.AddPolicy(PoliticaCorsPosLocal, politica =>
+        politica
+            .WithOrigins("http://tauri.localhost")
+            .WithMethods("GET", "POST", "PUT", "DELETE")
+            .WithHeaders("Content-Type", "Authorization", "Accept"));
+});
+
 // No hay zonas públicas: todo pide sesión salvo lo marcado con AllowAnonymous.
 builder.Services
     .AddAuthorizationBuilder()
@@ -177,6 +199,13 @@ if (app.Environment.IsDevelopment())
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Tiene que ir ANTES de UseAuthentication/UseAuthorization: un 401/403 de un endpoint protegido
+// corta la ejecución del pipeline (nunca llega a UseCors si este middleware fuera posterior), y
+// esa respuesta de error TAMBIÉN necesita el header Access-Control-Allow-Origin — sin él, el
+// navegador la ve como un error de red opaco en vez de una respuesta 401 legible por JavaScript
+// (`cliente.ts` sí la lee: parsea el cuerpo, dispara `alPerderLaSesion`).
+app.UseCors(PoliticaCorsPosLocal);
 
 app.UseAuthentication();
 app.UseAuthorization();

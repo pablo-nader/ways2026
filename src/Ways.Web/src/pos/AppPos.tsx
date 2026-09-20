@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
+import { leerCredencialDeDispositivo } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
@@ -15,6 +16,7 @@ type Estado =
   | { fase: 'cargando' }
   | { fase: 'sin-vincular' }
   | { fase: 'error'; mensaje: string }
+  | { fase: 'sin-red-pero-vinculado' }
   | { fase: 'vinculado-sin-sesion'; dispositivo: DispositivoActual }
   | { fase: 'con-sesion'; dispositivo: DispositivoActual; usuario: UsuarioAutenticado; puntoVenta: PuntoVentaListado }
 
@@ -58,27 +60,35 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
 }
 
 /**
- * Punto de entrada del POS de escritorio (`pos.html`, servido remotamente por la API — Tauri lo
- * carga desde el origen del servidor, no desde un archivo local) — stage-desktop-pos. Máquina de
- * estados propia (no reusa `AuthProvider`/`RutaProtegida`/`PuertaDePuntoVenta` de la app completa:
- * esas asumen login por mail/password y elección manual de PV, acá el dispositivo fija ambas
- * cosas):
+ * Punto de entrada del POS de escritorio (`pos.html`) — stage-desktop-pos. Desde la slice 3 es
+ * una página LOCAL bundleada con la app (`Ways.Desktop/ui/pos.html`), no una servida por la API;
+ * habla con el servidor por red (`cliente.ts`, `entornoTauri.ts`). Máquina de estados propia (no
+ * reusa `AuthProvider`/`RutaProtegida`/`PuertaDePuntoVenta` de la app completa: esas asumen login
+ * por mail/password y elección manual de PV, acá el dispositivo fija ambas cosas):
  *
  * 1. `GET /dispositivos/actual` (anónimo) → 404 `dispositivo_no_vinculado` = primera vez o
- *    dispositivo revocado → `PantallaDeVinculacion`.
- * 2. Dispositivo conocido → `resolverSesionDelDispositivo` (`GET /auth/me`): con una cookie de
- *    sesión todavía viva y operable, entra derecho a `con-sesion` sin pedir nada — sin sesión (o
- *    inválida), `LoginDeDispositivo`.
- * 3. Con sesión → `ShellPos` (vender / cerrar caja / Caja Z), con el punto de venta fijo del
+ *    dispositivo revocado → `PantallaDeVinculacion`. Este resultado es SIEMPRE una respuesta real
+ *    del servidor (nunca una inferencia local) y siempre gana, aunque haya una credencial local.
+ * 2. Cualquier otra falla en la llamada — el servidor ni siquiera pudo responder (red caída, DNS,
+ *    CORS) — consulta la credencial local guardada (`leerCredencialDeDispositivo`,
+ *    `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que esta
+ *    página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base sigue
+ *    sin poder confirmar nada, pero hay evidencia local de que este equipo ya se vinculó alguna
+ *    vez → `sin-red-pero-vinculado` (mensaje específico, con reintentar). Si no hay credencial
+ *    local tampoco, → `error` genérico: no hay ninguna evidencia de nada.
+ * 3. Dispositivo conocido → `resolverSesionDelDispositivo` (`GET /auth/me`): con una cookie/bearer
+ *    de sesión todavía vivo y operable, entra derecho a `con-sesion` sin pedir nada — sin sesión
+ *    (o inválida), `LoginDeDispositivo`.
+ * 4. Con sesión → `ShellPos` (vender / cerrar caja / Caja Z), con el punto de venta fijo del
  *    dispositivo.
  *
  * Un 401 en CUALQUIER llamada mientras se está en `con-sesion` (sesión revocada del lado del
  * servidor, ej. el dispositivo se desvincula con el cajero todavía adentro) vuelve a correr el
  * paso 1 completo (`alPerderLaSesion`, el mismo observador que usa `AuthContext`) — así se
- * distingue solo "cerró sesión" (paso 2 lo manda a `LoginDeDispositivo`) de "además el dispositivo
+ * distingue solo "cerró sesión" (paso 3 lo manda a `LoginDeDispositivo`) de "además el dispositivo
  * quedó revocado" (paso 1 lo manda a `PantallaDeVinculacion`) sin duplicar esa lógica.
  *
- * El `MemoryRouter` es una única instancia para las cuatro fases (nunca se remonta al cambiar de
+ * El `MemoryRouter` es una única instancia para todas las fases (nunca se remonta al cambiar de
  * fase) — `Pos.tsx`/`CierreDeCaja.tsx`/`CajaZ.tsx` necesitan un Router para sus hooks de
  * navegación aunque las pantallas de vinculación/login no lo usen.
  */
@@ -102,20 +112,27 @@ export function AppPos() {
     } catch (error) {
       if (generacionRef.current !== generacion) return
 
-      if (error instanceof ErrorApi && error.codigo === 'dispositivo_no_vinculado') {
-        // 404 explícito y alcanzable: el servidor confirmó "no vinculado" — se respeta siempre,
-        // aunque haya una credencial local (sería el caso de un dispositivo revocado del lado
-        // del servidor; la fuente de verdad es la base, nunca el archivo local).
-        setEstado({ fase: 'sin-vincular' })
-      } else {
-        // La llamada no dio una respuesta concluyente (red caída, error inesperado del
-        // servidor). judgment-day ronda 1: esta pantalla ya no puede preguntarle a Rust si hay
-        // una credencial local guardada — la capacidad remota perdió el permiso de LECTURA del
-        // secreto de dispositivo a propósito (ver `lib.rs`, `PERMISOS_REMOTOS`), así que siempre
-        // muestra el mensaje genérico. La distinción "sin red pero ya vinculado" vuelve cuando la
-        // slice 3 mueva esta pantalla a una página local con permiso de lectura.
-        setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
+      if (error instanceof ErrorApi) {
+        // El servidor SÍ respondió — es una respuesta real, no una inferencia local.
+        if (error.codigo === 'dispositivo_no_vinculado') {
+          // 404 explícito y alcanzable: el servidor confirmó "no vinculado" — se respeta
+          // siempre, aunque haya una credencial local (sería el caso de un dispositivo
+          // revocado del lado del servidor; la fuente de verdad es la base, nunca el archivo
+          // local).
+          setEstado({ fase: 'sin-vincular' })
+        } else {
+          setEstado({ fase: 'error', mensaje: error.message })
+        }
+        return
       }
+
+      // El fetch ni siquiera obtuvo una respuesta del servidor (red caída, DNS, CORS) — al
+      // servidor no se le pudo ni preguntar. Solo en ESTE caso (nunca cuando hubo una respuesta,
+      // aunque sea un error) se consulta el archivo local: la base sigue siendo la única
+      // autoridad, el archivo es un respaldo para cuando no se la pudo ni consultar.
+      const credencialLocal = await leerCredencialDeDispositivo()
+      if (generacionRef.current !== generacion) return
+      setEstado(credencialLocal ? { fase: 'sin-red-pero-vinculado' } : { fase: 'error', mensaje: MENSAJE_GENERICO })
     }
   }, [])
 
@@ -140,6 +157,17 @@ export function AppPos() {
         <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
           <div role="alert" className="alert alert-danger rounded-0 text-center w-100" style={{ maxWidth: 480 }}>
             <p>{estado.mensaje}</p>
+            <button type="button" className="btn btn-outline-dark rounded-0" onClick={() => void cargarDispositivo()}>
+              Reintentar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {estado.fase === 'sin-red-pero-vinculado' && (
+        <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
+          <div role="alert" className="alert alert-warning rounded-0 text-center w-100" style={{ maxWidth: 480 }}>
+            <p>No se pudo conectar con el servidor, pero este equipo ya está vinculado. Revisá la conexión y reintentá.</p>
             <button type="button" className="btn btn-outline-dark rounded-0" onClick={() => void cargarDispositivo()}>
               Reintentar
             </button>
