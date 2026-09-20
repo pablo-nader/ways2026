@@ -405,3 +405,62 @@ describe('ReporteDeArticulos — role gating', () => {
     await waitFor(() => expect(screen.queryByText('Reporte de artículos')).not.toBeInTheDocument())
   })
 })
+
+describe('ReporteDeArticulos — link a la edición del artículo', () => {
+  /**
+   * Cláusula bajo prueba: el `to={`/articulos/edit/${f.id}`}` de cada fila. Los dos ids son
+   * distintos a propósito (mutation-proof-tests): un href fijo o tomado de otra fila rompe acá.
+   */
+  it('cada fila linkea a la edición de SU artículo', async () => {
+    const filas = [
+      filaFixture({ id: 7, codigoInterno: 'COD-7', nombre: 'Aceite' }),
+      filaFixture({ id: 12, codigoInterno: 'COD-12', nombre: 'Fideos' }),
+    ]
+    mockearRutasBase((ruta) => (ruta.startsWith('/reportes/articulos') ? Promise.resolve(paginaFixture(filas)) : undefined))
+
+    renderReporte()
+
+    expect(await screen.findByRole('columnheader', { name: 'Acciones' })).toBeInTheDocument()
+    const filaSiete = (await screen.findByText('COD-7')).closest('tr')
+    const filaDoce = (await screen.findByText('COD-12')).closest('tr')
+    if (!filaSiete || !filaDoce) throw new Error('No se encontraron las filas del reporte')
+    expect(within(filaSiete).getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/articulos/edit/7')
+    expect(within(filaDoce).getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/articulos/edit/12')
+  })
+
+  /**
+   * Cláusula bajo prueba: la guarda `puedeGestionarCatalogos(usuario.rolId)`. El Supervisor ve el
+   * reporte pero no puede entrar a `/articulos` (admin-only en App.tsx y en el menú), así que no se
+   * le ofrece el link ni la columna. Mutation-proof-tests: forzar la guarda a `true` rompe acá.
+   */
+  it('a un Supervisor no le ofrece el link ni la columna Acciones', async () => {
+    usuarioActual = usuarioAdminFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearRutasBase()
+
+    renderReporte()
+
+    expect(await screen.findByText('COD-1')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Editar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Acciones' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `colSpan={puedeEditarArticulos ? 9 : 8}` de la fila vacía — con la
+   * columna nueva la leyenda tiene que seguir cubriendo TODA la tabla.
+   */
+  it('la fila de "sin resultados" cubre todas las columnas, con y sin la de Acciones', async () => {
+    mockearRutasBase((ruta) => (ruta.startsWith('/reportes/articulos') ? Promise.resolve(paginaFixture([])) : undefined))
+
+    const { unmount } = renderReporte()
+
+    const celdaAdmin = await screen.findByText('No hay artículos que coincidan con los filtros.')
+    expect(celdaAdmin).toHaveAttribute('colspan', '9')
+    unmount()
+
+    usuarioActual = usuarioAdminFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    renderReporte()
+
+    const celdaSupervisor = await screen.findByText('No hay artículos que coincidan con los filtros.')
+    expect(celdaSupervisor).toHaveAttribute('colspan', '8')
+  })
+})

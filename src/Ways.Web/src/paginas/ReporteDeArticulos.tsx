@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeCatalogo } from '../api/catalogos'
 import {
@@ -7,6 +8,7 @@ import {
   rutasDeExportacion,
   type FiltrosDeReporteDeArticulos,
 } from '../api/reportes'
+import { puedeGestionarCatalogos } from '../api/tipos'
 import type {
   AreaAlta,
   AreaListado,
@@ -19,6 +21,7 @@ import type {
   PaginaDe,
   ProveedorListado,
 } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -59,6 +62,10 @@ function CeldaOpcional({ valor }: { valor: string | null }) {
  * usuario ya cambió mientras tanto.
  */
 export function ReporteDeArticulos() {
+  const { usuario } = useAuth()
+  // El reporte lo ve Supervisor + Admin, pero `/articulos` es admin-only (misma puerta que el
+  // enlace del menú): al Supervisor no se le ofrece un link a una pantalla que no puede abrir.
+  const puedeEditarArticulos = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
   const [areas, setAreas] = useState<AreaListado[]>([])
   const [categorias, setCategorias] = useState<CategoriaListado[]>([])
   const [marcas, setMarcas] = useState<MarcaListado[]>([])
@@ -355,6 +362,7 @@ export function ReporteDeArticulos() {
                     <th>Grupo</th>
                     <th>Proveedor</th>
                     <th>Estado</th>
+                    {puedeEditarArticulos && <th className="text-end">Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -378,11 +386,21 @@ export function ReporteDeArticulos() {
                         <CeldaOpcional valor={f.proveedor} />
                       </td>
                       <td>{f.activo ? 'Activo' : 'Inactivo'}</td>
+                      {puedeEditarArticulos && (
+                        <td className="text-end text-nowrap">
+                          {/* <Link> real, igual que el "Editar" de la grilla de artículos: permite
+                              click-del-medio/Ctrl-click para completar el artículo en otra pestaña
+                              sin perder el reporte filtrado. */}
+                          <Link to={`/articulos/edit/${f.id}`} className="btn btn-sm btn-outline-primary rounded-0">
+                            Editar
+                          </Link>
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="text-center text-muted py-4">
+                      <td colSpan={puedeEditarArticulos ? 9 : 8} className="text-center text-muted py-4">
                         No hay artículos que coincidan con los filtros.
                       </td>
                     </tr>
