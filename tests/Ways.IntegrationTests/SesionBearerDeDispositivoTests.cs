@@ -209,6 +209,47 @@ public class SesionBearerDeDispositivoTests(WaysApiFixture fixture) : IClassFixt
         _ = idPuntoVenta;
     }
 
+    /// <summary>judgment-day ronda 1 (hallazgo WARNING, ambos jueces): el selector de esquema
+    /// (<c>Program.cs</c>, <c>ForwardDefaultSelector</c>) despachaba a bearer por la mera
+    /// PRESENCIA del header <c>Authorization</c>, sin mirar su prefijo — un header con OTRO
+    /// esquema (<c>Dispositivo ...</c>, el que usa <c>login-dispositivo</c>; <c>Basic ...</c>;
+    /// cualquier valor espurio) hacía que una request con la cookie <c>ways.sesion</c>
+    /// perfectamente vigente fallara con 401 en vez de autenticar por cookie como toda la app
+    /// hacía antes de este slice. Ahora solo el prefijo <c>Bearer </c> decide bearer; todo lo
+    /// demás sigue yendo por cookie.</summary>
+    [Theory]
+    [InlineData("Dispositivo un-secreto-cualquiera")]
+    [InlineData("Basic dXNlcjpwYXNz")]
+    public async Task UnHeaderAuthorizationConOtroEsquemaAutenticaPorLaCookie(string valorHeader)
+    {
+        var (admin, idTenant, idPuntoVenta, _, secreto) = await PrepararDispositivoYCajeroAsync(
+            nameof(UnHeaderAuthorizationConOtroEsquemaAutenticaPorLaCookie) + valorHeader.Split(' ')[0]);
+        admin.Dispose();
+
+        using var cajero = fixture.CreateClient();
+        using var loginCookie = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login-dispositivo")
+        {
+            Content = JsonContent.Create(new SolicitudDeLoginDeDispositivo("cajero1", PasswordCajero))
+        };
+        loginCookie.Headers.Add("Authorization", $"Dispositivo {secreto}");
+        var loginRespuesta = await cajero.SendAsync(loginCookie);
+        Assert.Equal(HttpStatusCode.OK, loginRespuesta.StatusCode);
+
+        // La cookie ways.sesion ya quedó en el cookie jar de `cajero`. Se agrega ADEMÁS un header
+        // Authorization con un esquema distinto de Bearer en el mismo mensaje — tiene que
+        // autenticar igual por la cookie, sin caer al 401 que daba antes de este fix.
+        using var meConOtroEsquema = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        meConOtroEsquema.Headers.Add("Authorization", valorHeader);
+        var respuesta = await cajero.SendAsync(meConOtroEsquema);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var usuario = await respuesta.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.Equal("cajero1", usuario!.Usuario);
+
+        _ = idTenant;
+        _ = idPuntoVenta;
+    }
+
     [Fact]
     public async Task RevocarElDispositivoCortaUnaSesionBearerYaEmitida()
     {
@@ -284,6 +325,37 @@ public class SesionBearerDeDispositivoTests(WaysApiFixture fixture) : IClassFixt
         {
             var usuario = await db.Usuarios.FirstAsync(u => u.IdTenant == idTenant && u.NombreUsuario == "cajero1");
             usuario.Estado = EstadoUsuario.Inactivo;
+            await db.SaveChangesAsync();
+        }
+
+        var despues = await cajero.SendAsync(RequestConBearer(HttpMethod.Get, "/api/puntos-venta", token));
+        Assert.Equal(HttpStatusCode.Unauthorized, despues.StatusCode);
+    }
+
+    /// <summary>judgment-day ronda 1 (hallazgo WARNING, juez A): la cláusula de tenant activo de
+    /// <c>ValidadorDeSesion.ResolverModoDeLaSesionAsync</c> ya tenía cobertura de "una sesión YA
+    /// abierta se corta al suspender el tenant" para cookie
+    /// (<c>UsuariosYLoginTests.SuspenderElTenantCortaLaSesionActivaEnLaProximaRequest</c>) — pero
+    /// nunca para bearer, y ahora esa misma cláusula respalda los dos esquemas. Mismo criterio de
+    /// "route the test BELOW the confound" que <c>InactivarElUsuarioCortaUnaSesionBearerYaEmitida</c>:
+    /// <c>/api/puntos-venta</c>, no <c>/api/auth/me</c>.</summary>
+    [Fact]
+    public async Task SuspenderElTenantCortaUnaSesionBearerYaEmitida()
+    {
+        var (admin, idTenant, _, _, secreto) = await PrepararDispositivoYCajeroAsync(
+            nameof(SuspenderElTenantCortaUnaSesionBearerYaEmitida));
+        admin.Dispose();
+
+        using var cajero = fixture.CreateClient();
+        var token = await LoguearComoCajeroYObtenerTokenAsync(cajero, secreto);
+
+        var antes = await cajero.SendAsync(RequestConBearer(HttpMethod.Get, "/api/puntos-venta", token));
+        Assert.Equal(HttpStatusCode.OK, antes.StatusCode);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var tenant = await db.Tenants.FirstAsync(t => t.Id == idTenant);
+            tenant.Estado = EstadoTenant.Suspendido;
             await db.SaveChangesAsync();
         }
 

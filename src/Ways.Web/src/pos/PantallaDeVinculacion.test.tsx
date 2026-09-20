@@ -36,6 +36,11 @@ vi.mock('../api/dispositivos', () => ({
   clienteDeDispositivos: { vincular: (...args: unknown[]) => vincularMock(...args) },
 }))
 
+const guardarCredencialDeDispositivoMock = vi.fn()
+vi.mock('../api/entornoTauri', () => ({
+  guardarCredencialDeDispositivo: (...args: unknown[]) => guardarCredencialDeDispositivoMock(...args),
+}))
+
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
     id: 1,
@@ -72,6 +77,8 @@ beforeEach(() => {
   apiPostMock.mockReset()
   listarPuntosVentaMock.mockReset()
   vincularMock.mockReset()
+  guardarCredencialDeDispositivoMock.mockReset()
+  guardarCredencialDeDispositivoMock.mockResolvedValue(undefined)
 })
 
 async function iniciarSesionComo(usuario: UsuarioAutenticado) {
@@ -148,7 +155,7 @@ describe('PantallaDeVinculacion', () => {
     await waitFor(() => expect(apiPostMock.mock.calls.filter((c) => c[0] === '/auth/login')).toHaveLength(1))
   })
 
-  it('si vincular falla, muestra el error y no avisa nada', async () => {
+  it('si vincular falla, muestra el error del servidor y no persiste ni cierra sesión', async () => {
     listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
     vincularMock.mockRejectedValue(new ErrorApi(409, 'punto_de_venta_ya_vinculado', 'El punto de venta ya tiene un dispositivo vinculado.'))
     const alVinculado = vi.fn()
@@ -162,5 +169,39 @@ describe('PantallaDeVinculacion', () => {
 
     expect(await screen.findByText('El punto de venta ya tiene un dispositivo vinculado.')).toBeInTheDocument()
     expect(alVinculado).not.toHaveBeenCalled()
+    expect(guardarCredencialDeDispositivoMock).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalledWith('/auth/logout')
+  })
+
+  /** judgment-day ronda 1 (hallazgo WARNING/SUGGESTION, ambos jueces): si el POST de vinculación
+   * ya comprometió al servidor (dispositivo creado, secreto emitido UNA sola vez) y solo falla el
+   * IPC local, el mensaje NO puede ser el genérico "no se pudo vincular" — eso es falso (el
+   * vínculo existe) y empujaría a un reintento que crea un segundo dispositivo huérfano. Tampoco
+   * cierra la sesión de admin ni avisa `alVinculado`: la pantalla se queda como está para que el
+   * admin lea el mensaje real (revocar y volver a vincular). */
+  it('si vincular funciona pero falla el guardado local, avisa que el dispositivo YA quedó vinculado y no cierra la sesión ni avanza', async () => {
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    const dispositivo = {
+      id: 1,
+      nombre: 'Caja 1',
+      idPuntoVenta: 7,
+      puntoVenta: { numero: 1, nombre: 'Local Centro' },
+      empresa: { nombre: 'Empresa Demo' },
+    }
+    vincularMock.mockResolvedValue({ datos: dispositivo, secreto: 'un-secreto-de-prueba' })
+    guardarCredencialDeDispositivoMock.mockRejectedValue(new Error('IPC falló'))
+    const alVinculado = vi.fn()
+    render(<PantallaDeVinculacion alVinculado={alVinculado} />)
+
+    await iniciarSesionComo(usuarioFixture())
+    await screen.findByLabelText('Punto de venta')
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
+    await userEvent.type(screen.getByLabelText('Nombre del equipo'), 'Caja 1')
+    await userEvent.click(screen.getByRole('button', { name: 'Vincular' }))
+
+    expect(await screen.findByText(/El dispositivo quedó vinculado, pero no se pudo guardar la credencial/)).toBeInTheDocument()
+    expect(screen.getByText(/Revocalo desde Dispositivos y volvé a vincularlo/)).toBeInTheDocument()
+    expect(alVinculado).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalledWith('/auth/logout')
   })
 })

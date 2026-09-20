@@ -3,7 +3,6 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
-import { leerCredencialDeDispositivo } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
@@ -20,14 +19,6 @@ type Estado =
   | { fase: 'con-sesion'; dispositivo: DispositivoActual; usuario: UsuarioAutenticado; puntoVenta: PuntoVentaListado }
 
 const MENSAJE_GENERICO = 'No se pudo determinar el dispositivo.'
-
-/** slice bearer: la llamada de red falló (no un 404 explícito — ese SIEMPRE se respeta como
- * "no vinculado", ver `cargarDispositivo`), pero hay una credencial de dispositivo guardada
- * localmente (Rust, Tauri). No se intenta armar un estado operable sin red (slice 6, offline
- * real, hace eso) — solo se evita mandar al usuario a repetir la vinculación completa por un
- * problema de conectividad cuando este equipo YA sabe que está vinculado. */
-const MENSAJE_SIN_RED_PERO_VINCULADO =
-  'No se pudo confirmar el dispositivo por red, pero este equipo ya está vinculado. Reintentá cuando haya conexión.'
 
 /**
  * Producto: la sesión del cajero NO vence hasta que se cierra a mano (`POST /auth/login-dispositivo`
@@ -118,17 +109,12 @@ export function AppPos() {
         setEstado({ fase: 'sin-vincular' })
       } else {
         // La llamada no dio una respuesta concluyente (red caída, error inesperado del
-        // servidor). Antes de este slice esto siempre mostraba MENSAJE_GENERICO — ahora, si
-        // hay una credencial de dispositivo guardada localmente, se lo dice así en vez de
-        // dejar sonar a que el equipo nunca se vinculó.
-        const credencialLocal = await leerCredencialDeDispositivo()
-        if (generacionRef.current !== generacion) return
-
-        if (credencialLocal) {
-          setEstado({ fase: 'error', mensaje: MENSAJE_SIN_RED_PERO_VINCULADO })
-        } else {
-          setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
-        }
+        // servidor). judgment-day ronda 1: esta pantalla ya no puede preguntarle a Rust si hay
+        // una credencial local guardada — la capacidad remota perdió el permiso de LECTURA del
+        // secreto de dispositivo a propósito (ver `lib.rs`, `PERMISOS_REMOTOS`), así que siempre
+        // muestra el mensaje genérico. La distinción "sin red pero ya vinculado" vuelve cuando la
+        // slice 3 mueva esta pantalla a una página local con permiso de lectura.
+        setEstado({ fase: 'error', mensaje: error instanceof ErrorApi ? error.message : MENSAJE_GENERICO })
       }
     }
   }, [])

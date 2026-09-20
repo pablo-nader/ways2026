@@ -46,9 +46,18 @@ builder.Services.Configure<ForwardedHeadersOptions>(opciones =>
 // shell de escritorio (Tauri, slice 3) va a correr en http://tauri.localhost, cross-site
 // respecto de la API; SameSite=Lax nunca manda la cookie ahí, así que necesita este segundo
 // camino. AddPolicyScheme elige por request, sin que ninguna policy nombrada (Politicas.cs) ni
-// el fallback tengan que enumerar los dos esquemas a mano: si llega el header Authorization se
-// autentica por bearer, si no por cookie — misma precedencia (header gana si está presente) que
-// ResolucionDeCredencialDeDispositivo usa para el secreto de dispositivo, por consistencia.
+// el fallback tengan que enumerar los dos esquemas a mano.
+//
+// judgment-day ronda 1 (hallazgo WARNING, ambos jueces): el selector NO puede despachar a bearer
+// por la mera PRESENCIA del header `Authorization` — `Authorization: Basic ...`,
+// `Authorization: Dispositivo <secreto>` (el que usa `POST /auth/login-dispositivo`) o
+// cualquier header espurio empujaban una request con una cookie `ways.sesion` perfectamente
+// válida a autenticar por bearer, que devuelve `NoResult()` para cualquier prefijo que no sea
+// `Bearer `, y esa `NoResult` nunca cae de vuelta a la cookie — 401 sin motivo. Solo el prefijo
+// `Bearer ` (RFC 7235, sin distinguir mayúsculas/minúsculas) decide bearer; cualquier otro valor,
+// incluido `Dispositivo ...`, sigue yendo por cookie exactamente como antes de este slice. Un
+// `Bearer <token>` inválido SIGUE sin caer a la cookie — eso lo garantiza
+// `ManejadorBearerDeSesion` fallando en vez de devolver `NoResult` (ver ese archivo).
 builder.Services
     .AddAuthentication(opciones =>
     {
@@ -58,7 +67,8 @@ builder.Services
     .AddPolicyScheme(EsquemasWays.Selector, "Cookie o bearer", opciones =>
     {
         opciones.ForwardDefaultSelector = contexto =>
-            contexto.Request.Headers.ContainsKey("Authorization")
+            contexto.Request.Headers["Authorization"].ToString()
+                .StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                 ? EsquemasWays.Bearer
                 : CookieAuthenticationDefaults.AuthenticationScheme;
     })
@@ -94,6 +104,18 @@ builder.Services
         // sí vive en ValidadorDeSesion.EsVigenteAsync — el ÚNICO lugar que lo implementa, para
         // que el esquema bearer (ManejadorBearerDeSesion) no pueda tener una copia que
         // diverja. Acá solo queda la parte propia de la cookie: RejectPrincipal + SignOutAsync.
+        //
+        // judgment-day ronda 1 (hallazgo WARNING, juez A): antes de este slice, la rama de claim
+        // `ClaimTypes.NameIdentifier` ausente/inválido hacía únicamente `RejectPrincipal(); return;`
+        // SIN `SignOutAsync` — una asimetría heredada de cuando esa validación vivía inline y
+        // distinguía "el claim ni siquiera parsea" de "el claim parsea pero la cuenta ya no es
+        // válida". Ahora que ValidadorDeSesion.EsVigenteAsync unificó los dos motivos detrás de un
+        // solo booleano, esta rama pasa por el mismo RejectPrincipal + SignOutAsync que el resto —
+        // decisión DELIBERADA, no un efecto colateral de la unificación: un principal sin claim de
+        // usuario nunca debería seguir viajando en la cookie del cliente, y SignOutAsync es
+        // idempotente (falla cerrado igual si ya no hay nada que borrar), así que el caso borde
+        // no tiene ningún costo — uniformar es más simple de razonar y no reintroduce la sesión
+        // colgada que la asimetría original evitaba por accidente, no a propósito.
         //
         // Mutation-proof: mutado a mano ValidadorDeSesion.EsVigenteAsync para que el chequeo de
         // dispositivo devuelva siempre `true` (nunca rechaza) y corridos

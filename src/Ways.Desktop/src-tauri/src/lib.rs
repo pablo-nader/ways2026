@@ -13,25 +13,40 @@ const IDENTIFICADOR_CAPACIDAD_REMOTA: &str = "pos-remoto";
 /// puede invocar. Se agregan en runtime, restringidos al origen exacto que
 /// el usuario configuro (ver `registrar_capacidad_remota`).
 ///
-/// stage-desktop-pos, slice bearer: se agregaron `allow-guardar-credencial-de-dispositivo` y
-/// `allow-leer-credencial-de-dispositivo` a proposito y de forma MINIMA — son los unicos dos
-/// comandos nuevos que `/pos.html` (todavia remoto en este slice) necesita para persistir/leer
-/// el secreto de dispositivo (ver `comandos.rs`, `credencial.rs`). Nota honesta sobre el otro
-/// lado de la superficie: `capabilities/local.json` le otorga a la pagina LOCAL de configuracion
-/// los 11 comandos existentes en bloque (`core:default` + un `allow-*` por comando, sin
-/// distincion fina) — un allowlist correcto pero mas ancho del que esa pagina en rigor necesita.
-/// Funciona hoy porque la pagina local es de confianza (bundleada con la app) y porque el shell
-/// del POS sigue siendo remoto; la slice 3 (que va a mover `/pos.html` a una pagina LOCAL) tiene
-/// que separar ese bloque en capacidades mas finas antes de que la superficie local también
-/// incluya el POS — mezclar los dos en una sola capacidad local de 13 comandos en ese momento
-/// repetiria, a mayor escala, la misma laxitud que hoy es inocua.
+/// stage-desktop-pos, slice bearer: se agrego `allow-guardar-credencial-de-dispositivo` a
+/// proposito y de forma MINIMA — es el unico comando nuevo que `/pos.html` (todavia remoto en
+/// este slice) necesita para persistir el secreto de dispositivo (ver `comandos.rs`,
+/// `credencial.rs`): la pantalla de vinculacion lo recibe en la respuesta de
+/// `POST /api/dispositivos` y se lo entrega a Rust para que lo guarde.
+///
+/// judgment-day ronda 1 (hallazgo BLOCKER, ambos jueces): `allow-leer-credencial-de-dispositivo`
+/// NO se agrega aca a proposito. Otorgarlo dejaria el secreto de dispositivo (vigente 10 anios)
+/// legible por CUALQUIER script del origen remoto — con `withGlobalTauri: true` y `csp: null`
+/// (`tauri.conf.json`), eso es el equivalente a exponerlo en una variable global que XSS puede
+/// leer. Antes de este slice ese secreto no existia; el unico dato de sesion persistente era la
+/// cookie HttpOnly, que ningun script puede leer. La pagina remota necesita ESCRIBIR el secreto
+/// (lo recibe del servidor, mismo origen, y se lo pasa a Rust) pero no tiene ningun motivo para
+/// LEERLO de vuelta — mientras el shell es remoto sigue siendo same-origin con la API y las
+/// cookies funcionan igual que siempre. Solo-escritura acota el peor caso a "un atacante
+/// sobrescribe el secreto" (la caja deja de funcionar — molesto, recuperable revocando y
+/// re-vinculando) en vez de "un atacante exfiltra el secreto" (compromiso total del dispositivo
+/// por 10 anios). El acceso de lectura es trabajo deliberado de la slice 3, que mueve el shell a
+/// una pagina LOCAL (bundleada, sin exposicion a script remoto) antes de otorgarlo.
+///
+/// Nota honesta sobre el otro lado de la superficie: `capabilities/local.json` le otorga a la
+/// pagina LOCAL de configuracion los 11 comandos existentes en bloque (`core:default` + un
+/// `allow-*` por comando, sin distincion fina) — un allowlist correcto pero mas ancho del que esa
+/// pagina en rigor necesita. Funciona hoy porque la pagina local es de confianza (bundleada con
+/// la app) y porque el shell del POS sigue siendo remoto; la slice 3 tiene que separar ese bloque
+/// en capacidades mas finas antes de que la superficie local también incluya el POS — mezclar los
+/// dos en una sola capacidad local en ese momento repetiria, a mayor escala, la misma laxitud que
+/// hoy es inocua.
 const PERMISOS_REMOTOS: &[&str] = &[
     "allow-imprimir-raw",
     "allow-listar-impresoras",
     "allow-abrir-configuracion",
     "allow-info-app",
     "allow-guardar-credencial-de-dispositivo",
-    "allow-leer-credencial-de-dispositivo",
 ];
 
 pub fn ejecutar() {
@@ -146,4 +161,20 @@ fn abrir_pagina_configuracion(app: &tauri::AppHandle) -> Result<(), String> {
     ventana
         .navigate(url_local)
         .map_err(|error| format!("No se pudo abrir la configuracion: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// judgment-day ronda 1 (hallazgo BLOCKER, ambos jueces): la capacidad remota tiene que poder
+    /// ESCRIBIR el secreto de dispositivo pero nunca LEERLO — leerlo desde el origen remoto (con
+    /// `withGlobalTauri: true` y `csp: null`) lo dejaria legible por cualquier script de ese
+    /// origen. Este test falla si alguien vuelve a agregar el permiso de lectura a
+    /// `PERMISOS_REMOTOS` sin revertir este comentario a proposito.
+    #[test]
+    fn los_permisos_remotos_pueden_escribir_pero_no_leer_la_credencial_de_dispositivo() {
+        assert!(PERMISOS_REMOTOS.contains(&"allow-guardar-credencial-de-dispositivo"));
+        assert!(!PERMISOS_REMOTOS.contains(&"allow-leer-credencial-de-dispositivo"));
+    }
 }

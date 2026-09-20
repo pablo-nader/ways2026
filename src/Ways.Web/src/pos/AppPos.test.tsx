@@ -8,14 +8,12 @@ import type { ClienteListado, MedioPagoListado, PaginaDe, ParametroResuelto, Pun
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
-const leerCredencialDeDispositivoMock = vi.fn()
 
 // `dispositivos.ts` (no mockeado en este archivo, corre real) también importa de aca
 // (`corriendoEnTauri`/`establecerTokenDeSesionBearer`) — el mock tiene que cubrir TODO lo que el
 // módulo real exporta, o esos imports quedan `undefined` en cualquier módulo que lo importe
 // (Vitest mockea por path resuelto, no por import individual).
 vi.mock('../api/entornoTauri', () => ({
-  leerCredencialDeDispositivo: (...args: unknown[]) => leerCredencialDeDispositivoMock(...args),
   corriendoEnTauri: () => false,
   establecerTokenDeSesionBearer: () => {},
   guardarCredencialDeDispositivo: () => Promise.resolve(),
@@ -162,8 +160,6 @@ beforeEach(() => {
   apiPostMock.mockReset()
   apiPostMock.mockResolvedValue(undefined)
   observadores = new Set()
-  leerCredencialDeDispositivoMock.mockReset()
-  leerCredencialDeDispositivoMock.mockResolvedValue(null)
 })
 
 describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-pos)', () => {
@@ -178,7 +174,10 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
   })
 
-  it('un error de red (no un 404 explícito) sin credencial local muestra el error genérico', async () => {
+  it('un error de red (no un 404 explícito) muestra el error genérico', async () => {
+    // judgment-day ronda 1: la pantalla remota ya no puede preguntarle a Rust si hay una
+    // credencial local guardada (perdió el permiso de lectura, ver `lib.rs`) — un error de red
+    // siempre muestra el mensaje genérico, sin distinguir "ya vinculado localmente".
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
     )
@@ -188,19 +187,7 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
   })
 
-  it('un error de red (no un 404 explícito) CON credencial local no manda a la pantalla de vinculación', async () => {
-    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado-por-rust')
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
-    )
-    render(<AppPos />)
-
-    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
-    expect(screen.queryByText('Vincular este equipo')).not.toBeInTheDocument()
-  })
-
-  it('un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular aunque haya credencial local (la base es la fuente de verdad)', async () => {
-    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado-por-rust')
+  it('un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular (la base es la fuente de verdad)', async () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual'
         ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))

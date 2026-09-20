@@ -140,10 +140,12 @@ pub fn guardar_credencial_de_dispositivo(app: AppHandle, secreto: String) -> Res
     credencial::guardar(&app, &secreto)
 }
 
-/// Devuelve el secreto de dispositivo guardado, si hay uno. La pagina lo usa para saber que este
-/// equipo ya esta vinculado sin depender de una llamada de red (ver `AppPos.tsx`) y para
-/// adjuntarlo como header en las dos superficies que lo resuelven del lado del servidor
-/// (`GET /dispositivos/actual`, `POST /auth/login-dispositivo`).
+/// Devuelve el secreto de dispositivo guardado, si hay uno.
+///
+/// judgment-day ronda 1 (hallazgo BLOCKER): este comando SIGUE existiendo (lo va a necesitar la
+/// slice 3, cuando `/pos.html` pase a ser una pagina LOCAL) pero deliberadamente no esta en
+/// `PERMISOS_REMOTOS` (ver `lib.rs`) — la pagina remota de hoy ya no puede invocarlo. `AppPos.tsx`
+/// dejo de llamarlo por ese motivo.
 #[tauri::command]
 pub fn leer_credencial_de_dispositivo(app: AppHandle) -> Option<String> {
     credencial::leer(&app)

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { clienteDeDispositivos } from '../api/dispositivos'
-import type { DispositivoActual } from '../api/dispositivos'
+import type { DispositivoActual, DispositivoVinculado } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
 import { guardarCredencialDeDispositivo } from '../api/entornoTauri'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -65,24 +65,49 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
     setEnviando(true)
     setError('')
 
+    // judgment-day ronda 1 (hallazgo WARNING/SUGGESTION, ambos jueces): `vincular` (server) y
+    // `guardarCredencialDeDispositivo` (persistencia local) van en try/catch SEPARADOS a
+    // propósito. Si el POST falla, no pasó nada del lado del servidor — el mensaje genérico de
+    // siempre está bien. Si el POST ya creó el dispositivo y devolvió el secreto (que el servidor
+    // NUNCA vuelve a entregar) y solo falla el IPC local, decirle al admin "no se pudo vincular"
+    // sería falso y lo empujaría a reintentar — eso crea un segundo dispositivo huérfano en vez
+    // de arreglar nada.
+    let vinculado: DispositivoVinculado
     try {
-      const vinculado = await clienteDeDispositivos.vincular({
+      vinculado = await clienteDeDispositivos.vincular({
         idPuntoVenta: Number(idPuntoVenta),
         nombre: nombreDispositivo.trim(),
       })
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el dispositivo.')
+      enviandoRef.current = false
+      setEnviando(false)
+      return
+    }
+
+    try {
       // El secreto viaja en el cuerpo UNA sola vez (dto-contract-honesty) — se lo entrega a Rust
       // para que lo persista en su propio archivo antes de seguir. No hace nada fuera de Tauri.
       await guardarCredencialDeDispositivo(vinculado.secreto)
-      // La sesión de admin ya cumplió su propósito: se cierra antes de avisar, así el próximo
-      // paso (login del cajero) arranca sin ninguna sesión activa.
-      await api.post('/auth/logout').catch(() => undefined)
-      alVinculado(vinculado.datos)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el dispositivo.')
-    } finally {
+    } catch {
+      // El dispositivo YA quedó vinculado del lado del servidor; el secreto no se puede volver a
+      // pedir. La salida es revocar este dispositivo y volver a vincularlo, nunca reintentar a
+      // ciegas desde esta misma pantalla.
+      setError(
+        'El dispositivo quedó vinculado, pero no se pudo guardar la credencial en este equipo. ' +
+          'Revocalo desde Dispositivos y volvé a vincularlo.',
+      )
       enviandoRef.current = false
       setEnviando(false)
+      return
     }
+
+    // La sesión de admin ya cumplió su propósito: se cierra antes de avisar, así el próximo
+    // paso (login del cajero) arranca sin ninguna sesión activa.
+    await api.post('/auth/logout').catch(() => undefined)
+    enviandoRef.current = false
+    setEnviando(false)
+    alVinculado(vinculado.datos)
   }
 
   if (paso.paso === 'elegir-pv') {
