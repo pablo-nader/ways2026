@@ -50,10 +50,17 @@ public class DispositivoConfiguration : IEntityTypeConfiguration<Dispositivo>
 
         builder.HasIndex(d => d.TokenHash).HasDatabaseName("ux_dispositivos_token_hash").IsUnique();
 
-        // Índice del modelo aprobado: (id_tenant, id_punto_venta) — el índice de scoping
-        // operativa estándar (doc 09).
+        // stage-desktop-pos (DB CHANGE GATE aprobado): invariante "una PC-caja = un punto de
+        // venta" — a lo sumo un dispositivo ACTIVO por punto de venta. Reemplaza al
+        // ix_dispositivos_tenant_punto_venta no-único de abajo: toda consulta de este par de
+        // columnas en el código pasa por el filtro global de baja lógica (deleted_at IS NULL,
+        // WaysDbContext.AplicarFiltroDeBajaLogica) salvo ResolverDispositivoVigenteAsync, que
+        // ignora el filtro de TENANT pero deja el de baja lógica activo — así que ningún camino de
+        // lectura necesita ya un índice no-parcial sobre filas revocadas.
         builder.HasIndex(d => new { d.IdTenant, d.IdPuntoVenta })
-            .HasDatabaseName("ix_dispositivos_tenant_punto_venta");
+            .HasDatabaseName("ux_dispositivos_punto_venta_activo")
+            .IsUnique()
+            .HasFilter("deleted_at IS NULL");
 
         // Soporte de las otras dos FKs, con nombre propio en vez del "IX_..." autogenerado por
         // EF — mismo criterio que ix_puntos_venta_empresa/ix_certificados_fiscales_empresa.

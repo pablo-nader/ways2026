@@ -31,4 +31,12 @@ public class PuntoVenta : EntidadTenant
     /// cosmético: es lo que vuelve inyectivo el mapa de la serie de ARCA <c>(PtoVta, CbteTipo)</c>
     /// a <c>(id_punto_venta, codigo_afip)</c>.</summary>
     public int? NumeroFiscal { get; set; }
+
+    /// <summary>Invariante "una PC-caja = un punto de venta" (DB CHANGE GATE aprobado): se elige
+    /// al crear el punto de venta, sin default de base — <see cref="ModoPuntoVenta.Escritorio"/>
+    /// exige que ese punto de venta tenga a lo sumo un dispositivo activo
+    /// (<c>ux_dispositivos_punto_venta_activo</c>) y que solo ese dispositivo pueda vender contra
+    /// él; <see cref="ModoPuntoVenta.Web"/> exige lo contrario (sesión sin claim de dispositivo).
+    /// Ortogonal a <see cref="NumeroFiscal"/>.</summary>
+    public ModoPuntoVenta Modo { get; set; }
 }

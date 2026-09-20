@@ -428,6 +428,7 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
                 npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

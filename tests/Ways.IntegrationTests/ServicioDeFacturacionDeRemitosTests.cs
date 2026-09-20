@@ -407,6 +407,7 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

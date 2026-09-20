@@ -369,12 +369,16 @@ public class InicializadorDeBaseDeDatos(
         db.Empresas.Add(empresa);
         await db.SaveChangesAsync(ct);
 
+        // stage-desktop-pos (DB CHANGE GATE aprobado): Web explícito, no el default de enum
+        // (Escritorio = 0) — mismo criterio que el backfill de ModoPuntoVentaYDispositivoActivoUnico
+        // (sin dispositivo activo, el punto de venta es Web).
         db.PuntosVenta.AddRange(
             new PuntoVenta
             {
                 IdTenant = tenant.Id,
                 IdEmpresa = empresa.Id,
                 Nombre = "Local 1",
+                Modo = ModoPuntoVenta.Web,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             },
@@ -383,6 +387,7 @@ public class InicializadorDeBaseDeDatos(
                 IdTenant = tenant.Id,
                 IdEmpresa = empresa.Id,
                 Nombre = "Local 2",
+                Modo = ModoPuntoVenta.Web,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             });

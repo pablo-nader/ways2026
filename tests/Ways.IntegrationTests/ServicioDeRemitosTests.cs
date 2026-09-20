@@ -105,7 +105,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var puntoVenta2 = new PuntoVenta
         {
             IdTenant = resultado.IdTenant, IdEmpresa = resultado.IdEmpresa, Nombre = $"{nombre}-PV2",
-            CreatedAt = ahora, UpdatedAt = ahora
+            Modo = ModoPuntoVenta.Web, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.PuntosVenta.Add(puntoVenta2);
         await db.SaveChangesAsync();
@@ -954,6 +954,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
+                npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;
