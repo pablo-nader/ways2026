@@ -229,6 +229,8 @@ app.MapearArticulos();
 app.MapearOfertas();
 app.MapearEtiquetas();
 app.MapearVentas();
+// stage-pos-venta-offline-backend (Parte A): instantánea de venta offline, device-only.
+app.MapearPos();
 app.MapearStock();
 app.MapearCaja();
 app.MapearGastos();

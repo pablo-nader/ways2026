@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Caja;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
@@ -302,7 +303,8 @@ public class VentasTurnoWiringTests(WaysApiFixture fixture) : IClassFixture<Ways
         var servicioDeTurnos = new ServicioDeTurnos(
             db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector));
         var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,

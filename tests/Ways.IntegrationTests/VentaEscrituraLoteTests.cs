@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Stock;
@@ -377,7 +378,8 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         // Conexión que SOSTIENE el lock de stock_lotes — deliberadamente sin comitear todavía, para
         // forzar al checkout a bloquearse justo ahí y ensanchar la ventana de observación. RLS exige

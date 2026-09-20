@@ -40,7 +40,13 @@ public class ItemComprobanteVenta : EntidadTenant
     public int IdListaPrecio { get; set; }
 
     /// <summary>Si una oferta tocó esta línea (design decisión 3: el total es siempre el
-    /// re-resuelto server-side, nunca el que mostró el cliente).</summary>
+    /// re-resuelto server-side, nunca el que mostró el cliente — cierto para el camino online/web
+    /// sin excepción. stage-pos-venta-offline-backend abre una excepción DISTINTA y explícitamente
+    /// gateada: con <c>NumeroPreasignado</c>, <see cref="PrecioUnitario"/>/<see cref="Descuento"/>/
+    /// <see cref="Total"/> pueden venir del precio que el DISPOSITIVO ya cobró offline —
+    /// autoritativo porque el ticket ya se le dio al cliente, no un valor de un carrito que el
+    /// servidor simplemente confía. Ver <c>ServicioDeVentas.MaterializarItems</c>/docs/10 §9.3.
+    /// </summary>
     public int? IdOferta { get; set; }
 
     public int IdAlicuotaIva { get; set; }

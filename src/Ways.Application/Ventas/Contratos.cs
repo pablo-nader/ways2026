@@ -26,7 +26,19 @@ namespace Ways.Application.Ventas;
 /// quiere consumir ahora. Solo un actor con claim de dispositivo puede traerlo (400
 /// <c>numero_preasignado_no_admitido</c> para un actor web) y tiene que pertenecerle (409
 /// <c>numero_preasignado_no_reservado</c> si no hay una reserva viva que lo contenga) — ver
-/// <c>ServicioDeVentas.EmitirAsync</c>. Ausente, el servidor sigue asignando como hoy.</summary>
+/// <c>ServicioDeVentas.EmitirAsync</c>. Ausente, el servidor sigue asignando como hoy.
+///
+/// stage-pos-venta-offline-backend (decisión del dueño — inversión deliberada de la decisión 3
+/// original de este mismo comentario, cerrando/acotando docs/10-modelo-de-datos.md §9.2): con
+/// <see cref="NumeroPreasignado"/> presente, <see cref="Lineas"/> puede además traer
+/// <see cref="LineaDeVenta.PrecioUnitario"/>/<see cref="LineaDeVenta.DescuentoUnitario"/> — el
+/// precio que el DISPOSITIVO ya cobró offline, no una vuelta atrás de la decisión 3 para el
+/// camino web/online, que sigue exactamente igual. <c>ServicioDeVentas.EmitirAsync</c> lo exige
+/// completo (todas las líneas con precio, o ninguna) y solo junto a un número pre-asignado (400
+/// <c>precio_offline_no_admitido</c>/<c>precio_offline_incompleto</c> en cualquier otro caso). El
+/// servidor sigue recomputando lo que HUBIERA cobrado (<c>ServicioDeOfertas.ResolverAsync</c>) y
+/// deja un rastro auditable (<c>AccionAuditada.VentaDiscrepanciaDePrecio</c>) si difiere — nunca
+/// bloquea, nunca pisa el precio recibido.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -51,8 +63,22 @@ public sealed record SolicitudDeVenta(
 /// conoce el campo transacciona igual (spec comprobantes-venta: "A client that knows nothing
 /// about lots still transacts correctly"). Provisto sobre una línea SIN lote efectivo, el campo
 /// no tiene destino real: se rechaza 400 lote_invalido en vez de ignorarse en silencio
-/// (dto-contract-honesty, judgment-day del slice 7).</summary>
-public sealed record LineaDeVenta(int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null);
+/// (dto-contract-honesty, judgment-day del slice 7).
+///
+/// stage-pos-venta-offline-backend (DB CHANGE GATE: sin cambio de esquema — decisión del dueño,
+/// "la venta offline carga sus precios"): <see cref="PrecioUnitario"/>/
+/// <see cref="DescuentoUnitario"/> son el precio/descuento que un DISPOSITIVO offline ya cobró,
+/// tomados de su última <c>GET /api/pos/instantanea</c> — nunca lo que <c>ServicioDeOfertas.
+/// ResolverAsync</c> resolvería HOY al sincronizar. Ambos <c>null</c> (el default) es el único
+/// camino admitido para un actor web o un dispositivo sin <see cref="SolicitudDeVenta.
+/// NumeroPreasignado"/>: <c>ServicioDeVentas.EmitirAsync</c> los rechaza con 400 en ese caso
+/// (<c>ExigirPreciosOfflineValidos</c>), y exige que TODAS las líneas de la solicitud los traigan,
+/// o ninguna — no hay un tercer estado "algunas sí, algunas no". <see cref="DescuentoUnitario"/>
+/// sin <see cref="PrecioUnitario"/> tampoco tiene destino (dto-contract-honesty regla 1): se
+/// rechaza igual que un <c>idLote</c> sin lote efectivo, arriba.</summary>
+public sealed record LineaDeVenta(
+    int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null,
+    decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo
@@ -67,7 +93,15 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// (warning, nunca bloqueo — spec: "Expired Lot Sale Warns, Never Blocks"). NULL/false para una
 /// línea sin lote. Desde slice 8, <c>id_lote</c> también se persiste como snapshot congelado en
 /// <c>items_comprobante_venta.id_lote</c> — una relectura (reprint) devuelve el mismo valor que el
-/// checkout fresco.</summary>
+/// checkout fresco.
+///
+/// <see cref="PrecioDiscrepante"/> (stage-pos-venta-offline-backend): warning, nunca bloqueo —
+/// mismo criterio EXACTO que <see cref="LoteVencido"/>, incluida su misma limitación: solo se
+/// completa en el checkout fresco que detectó la discrepancia (<c>ServicioDeVentas.
+/// MaterializarItems</c>), NO se persiste en <c>items_comprobante_venta</c> (DB CHANGE GATE
+/// evitado a propósito) — una relectura/reprint siempre devuelve <c>false</c> acá, aunque el
+/// rastro completo (precio cobrado vs. esperado) siga disponible en <c>GET /api/auditoria</c>
+/// (<c>AccionAuditada.VentaDiscrepanciaDePrecio</c>).</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -84,7 +118,8 @@ public sealed record ItemEmitido(
     decimal Total,
     int? IdLote = null,
     string? CodigoLote = null,
-    bool LoteVencido = false);
+    bool LoteVencido = false,
+    bool PrecioDiscrepante = false);
 
 /// <summary>Un pago ya emitido.</summary>
 public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);

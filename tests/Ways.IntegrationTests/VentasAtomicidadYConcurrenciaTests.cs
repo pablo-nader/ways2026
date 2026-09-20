@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
@@ -582,7 +583,8 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
             db, reloj, contexto, lectorDeMovimientos,
             new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+        var servicioDeVentas = new ServicioDeVentas(
+            db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes, new ServicioDeAuditoria(db, reloj, contexto));
 
         var metodo = typeof(ServicioDeVentas).GetMethod(
             "BuscarPorNumeroComprometidoAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
