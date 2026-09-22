@@ -9,6 +9,7 @@ use tauri::AppHandle;
 use crate::config::{self, Configuracion};
 use crate::credencial;
 use crate::impresion;
+use crate::sesion;
 
 #[derive(Serialize)]
 pub struct InfoApp {
@@ -152,4 +153,29 @@ pub fn guardar_credencial_de_dispositivo(app: AppHandle, secreto: String) -> Res
 #[tauri::command]
 pub fn leer_credencial_de_dispositivo(app: AppHandle) -> Option<String> {
     credencial::leer(&app)
+}
+
+/// Guarda la sesión del cajero (token bearer + vencimiento explícito que ya devolvió
+/// `POST /auth/login-dispositivo`, más el snapshot de dispositivo/PV/cajero para reconstruir el
+/// shell offline — judgment-day ronda 2, ver el doc-comment de `sesion::SesionDeCajero`) en su
+/// propio archivo (`sesion::guardar`, nunca en `dispositivo.credencial` ni en `config.json`) — la
+/// página local del POS lo llama al loguearse y, con `token`/`expira_el` vacíos, para limpiarla
+/// en los tres casos donde deja de ser válida: logout explícito, un 401 del servidor, y el cierre
+/// de turno (ver `entornoTauri.ts` del lado de React y sus llamadores). Esa limpieza se lleva el
+/// snapshot puesto, por ser el mismo registro — no hay un comando separado de limpieza ni uno
+/// separado para el snapshot.
+#[tauri::command]
+pub fn guardar_sesion_de_cajero(
+    app: AppHandle,
+    sesion: sesion::SesionDeCajero,
+) -> Result<(), String> {
+    sesion::guardar(&app, &sesion)
+}
+
+/// Devuelve la sesión de cajero guardada (token + vencimiento + snapshot), si hay una. La validez
+/// del vencimiento la decide quien llama (`entornoTauri.ts`, contra el reloj local) — este
+/// comando devuelve lo que hay en disco tal cual, igual que `leer_credencial_de_dispositivo`.
+#[tauri::command]
+pub fn leer_sesion_de_cajero(app: AppHandle) -> Option<sesion::SesionDeCajero> {
+    sesion::leer(&app)
 }

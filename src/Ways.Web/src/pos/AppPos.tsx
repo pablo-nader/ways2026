@@ -3,7 +3,8 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
-import { leerCredencialDeDispositivo } from '../api/entornoTauri'
+import { leerCredencialDeDispositivo, refrescarVentanaDeSesionPersistida, snapshotDeSesionOfflineVigente } from '../api/entornoTauri'
+import type { UsuarioOfflineMinimo } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
@@ -22,12 +23,39 @@ type Estado =
 
 const MENSAJE_GENERICO = 'No se pudo determinar el dispositivo.'
 
+/** Recorta un `UsuarioAutenticado` completo a lo mínimo que se persiste para la reconstrucción
+ * offline (judgment-day ronda 2, FIX CRITICAL) — ver el doc-comment de `UsuarioOfflineMinimo` en
+ * `entornoTauri.ts` sobre qué se descarta y por qué (nunca `mail`, PII que nada bajo este shell
+ * lee; nunca `rol`, tampoco leído; `rolId` sí, porque gatea `puedeAnular` en `VentasDelTurno`). */
+function usuarioOfflineMinimo(usuario: UsuarioAutenticado): UsuarioOfflineMinimo {
+  return { id: usuario.id, usuario: usuario.usuario, rolId: usuario.rolId }
+}
+
+/** Reconstruye un `UsuarioAutenticado`-shaped desde el snapshot offline mínimo — SOLO para el
+ * camino de reconstrucción sin red (`cargarDispositivo`, más abajo): los campos que el snapshot
+ * nunca guardó (`mail`, `rol`, `ultimaConexion`, `idTenant`) quedan en un valor neutro, nunca un
+ * dato real inventado. Nada bajo este shell los lee (ver `usuarioOfflineMinimo`) — si algún día
+ * algo los necesitara, tendría que volver a pasar por `/auth/me` primero, con red. */
+function usuarioOfflineComoAutenticado(minimo: UsuarioOfflineMinimo): UsuarioAutenticado {
+  return { id: minimo.id, usuario: minimo.usuario, rolId: minimo.rolId, mail: '', rol: '', ultimaConexion: null, idTenant: null }
+}
+
 /**
  * Producto: la sesión del cajero NO vence hasta que se cierra a mano (`POST /auth/login-dispositivo`
  * no expira sola) — un restart del shell de escritorio, o un F5 de la página, con la cookie de
  * sesión todavía viva tiene que caer derecho en `con-sesion`, nunca repreguntar login. `GET
  * /auth/me` (el mismo endpoint que ya usa `AuthContext`) es la única fuente de verdad de si esa
  * cookie sigue siendo válida — `GET /dispositivos/actual` no lo sabe, es anónimo.
+ *
+ * stage-pos-sesion-offline: bajo Tauri no hay cookie (`cliente.ts` manda `credentials: 'omit'`
+ * ahí) — el mismo `GET /auth/me` de arriba autentica con el token bearer que `entornoTauri.ts`
+ * tenga en memoria en ese momento. `pos/main.tsx` restaura ese bearer desde disco
+ * (`restaurarSesionDeCajeroPersistida`) ANTES de montar este componente, así que esta función NO
+ * necesita saber nada de Tauri ni de dónde vino el token: si `/auth/me` acepta la credencial que
+ * `headerBearerSiCorresponde` adjuntó (cookie o bearer, restaurado o recién logueado), cae en
+ * `con-sesion` igual; si la rechaza (vencida, revocada, o no había ninguna), cae en
+ * `vinculado-sin-sesion` igual. Ningún estado nuevo hace falta en esta máquina de estados para
+ * eso — ver el reporte de la tarea para el trazado completo de por qué.
  *
  * Nunca lanza: cualquier falla se traduce a un `Estado` (nunca deja "a medio camino" una sesión
  * que no se puede operar). Devuelve `vinculado-sin-sesion` tanto para un 401 legítimo como para un
@@ -50,6 +78,15 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
       return { fase: 'vinculado-sin-sesion', dispositivo }
     }
 
+    // judgment-day ronda 1 (FIX 1, BLOCKER) + ronda 2 (FIX CRITICAL): el servidor acaba de
+    // confirmar los tres datos juntos — se cachean en el MISMO registro que el bearer (ver el
+    // doc-comment de `refrescarVentanaDeSesionPersistida` en `entornoTauri.ts`) para que un
+    // restart posterior SIN red pueda reconstruir el shell (ver `cargarDispositivo`, más abajo),
+    // y de paso se refresca la ventana de vigencia LOCAL del bearer persistido (FIX 2b): el
+    // dispositivo demostró que puede hablar con el servidor AHORA, así que un cajero activo con
+    // red normal nunca ve expirar el archivo.
+    await refrescarVentanaDeSesionPersistida({ dispositivo, puntoVenta, usuario: usuarioOfflineMinimo(usuario) })
+
     return { fase: 'con-sesion', dispositivo, usuario, puntoVenta }
   } catch (error) {
     if (error instanceof ErrorApi && error.esNoAutenticado) {
@@ -70,12 +107,24 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
  *    dispositivo revocado → `PantallaDeVinculacion`. Este resultado es SIEMPRE una respuesta real
  *    del servidor (nunca una inferencia local) y siempre gana, aunque haya una credencial local.
  * 2. Cualquier otra falla en la llamada — el servidor ni siquiera pudo responder (red caída, DNS,
- *    CORS) — consulta la credencial local guardada (`leerCredencialDeDispositivo`,
- *    `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que esta
- *    página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base sigue
- *    sin poder confirmar nada, pero hay evidencia local de que este equipo ya se vinculó alguna
- *    vez → `sin-red-pero-vinculado` (mensaje específico, con reintentar). Si no hay credencial
- *    local tampoco, → `error` genérico: no hay ninguna evidencia de nada.
+ *    CORS) — intenta reconstruir el POS enteramente desde estado local, en dos niveles (judgment-
+ *    day ronda 1, FIX 1; ronda 2, FIX CRITICAL):
+ *    a. Si hay un snapshot de sesión offline vigente (`snapshotDeSesionOfflineVigente`,
+ *       `entornoTauri.ts` — solo devuelve algo con un bearer en memoria restaurado por
+ *       `pos/main.tsx` ANTES de montar este componente Y la ventana de vigencia LOCAL todavía sin
+ *       pasar, revalidada en este mismo punto de uso) → directo a `con-sesion`, sin ninguna
+ *       llamada de red adicional. Este es el camino que hace que la sesión persistida sirva de
+ *       algo durante un corte: sin él, el bearer restaurado nunca se llegaba a consultar. Token,
+ *       vencimiento y snapshot son el MISMO registro persistido (`sesion.rs`) — no pueden
+ *       divergir entre sí (ver el doc-comment de `SnapshotDeSesionOffline`).
+ *    b. Si no, consulta la credencial de dispositivo guardada (`leerCredencialDeDispositivo`,
+ *       `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que
+ *       esta página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base
+ *       sigue sin poder confirmar nada, pero hay evidencia local de que este equipo ya se vinculó
+ *       alguna vez → `sin-red-pero-vinculado` (mensaje específico, con reintentar). Si no hay
+ *       credencial local tampoco, → `error` genérico: no hay ninguna evidencia de nada.
+ *    Ninguno de los dos niveles puede pisar el 404 explícito del punto 1 (esa rama retorna antes
+ *    de llegar acá) — la base sigue siendo la única autoridad cuando SÍ pudo responder.
  * 3. Dispositivo conocido → `resolverSesionDelDispositivo` (`GET /auth/me`): con una cookie/bearer
  *    de sesión todavía vivo y operable, entra derecho a `con-sesion` sin pedir nada — sin sesión
  *    (o inválida), `LoginDeDispositivo`.
@@ -128,8 +177,35 @@ export function AppPos() {
 
       // El fetch ni siquiera obtuvo una respuesta del servidor (red caída, DNS, CORS) — al
       // servidor no se le pudo ni preguntar. Solo en ESTE caso (nunca cuando hubo una respuesta,
-      // aunque sea un error) se consulta el archivo local: la base sigue siendo la única
-      // autoridad, el archivo es un respaldo para cuando no se la pudo ni consultar.
+      // aunque sea un error) se consulta el estado local: la base sigue siendo la única
+      // autoridad, lo local es un respaldo para cuando no se la pudo ni consultar.
+      //
+      // judgment-day ronda 1 (FIX 1, BLOCKER): antes de este fix, este bloque SOLO distinguía
+      // "hay una credencial de dispositivo local" de "no hay nada" — nunca consultaba el bearer
+      // que `pos/main.tsx` ya restauró en memoria ANTES de montar este componente
+      // (`restaurarSesionDeCajeroPersistida`), así que un restart con la red caída SIEMPRE caía en
+      // `sin-red-pero-vinculado` (un callejón sin salida con un solo botón "Reintentar"), aunque
+      // hubiera una sesión de cajero perfectamente vigente esperando. Ahora, si hay un snapshot de
+      // dispositivo/PV/cajero (`snapshotDeSesionOfflineVigente`, `entornoTauri.ts`) — que solo
+      // devuelve algo cuando hay un bearer en memoria Y la ventana de vigencia LOCAL todavía no
+      // pasó CONTRA AHORA (judgment-day ronda 2, FIX SUGGESTION: revalidado en este mismo punto de
+      // uso, no solo una vez al arrancar) — se reconstruye el shell DIRECTO, sin ninguna llamada
+      // de red adicional.
+      //
+      // Esto nunca puede pisar el 404 `dispositivo_no_vinculado` explícito de arriba (esa rama
+      // retorna antes de llegar acá) — la base sigue siendo la única autoridad para esa respuesta;
+      // esto solo cubre el caso en que la base NO PUDO ser consultada en absoluto.
+      const snapshot = snapshotDeSesionOfflineVigente(new Date())
+      if (snapshot) {
+        setEstado({
+          fase: 'con-sesion',
+          dispositivo: snapshot.dispositivo,
+          usuario: usuarioOfflineComoAutenticado(snapshot.usuario),
+          puntoVenta: snapshot.puntoVenta,
+        })
+        return
+      }
+
       const credencialLocal = await leerCredencialDeDispositivo()
       if (generacionRef.current !== generacion) return
       setEstado(credencialLocal ? { fase: 'sin-red-pero-vinculado' } : { fase: 'error', mensaje: MENSAJE_GENERICO })
@@ -184,6 +260,13 @@ export function AppPos() {
           dispositivo={estado.dispositivo}
           onSesion={(usuario, puntoVenta) => {
             if (estado.fase !== 'vinculado-sin-sesion') return
+            // FIX 1 (judgment-day ronda 1) + FIX CRITICAL (ronda 2): login fresco es el otro
+            // momento en que el servidor confirma los tres datos juntos — mismo cacheo (ahora en
+            // el registro único de `entornoTauri.ts`) que `resolverSesionDelDispositivo`, para
+            // que un restart posterior sin red también pueda reconstruir desde ACÁ. Fire-and-
+            // forget (nunca lanza, ver el doc-comment de `guardarSesionDeCajeroPersistida`): este
+            // callback es síncrono, no bloquea el paso a `con-sesion`.
+            void refrescarVentanaDeSesionPersistida({ dispositivo: estado.dispositivo, puntoVenta, usuario: usuarioOfflineMinimo(usuario) })
             setEstado({ fase: 'con-sesion', dispositivo: estado.dispositivo, usuario, puntoVenta })
           }}
           onDispositivoInvalido={() => setEstado({ fase: 'sin-vincular' })}

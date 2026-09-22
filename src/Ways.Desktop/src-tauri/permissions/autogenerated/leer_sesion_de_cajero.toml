@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-leer-sesion-de-cajero"
+description = "Enables the leer_sesion_de_cajero command without any pre-configured scope."
+commands.allow = ["leer_sesion_de_cajero"]
+
+[[permission]]
+identifier = "deny-leer-sesion-de-cajero"
+description = "Denies the leer_sesion_de_cajero command without any pre-configured scope."
+commands.deny = ["leer_sesion_de_cajero"]

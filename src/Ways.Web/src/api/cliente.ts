@@ -86,13 +86,24 @@ export function alPerderLaSesion(observador: ObservadorDeSesion) {
  * o cualquier otro estado no-ok. Extraída de `pedir` (stage-11 slice 4, design decisión 12) para
  * que `descargar` comparta el mismo camino de error en vez de duplicarlo — dos copias del camino
  * de sesión expirada es una copia que se va a olvidar actualizar (`react-async-state` regla 10).
- */
-async function exigirRespuestaOk(respuesta: Response): Promise<void> {
+ *
+ * `tokenDeLaSolicitud` (judgment-day ronda 1, FIX 5, WARNING "worsened"): el token bearer que
+ * ESA solicitud llevaba adjunto, capturado por el llamador (`pedir`/`descargar`) ANTES del
+ * `fetch` — nunca `tokenDeSesionBearerActual()` leído acá adentro, que para entonces ya podría ser
+ * uno más nuevo. Bajo Tauri, una request vieja armada con un token ya superado por un relogueo
+ * exitoso puede resolver TARDE, después de que ese token nuevo ya está instalado (memoria + disco,
+ * `pos/main.tsx`) — sin este chequeo, el 401 de la request vieja pisaría esa sesión fresca en
+ * ambos lados. En el navegador normal (sin Tauri) los dos lados de la comparación son siempre
+ * `null`, así que el gate nunca cambia ese camino. */
+async function exigirRespuestaOk(respuesta: Response, tokenDeLaSolicitud: string | null): Promise<void> {
   if (respuesta.status === 401) {
-    // El token bearer guardado (si había uno) ya no sirve — mismo motivo que borrar la cookie
-    // de sesión, pero acá no hay nada del lado del servidor que "cerrar": el bearer es stateless.
-    establecerTokenDeSesionBearer(null)
-    observadores.forEach((o) => o())
+    // Solo se limpia (memoria + observadores, que a su vez limpian la sesión persistida en disco,
+    // ver `pos/main.tsx`) si el token de ESTA solicitud todavía es el vigente — de lo contrario, un
+    // login más nuevo ya lo reemplazó y este 401 es tardío, no hay nada que cerrar.
+    if (tokenDeLaSolicitud === tokenDeSesionBearerActual()) {
+      establecerTokenDeSesionBearer(null)
+      observadores.forEach((o) => o())
+    }
     throw new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.')
   }
 
@@ -136,6 +147,9 @@ async function ejecutarFetch(url: string, init: RequestInit): Promise<Response> 
 }
 
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
+  // Capturado ANTES del fetch (FIX 5, ver el doc-comment de `exigirRespuestaOk`): es el token con
+  // el que ESTA solicitud sale a la red, no el que esté vigente cuando la respuesta vuelva.
+  const tokenDeLaSolicitud = tokenDeSesionBearerActual()
   const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     ...init,
     credentials: corriendoEnTauri() ? 'omit' : 'include',
@@ -147,7 +161,7 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
     },
   })
 
-  await exigirRespuestaOk(respuesta)
+  await exigirRespuestaOk(respuesta, tokenDeLaSolicitud)
 
   if (respuesta.status === 204) {
     return undefined as T
@@ -182,11 +196,12 @@ export function nombreDeArchivo(respuesta: Response): string {
  * Open Questions).
  */
 async function descargar(ruta: string): Promise<void> {
+  const tokenDeLaSolicitud = tokenDeSesionBearerActual()
   const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     credentials: corriendoEnTauri() ? 'omit' : 'include',
     headers: headerBearerSiCorresponde(),
   })
-  await exigirRespuestaOk(respuesta)
+  await exigirRespuestaOk(respuesta, tokenDeLaSolicitud)
 
   const blob = await respuesta.blob()
   const nombre = nombreDeArchivo(respuesta)

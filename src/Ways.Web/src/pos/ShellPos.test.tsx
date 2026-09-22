@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
+import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
 import { cierreDeTurno, pulsoDeCajon, ticketDeVenta } from '../impresion/plantillas'
 import type {
@@ -325,6 +326,7 @@ beforeEach(() => {
   imprimirMock.mockResolvedValue({ ok: true })
   escritorioMock = false
   mockearRutasDePos()
+  establecerTokenDeSesionBearer(null)
 })
 
 describe('ShellPos', () => {
@@ -389,6 +391,30 @@ describe('ShellPos', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/auth/logout'))
     await waitFor(() => expect(alCerrarSesion).toHaveBeenCalledTimes(1))
+  })
+
+  /**
+   * judgment-day ronda 1 (FIX 2a, BLOCKER) + FIX 6: sin esta prueba, borrar la línea
+   * `establecerTokenDeSesionBearer(null)` de `cerrarSesion` (`ShellPos.tsx`) no hacía fallar
+   * ningún test — "Cerrar sesión" quedaba probado solo por el POST y el callback, nunca por si el
+   * bearer EN MEMORIA (que `cliente.ts` sigue adjuntando a cada request bajo Tauri) de verdad se
+   * soltaba.
+   *
+   * Mutación probada a mano: comentando esa línea en `ShellPos.tsx`, este test pasa de VERDE a
+   * ROJO (`tokenDeSesionBearerActual()` sigue devolviendo `'token-de-sesion-viva'` después del
+   * click) — restaurada la línea, vuelve a VERDE.
+   */
+  it('"Cerrar sesión" también limpia el bearer EN MEMORIA (FIX 2a) — sin esto, cliente.ts seguía adjuntándolo a cada request', async () => {
+    establecerTokenDeSesionBearer('token-de-sesion-viva')
+    render(
+      <MemoryRouter initialEntries={['/vender']}>
+        <ShellPos dispositivo={DISPOSITIVO} usuario={usuarioFixture()} puntoVenta={puntoVentaFixture()} alCerrarSesion={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
+
+    await waitFor(() => expect(tokenDeSesionBearerActual()).toBeNull())
   })
 })
 

@@ -4,7 +4,8 @@ const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
 
 const { alPerderLaSesion, api, ErrorApi, ErrorDeRed, nombreDeArchivo } = await import('./cliente')
-const { establecerTokenDeSesionBearer, inicializarUrlServidor, tokenDeSesionBearerActual } = await import('./entornoTauri')
+const { establecerTokenDeSesionBearer, inicializarUrlServidor, restaurarSesionDeCajeroPersistida, tokenDeSesionBearerActual } =
+  await import('./entornoTauri')
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: unknown }
 
@@ -98,6 +99,82 @@ describe('header Authorization bajo Tauri (slice bearer)', () => {
 
     await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
     expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  // judgment-day ronda 1 (FIX 5, WARNING "worsened"): una request en vuelo con un token viejo que
+  // resuelve TARDE (después de un relogueo exitoso con un token nuevo) no debe pisar la sesión
+  // fresca. Se simula sin `vi.useFakeTimers` — alcanza con no resolver el primer `fetch` hasta
+  // después de instalar el token nuevo, para reproducir el orden real de eventos.
+  it('un 401 de una request vieja (con un token YA superado por un relogueo) nunca limpia el token nuevo ni dispara los observadores', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('token-viejo')
+    const observador = vi.fn()
+    const dejarDeEscuchar = alPerderLaSesion(observador)
+
+    let resolverFetchViejo: (r: Response) => void = () => {}
+    const fetchViejoPendiente = new Promise<Response>((resolve) => {
+      resolverFetchViejo = resolve
+    })
+    fetchMock.mockReturnValueOnce(fetchViejoPendiente)
+
+    const promesaVieja = api.get('/algo')
+
+    // Mientras la request vieja sigue en vuelo, un relogueo exitoso instala un token NUEVO.
+    establecerTokenDeSesionBearer('token-nuevo')
+
+    // Ahora la request vieja resuelve, tarde, con un 401 — construida con 'token-viejo', que ya
+    // no es el vigente.
+    resolverFetchViejo(respuestaMock({ status: 401, ok: false }))
+
+    await expect(promesaVieja).rejects.toBeInstanceOf(ErrorApi)
+    // El token nuevo sigue instalado: el 401 tardío no lo pisó, ni disparó la limpieza global
+    // (que en `pos/main.tsx` también borraría la sesión persistida en disco del login fresco).
+    expect(tokenDeSesionBearerActual()).toBe('token-nuevo')
+    expect(observador).not.toHaveBeenCalled()
+
+    dejarDeEscuchar()
+  })
+
+  it('un 401 de la request CORRIENTE (mismo token todavía vigente) sigue limpiando la sesión, sin regresión', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('token-actual')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 401, ok: false }))
+
+    await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
+
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  // stage-pos-sesion-offline: prueba de composición de punta a punta (sin mockear
+  // `entornoTauri.ts`, a diferencia de `AppPos.test.tsx`) — una sesión persistida válida,
+  // restaurada por `restaurarSesionDeCajeroPersistida`, tiene que llegar hasta el header
+  // `Authorization` de la PRÓXIMA request real de `pedir`, exactamente igual que un token recién
+  // logueado. Esto es lo que hace que `AppPos.tsx` no necesite ningún cambio propio: para esta
+  // capa, un token restaurado y uno recién logueado son indistinguibles.
+  it('un token restaurado desde la sesión persistida se adjunta igual que uno recién logueado', async () => {
+    instalarPuenteTauri((comando) =>
+      comando === 'leer_sesion_de_cajero' ? Promise.resolve({ token: 'token-restaurado', expira_el: '2099-01-01T00:00:00Z' }) : Promise.resolve(undefined),
+    )
+    await restaurarSesionDeCajeroPersistida()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-restaurado')
+  })
+
+  it('una sesión persistida vencida NUNCA se adjunta — la request sale sin Authorization', async () => {
+    instalarPuenteTauri((comando) =>
+      comando === 'leer_sesion_de_cajero' ? Promise.resolve({ token: 'token-vencido', expira_el: '2020-01-01T00:00:00Z' }) : Promise.resolve(undefined),
+    )
+    await restaurarSesionDeCajeroPersistida()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 })
 

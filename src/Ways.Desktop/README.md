@@ -52,7 +52,10 @@ La app usa DOS ventanas Tauri, cada una con su propia capacidad (ver
   `imprimir_raw`, `abrir_configuracion` ni las credenciales de dispositivo.
 - **`pos`** (pagina local `ui/pos.html`, build de `Ways.Web`, capacidad
   `pos.json`): imprimir, volver a la configuracion y leer/escribir la
-  credencial de dispositivo. Nunca `guardar_configuracion` ni
+  credencial de dispositivo Y la sesion de cajero persistida (token bearer +
+  vencimiento + snapshot minimo de dispositivo/PV/cajero para reconstruir el
+  shell offline, judgment-day ronda 2 -- archivo aparte de la credencial de
+  dispositivo, ver `sesion.rs`). Nunca `guardar_configuracion` ni
   `leer_configuracion`.
 
 Al iniciar, si no existe `config.json` en el directorio de configuracion de
@@ -138,7 +141,109 @@ angostar `connect-src` reduce a DONDE puede mandarlo un script comprometido
 (ya no a cualquier host `https`), no si puede mandarlo al servidor legitimo
 en si. `main` sigue exactamente como antes (esquema `https:` sin host): no
 sostiene ningun secreto, asi que ese alcance mas amplio no agrega riesgo
-nuevo.
+nuevo EN ESTE EJE (in-origin script).
+
+### Riesgo real de persistir la sesion en disco (`sesion.rs`)
+
+judgment-day ronda 1 (FIX 3, BLOCKER): la comparacion de arriba (script
+in-origin) NO es la comparacion relevante para el archivo que agrega este
+slice (`sesion.rs`, token bearer + vencimiento) -- esa solo rebate a un
+script que ya corre DENTRO del origen permitido, que de por si ya podia leer
+el bearer en memoria. Persistirlo en disco agrega una superficie DISTINTA,
+que no existia antes y que un script in-origin no necesita:
+
+- **Acceso al filesystem** por cualquier via ajena al webview: otro proceso
+  del mismo usuario de Windows, una herramienta de administracion remota, o
+  simplemente alguien con acceso fisico/RDP a la maquina puede leer
+  `%APPDATA%/site.aipos.pos/sesion.credencial` sin pasar nunca por
+  `pos.html` ni por su CSP -- la CSP angostada no protege un archivo en
+  disco, solo trafico de red del webview.
+- **Backups**: si el directorio de configuracion del usuario entra en algun
+  backup (imagen de disco, backup de perfil, sincronizacion en la nube del
+  perfil de Windows), ese token viaja con el backup, legible por quien
+  acceda a esa copia mucho despues de que la maquina original ya no importe.
+- **Perfiles/discos copiados o clonados**: clonar el disco o copiar el
+  perfil de usuario a otra maquina (mantenimiento, reemplazo de equipo,
+  imagen maestra) copia el archivo tal cual -- la sesion del cajero queda
+  vigente en una maquina fisica distinta de la que la emitio, algo que un
+  token solo-en-memoria nunca permitia (no sobrevivia al proceso).
+- **Reinstalacion/reset que deja el perfil intacto** (caso planteado en la
+  ronda 1): desinstalar la app SIN borrar
+  `%APPDATA%/site.aipos.pos` (el instalador NSIS, `installMode:
+  currentUser`, no lo hace por defecto) y volver a instalarla hereda en
+  silencio la sesion del cajero anterior -- el equipo "recien reinstalado"
+  arranca ya autenticado como quien uso la maquina antes, sin que nadie
+  vuelva a pedir usuario/contraseña.
+
+Mitigacion real (no la CSP, que es irrelevante para este eje): la ventana de
+vigencia LOCAL del archivo es mucho mas corta que la del token real
+(`entornoTauri.ts`, `VENTANA_SESION_OFFLINE_MS`, ver el doc-comment de
+`calcularExpiracionPersistida`) y se renueva sola en cada contacto exitoso
+con el servidor -- un archivo filtrado por cualquiera de las cuatro vias de
+arriba, si nunca vuelve a tocar el servidor legitimo, deja de ser utilizable
+en dias, no en los 365 dias de vida real del token.
+
+judgment-day ronda 2 (FIX WARNING, Judge B): el analisis de arriba describe
+`sesion.rs` como si solo llevara el token + vencimiento. Desde esta ronda el
+mismo archivo carga ADEMAS un snapshot minimo del dispositivo/PV/cajero
+(campo `snapshot`, ver el doc-comment de `SesionDeCajero` y de
+`SnapshotDeSesionOffline` en `entornoTauri.ts`) -- antes vivia aparte, en un
+`localStorage` del webview sin este analisis de riesgo. Que compra de mas
+esa fusion, para las cuatro vias de arriba:
+
+- **Sin el snapshot** (solo token + vencimiento, como describia esta
+  seccion antes de esta ronda): copiar el archivo le da a quien lo copio
+  una CREDENCIAL -- puede autenticarse contra el servidor como ese cajero
+  (bearer sin revocacion, ver la comparacion de mas abajo), pero para
+  operar el POS de escritorio con esa credencial hace falta ADEMAS
+  contactar al servidor real (`GET /dispositivos/actual`, `GET /auth/me`,
+  `resolverPuntoVentaDelDispositivo`) para reconstruir la pantalla.
+- **Con el snapshot** (esta ronda en adelante): el mismo archivo copiado le
+  da a quien lo copio, ademas de la credencial, un **POS DE ESCRITORIO
+  COMPLETO Y OPERABLE offline** -- `AppPos.tsx` reconstruye el shell entero
+  (empresa, punto de venta, cajero, catalogo/precios cacheados) sin volver a
+  hablar con el servidor en absoluto mientras la ventana de vigencia LOCAL
+  no haya vencido. Antes de esta ronda, un archivo copiado sin red disponible
+  quedaba en el callejon sin salida `sin-red-pero-vinculado` (un boton
+  "Reintentar" y nada mas, ver `AppPos.tsx`); ahora, sin red, produce una
+  caja registradora funcional a nombre de otra persona.
+
+La mitigacion sigue siendo la misma ventana corta de arriba -- se aplica
+IGUAL a los dos componentes del archivo, porque es el mismo registro, la
+misma escritura y la misma limpieza (logout/401/cierre de turno): un archivo
+filtrado deja de poder reconstruir el shell offline exactamente en el mismo
+plazo en el que deja de poder autenticar. La fusion en un solo registro es
+justamente lo que garantiza eso -- ver el doc-comment de
+`limpiarSesionDeCajeroPersistida` sobre por que dos almacenamientos
+independientes (el diseño de la ronda 1) podian divergir y este ya no puede.
+
+### Comparacion con el secreto de dispositivo: NO son equivalentes
+
+La comparacion con el secreto de dispositivo (`credencial.rs`) que este
+documento sugeria antes tambien estaba invertida. Los dos archivos NO dan el
+mismo poder a quien los lea:
+
+- El secreto de dispositivo, SOLO, no autentica a nadie como cajero: sigue
+  exigiendo usuario + contraseña de un cajero real contra
+  `POST /auth/login-dispositivo` (`AuthEndpoints.cs`, lineas 55-64) antes de
+  emitir cualquier sesion. Robar ese archivo sin ademas conocer una
+  contraseña de cajero no vende nada.
+- El token de sesion (`sesion.rs`), SOLO, SI autentica como ese cajero: el
+  esquema bearer (`ManejadorBearerDeSesion.cs`, lineas 33-72) no exige
+  ningun otro dato ni ata el token al dispositivo que lo emitio -- copiado a
+  cualquier otra maquina, con o sin la credencial de dispositivo de esa
+  maquina, sigue autenticando como ese cajero mientras no haya vencido ni
+  sido revocado del lado de `ValidadorDeSesion`.
+
+Por eso la mitigacion real de este archivo es la ventana corta de arriba, no
+una supuesta equivalencia de riesgo con la credencial de dispositivo.
+
+judgment-day ronda 2: esta comparacion sigue siendo cierta en terminos de
+AUTENTICACION (el secreto de dispositivo solo nunca autentica; el token de
+sesion solo si autentica), pero ya no agota lo que compra copiar
+`sesion.rs` -- ver la seccion de arriba sobre el snapshot: ahi la brecha con
+el secreto de dispositivo es todavia mayor, porque el archivo copiado ya no
+necesita ni contactar al servidor para operar.
 
 **Lo que no se pudo verificar en este entorno** (no hay WebView2 real
 disponible aca): que el header reescrito efectivamente llegue a WebView2 y
