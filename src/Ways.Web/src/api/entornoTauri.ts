@@ -110,10 +110,41 @@ export function tokenDeSesionBearerActual(): string | null {
 }
 
 /**
+ * Ventana de vigencia LOCAL de la sesión persistida en disco (judgment-day ronda 1, FIX 2b) —
+ * deliberadamente mucho más corta que los 365 días del token real (`AuthEndpoints.cs`,
+ * `/auth/login-dispositivo`): ese vencimiento largo lo necesita la cookie/bearer para no volver a
+ * pedir login en uso normal, pero el ARCHIVO en disco es lo que un backup, un perfil copiado o un
+ * disco clonado podrían filtrar (ver `Ways.Desktop/README.md`). 3 días cubre un corte de red largo
+ * (viernes a lunes) más el margen de un restart, sin dejar un archivo filtrado utilizable durante
+ * meses — se refresca solo (`refrescarVentanaDeSesionPersistida`, más abajo) cada vez que el
+ * dispositivo vuelve a hablar con el servidor con éxito, así que un cajero activo nunca la nota.
+ */
+export const VENTANA_SESION_OFFLINE_MS = 3 * 24 * 60 * 60 * 1000
+
+/**
+ * Acota el vencimiento que de verdad se persiste en disco al menor entre el que devolvió el
+ * servidor (`expiraElServidor`, 365 días) y `ahora + VENTANA_SESION_OFFLINE_MS` — nunca alarga el
+ * vencimiento real del token, solo puede acortar cuánto tiempo queda UTILIZABLE el archivo local.
+ * Si el vencimiento del servidor ya vence antes de esa ventana (o no se puede parsear), se
+ * devuelve tal cual vino, sin reformatear — evita renormalizar innecesariamente un valor que ya
+ * era el más corto de los dos. Función pura para poder testearla con un reloj controlado.
+ */
+export function calcularExpiracionPersistida(expiraElServidor: string, ahora: Date): string {
+  const limiteVentana = ahora.getTime() + VENTANA_SESION_OFFLINE_MS
+  const expiraServidorMs = new Date(expiraElServidor).getTime()
+  if (!Number.isFinite(expiraServidorMs) || expiraServidorMs <= limiteVentana) {
+    return expiraElServidor
+  }
+  return new Date(limiteVentana).toISOString()
+}
+
+/**
  * Persiste el token de sesión del cajero + su vencimiento explícito (comando
  * `guardar_sesion_de_cajero`, `sesion.rs`) — nunca en IndexedDB/localStorage, mismo criterio que
  * `guardarCredencialDeDispositivo`. Se llama junto con `establecerTokenDeSesionBearer` en el
- * único lugar donde el token se obtiene de un login real (`dispositivos.ts`, `iniciarSesion`).
+ * único lugar donde el token se obtiene de un login real (`dispositivos.ts`, `iniciarSesion`),
+ * que ya le pasa el vencimiento ACOTADO por `calcularExpiracionPersistida` — esta función en sí
+ * es un passthrough tonto hacia el comando de Rust, nunca decide la ventana.
  *
  * A diferencia de `guardarCredencialDeDispositivo`, esta función NUNCA lanza: un fallo de IPC acá
  * no puede significar que el login mismo falló (`establecerTokenDeSesionBearer` ya corrió, el
@@ -137,10 +168,24 @@ export async function guardarSesionDeCajeroPersistida(token: string, expiraEl: s
 /**
  * Limpia la sesión de cajero persistida — reusa `guardar_sesion_de_cajero` con `token`/`expira_el`
  * vacíos (ver el doc-comment de `sesion.rs` sobre por qué no hay un comando de limpieza separado).
- * Se llama en los tres casos donde la sesión deja de ser válida: logout explícito
- * (`ShellPos.tsx`), un 401 del servidor (suscripto a `alPerderLaSesion` desde `pos/main.tsx`, para
- * no crear un import circular con `cliente.ts`, que ya importa de este archivo), y el cierre de
- * turno (`Pos.tsx`, `cierreConfirmado`). Nunca lanza, mismo motivo que
+ * Se llama en los tres disparadores CLIENTE que dejan de considerar vigente la sesión LOCAL:
+ * logout explícito (`ShellPos.tsx`, que además limpia el bearer en memoria con
+ * `establecerTokenDeSesionBearer(null)` — esta función sola nunca alcanza para cerrar sesión, ver
+ * más abajo), un 401 del servidor (suscripto a `alPerderLaSesion` desde `pos/main.tsx`, para no
+ * crear un import circular con `cliente.ts`, que ya importa de este archivo), y el cierre de turno
+ * (`Pos.tsx`, `cierreConfirmado`, mismo criterio).
+ *
+ * Honestidad sobre lo que estos tres disparadores NO hacen del lado del servidor (judgment-day
+ * ronda 1, FIX 2): el bearer es stateless y sin lista de revocación — `POST /auth/logout`
+ * (`AuthEndpoints.cs`) solo hace `SignOutAsync` sobre la COOKIE, nunca invalida un token bearer ya
+ * emitido, y el cierre de turno no toca ninguna tabla de autenticación. Un token copiado mientras
+ * estaba vivo sigue siendo válido para el servidor durante toda su vida real (365 días,
+ * `AuthEndpoints.MapearAuth`) sin importar que el cajero haya cerrado sesión o cerrado su turno
+ * acá — construir revocación real del lado del servidor es un proyecto propio, fuera de alcance de
+ * este slice. Lo que estos tres disparadores SÍ logran es acotado pero real: sacan el token de
+ * este dispositivo (memoria + disco), así que un restart posterior de ESTE equipo ya no lo
+ * restaura solo — el único mecanismo que limita cuánto puede durar un archivo FILTRADO es la
+ * ventana corta de `calcularExpiracionPersistida`, no esta función. Nunca lanza, mismo motivo que
  * `guardarSesionDeCajeroPersistida`. No hace nada fuera de Tauri.
  */
 export async function limpiarSesionDeCajeroPersistida(): Promise<void> {
@@ -201,4 +246,23 @@ export async function restaurarSesionDeCajeroPersistida(): Promise<void> {
   } catch {
     // Sin IPC no hay nada para restaurar — mismo criterio permisivo que el resto del archivo.
   }
+}
+
+/**
+ * Refresca la ventana de vigencia LOCAL de la sesión persistida (judgment-day ronda 1, FIX 2b) —
+ * se llama cada vez que el dispositivo confirma que TODAVÍA puede hablar con el servidor con éxito
+ * (`AppPos.tsx`, `resolverSesionDelDispositivo`, después de que `GET /auth/me` responde 200): un
+ * cajero activo, con red normal, nunca ve expirar el archivo local aunque la ventana en sí sea
+ * corta, porque se estira de nuevo en cada contacto real. Si NO hay contacto real (el escenario
+ * que este slice existe para cubrir: la red está caída) la ventana no se toca y sigue corriendo
+ * desde el último contacto confirmado — es precisamente esa falta de refresco la que acota cuánto
+ * puede durar un archivo filtrado que nunca vuelve a tocar el servidor legítimo.
+ *
+ * No hace nada si no hay un token en memoria (nada que refrescar) ni fuera de Tauri. Nunca lanza,
+ * mismo motivo que `guardarSesionDeCajeroPersistida`.
+ */
+export async function refrescarVentanaDeSesionPersistida(): Promise<void> {
+  const token = tokenDeSesionBearerActual()
+  if (!token) return
+  await guardarSesionDeCajeroPersistida(token, new Date(Date.now() + VENTANA_SESION_OFFLINE_MS).toISOString())
 }

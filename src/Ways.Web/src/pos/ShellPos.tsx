@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
-import { limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
@@ -175,6 +175,13 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
       // en el `finally` para limpiarse tanto si el POST tuvo éxito como si la sesión ya estaba
       // vencida del lado del servidor (el catch de arriba). No hace nada fuera de Tauri, nunca
       // lanza.
+      //
+      // judgment-day ronda 1 (FIX 2a, BLOCKER): `limpiarSesionDeCajeroPersistida` sola solo borra
+      // el archivo — el bearer EN MEMORIA (`entornoTauri.ts`) seguía vivo y `cliente.ts` lo sigue
+      // adjuntando a cada request siguiente, así que "Cerrar sesión" no cerraba nada de verdad.
+      // Tiene que limpiarse ACÁ (antes de `alCerrarSesion()`, que desmonta este shell): ningún
+      // otro punto del código vuelve a tocar el bearer una vez que se vuelve a `LoginDeDispositivo`.
+      establecerTokenDeSesionBearer(null)
       await limpiarSesionDeCajeroPersistida()
       cerrandoSesionRef.current = false
       setCerrandoSesion(false)

@@ -7,7 +7,7 @@
  * el camino esperado la primera vez, o si el dispositivo fue desvinculado del lado del servidor.
  */
 import { api } from './cliente'
-import { corriendoEnTauri, establecerTokenDeSesionBearer, guardarSesionDeCajeroPersistida } from './entornoTauri'
+import { calcularExpiracionPersistida, corriendoEnTauri, establecerTokenDeSesionBearer, guardarSesionDeCajeroPersistida } from './entornoTauri'
 import type { UsuarioAutenticado } from './tipos'
 
 export type DispositivoActual = {
@@ -52,10 +52,13 @@ export const clienteDeDispositivos = {
    * (`entornoTauri.ts`) para que `cliente.ts` lo adjunte en las requests siguientes — preparación
    * para la slice 3, donde la cookie va a dejar de viajar por ser cross-site.
    *
-   * stage-pos-sesion-offline: además lo persiste del lado de Rust (`guardarSesionDeCajeroPersistida`,
-   * con el `expiraEl` que ya trae esta misma respuesta) para que sobreviva un restart — es un
-   * `await` extra en el camino feliz, nunca lanza (ver el doc-comment de esa función), así que
-   * nunca puede convertir un login exitoso en uno fallido. */
+   * stage-pos-sesion-offline: además lo persiste del lado de Rust (`guardarSesionDeCajeroPersistida`)
+   * para que sobreviva un restart — es un `await` extra en el camino feliz, nunca lanza (ver el
+   * doc-comment de esa función), así que nunca puede convertir un login exitoso en uno fallido.
+   *
+   * judgment-day ronda 1 (FIX 2b): el vencimiento que se persiste NUNCA es el `expiraEl` crudo de
+   * la respuesta (365 días) — pasa por `calcularExpiracionPersistida`, que lo acota a una ventana
+   * local mucho más corta (ver `entornoTauri.ts`, `VENTANA_SESION_OFFLINE_MS`). */
   iniciarSesion: async (credenciales: CredencialesDeDispositivo): Promise<UsuarioAutenticado> => {
     const solicitarBearer = corriendoEnTauri()
     const respuesta = await api.post<RespuestaLoginDeDispositivo>('/auth/login-dispositivo', {
@@ -65,7 +68,7 @@ export const clienteDeDispositivos = {
 
     if (esRespuestaConBearer(respuesta)) {
       establecerTokenDeSesionBearer(respuesta.token)
-      await guardarSesionDeCajeroPersistida(respuesta.token, respuesta.expiraEl)
+      await guardarSesionDeCajeroPersistida(respuesta.token, calcularExpiracionPersistida(respuesta.expiraEl, new Date()))
       return respuesta.usuario
     }
 

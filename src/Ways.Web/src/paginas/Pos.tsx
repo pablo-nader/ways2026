@@ -7,7 +7,7 @@ import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/ca
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
-import { limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -1323,6 +1323,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // `confirmarCierrePorRetiro` como desde la recuperación de un cierre incierto en
     // `recuperarCierreIncierto`) — `CierreDeCaja.tsx` (camino web) nunca corre bajo Tauri, así que
     // no necesita este mismo llamado. No hace nada fuera de Tauri, nunca lanza.
+    //
+    // judgment-day ronda 1 (FIX 2a, BLOCKER): mismo motivo que `ShellPos.cerrarSesion` — sin
+    // limpiar también el bearer EN MEMORIA, el próximo cajero heredaría la sesión de este (nunca
+    // se le vuelve a pedir login mientras la pantalla no se recargue). `turnoConfirmadoCerrado()`
+    // no dispara ningún nuevo `GET` (el gate de turno solo se re-consulta al montar, ver
+    // `consultarTurno`), así que limpiar el bearer acá no bota al cajero de la pantalla bloqueada
+    // de "turno cerrado" — recién hace efecto en la PRÓXIMA request real.
+    establecerTokenDeSesionBearer(null)
     void limpiarSesionDeCajeroPersistida()
   }
 

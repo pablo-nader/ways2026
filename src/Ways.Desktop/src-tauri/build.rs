@@ -13,6 +13,8 @@ fn main() {
         "info_app",
         "guardar_credencial_de_dispositivo",
         "leer_credencial_de_dispositivo",
+        "guardar_sesion_de_cajero",
+        "leer_sesion_de_cajero",
     ]);
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

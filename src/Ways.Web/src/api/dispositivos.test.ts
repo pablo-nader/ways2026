@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { clienteDeDispositivos } from './dispositivos'
-import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from './entornoTauri'
+import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual, VENTANA_SESION_OFFLINE_MS } from './entornoTauri'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -98,6 +98,30 @@ describe('clienteDeDispositivos', () => {
       password: 'secreta',
       solicitarBearer: true,
     })
+  })
+
+  // judgment-day ronda 1 (FIX 2b, BLOCKER): el `expiraEl` REAL del servidor son 365 días —
+  // persistirlo tal cual dejaría un archivo filtrado vigente por casi un año. Este test usa un
+  // vencimiento realista (lejano) para probar que SÍ se acota, a diferencia del test de arriba
+  // ('instala el token en memoria Y lo persiste con su vencimiento'), que usa uno YA más corto
+  // que la ventana a propósito (para seguir probando el passthrough sin acoplarse a esta ventana).
+  it('bajo Tauri, con un expiraEl de servidor realista (lejano), persiste una expiración ACOTADA a la ventana local, nunca el valor crudo de 365 días', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    vi.setSystemTime(ahora)
+    const expiraElServidor = new Date(ahora.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString()
+    const usuario = { id: 1, usuario: 'jperez', mail: 'jperez@ways.test', rolId: 4, rol: 'Vendedor', ultimaConexion: null, idTenant: 1 }
+    apiPostMock.mockResolvedValue({ usuario, token: 'token-de-sesion', expiraEl: expiraElServidor })
+
+    await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+
+    const expiracionEsperada = new Date(ahora.getTime() + VENTANA_SESION_OFFLINE_MS).toISOString()
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
+      sesion: { token: 'token-de-sesion', expira_el: expiracionEsperada },
+    })
+    expect(expiracionEsperada).not.toBe(expiraElServidor)
+    vi.useRealTimers()
   })
 
   it('un fallo al persistir la sesión (IPC) nunca convierte un login exitoso en uno fallido', async () => {

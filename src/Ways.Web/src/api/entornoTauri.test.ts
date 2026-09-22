@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  calcularExpiracionPersistida,
   corriendoEnTauri,
   establecerTokenDeSesionBearer,
   guardarCredencialDeDispositivo,
@@ -7,10 +8,12 @@ import {
   inicializarUrlServidor,
   leerCredencialDeDispositivo,
   limpiarSesionDeCajeroPersistida,
+  refrescarVentanaDeSesionPersistida,
   restaurarSesionDeCajeroPersistida,
   sesionPersistidaEsValida,
   tokenDeSesionBearerActual,
   urlBaseApi,
+  VENTANA_SESION_OFFLINE_MS,
 } from './entornoTauri'
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
@@ -265,5 +268,68 @@ describe('restaurarSesionDeCajeroPersistida', () => {
     invokeMock.mockResolvedValue({ token: 123, expira_el: '2026-06-01T00:00:00Z' })
     await restaurarSesionDeCajeroPersistida()
     expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+})
+
+describe('calcularExpiracionPersistida (judgment-day ronda 1, FIX 2b)', () => {
+  it('acota un vencimiento de servidor lejano (365 días) a ahora + VENTANA_SESION_OFFLINE_MS', () => {
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    const expiraElServidor = new Date(ahora.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString()
+
+    const resultado = calcularExpiracionPersistida(expiraElServidor, ahora)
+
+    expect(resultado).toBe(new Date(ahora.getTime() + VENTANA_SESION_OFFLINE_MS).toISOString())
+    expect(new Date(resultado).getTime()).toBeLessThan(new Date(expiraElServidor).getTime())
+  })
+
+  it('nunca alarga: si el vencimiento del servidor ya es más corto que la ventana, se devuelve tal cual (sin reformatear)', () => {
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    const expiraElServidor = '2026-01-02T00:00:00Z' // 1 día, más corto que la ventana
+
+    expect(calcularExpiracionPersistida(expiraElServidor, ahora)).toBe(expiraElServidor)
+  })
+
+  it('con una fecha de servidor no parseable, devuelve el valor tal cual en vez de acotar contra NaN', () => {
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    expect(calcularExpiracionPersistida('no-es-una-fecha', ahora)).toBe('no-es-una-fecha')
+  })
+
+  /** Mutation target: `expiraServidorMs <= limiteVentana` — en el borde EXACTO (el servidor vence
+   * justo cuando venciera la ventana), tiene que devolver el original sin reformatear, nunca la
+   * versión con milisegundos de `toISOString()`. */
+  it('en el borde exacto (servidor vence justo en el límite de la ventana) devuelve el original sin reformatear', () => {
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    const expiraElServidor = new Date(ahora.getTime() + VENTANA_SESION_OFFLINE_MS).toISOString()
+
+    expect(calcularExpiracionPersistida(expiraElServidor, ahora)).toBe(expiraElServidor)
+  })
+})
+
+describe('refrescarVentanaDeSesionPersistida (judgment-day ronda 1, FIX 2b)', () => {
+  it('no hace nada si no hay un token en memoria', async () => {
+    await refrescarVentanaDeSesionPersistida()
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('con un token en memoria, persiste ESE token con una nueva expiración = ahora + VENTANA_SESION_OFFLINE_MS', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    establecerTokenDeSesionBearer('token-vigente')
+
+    await refrescarVentanaDeSesionPersistida()
+
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
+      sesion: { token: 'token-vigente', expira_el: new Date(Date.now() + VENTANA_SESION_OFFLINE_MS).toISOString() },
+    })
+    vi.useRealTimers()
+  })
+
+  it('nunca lanza aunque el comando falle', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    establecerTokenDeSesionBearer('token-vigente')
+
+    await expect(refrescarVentanaDeSesionPersistida()).resolves.toBeUndefined()
   })
 })

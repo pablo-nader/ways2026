@@ -3,13 +3,14 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
-import { leerCredencialDeDispositivo } from '../api/entornoTauri'
+import { leerCredencialDeDispositivo, refrescarVentanaDeSesionPersistida, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
 import { LoginDeDispositivo } from './LoginDeDispositivo'
 import { PantallaDeVinculacion } from './PantallaDeVinculacion'
 import { resolverPuntoVentaDelDispositivo } from './puntoVentaDelDispositivo'
+import { guardarSesionDeDispositivoLocal, leerSesionDeDispositivoLocal } from './sesionDeDispositivoLocal'
 import { ShellPos } from './ShellPos'
 
 type Estado =
@@ -60,6 +61,14 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
       return { fase: 'vinculado-sin-sesion', dispositivo }
     }
 
+    // judgment-day ronda 1 (FIX 1, BLOCKER): el servidor acaba de confirmar los tres datos juntos
+    // — se cachean para que un restart posterior SIN red pueda reconstruir el shell (ver
+    // `cargarDispositivo`, más abajo) y se refresca la ventana de vigencia LOCAL del bearer
+    // persistido (`entornoTauri.ts`, FIX 2b): el dispositivo demostró que puede hablar con el
+    // servidor AHORA, así que un cajero activo con red normal nunca ve expirar el archivo.
+    guardarSesionDeDispositivoLocal({ dispositivo, usuario, puntoVenta })
+    await refrescarVentanaDeSesionPersistida()
+
     return { fase: 'con-sesion', dispositivo, usuario, puntoVenta }
   } catch (error) {
     if (error instanceof ErrorApi && error.esNoAutenticado) {
@@ -80,12 +89,22 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
  *    dispositivo revocado → `PantallaDeVinculacion`. Este resultado es SIEMPRE una respuesta real
  *    del servidor (nunca una inferencia local) y siempre gana, aunque haya una credencial local.
  * 2. Cualquier otra falla en la llamada — el servidor ni siquiera pudo responder (red caída, DNS,
- *    CORS) — consulta la credencial local guardada (`leerCredencialDeDispositivo`,
- *    `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que esta
- *    página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base sigue
- *    sin poder confirmar nada, pero hay evidencia local de que este equipo ya se vinculó alguna
- *    vez → `sin-red-pero-vinculado` (mensaje específico, con reintentar). Si no hay credencial
- *    local tampoco, → `error` genérico: no hay ninguna evidencia de nada.
+ *    CORS) — intenta reconstruir el POS enteramente desde estado local, en dos niveles (judgment-
+ *    day ronda 1, FIX 1):
+ *    a. Si hay un bearer restaurado y vigente (`tokenDeSesionBearerActual`, `entornoTauri.ts` —
+ *       `pos/main.tsx` ya lo restauró ANTES de montar este componente) Y un snapshot cacheado del
+ *       último dispositivo/PV/cajero confirmado por el servidor
+ *       (`leerSesionDeDispositivoLocal`, `sesionDeDispositivoLocal.ts`) → directo a `con-sesion`,
+ *       sin ninguna llamada de red adicional. Este es el camino que hace que la sesión persistida
+ *       sirva de algo durante un corte: sin él, el bearer restaurado nunca se llegaba a consultar.
+ *    b. Si no, consulta la credencial de dispositivo guardada (`leerCredencialDeDispositivo`,
+ *       `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que
+ *       esta página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base
+ *       sigue sin poder confirmar nada, pero hay evidencia local de que este equipo ya se vinculó
+ *       alguna vez → `sin-red-pero-vinculado` (mensaje específico, con reintentar). Si no hay
+ *       credencial local tampoco, → `error` genérico: no hay ninguna evidencia de nada.
+ *    Ninguno de los dos niveles puede pisar el 404 explícito del punto 1 (esa rama retorna antes
+ *    de llegar acá) — la base sigue siendo la única autoridad cuando SÍ pudo responder.
  * 3. Dispositivo conocido → `resolverSesionDelDispositivo` (`GET /auth/me`): con una cookie/bearer
  *    de sesión todavía vivo y operable, entra derecho a `con-sesion` sin pedir nada — sin sesión
  *    (o inválida), `LoginDeDispositivo`.
@@ -138,8 +157,29 @@ export function AppPos() {
 
       // El fetch ni siquiera obtuvo una respuesta del servidor (red caída, DNS, CORS) — al
       // servidor no se le pudo ni preguntar. Solo en ESTE caso (nunca cuando hubo una respuesta,
-      // aunque sea un error) se consulta el archivo local: la base sigue siendo la única
-      // autoridad, el archivo es un respaldo para cuando no se la pudo ni consultar.
+      // aunque sea un error) se consulta el estado local: la base sigue siendo la única
+      // autoridad, lo local es un respaldo para cuando no se la pudo ni consultar.
+      //
+      // judgment-day ronda 1 (FIX 1, BLOCKER): antes de este fix, este bloque SOLO distinguía
+      // "hay una credencial de dispositivo local" de "no hay nada" — nunca consultaba el bearer
+      // que `pos/main.tsx` ya restauró en memoria ANTES de montar este componente
+      // (`restaurarSesionDeCajeroPersistida`), así que un restart con la red caída SIEMPRE caía en
+      // `sin-red-pero-vinculado` (un callejón sin salida con un solo botón "Reintentar"), aunque
+      // hubiera una sesión de cajero perfectamente vigente esperando. Ahora, si hay un bearer
+      // restaurado Y vigente (`tokenDeSesionBearerActual()`, ya validado contra su vencimiento
+      // local por `restaurarSesionDeCajeroPersistida`) Y un snapshot cacheado del dispositivo/PV/
+      // cajero (`guardarSesionDeDispositivoLocal`, escrito la última vez que el servidor confirmó
+      // los tres juntos), se reconstruye el shell DIRECTO, sin ninguna llamada de red adicional.
+      //
+      // Esto nunca puede pisar el 404 `dispositivo_no_vinculado` explícito de arriba (esa rama
+      // retorna antes de llegar acá) — la base sigue siendo la única autoridad para esa respuesta;
+      // esto solo cubre el caso en que la base NO PUDO ser consultada en absoluto.
+      const sesionLocal = tokenDeSesionBearerActual() ? leerSesionDeDispositivoLocal() : null
+      if (sesionLocal) {
+        setEstado({ fase: 'con-sesion', ...sesionLocal })
+        return
+      }
+
       const credencialLocal = await leerCredencialDeDispositivo()
       if (generacionRef.current !== generacion) return
       setEstado(credencialLocal ? { fase: 'sin-red-pero-vinculado' } : { fase: 'error', mensaje: MENSAJE_GENERICO })
@@ -194,6 +234,10 @@ export function AppPos() {
           dispositivo={estado.dispositivo}
           onSesion={(usuario, puntoVenta) => {
             if (estado.fase !== 'vinculado-sin-sesion') return
+            // FIX 1 (judgment-day ronda 1): login fresco es el otro momento en que el servidor
+            // confirma los tres datos juntos — mismo cacheo que `resolverSesionDelDispositivo`,
+            // para que un restart posterior sin red también pueda reconstruir desde ACÁ.
+            guardarSesionDeDispositivoLocal({ dispositivo: estado.dispositivo, usuario, puntoVenta })
             setEstado({ fase: 'con-sesion', dispositivo: estado.dispositivo, usuario, puntoVenta })
           }}
           onDispositivoInvalido={() => setEstado({ fase: 'sin-vincular' })}

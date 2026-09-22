@@ -9,6 +9,8 @@ import type { ClienteListado, MedioPagoListado, PaginaDe, ParametroResuelto, Pun
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const leerCredencialDeDispositivoMock = vi.fn()
+const tokenDeSesionBearerActualMock = vi.fn<() => string | null>()
+const refrescarVentanaDeSesionPersistidaMock = vi.fn()
 
 // `dispositivos.ts` (no mockeado en este archivo, corre real) también importa de aca
 // (`corriendoEnTauri`/`establecerTokenDeSesionBearer`) — el mock tiene que cubrir TODO lo que el
@@ -19,9 +21,20 @@ vi.mock('../api/entornoTauri', () => ({
   establecerTokenDeSesionBearer: () => {},
   guardarCredencialDeDispositivo: () => Promise.resolve(),
   leerCredencialDeDispositivo: (...args: unknown[]) => leerCredencialDeDispositivoMock(...args),
-  tokenDeSesionBearerActual: () => null,
+  tokenDeSesionBearerActual: () => tokenDeSesionBearerActualMock(),
+  refrescarVentanaDeSesionPersistida: (...args: unknown[]) => refrescarVentanaDeSesionPersistidaMock(...args),
   urlBaseApi: () => '',
   inicializarUrlServidor: () => Promise.resolve(),
+}))
+
+// stage-pos-sesion-offline (judgment-day ronda 1, FIX 1): snapshot local de dispositivo/PV/cajero
+// — mockeado aparte para poder controlar de forma determinista qué hay "cacheado" en cada test,
+// sin depender de la persistencia real de `localStorage` de jsdom entre tests.
+const guardarSesionDeDispositivoLocalMock = vi.fn()
+const leerSesionDeDispositivoLocalMock = vi.fn()
+vi.mock('./sesionDeDispositivoLocal', () => ({
+  guardarSesionDeDispositivoLocal: (...args: unknown[]) => guardarSesionDeDispositivoLocalMock(...args),
+  leerSesionDeDispositivoLocal: (...args: unknown[]) => leerSesionDeDispositivoLocalMock(...args),
 }))
 
 /** Espejo mínimo del observador real de `../api/cliente`: `dispararPerdidaDeSesion` simula lo que
@@ -176,6 +189,13 @@ beforeEach(() => {
   observadores = new Set()
   leerCredencialDeDispositivoMock.mockReset()
   leerCredencialDeDispositivoMock.mockResolvedValue(null)
+  tokenDeSesionBearerActualMock.mockReset()
+  tokenDeSesionBearerActualMock.mockReturnValue(null)
+  refrescarVentanaDeSesionPersistidaMock.mockReset()
+  refrescarVentanaDeSesionPersistidaMock.mockResolvedValue(undefined)
+  guardarSesionDeDispositivoLocalMock.mockReset()
+  leerSesionDeDispositivoLocalMock.mockReset()
+  leerSesionDeDispositivoLocalMock.mockReturnValue(null)
 })
 
 describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-pos)', () => {
@@ -429,5 +449,87 @@ describe('AppPos — la sesión del cajero no vence hasta que cierra sesión (re
     dispararPerdidaDeSesion()
 
     expect(await screen.findByPlaceholderText('Usuario')).toBeInTheDocument()
+  })
+})
+
+describe('AppPos — restart sin red con una sesión local cacheada (judgment-day ronda 1, FIX 1 BLOCKER)', () => {
+  const SESION_LOCAL_CACHEADA = { dispositivo: DISPOSITIVO, usuario: usuarioFixture(), puntoVenta: puntoVentaFixture() }
+
+  it('red caída en /dispositivos/actual, con bearer restaurado vigente Y snapshot cacheado, reconstruye el shell DIRECTO, sin llamar a /auth/me', async () => {
+    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
+    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByRole('link', { name: 'Vender' })).toBeInTheDocument()
+    expect(screen.getByText('Almacén Demo')).toBeInTheDocument()
+    expect(screen.getByText(/PV 1 — Local Centro · jperez/)).toBeInTheDocument()
+    // El camino offline NUNCA llama a `/auth/me` ni a `/puntos-venta` — se reconstruye entero
+    // desde el snapshot cacheado, sin ninguna llamada de red adicional.
+    expect(apiGetMock).not.toHaveBeenCalledWith('/auth/me')
+    expect(apiGetMock).not.toHaveBeenCalledWith('/puntos-venta')
+  })
+
+  it('red caída, con bearer restaurado pero SIN snapshot cacheado, cae al camino existente ("sin red pero vinculado")', async () => {
+    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
+    leerSesionDeDispositivoLocalMock.mockReturnValue(null)
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
+  })
+
+  it('red caída, con snapshot cacheado pero SIN bearer restaurado (logout previo), cae al camino existente — nunca reconstruye con una sesión ya cerrada', async () => {
+    tokenDeSesionBearerActualMock.mockReturnValue(null)
+    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
+  })
+
+  it('precedencia (NO NEGOCIABLE): un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular aunque haya bearer restaurado Y snapshot cacheado', async () => {
+    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
+    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual'
+        ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    // La base (un 404 real y alcanzable) siempre gana sobre cualquier estado local, aunque ese
+    // estado local sea "perfecto" (bearer vigente + snapshot completo) — nunca se consulta.
+    expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
+    expect(leerSesionDeDispositivoLocalMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
+  })
+
+  it('con red disponible, resolver la sesión con éxito cachea el snapshot y refresca la ventana de la sesión persistida', async () => {
+    mockearRutasComunes((ruta) => {
+      if (ruta === '/dispositivos/actual') return Promise.resolve(DISPOSITIVO)
+      if (ruta === '/auth/me') return Promise.resolve(usuarioFixture())
+      return undefined
+    })
+    render(<AppPos />)
+
+    await screen.findByRole('link', { name: 'Vender' })
+
+    expect(guardarSesionDeDispositivoLocalMock).toHaveBeenCalledWith({
+      dispositivo: DISPOSITIVO,
+      usuario: usuarioFixture(),
+      puntoVenta: puntoVentaFixture(),
+    })
+    expect(refrescarVentanaDeSesionPersistidaMock).toHaveBeenCalled()
   })
 })

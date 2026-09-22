@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
+import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
 import type {
   ArticuloDeInstantanea,
@@ -391,6 +392,7 @@ beforeEach(async () => {
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
   await borrarAlmacenOffline()
+  establecerTokenDeSesionBearer(null)
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -3795,6 +3797,44 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
 
       const cuerpoCierre = apiPostMock.mock.calls.find((c) => c[0] === RUTA_CIERRE_POR_RETIRO)?.[1]
       expect(cuerpoCierre).toEqual({ importeRetirado: 0, observaciones: null })
+
+      // judgment-day ronda 1 (FIX 2a, BLOCKER): el cierre de turno exitoso también tiene que
+      // soltar el bearer EN MEMORIA (`entornoTauri.ts`) — sin esto, el próximo cajero heredaría
+      // la sesión de éste (ver `cierreConfirmado`, `Pos.tsx`).
+      expect(tokenDeSesionBearerActual()).toBeNull()
+    })
+
+    /**
+     * judgment-day ronda 1 (FIX 2a, BLOCKER) + FIX 6: prueba dedicada (independiente del test
+     * "feliz" de arriba) para dejar la mutación clara y aislada.
+     *
+     * Mutación probada a mano: comentando la línea `establecerTokenDeSesionBearer(null)` de
+     * `cierreConfirmado` (`Pos.tsx`), este test pasa de VERDE a ROJO
+     * (`tokenDeSesionBearerActual()` sigue devolviendo `'token-de-cajero-vivo'` después del
+     * cierre) — restaurada la línea, vuelve a VERDE.
+     */
+    it('cerrar caja por retiro limpia el bearer EN MEMORIA del cajero que cerró, no solo la sesión persistida en disco', async () => {
+      establecerTokenDeSesionBearer('token-de-cajero-vivo')
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) return Promise.resolve(resumenCierreFixture())
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      await screen.findByText('Caja cerrada')
+      expect(tokenDeSesionBearerActual()).toBeNull()
     })
 
     it('cancelar el modal de monto: el turno sigue abierto', async () => {
