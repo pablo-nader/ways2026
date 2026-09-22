@@ -139,8 +139,13 @@ export type UsuarioOfflineMinimo = { id: number; usuario: string; rolId: number 
  * `guardar`/`leer`, y los tres disparadores que ya vacían el token (logout, 401, cierre de turno)
  * vacían este campo con el mismo `fs::write` — divergencia entre "hay token" y "hay snapshot"
  * queda estructuralmente imposible, no solo mitigada. `dispositivo`/`puntoVenta` viajan
- * COMPLETOS (a diferencia de `usuario`): ninguno de los dos trae PII, y ambos ya se muestran en
- * pantalla antes de cualquier login (`LoginDeDispositivo.tsx`).
+ * COMPLETOS (a diferencia de `usuario`): ninguno de los dos trae PII. Eso es cierto tal cual para
+ * `dispositivo` (`DispositivoActual`): es exactamente lo que `LoginDeDispositivo.tsx` ya pinta en
+ * pantalla antes de cualquier login (`empresa.nombre`, `puntoVenta.{numero,nombre}`, `nombre`).
+ * Para `puntoVenta` (`PuntoVentaListado`) NO es cierto — esa pantalla nunca recibe ese objeto, lo
+ * resuelve `resolverPuntoVentaDelDispositivo` recién DESPUÉS de un login exitoso (ver
+ * `LoginDeDispositivo.tsx`, `enviar`): se persiste completo porque, igual que `dispositivo`, no
+ * trae PII, no porque ya estuviera expuesto antes del login.
  */
 export type SnapshotDeSesionOffline = {
   dispositivo: DispositivoActual
@@ -148,10 +153,43 @@ export type SnapshotDeSesionOffline = {
   usuario: UsuarioOfflineMinimo
 }
 
+/**
+ * `dispositivo` deep-validado solo en los campos que el shell offline de verdad dereferencia —
+ * `ShellPos.tsx` (header + `ContextoDeImpresion`): `empresa.nombre`, `puntoVenta.numero`,
+ * `puntoVenta.nombre`. Nunca `id`/`idPuntoVenta`/`nombre` de nivel superior: nada bajo el shell
+ * offline (`ShellPos`/`Pos`/`CajaZ`/`VentasDelTurno`/`GastosDelTurno`) los lee. Antes de este fix
+ * (judgment-day ronda 2, FIX SUGGESTION, ambos jueces) un `dispositivo` truthy con, por ejemplo,
+ * `empresa: {}` pasaba el guard entero y `ShellPos.tsx` reventaba al desreferenciar
+ * `dispositivo.empresa.nombre` sin optional chaining — justo en el camino offline, donde el
+ * cajero no tiene forma de recuperarse.
+ */
+function esDispositivoUsablePorElShellOffline(valor: unknown): valor is DispositivoActual {
+  if (!valor || typeof valor !== 'object') return false
+  const candidato = valor as Partial<DispositivoActual>
+  if (!candidato.empresa || typeof candidato.empresa !== 'object') return false
+  if (typeof (candidato.empresa as Partial<DispositivoActual['empresa']>).nombre !== 'string') return false
+  if (!candidato.puntoVenta || typeof candidato.puntoVenta !== 'object') return false
+  const puntoVentaDelDispositivo = candidato.puntoVenta as Partial<DispositivoActual['puntoVenta']>
+  return typeof puntoVentaDelDispositivo.numero === 'number' && typeof puntoVentaDelDispositivo.nombre === 'string'
+}
+
+/**
+ * `puntoVenta` (el `PuntoVentaListado` completo que se persiste) deep-validado solo en `id` —el
+ * único campo que el shell offline dereferencia (`Pos.tsx`, `VentasDelTurno.tsx`,
+ * `GastosDelTurno.tsx`, todos vía `usePuntoVenta().puntoVenta.id`). Mismo criterio que
+ * `esDispositivoUsablePorElShellOffline`: validar lo que se usa, no la forma entera.
+ */
+function esPuntoVentaUsablePorElShellOffline(valor: unknown): valor is PuntoVentaListado {
+  if (!valor || typeof valor !== 'object') return false
+  return typeof (valor as Partial<PuntoVentaListado>).id === 'number'
+}
+
 function esSnapshotDeSesionOfflineValido(valor: unknown): valor is SnapshotDeSesionOffline {
   if (!valor || typeof valor !== 'object') return false
   const candidato = valor as Partial<SnapshotDeSesionOffline>
-  if (!candidato.dispositivo || !candidato.puntoVenta || !candidato.usuario || typeof candidato.usuario !== 'object') return false
+  if (!esDispositivoUsablePorElShellOffline(candidato.dispositivo)) return false
+  if (!esPuntoVentaUsablePorElShellOffline(candidato.puntoVenta)) return false
+  if (!candidato.usuario || typeof candidato.usuario !== 'object') return false
   const usuario = candidato.usuario as Partial<UsuarioOfflineMinimo>
   return typeof usuario.id === 'number' && typeof usuario.usuario === 'string' && typeof usuario.rolId === 'number'
 }
@@ -174,6 +212,19 @@ let ventanaLocalDeSesion: string | null = null
  * en este proceso o si la sesión se limpió (logout/401/cierre de turno).
  */
 let snapshotDeSesionOffline: SnapshotDeSesionOffline | null = null
+
+/**
+ * Reset SOLO para tests (`entornoTauri.test.ts`, `beforeEach`) — nunca se llama desde código de
+ * producción. `ventanaLocalDeSesion`/`snapshotDeSesionOffline` son módulo-privados a propósito
+ * (ningún consumidor real necesita pisarlos desde afuera), pero eso mismo deja a los tests sin
+ * forma de aislarse entre sí sin este hook: sin él, un test que no establece su propia
+ * precondición hereda en silencio lo que dejó el test anterior (judgment-day ronda 2, FIX
+ * WARNING, judge B).
+ */
+export function _resetearEspejosDeSesionOfflineParaTests(): void {
+  ventanaLocalDeSesion = null
+  snapshotDeSesionOffline = null
+}
 
 /**
  * Ventana de vigencia LOCAL de la sesión persistida en disco (judgment-day ronda 1, FIX 2b) —

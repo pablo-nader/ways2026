@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  _resetearEspejosDeSesionOfflineParaTests,
   calcularExpiracionPersistida,
   corriendoEnTauri,
   establecerTokenDeSesionBearer,
@@ -38,6 +39,14 @@ const SNAPSHOT_FIXTURE: SnapshotDeSesionOffline = {
   usuario: { id: 4, usuario: 'jperez', rolId: 4 },
 }
 
+/** Distinto de `SNAPSHOT_FIXTURE` en un campo observable (`usuario.id`) — sirve para probar que
+ * una llamada "no-op" de verdad no pisa el espejo ya establecido, en vez de solo llegar a `null`
+ * por casualidad. */
+const OTRO_SNAPSHOT_FIXTURE: SnapshotDeSesionOffline = {
+  ...SNAPSHOT_FIXTURE,
+  usuario: { id: 99, usuario: 'otro-cajero', rolId: 4 },
+}
+
 type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
 
 const invokeMock = vi.fn()
@@ -54,6 +63,11 @@ beforeEach(() => {
   invokeMock.mockReset()
   quitarPuenteTauri()
   establecerTokenDeSesionBearer(null)
+  // judgment-day ronda 2 (FIX WARNING, judge B): `ventanaLocalDeSesion`/`snapshotDeSesionOffline`
+  // son espejos módulo-privados que ningún test de este archivo puede pisar directamente — sin
+  // este reset, un test que no establece su propia precondición hereda en silencio lo que dejó el
+  // test anterior (y reordenar el archivo podía romperlo).
+  _resetearEspejosDeSesionOfflineParaTests()
 })
 
 afterEach(() => {
@@ -213,10 +227,25 @@ describe('guardarSesionDeCajeroPersistida', () => {
     await expect(guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')).resolves.toBeUndefined()
   })
 
+  /**
+   * judgment-day ronda 2 (FIX WARNING, judge B): antes, esta prueba dependía de lo que dejaba el
+   * test anterior en los espejos módulo-privados (`beforeEach` no los tocaba) — reordenar el
+   * archivo la podía romper. Ahora establece su propia precondición por el camino real (bajo
+   * Tauri) y confirma que la llamada FUERA de Tauri es un no-op total: el espejo sigue siendo el
+   * que se estableció, nunca `null` (que probaría lo mismo por casualidad) ni el snapshot nuevo
+   * que se le pasa en la segunda llamada.
+   */
   it('fuera de Tauri no actualiza los espejos en memoria (no hay ningún registro persistido del que ser espejo)', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
     establecerTokenDeSesionBearer('token-vigente')
-    await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
-    expect(snapshotDeSesionOfflineVigente(new Date('2026-01-01T00:00:00Z'))).toBeNull()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    await guardarSesionDeCajeroPersistida('token-vigente', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+    expect(snapshotDeSesionOfflineVigente(ahora)).toEqual(SNAPSHOT_FIXTURE)
+
+    quitarPuenteTauri()
+    await guardarSesionDeCajeroPersistida('otro-token', '2027-01-01T00:00:00Z', OTRO_SNAPSHOT_FIXTURE)
+    expect(snapshotDeSesionOfflineVigente(ahora)).toEqual(SNAPSHOT_FIXTURE)
   })
 })
 
@@ -396,6 +425,64 @@ describe('restaurarSesionDeCajeroPersistida', () => {
       token: 'token-restaurado',
       expira_el: '2026-06-01T00:00:00Z',
       snapshot: { dispositivo: SNAPSHOT_FIXTURE.dispositivo, puntoVenta: SNAPSHOT_FIXTURE.puntoVenta /* usuario falta */ },
+    })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(tokenDeSesionBearerActual()).toBe('token-restaurado')
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
+    vi.useRealTimers()
+  })
+
+  /**
+   * judgment-day ronda 2 (FIX SUGGESTION, ambos jueces): a diferencia del test de arriba (donde
+   * falta un campo entero y por lo tanto `!candidato.dispositivo` ya lo agarraba), acá
+   * `dispositivo` es TRUTHY pero `empresa`/`puntoVenta` vienen vacíos — la forma que antes pasaba
+   * el guard con un simple `!candidato.dispositivo` y después hacía explotar `ShellPos.tsx` al
+   * leer `dispositivo.empresa.nombre` sin optional chaining (el guard viejo solo chequeaba
+   * "truthy", nunca los campos que el shell offline de verdad lee).
+   *
+   * Mutación probada a mano: si `esDispositivoUsablePorElShellOffline` volviera a un simple
+   * `!!candidato.dispositivo` (sin mirar `empresa.nombre`/`puntoVenta.{numero,nombre}`), este test
+   * falla (`snapshotDeSesionOfflineVigente` devolvería el snapshot con el `dispositivo` roto en
+   * vez de `null`) — con la validación actual, pasa.
+   */
+  it('con un dispositivo truthy pero mal formado (empresa/puntoVenta vacíos), instala el token pero descarta el snapshot', async () => {
+    instalarPuenteTauri()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    vi.setSystemTime(ahora)
+    invokeMock.mockResolvedValue({
+      token: 'token-restaurado',
+      expira_el: '2026-06-01T00:00:00Z',
+      snapshot: {
+        dispositivo: { ...SNAPSHOT_FIXTURE.dispositivo, empresa: {}, puntoVenta: {} },
+        puntoVenta: SNAPSHOT_FIXTURE.puntoVenta,
+        usuario: SNAPSHOT_FIXTURE.usuario,
+      },
+    })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(tokenDeSesionBearerActual()).toBe('token-restaurado')
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
+    vi.useRealTimers()
+  })
+
+  /** Mismo criterio que el test anterior, pero del lado de `puntoVenta` (el `PuntoVentaListado`
+   * completo persistido): truthy pero sin `id` numérico, el único campo que el shell offline
+   * dereferencia (`Pos.tsx`/`VentasDelTurno.tsx`/`GastosDelTurno.tsx`). */
+  it('con un puntoVenta truthy pero sin id numérico, instala el token pero descarta el snapshot', async () => {
+    instalarPuenteTauri()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    vi.setSystemTime(ahora)
+    invokeMock.mockResolvedValue({
+      token: 'token-restaurado',
+      expira_el: '2026-06-01T00:00:00Z',
+      snapshot: {
+        dispositivo: SNAPSHOT_FIXTURE.dispositivo,
+        puntoVenta: { nombre: 'Local Centro' },
+        usuario: SNAPSHOT_FIXTURE.usuario,
+      },
     })
 
     await restaurarSesionDeCajeroPersistida()

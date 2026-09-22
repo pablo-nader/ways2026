@@ -27,6 +27,17 @@
 //! parsea acá): es un `serde_json::Value` opaco, transportado tal cual — el lado de TypeScript
 //! (`entornoTauri.ts`) es el único que construye y consume su contenido.
 //!
+//! Cambio de formato (judgment-day ronda 2, FIX WARNING/SUGGESTION): la ronda 1 de esta misma
+//! rama (nunca mergeada) escribía dos líneas de texto plano (`token`, `expira_el`); esta ronda
+//! cambia el archivo a JSON para poder llevar `snapshot` en el mismo registro. `analizar` usa
+//! `serde_json::from_str`, así que un archivo todavía en el formato viejo de dos líneas no es
+//! JSON válido y `leer` cae al mismo `None` que "no hay sesión" — un re-login silencioso, nunca
+//! un error visible. En producción esto es irrelevante (este archivo nació entero en esta rama,
+//! nunca se desplegó el formato viejo); a quien SÍ le puede pasar es a un desarrollador con esta
+//! rama corrida entre ambas rondas, con un `sesion.credencial` de la ronda 1 todavía en disco. No
+//! hay código de migración a propósito: el archivo se descarta y se vuelve a pedir login, sin
+//! ningún estado a medias.
+//!
 //! Vigente un solo registro (token, vencimiento, snapshot) a la vez, igual que
 //! `credencial::guardar`: no hay merge, cada `guardar` reemplaza lo anterior entero — por eso
 //! limpiar el token (ver más abajo) limpia el snapshot junto con él, nunca por separado.

@@ -525,21 +525,30 @@ describe('AppPos — restart sin red con una sesión local cacheada (judgment-da
 
 describe('AppPos — logout explícito + restart sin red NUNCA re-admite al cajero (judgment-day ronda 2, FIX CRITICAL — escenario del Judge B)', () => {
   /**
-   * Reproduce el escenario exacto que confirmaron los dos jueces: cajero A cierra sesión
-   * ("Cerrar sesión" en `ShellPos`, que llama `POST /auth/logout` + limpia el bearer en memoria +
-   * `limpiarSesionDeCajeroPersistida()`) y, en un restart posterior SIN red, el snapshot NUNCA
-   * vuelve a estar disponible — porque token, vencimiento y snapshot son ahora el MISMO registro
-   * persistido (`sesion.rs`), y limpiar uno limpia el otro con él (ver el doc-comment de
-   * `limpiarSesionDeCajeroPersistida` en `entornoTauri.ts`, y su prueba unitaria dedicada en
-   * `entornoTauri.test.ts`, "borra también el snapshot cacheado en memoria").
+   * judgment-day ronda 2 (FIX WARNING, judge A): lo que este test prueba de verdad es cómo
+   * reacciona `AppPos` cuando `snapshotDeSesionOfflineVigente` reporta `null` en un restart
+   * posterior a un logout — NUNCA que la limpieza real haya producido ese `null`. Todo
+   * `../api/entornoTauri` está mockeado en este archivo, y `snapshotDeSesionOfflineVigenteMock
+   * .mockReturnValue(null)` (más abajo) lo pone el propio test a mano, no
+   * `limpiarSesionDeCajeroPersistida` corriendo de verdad. Este test SÍ confirma que `AppPos`,
+   * ante ese `null`, nunca reconstruye un shell operable sin pedir contraseña (las aserciones del
+   * final); no confirma el mecanismo de limpieza en sí.
+   *
+   * El link causal real — que limpiar de verdad borra el snapshot junto con el token, del mismo
+   * registro, sin código nuevo por disparador — vive en otro lado, con las funciones reales y
+   * solo el puente de Tauri mockeado:
+   * - `entornoTauri.test.ts`, describe `limpiarSesionDeCajeroPersistida`, el test "borra también
+   *   el snapshot cacheado en memoria, no solo el token — nunca dos limpiezas independientes".
+   * - `sesion.rs`, el test `limpiar_con_token_vacio_borra_tambien_el_snapshot_guardado`.
    *
    * El "restart" se simula desmontando y volviendo a montar `<AppPos />` con
-   * `snapshotDeSesionOfflineVigenteMock` reconfigurado a `null` — exactamente lo que
-   * `snapshotDeSesionOfflineVigente` real devolvería tras una limpieza exitosa. Lo que este test
-   * NO puede probar (y honestamente no se puede probar en esta capa): que un restart posterior a
-   * una escritura de limpieza que en sí NUNCA llegó a completarse (IPC/disco) no restaure la
-   * sesión vieja — si esa escritura nunca sucedió, no hay nada que este código pueda hacer
-   * distinto (ver el comentario dedicado en `entornoTauri.test.ts` sobre ese límite inherente).
+   * `snapshotDeSesionOfflineVigenteMock` reconfigurado a `null` — el valor que la función real
+   * devolvería tras una limpieza exitosa, según las dos pruebas de arriba. Lo que ESTE test
+   * tampoco puede probar (y honestamente no se puede probar en esta capa): que un restart
+   * posterior a una escritura de limpieza que en sí NUNCA llegó a completarse (IPC/disco) no
+   * restaure la sesión vieja — si esa escritura nunca sucedió, no hay nada que este código pueda
+   * hacer distinto (ver el comentario dedicado en `entornoTauri.test.ts` sobre ese límite
+   * inherente).
    */
   it('logout exitoso → restart sin red → NUNCA reconstruye con-sesion sin pedir contraseña', async () => {
     mockearRutasComunes((ruta) => {
