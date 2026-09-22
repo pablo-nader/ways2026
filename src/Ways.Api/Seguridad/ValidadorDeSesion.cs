@@ -47,11 +47,27 @@ public static class ValidadorDeSesion
             return false;
         }
 
-        var vigente = await db.Usuarios
+        var fila = await db.Usuarios
             .AsNoTracking()
-            .AnyAsync(u => u.Id == usuarioId && u.Estado == EstadoUsuario.Activo);
+            .Where(u => u.Id == usuarioId)
+            .Select(u => new { u.Estado, u.RolId })
+            .FirstOrDefaultAsync();
 
-        if (!vigente)
+        if (fila is null || fila.Estado != EstadoUsuario.Activo)
+        {
+            return false;
+        }
+
+        // El rol se relee de la MISMA fila (proyección, mismo round trip que antes) y se
+        // rechaza la sesión ante cualquier diferencia con la claim ways:id_rol — nunca se
+        // reemite la claim en caliente. ClaimsWays.RolId se fija en el login
+        // (AuthEndpoints.ConstruirClaims) y hasta este chequeo viajaba sin cambios toda la vida
+        // de la sesión: con la cookie deslizante de 1h (el refresh reemite las MISMAS claims) o
+        // con la sesión de dispositivo de 365 días, degradar/promover a un usuario en la base no
+        // tenía ningún efecto hasta el próximo login. Rechazar (no reemitir) es consistente con
+        // el resto de este método: fuerza un re-login limpio, con claims correctas.
+        if (!int.TryParse(principal.FindFirstValue(ClaimsWays.RolId), out var rolEnClaim)
+            || rolEnClaim != fila.RolId)
         {
             return false;
         }
