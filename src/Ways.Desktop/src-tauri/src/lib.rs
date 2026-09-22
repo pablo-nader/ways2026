@@ -2,6 +2,7 @@ mod comandos;
 mod config;
 mod credencial;
 mod impresion;
+mod sesion;
 
 use std::sync::Mutex;
 
@@ -48,6 +49,8 @@ pub fn ejecutar() {
             comandos::info_app,
             comandos::guardar_credencial_de_dispositivo,
             comandos::leer_credencial_de_dispositivo,
+            comandos::guardar_sesion_de_cajero,
+            comandos::leer_sesion_de_cajero,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -504,6 +507,8 @@ mod tests {
             "allow-abrir-configuracion",
             "allow-guardar-credencial-de-dispositivo",
             "allow-leer-credencial-de-dispositivo",
+            "allow-guardar-sesion-de-cajero",
+            "allow-leer-sesion-de-cajero",
         ];
         for permiso in exclusivos_de_pos {
             assert!(

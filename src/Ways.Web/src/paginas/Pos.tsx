@@ -7,6 +7,7 @@ import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/ca
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
+import { limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -1315,6 +1316,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setMontoCierre(null)
     setCierreIncierto(false)
     setErrorCierrePorRetiro('')
+    // stage-pos-sesion-offline: cierre de turno es uno de los tres disparadores de limpieza de la
+    // sesión persistida (ver el doc-comment de `limpiarSesionDeCajeroPersistida`) — un turno es de
+    // UN cajero, el próximo tiene que loguearse como sí mismo. Este es el único choke point de
+    // "turno cerrado con éxito" del POS de escritorio (llega acá tanto desde el 2xx directo de
+    // `confirmarCierrePorRetiro` como desde la recuperación de un cierre incierto en
+    // `recuperarCierreIncierto`) — `CierreDeCaja.tsx` (camino web) nunca corre bajo Tauri, así que
+    // no necesita este mismo llamado. No hace nada fuera de Tauri, nunca lanza.
+    void limpiarSesionDeCajeroPersistida()
   }
 
   /**

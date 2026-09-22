@@ -3,8 +3,12 @@ import {
   corriendoEnTauri,
   establecerTokenDeSesionBearer,
   guardarCredencialDeDispositivo,
+  guardarSesionDeCajeroPersistida,
   inicializarUrlServidor,
   leerCredencialDeDispositivo,
+  limpiarSesionDeCajeroPersistida,
+  restaurarSesionDeCajeroPersistida,
+  sesionPersistidaEsValida,
   tokenDeSesionBearerActual,
   urlBaseApi,
 } from './entornoTauri'
@@ -28,6 +32,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Por si algún test de restaurarSesionDeCajeroPersistida (más abajo) usa vi.setSystemTime y
+  // falla antes de su propio vi.useRealTimers() — nunca debe filtrarse un reloj congelado a otro
+  // test de este archivo.
+  vi.useRealTimers()
   quitarPuenteTauri()
 })
 
@@ -127,6 +135,135 @@ describe('tokenDeSesionBearerActual/establecerTokenDeSesionBearer', () => {
     establecerTokenDeSesionBearer('un-token')
     expect(tokenDeSesionBearerActual()).toBe('un-token')
     establecerTokenDeSesionBearer(null)
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+})
+
+describe('sesionPersistidaEsValida (stage-pos-sesion-offline)', () => {
+  it('es true con un vencimiento futuro', () => {
+    expect(sesionPersistidaEsValida('2026-06-01T00:00:00Z', new Date('2026-01-01T00:00:00Z'))).toBe(true)
+  })
+
+  it('es false con un vencimiento pasado', () => {
+    expect(sesionPersistidaEsValida('2025-01-01T00:00:00Z', new Date('2026-01-01T00:00:00Z'))).toBe(false)
+  })
+
+  it('es false exactamente en el instante del vencimiento (estricto, nunca inclusive)', () => {
+    expect(sesionPersistidaEsValida('2026-01-01T00:00:00.000Z', new Date('2026-01-01T00:00:00.000Z'))).toBe(false)
+  })
+
+  it('es false con una fecha vacía o no parseable, nunca se asume vigente', () => {
+    expect(sesionPersistidaEsValida('', new Date())).toBe(false)
+    expect(sesionPersistidaEsValida('esto-no-es-una-fecha', new Date())).toBe(false)
+  })
+})
+
+describe('guardarSesionDeCajeroPersistida', () => {
+  it('no hace nada fuera de Tauri', async () => {
+    await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('invoca guardar_sesion_de_cajero con token y expira_el bajo Tauri', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
+      sesion: { token: 'un-token', expira_el: '2026-06-01T00:00:00Z' },
+    })
+  })
+
+  it('nunca lanza aunque el comando falle (un login ya autenticado en memoria no puede reportarse como fallido)', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    await expect(guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')).resolves.toBeUndefined()
+  })
+})
+
+describe('limpiarSesionDeCajeroPersistida', () => {
+  it('no hace nada fuera de Tauri', async () => {
+    await limpiarSesionDeCajeroPersistida()
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('reusa guardar_sesion_de_cajero con token/expira_el vacíos (sin comando de limpieza separado)', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    await limpiarSesionDeCajeroPersistida()
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', { sesion: { token: '', expira_el: '' } })
+  })
+
+  it('nunca lanza aunque el comando falle', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    await expect(limpiarSesionDeCajeroPersistida()).resolves.toBeUndefined()
+  })
+})
+
+describe('restaurarSesionDeCajeroPersistida', () => {
+  it('no hace nada (ni invoca) fuera de Tauri', async () => {
+    await restaurarSesionDeCajeroPersistida()
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('instala el token en memoria cuando la sesión persistida todavía no venció', async () => {
+    instalarPuenteTauri()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    invokeMock.mockResolvedValue({ token: 'token-restaurado', expira_el: '2026-06-01T00:00:00Z' })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(invokeMock).toHaveBeenCalledWith('leer_sesion_de_cajero')
+    expect(tokenDeSesionBearerActual()).toBe('token-restaurado')
+    vi.useRealTimers()
+  })
+
+  it('NO instala el token cuando la sesión persistida ya venció (cae al login, mismo camino que hoy)', async () => {
+    instalarPuenteTauri()
+    vi.setSystemTime(new Date('2026-06-02T00:00:00Z'))
+    invokeMock.mockResolvedValue({ token: 'token-vencido', expira_el: '2026-06-01T00:00:00Z' })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(tokenDeSesionBearerActual()).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('no hace nada si no hay ninguna sesión persistida (comando devuelve null)', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(null)
+    await restaurarSesionDeCajeroPersistida()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  /** Mutation target: el guard `resultado.token === ''` en `restaurarSesionDeCajeroPersistida` —
+   * un token vacío con un `expira_el` futuro (válido) no debe instalarse nunca, aunque
+   * `sesionPersistidaEsValida` por sí sola diría que la fecha es válida. El backend real
+   * (`sesion::analizar`, "vacío es None") nunca produce esta forma, pero la función de este lado
+   * no debe confiar ciegamente en la forma exacta de lo que cruza el IPC. */
+  it('no instala un token vacío aunque expira_el sea una fecha futura válida', async () => {
+    instalarPuenteTauri()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    invokeMock.mockResolvedValue({ token: '', expira_el: '2026-06-01T00:00:00Z' })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(tokenDeSesionBearerActual()).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('no hace nada (nunca lanza) si el comando falla', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    await expect(restaurarSesionDeCajeroPersistida()).resolves.toBeUndefined()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('no hace nada si la forma devuelta no tiene token/expira_el como string', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue({ token: 123, expira_el: '2026-06-01T00:00:00Z' })
+    await restaurarSesionDeCajeroPersistida()
     expect(tokenDeSesionBearerActual()).toBeNull()
   })
 })

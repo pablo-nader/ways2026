@@ -29,6 +29,16 @@ const MENSAJE_GENERICO = 'No se pudo determinar el dispositivo.'
  * /auth/me` (el mismo endpoint que ya usa `AuthContext`) es la única fuente de verdad de si esa
  * cookie sigue siendo válida — `GET /dispositivos/actual` no lo sabe, es anónimo.
  *
+ * stage-pos-sesion-offline: bajo Tauri no hay cookie (`cliente.ts` manda `credentials: 'omit'`
+ * ahí) — el mismo `GET /auth/me` de arriba autentica con el token bearer que `entornoTauri.ts`
+ * tenga en memoria en ese momento. `pos/main.tsx` restaura ese bearer desde disco
+ * (`restaurarSesionDeCajeroPersistida`) ANTES de montar este componente, así que esta función NO
+ * necesita saber nada de Tauri ni de dónde vino el token: si `/auth/me` acepta la credencial que
+ * `headerBearerSiCorresponde` adjuntó (cookie o bearer, restaurado o recién logueado), cae en
+ * `con-sesion` igual; si la rechaza (vencida, revocada, o no había ninguna), cae en
+ * `vinculado-sin-sesion` igual. Ningún estado nuevo hace falta en esta máquina de estados para
+ * eso — ver el reporte de la tarea para el trazado completo de por qué.
+ *
  * Nunca lanza: cualquier falla se traduce a un `Estado` (nunca deja "a medio camino" una sesión
  * que no se puede operar). Devuelve `vinculado-sin-sesion` tanto para un 401 legítimo como para un
  * usuario que no puede operar el POS o un PV que ya no existe — en estos dos últimos casos cierra

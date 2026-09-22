@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
+import { limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
@@ -169,6 +170,12 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
       // igual se cierra del lado del cliente.
       if (!(e instanceof ErrorApi && e.esNoAutenticado)) throw e
     } finally {
+      // stage-pos-sesion-offline: logout explícito es uno de los tres disparadores de limpieza
+      // de la sesión persistida (ver el doc-comment de `limpiarSesionDeCajeroPersistida`) — corre
+      // en el `finally` para limpiarse tanto si el POST tuvo éxito como si la sesión ya estaba
+      // vencida del lado del servidor (el catch de arriba). No hace nada fuera de Tauri, nunca
+      // lanza.
+      await limpiarSesionDeCajeroPersistida()
       cerrandoSesionRef.current = false
       setCerrandoSesion(false)
       alCerrarSesion()

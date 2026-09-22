@@ -52,8 +52,9 @@ La app usa DOS ventanas Tauri, cada una con su propia capacidad (ver
   `imprimir_raw`, `abrir_configuracion` ni las credenciales de dispositivo.
 - **`pos`** (pagina local `ui/pos.html`, build de `Ways.Web`, capacidad
   `pos.json`): imprimir, volver a la configuracion y leer/escribir la
-  credencial de dispositivo. Nunca `guardar_configuracion` ni
-  `leer_configuracion`.
+  credencial de dispositivo Y la sesion de cajero persistida (token bearer +
+  vencimiento, archivo aparte de la credencial de dispositivo -- ver
+  `sesion.rs`). Nunca `guardar_configuracion` ni `leer_configuracion`.
 
 Al iniciar, si no existe `config.json` en el directorio de configuracion de
 la app (`%APPDATA%/site.aipos.pos/config.json` en Windows), se muestra `main`.
@@ -133,12 +134,13 @@ esa pagina a un host distinto del origen configurado, incluyendo otro host
 Que NO protege, ni en `pos` ni en `main`: un script bundleado comprometido
 (supply-chain de una dependencia de `Ways.Web`, para `pos`) que se ejecuta
 DENTRO del origen ya permitido puede seguir mandando el token bearer en
-memoria o la credencial de dispositivo a ESE MISMO origen configurado --
-angostar `connect-src` reduce a DONDE puede mandarlo un script comprometido
-(ya no a cualquier host `https`), no si puede mandarlo al servidor legitimo
-en si. `main` sigue exactamente como antes (esquema `https:` sin host): no
-sostiene ningun secreto, asi que ese alcance mas amplio no agrega riesgo
-nuevo.
+memoria (o su copia persistida en disco, ver `sesion.rs` -- mismo origen,
+mismo permiso `pos.json` que ya lo alcanza) o la credencial de dispositivo a
+ESE MISMO origen configurado -- angostar `connect-src` reduce a DONDE puede
+mandarlo un script comprometido (ya no a cualquier host `https`), no si
+puede mandarlo al servidor legitimo en si. `main` sigue exactamente como
+antes (esquema `https:` sin host): no sostiene ningun secreto, asi que ese
+alcance mas amplio no agrega riesgo nuevo.
 
 **Lo que no se pudo verificar en este entorno** (no hay WebView2 real
 disponible aca): que el header reescrito efectivamente llegue a WebView2 y

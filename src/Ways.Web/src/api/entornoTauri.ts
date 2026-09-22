@@ -86,12 +86,18 @@ export function urlBaseApi(): string {
 }
 
 /**
- * Token bearer de la SESIÓN del cajero (slice bearer, Parte B) — vive en memoria, no en disco:
- * a diferencia del secreto de dispositivo (que tiene que sobrevivir un restart de la app ANTES
- * de cualquier login), este token lo emite `POST /auth/login-dispositivo` recién cuando hay un
- * cajero logueado, y perderlo al cerrar la app simplemente manda de vuelta a
- * `LoginDeDispositivo` — ya el comportamiento esperado hoy con la cookie de sesión si el usuario
- * la borra. `cliente.ts` lo adjunta como header `Authorization` en cada request bajo Tauri.
+ * Token bearer de la SESIÓN del cajero (slice bearer, Parte B) — la copia en memoria que
+ * `cliente.ts` adjunta como header `Authorization` en cada request bajo Tauri. `POST
+ * /auth/login-dispositivo` lo emite recién cuando hay un cajero logueado.
+ *
+ * stage-pos-sesion-offline: hasta esta etapa esta variable vivía SOLO en memoria — un restart del
+ * shell de escritorio, un F5, o un reboot del PC la perdían siempre, sin importar si la sesión
+ * seguía vigente del lado del servidor, obligando a repreguntar `LoginDeDispositivo` (que
+ * necesita red) incluso cuando no había pasado nada raro. Ahora se persiste del lado de Rust
+ * (`guardarSesionDeCajeroPersistida`, más abajo) junto con su vencimiento explícito, y se
+ * restaura al arrancar (`restaurarSesionDeCajeroPersistida`) — ver esas dos funciones para el
+ * ciclo de vida completo. El secreto de DISPOSITIVO (`credencial.rs`) sigue siendo un archivo
+ * aparte con un ciclo de vida distinto (sobrevive a todos los cajeros que usan el equipo).
  */
 let tokenDeSesionBearer: string | null = null
 
@@ -101,4 +107,98 @@ export function establecerTokenDeSesionBearer(token: string | null): void {
 
 export function tokenDeSesionBearerActual(): string | null {
   return tokenDeSesionBearer
+}
+
+/**
+ * Persiste el token de sesión del cajero + su vencimiento explícito (comando
+ * `guardar_sesion_de_cajero`, `sesion.rs`) — nunca en IndexedDB/localStorage, mismo criterio que
+ * `guardarCredencialDeDispositivo`. Se llama junto con `establecerTokenDeSesionBearer` en el
+ * único lugar donde el token se obtiene de un login real (`dispositivos.ts`, `iniciarSesion`).
+ *
+ * A diferencia de `guardarCredencialDeDispositivo`, esta función NUNCA lanza: un fallo de IPC acá
+ * no puede significar que el login mismo falló (`establecerTokenDeSesionBearer` ya corrió, el
+ * cajero YA está autenticado en memoria) — el único costo de no poder persistir es que un restart
+ * posterior va a volver a pedir login, exactamente el comportamiento de hoy sin este slice. No es
+ * comparable al secreto de dispositivo (`PantallaDeVinculacion.tsx`), que si no se persiste queda
+ * irrecuperable para siempre (el servidor nunca lo vuelve a entregar) y por eso sí necesita un
+ * camino de error dedicado. No hace nada fuera de Tauri.
+ */
+export async function guardarSesionDeCajeroPersistida(token: string, expiraEl: string): Promise<void> {
+  const tauri = puenteTauri()
+  if (!tauri) return
+  try {
+    await tauri.core.invoke('guardar_sesion_de_cajero', { sesion: { token, expira_el: expiraEl } })
+  } catch {
+    // Ver el doc-comment de arriba: un fallo de IPC acá nunca debe impedir que el login en curso
+    // se reporte como exitoso.
+  }
+}
+
+/**
+ * Limpia la sesión de cajero persistida — reusa `guardar_sesion_de_cajero` con `token`/`expira_el`
+ * vacíos (ver el doc-comment de `sesion.rs` sobre por qué no hay un comando de limpieza separado).
+ * Se llama en los tres casos donde la sesión deja de ser válida: logout explícito
+ * (`ShellPos.tsx`), un 401 del servidor (suscripto a `alPerderLaSesion` desde `pos/main.tsx`, para
+ * no crear un import circular con `cliente.ts`, que ya importa de este archivo), y el cierre de
+ * turno (`Pos.tsx`, `cierreConfirmado`). Nunca lanza, mismo motivo que
+ * `guardarSesionDeCajeroPersistida`. No hace nada fuera de Tauri.
+ */
+export async function limpiarSesionDeCajeroPersistida(): Promise<void> {
+  const tauri = puenteTauri()
+  if (!tauri) return
+  try {
+    await tauri.core.invoke('guardar_sesion_de_cajero', { sesion: { token: '', expira_el: '' } })
+  } catch {
+    // Ver el doc-comment de arriba.
+  }
+}
+
+/**
+ * `true` si `expiraEl` (el mismo valor que ya devolvió `POST /auth/login-dispositivo`, persistido
+ * tal cual) todavía no pasó, comparado contra `ahora` — clausula PURA (sin IPC, sin `Date.now()`
+ * directo) para poder testearla con un reloj controlado. Una fecha vacía o no parseable (archivo
+ * corrupto, o el string vacío que produce una limpieza) es SIEMPRE inválida: nunca se asume
+ * vigente sin poder confirmarlo, mismo criterio permisivo que el resto de este archivo pero
+ * invertido (acá "no se puede confirmar" cae a `false`, no a un valor cacheado).
+ *
+ * Sin `Number.isFinite` explícito a propósito (mutation-proof-tests, "guardas inmatables no se
+ * shippean", PR #257): `new Date('').getTime()`/`new Date('no-es-una-fecha').getTime()` devuelven
+ * `NaN`, y `NaN > cualquierNumero` es SIEMPRE `false` en JS — un chequeo de finitud agregado ahí
+ * quedaría sobredeterminado por esa comparación (ningún test podría matarlo, se probó a mano y
+ * sobrevivió la mutación), así que el comentario documenta la garantía en vez de un `if` muerto.
+ */
+export function sesionPersistidaEsValida(expiraEl: string, ahora: Date): boolean {
+  const expira = new Date(expiraEl).getTime()
+  return expira > ahora.getTime()
+}
+
+/**
+ * Lee la sesión de cajero persistida y, si es válida (token no vacío Y no vencida contra el reloj
+ * local, `sesionPersistidaEsValida`), la instala en memoria (`establecerTokenDeSesionBearer`)
+ * para que `cliente.ts` la adjunte en la próxima request. Deliberadamente NO llama a la red (ni a
+ * `/dispositivos/actual` ni a `/auth/me`): eso sigue siendo trabajo de `AppPos.tsx`
+ * (`resolverSesionDelDispositivo`), que ya es la única fuente de verdad sobre si una sesión sigue
+ * vigente del lado del servidor — esta función solo decide si hay algo localmente vigente que
+ * vale la pena intentar. Si no hay nada, o está vencida, no hace nada (el bearer en memoria queda
+ * `null`): el camino es idéntico al de hoy, `AppPos` cae al login del dispositivo. Una sesión
+ * vencida detectada acá NUNCA se limpia del archivo (a propósito: los únicos tres disparadores de
+ * limpieza son logout/401/cierre de turno, ver `limpiarSesionDeCajeroPersistida` — agregar un
+ * cuarto acá sería silencioso e innecesario, la próxima restauración la va a volver a descartar
+ * igual sin ningún efecto observable).
+ *
+ * Se llama una sola vez al arrancar (`pos/main.tsx`), junto con `inicializarUrlServidor` y ANTES
+ * de montar `AppPos` — si `AppPos` montara antes de esto, su primer `GET /auth/me` saldría sin el
+ * bearer restaurado todavía. Nunca lanza. No hace nada fuera de Tauri.
+ */
+export async function restaurarSesionDeCajeroPersistida(): Promise<void> {
+  const tauri = puenteTauri()
+  if (!tauri) return
+  try {
+    const resultado = (await tauri.core.invoke('leer_sesion_de_cajero')) as { token?: unknown; expira_el?: unknown } | null
+    if (!resultado || typeof resultado.token !== 'string' || typeof resultado.expira_el !== 'string') return
+    if (resultado.token === '' || !sesionPersistidaEsValida(resultado.expira_el, new Date())) return
+    establecerTokenDeSesionBearer(resultado.token)
+  } catch {
+    // Sin IPC no hay nada para restaurar — mismo criterio permisivo que el resto del archivo.
+  }
 }

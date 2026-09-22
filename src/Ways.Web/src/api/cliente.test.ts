@@ -4,7 +4,8 @@ const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
 
 const { alPerderLaSesion, api, ErrorApi, ErrorDeRed, nombreDeArchivo } = await import('./cliente')
-const { establecerTokenDeSesionBearer, inicializarUrlServidor, tokenDeSesionBearerActual } = await import('./entornoTauri')
+const { establecerTokenDeSesionBearer, inicializarUrlServidor, restaurarSesionDeCajeroPersistida, tokenDeSesionBearerActual } =
+  await import('./entornoTauri')
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: unknown }
 
@@ -98,6 +99,38 @@ describe('header Authorization bajo Tauri (slice bearer)', () => {
 
     await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
     expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  // stage-pos-sesion-offline: prueba de composición de punta a punta (sin mockear
+  // `entornoTauri.ts`, a diferencia de `AppPos.test.tsx`) — una sesión persistida válida,
+  // restaurada por `restaurarSesionDeCajeroPersistida`, tiene que llegar hasta el header
+  // `Authorization` de la PRÓXIMA request real de `pedir`, exactamente igual que un token recién
+  // logueado. Esto es lo que hace que `AppPos.tsx` no necesite ningún cambio propio: para esta
+  // capa, un token restaurado y uno recién logueado son indistinguibles.
+  it('un token restaurado desde la sesión persistida se adjunta igual que uno recién logueado', async () => {
+    instalarPuenteTauri((comando) =>
+      comando === 'leer_sesion_de_cajero' ? Promise.resolve({ token: 'token-restaurado', expira_el: '2099-01-01T00:00:00Z' }) : Promise.resolve(undefined),
+    )
+    await restaurarSesionDeCajeroPersistida()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-restaurado')
+  })
+
+  it('una sesión persistida vencida NUNCA se adjunta — la request sale sin Authorization', async () => {
+    instalarPuenteTauri((comando) =>
+      comando === 'leer_sesion_de_cajero' ? Promise.resolve({ token: 'token-vencido', expira_el: '2020-01-01T00:00:00Z' }) : Promise.resolve(undefined),
+    )
+    await restaurarSesionDeCajeroPersistida()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 })
 
