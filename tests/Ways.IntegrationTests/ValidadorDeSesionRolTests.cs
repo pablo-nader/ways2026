@@ -39,7 +39,14 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
 {
     private const string MailRoot = "test@test.com";
     private const string PasswordRoot = "root";
-    private const string PasswordCajero = "una-contraseña-de-cajero";
+
+    /// <summary>Password compartida por las dos cuentas sembradas directo en la base de
+    /// este archivo: el admin de tenant de <c>SembrarTenantConAdminAsync</c> y el cajero
+    /// de dispositivo de <c>CambiarElRolDelUsuarioCortaUnaSesionBearerYaEmitida</c>. El
+    /// nombre describe lo que las dos comparten — loguear con una password conocida para
+    /// después comparar la claim ya emitida contra el rol vigente en la base — no a cuál
+    /// de las dos pertenece.</summary>
+    private const string PasswordClaimsMatchCode = "una-contraseña-de-cajero";
 
     /// <summary>Siembra un tenant y un admin propio directo en la base, con hash real — mismo
     /// patrón que <c>UsuariosYLoginTests.SembrarTenantConUsuarioAsync</c>, duplicado a propósito
@@ -66,7 +73,7 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
             NombreUsuario = "admin",
             Mail = mail,
             RolId = (int)RolConocido.Admin,
-            PasswordHash = hasheador.Hashear(PasswordCajero),
+            PasswordHash = hasheador.Hashear(PasswordClaimsMatchCode),
             PasswordAlgoritmo = hasheador.Algoritmo,
             PasswordActualizadoEl = ahora,
             CreatedAt = ahora,
@@ -85,6 +92,17 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Variante de <see cref="CambiarRolAsync"/> para la cuenta root: no tiene
+    /// <c>IdTenant</c> (es de plataforma) así que se busca por <c>Mail</c> en vez de
+    /// <c>(IdTenant, NombreUsuario)</c>.</summary>
+    private async Task CambiarRolDeRootAsync(RolConocido rol)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var root = await db.Usuarios.FirstAsync(u => u.Mail == MailRoot);
+        root.RolId = (int)rol;
+        await db.SaveChangesAsync();
+    }
+
     [Fact]
     public async Task CambiarElRolDelUsuarioCortaUnaSesionDeCookieYaAbierta()
     {
@@ -92,7 +110,7 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
             nameof(CambiarElRolDelUsuarioCortaUnaSesionDeCookieYaAbierta));
 
         using var cliente = fixture.CreateClient();
-        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordCajero));
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordClaimsMatchCode));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var antes = await cliente.GetAsync("/api/usuarios/");
@@ -160,7 +178,7 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
                 NombreUsuario = "cajero1",
                 Mail = $"cajero1-{resultado.IdTenant}@ways.test",
                 RolId = (int)RolConocido.Admin,
-                PasswordHash = hasheador.Hashear(PasswordCajero),
+                PasswordHash = hasheador.Hashear(PasswordClaimsMatchCode),
                 PasswordAlgoritmo = hasheador.Algoritmo,
                 PasswordActualizadoEl = ahora,
                 CreatedAt = ahora,
@@ -171,7 +189,7 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
 
         using var loginDispositivo = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login-dispositivo")
         {
-            Content = JsonContent.Create(new SolicitudDeLoginDeDispositivo("cajero1", PasswordCajero, SolicitarBearer: true))
+            Content = JsonContent.Create(new SolicitudDeLoginDeDispositivo("cajero1", PasswordClaimsMatchCode, SolicitarBearer: true))
         };
         loginDispositivo.Headers.Add("Authorization", $"Dispositivo {vinculado.Secreto}");
 
@@ -191,5 +209,45 @@ public class ValidadorDeSesionRolTests(WaysApiFixture fixture) : IClassFixture<W
 
         var despues = await cajero.SendAsync(RequestConBearer(HttpMethod.Get, "/api/usuarios/", token!));
         Assert.Equal(HttpStatusCode.Unauthorized, despues.StatusCode);
+    }
+
+    /// <summary>Judgment-day (juez B): los dos tests de arriba prueban la cláusula de mismatch
+    /// para una cuenta de TENANT — ninguno la ejerce para root/plataforma, el único caso donde
+    /// equivocarse deja al dueño afuera de su propia plataforma. <c>PoliticaDeRoles.ValidarPuedeAsignarRol</c>
+    /// rechaza asignar o reasignar el rol root desde la aplicación (no hay ningún endpoint que
+    /// pueda producir este estado); la única forma de ejercitarlo es escribir <c>RolId</c> directo
+    /// en la base, igual que <see cref="CambiarRolAsync"/> hace para las otras dos cuentas.
+    ///
+    /// Con la claim ways:id_rol todavía diciendo Root, <c>ResolverModoDeLaSesionAsync</c> deja el
+    /// contexto en modo Plataforma — el filtro de tenant de EF no esconde la fila (plataforma ve
+    /// todo) — así que la comparación de <c>RolId</c> sí llega a evaluarse y tiene que rechazar.</summary>
+    [Fact]
+    public async Task DegradarElRolDeRootDirectoEnLaBaseCortaUnaSesionYaAbierta()
+    {
+        using var root = fixture.CreateClient();
+        var login = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var antes = await root.GetAsync("/api/usuarios/");
+        Assert.Equal(HttpStatusCode.OK, antes.StatusCode);
+
+        try
+        {
+            // Degradado a Admin SIN pasar por ningún re-login: la claim ways:id_rol de la
+            // cookie ya emitida sigue diciendo Root.
+            await CambiarRolDeRootAsync(RolConocido.Admin);
+
+            var despues = await root.GetAsync("/api/usuarios/");
+            Assert.Equal(HttpStatusCode.Unauthorized, despues.StatusCode);
+        }
+        finally
+        {
+            // La cuenta root es única y la comparte toda esta clase (mismo WaysApiFixture,
+            // mismo contenedor) — a diferencia de las cuentas de los otros dos tests, que
+            // siembran su propio tenant aislado, este test tiene que devolverla como la
+            // encontró para no filtrar estado a los tests que corren después (la colección
+            // "secuencial" garantiza que nunca corren en paralelo, pero sí en cualquier orden).
+            await CambiarRolDeRootAsync(RolConocido.Root);
+        }
     }
 }
