@@ -38,20 +38,42 @@ public static class ValidadorDeSesion
             return false;
         }
 
+        // Se parsea una sola vez acá y se reusa tanto en ResolverModoDeLaSesionAsync como en
+        // el chequeo de mismatch de más abajo — ambos leían el mismo claim ways:id_rol por
+        // separado, en cada request autenticada de toda la app.
+        var rolEnClaim = int.TryParse(principal.FindFirstValue(ClaimsWays.RolId), out var rolParseado)
+            ? rolParseado
+            : (int?)null;
+
         // El modo/tenant se resuelve ANTES de tocar `usuarios` a propósito (mismo motivo que el
         // comentario original en Program.cs): el filtro de tenant de EF (ADR-1) falla cerrado en
         // modo `Ninguno`, así que revisar la cuenta propia con el contexto todavía sin resolver
         // la dejaría siempre invisible, para cualquier cuenta de tenant.
-        if (!await ResolverModoDeLaSesionAsync(principal, http, db))
+        if (!await ResolverModoDeLaSesionAsync(principal, http, db, rolEnClaim))
         {
             return false;
         }
 
-        var vigente = await db.Usuarios
+        var fila = await db.Usuarios
             .AsNoTracking()
-            .AnyAsync(u => u.Id == usuarioId && u.Estado == EstadoUsuario.Activo);
+            .Where(u => u.Id == usuarioId)
+            .Select(u => new { u.Estado, u.RolId })
+            .FirstOrDefaultAsync();
 
-        if (!vigente)
+        if (fila is null || fila.Estado != EstadoUsuario.Activo)
+        {
+            return false;
+        }
+
+        // El rol se relee de la MISMA fila (proyección, mismo round trip que antes) y se
+        // rechaza la sesión ante cualquier diferencia con la claim ways:id_rol — nunca se
+        // reemite la claim en caliente. ClaimsWays.RolId se fija en el login
+        // (AuthEndpoints.ConstruirClaims) y hasta este chequeo viajaba sin cambios toda la vida
+        // de la sesión: con la cookie deslizante de 1h (el refresh reemite las MISMAS claims) o
+        // con la sesión de dispositivo de 365 días, degradar/promover a un usuario en la base no
+        // tenía ningún efecto hasta el próximo login. Rechazar (no reemitir) es consistente con
+        // el resto de este método: fuerza un re-login limpio, con claims correctas.
+        if (rolEnClaim is null || rolEnClaim != fila.RolId)
         {
             return false;
         }
@@ -84,13 +106,11 @@ public static class ValidadorDeSesion
     /// <c>Program.cs</c> (ahora movido acá): <c>false</c> cuando ya hay que rechazar la sesión
     /// (tenant inexistente/suspendido/de baja).</summary>
     private static async Task<bool> ResolverModoDeLaSesionAsync(
-        ClaimsPrincipal principal, HttpContext http, WaysDbContext db)
+        ClaimsPrincipal principal, HttpContext http, WaysDbContext db, int? rolEnClaim)
     {
         var tenantActual = http.RequestServices.GetRequiredService<TenantActualDeSesion>();
 
-        var esRoot =
-            int.TryParse(principal.FindFirstValue(ClaimsWays.RolId), out var rolId)
-            && (RolConocido)rolId == RolConocido.Root;
+        var esRoot = rolEnClaim is not null && (RolConocido)rolEnClaim == RolConocido.Root;
 
         if (esRoot)
         {
