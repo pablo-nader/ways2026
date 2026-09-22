@@ -9,32 +9,30 @@ import type { ClienteListado, MedioPagoListado, PaginaDe, ParametroResuelto, Pun
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const leerCredencialDeDispositivoMock = vi.fn()
-const tokenDeSesionBearerActualMock = vi.fn<() => string | null>()
+const snapshotDeSesionOfflineVigenteMock = vi.fn()
 const refrescarVentanaDeSesionPersistidaMock = vi.fn()
+const limpiarSesionDeCajeroPersistidaMock = vi.fn()
 
 // `dispositivos.ts` (no mockeado en este archivo, corre real) también importa de aca
-// (`corriendoEnTauri`/`establecerTokenDeSesionBearer`) — el mock tiene que cubrir TODO lo que el
-// módulo real exporta, o esos imports quedan `undefined` en cualquier módulo que lo importe
-// (Vitest mockea por path resuelto, no por import individual).
+// (`corriendoEnTauri`/`establecerTokenDeSesionBearer`), y `ShellPos.tsx`/`Pos.tsx` (tampoco
+// mockeados, se montan de verdad al llegar a `con-sesion`) importan
+// `establecerTokenDeSesionBearer`/`limpiarSesionDeCajeroPersistida` — el mock tiene que cubrir
+// TODO lo que el módulo real exporta y que cualquiera de esos módulos pueda llegar a invocar, o
+// esos imports quedan `undefined` (Vitest mockea por path resuelto, no por import individual).
+//
+// judgment-day ronda 2 (FIX CRITICAL): `snapshotDeSesionOfflineVigente` reemplaza a la combinación
+// `tokenDeSesionBearerActual() ? leerSesionDeDispositivoLocal() : null` de la ronda 1 — un solo
+// gate mockeable en vez de dos, mismo criterio "un solo registro" que el fix real.
 vi.mock('../api/entornoTauri', () => ({
   corriendoEnTauri: () => false,
   establecerTokenDeSesionBearer: () => {},
   guardarCredencialDeDispositivo: () => Promise.resolve(),
   leerCredencialDeDispositivo: (...args: unknown[]) => leerCredencialDeDispositivoMock(...args),
-  tokenDeSesionBearerActual: () => tokenDeSesionBearerActualMock(),
+  snapshotDeSesionOfflineVigente: (...args: unknown[]) => snapshotDeSesionOfflineVigenteMock(...args),
   refrescarVentanaDeSesionPersistida: (...args: unknown[]) => refrescarVentanaDeSesionPersistidaMock(...args),
+  limpiarSesionDeCajeroPersistida: (...args: unknown[]) => limpiarSesionDeCajeroPersistidaMock(...args),
   urlBaseApi: () => '',
   inicializarUrlServidor: () => Promise.resolve(),
-}))
-
-// stage-pos-sesion-offline (judgment-day ronda 1, FIX 1): snapshot local de dispositivo/PV/cajero
-// — mockeado aparte para poder controlar de forma determinista qué hay "cacheado" en cada test,
-// sin depender de la persistencia real de `localStorage` de jsdom entre tests.
-const guardarSesionDeDispositivoLocalMock = vi.fn()
-const leerSesionDeDispositivoLocalMock = vi.fn()
-vi.mock('./sesionDeDispositivoLocal', () => ({
-  guardarSesionDeDispositivoLocal: (...args: unknown[]) => guardarSesionDeDispositivoLocalMock(...args),
-  leerSesionDeDispositivoLocal: (...args: unknown[]) => leerSesionDeDispositivoLocalMock(...args),
 }))
 
 /** Espejo mínimo del observador real de `../api/cliente`: `dispararPerdidaDeSesion` simula lo que
@@ -189,13 +187,12 @@ beforeEach(() => {
   observadores = new Set()
   leerCredencialDeDispositivoMock.mockReset()
   leerCredencialDeDispositivoMock.mockResolvedValue(null)
-  tokenDeSesionBearerActualMock.mockReset()
-  tokenDeSesionBearerActualMock.mockReturnValue(null)
+  snapshotDeSesionOfflineVigenteMock.mockReset()
+  snapshotDeSesionOfflineVigenteMock.mockReturnValue(null)
   refrescarVentanaDeSesionPersistidaMock.mockReset()
   refrescarVentanaDeSesionPersistidaMock.mockResolvedValue(undefined)
-  guardarSesionDeDispositivoLocalMock.mockReset()
-  leerSesionDeDispositivoLocalMock.mockReset()
-  leerSesionDeDispositivoLocalMock.mockReturnValue(null)
+  limpiarSesionDeCajeroPersistidaMock.mockReset()
+  limpiarSesionDeCajeroPersistidaMock.mockResolvedValue(undefined)
 })
 
 describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-pos)', () => {
@@ -452,12 +449,15 @@ describe('AppPos — la sesión del cajero no vence hasta que cierra sesión (re
   })
 })
 
-describe('AppPos — restart sin red con una sesión local cacheada (judgment-day ronda 1, FIX 1 BLOCKER)', () => {
-  const SESION_LOCAL_CACHEADA = { dispositivo: DISPOSITIVO, usuario: usuarioFixture(), puntoVenta: puntoVentaFixture() }
+describe('AppPos — restart sin red con una sesión local cacheada (judgment-day ronda 1, FIX 1 BLOCKER; ronda 2, FIX CRITICAL)', () => {
+  // judgment-day ronda 2: el snapshot cacheado ya nunca trae un `UsuarioAutenticado` completo —
+  // solo lo mínimo (`UsuarioOfflineMinimo`, ver `entornoTauri.ts`), reconstruido por
+  // `usuarioOfflineComoAutenticado` en `AppPos.tsx`. `jperez`/`ROL.Vendedor` son los únicos campos
+  // que la pantalla renderizada realmente exhibe.
+  const SNAPSHOT_CACHEADO = { dispositivo: DISPOSITIVO, puntoVenta: puntoVentaFixture(), usuario: { id: 4, usuario: 'jperez', rolId: ROL.Vendedor } }
 
-  it('red caída en /dispositivos/actual, con bearer restaurado vigente Y snapshot cacheado, reconstruye el shell DIRECTO, sin llamar a /auth/me', async () => {
-    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
-    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
+  it('red caída en /dispositivos/actual, con snapshotDeSesionOfflineVigente devolviendo un snapshot, reconstruye el shell DIRECTO, sin llamar a /auth/me', async () => {
+    snapshotDeSesionOfflineVigenteMock.mockReturnValue(SNAPSHOT_CACHEADO)
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
     )
@@ -470,11 +470,13 @@ describe('AppPos — restart sin red con una sesión local cacheada (judgment-da
     // desde el snapshot cacheado, sin ninguna llamada de red adicional.
     expect(apiGetMock).not.toHaveBeenCalledWith('/auth/me')
     expect(apiGetMock).not.toHaveBeenCalledWith('/puntos-venta')
+    // El gate se revalida EN EL PUNTO DE USO (judgment-day ronda 2, FIX SUGGESTION) — se llama con
+    // un reloj real, nunca con un valor cacheado de otro momento.
+    expect(snapshotDeSesionOfflineVigenteMock).toHaveBeenCalledWith(expect.any(Date))
   })
 
-  it('red caída, con bearer restaurado pero SIN snapshot cacheado, cae al camino existente ("sin red pero vinculado")', async () => {
-    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
-    leerSesionDeDispositivoLocalMock.mockReturnValue(null)
+  it('red caída, con snapshotDeSesionOfflineVigente devolviendo null (sin bearer vigente, sin ventana vigente, o logout previo), cae al camino existente ("sin red pero vinculado")', async () => {
+    snapshotDeSesionOfflineVigenteMock.mockReturnValue(null)
     leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
@@ -485,22 +487,8 @@ describe('AppPos — restart sin red con una sesión local cacheada (judgment-da
     expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
   })
 
-  it('red caída, con snapshot cacheado pero SIN bearer restaurado (logout previo), cae al camino existente — nunca reconstruye con una sesión ya cerrada', async () => {
-    tokenDeSesionBearerActualMock.mockReturnValue(null)
-    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
-    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
-    )
-    render(<AppPos />)
-
-    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
-  })
-
-  it('precedencia (NO NEGOCIABLE): un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular aunque haya bearer restaurado Y snapshot cacheado', async () => {
-    tokenDeSesionBearerActualMock.mockReturnValue('token-restaurado')
-    leerSesionDeDispositivoLocalMock.mockReturnValue(SESION_LOCAL_CACHEADA)
+  it('precedencia (NO NEGOCIABLE): un 404 dispositivo_no_vinculado EXPLÍCITO manda a vincular aunque snapshotDeSesionOfflineVigente tenga un snapshot para dar', async () => {
+    snapshotDeSesionOfflineVigenteMock.mockReturnValue(SNAPSHOT_CACHEADO)
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual'
         ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))
@@ -509,13 +497,13 @@ describe('AppPos — restart sin red con una sesión local cacheada (judgment-da
     render(<AppPos />)
 
     // La base (un 404 real y alcanzable) siempre gana sobre cualquier estado local, aunque ese
-    // estado local sea "perfecto" (bearer vigente + snapshot completo) — nunca se consulta.
+    // estado local sea "perfecto" (snapshot completo) — nunca se consulta.
     expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
-    expect(leerSesionDeDispositivoLocalMock).not.toHaveBeenCalled()
+    expect(snapshotDeSesionOfflineVigenteMock).not.toHaveBeenCalled()
     expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
   })
 
-  it('con red disponible, resolver la sesión con éxito cachea el snapshot y refresca la ventana de la sesión persistida', async () => {
+  it('con red disponible, resolver la sesión con éxito refresca la ventana de la sesión persistida con el snapshot mínimo del cajero', async () => {
     mockearRutasComunes((ruta) => {
       if (ruta === '/dispositivos/actual') return Promise.resolve(DISPOSITIVO)
       if (ruta === '/auth/me') return Promise.resolve(usuarioFixture())
@@ -525,11 +513,64 @@ describe('AppPos — restart sin red con una sesión local cacheada (judgment-da
 
     await screen.findByRole('link', { name: 'Vender' })
 
-    expect(guardarSesionDeDispositivoLocalMock).toHaveBeenCalledWith({
+    // judgment-day ronda 2 (FIX CRITICAL): nunca el `UsuarioAutenticado` completo — ni `mail` ni
+    // `rol` (el string) viajan al snapshot persistido, ver `usuarioOfflineMinimo`.
+    expect(refrescarVentanaDeSesionPersistidaMock).toHaveBeenCalledWith({
       dispositivo: DISPOSITIVO,
-      usuario: usuarioFixture(),
       puntoVenta: puntoVentaFixture(),
+      usuario: { id: 4, usuario: 'jperez', rolId: ROL.Vendedor },
     })
-    expect(refrescarVentanaDeSesionPersistidaMock).toHaveBeenCalled()
+  })
+})
+
+describe('AppPos — logout explícito + restart sin red NUNCA re-admite al cajero (judgment-day ronda 2, FIX CRITICAL — escenario del Judge B)', () => {
+  /**
+   * Reproduce el escenario exacto que confirmaron los dos jueces: cajero A cierra sesión
+   * ("Cerrar sesión" en `ShellPos`, que llama `POST /auth/logout` + limpia el bearer en memoria +
+   * `limpiarSesionDeCajeroPersistida()`) y, en un restart posterior SIN red, el snapshot NUNCA
+   * vuelve a estar disponible — porque token, vencimiento y snapshot son ahora el MISMO registro
+   * persistido (`sesion.rs`), y limpiar uno limpia el otro con él (ver el doc-comment de
+   * `limpiarSesionDeCajeroPersistida` en `entornoTauri.ts`, y su prueba unitaria dedicada en
+   * `entornoTauri.test.ts`, "borra también el snapshot cacheado en memoria").
+   *
+   * El "restart" se simula desmontando y volviendo a montar `<AppPos />` con
+   * `snapshotDeSesionOfflineVigenteMock` reconfigurado a `null` — exactamente lo que
+   * `snapshotDeSesionOfflineVigente` real devolvería tras una limpieza exitosa. Lo que este test
+   * NO puede probar (y honestamente no se puede probar en esta capa): que un restart posterior a
+   * una escritura de limpieza que en sí NUNCA llegó a completarse (IPC/disco) no restaure la
+   * sesión vieja — si esa escritura nunca sucedió, no hay nada que este código pueda hacer
+   * distinto (ver el comentario dedicado en `entornoTauri.test.ts` sobre ese límite inherente).
+   */
+  it('logout exitoso → restart sin red → NUNCA reconstruye con-sesion sin pedir contraseña', async () => {
+    mockearRutasComunes((ruta) => {
+      if (ruta === '/dispositivos/actual') return Promise.resolve(DISPOSITIVO)
+      if (ruta === '/auth/me') return Promise.resolve(usuarioFixture())
+      return undefined
+    })
+    const primerMontaje = render(<AppPos />)
+    await screen.findByRole('link', { name: 'Vender' })
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/auth/logout'))
+    await waitFor(() => expect(limpiarSesionDeCajeroPersistidaMock).toHaveBeenCalled())
+    // Confirma el logout del lado del cliente: vuelve a la pantalla de login, nunca se queda "a
+    // medio camino" en el shell.
+    expect(await screen.findByPlaceholderText('Usuario')).toBeInTheDocument()
+    primerMontaje.unmount()
+
+    // "Restart": nuevo montaje, sin red — la limpieza recién confirmada ya se llevó el snapshot
+    // con ella, así que el gate offline correctamente no tiene nada para devolver.
+    snapshotDeSesionOfflineVigenteMock.mockReturnValue(null)
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    // Nunca "Vender" sin contraseña: como mucho el callejón sin salida ya existente, nunca un
+    // shell operable de gratis.
+    expect(await screen.findByText(/este equipo ya está vinculado/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Vender' })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Usuario')).not.toBeInTheDocument()
   })
 })

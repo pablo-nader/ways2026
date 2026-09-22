@@ -3,14 +3,14 @@ import { MemoryRouter } from 'react-router'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
-import { leerCredencialDeDispositivo, refrescarVentanaDeSesionPersistida, tokenDeSesionBearerActual } from '../api/entornoTauri'
+import { leerCredencialDeDispositivo, refrescarVentanaDeSesionPersistida, snapshotDeSesionOfflineVigente } from '../api/entornoTauri'
+import type { UsuarioOfflineMinimo } from '../api/entornoTauri'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
 import { LoginDeDispositivo } from './LoginDeDispositivo'
 import { PantallaDeVinculacion } from './PantallaDeVinculacion'
 import { resolverPuntoVentaDelDispositivo } from './puntoVentaDelDispositivo'
-import { guardarSesionDeDispositivoLocal, leerSesionDeDispositivoLocal } from './sesionDeDispositivoLocal'
 import { ShellPos } from './ShellPos'
 
 type Estado =
@@ -22,6 +22,23 @@ type Estado =
   | { fase: 'con-sesion'; dispositivo: DispositivoActual; usuario: UsuarioAutenticado; puntoVenta: PuntoVentaListado }
 
 const MENSAJE_GENERICO = 'No se pudo determinar el dispositivo.'
+
+/** Recorta un `UsuarioAutenticado` completo a lo mínimo que se persiste para la reconstrucción
+ * offline (judgment-day ronda 2, FIX CRITICAL) — ver el doc-comment de `UsuarioOfflineMinimo` en
+ * `entornoTauri.ts` sobre qué se descarta y por qué (nunca `mail`, PII que nada bajo este shell
+ * lee; nunca `rol`, tampoco leído; `rolId` sí, porque gatea `puedeAnular` en `VentasDelTurno`). */
+function usuarioOfflineMinimo(usuario: UsuarioAutenticado): UsuarioOfflineMinimo {
+  return { id: usuario.id, usuario: usuario.usuario, rolId: usuario.rolId }
+}
+
+/** Reconstruye un `UsuarioAutenticado`-shaped desde el snapshot offline mínimo — SOLO para el
+ * camino de reconstrucción sin red (`cargarDispositivo`, más abajo): los campos que el snapshot
+ * nunca guardó (`mail`, `rol`, `ultimaConexion`, `idTenant`) quedan en un valor neutro, nunca un
+ * dato real inventado. Nada bajo este shell los lee (ver `usuarioOfflineMinimo`) — si algún día
+ * algo los necesitara, tendría que volver a pasar por `/auth/me` primero, con red. */
+function usuarioOfflineComoAutenticado(minimo: UsuarioOfflineMinimo): UsuarioAutenticado {
+  return { id: minimo.id, usuario: minimo.usuario, rolId: minimo.rolId, mail: '', rol: '', ultimaConexion: null, idTenant: null }
+}
 
 /**
  * Producto: la sesión del cajero NO vence hasta que se cierra a mano (`POST /auth/login-dispositivo`
@@ -61,13 +78,14 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
       return { fase: 'vinculado-sin-sesion', dispositivo }
     }
 
-    // judgment-day ronda 1 (FIX 1, BLOCKER): el servidor acaba de confirmar los tres datos juntos
-    // — se cachean para que un restart posterior SIN red pueda reconstruir el shell (ver
-    // `cargarDispositivo`, más abajo) y se refresca la ventana de vigencia LOCAL del bearer
-    // persistido (`entornoTauri.ts`, FIX 2b): el dispositivo demostró que puede hablar con el
-    // servidor AHORA, así que un cajero activo con red normal nunca ve expirar el archivo.
-    guardarSesionDeDispositivoLocal({ dispositivo, usuario, puntoVenta })
-    await refrescarVentanaDeSesionPersistida()
+    // judgment-day ronda 1 (FIX 1, BLOCKER) + ronda 2 (FIX CRITICAL): el servidor acaba de
+    // confirmar los tres datos juntos — se cachean en el MISMO registro que el bearer (ver el
+    // doc-comment de `refrescarVentanaDeSesionPersistida` en `entornoTauri.ts`) para que un
+    // restart posterior SIN red pueda reconstruir el shell (ver `cargarDispositivo`, más abajo),
+    // y de paso se refresca la ventana de vigencia LOCAL del bearer persistido (FIX 2b): el
+    // dispositivo demostró que puede hablar con el servidor AHORA, así que un cajero activo con
+    // red normal nunca ve expirar el archivo.
+    await refrescarVentanaDeSesionPersistida({ dispositivo, puntoVenta, usuario: usuarioOfflineMinimo(usuario) })
 
     return { fase: 'con-sesion', dispositivo, usuario, puntoVenta }
   } catch (error) {
@@ -90,13 +108,15 @@ async function resolverSesionDelDispositivo(dispositivo: DispositivoActual): Pro
  *    del servidor (nunca una inferencia local) y siempre gana, aunque haya una credencial local.
  * 2. Cualquier otra falla en la llamada — el servidor ni siquiera pudo responder (red caída, DNS,
  *    CORS) — intenta reconstruir el POS enteramente desde estado local, en dos niveles (judgment-
- *    day ronda 1, FIX 1):
- *    a. Si hay un bearer restaurado y vigente (`tokenDeSesionBearerActual`, `entornoTauri.ts` —
- *       `pos/main.tsx` ya lo restauró ANTES de montar este componente) Y un snapshot cacheado del
- *       último dispositivo/PV/cajero confirmado por el servidor
- *       (`leerSesionDeDispositivoLocal`, `sesionDeDispositivoLocal.ts`) → directo a `con-sesion`,
- *       sin ninguna llamada de red adicional. Este es el camino que hace que la sesión persistida
- *       sirva de algo durante un corte: sin él, el bearer restaurado nunca se llegaba a consultar.
+ *    day ronda 1, FIX 1; ronda 2, FIX CRITICAL):
+ *    a. Si hay un snapshot de sesión offline vigente (`snapshotDeSesionOfflineVigente`,
+ *       `entornoTauri.ts` — solo devuelve algo con un bearer en memoria restaurado por
+ *       `pos/main.tsx` ANTES de montar este componente Y la ventana de vigencia LOCAL todavía sin
+ *       pasar, revalidada en este mismo punto de uso) → directo a `con-sesion`, sin ninguna
+ *       llamada de red adicional. Este es el camino que hace que la sesión persistida sirva de
+ *       algo durante un corte: sin él, el bearer restaurado nunca se llegaba a consultar. Token,
+ *       vencimiento y snapshot son el MISMO registro persistido (`sesion.rs`) — no pueden
+ *       divergir entre sí (ver el doc-comment de `SnapshotDeSesionOffline`).
  *    b. Si no, consulta la credencial de dispositivo guardada (`leerCredencialDeDispositivo`,
  *       `entornoTauri.ts`, respaldada por `leer_credencial_de_dispositivo` del lado de Rust, que
  *       esta página SÍ tiene permitido invocar — ver `capabilities/pos.json`). Si hay una, la base
@@ -165,18 +185,24 @@ export function AppPos() {
       // que `pos/main.tsx` ya restauró en memoria ANTES de montar este componente
       // (`restaurarSesionDeCajeroPersistida`), así que un restart con la red caída SIEMPRE caía en
       // `sin-red-pero-vinculado` (un callejón sin salida con un solo botón "Reintentar"), aunque
-      // hubiera una sesión de cajero perfectamente vigente esperando. Ahora, si hay un bearer
-      // restaurado Y vigente (`tokenDeSesionBearerActual()`, ya validado contra su vencimiento
-      // local por `restaurarSesionDeCajeroPersistida`) Y un snapshot cacheado del dispositivo/PV/
-      // cajero (`guardarSesionDeDispositivoLocal`, escrito la última vez que el servidor confirmó
-      // los tres juntos), se reconstruye el shell DIRECTO, sin ninguna llamada de red adicional.
+      // hubiera una sesión de cajero perfectamente vigente esperando. Ahora, si hay un snapshot de
+      // dispositivo/PV/cajero (`snapshotDeSesionOfflineVigente`, `entornoTauri.ts`) — que solo
+      // devuelve algo cuando hay un bearer en memoria Y la ventana de vigencia LOCAL todavía no
+      // pasó CONTRA AHORA (judgment-day ronda 2, FIX SUGGESTION: revalidado en este mismo punto de
+      // uso, no solo una vez al arrancar) — se reconstruye el shell DIRECTO, sin ninguna llamada
+      // de red adicional.
       //
       // Esto nunca puede pisar el 404 `dispositivo_no_vinculado` explícito de arriba (esa rama
       // retorna antes de llegar acá) — la base sigue siendo la única autoridad para esa respuesta;
       // esto solo cubre el caso en que la base NO PUDO ser consultada en absoluto.
-      const sesionLocal = tokenDeSesionBearerActual() ? leerSesionDeDispositivoLocal() : null
-      if (sesionLocal) {
-        setEstado({ fase: 'con-sesion', ...sesionLocal })
+      const snapshot = snapshotDeSesionOfflineVigente(new Date())
+      if (snapshot) {
+        setEstado({
+          fase: 'con-sesion',
+          dispositivo: snapshot.dispositivo,
+          usuario: usuarioOfflineComoAutenticado(snapshot.usuario),
+          puntoVenta: snapshot.puntoVenta,
+        })
         return
       }
 
@@ -234,10 +260,13 @@ export function AppPos() {
           dispositivo={estado.dispositivo}
           onSesion={(usuario, puntoVenta) => {
             if (estado.fase !== 'vinculado-sin-sesion') return
-            // FIX 1 (judgment-day ronda 1): login fresco es el otro momento en que el servidor
-            // confirma los tres datos juntos — mismo cacheo que `resolverSesionDelDispositivo`,
-            // para que un restart posterior sin red también pueda reconstruir desde ACÁ.
-            guardarSesionDeDispositivoLocal({ dispositivo: estado.dispositivo, usuario, puntoVenta })
+            // FIX 1 (judgment-day ronda 1) + FIX CRITICAL (ronda 2): login fresco es el otro
+            // momento en que el servidor confirma los tres datos juntos — mismo cacheo (ahora en
+            // el registro único de `entornoTauri.ts`) que `resolverSesionDelDispositivo`, para
+            // que un restart posterior sin red también pueda reconstruir desde ACÁ. Fire-and-
+            // forget (nunca lanza, ver el doc-comment de `guardarSesionDeCajeroPersistida`): este
+            // callback es síncrono, no bloquea el paso a `con-sesion`.
+            void refrescarVentanaDeSesionPersistida({ dispositivo: estado.dispositivo, puntoVenta, usuario: usuarioOfflineMinimo(usuario) })
             setEstado({ fase: 'con-sesion', dispositivo: estado.dispositivo, usuario, puntoVenta })
           }}
           onDispositivoInvalido={() => setEstado({ fase: 'sin-vincular' })}

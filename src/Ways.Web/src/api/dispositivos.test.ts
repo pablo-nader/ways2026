@@ -77,8 +77,11 @@ describe('clienteDeDispositivos', () => {
 
     expect(resultado).toBe(usuario)
     expect(tokenDeSesionBearerActual()).toBe('token-de-sesion')
+    // `snapshot: null`: `iniciarSesion` todavía no conoce el punto de venta en este momento (se
+    // resuelve un instante después, ver `LoginDeDispositivo.tsx`) — ver el doc-comment de
+    // `guardarSesionDeCajeroPersistida` en `entornoTauri.ts`.
     expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
-      sesion: { token: 'token-de-sesion', expira_el: '2026-06-01T00:00:00Z' },
+      sesion: { token: 'token-de-sesion', expira_el: '2026-06-01T00:00:00Z', snapshot: null },
     })
   })
 
@@ -118,7 +121,7 @@ describe('clienteDeDispositivos', () => {
 
     const expiracionEsperada = new Date(ahora.getTime() + VENTANA_SESION_OFFLINE_MS).toISOString()
     expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
-      sesion: { token: 'token-de-sesion', expira_el: expiracionEsperada },
+      sesion: { token: 'token-de-sesion', expira_el: expiracionEsperada, snapshot: null },
     })
     expect(expiracionEsperada).not.toBe(expiraElServidor)
     vi.useRealTimers()

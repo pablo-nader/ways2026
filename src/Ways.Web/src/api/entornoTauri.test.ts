@@ -11,10 +11,32 @@ import {
   refrescarVentanaDeSesionPersistida,
   restaurarSesionDeCajeroPersistida,
   sesionPersistidaEsValida,
+  snapshotDeSesionOfflineVigente,
   tokenDeSesionBearerActual,
   urlBaseApi,
   VENTANA_SESION_OFFLINE_MS,
 } from './entornoTauri'
+import type { SnapshotDeSesionOffline } from './entornoTauri'
+
+const SNAPSHOT_FIXTURE: SnapshotDeSesionOffline = {
+  dispositivo: { id: 1, nombre: 'Caja 1', idPuntoVenta: 7, puntoVenta: { numero: 1, nombre: 'Local Centro' }, empresa: { nombre: 'Almacén Demo' } },
+  puntoVenta: {
+    id: 7,
+    idTenant: 1,
+    idEmpresa: 3,
+    nombre: 'Local Centro',
+    domicilio: null,
+    horario: null,
+    whatsapp: null,
+    instagram: null,
+    facebook: null,
+    web: null,
+    nombreTenant: 'Tenant Demo',
+    razonSocialEmpresa: 'Empresa Demo',
+    modo: 'Escritorio',
+  },
+  usuario: { id: 4, usuario: 'jperez', rolId: 4 },
+}
 
 type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
 
@@ -167,12 +189,21 @@ describe('guardarSesionDeCajeroPersistida', () => {
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it('invoca guardar_sesion_de_cajero con token y expira_el bajo Tauri', async () => {
+  it('invoca guardar_sesion_de_cajero con token, expira_el y snapshot null por defecto bajo Tauri', async () => {
     instalarPuenteTauri()
     invokeMock.mockResolvedValue(undefined)
     await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')
     expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
-      sesion: { token: 'un-token', expira_el: '2026-06-01T00:00:00Z' },
+      sesion: { token: 'un-token', expira_el: '2026-06-01T00:00:00Z', snapshot: null },
+    })
+  })
+
+  it('invoca guardar_sesion_de_cajero con el snapshot cuando se le pasa uno (judgment-day ronda 2, FIX CRITICAL)', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
+      sesion: { token: 'un-token', expira_el: '2026-06-01T00:00:00Z', snapshot: SNAPSHOT_FIXTURE },
     })
   })
 
@@ -180,6 +211,12 @@ describe('guardarSesionDeCajeroPersistida', () => {
     instalarPuenteTauri()
     invokeMock.mockRejectedValue(new Error('IPC falló'))
     await expect(guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z')).resolves.toBeUndefined()
+  })
+
+  it('fuera de Tauri no actualiza los espejos en memoria (no hay ningún registro persistido del que ser espejo)', async () => {
+    establecerTokenDeSesionBearer('token-vigente')
+    await guardarSesionDeCajeroPersistida('un-token', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+    expect(snapshotDeSesionOfflineVigente(new Date('2026-01-01T00:00:00Z'))).toBeNull()
   })
 })
 
@@ -189,17 +226,79 @@ describe('limpiarSesionDeCajeroPersistida', () => {
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it('reusa guardar_sesion_de_cajero con token/expira_el vacíos (sin comando de limpieza separado)', async () => {
+  it('reusa guardar_sesion_de_cajero con token/expira_el/snapshot vacíos (sin comando de limpieza separado)', async () => {
     instalarPuenteTauri()
     invokeMock.mockResolvedValue(undefined)
     await limpiarSesionDeCajeroPersistida()
-    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', { sesion: { token: '', expira_el: '' } })
+    expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', { sesion: { token: '', expira_el: '', snapshot: null } })
   })
 
   it('nunca lanza aunque el comando falle', async () => {
     instalarPuenteTauri()
     invokeMock.mockRejectedValue(new Error('IPC falló'))
     await expect(limpiarSesionDeCajeroPersistida()).resolves.toBeUndefined()
+  })
+
+  /**
+   * judgment-day ronda 2 (escenario de Judge B, "incluso si la limpieza falla"): `ShellPos.cerrarSesion`
+   * suelta el bearer EN MEMORIA con `establecerTokenDeSesionBearer(null)` ANTES de, y por fuera
+   * de, el `await limpiarSesionDeCajeroPersistida()` que sí puede fallar (IPC, disco). Este test
+   * reproduce ese mismo orden: aunque el IPC de limpieza rechace, el gate offline de ESTE proceso
+   * ya no puede reconstruir nada, porque depende del bearer en memoria, que se soltó aparte y sin
+   * IPC de por medio.
+   *
+   * Lo que este test NO prueba (y no se puede probar en esta capa, ver el reporte de la tarea):
+   * que un RESTART posterior, con el archivo en disco todavía intacto porque esa misma escritura
+   * de limpieza nunca llegó a completarse, no vuelva a restaurar la sesión vieja — si la
+   * escritura en sí nunca sucedió, `restaurarSesionDeCajeroPersistida` del próximo arranque va a
+   * leer, legítimamente, lo último que SÍ se escribió con éxito. Ninguna función de este archivo
+   * puede garantizar la durabilidad de una escritura que su propio `catch` swallowea a propósito
+   * (ver el doc-comment de `limpiarSesionDeCajeroPersistida`) — es un límite inherente a persistir
+   * un bearer sin revocación de servidor, ya documentado en el riesgo real de `sesion.rs`
+   * (`Ways.Desktop/README.md`), no algo nuevo que esta ronda podría cerrar del todo.
+   */
+  it('aunque el IPC de limpieza rechace, el gate offline de este proceso ya no reconstruye (el bearer se soltó aparte, sin IPC)', async () => {
+    instalarPuenteTauri()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    invokeMock.mockResolvedValue(undefined)
+    establecerTokenDeSesionBearer('token-de-cajero-a')
+    await guardarSesionDeCajeroPersistida('token-de-cajero-a', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+    expect(snapshotDeSesionOfflineVigente(ahora)).toEqual(SNAPSHOT_FIXTURE)
+
+    invokeMock.mockRejectedValue(new Error('IPC falló'))
+    // Mismo orden exacto que `ShellPos.cerrarSesion`.
+    establecerTokenDeSesionBearer(null)
+    await expect(limpiarSesionDeCajeroPersistida()).resolves.toBeUndefined()
+
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
+  })
+
+  /**
+   * El corazón del fix CRITICAL de judgment-day ronda 2 (confirmado por los dos jueces): antes de
+   * esta ronda, el snapshot vivía en un `localStorage` separado (`sesionDeDispositivoLocal.ts`,
+   * eliminado) que NINGUNO de los tres disparadores de limpieza tocaba nunca. Ahora, al ser el
+   * mismo registro que el token, limpiar uno limpia el otro con él — sin código nuevo por
+   * disparador.
+   *
+   * Mutación probada a mano: si `limpiarSesionDeCajeroPersistida` volviera a su implementación
+   * original (invocar el comando directo, sin pasar por `guardarSesionDeCajeroPersistida`, que es
+   * la única función que toca los espejos en memoria), este test falla (`snapshotDeSesionOfflineVigente`
+   * seguiría devolviendo el snapshot viejo) — con la implementación actual, pasa.
+   */
+  it('borra también el snapshot cacheado en memoria, no solo el token — nunca dos limpiezas independientes', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    establecerTokenDeSesionBearer('token-de-cajero-a')
+    await guardarSesionDeCajeroPersistida('token-de-cajero-a', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+    expect(snapshotDeSesionOfflineVigente(ahora)).toEqual(SNAPSHOT_FIXTURE)
+
+    await limpiarSesionDeCajeroPersistida()
+    // Mismo camino que `ShellPos.cerrarSesion`: el bearer en memoria se suelta aparte —
+    // `limpiarSesionDeCajeroPersistida` sola nunca alcanzó para eso (ver su doc-comment).
+    establecerTokenDeSesionBearer(null)
+
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
   })
 })
 
@@ -269,6 +368,77 @@ describe('restaurarSesionDeCajeroPersistida', () => {
     await restaurarSesionDeCajeroPersistida()
     expect(tokenDeSesionBearerActual()).toBeNull()
   })
+
+  /** judgment-day ronda 2 (FIX CRITICAL): restaurar el bearer restaura, del MISMO registro, el
+   * snapshot de dispositivo/PV/cajero — sin esto `AppPos.tsx` no tendría con qué reconstruir el
+   * shell offline (ver `snapshotDeSesionOfflineVigente`). */
+  it('con una sesión válida, también deja el snapshot disponible para snapshotDeSesionOfflineVigente', async () => {
+    instalarPuenteTauri()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    vi.setSystemTime(ahora)
+    invokeMock.mockResolvedValue({ token: 'token-restaurado', expira_el: '2026-06-01T00:00:00Z', snapshot: SNAPSHOT_FIXTURE })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(snapshotDeSesionOfflineVigente(ahora)).toEqual(SNAPSHOT_FIXTURE)
+    vi.useRealTimers()
+  })
+
+  /** Un snapshot con forma inválida (archivo corrupto, o al cajero le falta algún campo) se
+   * descarta con `null` en vez de instalarse a medias — mismo criterio permisivo que el resto del
+   * archivo. El token SÍ se instala igual: un snapshot roto no debe tirar abajo el bearer, que es
+   * información independiente y ya validada por su cuenta. */
+  it('con un snapshot de forma inválida, instala el token pero descarta el snapshot', async () => {
+    instalarPuenteTauri()
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    vi.setSystemTime(ahora)
+    invokeMock.mockResolvedValue({
+      token: 'token-restaurado',
+      expira_el: '2026-06-01T00:00:00Z',
+      snapshot: { dispositivo: SNAPSHOT_FIXTURE.dispositivo, puntoVenta: SNAPSHOT_FIXTURE.puntoVenta /* usuario falta */ },
+    })
+
+    await restaurarSesionDeCajeroPersistida()
+
+    expect(tokenDeSesionBearerActual()).toBe('token-restaurado')
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
+    vi.useRealTimers()
+  })
+})
+
+describe('snapshotDeSesionOfflineVigente (judgment-day ronda 2, FIX CRITICAL + FIX SUGGESTION)', () => {
+  it('null sin bearer en memoria, aunque haya un snapshot cacheado', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    const ahora = new Date('2026-01-01T00:00:00Z')
+    establecerTokenDeSesionBearer('token-x')
+    await guardarSesionDeCajeroPersistida('token-x', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+
+    establecerTokenDeSesionBearer(null)
+
+    expect(snapshotDeSesionOfflineVigente(ahora)).toBeNull()
+  })
+
+  /** FIX SUGGESTION (judge B): re-validar en el punto de uso, no solo una vez al arrancar — una
+   * sesión larga que cruzó la ventana local en vuelo (sin volver a hablar con el servidor con
+   * éxito, que es lo único que la estira) ya no puede colarse con un token local-vencido. */
+  it('null si la ventana local ya venció contra "ahora", aunque el bearer siga en memoria', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    establecerTokenDeSesionBearer('token-x')
+    await guardarSesionDeCajeroPersistida('token-x', '2026-01-01T00:00:00Z', SNAPSHOT_FIXTURE)
+
+    expect(snapshotDeSesionOfflineVigente(new Date('2026-01-02T00:00:00Z'))).toBeNull()
+  })
+
+  it('devuelve el snapshot cuando hay bearer en memoria Y la ventana local todavía no pasó', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValue(undefined)
+    establecerTokenDeSesionBearer('token-x')
+    await guardarSesionDeCajeroPersistida('token-x', '2026-06-01T00:00:00Z', SNAPSHOT_FIXTURE)
+
+    expect(snapshotDeSesionOfflineVigente(new Date('2026-01-01T00:00:00Z'))).toEqual(SNAPSHOT_FIXTURE)
+  })
 })
 
 describe('calcularExpiracionPersistida (judgment-day ronda 1, FIX 2b)', () => {
@@ -305,22 +475,26 @@ describe('calcularExpiracionPersistida (judgment-day ronda 1, FIX 2b)', () => {
   })
 })
 
-describe('refrescarVentanaDeSesionPersistida (judgment-day ronda 1, FIX 2b)', () => {
+describe('refrescarVentanaDeSesionPersistida (judgment-day ronda 1, FIX 2b; ronda 2, FIX CRITICAL)', () => {
   it('no hace nada si no hay un token en memoria', async () => {
-    await refrescarVentanaDeSesionPersistida()
+    await refrescarVentanaDeSesionPersistida(SNAPSHOT_FIXTURE)
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it('con un token en memoria, persiste ESE token con una nueva expiración = ahora + VENTANA_SESION_OFFLINE_MS', async () => {
+  it('con un token en memoria, persiste ESE token con una nueva expiración = ahora + VENTANA_SESION_OFFLINE_MS, junto con el snapshot', async () => {
     instalarPuenteTauri()
     invokeMock.mockResolvedValue(undefined)
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     establecerTokenDeSesionBearer('token-vigente')
 
-    await refrescarVentanaDeSesionPersistida()
+    await refrescarVentanaDeSesionPersistida(SNAPSHOT_FIXTURE)
 
     expect(invokeMock).toHaveBeenCalledWith('guardar_sesion_de_cajero', {
-      sesion: { token: 'token-vigente', expira_el: new Date(Date.now() + VENTANA_SESION_OFFLINE_MS).toISOString() },
+      sesion: {
+        token: 'token-vigente',
+        expira_el: new Date(Date.now() + VENTANA_SESION_OFFLINE_MS).toISOString(),
+        snapshot: SNAPSHOT_FIXTURE,
+      },
     })
     vi.useRealTimers()
   })
@@ -330,6 +504,6 @@ describe('refrescarVentanaDeSesionPersistida (judgment-day ronda 1, FIX 2b)', ()
     invokeMock.mockRejectedValue(new Error('IPC falló'))
     establecerTokenDeSesionBearer('token-vigente')
 
-    await expect(refrescarVentanaDeSesionPersistida()).resolves.toBeUndefined()
+    await expect(refrescarVentanaDeSesionPersistida(SNAPSHOT_FIXTURE)).resolves.toBeUndefined()
   })
 })
