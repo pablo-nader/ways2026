@@ -46,9 +46,11 @@ namespace Ways.Application.Tests.Articulos;
 /// (mismo "transaction-blocked-provider caveat" de arriba). La prueba que vivía acá
 /// (<c>EliminarUnArticuloFunciona</c>) ya estaba duplicada por
 /// <c>ArticulosEndpointsTests.UnAdminCreaYDaDeBajaUnArticulo</c> (Postgres real, alta + baja +
-/// ausencia en el listado — mismo filtro <c>BajaLogica</c> que <see cref="ServicioDeArticulos.ObtenerAsync"/>
-/// usa para su propio 404, aunque esa prueba lo observa vía el listado y no vía un GET de detalle),
-/// así que se retira de acá sin reemplazo.
+/// ausencia en el listado), así que se retira de acá sin reemplazo. Y esa prueba dejó de observar la
+/// baja SOLO por el listado: judgment-day marcó que el 404 del GET de DETALLE —la aserción exacta
+/// que hacía la prueba retirada— no quedaba afirmado en ninguna parte, así que ahora lo afirma
+/// también. Son dos proyecciones distintas sobre el mismo filtro <c>BajaLogica</c> que
+/// <see cref="ServicioDeArticulos.ObtenerAsync"/> usa para su propio 404, y las dos están cubiertas.
 /// </summary>
 public class ServicioDeArticulosTests
 {

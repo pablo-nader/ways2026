@@ -289,9 +289,17 @@ public class ServicioDeArticulos(
         //
         // Va por EXISTS y NO por BuscarAsync: una lectura trackeada acá metería la entidad en el
         // identity map y la de adentro del lock resolvería contra ella — justo el snapshot pre-lock
-        // que este fix elimina. Best-effort: la AUTORIDAD es la lectura de adentro del lock (mismo
-        // idioma que ServicioDeOfertas.ActualizarAsync y ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync,
-        // donde este chequeo también es la primera sentencia).
+        // que este fix elimina. Best-effort: la AUTORIDAD es la lectura de adentro del lock, mismo
+        // idioma que ServicioDeOfertas.ActualizarAsync, donde este chequeo también es la primera
+        // sentencia.
+        //
+        // ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync comparte el idioma pero NO la
+        // posición, y no es un descuido: ahí el guard de `modo_requerido` precede al 404 porque ese
+        // fue siempre su contrato —es anterior al fix de la lectura bajo el lock y lo fija
+        // OrganizacionTests.OmitirElCampoModoEnJsonCrudoAlCambiarElModoDevuelve400YNoCambiaNada—,
+        // así que ahí mover el EXISTS más arriba cambiaría un comportamiento probado. Acá al revés:
+        // la lectura ERA la primera sentencia, así que el EXISTS tiene que ocupar ese lugar para no
+        // cambiar nada.
         if (!await db.Articulos.AnyAsync(a => a.Id == id, ct))
         {
             throw ErrorDominio.NoEncontrado($"No existe el artículo {id}.");
