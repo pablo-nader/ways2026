@@ -150,8 +150,12 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
 
     await screen.findByLabelText('Punto de venta')
     expect(screen.getByLabelText('Punto de venta')).toHaveValue('10')
-    const llamada = apiGetMock.mock.calls.find((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/reposicion?'))!
-    expect(llamada[0] as string).toBe('/reportes/stock/reposicion?idPuntoVenta=10')
+    // La consulta del reporte la dispara un efecto POSTERIOR a que el punto de venta quede
+    // seleccionado: leer `mock.calls` en el mismo tick encuentra la lista todavía sin esa llamada.
+    await waitFor(() => {
+      const llamada = apiGetMock.mock.calls.find((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/reposicion?'))
+      expect(llamada?.[0]).toBe('/reportes/stock/reposicion?idPuntoVenta=10')
+    })
   })
 
   it('sugerido renderiza — cuando es null, nunca 0', async () => {
