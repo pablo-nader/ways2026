@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
+using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
@@ -137,6 +138,7 @@ public class ServicioDeRemitos(
         var momento = reloj.Ahora;
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, puntoVenta.Id, ct);
         var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         ExigirCantidadesValidas(solicitud.Lineas);
 
@@ -182,6 +184,7 @@ public class ServicioDeRemitos(
         var momento = reloj.Ahora;
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, puntoVenta.Id, ct);
         var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         ExigirCantidadesValidas(solicitud.Lineas);
 
@@ -289,6 +292,12 @@ public class ServicioDeRemitos(
         }
 
         var idPuntoVenta = preLectura.IdPuntoVenta;
+
+        // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
+        // IdPuntoVenta en el PUT, ServicioDeRemitos.cs:223) — el chequeo de creación/edición no
+        // cubre este momento; se re-verifica acá, antes de gastar un número o tocar stock.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
+
         var puntoVenta = await db.PuntosVenta.AsNoTracking().FirstAsync(pv => pv.Id == idPuntoVenta, ct);
 
         var loteFinalPorItem = await ResolverFefoAsync(

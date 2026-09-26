@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Organizacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
@@ -280,6 +281,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         await ResolverProveedorAsync(solicitud.IdProveedor, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, solicitud.IdPuntoVenta, ct);
         await ExigirArticulosExistentesAsync(solicitud.Items, ct);
 
         var orden = new OrdenCompra
@@ -320,6 +322,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         await ResolverProveedorAsync(solicitud.IdProveedor, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, solicitud.IdPuntoVenta, ct);
         await ExigirArticulosExistentesAsync(solicitud.Items, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -409,6 +412,11 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         }
 
         var idPuntoVenta = preLectura.IdPuntoVenta;
+
+        // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
+        // IdPuntoVenta en el PUT, ServicioDeOrdenesDeCompra.cs:359) — el chequeo de
+        // creación/edición no cubre este momento; se re-verifica acá, antes de gastar un número.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
 
         var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
         var numero = await estrategiaNumeracion.ExecuteAsync(async () =>

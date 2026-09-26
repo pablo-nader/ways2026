@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
+using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -226,6 +227,7 @@ public class ServicioDePresupuestos(
         var momento = reloj.Ahora;
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, puntoVenta.Id, ct);
         var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         ExigirCantidadesValidas(solicitud.Lineas);
 
@@ -273,6 +275,7 @@ public class ServicioDePresupuestos(
         var momento = reloj.Ahora;
 
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, puntoVenta.Id, ct);
         var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
         ExigirCantidadesValidas(solicitud.Lineas);
 
@@ -366,6 +369,11 @@ public class ServicioDePresupuestos(
         }
 
         var idPuntoVenta = preLectura.IdPuntoVenta;
+
+        // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
+        // IdPuntoVenta en el PUT, ServicioDePresupuestos.cs:317) — el chequeo de creación/edición
+        // no cubre este momento; se re-verifica acá, antes de gastar un número.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
 
         // design decisión 10/11: "hoy" SIEMPRE resuelto en la zona del punto de venta (mutation
         // target #19) — jamás DateTime.UtcNow/reloj.Ahora.UtcDateTime.

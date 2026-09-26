@@ -1399,6 +1399,35 @@ después `id_dispositivo`, ambos DESC) antes de crear el índice único.
 
 **Estado (stage-desktop-pos): implementada.**
 
+**Alcance de `PoliticaDeModoDePuntoVenta` (revisión adversarial post-stage-17).** Hasta acá esta
+sección describía la regla escrita en singular ("un actor... solo puede **vender**...") sin dejar
+registrado qué otros caminos de escritura la comparten — ausencia que dejó pasar un hallazgo: un
+actor de dispositivo podía crear/editar/emitir remitos, presupuestos y órdenes de compra contra
+CUALQUIER punto de venta de su tenant, no solo el suyo. El alcance real, explícito:
+
+- **Las dos mitades** (compatibilidad de modo completa, dispositivo↔Escritorio y web↔Web) aplican
+  a los emisores que numeran desde `numeraciones_comprobante` (doc 09, "salvo la numeración"): el checkout
+  (`ServicioDeVentas`), `ServicioDeFacturacionDeRemitos`, `ServicioDeCuentaCorriente.
+  RegistrarPagoAsync`, más `POST /api/ventas/reservas-numeracion` y `pos/instantanea` (la claim de
+  dispositivo ahí es una condición adicional sobre el mismo espacio de numeración, no una regla
+  distinta).
+- **Solo la mitad dispositivo** aplica a remitos, presupuestos y órdenes de compra
+  (`PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync`): un actor de dispositivo
+  únicamente puede tocar el punto de venta que ese dispositivo tiene vinculado. La razón no es la
+  numeración (REM/PRES/OC son filas separadas en `numeraciones_comprobante` por PK
+  `(id_punto_venta, tipo_comprobante)`, doc 09 — un bloque `TX` reservado offline no puede colisionar
+  con ellas): es que `ServicioDeRemitos.EmitirAsync` decrementa `stock`/`stock_lotes` del punto de
+  venta del documento, y `ordenes_compra.id_punto_venta` es el destino de recepción que
+  `ServicioDeCompras` usa después — autorización + integridad operativa, no numeración. **La mitad
+  web NO existe acá, a propósito**: un actor web sigue eligiendo cualquier punto de venta de su
+  tenant, en cualquier `modo`, para estos tres documentos (§9 arriba, "la selección de punto de
+  venta del legacy (A2) se conserva"; `openspec/specs/operacion-de-pos/spec.md`, escenario "Same
+  user operates two puntos de venta in sequence" — agregar esa mitad rompería el back office de
+  cualquier tenant cuyo único punto de venta sea una caja Escritorio).
+- **Exenciones nombradas, sin cambios:** `ServicioDeFacturacionFiscal` numera desde
+  `numeraciones_fiscales` (espacio distinto, doc 09/10 fiscal); `ServicioDeCuentaCorriente.
+  RegistrarAjusteAsync` no emite ningún comprobante.
+
 ### 9.2 Reserva de numeración para venta offline (stage-pos-reserva-de-numeracion)
 
 El POS de escritorio tiene que poder seguir vendiendo durante un corte de conexión, pero
