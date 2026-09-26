@@ -266,9 +266,12 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
     /// <summary><paramref name="idTenant"/> en <c>null</c> siembra una cuenta de PLATAFORMA: no
     /// hay endpoint que las cree y es la única forma de tener un objetivo Root para probar el
-    /// orden entre <c>PoliticaDeRoles</c> y el guard.</summary>
+    /// orden entre <c>PoliticaDeRoles</c> y el guard. <paramref name="estado"/> sembrado
+    /// DIRECTO (default <c>Activo</c>) — la carrera de la relectura post-lock necesita arrancar
+    /// de un estado que la foto pre-lock del mutante pueda contradecir.</summary>
     private async Task<Usuario> SembrarUsuarioAsync(
-        int? idTenant, RolConocido rol, string password, DateTimeOffset instante)
+        int? idTenant, RolConocido rol, string password, DateTimeOffset instante,
+        EstadoUsuario estado = EstadoUsuario.Activo)
     {
         await using var db = ContextoDePlataforma();
 
@@ -281,6 +284,7 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
             NombreUsuario = $"{rol}-{sufijo}".ToLowerInvariant(),
             Mail = $"{rol}-{sufijo}@ways.test".ToLowerInvariant(),
             RolId = (int)rol,
+            Estado = estado,
             PasswordHash = hasheador.Hashear(password),
             PasswordAlgoritmo = hasheador.Algoritmo,
             PasswordActualizadoEl = instante,
@@ -1839,6 +1843,32 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         }
     }
 
+    /// <summary>
+    /// Generaliza el idioma de <see cref="InterceptorQueDaDeBajaElTenantAlAbrir"/> (mismo punto de
+    /// enganche, mismo motivo — el <c>pg_advisory_xact_lock</c> es ADO crudo y no pasa por
+    /// <see cref="DbCommandInterceptor"/>) para un <paramref name="callback"/> que NO es
+    /// necesariamente una baja de tenant: las carreras baja-contra-suspensión y
+    /// baja-contra-desbloqueo (<c>single-read-under-lock</c>) usan la MISMA forma — el ganador no
+    /// toma ningún lock, así que corre y comitea entero DENTRO del callback, antes de que la baja
+    /// perdedora llegue siquiera a pedirlo.
+    /// </summary>
+    private sealed class InterceptorQueEjecutaAlAbrirLaTransaccion(Func<Task> callback) : DbTransactionInterceptor
+    {
+        private int disparos;
+
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref disparos) == 1)
+            {
+                await callback();
+            }
+
+            return await base.TransactionStartedAsync(connection, eventData, result, cancellationToken);
+        }
+    }
+
     private static ServicioDeOrganizacion ServicioDeOrganizacionSobre(
         WaysDbContext db, DateTimeOffset momento, int idActor)
     {
@@ -2043,6 +2073,153 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         var fila = Assert.Single(bajasDeLaCuenta);
         Assert.True(PorCascadaDe(fila.ValorNuevo));
         Assert.Equal(AMicrosegundos(momentoDeLaCascada), DeletedAtDe(fila.ValorNuevo));
+    }
+
+    // =========================================================================================
+    // single-read-under-lock: fidelidad del rastro cuando la ÚNICA lectura nace bajo el lock
+    // =========================================================================================
+
+    /// <summary>
+    /// <c>single-read-under-lock</c> / <c>mutation-proof-tests</c> — LA CLÁUSULA: la ÚNICA lectura
+    /// del tenant en <see cref="ServicioDeOrganizacion.EliminarTenantAsync"/> nace DESPUÉS de
+    /// <c>TomarLockDeBajaAsync</c>. Antes del fix había una relectura: un <c>BuscarTenantAsync</c>
+    /// pre-transacción (para el 404 barato) más la lectura de acá — con la entidad ya trackeada
+    /// desde esa pre-lectura, la de acá resolvía contra el identity map de EF y devolvía la MISMA
+    /// foto vieja, así que <c>estadoAnterior</c> podía mentir sobre lo que la transacción vio bajo
+    /// el lock.
+    ///
+    /// El callback de <see cref="InterceptorQueEjecutaAlAbrirLaTransaccion"/> corre EXACTAMENTE
+    /// cuando la transacción de la baja (el perdedor) abre — antes de que pida el lock — y ahí
+    /// suspende el MISMO tenant por el camino real (<c>SuspenderTenantAsync</c>): esa acción no
+    /// abre transacción de baja ni toma <c>TomarLockDeBajaAsync</c>, así que gana sin competir por
+    /// nada y comitea <c>Suspendido</c> ANTES de que el callback devuelva el control. Recién ahí la
+    /// baja toma el lock —ya libre— y hace su única lectura. Bajo el fix, esa lectura VE
+    /// <c>Suspendido</c>. Bajo el mutante (la relectura de antes, con <c>EliminarTenantAsync</c>
+    /// volviendo a resolver <c>estadoAnterior</c> sobre la foto pre-transacción), la foto sigue
+    /// diciendo <c>Activo</c> — el estado de ANTES de la carrera.
+    ///
+    /// LA ÚNICA ASERCIÓN DISCRIMINANTE es <c>valor_anterior.estado</c> de la fila
+    /// <c>tenant.baja</c>: tiene que decir <c>"suspendido"</c>, nunca <c>"activo"</c>. Que la baja
+    /// haya sucedido de verdad —estado final <c>Baja</c>, <c>deleted_at</c> seteado— es contexto:
+    /// <c>SuspenderTenantAsync</c> no toma ningún lock, así que nunca puede hacer fallar ni bloquear
+    /// a la baja, y ningún mutante de esta clase toca ese resultado.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeTenantAuditaElEstadoSuspendidoQueVioBajoElLockYNoElActivoDeLaFotoPreLock()
+    {
+        var sembrado = await AprovisionarAsync("carrera-suspension-tenant");
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+        var momentoDeLaSuspension = sembrado.Ancla.AddHours(1);
+        var momentoDeLaBaja = sembrado.Ancla.AddHours(2);
+
+        var interceptor = new InterceptorQueEjecutaAlAbrirLaTransaccion(async () =>
+        {
+            await using var otro = ContextoDePlataforma();
+            await ServicioDeOrganizacionSobre(otro, momentoDeLaSuspension, idRoot)
+                .SuspenderTenantAsync(sembrado.IdTenant);
+        });
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma, interceptor))
+        {
+            await ServicioDeOrganizacionSobre(db, momentoDeLaBaja, idRoot).EliminarTenantAsync(sembrado.IdTenant);
+        }
+
+        // Contexto — la baja sucedió de verdad; nunca compitió por ningún lock con la suspensión.
+        var tenantFinal = await LeerTenantAsync(sembrado.IdTenant);
+        Assert.Equal(EstadoTenant.Baja, tenantFinal.Estado);
+        Assert.NotNull(tenantFinal.DeletedAt);
+
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+        var delTenant = Assert.Single(rastro, f => f.Accion == "tenant.baja");
+
+        // ÚNICA aserción discriminante.
+        Assert.Equal(
+            "suspendido",
+            JsonDocument.Parse(delTenant.ValorAnterior!).RootElement.GetProperty("estado").GetString());
+    }
+
+    /// <summary>
+    /// <c>single-read-under-lock</c> / <c>mutation-proof-tests</c> — LA CLÁUSULA: la ÚNICA lectura
+    /// del sujeto en <see cref="ServicioDeUsuarios.EliminarAsync"/> nace DESPUÉS de
+    /// <c>TomarLockDeBajaAsync</c>. Antes del fix había una relectura equivalente: un
+    /// <c>BuscarAsync</c> pre-lock (del que además salía la clave del lock, una entidad trackeada
+    /// en vez de una proyección escalar) más la lectura de acá — la de acá resolvía contra el
+    /// identity map y devolvía la MISMA instancia vieja.
+    ///
+    /// El callback de <see cref="InterceptorQueEjecutaAlAbrirLaTransaccion"/> corre cuando la
+    /// transacción de la baja (el perdedor) abre — antes del lock — y ahí desbloquea al MISMO
+    /// usuario por el camino real (<c>DesbloquearAsync</c>): no toma ningún lock, así que gana sin
+    /// competir y comitea <c>Activo</c> antes de que el callback devuelva el control. Recién ahí la
+    /// baja toma el lock —ya libre— y hace su única lectura. Bajo el fix, ve <c>Activo</c>. Bajo el
+    /// mutante (relectura pre-lock, con la clave del lock saliendo de esa misma entidad trackeada),
+    /// la foto sigue diciendo <c>Bloqueado</c> — el estado de ANTES de la carrera.
+    ///
+    /// LA ÚNICA ASERCIÓN DISCRIMINANTE es el <c>estado</c> del payload de <c>usuario.baja</c>:
+    /// <c>PayloadDeAuditoria.BajaDeUsuario</c> pone el MISMO valor en <c>valor_anterior</c> y en
+    /// <c>valor_nuevo</c> (no hay "estado nuevo" distinto: la baja no cambia <c>Estado</c>, solo
+    /// estampa <c>deleted_at</c>), así que afirmar los dos lados es UNA sola afirmación, no dos.
+    /// Tiene que decir <c>"activo"</c> en ambos, nunca <c>"bloqueado"</c>. Que la baja haya
+    /// sucedido de verdad —<c>deleted_at</c> seteado— es contexto.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUsuarioAuditaElEstadoActivoQueVioBajoElLockYNoElBloqueadoDeLaFotoPreLock()
+    {
+        var sembrado = await AprovisionarAsync("carrera-desbloqueo-usuario");
+        var momentoDeSiembra = sembrado.Ancla.AddMinutes(1);
+        var sujeto = await SembrarUsuarioAsync(
+            sembrado.IdTenant, RolConocido.Vendedor, "una-contraseña-larga", momentoDeSiembra,
+            EstadoUsuario.Bloqueado);
+
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+        var momentoDelDesbloqueo = momentoDeSiembra.AddHours(1);
+        var momentoDeLaBaja = momentoDeSiembra.AddHours(2);
+
+        var interceptor = new InterceptorQueEjecutaAlAbrirLaTransaccion(async () =>
+        {
+            await using var otroDb = ContextoDePlataforma();
+            await using var otraPlataforma = ContextoDePlataforma();
+            var relojDelDesbloqueo = new RelojFijo(momentoDelDesbloqueo);
+            var contextoDelDesbloqueo = new ContextoFijo(RolConocido.Root, idRoot, idTenant: null);
+
+            var servicioDeDesbloqueo = new ServicioDeUsuarios(
+                otroDb, otraPlataforma, new Ways.Infrastructure.Seguridad.HasheadorPbkdf2(),
+                relojDelDesbloqueo, contextoDelDesbloqueo,
+                new ServicioDeAuditoria(otroDb, relojDelDesbloqueo, contextoDelDesbloqueo),
+                new InspectorDeUso(otroDb));
+
+            await servicioDeDesbloqueo.DesbloquearAsync(sujeto.Id);
+        });
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma, interceptor))
+        await using (var dbPlataforma = ContextoDePlataforma())
+        {
+            var contexto = new ContextoFijo(RolConocido.Root, idRoot, idTenant: null);
+            var reloj = new RelojFijo(momentoDeLaBaja);
+
+            var servicio = new ServicioDeUsuarios(
+                db, dbPlataforma, new Ways.Infrastructure.Seguridad.HasheadorPbkdf2(), reloj, contexto,
+                new ServicioDeAuditoria(db, reloj, contexto), new InspectorDeUso(db));
+
+            await servicio.EliminarAsync(sujeto.Id);
+        }
+
+        // Contexto — la baja sucedió de verdad; nunca compitió por ningún lock con el desbloqueo.
+        var usuarioFinal = await LeerUsuarioAsync(sujeto.Id);
+        Assert.NotNull(usuarioFinal.DeletedAt);
+
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+        var delUsuario = Assert.Single(rastro, f => f.Accion == "usuario.baja" && f.IdEntidad == sujeto.Id);
+
+        // ÚNICA aserción discriminante — los dos lados son el MISMO campo del MISMO payload
+        // (PayloadDeAuditoria.BajaDeUsuario), no dos afirmaciones independientes.
+        Assert.Equal(
+            "activo",
+            JsonDocument.Parse(delUsuario.ValorAnterior!).RootElement.GetProperty("estado").GetString());
+        Assert.Equal(
+            "activo",
+            JsonDocument.Parse(delUsuario.ValorNuevo).RootElement.GetProperty("estado").GetString());
     }
 
     /// <summary>

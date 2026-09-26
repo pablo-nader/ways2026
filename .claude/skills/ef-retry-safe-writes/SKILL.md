@@ -23,7 +23,11 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
    vuelve a ejecutar el lambda completo y agrega un segundo set; el `SaveChangesAsync`
    final inserta ambos. Además, toda entidad CARGADA ANTES del lambda y mutada DENTRO
    de él arrastra la mutación del intento 1 al intento 2 (un `valorAnterior` leído de
-   esa entidad registra un estado previo falso, porque ya viene mutado).
+   esa entidad registra un estado previo falso, porque ya viene mutado). Esa misma
+   pre-lectura tiene un segundo defecto, independiente del reintento y con su propia
+   skill: ver `single-read-under-lock` (la foto pre-lock también es el valor ORIGINAL de
+   EF, así que además de mentir en el rastro puede hacer desaparecer la columna del
+   `UPDATE`).
 
 2. **Elegir una de dos formas y decir cuál se eligió:**
    - (a) **Lambda retry-safe**: `db.ChangeTracker.Clear()` como primera sentencia del

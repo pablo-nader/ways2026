@@ -176,9 +176,15 @@ public class ServicioDeOrganizacion(
     /// <list type="number">
     /// <item>el <c>pg_advisory_xact_lock</c> (D11), que serializa esta baja contra cualquier otra
     /// del mismo tenant —incluida la de una de sus empresas, que toma la MISMA clave—;</item>
-    /// <item>la RELECTURA del ancla bajo el lock: si una baja concurrente ganó, la fila ya no es
-    /// visible bajo <c>"BajaLogica"</c> y esto es un 404 limpio en vez de un segundo
-    /// <c>deleted_at</c> pisando el primero;</item>
+    /// <item>la ÚNICA lectura del ancla, bajo el lock: si una baja concurrente ganó, la fila ya no
+    /// es visible bajo <c>"BajaLogica"</c> y esto es un 404 limpio en vez de un segundo
+    /// <c>deleted_at</c> pisando el primero. Era una RELECTURA (había un <c>BuscarTenantAsync</c>
+    /// pre-transacción para dar el 404 sin pagar transacción) y eso ensuciaba el rastro: con la
+    /// entidad ya trackeada desde antes del lock, esta consulta resolvía contra el identity map y
+    /// devolvía la MISMA foto vieja, así que <c>estadoAnterior</c> podía afirmar <c>activo</c>
+    /// sobre un tenant que una suspensión concurrente —que no toma este lock— ya había dejado en
+    /// <c>suspendido</c>. Un 404 ahora paga una transacción; es una acción de plataforma, rara y
+    /// manual, y el rastro exacto vale más que ese round trip;</item>
     /// <item>el guard de uso, evaluado UNA SOLA VEZ y sin ningún pre-chequeo afuera. Un pre-chequeo
     /// que espejara al guard es el confound más común de este repo (<c>mutation-proof-tests</c>
     /// regla 3): correrlo una sola vez lo elimina en vez de escribir pruebas que lo esquiven;</item>
@@ -196,9 +202,6 @@ public class ServicioDeOrganizacion(
     /// </summary>
     public async Task EliminarTenantAsync(int id, CancellationToken ct = default)
     {
-        // 404 antes de abrir nada: el caso normal de "ese id no existe" no paga transacción.
-        await BuscarTenantAsync(id, ct);
-
         await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(id, ct);
