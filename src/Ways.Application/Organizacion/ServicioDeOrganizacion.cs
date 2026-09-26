@@ -574,6 +574,24 @@ public class ServicioDeOrganizacion(
     /// escritores de esta invariante se serializan sobre la MISMA fila y el perdedor de la carrera
     /// relee el estado ya comiteado por el ganador.
     ///
+    /// Fidelidad del rastro bajo una carrera de DOS flips: la entidad se lee DENTRO de la
+    /// transacción y DESPUÉS del lock, nunca antes. Con la lectura afuera,
+    /// <c>modoAnterior</c> salía del snapshot PRE-lock, así que el perdedor de la carrera
+    /// auditaba un <c>valor_anterior</c> que ya no era el estado que su propia transacción
+    /// vio. Y ese mismo snapshot es el valor original contra el que EF compara al armar el
+    /// UPDATE: cuando el modo pedido coincidía con el valor stale, EF no detectaba cambio y
+    /// OMITÍA la columna <c>modo</c>, así que el flip del perdedor se perdía en
+    /// silencio y la relectura final devolvía el modo del ganador con un 200. Una SEGUNDA
+    /// consulta no arregla ninguno de los dos: resuelve contra el identity map y devuelve la
+    /// MISMA instancia stale (el motivo ya documentado en
+    /// <see cref="EnUnaTransaccionDeBajaAsync{T}"/>). Por eso la única lectura de la ENTIDAD
+    /// nace bajo el lock, y el chequeo de 404/alcance de más arriba —que mantiene la
+    /// convención de las tres bajas de este archivo— es un <c>AnyAsync</c>, precisamente para
+    /// no entrar al identity map. Su único efecto observable es no pagar una transacción por un
+    /// 404 —el <c>BuscarPuntoVentaAsync</c> de adentro del lock tira el MISMO 404—, y eso es
+    /// exactamente lo que cuenta
+    /// <c>OrganizacionTests.ElFlipDeModoDevuelve404SinPagarTransaccionNiParaUnIdInexistenteNiParaOtroTenant</c>.
+    ///
     /// Nota (stage futura, offline outbox): cuando exista la cola de escritura offline del POS de
     /// escritorio, este flip además va a tener que exigir esa cola vacía — flipear a Web con
     /// ventas pendientes de sincronizar las dejaría huérfanas.
@@ -589,11 +607,23 @@ public class ServicioDeOrganizacion(
     {
         var modo = datos.Modo
             ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
-        var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
+
+        // 404 antes de abrir nada, igual que las tres bajas de este archivo. Va por AnyAsync y
+        // NO por BuscarPuntoVentaAsync: una lectura trackeada acá metería la entidad en el
+        // identity map y la de adentro del lock resolvería contra ella — justo el snapshot
+        // pre-lock que este método dejó de usar. No se repite ValidarAlcanceDeTenant: el filtro
+        // de tenant ya recorta el cruce de alcance y para un actor de plataforma esa guarda
+        // retorna sin hacer nada, así que acá no podría tirar nunca.
+        if (!await db.PuntosVenta.AnyAsync(p => p.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
+        }
 
         return await EnUnaTransaccionDeBajaAsync(async () =>
         {
-            await TomarLockDePuntoVentaAsync(puntoVenta.Id, ct);
+            await TomarLockDePuntoVentaAsync(id, ct);
+
+            var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
 
             var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == puntoVenta.Id, ct);
             if (tieneDispositivoActivo)
