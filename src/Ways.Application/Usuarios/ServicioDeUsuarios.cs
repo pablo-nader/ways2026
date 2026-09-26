@@ -366,18 +366,33 @@ public class ServicioDeUsuarios(
     /// que toman las bajas de organización — así la baja de un usuario y la del tenant que lo
     /// contiene se serializan entre sí en vez de pisarse.
     ///
-    /// Y RELEE AL SUJETO BAJO EL LOCK desde judgment-day ronda 2 (hallazgo R2-2), igual que las
-    /// tres bajas de organización: la lectura de arriba es de ANTES del lock, así que el perdedor
-    /// de una baja concurrente —la cascada del tenant, típicamente— re-estampaba un
-    /// <c>deleted_at</c> nuevo sobre una fila ya dada de baja y escribía un segundo
-    /// <c>usuario.baja</c>. Con la relectura eso es un 404, y el instante compartido de la cascada
-    /// queda intacto.
+    /// Y LEE AL SUJETO UNA SOLA VEZ, BAJO EL LOCK (judgment-day ronda 2, hallazgo R2-2, igual que
+    /// las tres bajas de organización). Sin esa lectura, el perdedor de una baja concurrente —la
+    /// cascada del tenant, típicamente— re-estampaba un <c>deleted_at</c> nuevo sobre una fila ya
+    /// dada de baja y escribía un segundo <c>usuario.baja</c>; con ella eso es un 404 y el instante
+    /// compartido de la cascada queda intacto.
     ///
-    /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> queda AFUERA de la transacción a
-    /// propósito: es una decisión de dominio que no depende de los datos, no necesita el lock, y
-    /// dejarla afuera mantiene el orden observable que UT-R2 afirma (un objetivo Root rinde el
-    /// error de <c>PoliticaDeRoles</c>, nunca <c>usuario_en_uso</c>). Lo que SÍ tiene que estar
-    /// bajo el lock es el guard, que es la pregunta a la base.
+    /// Que sea UNA sola —y no una relectura sobre una pre-lectura— es lo que hace exacto al rastro:
+    /// mientras hubo dos, la segunda resolvía contra el identity map de EF y devolvía la MISMA
+    /// instancia de la primera, así que el <c>estado</c> del payload de auditoría era el de ANTES
+    /// del lock. Un <c>DesbloquearAsync</c> o un bloqueo por intentos fallidos —ninguno de los dos
+    /// toma este lock— podían comitear en el medio y la fila <c>usuario.baja</c> afirmaba
+    /// <c>bloqueado</c> sobre una cuenta que en ese momento ya estaba <c>activo</c>.
+    ///
+    /// Lo poco que se necesita ANTES de abrir la transacción sale de una PROYECCIÓN escalar, nunca
+    /// de una entidad trackeada: una proyección no pasa por el identity map, así que no puede
+    /// ensuciar la lectura de adentro. Son dos campos y cada uno por su motivo: <c>id_tenant</c> es
+    /// la CLAVE del lock (hay que conocerla para poder tomarlo) y es inmutable para una cuenta; y
+    /// <c>rol_id</c> es lo que decide <see cref="PoliticaDeRoles"/>, que no es una columna que esta
+    /// escritura toque. El mismo statement da además el 404 de "ese id no existe" sin pagar
+    /// transacción.
+    ///
+    /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> sigue AFUERA de la transacción a
+    /// propósito, igual que antes: es una decisión de dominio que no necesita el lock, y dejarla
+    /// afuera mantiene el orden observable que UT-R2 afirma (un objetivo Root rinde el error de
+    /// <c>PoliticaDeRoles</c>, nunca <c>usuario_en_uso</c>) sin que un 403 pague transacción ni
+    /// advisory lock. <c>BajasEstructuralesTests</c> clava ese orden. Lo que SÍ tiene que estar bajo
+    /// el lock es el guard, que es la pregunta a la base.
     ///
     /// Residual honesto, el mismo que la tabla G del design registra como R1 para las bajas de
     /// organización: bajo READ COMMITTED una venta puede confirmarse entre el <c>EXISTS</c> del
@@ -386,10 +401,19 @@ public class ServicioDeUsuarios(
     /// </summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var usuario = await BuscarAsync(id, ct);
+        // Lo que hace falta ANTES de abrir nada, por proyección escalar: ver el doc-comment. No
+        // materializa la entidad, así que la lectura de abajo —la única— nace de verdad bajo el
+        // lock.
+        var sujetoPreLock = await db.Usuarios
+            .Where(u => u.Id == id)
+            .Select(u => new { u.IdTenant, u.RolId })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el usuario {id}.");
+
+        PoliticaDeRoles.ValidarAlcanceDeTenant(Actor, sujetoPreLock.IdTenant);
 
         PoliticaDeRoles.ValidarPuedeIntervenirSobre(
-            contexto.Rol, contexto.UsuarioId, (RolConocido)usuario.RolId, usuario.Id, esBaja: true);
+            contexto.Rol, contexto.UsuarioId, (RolConocido)sujetoPreLock.RolId, id, esBaja: true);
 
         // La transacción vive ADENTRO de la estrategia de ejecución, nunca al revés (ADR-16), y la
         // estrategia es la SIN REINTENTO (judgment-day ronda 2, hallazgo R2-1): mismo motivo exacto
@@ -403,17 +427,17 @@ public class ServicioDeUsuarios(
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            await TomarLockDeBajaAsync(usuario.IdTenant ?? TenantSentinelaDePlataforma, ct);
+            await TomarLockDeBajaAsync(sujetoPreLock.IdTenant ?? TenantSentinelaDePlataforma, ct);
 
-            // RELECTURA BAJO EL LOCK (judgment-day ronda 2, hallazgo R2-2), la misma que hacen las
-            // tres bajas de ServicioDeOrganizacion. La pre-lectura de arriba es de ANTES del lock:
-            // si una baja concurrente —la cascada de su tenant, típicamente— ganó mientras esta
-            // esperaba, la fila ya no es visible bajo "BajaLogica" y esto es un 404 limpio. Sin
-            // ella, el perdedor de la carrera re-estampa un `deleted_at` NUEVO sobre una fila ya
-            // dada de baja y escribe un SEGUNDO `usuario.baja`: el instante compartido que hace
-            // exacto al restore de la cascada (`WHERE deleted_at = '<instante>'`) se rompe justo
-            // en la cuenta que se re-estampó. `BuscarAsync` revalida además el alcance de tenant,
-            // que es barato porque ya está en la misma consulta.
+            // LECTURA ÚNICA BAJO EL LOCK (judgment-day ronda 2, hallazgo R2-2), la misma que hacen
+            // las tres bajas de ServicioDeOrganizacion. Si una baja concurrente —la cascada de su
+            // tenant, típicamente— ganó mientras esta esperaba, la fila ya no es visible bajo
+            // "BajaLogica" y esto es un 404 limpio. Sin ella, el perdedor de la carrera re-estampa
+            // un `deleted_at` NUEVO sobre una fila ya dada de baja y escribe un SEGUNDO
+            // `usuario.baja`: el instante compartido que hace exacto al restore de la cascada
+            // (`WHERE deleted_at = '<instante>'`) se rompe justo en la cuenta que se re-estampó.
+            // `BuscarAsync` revalida además el alcance de tenant, que es barato porque ya está en
+            // la misma consulta.
             var sujeto = await BuscarAsync(id, ct);
 
             var tablaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(
