@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Organizacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
@@ -280,6 +281,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         await ResolverProveedorAsync(solicitud.IdProveedor, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, solicitud.IdPuntoVenta, ct);
         await ExigirArticulosExistentesAsync(solicitud.Items, ct);
 
         var orden = new OrdenCompra
@@ -320,6 +322,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         await ResolverProveedorAsync(solicitud.IdProveedor, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, solicitud.IdPuntoVenta, ct);
         await ExigirArticulosExistentesAsync(solicitud.Items, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -410,6 +413,11 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         var idPuntoVenta = preLectura.IdPuntoVenta;
 
+        // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
+        // IdPuntoVenta en el PUT, ServicioDeOrdenesDeCompra.cs:359) — el chequeo de
+        // creación/edición no cubre este momento; se re-verifica acá, antes de gastar un número.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
+
         var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
         var numero = await estrategiaNumeracion.ExecuteAsync(async () =>
             await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, idTenant, idPuntoVenta, "OC", ct));
@@ -456,12 +464,33 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// (mutation target #31) ni <c>anulada</c>. Una vez escrito, <c>id_empleado_cierre IS NOT
     /// NULL</c> hace que <see cref="EscriturasDeOrdenDeCompra.ProyectarEstadoAsync"/> jamás vuelva
     /// a tocar esta orden (design decisión 2, cortocircuito bajo el mismo lock, mutation target
-    /// #26).</summary>
+    /// #26).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 2 — corrige una claim falsa de la
+    /// ronda 1, mismo criterio que <c>ServicioDeRemitos.AnularAsync</c>): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se verifica DOS
+    /// VECES. La pre-lectura de acá (fuera de la transacción) es un atajo barato para el rechazo
+    /// común, NUNCA la autoridad: un actor web puede mover <c>id_punto_venta</c> entre esta
+    /// pre-lectura y el <c>UPDATE</c> de <see cref="EjecutarCierreAsync"/>, y la pre-lectura no lo
+    /// ve. La autoridad real vive ahí: <see cref="CerrarHeaderAsync"/> ensancha su <c>RETURNING</c>
+    /// a <c>id_punto_venta</c> — el valor que el propio lock de fila del <c>UPDATE</c> acaba de ver
+    /// — y el guard se re-verifica contra ESE valor antes de comitear; un rechazo ahí hace rollback
+    /// de la transacción entera. Un actor web queda intocado por las dos verificaciones: el método
+    /// retorna de inmediato sin claim de dispositivo.</summary>
     public async Task<OrdenDeCompraBorrador> CerrarAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.OrdenesCompra.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => (int?)o.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
@@ -477,7 +506,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         var cerrada = await CerrarHeaderAsync(conexion, transaccionCruda, id, idTenant, idEmpleado, momento, ct);
-        if (!cerrada)
+        if (cerrada is null)
         {
             var existe = await db.OrdenesCompra.AsNoTracking().AnyAsync(o => o.Id == id, ct);
             if (!existe)
@@ -492,6 +521,12 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             throw new ErrorDominio(
                 "orden_compra_no_cerrable", "La orden de compra no está en un estado cerrable.", 409);
         }
+
+        // Autoridad (judgment-day ronda 2): re-verifica el guard contra el id_punto_venta que el
+        // UPDATE de arriba acaba de bloquear y devolver — nunca el de la pre-lectura de
+        // CerrarAsync. Antes de comitear; si rechaza, la transacción entera hace rollback.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(
+            db, contexto, cerrada.Value.IdPuntoVenta, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -509,11 +544,33 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// slice). Los TRES guards fallidos colapsan al MISMO código de dominio,
     /// <c>orden_compra_con_recepciones</c> — el propio contrato del spec ("otherwise 409
     /// orden_compra_con_recepciones") lo pinea como código único, mismo criterio de generalidad
-    /// deliberada que decisión 19 (<c>orden_compra_no_enviable</c>).</summary>
+    /// deliberada que decisión 19 (<c>orden_compra_no_enviable</c>).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 2 — corrige una claim falsa de la
+    /// ronda 1, mismo criterio que <c>ServicioDeRemitos.AnularAsync</c>): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se verifica DOS
+    /// VECES. La pre-lectura de acá (fuera de la transacción) es un atajo barato para el rechazo
+    /// común, NUNCA la autoridad: un actor web puede mover <c>id_punto_venta</c> entre esta
+    /// pre-lectura y el lock de <see cref="EjecutarAnulacionDeOrdenAsync"/>, y la pre-lectura no lo
+    /// ve. La autoridad real vive ahí: <see cref="BloquearYLeerEstadoOrdenAsync"/> (statement 1, el
+    /// ÚNICO <c>FOR UPDATE</c> del método) ensancha su <c>SELECT</c> a <c>id_punto_venta</c> — el
+    /// valor que ESE lock de fila acaba de ver — y el guard se re-verifica contra ESE valor
+    /// INMEDIATAMENTE después, antes de los statements 2-4; un rechazo ahí hace rollback de la
+    /// transacción entera. Un actor web queda intocado por las dos verificaciones: el método
+    /// retorna de inmediato sin claim de dispositivo.</summary>
     public async Task<OrdenDeCompraBorrador> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.OrdenesCompra.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => (int?)o.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
@@ -530,17 +587,23 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         // Statement 1 — PRIMER y ÚNICO lock (FOR UPDATE). 0 filas ⇒ la orden no existe para este
         // tenant (ADR-8: mismo 404 para "no existe" y "es de otro tenant").
-        var estado = await BloquearYLeerEstadoOrdenAsync(conexion, transaccionCruda, id, idTenant, ct);
-        if (estado is null)
+        var bloqueada = await BloquearYLeerEstadoOrdenAsync(conexion, transaccionCruda, id, idTenant, ct);
+        if (bloqueada is null)
         {
             throw ErrorDominio.NoEncontrado($"No existe la orden de compra {id}.");
         }
 
-        if (estado != "borrador" && estado != "enviada")
+        if (bloqueada.Value.Estado != "borrador" && bloqueada.Value.Estado != "enviada")
         {
             throw new ErrorDominio(
                 "orden_compra_con_recepciones", "La orden de compra no puede anularse.", 409);
         }
+
+        // Autoridad (judgment-day ronda 2): re-verifica el guard contra el id_punto_venta que el
+        // lock de arriba acaba de ver — nunca el de la pre-lectura de AnularAsync. Antes de los
+        // statements 2-4; si rechaza, la transacción entera hace rollback.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(
+            db, contexto, bloqueada.Value.IdPuntoVenta, ct);
 
         // Statement 2 — recepción confirmada (recibida > 0 en cualquier artículo). Lock-free
         // (decisión 9): un SELECT simple nunca bloquea bajo READ COMMITTED, ve solo el último
@@ -633,8 +696,13 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// (design decisión 5) — el CHECK 2 exige que las tres cambien juntas, así que partirlo en dos
     /// statements dejaría una ventana con la fila en un estado que el propio CHECK rechazaría.
     /// <c>momento</c>/<c>idEmpleado</c> viajan SIEMPRE por <see cref="ParametrosDeComando.Agregar"/>
-    /// (mutation target #32 para el segundo).</summary>
-    private static async Task<bool> CerrarHeaderAsync(
+    /// (mutation target #32 para el segundo).
+    ///
+    /// <c>RETURNING id_punto_venta</c> ensancha el statement (judgment-day ronda 2, mismo criterio
+    /// que <c>ServicioDeRemitos.RemitoAnulado</c>): el valor que ESTE lock de fila vio es la
+    /// autoridad que <see cref="CerrarAsync"/> re-verifica contra
+    /// <c>PoliticaDeModoDePuntoVenta</c>, nunca el de la pre-lectura.</summary>
+    private static async Task<OrdenCerrada?> CerrarHeaderAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
     {
@@ -645,35 +713,59 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             "fecha_cierre = $1, id_empleado_cierre = $2, updated_at = $1 " +
             "WHERE id_orden_compra = $3 AND id_tenant = $4 " +
             "AND estado IN ('enviada'::estado_orden_compra, 'recibida_parcial'::estado_orden_compra) " +
-            "RETURNING estado";
+            "RETURNING id_punto_venta";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, idEmpleado);
         ParametrosDeComando.Agregar(comando, id);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is not null;
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new OrdenCerrada(lector.GetInt32(0));
     }
+
+    /// <summary>Fila devuelta por el <c>UPDATE...RETURNING</c> de <see cref="CerrarHeaderAsync"/>
+    /// (judgment-day ronda 2).</summary>
+    private readonly record struct OrdenCerrada(int IdPuntoVenta);
 
     /// <summary>design: Transactions — ANULAR OC, statement 1. El ÚNICO <c>FOR UPDATE</c> de todo
     /// el método <see cref="EjecutarAnulacionDeOrdenAsync"/> — statements 2/3 son lecturas
     /// lock-free a propósito (decisión 9). <c>null</c> ⇒ la fila no existe para este tenant
-    /// (invariante de FK garantiza que, si existe, esta lectura la ve).</summary>
-    private static async Task<string?> BloquearYLeerEstadoOrdenAsync(
+    /// (invariante de FK garantiza que, si existe, esta lectura la ve).
+    ///
+    /// <c>id_punto_venta</c> ensancha el <c>SELECT</c> (judgment-day ronda 2, mismo criterio que
+    /// <c>ServicioDeRemitos.RemitoAnulado</c>): el valor que ESTE lock de fila vio es la autoridad
+    /// que <see cref="AnularAsync"/> re-verifica contra <c>PoliticaDeModoDePuntoVenta</c>, nunca el
+    /// de la pre-lectura.</summary>
+    private static async Task<EstadoOrdenBloqueado?> BloquearYLeerEstadoOrdenAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "SELECT estado::text FROM ordenes_compra WHERE id_orden_compra = $1 AND id_tenant = $2 FOR UPDATE";
+            "SELECT estado::text, id_punto_venta FROM ordenes_compra " +
+            "WHERE id_orden_compra = $1 AND id_tenant = $2 FOR UPDATE";
 
         ParametrosDeComando.Agregar(comando, id);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado as string;
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new EstadoOrdenBloqueado(lector.GetString(0), lector.GetInt32(1));
     }
+
+    /// <summary>Fila devuelta por el <c>SELECT ... FOR UPDATE</c> de
+    /// <see cref="BloquearYLeerEstadoOrdenAsync"/> (judgment-day ronda 2).</summary>
+    private readonly record struct EstadoOrdenBloqueado(string Estado, int IdPuntoVenta);
 
     /// <summary>design: Transactions — ANULAR OC, statement 2 ("recibida &gt; 0 en cualquier
     /// artículo"). <c>cantidad</c> de un item de comprobante confirmado es SIEMPRE positiva
