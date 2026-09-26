@@ -39,6 +39,18 @@ namespace Ways.Application.Tests.Articulos;
 /// y <c>EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila</c>. Las validaciones que corren ANTES
 /// de abrir esa transacción (los chequeos en memoria, <c>ReglaDeArticulos</c>, el pre-chequeo de
 /// empresas) siguen alcanzables acá y NO se movieron.
+///
+/// <see cref="ServicioDeArticulos.EliminarAsync"/> TAMPOCO se cubre acá desde fix/articulos-lock-de-fila:
+/// ahora también abre <c>Database.BeginTransactionAsync</c> y toma
+/// <see cref="Bajas.GuardaDeReferencias.BloquearFilaAsync{T}"/> sobre la propia fila ANTES de leerla
+/// (mismo "transaction-blocked-provider caveat" de arriba). La prueba que vivía acá
+/// (<c>EliminarUnArticuloFunciona</c>) ya estaba duplicada por
+/// <c>ArticulosEndpointsTests.UnAdminCreaYDaDeBajaUnArticulo</c> (Postgres real, alta + baja +
+/// ausencia en el listado), así que se retira de acá sin reemplazo. Y esa prueba dejó de observar la
+/// baja SOLO por el listado: judgment-day marcó que el 404 del GET de DETALLE —la aserción exacta
+/// que hacía la prueba retirada— no quedaba afirmado en ninguna parte, así que ahora lo afirma
+/// también. Son dos proyecciones distintas sobre el mismo filtro <c>BajaLogica</c> que
+/// <see cref="ServicioDeArticulos.ObtenerAsync"/> usa para su propio 404, y las dos están cubiertas.
 /// </summary>
 public class ServicioDeArticulosTests
 {
@@ -429,20 +441,6 @@ public class ServicioDeArticulosTests
 
         Assert.False(detalle.DisponibleParaTodas);
         Assert.Equal([idEmpresa], detalle.IdsEmpresas);
-    }
-
-    [Fact]
-    public async Task EliminarUnArticuloFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var articulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, idArea, idAlicuotaIva);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        await servicio.EliminarAsync(articulo.Id);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerAsync(articulo.Id));
-        Assert.Equal("no_encontrado", error.Codigo);
     }
 
     [Fact]

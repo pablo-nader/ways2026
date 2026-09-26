@@ -276,6 +276,29 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
         Activo: actual.Activo,
         ControlaLote: actual.ControlaLote);
 
+    /// <summary>Payload de edición para la sección 5: fuerza <c>Activo</c> y <c>Nombre</c>,
+    /// conserva el resto del estado sembrado sin tocarlo — mismo criterio que
+    /// <see cref="EdicionConReferencia"/>.</summary>
+    private static EdicionArticulo EdicionConActivoYNombre(ArticuloListado actual, bool activo, string nombre) => new(
+        Nombre: nombre,
+        Descripcion: actual.Descripcion,
+        IdArea: actual.IdArea,
+        IdCategoria: actual.IdCategoria,
+        IdMarca: actual.IdMarca,
+        IdGrupo: actual.IdGrupo,
+        IdProveedorHabitual: actual.IdProveedorHabitual,
+        IdAlicuotaIva: actual.IdAlicuotaIva,
+        UnidadVenta: actual.UnidadVenta,
+        UnidadesPorBulto: actual.UnidadesPorBulto,
+        EsProducto: actual.EsProducto,
+        CostoLista: actual.CostoLista,
+        DescuentoProveedor: actual.DescuentoProveedor,
+        CostoNominal: actual.CostoNominal,
+        DisponibleParaTodas: actual.DisponibleParaTodas,
+        IdsEmpresas: null,
+        Activo: activo,
+        ControlaLote: actual.ControlaLote);
+
     // =================================================================================================
     // 1. Secuencial: una referencia YA dada de baja antes de que el escritor arranque — 400
     // referencia_invalida, nada persistido/cambiado. Mutación: borrar el call site del chequeo
@@ -357,6 +380,13 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
 
         return false;
     }
+
+    /// <summary>El <c>deleted_at</c> crudo, truncado a MICROSEGUNDOS — mismo criterio que
+    /// <c>BajasDeOrganizacionTests.AMicrosegundos</c>: la columna <c>timestamptz</c> guarda
+    /// microsegundos, y comparar contra un <see cref="DateTimeOffset"/> en memoria (100 ns de
+    /// resolución) sin truncar arriesga una diferencia de representación, no de instante.</summary>
+    private static DateTimeOffset AMicrosegundos(DateTimeOffset instante) =>
+        new(instante.Ticks - (instante.Ticks % (TimeSpan.TicksPerMillisecond / 1000)), instante.Offset);
 
     /// <summary>C2 del plan: un T1 crudo toma <c>FOR UPDATE</c> sobre la marca (stand-in de la
     /// baja) ANTES de que el alta arranque; el alta queda esperando ese lock (afirmado vía
@@ -518,5 +548,146 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(marcaDos.Id, editado.IdMarca);
         Assert.Equal(grupoDos.Id, editado.IdGrupo);
         Assert.Equal(proveedorDos.Id, editado.IdProveedorHabitual);
+    }
+
+    // =================================================================================================
+    // 5/6. single-read-under-lock: fix/articulos-lock-de-fila. ActualizarAsync/EliminarAsync ahora
+    // toman FOR UPDATE sobre la PROPIA fila de articulos (el lock que faltaba: los 5 chequeos de
+    // 1-4 de arriba son FOR KEY SHARE sobre los CATÁLOGOS referenciados, nunca sobre articulos, así
+    // que no serializaban dos escrituras del MISMO artículo entre sí). Roles invertidos respecto de
+    // 2/3: ahí la conexión cruda simulaba una baja de CATÁLOGO y la API esperaba ese lock; acá la
+    // conexión cruda sostiene el lock de la PROPIA fila del artículo, simulando un segundo escritor
+    // que ya le ganó la carrera, y la API es la que espera.
+    // =================================================================================================
+
+    /// <summary>
+    /// single-read-under-lock, regla 3 (lost update SILENCIOSO): antes de este fix,
+    /// <c>ActualizarAsync</c> mutaba una instancia leída ANTES del lock de fila — si el PUT pedía,
+    /// para un campo, el mismo valor que esa foto vieja, EF no detectaba cambio contra su ORIGINAL
+    /// y lo omitía del <c>UPDATE</c>, aunque un escritor concurrente ya hubiera cambiado ese campo
+    /// en la base entre la foto y el commit de este PUT. Acá el PUT pide <c>Activo = true</c> —
+    /// IGUAL al valor sembrado — mientras una conexión cruda, sosteniendo el <c>FOR UPDATE</c> de
+    /// la propia fila del artículo, lo cambia a <c>false</c> y comitea recién DESPUÉS de que el PUT
+    /// quedó observado esperando ese lock. La aserción discriminante es la fila RELEÍDA por un GET
+    /// aparte, nunca el cuerpo del PUT (que proyecta la instancia ya mutada en memoria pase lo que
+    /// pase con la base — single-read-under-lock regla 8): bajo el fix, <c>ActualizarAsync</c> lee
+    /// <c>articulo</c> DESPUÉS del lock, ve <c>Activo = false</c> recién comiteado, y pedir
+    /// <c>true</c> SÍ es un cambio contra ESE original — la columna entra al <c>UPDATE</c>.
+    /// </summary>
+    [Fact]
+    public async Task UnaBajaConcurrenteDeActivoGanaLaCarreraContraUnaEdicionYElLostUpdateSeCierra()
+    {
+        var s = await AprovisionarAsync("lost-update-activo");
+        using var admin = await ClienteAdminAsync(s.MailAdmin, s.PasswordAdmin);
+        var idAlicuota = await IdDeAlicuotaIvaAsync();
+
+        var creado = await CrearArticuloBaseAsync(admin, s.IdArea, idAlicuota);
+        Assert.True(creado.Activo);
+
+        await using var conexionCarrera = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenant);
+        var pidCarrera = await BackendPidAsync(conexionCarrera);
+
+        await using var transaccionCarrera = await conexionCarrera.BeginTransactionAsync();
+        await using (var comandoLock = new NpgsqlCommand(
+            "SELECT 1 FROM articulos WHERE id_articulo = $1 FOR UPDATE", conexionCarrera, transaccionCarrera))
+        {
+            comandoLock.Parameters.AddWithValue(creado.Id);
+            await comandoLock.ExecuteScalarAsync();
+        }
+
+        var edicion = EdicionConActivoYNombre(creado, activo: true, nombre: "Editado bajo el lock");
+        var putTask = admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion);
+
+        await using var conexionPoll = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenant);
+        var pidPoll = await BackendPidAsync(conexionPoll);
+
+        var observado = await EsperarBackendBloqueadoAsync(conexionPoll, pidCarrera, pidPoll);
+        Assert.True(observado, "La edición nunca se observó esperando un lock: la prueba no está probando la carrera.");
+
+        await using (var comandoCarrera = new NpgsqlCommand(
+            "UPDATE articulos SET activo = false WHERE id_articulo = $1", conexionCarrera, transaccionCarrera))
+        {
+            comandoCarrera.Parameters.AddWithValue(creado.Id);
+            await comandoCarrera.ExecuteNonQueryAsync();
+        }
+
+        await transaccionCarrera.CommitAsync();
+
+        var respuesta = await putTask;
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var releido = await admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{creado.Id}", OpcionesJson);
+        Assert.True(releido!.Activo);
+        Assert.Equal("Editado bajo el lock", releido.Nombre);
+    }
+
+    /// <summary>
+    /// single-read-under-lock, regla 3 (fidelidad + no re-estampado): antes de este fix,
+    /// <c>EliminarAsync</c> no abría transacción ni tomaba ningún lock — dos bajas concurrentes del
+    /// mismo artículo podían leer las dos la fila viva y la que comiteaba segunda re-estampaba un
+    /// <c>deleted_at</c> NUEVO sobre el de la primera en vez de rendir 404 (mismo defecto de forma
+    /// que <c>ServicioDeUsuarios.EliminarAsync</c>/<c>ServicioDeOrganizacion.EliminarTenantAsync</c>
+    /// antes de sus propios fixes). Acá una conexión cruda, sosteniendo el <c>FOR UPDATE</c> de la
+    /// propia fila, estampa <c>deleted_at</c> con un instante FIJO y comitea recién DESPUÉS de que
+    /// el DELETE de la API quedó observado esperando ese lock. Bajo el fix, <c>BuscarAsync</c> —la
+    /// única lectura del artículo, nacida DESPUÉS del lock— corre cuando la fila ya está borrada,
+    /// el filtro <c>BajaLogica</c> la esconde, y el método responde 404 <c>no_encontrado</c> SIN
+    /// llegar a ningún <c>SaveChangesAsync</c> que pudiera re-estampar nada. La aserción
+    /// discriminante es el <c>deleted_at</c> releído CRUDO (no vía la API): tiene que ser
+    /// EXACTAMENTE el instante que escribió la conexión cruda, no uno nuevo del DELETE perdedor.
+    /// </summary>
+    [Fact]
+    public async Task UnaBajaConcurrenteDeLaPropiaFilaGanaLaCarreraContraUnaBajaDeArticuloYRinde404SinReestampar()
+    {
+        var s = await AprovisionarAsync("doble-baja-articulo");
+        using var admin = await ClienteAdminAsync(s.MailAdmin, s.PasswordAdmin);
+        var idAlicuota = await IdDeAlicuotaIvaAsync();
+
+        var creado = await CrearArticuloBaseAsync(admin, s.IdArea, idAlicuota);
+
+        await using var conexionCarrera = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenant);
+        var pidCarrera = await BackendPidAsync(conexionCarrera);
+
+        await using var transaccionCarrera = await conexionCarrera.BeginTransactionAsync();
+        await using (var comandoLock = new NpgsqlCommand(
+            "SELECT 1 FROM articulos WHERE id_articulo = $1 FOR UPDATE", conexionCarrera, transaccionCarrera))
+        {
+            comandoLock.Parameters.AddWithValue(creado.Id);
+            await comandoLock.ExecuteScalarAsync();
+        }
+
+        var deleteTask = admin.DeleteAsync($"/api/articulos/{creado.Id}");
+
+        await using var conexionPoll = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenant);
+        var pidPoll = await BackendPidAsync(conexionPoll);
+
+        var observado = await EsperarBackendBloqueadoAsync(conexionPoll, pidCarrera, pidPoll);
+        Assert.True(observado, "La baja nunca se observó esperando un lock: la prueba no está probando la carrera.");
+
+        var instanteFijo = new DateTimeOffset(2026, 3, 10, 9, 15, 30, 500, TimeSpan.Zero);
+        await using (var comandoCarrera = new NpgsqlCommand(
+            "UPDATE articulos SET deleted_at = $1 WHERE id_articulo = $2", conexionCarrera, transaccionCarrera))
+        {
+            comandoCarrera.Parameters.AddWithValue(instanteFijo);
+            comandoCarrera.Parameters.AddWithValue(creado.Id);
+            await comandoCarrera.ExecuteNonQueryAsync();
+        }
+
+        await transaccionCarrera.CommitAsync();
+
+        var respuesta = await deleteTask;
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("no_encontrado", problema.GetProperty("codigo").GetString());
+
+        await using var conexionLectura = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenant);
+        await using var comandoLectura = new NpgsqlCommand(
+            "SELECT deleted_at FROM articulos WHERE id_articulo = $1", conexionLectura);
+        comandoLectura.Parameters.AddWithValue(creado.Id);
+        await using var lector = await comandoLectura.ExecuteReaderAsync();
+        await lector.ReadAsync();
+        var deletedAtPersistido = lector.GetFieldValue<DateTimeOffset>(0);
+
+        Assert.Equal(AMicrosegundos(instanteFijo), AMicrosegundos(deletedAtPersistido));
     }
 }

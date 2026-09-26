@@ -77,10 +77,28 @@ estaba mal era DÓNDE nacía la lectura.
 4. **Antes de "arreglar", verificar que el lock REALMENTE serializa al escritor en pugna.**
    Nombrar al otro escritor y la columna que los dos tocan. Si el lock no cubre la fila que se
    muta, mover la lectura es cosmético: no cierra nada y disimula el hueco real, que es un lock
-   faltante. Caso vivo: `ServicioDeArticulos.ActualizarAsync` tiene la forma del defecto, pero
-   sus cinco `BloquearSiEstaVivaAsync` son `FOR KEY SHARE` sobre los CATÁLOGOS referenciados
-   (área/categoría/marca/grupo/proveedor), nunca sobre `articulos` — dos ediciones concurrentes
-   del mismo artículo no se serializan con nada, así que ahí la deuda es el lock, no la lectura.
+   faltante. El caso que fundó esta regla fue `ServicioDeArticulos.ActualizarAsync`: tenía la
+   forma del defecto, pero sus cinco `BloquearSiEstaVivaAsync` son `FOR KEY SHARE` sobre los
+   CATÁLOGOS referenciados (área/categoría/marca/grupo/proveedor), nunca sobre `articulos`, así
+   que dos ediciones concurrentes del mismo artículo no se serializaban con nada. Se reportó como
+   deuda de LOCK y se cerró aparte agregando el `FOR UPDATE` que faltaba sobre la propia fila —
+   no moviendo la lectura, que sola no habría cerrado nada.
+
+   Cuando la conclusión es "falta un lock", el lock nuevo va PRIMERO en la transacción y hay que
+   escribir por qué no abre un ciclo. En artículos el orden es fila del artículo (`FOR UPDATE`) y
+   después los catálogos (`FOR KEY SHARE`): la baja de un catálogo toma el orden inverso —lockea
+   el catálogo y después LEE `articulos`— pero lo lee SIN lock (`InspectorDeUso` es read-only), así
+   que nunca espera por la fila del artículo y no hay ciclo. Verificar esa asimetría con el
+   inventario de locks en la mano, no de memoria.
+
+   Y la precisión que sale de mutar ese lock, que es fácil describir mal: el lock explícito NO es
+   lo que hace que los dos escritores se serialicen. El `UPDATE` de `SaveChangesAsync` toma su
+   propio lock de fila y espera igual. Lo que el lock explícito agrega es serializar ANTES DE LEER:
+   sin él el perdedor lee su foto, espera recién al escribir, y escribe valores derivados de un
+   estado ya pisado. Consecuencia para los tests: una aserción de "se observó bloqueado"
+   (`pg_stat_activity`, `wait_event_type = 'Lock'`) NO mata al mutante que borra el lock —
+   sobrevive, porque el bloqueo sigue ocurriendo. Lo que lo mata es la aserción sobre la FILA
+   RELEÍDA. Comprobado corriéndolo, no razonándolo.
 
 5. **Lo que NO está afectado — decirlo explícitamente en vez de "arreglarlo".**
    - Escrituras 100% ADO crudo (`UPDATE ... RETURNING`, upsert): el lock y la mutación son un
@@ -155,6 +173,7 @@ estaba mal era DÓNDE nacía la lectura.
 | Ya hay una pre-lectura y se agrega una relectura | No alcanza: borrar la pre-lectura (regla 2) |
 | `valorAnterior` sale de una entidad | Tiene que salir de la lectura post-lock, con su propia aserción |
 | El lock no cubre la fila que se muta | Deuda de LOCK, no de lectura: reportarla, no maquillarla (regla 4) |
+| Se decide cerrar esa deuda | El lock nuevo va PRIMERO en la transacción, con su análisis de ciclo escrito (regla 4) |
 | Escritura ADO cruda / proyección / escalar / insert | No afectado — decirlo explícitamente |
 | Solo se muta `deleted_at` bajo el filtro de baja lógica | No afectado: el original `null` siempre difiere (regla 5) |
 | Hace falta la clave del lock antes del lock | Proyección escalar de columna inmutable (regla 6) |
