@@ -377,7 +377,9 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
     /// <summary>design: Transactions — ENVIAR OC. El número (serie <c>'OC'</c>) se asigna y
     /// COMITEA en su propia transacción chica ANTES de abrir la que escribe la orden (mismo shape
-    /// que <c>ServicioDeVentas.cs:278-280</c>) — <c>AsignadorDeNumeroComprobante.
+    /// que <c>ServicioDeVentas.EmitirAsync</c>, que documenta por qué esa transacción va separada:
+    /// "el número se consume aunque falle el resto" tiene que ser literal, no una aproximación que
+    /// un ROLLBACK conjunto desmienta) — <c>AsignadorDeNumeroComprobante.
     /// AsignarComprometidoAsync</c> no se toca. El <c>UPDATE</c> final pinea
     /// <c>id_punto_venta = $pv</c> (el capturado en la pre-lectura, ANTES del draw): 0 filas puede
     /// deberse a un doble-enviar (mutation target #12/#13, tasks 2.14-2.15) o a un <c>PUT</c>
@@ -414,7 +416,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         var idPuntoVenta = preLectura.IdPuntoVenta;
 
         // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
-        // IdPuntoVenta en el PUT, ServicioDeOrdenesDeCompra.cs:359) — el chequeo de
+        // IdPuntoVenta en el PUT, ver EjecutarActualizacionAsync) — el chequeo de
         // creación/edición no cubre este momento; se re-verifica acá, antes de gastar un número.
         await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
 

@@ -54,7 +54,7 @@ keeps pointing somewhere else, now confidently wrong. Cite the **member** —
 checks for you.
 
 Measured, not assumed: a sweep of every `ServicioDeVentas.cs:<línea>` citation in
-`src/` found **4 of 4 drifted**, by 30 to 500 lines.
+`src/` found **4 of 4 drifted**, by 30 to 500 lines. All four are now cited by member.
 
 | Citing site | Claimed | Actually lives at |
 |---|---|---|
@@ -70,6 +70,19 @@ is telling you the format is wrong, not the number.
 The same applies to citations into docs (`docs/10-modelo-de-datos.md:1387-1390`): prefer
 the section anchor (`doc 10 §9.1`) over the line, and check the section number is unique
 in that file before leaning on it — doc 10 has two `## 9.` headings.
+
+**Residual, so nobody re-derives it:** measured after the seven fixed above, `src/` still
+holds 42 line citations of this shape (30 distinct), mostly `<X>Configuration.cs:NN`
+cross-references between EF configurations and migrations. They were left alone deliberately — each needs someone to confirm what it
+MEANT to point at, not just a fresh number, and a bulk renumber would only reset the
+clock. Find them with:
+
+```
+rg -n '[A-Za-z_][\w.]*\.(cs|ts|tsx):[0-9]+' src/
+```
+
+Convert one whenever you are already editing its comment for another reason. Do not
+open a PR that only renumbers them.
 
 ## Checks before the prose ships
 
