@@ -483,12 +483,31 @@ public class ServicioDeRemitos(
     /// que el loop de reversa de abajo lee una lista vacía y no hace nada, sin ninguna rama especial
     /// (mismo criterio "estructural, no una bandera" que el itemless <c>RC</c>/<c>TXR</c>). 0 filas
     /// reclasifica en 404 / 409 <c>remito_facturado</c> / 409 <c>remito_ya_anulado</c> (OD8/T2, task
-    /// 5.9 — el escenario de doble-anulación ausente de <c>remitos/spec.md</c>).</summary>
+    /// 5.9 — el escenario de doble-anulación ausente de <c>remitos/spec.md</c>).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
+    /// ACÁ, con una pre-lectura fuera de la transacción — anular es el write site que de verdad
+    /// mueve stock (la reversa de abajo). La pre-lectura no queda TOCTOU frente al único caso que
+    /// importa: <c>id_punto_venta</c> solo puede moverse mientras el remito sigue en <c>borrador</c>
+    /// (<c>EjecutarEdicionAsync</c> pinea <c>estado='borrador'</c> en el mismo <c>UPDATE</c>), y
+    /// anular un borrador no escribe ningún <c>movimientos_stock</c> — para el caso que sí escribe
+    /// (un remito <c>emitido</c>), el punto de venta ya está congelado por el propio
+    /// <c>EmitirHeaderAsync</c>.</summary>
     public async Task<RemitoDetalle> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.Remitos.AsNoTracking()
+            .Where(r => r.Id == id)
+            .Select(r => (int?)r.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>

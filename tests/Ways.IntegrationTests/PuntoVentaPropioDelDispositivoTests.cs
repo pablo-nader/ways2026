@@ -31,13 +31,20 @@ namespace Ways.IntegrationTests;
 /// venta del documento, y el <c>id_punto_venta</c> de una orden de compra es el destino de
 /// recepción que <c>ServicioDeCompras</c> usa después.
 ///
-/// Esta clase prueba las 9 réplicas del guard nuevo (mutation-proof-tests regla 15: un kill POR
-/// sitio, nunca uno solo por todos) más dos familias de regresión, una por servicio cada una:
-/// las tres <c>ActorWebPuedeOperarContraPuntoVentaEscritorio</c> son las ÚNICAS que prueban que la
+/// Esta clase prueba las 13 réplicas del guard (mutation-proof-tests regla 15: un kill POR
+/// sitio, nunca uno solo por todos) — las primeras 9 en creación/edición/emisión-envío, las 4
+/// restantes agregadas en la revisión adversarial que encontró el mismo hueco en anular/cerrar
+/// (sitio 10: <c>ServicioDeRemitos.AnularAsync</c>; sitio 11:
+/// <c>ServicioDePresupuestos.AnularAsync</c>; sitio 12: <c>ServicioDeOrdenesDeCompra.CerrarAsync</c>;
+/// sitio 13: <c>ServicioDeOrdenesDeCompra.AnularAsync</c>) — más dos familias de regresión por
+/// servicio (una para creación/emisión, una para anular/cerrar):
+/// las <c>ActorWebPuedeOperarContraPuntoVentaEscritorio</c>/<c>ActorWebPuedeAnularContra…</c>/
+/// <c>ActorWebPuedeCerrarContra…</c> son las ÚNICAS que prueban que la
 /// mitad WEB nunca se agregó — un actor sin claim de dispositivo sigue eligiendo cualquier punto de
 /// venta de su tenant, en cualquier <c>modo</c> (docs/09-multi-tenancy.md:210-212;
-/// openspec/specs/operacion-de-pos/spec.md:53-58); las tres
-/// <c>DispositivoPuedeOperarContraSuPropioPuntoVenta</c> solo prueban que el guard no rompió el
+/// openspec/specs/operacion-de-pos/spec.md:53-58); las
+/// <c>DispositivoPuedeOperarContraSuPropioPuntoVenta</c>/<c>DispositivoPuedeAnularSuPropio…</c>/
+/// <c>DispositivoPuedeCerrarSuPropio…</c> solo prueban que el guard no rompió el
 /// camino feliz del dispositivo, y no dicen nada sobre la mitad web.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -203,6 +210,18 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
             .FirstOrDefaultAsync();
     }
 
+    private async Task<EstadoPresupuesto> LeerEstadoPresupuestoAsync(int idTenant, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return await db.Presupuestos.AsNoTracking().Where(p => p.Id == id).Select(p => p.Estado).FirstAsync();
+    }
+
+    private async Task<EstadoOrdenCompra> LeerEstadoOrdenDeCompraAsync(int idTenant, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return await db.OrdenesCompra.AsNoTracking().Where(o => o.Id == id).Select(o => o.Estado).FirstAsync();
+    }
+
     private static async Task<JsonElement> LeerCodigoAsync(HttpResponseMessage respuesta)
     {
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
@@ -327,6 +346,82 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
         Assert.StartsWith($"{ctx.IdPuntoVentaPropio:D4}-", detalle.NumeroFormateado);
     }
 
+    /// <summary>Sitio 10 — kill: mismo esquive de confound que el emitir (el borrador con PV ajeno
+    /// lo siembra Y lo emite el actor WEB — el guard de creación ya rechazaría a un dispositivo
+    /// intentándolo). Discriminante (mutation-proof-tests regla 4): ANULAR es el write site que
+    /// REVIERTE stock (<c>EjecutarAnulacionAsync</c>) — el valor que solo este guard puede producir
+    /// es que esa reversa nunca corrió, así que el stock del punto de venta ajeno queda intacto.</summary>
+    [Fact]
+    public async Task RemitoDispositivoNoPuedeAnularUnoEmitidoDePuntoVentaAjeno()
+    {
+        var ctx = await PrepararAsync(nameof(RemitoDispositivoNoPuedeAnularUnoEmitidoDePuntoVentaAjeno));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(ctx, ctx.IdPuntoVentaPropio, "rem-anular");
+
+        var creadoPorWeb = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos", RemitoConLinea(ctx.IdPuntoVentaAjeno, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creadoPorWeb.StatusCode);
+        var borrador = (await creadoPorWeb.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+
+        var emitidoPorWeb = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+        Assert.Equal(HttpStatusCode.OK, emitidoPorWeb.StatusCode);
+
+        var stockAntes = await LeerStockAsync(ctx.IdTenant, ctx.IdArticulo, ctx.IdPuntoVentaAjeno);
+
+        var respuesta = await cajero.PostAsync($"/api/remitos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await LeerCodigoAsync(respuesta);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        var stockDespues = await LeerStockAsync(ctx.IdTenant, ctx.IdArticulo, ctx.IdPuntoVentaAjeno);
+        Assert.Equal(stockAntes, stockDespues);
+    }
+
+    /// <summary>Regresión (f): un actor WEB sigue pudiendo anular un remito emitido contra un punto
+    /// de venta Escritorio — la mitad web tampoco se agregó acá.</summary>
+    [Fact]
+    public async Task RemitoActorWebPuedeAnularContraPuntoVentaEscritorio()
+    {
+        var ctx = await PrepararAsync(nameof(RemitoActorWebPuedeAnularContraPuntoVentaEscritorio));
+
+        var creado = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos", RemitoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+
+        var emitido = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+        Assert.Equal(HttpStatusCode.OK, emitido.StatusCode);
+
+        var anulado = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, anulado.StatusCode);
+        var detalle = (await anulado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+        Assert.Equal(EstadoRemito.Anulado, detalle.Estado);
+    }
+
+    /// <summary>Regresión (g): un dispositivo puede anular un remito emitido de SU PROPIO punto de
+    /// venta.</summary>
+    [Fact]
+    public async Task RemitoDispositivoPuedeAnularSuPropioPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(RemitoDispositivoPuedeAnularSuPropioPuntoVenta));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(ctx, ctx.IdPuntoVentaPropio, "rem-anular-ok");
+
+        var creado = await cajero.PostAsJsonAsync(
+            "/api/remitos", RemitoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+
+        var emitido = await cajero.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+        Assert.Equal(HttpStatusCode.OK, emitido.StatusCode);
+
+        var anulado = await cajero.PostAsync($"/api/remitos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, anulado.StatusCode);
+        var detalle = (await anulado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+        Assert.Equal(EstadoRemito.Anulado, detalle.Estado);
+    }
+
     // ==========================================================================================
     // ---- Presupuestos: sitios 4 (CrearBorradorAsync), 5 (EditarAsync), 6 (EnviarAsync) ----
     // ==========================================================================================
@@ -433,6 +528,76 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
         Assert.NotNull(detalle.Numero);
         Assert.Equal(EstadoPresupuesto.Enviado, detalle.Estado);
         Assert.StartsWith($"{ctx.IdPuntoVentaPropio:D4}-", detalle.NumeroFormateado);
+    }
+
+    /// <summary>Sitio 11 — kill: mismo esquive de confound — el borrador con PV ajeno lo siembra Y
+    /// lo envía el actor WEB.</summary>
+    [Fact]
+    public async Task PresupuestoDispositivoNoPuedeAnularUnoAjeno()
+    {
+        var ctx = await PrepararAsync(nameof(PresupuestoDispositivoNoPuedeAnularUnoAjeno));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(ctx, ctx.IdPuntoVentaPropio, "pres-anular");
+
+        var creadoPorWeb = await ctx.Admin.PostAsJsonAsync(
+            "/api/presupuestos", PresupuestoConLinea(ctx.IdPuntoVentaAjeno, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creadoPorWeb.StatusCode);
+        var borrador = (await creadoPorWeb.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+
+        var enviadoPorWeb = await ctx.Admin.PostAsJsonAsync($"/api/presupuestos/{borrador.Id}/enviar", EnvioAFuturo());
+        Assert.Equal(HttpStatusCode.OK, enviadoPorWeb.StatusCode);
+
+        var respuesta = await cajero.PostAsync($"/api/presupuestos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await LeerCodigoAsync(respuesta);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoPresupuesto.Enviado, await LeerEstadoPresupuestoAsync(ctx.IdTenant, borrador.Id));
+    }
+
+    /// <summary>Regresión (f): un actor WEB sigue pudiendo anular un presupuesto enviado contra un
+    /// punto de venta Escritorio.</summary>
+    [Fact]
+    public async Task PresupuestoActorWebPuedeAnularContraPuntoVentaEscritorio()
+    {
+        var ctx = await PrepararAsync(nameof(PresupuestoActorWebPuedeAnularContraPuntoVentaEscritorio));
+
+        var creado = await ctx.Admin.PostAsJsonAsync(
+            "/api/presupuestos", PresupuestoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+
+        var enviado = await ctx.Admin.PostAsJsonAsync($"/api/presupuestos/{borrador.Id}/enviar", EnvioAFuturo());
+        Assert.Equal(HttpStatusCode.OK, enviado.StatusCode);
+
+        var anulado = await ctx.Admin.PostAsync($"/api/presupuestos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, anulado.StatusCode);
+        var detalle = (await anulado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+        Assert.Equal(EstadoPresupuesto.Anulado, detalle.Estado);
+    }
+
+    /// <summary>Regresión (g): un dispositivo puede anular un presupuesto enviado de SU PROPIO
+    /// punto de venta.</summary>
+    [Fact]
+    public async Task PresupuestoDispositivoPuedeAnularSuPropioPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(PresupuestoDispositivoPuedeAnularSuPropioPuntoVenta));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(ctx, ctx.IdPuntoVentaPropio, "pres-anular-ok");
+
+        var creado = await cajero.PostAsJsonAsync(
+            "/api/presupuestos", PresupuestoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+
+        var enviado = await cajero.PostAsJsonAsync($"/api/presupuestos/{borrador.Id}/enviar", EnvioAFuturo());
+        Assert.Equal(HttpStatusCode.OK, enviado.StatusCode);
+
+        var anulado = await cajero.PostAsync($"/api/presupuestos/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, anulado.StatusCode);
+        var detalle = (await anulado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+        Assert.Equal(EstadoPresupuesto.Anulado, detalle.Estado);
     }
 
     // ================================================================================================
@@ -546,5 +711,99 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
         var detalle = (await enviada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
         Assert.NotNull(detalle.Numero);
         Assert.Equal(EstadoOrdenCompra.Enviada, detalle.Estado);
+    }
+
+    /// <summary>Sitio 12 — kill: mismo esquive de confound — el borrador con PV ajeno lo siembra Y
+    /// lo envía el actor WEB (Admin en esta sección).</summary>
+    [Fact]
+    public async Task OrdenDeCompraDispositivoNoPuedeCerrarUnaAjena()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraDispositivoNoPuedeCerrarUnaAjena));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "oc-cerrar", RolConocido.Admin);
+
+        var creadaPorWeb = await ctx.Admin.PostAsJsonAsync(
+            "/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaAjeno));
+        Assert.Equal(HttpStatusCode.Created, creadaPorWeb.StatusCode);
+        var borrador = (await creadaPorWeb.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var enviadaPorWeb = await ctx.Admin.PostAsync($"/api/ordenes-compra/{borrador.Id}/enviar", content: null);
+        Assert.Equal(HttpStatusCode.OK, enviadaPorWeb.StatusCode);
+
+        var respuesta = await cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/cerrar", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await LeerCodigoAsync(respuesta);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoOrdenDeCompraAsync(ctx.IdTenant, borrador.Id));
+    }
+
+    /// <summary>Sitio 13 — kill: el borrador con PV ajeno lo siembra el actor WEB (Admin), sin
+    /// necesidad de enviarlo — <c>AnularAsync</c> admite <c>borrador</c>.</summary>
+    [Fact]
+    public async Task OrdenDeCompraDispositivoNoPuedeAnularUnaAjena()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraDispositivoNoPuedeAnularUnaAjena));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "oc-anular", RolConocido.Admin);
+
+        var creadaPorWeb = await ctx.Admin.PostAsJsonAsync(
+            "/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaAjeno));
+        Assert.Equal(HttpStatusCode.Created, creadaPorWeb.StatusCode);
+        var borrador = (await creadaPorWeb.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var respuesta = await cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/anular", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await LeerCodigoAsync(respuesta);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoOrdenCompra.Borrador, await LeerEstadoOrdenDeCompraAsync(ctx.IdTenant, borrador.Id));
+    }
+
+    /// <summary>Regresión (f): un actor WEB (Admin) sigue pudiendo cerrar una orden de compra
+    /// enviada contra un punto de venta Escritorio.</summary>
+    [Fact]
+    public async Task OrdenDeCompraActorWebPuedeCerrarContraPuntoVentaEscritorio()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraActorWebPuedeCerrarContraPuntoVentaEscritorio));
+
+        var creada = await ctx.Admin.PostAsJsonAsync(
+            "/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaPropio));
+        Assert.Equal(HttpStatusCode.Created, creada.StatusCode);
+        var borrador = (await creada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var enviada = await ctx.Admin.PostAsync($"/api/ordenes-compra/{borrador.Id}/enviar", content: null);
+        Assert.Equal(HttpStatusCode.OK, enviada.StatusCode);
+
+        var cerrada = await ctx.Admin.PostAsync($"/api/ordenes-compra/{borrador.Id}/cerrar", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, cerrada.StatusCode);
+        var detalle = (await cerrada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+        Assert.Equal(EstadoOrdenCompra.Cerrada, detalle.Estado);
+    }
+
+    /// <summary>Regresión (g): un dispositivo puede cerrar una orden de compra enviada de SU
+    /// PROPIO punto de venta.</summary>
+    [Fact]
+    public async Task OrdenDeCompraDispositivoPuedeCerrarSuPropioPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraDispositivoPuedeCerrarSuPropioPuntoVenta));
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "oc-cerrar-ok", RolConocido.Admin);
+
+        var creada = await cajero.PostAsJsonAsync("/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaPropio));
+        Assert.Equal(HttpStatusCode.Created, creada.StatusCode);
+        var borrador = (await creada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var enviada = await cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/enviar", content: null);
+        Assert.Equal(HttpStatusCode.OK, enviada.StatusCode);
+
+        var cerrada = await cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/cerrar", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, cerrada.StatusCode);
+        var detalle = (await cerrada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+        Assert.Equal(EstadoOrdenCompra.Cerrada, detalle.Estado);
     }
 }

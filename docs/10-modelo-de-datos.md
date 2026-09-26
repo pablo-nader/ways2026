@@ -1413,17 +1413,23 @@ CUALQUIER punto de venta de su tenant, no solo el suyo. El alcance real, explíc
   distinta).
 - **Solo la mitad dispositivo** aplica a remitos, presupuestos y órdenes de compra
   (`PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync`): un actor de dispositivo
-  únicamente puede tocar el punto de venta que ese dispositivo tiene vinculado. La razón no es la
-  numeración (REM/PRES/OC son filas separadas en `numeraciones_comprobante` por PK
+  únicamente puede tocar el punto de venta que ese dispositivo tiene vinculado. La superficie
+  cubierta es **crear, editar, emitir/enviar, anular (los tres documentos) y cerrar (órdenes de
+  compra)** — el guard se re-verifica en cada uno de esos write sites, nunca solo al crear/editar.
+  La razón no es la numeración (REM/PRES/OC son filas separadas en `numeraciones_comprobante` por PK
   `(id_punto_venta, tipo_comprobante)`, doc 09 — un bloque `TX` reservado offline no puede colisionar
   con ellas): es que `ServicioDeRemitos.EmitirAsync` decrementa `stock`/`stock_lotes` del punto de
   venta del documento, y `ordenes_compra.id_punto_venta` es el destino de recepción que
-  `ServicioDeCompras` usa después — autorización + integridad operativa, no numeración. **La mitad
-  web NO existe acá, a propósito**: un actor web sigue eligiendo cualquier punto de venta de su
-  tenant, en cualquier `modo`, para estos tres documentos (§9 arriba, "la selección de punto de
-  venta del legacy (A2) se conserva"; `openspec/specs/operacion-de-pos/spec.md`, escenario "Same
-  user operates two puntos de venta in sequence" — agregar esa mitad rompería el back office de
-  cualquier tenant cuyo único punto de venta sea una caja Escritorio).
+  `ServicioDeCompras` usa después — autorización + integridad operativa, no numeración. **Anular
+  importa más que ninguno de los otros**: la reversa de un remito (`ServicioDeRemitos.AnularAsync`)
+  vuelve a escribir `stock`/`stock_lotes` en el punto de venta del documento, así que sin el guard un
+  dispositivo podía anular un remito ajeno y mover stock de un local que no es el suyo — el mismo
+  daño concreto que emitir, del lado inverso. **La mitad web NO existe acá, a propósito**: un actor
+  web sigue eligiendo cualquier punto de venta de su tenant, en cualquier `modo`, para estos tres
+  documentos (§9 arriba, "la selección de punto de venta del legacy (A2) se conserva";
+  `openspec/specs/operacion-de-pos/spec.md`, escenario "Same user operates two puntos de venta in
+  sequence" — agregar esa mitad rompería el back office de cualquier tenant cuyo único punto de
+  venta sea una caja Escritorio).
 - **Exenciones nombradas, sin cambios:** `ServicioDeFacturacionFiscal` numera desde
   `numeraciones_fiscales` (espacio distinto, doc 09/10 fiscal); `ServicioDeCuentaCorriente.
   RegistrarAjusteAsync` no emite ningún comprobante.

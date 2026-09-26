@@ -59,11 +59,12 @@ public static class PoliticaDeModoDePuntoVenta
 
     /// <summary>
     /// Mitad "dispositivo" de la regla de arriba, aislada para remitos/presupuestos/órdenes de
-    /// compra: un actor con claim de dispositivo solo puede crear, editar o emitir/enviar esos tres
-    /// documentos contra el punto de venta que ESE dispositivo tiene vinculado — nunca contra otro
-    /// punto de venta del mismo tenant. Un actor SIN esa claim (sesión web) es <b>completamente
-    /// intocado por este método</b>: retorna de inmediato, sin query ni error, y sigue eligiendo
-    /// cualquier punto de venta de su tenant, en cualquier <c>modo</c> — ver el porqué más abajo.
+    /// compra: un actor con claim de dispositivo solo puede crear, editar, emitir/enviar,
+    /// <b>anular</b> (los tres documentos) y <b>cerrar</b> (órdenes de compra) contra el punto de
+    /// venta que ESE dispositivo tiene vinculado — nunca contra otro punto de venta del mismo
+    /// tenant. Un actor SIN esa claim (sesión web) es <b>completamente intocado por este
+    /// método</b>: retorna de inmediato, sin query ni error, y sigue eligiendo cualquier punto de
+    /// venta de su tenant, en cualquier <c>modo</c> — ver el porqué más abajo.
     ///
     /// <para><b>Por qué remitos/PRES/OC necesitan esta mitad y ventas necesita las dos.</b> El
     /// checkout escribe <c>stock</c>/<c>movimientos_stock</c> por <c>id_punto_venta</c> Y consume

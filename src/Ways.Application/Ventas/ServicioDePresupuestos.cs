@@ -431,11 +431,29 @@ public class ServicioDePresupuestos(
     /// Presupuesto"). Un único <c>UPDATE … RETURNING</c> (mismo criterio que
     /// <c>ServicioDeOrdenesDeCompra.MarcarOrdenAnuladaAsync</c>, sin lock previo — no hay ningún
     /// segundo invariante que verificar bajo lock, a diferencia de la OC gobernada por el
-    /// libro).</summary>
+    /// libro).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
+    /// ACÁ con una pre-lectura fuera de la transacción, mismo criterio que <see
+    /// cref="ServicioDeRemitos.AnularAsync"/>: <c>id_punto_venta</c> solo puede moverse mientras el
+    /// presupuesto sigue en <c>borrador</c> (<c>EjecutarEdicionAsync</c> pinea
+    /// <c>estado='borrador'</c> en el mismo <c>UPDATE</c>), así que para el único estado que
+    /// realmente llega acá desde otro actor (<c>enviado</c>) el punto de venta ya está congelado
+    /// por <c>EnviarHeaderAsync</c>.</summary>
     public async Task<PresupuestoDetalle> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.Presupuestos.AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => (int?)p.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>

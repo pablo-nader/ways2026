@@ -464,12 +464,29 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// (mutation target #31) ni <c>anulada</c>. Una vez escrito, <c>id_empleado_cierre IS NOT
     /// NULL</c> hace que <see cref="EscriturasDeOrdenDeCompra.ProyectarEstadoAsync"/> jamás vuelva
     /// a tocar esta orden (design decisión 2, cortocircuito bajo el mismo lock, mutation target
-    /// #26).</summary>
+    /// #26).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
+    /// ACÁ con una pre-lectura fuera de la transacción, mismo criterio que
+    /// <c>ServicioDeRemitos.AnularAsync</c>: <c>id_punto_venta</c> solo puede moverse mientras la
+    /// orden sigue en <c>borrador</c> (<c>EjecutarActualizacionAsync</c> pinea
+    /// <c>estado='borrador'</c> en el mismo <c>UPDATE</c>), y <c>CerrarAsync</c> solo admite
+    /// <c>enviada</c>/<c>recibida_parcial</c> — ya congelada por <c>EnviarHeaderAsync</c>.</summary>
     public async Task<OrdenDeCompraBorrador> CerrarAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.OrdenesCompra.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => (int?)o.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
@@ -517,11 +534,29 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// slice). Los TRES guards fallidos colapsan al MISMO código de dominio,
     /// <c>orden_compra_con_recepciones</c> — el propio contrato del spec ("otherwise 409
     /// orden_compra_con_recepciones") lo pinea como código único, mismo criterio de generalidad
-    /// deliberada que decisión 19 (<c>orden_compra_no_enviable</c>).</summary>
+    /// deliberada que decisión 19 (<c>orden_compra_no_enviable</c>).
+    ///
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
+    /// ACÁ con una pre-lectura fuera de la transacción, mismo criterio que
+    /// <c>ServicioDeRemitos.AnularAsync</c>: <c>id_punto_venta</c> solo puede moverse mientras la
+    /// orden sigue en <c>borrador</c> (<c>EjecutarActualizacionAsync</c> pinea
+    /// <c>estado='borrador'</c> en el mismo <c>UPDATE</c>) — para <c>enviada</c>, el único otro
+    /// estado que este método admite, el punto de venta ya está congelado por
+    /// <c>EnviarHeaderAsync</c>.</summary>
     public async Task<OrdenDeCompraBorrador> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var momento = reloj.Ahora;
+
+        var idPuntoVenta = await db.OrdenesCompra.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => (int?)o.IdPuntoVenta)
+            .FirstOrDefaultAsync(ct);
+        if (idPuntoVenta is { } pv)
+        {
+            await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, pv, ct);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
