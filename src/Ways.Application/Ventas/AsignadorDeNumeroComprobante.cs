@@ -164,6 +164,44 @@ public static class AsignadorDeNumeroComprobante
         return (desde, hasta);
     }
 
+    /// <summary>Rendición de la cola local del dispositivo (guarda de cierre de turno): pisa
+    /// <c>entregado_hasta</c>/<c>pendientes</c>/<c>reportado_at</c> del bloque VIVO de
+    /// <paramref name="idDispositivo"/> para esa serie. A diferencia de
+    /// <see cref="ReservarBloqueAsync"/>, NO abre transacción propia: es un único statement, así
+    /// que ya es atómico por sí mismo — el llamador solo lo envuelve en su estrategia de ejecución
+    /// (misma convención que el resto de esta clase; ver el doc-comment de
+    /// <see cref="AsignarComprometidoAsync"/>).
+    ///
+    /// Devuelve la cantidad de filas afectadas para que el llamador pueda distinguir "no hay
+    /// bloque vivo" (0) de una rendición efectiva (1) — el índice parcial
+    /// <c>ux_reservas_numeracion_dispositivo_activo</c> garantiza que nunca sea más de 1.
+    /// Idempotente por construcción (escribe los valores que le pasan, no los incrementa), así que
+    /// un reintento sobre un commit ambiguo no duplica nada.</summary>
+    public static async Task<int> RegistrarRendicionAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo,
+        long entregadoHasta, int pendientes, DateTimeOffset momento, CancellationToken ct = default)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(db, ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE reservas_numeracion " +
+            "SET entregado_hasta = $1, pendientes = $2, reportado_at = $3, updated_at = $3 " +
+            "WHERE id_tenant = $4 AND id_punto_venta = $5 AND tipo_comprobante = $6 AND id_dispositivo = $7 " +
+            "AND abandonada_at IS NULL";
+
+        ParametrosDeComando.Agregar(comando, entregadoHasta);
+        ParametrosDeComando.Agregar(comando, pendientes);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, tipoComprobante);
+        ParametrosDeComando.Agregar(comando, idDispositivo);
+
+        return await comando.ExecuteNonQueryAsync(ct);
+    }
+
     private static async Task AbandonarReservaVivaAsync(
         IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo,
         DateTimeOffset momento, CancellationToken ct)
