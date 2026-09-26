@@ -45,6 +45,32 @@ Prose may describe what the code does, or less. It may never describe more.
 When you cannot make the code match the claim in the same commit, weaken the claim —
 do not leave the stronger sentence standing and plan to catch up later.
 
+## Never cite another file by line number
+
+A cross-file citation of the form `OtroArchivo.cs:1130-1135` is a claim about what
+lives at those lines, and it rots on its own: the target file moves and the sentence
+keeps pointing somewhere else, now confidently wrong. Cite the **member** —
+`ServicioDeVentas.UpsertStockLoteAsync` — or a `<see cref="..."/>`, which the compiler
+checks for you.
+
+Measured, not assumed: a sweep of every `ServicioDeVentas.cs:<línea>` citation in
+`src/` found **4 of 4 drifted**, by 30 to 500 lines.
+
+| Citing site | Claimed | Actually lives at |
+|---|---|---|
+| `ServicioDeRemitos.EjecutarAnulacionAsync` | `:1130-1135` (reversa sin chequeo de negativo) | `UpsertStockLoteAsync`'s doc-comment |
+| `AsignadorDeNumeroComprobante` | `:342-349` (huecos sí, duplicados no) | the `gaps are accepted` comment, ~`:374` |
+| `ServicioDeOrdenesDeCompra.EnviarAsync` | `:278-280` (numerar en transacción propia) | the `estrategiaNumeracion` draw, ~`:385-387` |
+| `20260819195638_PresupuestosEtapa17.Down` | `:930` (`\|\| !tipo.AfectaStock`) | ~`:1429` |
+
+The one fixed in that sweep drifted twice over: it read `:537` when a reviewer found it
+and `:567` by the time the fix landed. A citation that moves while you are correcting it
+is telling you the format is wrong, not the number.
+
+The same applies to citations into docs (`docs/10-modelo-de-datos.md:1387-1390`): prefer
+the section anchor (`doc 10 §9.1`) over the line, and check the section number is unique
+in that file before leaning on it — doc 10 has two `## 9.` headings.
+
 ## Checks before the prose ships
 
 | You wrote | Prove it or weaken it |
