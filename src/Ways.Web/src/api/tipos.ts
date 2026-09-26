@@ -113,6 +113,14 @@ export function puedeSupervisarCuentaCorriente(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de la guarda de rol de `ServicioDeTurnos.ValidarOverrideDeRendicion`: supervisor o admin
+ * pueden forzar un cierre de turno sin la rendición de cola de un dispositivo. Solo da forma a la
+ * copia en pantalla — el servidor vuelve a exigir el rol y responde `403 prohibido` igual, así que
+ * el control nunca se esconde en base a esto (el rol del cliente no es fuente de verdad). */
+export function puedeForzarCierreSinRendicion(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 /** Espejo de `Politicas.SupervisionDeCuentaDeProveedor` (stage-15-cc-proveedores-ledger, Slice 5):
  * supervisor o admin pueden registrar un ajuste manual del ledger de proveedores — vendedor queda
  * afuera, mismo criterio que `puedeSupervisarCuentaCorriente` pero una policy DISTINTA y propia
@@ -957,8 +965,18 @@ export type ResumenDeTurno = {
 export type ConteoDeclarado = { idMedioPago: number; importeDeclarado: number }
 
 /** Cuerpo de `POST /api/caja/turnos/{id}/cierre` — sin ningún campo de total, subtotal o
- * esperado (spec: No Request Shape Accepts A Total). */
-export type SolicitudDeCierre = { conteos: ConteoDeclarado[]; observaciones: string | null }
+ * esperado (spec: No Request Shape Accepts A Total).
+ *
+ * `forzarSinRendicion`/`motivoSinRendicion` son el override supervisado de la guarda de rendición
+ * de dispositivos, opcionales porque el servidor los rechaza cruzados: forzar sin motivo es `400
+ * motivo_requerido` y un motivo sin forzar es `400 motivo_sin_forzado`, así que un cierre normal
+ * viaja sin ninguno de los dos (nunca `false`/`null` explícitos). */
+export type SolicitudDeCierre = {
+  conteos: ConteoDeclarado[]
+  observaciones: string | null
+  forzarSinRendicion?: boolean
+  motivoSinRendicion?: string
+}
 
 /** Una fila ya persistida de `arqueos_turno` — `diferencia` la calcula la columna `GENERATED
  * ALWAYS` del servidor (design decisión 6); positivo = faltante. */
@@ -981,8 +999,14 @@ export type TurnoConArqueos = TurnoResumen & { arqueos: LineaDeArqueoResumen[] }
 /** Cuerpo de `POST /api/caja/turnos/{id}/cierre-por-retiro` — `importeRetirado` es un
  * MOVIMIENTO (lo que el cajero se lleva), nunca un total de ventas ni un conteo por medio
  * (spec: Cierre Por Retiro Payload Carries Only The Withdrawal Amount). `>= 0`; `0` es válido
- * y no genera ningún movimiento de retiro. */
-export type SolicitudDeCierrePorRetiro = { importeRetirado: number; observaciones: string | null }
+ * y no genera ningún movimiento de retiro. `forzarSinRendicion`/`motivoSinRendicion`: mismo
+ * contrato exacto que `SolicitudDeCierre` (los dos modos de cierre comparten la guarda). */
+export type SolicitudDeCierrePorRetiro = {
+  importeRetirado: number
+  observaciones: string | null
+  forzarSinRendicion?: boolean
+  motivoSinRendicion?: string
+}
 
 /** Punto de venta de `ResumenDeCierrePorRetiro` — `numero` es el mismo valor que `id` (no hay
  * una columna de numeración operativa separada, ver el doc-comment del lado del servidor). */
@@ -1279,6 +1303,17 @@ export type BloqueDeNumeracionReservado = {
   hasta: number
   idPuntoVenta: number
   codigoTipoComprobante: string
+}
+
+/** Cuerpo de `POST /api/pos/rendicion-de-cola` — espejo de `SolicitudDeRendicionDeCola`: el
+ * dispositivo declara hasta qué número repartió (`proximo - 1` de su bloque local; `desde - 1`
+ * cuando todavía no repartió ninguno) y cuántas de esas ventas no llegaron al servidor (outbox +
+ * rechazadas), para que el cierre de turno pueda verificarlo contra `comprobantes_venta`. Sin
+ * `idPuntoVenta`/`idDispositivo`: los dos los deriva el servidor del dispositivo autenticado. */
+export type SolicitudDeRendicionDeCola = {
+  codigoTipoComprobante: string
+  entregadoHasta: number
+  pendientes: number
 }
 
 export type EstadoComprobante = 'Emitido' | 'Anulado'

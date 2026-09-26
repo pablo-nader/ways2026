@@ -11,6 +11,7 @@ import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, Solici
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
 const obtenerInstantaneaMock = vi.fn()
+const rendirColaMock = vi.fn()
 
 // Solo `clienteDeVentas` (el único HTTP que este hook toca) se reemplaza; el resto del módulo
 // queda REAL para que el test de acuerdo vista-previa/payload pueda usar la `previaDeLinea` de
@@ -24,7 +25,10 @@ vi.mock('../api/ventas', async (importarOriginal) => ({
 }))
 
 vi.mock('../api/pos', () => ({
-  clienteDePos: { obtenerInstantanea: (...args: unknown[]) => obtenerInstantaneaMock(...args) },
+  clienteDePos: {
+    obtenerInstantanea: (...args: unknown[]) => obtenerInstantaneaMock(...args),
+    rendirCola: (...args: unknown[]) => rendirColaMock(...args),
+  },
 }))
 
 /** Mismo fake en memoria que `outboxOffline.test.ts` — evita acoplar este test a IndexedDB real. */
@@ -117,6 +121,9 @@ beforeEach(() => {
   emitirMock.mockReset()
   reservarNumeracionMock.mockReset()
   obtenerInstantaneaMock.mockReset()
+  rendirColaMock.mockReset()
+  // default: la rendición llega bien (204) — cada test que necesite el fallo la sobrescribe.
+  rendirColaMock.mockResolvedValue(undefined)
   // default: sin servidor (ErrorDeRed) — cada test que necesite señal la sobrescribe.
   obtenerInstantaneaMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
   reservarNumeracionMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
@@ -811,5 +818,118 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(primero).toMatchObject({ ok: true, numero: 150 })
     expect(segundo).toMatchObject({ ok: true, numero: 151 })
     await waitFor(() => expect(result.current.outboxCount).toBe(2))
+  })
+})
+
+// Rendición de la cola local (`POST /api/pos/rendicion-de-cola`): el cierre de turno del servidor
+// verifica este reporte contra `comprobantes_venta` en vez de creerle al IndexedDB de UNA máquina.
+describe('useSincronizacionOffline — rendición de la cola local', () => {
+  function ventaEnCola(idLocal: string, numeroPreasignado: number): VentaEnCola {
+    return {
+      idLocal,
+      numeroPreasignado,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: solicitudFixture({ numeroPreasignado }),
+    }
+  }
+
+  /** Espera un ciclo completo (drenado + instantánea + rendición) sin depender de ningún assert
+   * sobre la rendición misma — para los tests que prueban que NO se rinde. */
+  async function esperarUnCicloCompleto() {
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalled())
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+
+  /**
+   * Cláusula bajo prueba: `entregadoHasta = bloque.proximo - 1` (el puntero local apunta al
+   * PRÓXIMO número a repartir, así que el más alto ya entregado es el anterior) y
+   * `pendientes = outbox + rechazadas` (una venta rechazada también tiene su ticket en la mano de
+   * un cliente). Los tres valores son distintos entre sí a propósito: 2 en el outbox, 1 rechazada,
+   * 3 en total — ninguna suma parcial coincide con el total por casualidad.
+   */
+  it('rinde entregadoHasta = proximo - 1 y pendientes = outbox + rechazadas, con el tipo de comprobante del bloque', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, hasta: 200, proximo: 105 }))
+    await agregarAOutbox(almacen, ventaEnCola('a', 100))
+    await agregarAOutbox(almacen, ventaEnCola('b', 101))
+    await agregarARechazada(almacen, { ...ventaEnCola('c', 102), mensaje: 'La venta 102 no se pudo sincronizar.' })
+    // Sin señal para el checkout: el outbox no drena, así que los pendientes siguen siendo 3.
+    emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() =>
+      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 104, pendientes: 3 }),
+    )
+  })
+
+  it('rinde DESPUÉS del drenado: lo que declara refleja el outbox ya vacío, nunca el de antes del ciclo', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, hasta: 200, proximo: 103 }))
+    await agregarAOutbox(almacen, ventaEnCola('a', 100))
+    await agregarAOutbox(almacen, ventaEnCola('b', 101))
+    emitirMock.mockResolvedValue({ id: 1 })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.outboxCount).toBe(0))
+    await waitFor(() => expect(rendirColaMock).toHaveBeenCalled())
+    // Ninguna rendición de este ciclo declaró las dos ventas que el drenado ya había entregado.
+    expect(rendirColaMock.mock.calls.map((c) => c[0])).toEqual([
+      { codigoTipoComprobante: 'TX', entregadoHasta: 102, pendientes: 0 },
+    ])
+  })
+
+  it('sin bloque local no rinde nada: no hay cola de la que dar fe', async () => {
+    const almacen = almacenFake()
+    await agregarAOutbox(almacen, ventaEnCola('a', 100))
+    emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await esperarUnCicloCompleto()
+    expect(rendirColaMock).not.toHaveBeenCalled()
+  })
+
+  it('una rendición que falla no rompe el drenado del mismo ciclo ni el ciclo siguiente, y no deja una rejection sin manejar', async () => {
+    // Sin el `try/catch` alrededor de `clienteDePos.rendirCola`, el rechazo escapa como una promise
+    // rejection nunca manejada (el llamador de `ciclo()` es `void ciclo(...)`, fire-and-forget) —
+    // los ciclos siguen corriendo igual por el timer, así que esperar la convergencia NO alcanza
+    // para probar esta guarda; hace falta escuchar `unhandledRejection`, mismo criterio (y misma
+    // forma local mínima de `process`) que el test del `try/catch` de `quitarDeOutbox`.
+    const procesoDeNode = (globalThis as { process?: { on: (evento: string, listener: (razon: unknown) => void) => void; off: (evento: string, listener: (razon: unknown) => void) => void } }).process
+    const rejeccionesNoManejadas: unknown[] = []
+    const alRejectionNoManejada = (razon: unknown) => rejeccionesNoManejadas.push(razon)
+    procesoDeNode?.on('unhandledRejection', alRejectionNoManejada)
+
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, hasta: 200, proximo: 101 }))
+    await agregarAOutbox(almacen, ventaEnCola('a', 100))
+    emitirMock.mockResolvedValue({ id: 1 })
+    rendirColaMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    // El drenado del MISMO ciclo llegó a completarse (la rendición corre después, y falla sola).
+    await waitFor(() => expect(result.current.outboxCount).toBe(0))
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+    await waitFor(() => expect(rendirColaMock).toHaveBeenCalledTimes(1))
+
+    // Y el ciclo siguiente corre completo igual: drena la venta nueva y vuelve a rendir.
+    await agregarAOutbox(almacen, ventaEnCola('b', 101))
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await waitFor(() => expect(rendirColaMock).toHaveBeenCalledTimes(2))
+    expect(emitirMock.mock.calls.map((c) => (c[0] as SolicitudDeVenta).numeroPreasignado)).toEqual([100, 101])
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+
+    procesoDeNode?.off('unhandledRejection', alRejectionNoManejada)
+    expect(rejeccionesNoManejadas).toEqual([])
   })
 })
