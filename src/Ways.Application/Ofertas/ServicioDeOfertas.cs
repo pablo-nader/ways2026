@@ -319,15 +319,10 @@ public class ServicioDeOfertas(
     /// <c>SaveChangesAsync</c> — el resultado se reporta, nunca se persiste (spec: Applied
     /// Ofertas Are Reported, Never Persisted).
     ///
-    /// <para>Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
-    /// tenant) + 1 <c>ofertas</c> (filtro grueso: <c>activo</c>, alcance por ids, <c>id_empresa</c>)
-    /// + 1 <c>ofertas_listas</c> + hasta 3 de <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/>
-    /// = 7, sin loop de una consulta por línea. El resto del matching (ventana de vigencia,
-    /// <c>cantidad_minima</c>, lista objetivo, día de semana, alcance jerárquico de categoría) lo
-    /// hace <see cref="ResolvedorDeOfertas.Coincide"/> en memoria, por línea, sobre las mismas
-    /// <see cref="OfertaCandidata"/> ya materializadas — el único filtro por línea que corre ACÁ
-    /// (no en el resolver puro, porque <see cref="LineaAResolver"/> no lleva <c>id_empresa</c>,
-    /// design: Resolution Contract) es <see cref="ReglaDeOfertas.CoincideEmpresa"/>.</para>
+    /// <para>Todo el acceso a datos vive en <see cref="ConstruirContextoAsync"/> (presupuesto de
+    /// consultas documentado ahí), COMPARTIDO con <see cref="ResolverConEscalonesAsync"/>: este
+    /// método resuelve exactamente una vez por línea a la cantidad pedida y no calcula
+    /// escalones.</para>
     ///
     /// <para>Hora local (design: Open Questions, "server-configured local time" v1): el único
     /// <paramref name="momento"/> del lote se descompone UNA vez con <see cref="TimeZoneInfo.Local"/>
@@ -336,20 +331,129 @@ public class ServicioDeOfertas(
     public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
     {
-        // La clave "lineas" ausente o explícitamente `null` en el body deserializa igual acá
-        // (STJ no valida `required` con constructores `SetsRequiredMembers`), así que el chequeo
-        // vive en el servicio: distingue un body malformado (400) de un lote vacío legítimo
-        // (`[]` ⇒ resultado vacío, sin error).
-        if (lineas is null)
-        {
-            throw new ErrorDominio("lineas_requeridas", "El campo 'lineas' es obligatorio.", 400);
-        }
-
-        if (lineas.Count == 0)
+        var lineasPedidas = ExigirLineas(lineas);
+        if (lineasPedidas.Count == 0)
         {
             return [];
         }
 
+        var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
+        var resultado = new List<ResultadoDeResolucion>(lineasPedidas.Count);
+
+        foreach (var linea in lineasPedidas)
+        {
+            if (Preparar(contexto, linea) is not { } preparada)
+            {
+                resultado.Add(SinPrecio(linea));
+                continue;
+            }
+
+            resultado.Add(ProyectarResultado(
+                linea, ResolvedorDeOfertas.Resolver(preparada.Linea, preparada.Candidatas)));
+        }
+
+        return resultado;
+    }
+
+    /// <summary>
+    /// Igual que <see cref="ResolverAsync"/> (mismo contexto, mismas consultas, mismo resultado
+    /// plano por línea) más la CURVA de precio por cantidad de cada línea: un
+    /// <see cref="EscalonDeCantidad"/> por cada <c>cantidad_minima</c> mayor a la cantidad pedida
+    /// que efectivamente cambia el resultado, ascendente, ya resuelto por el motor real
+    /// (<see cref="EscalonesDeCantidad"/> → <see cref="ResolvedorDeOfertas"/>).
+    ///
+    /// <para>Existe para la instantánea offline del punto de venta de escritorio
+    /// (<c>ServicioDeInstantaneaDePos</c>): el dispositivo no vuelve a evaluar ofertas nunca
+    /// (decisión del dueño), así que necesita la curva entera pre-resuelta para poder cobrar una
+    /// oferta por volumen sin red. El dispositivo solo elige el último escalón cuyo umbral entra
+    /// en la cantidad del carrito — nunca reimplementa el matching.</para>
+    ///
+    /// <para>CERO consultas extra respecto de <see cref="ResolverAsync"/>: los escalones salen de
+    /// las MISMAS <see cref="OfertaCandidata"/> ya materializadas por
+    /// <see cref="ConstruirContextoAsync"/> (la <c>cantidad_minima</c> de cada candidata ya viaja
+    /// ahí), resueltas en memoria a cada umbral. Un artículo sin ninguna candidata con umbral
+    /// devuelve <see cref="ResultadoDeResolucionConEscalones.Escalones"/> vacío sin resolver nada
+    /// de más.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<ResultadoDeResolucionConEscalones>> ResolverConEscalonesAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
+    {
+        var lineasPedidas = ExigirLineas(lineas);
+        if (lineasPedidas.Count == 0)
+        {
+            return [];
+        }
+
+        var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
+        var resultado = new List<ResultadoDeResolucionConEscalones>(lineasPedidas.Count);
+
+        foreach (var linea in lineasPedidas)
+        {
+            if (Preparar(contexto, linea) is not { } preparada)
+            {
+                resultado.Add(new ResultadoDeResolucionConEscalones(SinPrecio(linea), []));
+                continue;
+            }
+
+            var curva = EscalonesDeCantidad.Construir(preparada.Linea, preparada.Candidatas);
+
+            var escalones = curva.Escalones
+                .Select(e => new EscalonDeCantidad(
+                    e.CantidadDesde, e.Resolucion.PrecioFinal, e.Resolucion.DescuentoUnitario,
+                    ProyectarAplicadas(e.Resolucion.Aplicadas)))
+                .ToList();
+
+            resultado.Add(new ResultadoDeResolucionConEscalones(
+                ProyectarResultado(linea, curva.Base), escalones));
+        }
+
+        return resultado;
+    }
+
+    /// <summary>La clave "lineas" ausente o explícitamente <c>null</c> en el body deserializa
+    /// igual (STJ no valida <c>required</c> con constructores <c>SetsRequiredMembers</c>), así que
+    /// el chequeo vive en el servicio: distingue un body malformado (400) de un lote vacío
+    /// legítimo (<c>[]</c> ⇒ resultado vacío, sin error, que resuelven los dos puntos de
+    /// entrada).</summary>
+    private static IReadOnlyList<LineaDeResolucion> ExigirLineas(IReadOnlyList<LineaDeResolucion>? lineas) =>
+        lineas ?? throw new ErrorDominio("lineas_requeridas", "El campo 'lineas' es obligatorio.", 400);
+
+    /// <summary>Alcance de UN artículo del lote ya resuelto: grupo propio y cadena completa de
+    /// ancestros de categoría (<see cref="CadenaDeCategorias"/>), lista para entrar en un
+    /// <see cref="LineaAResolver"/> sin rearmarse por línea.</summary>
+    private sealed record AlcanceDeArticulo(int? IdGrupo, IReadOnlyList<int> IdsCategorias);
+
+    /// <summary>Una candidata materializada + el <c>id_empresa</c> de su fila — el único eje que
+    /// NO evalúa el resolver puro (<see cref="LineaAResolver"/> no lleva ese dato, design:
+    /// Resolution Contract), así que se filtra por línea acá con
+    /// <see cref="ReglaDeOfertas.CoincideEmpresa"/>.</summary>
+    private sealed record CandidataConEmpresa(int? IdEmpresa, OfertaCandidata Candidata);
+
+    /// <summary>Todo lo que las consultas del lote produjeron, ya indexado: lo consumen por igual
+    /// <see cref="ResolverAsync"/> y <see cref="ResolverConEscalonesAsync"/>, sin volver a la base
+    /// ninguno de los dos.</summary>
+    private sealed record ContextoDeResolucion(
+        IReadOnlyDictionary<int, AlcanceDeArticulo> AlcancePorArticulo,
+        IReadOnlyList<CandidataConEmpresa> Candidatas,
+        IReadOnlyDictionary<(int IdArticulo, int IdListaPrecio), decimal?> Precios,
+        DateOnly Fecha,
+        TimeOnly Hora,
+        int DiaSemana);
+
+    /// <summary>
+    /// Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
+    /// tenant) + 1 <c>ofertas</c> (filtro grueso: <c>activo</c>, alcance por ids, <c>id_empresa</c>)
+    /// + 1 <c>ofertas_listas</c> + hasta 3 de <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/>
+    /// = 7, sin loop de una consulta por línea. Todas derivan de los ids DISTINTOS del lote, así
+    /// que el presupuesto no depende de la cantidad de líneas ni de si el llamador quiere
+    /// escalones. El resto del matching (ventana de vigencia, <c>cantidad_minima</c>, lista
+    /// objetivo, día de semana, alcance jerárquico de categoría) lo hace
+    /// <see cref="ResolvedorDeOfertas.Coincide"/> en memoria, por línea, sobre las mismas
+    /// <see cref="OfertaCandidata"/> ya materializadas.
+    /// </summary>
+    private async Task<ContextoDeResolucion> ConstruirContextoAsync(
+        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct)
+    {
         var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
         var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
 
@@ -359,9 +463,7 @@ public class ServicioDeOfertas(
             .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo })
             .ToListAsync(ct);
 
-        var articuloPorId = articulos.ToDictionary(a => a.Id);
-
-        var idsArticuloFaltantes = idsArticulo.Except(articuloPorId.Keys).ToList();
+        var idsArticuloFaltantes = idsArticulo.Except(articulos.Select(a => a.Id)).ToList();
         if (idsArticuloFaltantes.Count > 0)
         {
             throw new ErrorDominio("referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
@@ -374,7 +476,7 @@ public class ServicioDeOfertas(
             .Select(c => new { c.Id, c.IdCategoriaPadre })
             .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
 
-        var idsCategoriasPorArticulo = new Dictionary<int, IReadOnlySet<int>>(articulos.Count);
+        var alcancePorArticulo = new Dictionary<int, AlcanceDeArticulo>(articulos.Count);
         var todasLasCategoriasAlcanzables = new HashSet<int>();
         var idsGrupo = new HashSet<int>();
 
@@ -384,7 +486,7 @@ public class ServicioDeOfertas(
                 ? CadenaDeCategorias.ConstruirAncestros(idCategoria, padrePorCategoria)
                 : (IReadOnlySet<int>)new HashSet<int>();
 
-            idsCategoriasPorArticulo[articulo.Id] = ancestros;
+            alcancePorArticulo[articulo.Id] = new AlcanceDeArticulo(articulo.IdGrupo, ancestros.ToList());
             todasLasCategoriasAlcanzables.UnionWith(ancestros);
 
             if (articulo.IdGrupo is { } idGrupo)
@@ -426,16 +528,14 @@ public class ServicioDeOfertas(
         // ya validó estas cinco guardas al escribir (Slice 2), así que proyectarlas acá nunca
         // debería lanzar; si lo hace, es una fila corrupta fuera de banda (defensa en profundidad,
         // no un camino alcanzable en operación normal).
-        var candidatasPorOferta = ofertas.Select(o => new
-        {
-            Oferta = o,
-            Candidata = new OfertaCandidata(
+        var candidatas = ofertas.Select(o => new CandidataConEmpresa(
+            o.IdEmpresa,
+            new OfertaCandidata(
                 o.Id, o.Nombre, o.Prioridad, o.Acumulable,
                 ReglaDeOfertas.LeerAlcance(o), ReglaDeOfertas.LeerBeneficio(o), o.CantidadMinima,
                 o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
                 ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
-                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>())
-        }).ToList();
+                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>()))).ToList();
 
         // Hasta 3 consultas: precios vigentes en lote para el producto cartesiano de artículos ×
         // listas pedidas (design decision 5 — ServicioDePrecios.PreciosVigentesAsync/
@@ -445,42 +545,49 @@ public class ServicioDeOfertas(
 
         var (fechaLocal, horaLocal, diaSemanaLocal) = DescomponerHoraLocal(momentoEfectivo);
 
-        var resultado = new List<ResultadoDeResolucion>(lineas.Count);
+        return new ContextoDeResolucion(
+            alcancePorArticulo, candidatas, precios, fechaLocal, horaLocal, diaSemanaLocal);
+    }
 
-        foreach (var linea in lineas)
+    /// <summary>Lo que las dos resoluciones necesitan por línea antes de llamar al motor: el
+    /// precio original vigente (<c>null</c> ⇒ nada que resolver), las candidatas que pasan el
+    /// filtro de empresa y la <see cref="LineaAResolver"/> armada. <c>null</c> ⇒ el par
+    /// (artículo, lista) no tiene precio vigente en este momento.</summary>
+    private static (LineaAResolver Linea, IReadOnlyList<OfertaCandidata> Candidatas)? Preparar(
+        ContextoDeResolucion contexto, LineaDeResolucion linea)
+    {
+        if (!contexto.Precios.TryGetValue((linea.IdArticulo, linea.IdListaPrecio), out var monto) || monto is null)
         {
-            var precioOriginal = precios.TryGetValue((linea.IdArticulo, linea.IdListaPrecio), out var monto)
-                ? monto
-                : null;
-
-            if (precioOriginal is null)
-            {
-                resultado.Add(new ResultadoDeResolucion(
-                    linea.IdArticulo, linea.IdListaPrecio, null, null, 0m, []));
-                continue;
-            }
-
-            var candidatasDeLaLinea = candidatasPorOferta
-                .Where(c => ReglaDeOfertas.CoincideEmpresa(c.Oferta.IdEmpresa, linea.IdEmpresa))
-                .Select(c => c.Candidata)
-                .ToList();
-
-            var lineaAResolver = new LineaAResolver(
-                linea.IdArticulo, articuloPorId[linea.IdArticulo].IdGrupo,
-                idsCategoriasPorArticulo[linea.IdArticulo].ToList(),
-                linea.IdListaPrecio, linea.Cantidad, precioOriginal.Value,
-                fechaLocal, horaLocal, diaSemanaLocal);
-
-            var resuelto = ResolvedorDeOfertas.Resolver(lineaAResolver, candidatasDeLaLinea);
-
-            resultado.Add(new ResultadoDeResolucion(
-                linea.IdArticulo, linea.IdListaPrecio, resuelto.PrecioOriginal, resuelto.PrecioFinal,
-                resuelto.DescuentoUnitario,
-                resuelto.Aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario)).ToList()));
+            return null;
         }
 
-        return resultado;
+        var candidatas = contexto.Candidatas
+            .Where(c => ReglaDeOfertas.CoincideEmpresa(c.IdEmpresa, linea.IdEmpresa))
+            .Select(c => c.Candidata)
+            .ToList();
+
+        var alcance = contexto.AlcancePorArticulo[linea.IdArticulo];
+
+        var lineaAResolver = new LineaAResolver(
+            linea.IdArticulo, alcance.IdGrupo, alcance.IdsCategorias,
+            linea.IdListaPrecio, linea.Cantidad, monto.Value,
+            contexto.Fecha, contexto.Hora, contexto.DiaSemana);
+
+        return (lineaAResolver, candidatas);
     }
+
+    /// <summary>Par (artículo, lista) sin precio vigente: caso fuera de alcance de la spec de
+    /// ofertas (sin precio no hay nada que descontar), reportado con los dos precios en
+    /// <c>null</c> y sin aplicadas.</summary>
+    private static ResultadoDeResolucion SinPrecio(LineaDeResolucion linea) =>
+        new(linea.IdArticulo, linea.IdListaPrecio, null, null, 0m, []);
+
+    private static ResultadoDeResolucion ProyectarResultado(LineaDeResolucion linea, in PrecioConOfertas resuelto) =>
+        new(linea.IdArticulo, linea.IdListaPrecio, resuelto.PrecioOriginal, resuelto.PrecioFinal,
+            resuelto.DescuentoUnitario, ProyectarAplicadas(resuelto.Aplicadas));
+
+    private static IReadOnlyList<OfertaAplicadaDto> ProyectarAplicadas(IReadOnlyList<OfertaAplicada> aplicadas) =>
+        aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario)).ToList();
 
     /// <summary>Design: Open Questions, "Time zone for hora_desde/hasta and dias_semana
     /// matching" — v1 usa <see cref="TimeZoneInfo.Local"/> (huso del servidor, no hay huso de

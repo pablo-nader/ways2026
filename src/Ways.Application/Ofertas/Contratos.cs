@@ -113,3 +113,23 @@ public sealed record ResultadoDeResolucion(
     decimal? PrecioFinal,
     decimal DescuentoUnitario,
     IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+
+/// <summary>Un escalón de la curva de precio por cantidad, forma HTTP de
+/// <c>Ways.Domain.Ofertas.EscalonResuelto</c>: desde <see cref="CantidadDesde"/> unidades (y hasta
+/// el siguiente escalón, si hay) la línea resuelve a estos valores. <c>PrecioOriginal</c> NO se
+/// repite por escalón a propósito — la cantidad no entra en la resolución de precio de lista, así
+/// que es constante para toda la curva y ya viaja una sola vez en el resultado plano; lo único que
+/// varía con la cantidad es el descuento, el final y qué ofertas aplicaron.</summary>
+public sealed record EscalonDeCantidad(
+    decimal CantidadDesde,
+    decimal PrecioFinal,
+    decimal DescuentoUnitario,
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+
+/// <summary>El <see cref="Resultado"/> de siempre (la resolución a la cantidad pedida, byte por
+/// byte lo que devuelve <c>ServicioDeOfertas.ResolverAsync</c>) más la curva de precio por
+/// cantidad POR ENCIMA de esa cantidad. <see cref="Escalones"/> vacío ⇒ la línea no tiene ningún
+/// escalón: el resultado plano aplica a cualquier cantidad.</summary>
+public sealed record ResultadoDeResolucionConEscalones(
+    ResultadoDeResolucion Resultado,
+    IReadOnlyList<EscalonDeCantidad> Escalones);
