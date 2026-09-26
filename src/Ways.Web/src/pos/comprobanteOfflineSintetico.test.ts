@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { construirComprobanteOfflineSintetico } from './comprobanteOfflineSintetico'
-import type { ArticuloDeInstantanea, InstantaneaDePos } from '../api/tipos'
+import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 
 function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
@@ -25,6 +25,15 @@ function instantaneaFixture(articulos: ArticuloDeInstantanea[]): InstantaneaDePo
 
 function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+}
+
+/** Tramos con valores todos distintos entre sí y del precio plano — mismo criterio que
+ * `instantaneaOffline.test.ts`. */
+const ESCALON_3: EscalonDeCantidad = { cantidadDesde: 3, precioFinal: 90, descuentoUnitario: 10, aplicadas: [{ idOferta: 31, nombre: '3 o más', descuentoUnitario: 10 }] }
+const ESCALON_6: EscalonDeCantidad = { cantidadDesde: 6, precioFinal: 80, descuentoUnitario: 20, aplicadas: [{ idOferta: 61, nombre: '6 o más', descuentoUnitario: 20 }] }
+
+function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+  return articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [], escalones: [ESCALON_3, ESCALON_6], ...sobrescribir })
 }
 
 describe('construirComprobanteOfflineSintetico', () => {
@@ -151,6 +160,43 @@ describe('construirComprobanteOfflineSintetico', () => {
     })
     expect(comprobante?.items[0].loteVencido).toBe(false)
     expect(comprobante?.items[0].precioDiscrepante).toBe(false)
+  })
+
+  // Este módulo lee la instantánea DIRECTO (no el `ResultadoDeResolucion` de la vista previa), así
+  // que necesita su propio lookup de tramo: sin él, el ticket impreso llevaría el descuento de
+  // cantidad 1 mientras la pantalla y el payload encolado ya cobran el del tramo. Cantidad 6 cruza
+  // los dos umbrales; el descuento del tramo es 20, el plano 0 y el del primer tramo 10.
+  it('con una cantidad que cruza un umbral, el ticket usa el descuento y la oferta del TRAMO', () => {
+    const comprobante = construirComprobanteOfflineSintetico({
+      numero: 14,
+      numeroVisible: '0007-00000014',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad: 6 })],
+      instantanea: instantaneaFixture([articuloConEscalonesFixture()]),
+      pagos: [],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    // bruto = 6 × 100 = 600; descuento = 20 × 6 = 120; total = 480
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 6, precioUnitario: 100, descuento: 120, total: 480, idOferta: 61 })
+    expect(comprobante).toMatchObject({ subtotal: 600, descuentoTotal: 120, total: 480 })
+  })
+
+  it('con la cantidad por debajo del primer umbral el ticket usa el precio plano — nunca el primer tramo', () => {
+    const comprobante = construirComprobanteOfflineSintetico({
+      numero: 15,
+      numeroVisible: '0007-00000015',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad: 2 })],
+      instantanea: instantaneaFixture([articuloConEscalonesFixture()]),
+      pagos: [],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 2, precioUnitario: 100, descuento: 0, total: 200, idOferta: null })
+    expect(comprobante).toMatchObject({ subtotal: 200, descuentoTotal: 0, total: 200 })
   })
 
   it('encabezado: numero/numeroVisible/idPuntoVenta/idCliente/estado/fecha/pagos vienen tal cual se pasaron', () => {
