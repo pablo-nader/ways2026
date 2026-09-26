@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Ways.Application.Ofertas;
 using Ways.Domain.Catalogos;
 
@@ -13,12 +14,32 @@ namespace Ways.Application.Pos;
 ///
 /// <see cref="PrecioOriginal"/>/<see cref="PrecioFinal"/>/<see cref="DescuentoUnitario"/>/
 /// <see cref="Aplicadas"/> son el mismo shape que <see cref="ResultadoDeResolucion"/> — el
-/// resultado YA RESUELTO de <c>ServicioDeOfertas.ResolverAsync</c> a <c>cantidad = 1</c>, nunca el
-/// motor de reglas reimplementado en TypeScript (decisión del dueño, rechazada explícitamente: el
-/// dispositivo nunca vuelve a evaluar ofertas offline). Limitación aceptada y documentada: una
-/// oferta con <c>cantidadMinima > 1</c> nunca se refleja acá — el snapshot congela el precio a
-/// cantidad unitaria, así que una venta offline de varias unidades no ve ese descuento por
-/// volumen hasta que el dispositivo vuelva a tener señal y re-resuelva online.
+/// resultado YA RESUELTO de <c>ServicioDeOfertas.ResolverConEscalonesAsync</c> a
+/// <c>cantidad = 1</c>, nunca el motor de reglas reimplementado en TypeScript (decisión del dueño,
+/// rechazada explícitamente: el dispositivo nunca vuelve a evaluar ofertas offline).
+///
+/// <see cref="Escalones"/> es la tabla de quiebres por cantidad del artículo, un escalón por cada
+/// <c>cantidadMinima > 1</c> que CAMBIA el resultado, ascendente por
+/// <see cref="EscalonDeCantidad.CantidadDesde"/> y calculada por el motor real en el servidor
+/// (<c>Ways.Domain.Ofertas.EscalonesDeCantidad</c>): el dispositivo solo elige el último escalón
+/// cuyo umbral entra en la cantidad del carrito, nunca reimplementa el matching. Así una oferta
+/// por volumen SÍ se cobra offline — la limitación que este contrato documentaba antes (precio
+/// congelado a cantidad unitaria) ya no existe.
+///
+/// La entrada de cantidad 1 NO viaja en <see cref="Escalones"/>: ESA es exactamente la que llevan
+/// los campos planos de arriba, y repetirla sería la misma información dos veces. Por eso
+/// <see cref="Escalones"/> ausente/<c>null</c>/vacío significa "el artículo no tiene ningún
+/// escalón" y los campos planos aplican a CUALQUIER cantidad — byte por byte el comportamiento
+/// anterior a esta etapa, que es lo que mantiene válido el snapshot de un dispositivo que quedó
+/// offline cruzando el deploy (el IndexedDB del dispositivo no tiene versión de esquema ni
+/// validación). El <see cref="JsonIgnoreAttribute"/> sostiene esa compatibilidad del lado del
+/// payload: sin escalones la clave queda AUSENTE, no <c>"escalones":null</c> repetido ~6000 veces.
+/// Ojo con el reparto de responsabilidades, porque el atributo NO cubre la lista vacía
+/// (<see cref="JsonIgnoreCondition.WhenWritingNull"/> solo omite <c>null</c>): que un artículo sin
+/// escalones llegue acá como <c>null</c> y no como <c>[]</c> lo garantiza el propio llamador
+/// (<c>ServicioDeInstantaneaDePos</c>, <c>escalones.Count == 0 ? null : escalones</c>). Los tres
+/// casos significan lo mismo para el dispositivo, así que un <c>[]</c> que se escapara sería ruido
+/// de payload, nunca un precio mal cobrado.
 ///
 /// Solo artículos con precio vigente HOY en la lista de <see cref="ReglaDeClientes.
 /// NumeroConsumidorFinal"/> (mismo motivo que <c>MaterializarItems</c>: un artículo sin precio
@@ -36,7 +57,9 @@ public sealed record ArticuloDeInstantanea(
     decimal DescuentoUnitario,
     IReadOnlyList<OfertaAplicadaDto> Aplicadas,
     int IdAlicuotaIva,
-    decimal PorcentajeIva);
+    decimal PorcentajeIva,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<EscalonDeCantidad>? Escalones = null);
 
 /// <summary>
 /// Respuesta de <c>GET /api/pos/instantanea</c> (stage-pos-venta-offline-backend, Parte A) — todo
