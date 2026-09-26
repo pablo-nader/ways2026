@@ -41,8 +41,17 @@ namespace Ways.IntegrationTests;
 /// restantes agregadas en la revisión adversarial que encontró el mismo hueco en anular/cerrar
 /// (sitio 10: <c>ServicioDeRemitos.AnularAsync</c>; sitio 11:
 /// <c>ServicioDePresupuestos.AnularAsync</c>; sitio 12: <c>ServicioDeOrdenesDeCompra.CerrarAsync</c>;
-/// sitio 13: <c>ServicioDeOrdenesDeCompra.AnularAsync</c>) — más dos familias de regresión por
-/// servicio (una para creación/emisión, una para anular/cerrar):
+/// sitio 13: <c>ServicioDeOrdenesDeCompra.AnularAsync</c>).
+///
+/// Los sitios 10-13 tienen DOS chequeos, no uno: la pre-lectura de la que autoriza el atajo y la
+/// autoridad in-transacción que lee el <c>id_punto_venta</c> de la fila recién bloqueada. Los
+/// tests secuenciales de esos cuatro sitios mueren en la pre-lectura, así que NO cubren el
+/// chequeo in-transacción — eso lo hacen las cuatro <c>…ViaCarreraRealQueMueveElPuntoVenta</c>
+/// (rendezvous con <see cref="InterceptorDePausaTrasElPreLecturaDeGuard"/>, judgment-day ronda 2):
+/// son las únicas que lo matan, y el par secuencial/carrera es la demostración del confound que
+/// pide mutation-proof-tests regla 3.
+///
+/// Más dos familias de regresión por servicio (una para creación/emisión, una para anular/cerrar):
 /// las <c>ActorWebPuedeOperarContraPuntoVentaEscritorio</c>/<c>ActorWebPuedeAnularContra…</c>/
 /// <c>ActorWebPuedeCerrarContra…</c> son las ÚNICAS que prueban que la
 /// mitad WEB nunca se agregó — un actor sin claim de dispositivo sigue eligiendo cualquier punto de
