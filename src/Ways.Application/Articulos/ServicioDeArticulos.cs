@@ -280,6 +280,23 @@ public class ServicioDeArticulos(
 
     public async Task<ArticuloListado> ActualizarAsync(int id, EdicionArticulo datos, CancellationToken ct = default)
     {
+        // 404 antes de CUALQUIER validación de payload, porque esa es la precedencia que había:
+        // hasta este fix la lectura del artículo era la PRIMERA sentencia del método, así que un id
+        // inexistente rendía 404 aunque el body fuera inválido. Tiene que ser la primera sentencia
+        // y no solo "antes de abrir la transacción" — con los validadores de payload delante, un id
+        // inexistente con body inválido pasa a 400 y el contrato cambia en silencio (judgment-day
+        // encontró exactamente eso acá, y antes el mismo error en ServicioDeOfertas.ActualizarAsync).
+        //
+        // Va por EXISTS y NO por BuscarAsync: una lectura trackeada acá metería la entidad en el
+        // identity map y la de adentro del lock resolvería contra ella — justo el snapshot pre-lock
+        // que este fix elimina. Best-effort: la AUTORIDAD es la lectura de adentro del lock (mismo
+        // idioma que ServicioDeOfertas.ActualizarAsync y ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync,
+        // donde este chequeo también es la primera sentencia).
+        if (!await db.Articulos.AnyAsync(a => a.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el artículo {id}.");
+        }
+
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
 
@@ -308,18 +325,6 @@ public class ServicioDeArticulos(
         }
 
         var idTenant = ExigirTenantDeLaSesion();
-
-        // 404 antes de abrir nada, para no invertir la precedencia: hasta este fix la lectura del
-        // artículo era la PRIMERA sentencia del método, así que un id inexistente rendía 404
-        // aunque el body fuera inválido. Va por EXISTS y NO por BuscarAsync: una lectura trackeada
-        // acá metería la entidad en el identity map y la de adentro del lock resolvería contra
-        // ella — justo el snapshot pre-lock que este fix elimina. Best-effort: la AUTORIDAD es la
-        // lectura de adentro del lock (mismo idioma que ServicioDeOfertas.ActualizarAsync y que
-        // ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync).
-        if (!await db.Articulos.AnyAsync(a => a.Id == id, ct))
-        {
-            throw ErrorDominio.NoEncontrado($"No existe el artículo {id}.");
-        }
 
         // fix/articulos-lock-referencias (ef-retry-safe-writes, forma (b)): de acá hasta el
         // SaveChangesAsync corre sin reintento, dentro de una transacción explícita — antes esta
@@ -373,6 +378,13 @@ public class ServicioDeArticulos(
             // flipeara controla_lote entre esa foto y el commit hacía que esta detección de
             // transición viera el "antes" equivocado y saltara (o disparara de más) la
             // reconciliación de lotes.
+            //
+            // Honestidad sobre la cobertura (judgment-day, los dos jueces): esta mitad NO tiene test
+            // de carrera propio. Sale de la MISMA lectura única que sí está probada por la carrera
+            // de `activo`, así que el mecanismo está cubierto; lo que no está afirmado por ningún
+            // test es la consecuencia observable —que la reconciliación de lotes dispare o no—,
+            // porque el andamiaje de lotes vive en ReconciliacionTests y el de carreras en
+            // ArticulosReferenciasVivasTests, sin colocar. Es deuda declarada, no cobertura supuesta.
             controlaLoteAnterior = articulo.ControlaLote;
 
             await ExigirAreaValidaAsync(datos.IdArea, ct);

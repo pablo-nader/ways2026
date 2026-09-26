@@ -811,6 +811,49 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var listado = await admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=De+alta+y+baja", OpcionesJson);
         Assert.DoesNotContain(listado!.Items, a => a.Id == creado.Id);
+
+        // (judgment-day, los dos jueces) El GET de DETALLE, no solo el listado: es la aserción que
+        // tenía ServicioDeArticulosTests.EliminarUnArticuloFunciona —el test InMemory que se retiró
+        // porque el proveedor no abre la transacción que EliminarAsync ahora usa— y sin ella la baja
+        // quedaba cubierta únicamente por la vía del listado. Son dos proyecciones distintas sobre
+        // el mismo filtro BajaLogica; que las dos lo respeten se afirma por separado.
+        var detalle = await admin.GetAsync($"/api/articulos/{creado.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, detalle.StatusCode);
+    }
+
+    /// <summary>(judgment-day, hallazgo CRITICAL) La PRECEDENCIA del PUT: un id que no existe rinde
+    /// 404 AUNQUE el body sea inválido. Cuando la lectura del artículo se mudó adentro de la
+    /// transacción (skill <c>single-read-under-lock</c>), el <c>EXISTS</c> que la reemplazó quedó
+    /// DESPUÉS de los validadores de payload y de dos idas a la base, así que ese caso pasó a 400:
+    /// el contrato cambió en silencio y ningún test lo fijaba. Es la SEGUNDA vez que esta misma
+    /// inversión aparece en el programa —la primera fue <c>ServicioDeOfertas.ActualizarAsync</c>—,
+    /// de ahí que acá quede fijada.
+    ///
+    /// LA CLÁUSULA es que ese <c>EXISTS</c> sea la PRIMERA sentencia de
+    /// <see cref="ServicioDeArticulos.ActualizarAsync"/>: basta bajarlo debajo de
+    /// <c>NormalizarRequerido</c> para que la primera mitad devuelva 400.
+    ///
+    /// Las dos mitades son la MISMA afirmación y las dos hacen falta: sin la segunda, un body que
+    /// resultara VÁLIDO haría pasar la primera por la razón equivocada (cualquier PUT a un id
+    /// inexistente da 404). La segunda prueba que ese mismo body es de verdad un 400 cuando el
+    /// artículo existe, así que el 404 de la primera solo puede venir de la precedencia.</summary>
+    [Fact]
+    public async Task UnPutConBodyInvalidoSobreUnArticuloInexistenteDa404YNo400()
+    {
+        var (_, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPutConBodyInvalidoSobreUnArticuloInexistenteDa404YNo400));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva, "Precedencia del 404");
+        var bodyInvalido = EdicionDesde(creado) with { Nombre = "   " };
+
+        var inexistente = await admin.PutAsJsonAsync($"/api/articulos/{creado.Id + 100_000}", bodyInvalido);
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+
+        var existente = await admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", bodyInvalido);
+        Assert.Equal(HttpStatusCode.BadRequest, existente.StatusCode);
+        var problema = await existente.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("nombre_requerido", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]
