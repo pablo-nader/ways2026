@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -592,19 +591,6 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     // task 6.14: facturar × facturar sobre sets superpuestos — exactamente un 201 + un 409
     // (mutation targets 48/50)
     // =============================================================================================
-
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<System.Data.Common.DbTransaction> TransactionStartedAsync(
-            System.Data.Common.DbConnection connection, TransactionEndEventData eventData,
-            System.Data.Common.DbTransaction transaction, CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>Mismo patrón que <c>ServicioDeRemitosTests.DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck</c>:
     /// el primer <c>facturar</c> pausa justo tras abrir SU transacción — antes de tomar el lock

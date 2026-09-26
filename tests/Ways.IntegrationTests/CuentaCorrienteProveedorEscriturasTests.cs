@@ -1,4 +1,3 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -154,23 +153,6 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
     }
 
     // ---- mutation target #15: id_proveedor/total salen del RETURNING del lock, no de preLectura ---
-
-    /// <summary>Pausa <c>EjecutarConfirmarAsync</c> justo DESPUÉS de <c>BeginTransactionAsync</c> —
-    /// antes de que el <c>UPDATE ... RETURNING</c> del header corra — mismo patrón que
-    /// <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c> (cada
-    /// archivo de este repo mantiene su propia copia, no comparte una base).</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>Mutation target #15 (task 2.21): si <c>encabezado.Total</c> viniera de
     /// <c>preLectura</c> (leída ANTES de la transacción) en vez del <c>RETURNING</c> del lock, el

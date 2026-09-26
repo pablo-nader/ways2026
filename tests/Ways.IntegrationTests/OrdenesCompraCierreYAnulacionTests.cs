@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
@@ -557,19 +555,6 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
     // task 4.10 / mutation target #33 (segunda cláusula) / decisión 20.2: RACE 1 — anular OC ×
     // confirmar el comprobante ligado, en AMBOS órdenes (interceptor). Ver doc-comment de la clase.
     // ================================================================================================
-
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>Orden 1: <c>anular</c> pausada justo tras abrir su transacción — <c>confirmar</c>
     /// corre y comitea PRIMERO (mueve la OC vía <see cref="EscriturasDeOrdenDeCompra"/>). Al
