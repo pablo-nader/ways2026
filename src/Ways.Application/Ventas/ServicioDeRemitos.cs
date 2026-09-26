@@ -485,15 +485,18 @@ public class ServicioDeRemitos(
     /// reclasifica en 404 / 409 <c>remito_facturado</c> / 409 <c>remito_ya_anulado</c> (OD8/T2, task
     /// 5.9 — el escenario de doble-anulación ausente de <c>remitos/spec.md</c>).
     ///
-    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
-    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
-    /// ACÁ, con una pre-lectura fuera de la transacción — anular es el write site que de verdad
-    /// mueve stock (la reversa de abajo). La pre-lectura no queda TOCTOU frente al único caso que
-    /// importa: <c>id_punto_venta</c> solo puede moverse mientras el remito sigue en <c>borrador</c>
-    /// (<c>EjecutarEdicionAsync</c> pinea <c>estado='borrador'</c> en el mismo <c>UPDATE</c>), y
-    /// anular un borrador no escribe ningún <c>movimientos_stock</c> — para el caso que sí escribe
-    /// (un remito <c>emitido</c>), el punto de venta ya está congelado por el propio
-    /// <c>EmitirHeaderAsync</c>.</summary>
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 2 — corrige una claim falsa de la
+    /// ronda 1): <see cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/>
+    /// se verifica DOS VECES, con roles distintos. La pre-lectura de acá (fuera de la transacción)
+    /// es un atajo barato para el rechazo común, NUNCA la autoridad: un actor web puede mover
+    /// <c>id_punto_venta</c> y emitir el remito en el punto de venta nuevo entre esta pre-lectura y
+    /// el <c>UPDATE</c> de <see cref="EjecutarAnulacionAsync"/>, y la pre-lectura no lo ve. La
+    /// autoridad real vive AHÍ: <see cref="MarcarAnuladoAsync"/> ensancha su <c>RETURNING</c> a
+    /// <c>id_punto_venta</c> — el valor que el propio lock de fila del <c>UPDATE</c> acaba de ver,
+    /// nunca el de esta pre-lectura — y el guard se re-verifica contra ESE valor antes de tocar
+    /// cualquier <c>movimientos_stock</c>; un rechazo ahí hace rollback de la transacción entera. Un
+    /// actor web queda intocado por las dos verificaciones: el método retorna de inmediato sin claim
+    /// de dispositivo.</summary>
     public async Task<RemitoDetalle> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -523,7 +526,7 @@ public class ServicioDeRemitos(
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         var anulado = await MarcarAnuladoAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
-        if (!anulado)
+        if (anulado is null)
         {
             var actual = await db.Remitos.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct);
             if (actual is null)
@@ -549,6 +552,13 @@ public class ServicioDeRemitos(
                 $"El remito {id} no matcheó el UPDATE guardado pero tampoco una causa conocida de rechazo " +
                 $"(estado leído: {actual.Estado}).");
         }
+
+        // Autoridad (judgment-day ronda 2): re-verifica el guard contra el id_punto_venta que el
+        // UPDATE de arriba acaba de bloquear y devolver — nunca el de la pre-lectura de
+        // AnularAsync, que un actor web pudo dejar stale con un relink concurrente. Antes de
+        // cualquier movimiento de stock; si rechaza, la transacción entera hace rollback.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(
+            db, contexto, anulado.Value.IdPuntoVenta, ct);
 
         // task 5.8/design decisión 9: movimientos ORIGINALES del ledger (motivo = remito), NUNCA
         // re-derivados de items_remito — orden ascendente (id_articulo, id_lote), mismo criterio
@@ -658,8 +668,14 @@ public class ServicioDeRemitos(
     /// <summary>design.md:301-302, mutation targets 45-46: single-statement, admite <c>borrador</c>
     /// Y <c>emitido</c> — <c>facturado</c>/<c>anulado</c> quedan afuera del <c>IN</c> a propósito
     /// (spec: "facturado MUST be rejected with 409"; OD8/T2: doble-anulación también 409, distinguido
-    /// del 409 de facturado por el estado leído en la reclasificación del llamador).</summary>
-    private static async Task<bool> MarcarAnuladoAsync(
+    /// del 409 de facturado por el estado leído en la reclasificación del llamador).
+    ///
+    /// <c>RETURNING id_punto_venta</c> ensancha el statement (judgment-day ronda 2, mismo criterio
+    /// que <see cref="Compras.ServicioDeCompras"/>'s <c>EncabezadoAnulado</c>): el valor que ESTE
+    /// lock de fila vio es la autoridad que <see cref="AnularAsync"/> re-verifica contra
+    /// <c>PoliticaDeModoDePuntoVenta</c> antes de escribir ningún <c>movimientos_stock</c> — nunca el
+    /// de la pre-lectura, que un relink concurrente puede haber dejado stale.</summary>
+    private static async Task<RemitoAnulado?> MarcarAnuladoAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento,
         CancellationToken ct)
     {
@@ -669,15 +685,25 @@ public class ServicioDeRemitos(
             "UPDATE remitos SET estado = 'anulado'::estado_remito, updated_at = $1 " +
             "WHERE id_remito = $2 AND id_tenant = $3 " +
             "AND estado IN ('borrador'::estado_remito, 'emitido'::estado_remito) " +
-            "RETURNING estado";
+            "RETURNING id_punto_venta";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is not null;
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new RemitoAnulado(lector.GetInt32(0));
     }
+
+    /// <summary>Fila devuelta por el <c>UPDATE...RETURNING</c> de <see cref="MarcarAnuladoAsync"/>
+    /// (judgment-day ronda 2) — hoy solo <c>IdPuntoVenta</c>, el único campo que
+    /// <see cref="AnularAsync"/> necesita para re-verificar el guard bajo el lock ya tomado.</summary>
+    private readonly record struct RemitoAnulado(int IdPuntoVenta);
 
     // ---- statements crudos: EL CUARTO WRITE SITE (design decisión 8 — deliberadamente NO ---------
     // ---- comparte código con ServicioDeVentas/ServicioDeCompras/ServicioDeStock) -------------------

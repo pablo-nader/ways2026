@@ -1,7 +1,11 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Dispositivos;
@@ -18,6 +22,7 @@ using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -153,9 +158,13 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
     /// <c>VentasModoPuntoVentaTests</c>/<c>DispositivosTests</c>). <paramref name="rol"/> es
     /// <see cref="RolConocido.Vendedor"/> por default; las órdenes de compra necesitan
     /// <see cref="RolConocido.Admin"/> — sus rutas de escritura apilan <c>GestionDeCatalogo</c>
-    /// sobre <c>OperacionDePos</c> (<c>OrdenesDeCompraEndpoints.cs</c>).</summary>
+    /// sobre <c>OperacionDePos</c> (<c>OrdenesDeCompraEndpoints.cs</c>). <paramref
+    /// name="crearCliente"/> (judgment-day ronda 2) permite que las pruebas de carrera real logueen
+    /// al cajero contra un <c>WebApplicationFactory</c> con un <c>DbCommandInterceptor</c> propio —
+    /// default <c>fixture.CreateClient</c>, sin interceptor, igual que siempre.</summary>
     private async Task<HttpClient> LoguearComoCajeroDeDispositivoAsync(
-        Contexto ctx, int idPuntoVenta, string sufijo, RolConocido rol = RolConocido.Vendedor)
+        Contexto ctx, int idPuntoVenta, string sufijo, RolConocido rol = RolConocido.Vendedor,
+        Func<HttpClient>? crearCliente = null)
     {
         var alta = await ctx.Admin.PostAsJsonAsync("/api/dispositivos", new AltaDispositivo(idPuntoVenta, $"Caja {sufijo}"));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
@@ -180,7 +189,7 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
             await db.SaveChangesAsync();
         }
 
-        var cajero = fixture.CreateClient();
+        var cajero = (crearCliente ?? fixture.CreateClient)();
         using var solicitud = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login-dispositivo")
         {
             Content = JsonContent.Create(new SolicitudDeLoginDeDispositivo($"cajero-{sufijo}", PasswordCajero))
@@ -805,5 +814,257 @@ public class PuntoVentaPropioDelDispositivoTests(WaysApiFixture fixture) : IClas
         Assert.Equal(HttpStatusCode.OK, cerrada.StatusCode);
         var detalle = (await cerrada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
         Assert.Equal(EstadoOrdenCompra.Cerrada, detalle.Estado);
+    }
+
+    // ==================================================================================================
+    // ---- Carrera real (judgment-day ronda 2): la autoridad in-transacción, no la pre-lectura --------
+    // ==================================================================================================
+    //
+    // Los sitios 10-13 re-verifican el guard DOS VECES: la pre-lectura de arriba (atajo barato,
+    // fuera de la transacción) Y el UPDATE/lock guardado (autoridad, adentro, sobre el
+    // id_punto_venta que ESE lock vio). Las pruebas secuenciales de arriba mueren en la pre-lectura
+    // — nunca ejercitan la segunda verificación (mutation-proof-tests regla 3: "confound: un
+    // PRE-CHECK que espeja un guard transaccional"). Estas cuatro fuerzan la carrera real con un
+    // DbCommandInterceptor: pausan justo DESPUÉS de que la pre-lectura EF (AsNoTracking, LINQ)
+    // ejecutó — los UPDATEs/locks guardados corren sobre DbConnection.CreateCommand() crudo, fuera
+    // del pipeline de interceptores de EF, así que nunca disparan este hook (mismo patrón que
+    // AuditoriaAnulacionVentaTests.InterceptorDePausaTrasElPreLecturaDeAnulacion).
+
+    /// <summary>Pausa la primera query cuyo <c>CommandText</c> es un <c>SELECT</c> que toca
+    /// <paramref name="tabla"/> justo DESPUÉS de que ejecutó — un rendezvous de UN solo participante
+    /// (a diferencia de <c>ParametrosTests.InterceptorDeRendezVous</c>, acá alcanza con soltar la
+    /// carrera cuando el actor externo terminó: ese actor usa <c>ctx.Admin</c>, un cliente de OTRO
+    /// <see cref="WebApplicationFactory{TEntryPoint}"/> sin este interceptor, así que nunca pasa por
+    /// acá). El filtro <c>StartsWith("SELECT")</c> es necesario, no cosmético: el <c>cajero</c>
+    /// también crea el borrador ANTES de llamar anular/cerrar, y ese <c>INSERT ... RETURNING</c>
+    /// también toca <paramref name="tabla"/> y también corre vía <c>ReaderExecutedAsync</c> (Npgsql
+    /// lee el id generado con un <c>DataReader</c>) — sin el filtro, el rendezvous se dispara
+    /// durante la CREACIÓN y el pre-read real de anular/cerrar nunca lo encuentra pausado.</summary>
+    private sealed class InterceptorDePausaTrasElPreLecturaDeGuard(
+        string tabla, TaskCompletionSource preLecturaLista, TaskCompletionSource puedeContinuar) : DbCommandInterceptor
+    {
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                && command.CommandText.Contains(tabla, StringComparison.OrdinalIgnoreCase))
+            {
+                preLecturaLista.TrySetResult();
+                await puedeContinuar.Task;
+            }
+
+            return await base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>Sitio 10, carrera real: el remito nace <c>borrador</c> en el PV PROPIO del
+    /// dispositivo. El dispositivo llama <c>anular</c> de inmediato — la pre-lectura lee el PV
+    /// propio (pasa el atajo) y se pausa ahí. Un actor WEB (intocado por el guard) mueve el remito
+    /// al PV AJENO (todavía <c>borrador</c>, legal) y lo EMITE ahí — escribe stock real en el PV
+    /// ajeno. Al reanudar, el <c>UPDATE</c> guardado de <c>MarcarAnuladoAsync</c> matchea por
+    /// <c>estado</c> solo (ahora <c>emitido</c>) y devuelve el PV YA movido — la autoridad
+    /// in-transacción rechaza ANTES de que el loop de reversa toque una sola fila. Discriminante
+    /// (mutation-proof-tests regla 4): el stock del PV ajeno, ya decrementado por la emisión, queda
+    /// EXACTAMENTE igual — nunca revertido.</summary>
+    [Fact]
+    public async Task RemitoDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(RemitoDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta));
+
+        var preLecturaLista = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasElPreLecturaDeGuard("remitos", preLecturaLista, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "rem-race", crearCliente: factory.CreateClient);
+
+        var creado = await cajero.PostAsJsonAsync(
+            "/api/remitos", RemitoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+
+        var tareaAnular = cajero.PostAsync($"/api/remitos/{borrador.Id}/anular", content: null);
+
+        await preLecturaLista.Task;
+
+        var relink = await ctx.Admin.PutAsJsonAsync(
+            $"/api/remitos/{borrador.Id}", RemitoConLinea(ctx.IdPuntoVentaAjeno, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.OK, relink.StatusCode);
+
+        var emitidoEnAjeno = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+        var cuerpoEmitido = await emitidoEnAjeno.Content.ReadAsStringAsync();
+        Assert.True(emitidoEnAjeno.StatusCode == HttpStatusCode.OK, cuerpoEmitido);
+
+        var stockTrasEmitir = await LeerStockAsync(ctx.IdTenant, ctx.IdArticulo, ctx.IdPuntoVentaAjeno);
+        Assert.Equal(-1m, stockTrasEmitir);
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaAnular;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(stockTrasEmitir, await LeerStockAsync(ctx.IdTenant, ctx.IdArticulo, ctx.IdPuntoVentaAjeno));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var remitoFinal = await db.Remitos.AsNoTracking().FirstAsync(r => r.Id == borrador.Id);
+        Assert.Equal(EstadoRemito.Emitido, remitoFinal.Estado);
+        Assert.Equal(ctx.IdPuntoVentaAjeno, remitoFinal.IdPuntoVenta);
+    }
+
+    /// <summary>Sitio 11, carrera real: el presupuesto nace <c>borrador</c> en el PV PROPIO. El
+    /// dispositivo llama <c>anular</c> de inmediato — la pre-lectura lee el PV propio (pasa el
+    /// atajo) y se pausa ahí. Un actor WEB mueve el presupuesto al PV AJENO (todavía <c>borrador</c>,
+    /// legal — <c>anular</c> admite <c>borrador</c> directo, sin necesidad de enviarlo). Al
+    /// reanudar, el <c>UPDATE</c> guardado matchea por <c>estado</c> (sigue <c>borrador</c>) y
+    /// devuelve el PV YA movido — la autoridad in-transacción rechaza. Discriminante: el presupuesto
+    /// sigue <c>borrador</c> en el PV ajeno, nunca <c>anulado</c>.</summary>
+    [Fact]
+    public async Task PresupuestoDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(PresupuestoDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta));
+
+        var preLecturaLista = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasElPreLecturaDeGuard("presupuestos", preLecturaLista, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "pres-race", crearCliente: factory.CreateClient);
+
+        var creado = await cajero.PostAsJsonAsync(
+            "/api/presupuestos", PresupuestoConLinea(ctx.IdPuntoVentaPropio, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+
+        var tareaAnular = cajero.PostAsync($"/api/presupuestos/{borrador.Id}/anular", content: null);
+
+        await preLecturaLista.Task;
+
+        var relink = await ctx.Admin.PutAsJsonAsync(
+            $"/api/presupuestos/{borrador.Id}", PresupuestoConLinea(ctx.IdPuntoVentaAjeno, ctx.IdArticulo));
+        Assert.Equal(HttpStatusCode.OK, relink.StatusCode);
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaAnular;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoPresupuesto.Borrador, await LeerEstadoPresupuestoAsync(ctx.IdTenant, borrador.Id));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var presupuestoFinal = await db.Presupuestos.AsNoTracking().FirstAsync(p => p.Id == borrador.Id);
+        Assert.Equal(ctx.IdPuntoVentaAjeno, presupuestoFinal.IdPuntoVenta);
+    }
+
+    /// <summary>Sitio 12, carrera real: la OC nace <c>borrador</c> en el PV PROPIO. El dispositivo
+    /// llama <c>cerrar</c> de inmediato (todavía <c>borrador</c> — la pre-lectura de
+    /// <c>CerrarAsync</c> no filtra por estado, solo lee el PV): la pre-lectura lee el PV propio
+    /// (pasa el atajo) y se pausa ahí. Un actor WEB mueve la OC al PV AJENO (todavía <c>borrador</c>,
+    /// legal) Y la ENVÍA ahí — <c>enviada</c> congela el PV nuevo. Al reanudar,
+    /// <c>CerrarHeaderAsync</c> matchea por <c>estado</c> (ahora <c>enviada</c>) y devuelve el PV YA
+    /// movido — la autoridad in-transacción rechaza. Discriminante: la OC sigue <c>enviada</c> en el
+    /// PV ajeno, nunca <c>cerrada</c>.</summary>
+    [Fact]
+    public async Task OrdenDeCompraDispositivoNoPuedeCerrarViaCarreraRealQueMueveElPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraDispositivoNoPuedeCerrarViaCarreraRealQueMueveElPuntoVenta));
+
+        var preLecturaLista = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasElPreLecturaDeGuard("ordenes_compra", preLecturaLista, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "oc-cerrar-race", RolConocido.Admin, factory.CreateClient);
+
+        var creada = await cajero.PostAsJsonAsync("/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaPropio));
+        Assert.Equal(HttpStatusCode.Created, creada.StatusCode);
+        var borrador = (await creada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var tareaCerrar = cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/cerrar", content: null);
+
+        await preLecturaLista.Task;
+
+        var relink = await ctx.Admin.PutAsJsonAsync(
+            $"/api/ordenes-compra/{borrador.Id}", OrdenConLinea(ctx, ctx.IdPuntoVentaAjeno));
+        Assert.Equal(HttpStatusCode.OK, relink.StatusCode);
+
+        var enviadaEnAjeno = await ctx.Admin.PostAsync($"/api/ordenes-compra/{borrador.Id}/enviar", content: null);
+        var cuerpoEnviada = await enviadaEnAjeno.Content.ReadAsStringAsync();
+        Assert.True(enviadaEnAjeno.StatusCode == HttpStatusCode.OK, cuerpoEnviada);
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaCerrar;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoOrdenDeCompraAsync(ctx.IdTenant, borrador.Id));
+    }
+
+    /// <summary>Sitio 13, carrera real: la OC nace <c>borrador</c> en el PV PROPIO. El dispositivo
+    /// llama <c>anular</c> de inmediato — el ÚNICO lock del método
+    /// (<c>BloquearYLeerEstadoOrdenAsync</c>, statement 1) todavía no corrió cuando la pre-lectura
+    /// de <c>AnularAsync</c> se pausa (lee el PV propio, pasa el atajo). Un actor WEB mueve la OC al
+    /// PV AJENO (todavía <c>borrador</c>, legal — <c>anular</c> admite <c>borrador</c> directo). Al
+    /// reanudar, el statement 1 toma el lock y lee el PV YA movido — la autoridad in-transacción
+    /// rechaza ANTES de los statements 2-4. Discriminante: la OC sigue <c>borrador</c> en el PV
+    /// ajeno, nunca <c>anulada</c>.</summary>
+    [Fact]
+    public async Task OrdenDeCompraDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta()
+    {
+        var ctx = await PrepararAsync(nameof(OrdenDeCompraDispositivoNoPuedeAnularViaCarreraRealQueMueveElPuntoVenta));
+
+        var preLecturaLista = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasElPreLecturaDeGuard("ordenes_compra", preLecturaLista, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var cajero = await LoguearComoCajeroDeDispositivoAsync(
+            ctx, ctx.IdPuntoVentaPropio, "oc-anular-race", RolConocido.Admin, factory.CreateClient);
+
+        var creada = await cajero.PostAsJsonAsync("/api/ordenes-compra", OrdenConLinea(ctx, ctx.IdPuntoVentaPropio));
+        Assert.Equal(HttpStatusCode.Created, creada.StatusCode);
+        var borrador = (await creada.Content.ReadFromJsonAsync<OrdenDeCompraBorrador>(OpcionesJson))!;
+
+        var tareaAnular = cajero.PostAsync($"/api/ordenes-compra/{borrador.Id}/anular", content: null);
+
+        await preLecturaLista.Task;
+
+        var relink = await ctx.Admin.PutAsJsonAsync(
+            $"/api/ordenes-compra/{borrador.Id}", OrdenConLinea(ctx, ctx.IdPuntoVentaAjeno));
+        Assert.Equal(HttpStatusCode.OK, relink.StatusCode);
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaAnular;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal(CodigoRechazo, problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoOrdenCompra.Borrador, await LeerEstadoOrdenDeCompraAsync(ctx.IdTenant, borrador.Id));
     }
 }

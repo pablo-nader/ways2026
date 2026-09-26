@@ -429,18 +429,20 @@ public class ServicioDePresupuestos(
     /// — esta clase JAMÁS lo revierte, y por eso el <c>WHERE</c> de abajo solo admite
     /// <c>borrador</c>/<c>enviado</c> (spec: "Anulación Is Rejected For A Convertido
     /// Presupuesto"). Un único <c>UPDATE … RETURNING</c> (mismo criterio que
-    /// <c>ServicioDeOrdenesDeCompra.MarcarOrdenAnuladaAsync</c>, sin lock previo — no hay ningún
-    /// segundo invariante que verificar bajo lock, a diferencia de la OC gobernada por el
-    /// libro).
+    /// <c>ServicioDeOrdenesDeCompra.MarcarOrdenAnuladaAsync</c>, sin lock previo propio — el
+    /// <c>UPDATE</c> mismo es el lock).
     ///
-    /// Revisión adversarial post-stage-17 (judgment-day, ronda 1): <see
-    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se re-verifica
-    /// ACÁ con una pre-lectura fuera de la transacción, mismo criterio que <see
-    /// cref="ServicioDeRemitos.AnularAsync"/>: <c>id_punto_venta</c> solo puede moverse mientras el
-    /// presupuesto sigue en <c>borrador</c> (<c>EjecutarEdicionAsync</c> pinea
-    /// <c>estado='borrador'</c> en el mismo <c>UPDATE</c>), así que para el único estado que
-    /// realmente llega acá desde otro actor (<c>enviado</c>) el punto de venta ya está congelado
-    /// por <c>EnviarHeaderAsync</c>.</summary>
+    /// Revisión adversarial post-stage-17 (judgment-day, ronda 2 — corrige una claim falsa de la
+    /// ronda 1, mismo criterio que <see cref="ServicioDeRemitos.AnularAsync"/>): <see
+    /// cref="PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync"/> se verifica DOS
+    /// VECES. La pre-lectura de acá (fuera de la transacción) es un atajo barato para el rechazo
+    /// común, NUNCA la autoridad: un actor web puede mover <c>id_punto_venta</c> entre esta
+    /// pre-lectura y el <c>UPDATE</c> de <see cref="EjecutarAnulacionAsync"/>, y la pre-lectura no lo
+    /// ve. La autoridad real vive ahí: <see cref="MarcarAnuladoAsync"/> ensancha su
+    /// <c>RETURNING</c> a <c>id_punto_venta</c> — el valor que el propio lock de fila del
+    /// <c>UPDATE</c> acaba de ver — y el guard se re-verifica contra ESE valor antes de comitear; un
+    /// rechazo ahí hace rollback de la transacción entera. Un actor web queda intocado por las dos
+    /// verificaciones: el método retorna de inmediato sin claim de dispositivo.</summary>
     public async Task<PresupuestoDetalle> AnularAsync(int id, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -469,7 +471,7 @@ public class ServicioDePresupuestos(
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         var anulado = await MarcarAnuladoAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
-        if (!anulado)
+        if (anulado is null)
         {
             var existe = await db.Presupuestos.AsNoTracking().AnyAsync(p => p.Id == id, ct);
             if (!existe)
@@ -479,6 +481,12 @@ public class ServicioDePresupuestos(
 
             throw new ErrorDominio("presupuesto_no_anulable", "El presupuesto no puede anularse.", 409);
         }
+
+        // Autoridad (judgment-day ronda 2): re-verifica el guard contra el id_punto_venta que el
+        // UPDATE de arriba acaba de bloquear y devolver — nunca el de la pre-lectura de
+        // AnularAsync. Antes de comitear; si rechaza, la transacción entera hace rollback.
+        await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(
+            db, contexto, anulado.Value.IdPuntoVenta, ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -542,8 +550,13 @@ public class ServicioDePresupuestos(
     /// de transición a <c>anulado</c>. <c>convertido</c> queda deliberadamente afuera del
     /// <c>IN</c> (OD8/T1): un presupuesto ya convertido nunca matchea, así que 0 filas colapsa
     /// "convertido"/"ya anulado"/"no existe para este tenant" en el mismo código de dominio de
-    /// rechazo, distinguido de 404 solo por la existencia de la fila.</summary>
-    private static async Task<bool> MarcarAnuladoAsync(
+    /// rechazo, distinguido de 404 solo por la existencia de la fila.
+    ///
+    /// <c>RETURNING id_punto_venta</c> ensancha el statement (judgment-day ronda 2, mismo criterio
+    /// que <see cref="ServicioDeRemitos.RemitoAnulado"/>): el valor que ESTE lock de fila vio es la
+    /// autoridad que <see cref="AnularAsync"/> re-verifica contra
+    /// <c>PoliticaDeModoDePuntoVenta</c>, nunca el de la pre-lectura.</summary>
+    private static async Task<PresupuestoAnulado?> MarcarAnuladoAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento,
         CancellationToken ct)
     {
@@ -553,15 +566,24 @@ public class ServicioDePresupuestos(
             "UPDATE presupuestos SET estado = 'anulado'::estado_presupuesto, updated_at = $1 " +
             "WHERE id_presupuesto = $2 AND id_tenant = $3 " +
             "AND estado IN ('borrador'::estado_presupuesto, 'enviado'::estado_presupuesto) " +
-            "RETURNING estado";
+            "RETURNING id_punto_venta";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is not null;
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new PresupuestoAnulado(lector.GetInt32(0));
     }
+
+    /// <summary>Fila devuelta por el <c>UPDATE...RETURNING</c> de <see cref="MarcarAnuladoAsync"/>
+    /// (judgment-day ronda 2).</summary>
+    private readonly record struct PresupuestoAnulado(int IdPuntoVenta);
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {
