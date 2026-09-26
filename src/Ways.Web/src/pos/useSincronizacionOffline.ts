@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AlmacenClaveValor } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
-import { guardarInstantaneaLocal, leerInstantaneaLocal, todasLasLineasTienenPrecioOffline } from './instantaneaOffline'
+import { guardarInstantaneaLocal, leerInstantaneaLocal, preciosVigentesOffline, todasLasLineasTienenPrecioOffline } from './instantaneaOffline'
 import {
   admisibilidadDeVentaOffline,
   agregarAOutbox,
@@ -114,22 +114,28 @@ export type ResultadoDeSincronizacionOffline = {
   descartarVentaConError: (idLocal: string) => Promise<boolean>
 }
 
-/** Enriquece cada línea con el precio congelado de la instantánea — `null` si CUALQUIER línea no
- * tiene artículo en la instantánea. Defensa en profundidad únicamente: el gate real (todas o
- * ninguna) es `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar
- * esto (judgment-day ronda 1, SUGGESTION) — este `if (!articulo) return null` nunca debería
- * disparar en la práctica, mismo criterio que `comprobanteOfflineSintetico.ts`. */
+/** Enriquece cada línea con el precio congelado de la instantánea, en el tramo que corresponde a
+ * SU cantidad (`preciosVigentesOffline` — la misma función que resuelve la vista previa en
+ * pantalla, para que lo mostrado y lo cobrado no puedan diferir: este payload es el que el
+ * servidor cobra literal). `null` si CUALQUIER línea no tiene artículo en la instantánea. Defensa
+ * en profundidad únicamente: el gate real (todas o ninguna) es
+ * `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar esto
+ * (judgment-day ronda 1, SUGGESTION) — este `if (!articulo) return null` nunca debería disparar en
+ * la práctica, mismo criterio que `comprobanteOfflineSintetico.ts`. */
 function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos): LineaDeVenta[] | null {
   const porId = new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
   const enriquecidas: LineaDeVenta[] = []
   for (const linea of lineas) {
     const articulo = porId.get(linea.idArticulo)
     if (!articulo) return null
+    const precios = preciosVigentesOffline(articulo, linea.cantidad)
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
     // (ya neto) restaba el descuento DOS VECES y sub-registraba toda venta offline con oferta.
-    enriquecidas.push({ ...linea, precioUnitario: articulo.precioOriginal, descuentoUnitario: articulo.descuentoUnitario })
+    // Por eso el tramo solo aporta `descuentoUnitario`: `precioOriginal` es el bruto y no varía
+    // con la cantidad.
+    enriquecidas.push({ ...linea, precioUnitario: precios.precioOriginal, descuentoUnitario: precios.descuentoUnitario })
   }
   return enriquecidas
 }

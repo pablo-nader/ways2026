@@ -271,7 +271,14 @@ describe('OrdenDeCompra — crear borrador', () => {
 
     renderPantalla('nueva')
 
-    await userEvent.selectOptions(await screen.findByLabelText('Proveedor'), '4')
+    // Los dos `<select>` se renderizan vacíos y deshabilitados hasta que llega la referencia:
+    // esperar solo al elemento deja a `selectOptions` corriendo contra un select sin opciones
+    // — "Value 4 not found in options" bajo carga. `referenciaOk` habilita los dos a la vez, así
+    // que un solo gate cubre proveedor y punto de venta.
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await waitFor(() => expect(proveedor).toBeEnabled())
+
+    await userEvent.selectOptions(proveedor, '4')
     await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), '9')
     await userEvent.click(screen.getByRole('button', { name: 'Crear borrador' }))
 
@@ -298,7 +305,13 @@ describe('OrdenDeCompra — precarga desde Reposicion.tsx (location.state)', () 
       items: [{ idArticulo: 10, descripcion: 'Yerba mate 1kg', cantidadPedida: 17, costoUnitarioEstimado: null }],
     })
 
-    expect((await screen.findByLabelText('Proveedor')) as HTMLSelectElement).toHaveValue('4')
+    // `referenciaOk` es la conjunción de los dos fetches, así que `toBeEnabled()` es el único gate
+    // que prueba que aterrizaron LOS DOS: un `<select>` sin su opción cargada vale '' aunque el
+    // estado ya diga 4, y esperar solo al valor del proveedor dejaría el punto de venta sin gate.
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await waitFor(() => expect(proveedor).toBeEnabled())
+
+    expect(proveedor).toHaveValue('4')
     expect(screen.getByLabelText('Punto de venta')).toHaveValue('9')
     expect(screen.getByLabelText('Cantidad pedida')).toHaveValue(17)
   })

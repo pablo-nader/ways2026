@@ -207,7 +207,13 @@ describe('Presupuesto — crear borrador', () => {
       </MemoryRouter>,
     )
 
-    await userEvent.selectOptions(await screen.findByLabelText('Punto de venta'), '9')
+    // El `<select>` se renderiza vacío y deshabilitado hasta que llega la referencia
+    // (`referenciaOk`): esperar solo al elemento deja a `selectOptions` corriendo contra un select
+    // sin opciones — "Value 9 not found in options" en cuanto la máquina está cargada.
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await waitFor(() => expect(puntoVenta).toBeEnabled())
+
+    await userEvent.selectOptions(puntoVenta, '9')
     await userEvent.click(screen.getByRole('button', { name: 'Crear borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/presupuestos', expect.objectContaining({ idPuntoVenta: 9, idCliente: null })))

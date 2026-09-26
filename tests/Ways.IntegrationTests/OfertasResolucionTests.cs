@@ -520,8 +520,39 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
             $"Se esperaban a lo sumo 7 consultas (design: Technical Approach), se emitieron {consultasConPocosArticulos}.");
     }
 
+    /// <summary>La curva de escalones de la instantánea offline sale de las MISMAS candidatas ya
+    /// materializadas (su <c>cantidad_minima</c> ya viaja en la <c>OfertaCandidata</c>): la
+    /// resolución por umbral es pura, en memoria. Este guard exige el MISMO presupuesto de consultas
+    /// que <see cref="ServicioDeOfertas.ResolverAsync"/> — una oferta por volumen de categoría que
+    /// alcanza a los 20 artículos, o sea 40 líneas (con la lista derivada) con curva, sin una sola
+    /// consulta extra. El <c>Assert.Contains</c> de
+    /// <see cref="ContarConsultasDeResolucionAsync"/> es lo que impide que este guard pase sobre una
+    /// curva que nunca se calculó.</summary>
+    [Fact]
+    public async Task ResolverConEscalonesEmiteLasMismasConsultasQueResolver()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(
+            nameof(ResolverConEscalonesEmiteLasMismasConsultasQueResolver));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idCategoria = await SembrarCategoriaAsync(idTenant, "Categoria");
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        var idListaDerivada = await SembrarListaDerivadaAsync(idTenant, "Derivada", idLista, -10m);
+
+        var oferta = OfertaDeCategoria(idCategoria, porcentaje: 10m);
+        await CrearOfertaAsync(admin, oferta with { CantidadMinima = 6m, Nombre = "Por volumen" });
+
+        var consultasDeResolver = await ContarConsultasDeResolucionAsync(
+            idTenant, cantidadDeArticulos: 20, idCategoria, idLista, idListaDerivada, conEscalones: false);
+        var consultasDeResolverConEscalones = await ContarConsultasDeResolucionAsync(
+            idTenant, cantidadDeArticulos: 20, idCategoria, idLista, idListaDerivada, conEscalones: true);
+
+        Assert.Equal(consultasDeResolver, consultasDeResolverConEscalones);
+    }
+
     private async Task<int> ContarConsultasDeResolucionAsync(
-        int idTenant, int cantidadDeArticulos, int idCategoria, int idLista, int idListaDerivada)
+        int idTenant, int cantidadDeArticulos, int idCategoria, int idLista, int idListaDerivada,
+        bool conEscalones = false)
     {
         var idsArticulo = new List<int>();
         for (var i = 0; i < cantidadDeArticulos; i++)
@@ -563,7 +594,18 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
                 .Select(idListaPrecio => new LineaDeResolucion(idArticulo, null, idListaPrecio, 1m)))
             .ToList();
 
-        await servicioDeOfertas.ResolverAsync(lineas, momento: null);
+        if (conEscalones)
+        {
+            var conCurva = await servicioDeOfertas.ResolverConEscalonesAsync(lineas, momento: null);
+
+            // La curva tiene que haberse calculado de verdad: un contador igual sobre un resultado
+            // vacío no probaría nada (mismo criterio que asserts sobre valores discriminantes).
+            Assert.Contains(conCurva, r => r.Escalones.Count > 0);
+        }
+        else
+        {
+            await servicioDeOfertas.ResolverAsync(lineas, momento: null);
+        }
 
         return contador.Consultas;
     }

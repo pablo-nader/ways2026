@@ -785,6 +785,23 @@ export type ResultadoDeResolucion = {
 // son `null` acá (a diferencia de `ResultadoDeResolucion`): el servicio ya omite del todo cualquier
 // artículo sin precio vigente, así que la instantánea nunca ofrece algo que no podría cobrar.
 
+/**
+ * Un tramo de precio por cantidad de un artículo de la instantánea — espejo de
+ * `EscalonDeCantidad`. Existe porque una oferta con `cantidadMinima > 1` (un "3 o más") no podía
+ * aplicarse offline: la instantánea congelaba UN solo precio, resuelto server-side en
+ * `cantidad = 1`. Cada escalón lo calcula el motor de ofertas REAL del servidor — el dispositivo
+ * nunca evalúa reglas, solo elige el tramo vigente (`elegirEscalon` en `instantaneaOffline.ts`).
+ *
+ * `precioOriginal` NO está acá a propósito: es constante entre cantidades, así que el escalón pisa
+ * `precioFinal`/`descuentoUnitario`/`aplicadas` y deja el precio de lista del artículo intacto.
+ */
+export type EscalonDeCantidad = {
+  cantidadDesde: number
+  precioFinal: number
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+}
+
 /** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Sin `idArea`: ese
  * campo lo resuelve el servidor del artículo FRESCO al sincronizar, nunca la instantánea local
  * (mismo motivo que el propio contrato del backend documenta). */
@@ -799,6 +816,18 @@ export type ArticuloDeInstantanea = {
   aplicadas: OfertaAplicada[]
   idAlicuotaIva: number
   porcentajeIva: number
+  /**
+   * Tramos de precio por cantidad, ascendentes por `cantidadDesde` y todos con `cantidadDesde > 1`
+   * — NUNCA incluyen la entrada de cantidad 1: esa es el precio plano de arriba.
+   *
+   * OPCIONAL a propósito, y eso es carga estructural: la instantánea persistida en IndexedDB no
+   * tiene versión de esquema ni validación (`almacenPos.ts` castea lo que haya), así que un
+   * dispositivo que atraviese el deploy sin conexión va a leer una instantánea VIEJA sin esta
+   * clave. Ausente/`null`/vacío significa "este artículo no tiene tramos" y el precio plano rige a
+   * TODA cantidad — exactamente el comportamiento de hoy, nunca un error ni un `undefined`
+   * propagado a un importe.
+   */
+  escalones?: EscalonDeCantidad[] | null
 }
 
 /** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */

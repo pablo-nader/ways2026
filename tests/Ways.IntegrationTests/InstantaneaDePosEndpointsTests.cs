@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Dispositivos;
@@ -205,8 +206,11 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
 
     /// <summary>Oferta de porcentaje sin restricción de lista/empresa/fecha/hora — aplica a
     /// CUALQUIER resolución de ese artículo (<c>ListasObjetivo</c> vacío = sin restricción, ver
-    /// <c>ResolvedorDeOfertas.Coincide</c>).</summary>
-    private async Task SembrarOfertaDePorcentajeAsync(int idTenant, int idArticulo, decimal porcentaje)
+    /// <c>ResolvedorDeOfertas.Coincide</c>). Con <paramref name="cantidadMinima"/> seteada es una
+    /// oferta por volumen: NO aplica a la cantidad 1 con la que la instantánea resuelve el
+    /// resultado plano, solo a partir de su umbral (<c>ArticuloDeInstantanea.Escalones</c>).</summary>
+    private async Task SembrarOfertaDePorcentajeAsync(
+        int idTenant, int idArticulo, decimal porcentaje, decimal? cantidadMinima = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -217,6 +221,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
             Nombre = $"Descuento {porcentaje}%",
             IdArticulo = idArticulo,
             Porcentaje = porcentaje,
+            CantidadMinima = cantidadMinima,
             Activo = true,
             CreatedAt = ahora,
             UpdatedAt = ahora
@@ -347,6 +352,58 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         var aplicada = Assert.Single(articulo.Aplicadas);
         Assert.Equal($"Descuento 10%", aplicada.Nombre);
         Assert.Equal(20m, aplicada.DescuentoUnitario);
+
+        // Una oferta directa (sin cantidad_minima) ya vive en los campos planos: no hay curva.
+        Assert.Null(articulo.Escalones);
+    }
+
+    /// <summary>
+    /// Una oferta con <c>cantidad_minima &gt; 1</c> NO aplica a la cantidad 1 con la que la
+    /// instantánea resuelve el precio plano, y antes de esta etapa se perdía entera: el precio del
+    /// dispositivo es autoritativo (<c>ServicioDeVentas.MaterializarItems</c> cobra
+    /// <c>linea.PrecioUnitario</c> tal cual), así que la venta offline de 6 unidades se cobraba sin
+    /// el descuento por volumen. Ahora viaja como escalón, ya resuelto por el motor real.
+    ///
+    /// <para>El segundo artículo (sin oferta por volumen) prueba la compatibilidad del payload: su
+    /// clave <c>escalones</c> queda AUSENTE del JSON — el conteo de ocurrencias en el cuerpo crudo
+    /// es 1, no 2 —, que es lo que lee un dispositivo que quedó offline cruzando el deploy.</para>
+    /// </summary>
+    [Fact]
+    public async Task LaInstantaneaTraeLaCurvaDeEscalonesDeUnaOfertaPorVolumen()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaInstantaneaTraeLaCurvaDeEscalonesDeUnaOfertaPorVolumen));
+        var idConVolumen = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "volumen", 200m);
+        var idSinVolumen = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "sin-volumen", 300m);
+        await SembrarOfertaDePorcentajeAsync(idTenant, idConVolumen, 10m, cantidadMinima: 6m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "volumen");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync("/api/pos/instantanea");
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        var instantanea = JsonSerializer.Deserialize<InstantaneaDePos>(cuerpo, OpcionesJson)!;
+
+        var conVolumen = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idConVolumen);
+        Assert.Equal(200m, conVolumen.PrecioOriginal);
+        Assert.Equal(200m, conVolumen.PrecioFinal);
+        Assert.Equal(0m, conVolumen.DescuentoUnitario);
+        Assert.Empty(conVolumen.Aplicadas);
+
+        var escalon = Assert.Single(conVolumen.Escalones!);
+        Assert.Equal(6m, escalon.CantidadDesde);
+        Assert.Equal(20m, escalon.DescuentoUnitario);
+        Assert.Equal(180m, escalon.PrecioFinal);
+        var aplicada = Assert.Single(escalon.Aplicadas);
+        Assert.Equal("Descuento 10%", aplicada.Nombre);
+        Assert.Equal(20m, aplicada.DescuentoUnitario);
+
+        var sinVolumen = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idSinVolumen);
+        Assert.Equal(300m, sinVolumen.PrecioFinal);
+        Assert.Null(sinVolumen.Escalones);
+        Assert.Single(Regex.Matches(cuerpo, "escalones"));
     }
 
     [Fact]
