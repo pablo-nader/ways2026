@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
@@ -35,6 +35,35 @@ function respuestaMock(init: {
     json: init.json ?? (() => Promise.resolve({})),
   } as unknown as Response
 }
+
+type ClickDeDescarga = { href: string; download: string; enElDocumento: boolean }
+
+/**
+ * `descargar` termina haciéndole click a un `<a download>` sintético. jsdom no implementa
+ * descargas: ese click sale por su camino de navegación real y emite "Not implemented: navigation
+ * to another Document" en la consola del proceso —fuera de todo test, porque jsdom escribe en la
+ * consola de Node, no en la que Vitest intercepta—, así que ni siquiera queda atribuido a este
+ * archivo. Interceptar el click acá es lo que hace que jsdom nunca vea una navegación, y de paso
+ * deja asertable el enlace que arma la descarga (hasta ahora nada probaba que `nombreDeArchivo`
+ * llegara al atributo `download`).
+ */
+const clicksDeDescarga: ClickDeDescarga[] = []
+let espiaDeClick: MockInstance<() => void>
+
+beforeEach(() => {
+  clicksDeDescarga.length = 0
+  espiaDeClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    clicksDeDescarga.push({
+      href: this.getAttribute('href') ?? '',
+      download: this.download,
+      enElDocumento: this.isConnected,
+    })
+  })
+})
+
+afterEach(() => {
+  espiaDeClick.mockRestore()
+})
 
 describe('header Authorization bajo Tauri (slice bearer)', () => {
   beforeEach(() => {
@@ -366,6 +395,10 @@ describe('api.descargar', () => {
     })
     expect(crearUrlMock).toHaveBeenCalledWith(blob)
     expect(revocarUrlMock).toHaveBeenCalledWith('blob:mock-url')
+    // El enlace sintético se clickea con el object URL y el nombre parseado del
+    // `Content-Disposition`, estando ya en el documento — y no queda colgado después.
+    expect(clicksDeDescarga).toEqual([{ href: 'blob:mock-url', download: 'reporte.xlsx', enElDocumento: true }])
+    expect(document.querySelector('a[download]')).toBeNull()
   })
 
   it('403 → funnel: no crea object URL, lanza ErrorApi con el mensaje del servidor, no navega la SPA', async () => {
