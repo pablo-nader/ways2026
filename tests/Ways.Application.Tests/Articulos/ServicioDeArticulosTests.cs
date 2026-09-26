@@ -39,6 +39,16 @@ namespace Ways.Application.Tests.Articulos;
 /// y <c>EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila</c>. Las validaciones que corren ANTES
 /// de abrir esa transacción (los chequeos en memoria, <c>ReglaDeArticulos</c>, el pre-chequeo de
 /// empresas) siguen alcanzables acá y NO se movieron.
+///
+/// <see cref="ServicioDeArticulos.EliminarAsync"/> TAMPOCO se cubre acá desde fix/articulos-lock-de-fila:
+/// ahora también abre <c>Database.BeginTransactionAsync</c> y toma
+/// <see cref="Bajas.GuardaDeReferencias.BloquearFilaAsync{T}"/> sobre la propia fila ANTES de leerla
+/// (mismo "transaction-blocked-provider caveat" de arriba). La prueba que vivía acá
+/// (<c>EliminarUnArticuloFunciona</c>) ya estaba duplicada por
+/// <c>ArticulosEndpointsTests.UnAdminCreaYDaDeBajaUnArticulo</c> (Postgres real, alta + baja +
+/// ausencia en el listado — mismo filtro <c>BajaLogica</c> que <see cref="ServicioDeArticulos.ObtenerAsync"/>
+/// usa para su propio 404, aunque esa prueba lo observa vía el listado y no vía un GET de detalle),
+/// así que se retira de acá sin reemplazo.
 /// </summary>
 public class ServicioDeArticulosTests
 {
@@ -429,20 +439,6 @@ public class ServicioDeArticulosTests
 
         Assert.False(detalle.DisponibleParaTodas);
         Assert.Equal([idEmpresa], detalle.IdsEmpresas);
-    }
-
-    [Fact]
-    public async Task EliminarUnArticuloFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var articulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, idArea, idAlicuotaIva);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        await servicio.EliminarAsync(articulo.Id);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerAsync(articulo.Id));
-        Assert.Equal("no_encontrado", error.Codigo);
     }
 
     [Fact]

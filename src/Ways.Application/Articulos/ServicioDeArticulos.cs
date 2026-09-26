@@ -280,8 +280,6 @@ public class ServicioDeArticulos(
 
     public async Task<ArticuloListado> ActualizarAsync(int id, EdicionArticulo datos, CancellationToken ct = default)
     {
-        var articulo = await BuscarAsync(id, ct);
-
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
 
@@ -311,12 +309,17 @@ public class ServicioDeArticulos(
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        // Task 4.2 (design: Reconciliation triggers): capturado ANTES de sobrescribir el campo —
-        // es el único momento en que "antes" y "después" conviven en memoria. Se lee acá, afuera
-        // de la transacción de abajo: es un valor en memoria del articulo ya cargado, no hace
-        // falta ninguna consulta nueva, y ReconciliarAsync corre DESPUÉS del commit (ver más
-        // abajo) así que tiene que sobrevivir a la ejecución del lambda.
-        var controlaLoteAnterior = articulo.ControlaLote;
+        // 404 antes de abrir nada, para no invertir la precedencia: hasta este fix la lectura del
+        // artículo era la PRIMERA sentencia del método, así que un id inexistente rendía 404
+        // aunque el body fuera inválido. Va por EXISTS y NO por BuscarAsync: una lectura trackeada
+        // acá metería la entidad en el identity map y la de adentro del lock resolvería contra
+        // ella — justo el snapshot pre-lock que este fix elimina. Best-effort: la AUTORIDAD es la
+        // lectura de adentro del lock (mismo idioma que ServicioDeOfertas.ActualizarAsync y que
+        // ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync).
+        if (!await db.Articulos.AnyAsync(a => a.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe el artículo {id}.");
+        }
 
         // fix/articulos-lock-referencias (ef-retry-safe-writes, forma (b)): de acá hasta el
         // SaveChangesAsync corre sin reintento, dentro de una transacción explícita — antes esta
@@ -324,14 +327,53 @@ public class ServicioDeArticulos(
         // envolver los 5 chequeos de referencia LOCKEADOS (GuardaDeReferencias.BloquearSiEstaVivaAsync,
         // ver el doc-comment de la clase) en la misma transacción que el UPDATE que los usa. Sin
         // reintento por el mismo motivo que ServicioDeCatalogo.EliminarAsync: un commit ambiguo
-        // reintentado releería el artículo (BuscarAsync corrió arriba, antes de este bloque) con
-        // datos potencialmente ya actualizados por el propio intento anterior, mismo riesgo que
-        // duplicar filas de ArticulosEmpresas.
+        // reintentado releería el artículo con datos potencialmente ya actualizados por el propio
+        // intento anterior, mismo riesgo que duplicar filas de ArticulosEmpresas.
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        // Asignadas ADENTRO del lambda y leídas después: sirve porque la estrategia es la SIN
+        // reintento, así que el lambda corre exactamente una vez y cualquier fallo se propaga en
+        // vez de dejarlas a medio asignar. Con una estrategia reintentable esto sería una trampa.
+        Articulo? articulo = null;
+        var controlaLoteAnterior = false;
 
         await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            // EL LOCK QUE FALTABA, y es el PRIMER statement de la transacción: FOR UPDATE sobre la
+            // fila del propio artículo. Los 5 BloquearSiEstaVivaAsync de abajo son FOR KEY SHARE
+            // sobre los catálogos REFERENCIADOS, nunca sobre articulos.
+            //
+            // Lo que este lock agrega NO es la serialización: dos ediciones del mismo artículo ya
+            // se serializaban entre sí, porque el UPDATE de SaveChangesAsync toma su propio lock de
+            // fila y espera. Lo que agrega es serializar ANTES DE LEER. Sin él, el perdedor leía su
+            // foto primero, esperaba recién al escribir, y terminaba escribiendo valores derivados
+            // de un estado ya pisado: un campo cuyo valor pedido coincidía con esa foto quedaba
+            // FUERA del UPDATE (EF no detecta cambio contra su valor ORIGINAL) y se perdía en
+            // silencio con un 200. Verificado con el mutante: borrando esta línea la edición SIGUE
+            // observándose bloqueada —el lock implícito del UPDATE alcanza para eso— y lo que muere
+            // es la aserción sobre la fila final. Ver la skill single-read-under-lock, regla 4.
+            //
+            // ORDEN, y por qué no abre un ciclo: artículo (FOR UPDATE) y DESPUÉS los catálogos
+            // (FOR KEY SHARE). La baja de un catálogo toma el orden inverso —FOR UPDATE sobre el
+            // catálogo y después LEE articulos— pero lo lee SIN lock (InspectorDeUso es
+            // read-only), así que nunca espera por esta fila y no hay ciclo. Ningún otro escritor
+            // del repo tomaba un lock explícito sobre articulos antes de este fix.
+            await guarda.BloquearFilaAsync<Articulo>(id, ct);
+
+            // La ÚNICA lectura del artículo, nacida bajo el lock. Una segunda no arreglaría nada:
+            // con la entidad ya trackeada, la relectura resuelve contra el identity map y devuelve
+            // la MISMA instancia vieja.
+            articulo = await BuscarAsync(id, ct);
+
+            // Task 4.2 (design: Reconciliation triggers): capturado ANTES de sobrescribir el campo
+            // — es el único momento en que "antes" y "después" conviven en memoria. Ahora sale de
+            // la lectura bajo el lock: leído de la foto pre-lock, una edición concurrente que
+            // flipeara controla_lote entre esa foto y el commit hacía que esta detección de
+            // transición viera el "antes" equivocado y saltara (o disparara de más) la
+            // reconciliación de lotes.
+            controlaLoteAnterior = articulo.ControlaLote;
 
             await ExigirAreaValidaAsync(datos.IdArea, ct);
             await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
@@ -389,26 +431,44 @@ public class ServicioDeArticulos(
         // alcance.
         if (!controlaLoteAnterior && datos.ControlaLote)
         {
-            await servicioDeLotes.ReconciliarAsync(articulo.Id, idPuntoVenta: null, ct);
+            await servicioDeLotes.ReconciliarAsync(articulo!.Id, idPuntoVenta: null, ct);
         }
 
-        return Proyectar(articulo, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
+        return Proyectar(articulo!, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
     }
 
     /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila. Los
     /// <see cref="CodigoBarra"/>/<see cref="ArticuloEmpresa"/> asociados quedan como están —
     /// sin cascada, mismo criterio que <see cref="Proveedores.ServicioDeProveedores.EliminarAsync"/>
     /// (sin guard de fila protegida a diferencia de clientes: artículos no tiene un equivalente
-    /// al Consumidor Final).</summary>
+    /// al Consumidor Final).
+    ///
+    /// La paridad con esa baja de proveedores era declarativa y ahora es real: allá el lock de fila
+    /// se toma ANTES de cargar la entidad y acá no se tomaba ninguno, así que dos bajas concurrentes
+    /// del mismo artículo leían las dos la fila viva y la segunda re-estampaba un <c>deleted_at</c>
+    /// NUEVO sobre el de la primera en vez de rendir 404. Mismo shape sin reintento + lock antes de
+    /// la carga que <c>ServicioDeCatalogo{T,TListado,TAlta}.EliminarAsync</c>, y el mismo lock de
+    /// fila que <see cref="ActualizarAsync"/>, así que editar y dar de baja el mismo artículo
+    /// también se serializan entre sí.</summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var articulo = await BuscarAsync(id, ct);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        var ahora = reloj.Ahora;
-        articulo.DeletedAt = ahora;
-        articulo.UpdatedAt = ahora;
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        await db.SaveChangesAsync(ct);
+            await guarda.BloquearFilaAsync<Articulo>(id, ct);
+
+            var articulo = await BuscarAsync(id, ct);
+
+            var ahora = reloj.Ahora;
+            articulo.DeletedAt = ahora;
+            articulo.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
     }
 
     /// <summary>db-error-backstops: pre-chequeo best-effort — el backstop real sigue siendo
