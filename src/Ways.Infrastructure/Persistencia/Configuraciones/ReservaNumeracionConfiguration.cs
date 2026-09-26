@@ -21,6 +21,24 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.ToTable("reservas_numeracion", t =>
         {
             t.HasCheckConstraint("ck_reservas_numeracion_rango", "hasta >= desde");
+
+            // desde - 1 ⇒ el dispositivo reportó sin haber repartido ningún número todavía; hasta
+            // ⇒ agotó el bloque. Fuera de ese rango el reporte es de otro bloque o está corrupto.
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_entregado_en_rango",
+                "entregado_hasta IS NULL OR (entregado_hasta >= desde - 1 AND entregado_hasta <= hasta)");
+
+            // Las tres columnas del reporte son un solo hecho ("el dispositivo rindió ESTO en ESTE
+            // momento"): media rendición no existe, y dejarla entrar volvería ambiguo el
+            // fail-closed de la guarda (reportado_at IS NULL ⇒ nunca rindió).
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_reporte_consistente",
+                "(entregado_hasta IS NULL AND pendientes IS NULL AND reportado_at IS NULL) " +
+                "OR (entregado_hasta IS NOT NULL AND pendientes IS NOT NULL AND reportado_at IS NOT NULL)");
+
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_pendientes_no_negativo",
+                "pendientes IS NULL OR pendientes >= 0");
         });
 
         builder.HasKey(r => r.Id).HasName("pk_reservas_numeracion");
@@ -44,6 +62,14 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.Property(r => r.Desde).HasColumnName("desde").IsRequired();
         builder.Property(r => r.Hasta).HasColumnName("hasta").IsRequired();
         builder.Property(r => r.AbandonadaAt).HasColumnName("abandonada_at");
+
+        // Rendición del dispositivo (guarda de cierre de turno): las escribe
+        // AsignadorDeNumeroComprobante.RegistrarRendicionAsync con SQL crudo, como el resto de la
+        // tabla. bigint para entregado_hasta, mismo tipo que desde/hasta — es un número de la misma
+        // serie, no un conteo.
+        builder.Property(r => r.EntregadoHasta).HasColumnName("entregado_hasta");
+        builder.Property(r => r.Pendientes).HasColumnName("pendientes");
+        builder.Property(r => r.ReportadoAt).HasColumnName("reportado_at");
 
         builder.Property(r => r.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(r => r.UpdatedAt).HasColumnName("updated_at").IsRequired();
