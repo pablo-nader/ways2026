@@ -475,8 +475,15 @@ describe('Articulos — defaults de Área/Alícuota de IVA cuando los catálogos
 
     renderArticulos('/articulos/create')
     await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-    // Alícuota ya cargada (no depende de `areasPendientes`): el usuario elige la 27%, no la del
-    // default (21%), ANTES de que el área resuelva.
+
+    // El select de alícuota se renderiza SIEMPRE y sin `disabled`, con solo `Elegir…` hasta que
+    // llega el catálogo, así que esperar al diálogo no prueba que las opciones estén y
+    // `toBeEnabled()` pasaría en el primer tick sin probar nada. La opción concreta es la única
+    // señal de que el dato aterrizó (web-test-data-gates): sin esto, `selectOptions` corre contra
+    // un select vacío y tira "Value 10 not found in options" en cuanto la máquina está cargada.
+    await screen.findByRole('option', { name: 'IVA 27% (27%)' })
+
+    // El usuario elige la 27%, no la del default (21%), ANTES de que el área resuelva.
     await userEvent.selectOptions(screen.getByLabelText('Alícuota de IVA'), '10')
 
     await act(async () => {
@@ -679,6 +686,17 @@ describe('Articulos — alta rápida: alta exitosa inserta ordenado, selecciona 
     const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
     // Espacios a los costados a propósito: prueban que el POST manda el nombre recortado.
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), '  Lácteos  ')
+
+    // Misma FORMA que el select de alícuota — `categorias` le llega a AltaRapidaCategoria por prop
+    // desde Articulos.tsx, el select se renderiza sin esperarla y `abrirFormularioNuevo` solo
+    // prueba que llegó el listado de artículos, que es otro fetch — pero acá el gate NO está
+    // probado: con las categorías demoradas 400ms el test pasa igual, porque el `type` de once
+    // caracteres de arriba ya da tiempo de sobra. Solo muere si nunca resuelven. Queda como
+    // resguardo por la regla de web-test-data-gates (nunca actuar sobre el dato habiendo esperado
+    // solo al elemento), no como arreglo de una falla observada: si ese `type` se acorta o se va,
+    // esta es la línea que evita la carrera.
+    await within(dialogo).findByRole('option', { name: 'Bebidas' })
+
     await userEvent.selectOptions(within(dialogo).getByLabelText('Categoría padre'), '1')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
@@ -876,11 +894,24 @@ describe('Articulos — alta rápida de categoría ofrece las categorías ya car
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría' }))
     const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
     const selectPadre = within(dialogo).getByLabelText('Categoría padre')
-    expect(within(selectPadre).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      '— Ninguna (raíz) —',
-      'Bebidas',
-      'Lácteos',
-    ])
+    // Lectura de OPCIONES, no del elemento: el select se renderiza siempre y sin `disabled`, así que
+    // nada garantiza que `categorias` (otro fetch, prop desde Articulos.tsx) ya esté.
+    //
+    // Este gate NO está probado, y es la referencia para los otros dos de abajo: el `click`
+    // awaiteado de arriba descarga suficiente trabajo de React como para que el fixture aterrice,
+    // y con las categorías demoradas 400ms el `expect` pelado pasaba igual — solo muere si nunca
+    // resuelven. Va como resguardo por la regla de web-test-data-gates (nunca actuar sobre el dato
+    // habiendo esperado solo al elemento), no como arreglo de una falla observada: esa protección
+    // es incidental y depende de cuántos flushes dispare ese `click`. El único sitio de este
+    // archivo con falla REAL y probada es el select de alícuota, que no tiene nada awaiteado en el
+    // medio.
+    await waitFor(() =>
+      expect(within(selectPadre).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        '— Ninguna (raíz) —',
+        'Bebidas',
+        'Lácteos',
+      ]),
+    )
   })
 
   // fix/articulos-form-catalogos-inactivos: `categorias` en este formulario trae activas e
@@ -898,7 +929,11 @@ describe('Articulos — alta rápida de categoría ofrece las categorías ya car
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría' }))
     const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
     const selectPadre = within(dialogo).getByLabelText('Categoría padre')
-    expect(within(selectPadre).getAllByRole('option').map((o) => o.textContent)).toEqual(['— Ninguna (raíz) —', 'Bebidas'])
+    // Misma lectura de opciones que el test de arriba, y gate igualmente NO probado por el mismo
+    // `click` awaiteado — ver el detalle allá.
+    await waitFor(() =>
+      expect(within(selectPadre).getAllByRole('option').map((o) => o.textContent)).toEqual(['— Ninguna (raíz) —', 'Bebidas']),
+    )
   })
 })
 
@@ -921,12 +956,18 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
     await abrirFormularioNuevo()
     const selectProveedor = screen.getByLabelText('Proveedor habitual') as HTMLSelectElement
 
-    // Orden inicial ya viene por etiqueta, no por como llegó del servidor.
-    expect(within(selectProveedor).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Sin especificar',
-      'Alfa SA',
-      'Zeta SA',
-    ])
+    // Orden inicial ya viene por etiqueta, no por como llegó del servidor. La espera es por el
+    // mismo motivo que los dos selects de categoría padre: `abrirFormularioNuevo` solo prueba que
+    // llegó el listado de artículos, y `/proveedores` es otro fetch. Gate igualmente NO probado —
+    // el `click` awaiteado que hay dentro de `abrirFormularioNuevo` alcanza para que el fixture
+    // aterrice; ver el detalle en el primer select de categoría padre.
+    await waitFor(() =>
+      expect(within(selectProveedor).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'Sin especificar',
+        'Alfa SA',
+        'Zeta SA',
+      ]),
+    )
 
     await userEvent.click(screen.getByRole('button', { name: 'Nuevo proveedor' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Nuevo proveedor' })
