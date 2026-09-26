@@ -298,7 +298,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             // proposal.md:1085-1090: reactivar PRE (`activo = true`) SOLO si el resolver guard de
-            // la slice 3 (ServicioDeVentas.cs:930, `|| !tipo.AfectaStock`) también se revierte —
+            // la slice 3 (ServicioDeVentas.ResolverTipoComprobanteAsync, el conjunto
+            // `|| !tipo.AfectaStock`) también se revierte —
             // de lo contrario dejar PRE inactivo es el residuo más seguro. Este Down() (slice 1
             // aislada) NO sabe si esa cláusula sigue presente, así que NO reactiva PRE — el
             // Down explícitamente registrado por el gate, no una omisión.

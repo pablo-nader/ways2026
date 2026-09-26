@@ -294,7 +294,7 @@ public class ServicioDeRemitos(
         var idPuntoVenta = preLectura.IdPuntoVenta;
 
         // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
-        // IdPuntoVenta en el PUT, ServicioDeRemitos.cs:223) — el chequeo de creación/edición no
+        // IdPuntoVenta en el PUT, ver EjecutarEdicionAsync) — el chequeo de creación/edición no
         // cubre este momento; se re-verifica acá, antes de gastar un número o tocar stock.
         await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
 
@@ -565,8 +565,8 @@ public class ServicioDeRemitos(
         // anti-deadlock que EmitirAsync (por consistencia de convención, no por necesidad estricta
         // acá). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma — misma
         // postura, verbatim, que el doc-comment de ServicioDeVentas.UpsertStockLoteAsync (tensión
-        // T8). Citado por miembro y no por línea a propósito: la cita anterior apuntaba a
-        // ServicioDeVentas.cs:1130-1135, que hoy es el UPDATE de la transición de estado.
+        // T8). Citado por miembro y no por línea a propósito (ver la skill claims-match-code): la
+        // cita anterior era un rango de líneas y se corrió hasta apuntar a otro método.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdRemito == id && m.Motivo == MotivoStock.Remito)
             .OrderBy(m => m.IdArticulo)

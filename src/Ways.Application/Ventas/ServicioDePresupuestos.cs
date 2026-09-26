@@ -371,7 +371,7 @@ public class ServicioDePresupuestos(
         var idPuntoVenta = preLectura.IdPuntoVenta;
 
         // El borrador pudo haberse creado/editado por OTRO actor (un web puede setear/mover
-        // IdPuntoVenta en el PUT, ServicioDePresupuestos.cs:317) — el chequeo de creación/edición
+        // IdPuntoVenta en el PUT, ver EjecutarEdicionAsync) — el chequeo de creación/edición
         // no cubre este momento; se re-verifica acá, antes de gastar un número.
         await PoliticaDeModoDePuntoVenta.ExigirPuntoVentaPropioDelDispositivoAsync(db, contexto, idPuntoVenta, ct);
 

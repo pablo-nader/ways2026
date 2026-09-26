@@ -126,7 +126,9 @@ public static class AsignadorDeNumeroComprobante
     /// bolsillo de un cliente. Por eso el bloque anterior se abandona ENTERO, aunque le queden
     /// números sin usar: un hueco más es aceptable (ya lo son los que deja un rollback/retry de
     /// la numeración de a uno, ver <see cref="AsignarBloqueAsync"/>), un número duplicado no lo es
-    /// (spec, comentario de <c>ServicioDeVentas.cs:342-349</c>).
+    /// (spec; misma postura en el comentario de <c>ServicioDeVentas.EmitirAsync</c> sobre la
+    /// numeración en transacción propia: <c>design decisión 2, "gaps are accepted", nunca
+    /// duplicados</c>).
     ///
     /// judgment-day (CRITICAL, ronda 1 — riesgo cerrado, ya no es un supuesto abierto):
     /// <c>abandonada_at</c> solo gobierna de qué bloque este dispositivo puede sacar números
