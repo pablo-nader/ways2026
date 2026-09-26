@@ -563,8 +563,10 @@ public class ServicioDeRemitos(
         // task 5.8/design decisión 9: movimientos ORIGINALES del ledger (motivo = remito), NUNCA
         // re-derivados de items_remito — orden ascendente (id_articulo, id_lote), mismo criterio
         // anti-deadlock que EmitirAsync (por consistencia de convención, no por necesidad estricta
-        // acá). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma
-        // (ServicioDeVentas.cs:1130-1135 posture verbatim, tensión T8).
+        // acá). SIN chequeo de negativo: un remito decrementa, su reversa siempre suma — misma
+        // postura, verbatim, que el doc-comment de ServicioDeVentas.UpsertStockLoteAsync (tensión
+        // T8). Citado por miembro y no por línea a propósito: la cita anterior apuntaba a
+        // ServicioDeVentas.cs:1130-1135, que hoy es el UPDATE de la transición de estado.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdRemito == id && m.Motivo == MotivoStock.Remito)
             .OrderBy(m => m.IdArticulo)
