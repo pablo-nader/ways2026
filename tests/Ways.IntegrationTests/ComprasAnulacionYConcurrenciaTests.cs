@@ -506,26 +506,6 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.True(await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id) <= 1);
     }
 
-    /// <summary>Pausa cada transacción manual (<c>EjecutarConfirmarAsync</c>/
-    /// <c>EjecutarAnulacionAsync</c>) justo DESPUÉS de <c>BeginTransactionAsync</c> — antes de que
-    /// el statement crudo <c>UPDATE ... RETURNING</c> corra — hasta que el test la libera. Fuerza
-    /// determinísticamente el interleaving "un PUT concurrente commitea ANTES de que el lock del
-    /// header confirme", sin depender del timing real del pool (mismo criterio de forced
-    /// rendezvous que <see cref="InterceptorDeRendezVousConfirmar"/>, pero enganchado al ciclo de
-    /// vida de la transacción en vez de a un <c>DbCommand</c> puntual).</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>Design: Backstop Map — superficie racy 1, "confirm × concurrent tipo-switching
     /// edit" (judgment-day, blocker judge B). Antes del fix, <c>discriminaIva</c> se resolvía del
     /// <c>tipos_comprobante</c> leído ANTES del lock del header — un PUT que cambia el tipo

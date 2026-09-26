@@ -763,23 +763,6 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         }
     }
 
-    /// <summary>Pausa la transacción manual de <c>ServicioDeOfertas.ActualizarAsync</c> justo
-    /// DESPUÉS de <c>BeginTransactionAsync</c> —o sea antes de su primer statement, el
-    /// <c>pg_advisory_xact_lock</c> de <c>TomarLockDeOfertaAsync</c>— hasta que el test la libera.
-    /// Mismo patrón que <c>OrganizacionTests.InterceptorDePausaTrasIniciarLaTransaccion</c>.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>
     /// <c>single-read-under-lock</c> / <c>mutation-proof-tests</c> — LA CLÁUSULA: la ÚNICA lectura
     /// de la oferta en <see cref="ServicioDeOfertas.ActualizarAsync"/> nace DESPUÉS de
