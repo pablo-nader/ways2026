@@ -233,6 +233,30 @@ so deleting the clause under test changes nothing the test can see.
    classic cierre — carries the identical hole and no Vendedor test; close it when
    that route is next touched.)
 
+17. **A clause whose only observable effect is NON-FUNCTIONAL is killable only by a
+   structural assertion — count the resource, never the outcome.** A pre-check placed
+   in front of a transactional guard that throws the SAME error is functionally
+   invisible: delete it and every status code, error code and response body is
+   byte-identical, so no behavioural test can tell the two states apart. Its real
+   effect is a resource NOT consumed (a transaction not opened, a row lock not taken,
+   a round-trip saved). Assert that resource directly: a counting `DbTransactionInterceptor`
+   on a derived host, asserting the DELTA across the call (never a total — login and
+   fixture work open their own), or `pg_locks`, or a command count. Distinguish this
+   from the unreachable-guard rule, because the same diff can contain both and they get
+   OPPOSITE verdicts: a branch that can never execute does not ship at all (it ships as
+   a comment — see the `guardas-inmatables-no-se-shippean` memory and PR #257); a branch
+   that DOES execute but only saves a resource ships WITH its structural net. Prove which
+   one you have before choosing: if an ambient filter or an earlier guard already makes
+   the branch unreachable, it is the first kind.
+   (2026-09-26, `ActualizarModoPuntoVentaAsync`: restoring the documented pre-transaction
+   fast-404 produced one of each. `PoliticaDeRoles.ValidarAlcanceDeTenant` could never
+   throw there — the global tenant filter already hides a cross-tenant row and the guard
+   returns early for platform actors — so it was removed; the `AnyAsync` existence check
+   stayed and got `ElFlipDeModoDevuelve404SinPagarTransaccionNiParaUnIdInexistenteNiParaOtroTenant`,
+   which dies `Expected 0, Actual 1` on the deletion mutant. Both judges raised the
+   shadowing independently and both cited rule 3; the whole suite had passed with the
+   check absent, which is precisely why the behavioural tests could not see it.)
+
 ## Decision Gate
 
 | Situation | Action |
@@ -246,4 +270,6 @@ so deleting the clause under test changes nothing the test can see.
 | Guarded UPDATE with several conjuncts | Enumerate them; one kill per conjunct (rule 3) |
 | Same clause in N sibling components/params/branches | Parameterize over all siblings; mutate a non-representative one (rule 15) |
 | A route is added to an authorization allowlist | Ship its positive per-role test in the same PR; mutate by stacking the stricter policy (rule 16) |
+| Clause's only effect is a resource NOT consumed (no transaction, no lock, no round-trip) | Structural net asserting the resource DELTA (rule 17) — behavioural asserts are blind to it |
+| Guard sits in front of another that throws the same error | Prove reachability first: unreachable → ship the comment, not the `if`; reachable → ship rule 17's net |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |

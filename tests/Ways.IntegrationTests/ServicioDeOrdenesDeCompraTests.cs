@@ -1,10 +1,8 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
@@ -450,19 +448,6 @@ public class ServicioDeOrdenesDeCompraTests(WaysApiFixture fixture) : IClassFixt
     }
 
     // ---- task 2.16: mutation target #11 — la carrera del relink de PV -------------------------------
-
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>Mutation target #11 (task 2.16, design decisión 6): un <c>PUT</c> que mueve la OC
     /// del punto de venta 1 al punto de venta 2 gana la carrera y COMMITEA DESPUÉS de que el número

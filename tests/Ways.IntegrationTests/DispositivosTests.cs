@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Ways.Application.Abstracciones;
@@ -700,28 +698,6 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             "Invariante violada: quedó un dispositivo activo vinculado a un punto de venta Web.");
     }
 
-    /// <summary>Mismo patrón de rendezvous forzado que
-    /// <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c>: pausa
-    /// justo DESPUÉS de <c>BeginTransactionAsync</c> (antes del primer statement de la transacción),
-    /// hasta que el llamador libere <paramref name="puedeContinuar"/>. Reproduce
-    /// DETERMINÍSTICAMENTE el interleaving "el flip de modo gana la carrera y commitea ANTES de
-    /// que el re-chequeo bajo lock de <c>CrearAsync</c> corra" — la carrera libre por HTTP
-    /// (<see cref="CrearDispositivoYCambiarModoAWebEnParaleloDaExactamenteUnGanadorYSostieneLaInvariante"/>)
-    /// no puede garantizar esa interleaving en particular, así que este test es el que
-    /// efectivamente mata la ausencia del re-chequeo.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>judgment-day ronda 1 (hallazgo BLOCKER 1) — evidencia mutation-proof de que el
     /// re-chequeo bajo lock de <c>ServicioDeDispositivos.CrearAsync</c>
     /// (<c>BloquearYLeerModoDePuntoVentaAsync</c>) es lo que de verdad sostiene la invariante, no
@@ -745,6 +721,10 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // La carrera libre por HTTP —el caso
+        // CrearDispositivoYCambiarModoAWebEnParaleloDaExactamenteUnGanadorYSostieneLaInvariante—
+        // no puede garantizar ESTE interleaving en particular, así que es este caso, y no aquel,
+        // el que mata la ausencia del re-chequeo bajo lock.
         var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
 
         await using var factory = fixture.WithWebHostBuilder(builder =>

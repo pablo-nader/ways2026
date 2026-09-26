@@ -538,19 +538,6 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
 
     // ---- task 2.12: mutation target #17 — la carrera del relink de PV ------------------------------
 
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>Mutation target #17 (task 2.12, mismo patrón que
     /// <c>ServicioDeOrdenesDeCompraTests.UnPutQueMuevePuntoDeVentaConcurrenteConEnviarReclasificaA409YElNumeroQuedaEnLaSerieVieja</c>):
     /// un <c>PUT</c> que mueve el presupuesto del PV 1 al PV 2 gana la carrera y COMMITEA DESPUÉS

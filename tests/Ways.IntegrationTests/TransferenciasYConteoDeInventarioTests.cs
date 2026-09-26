@@ -941,24 +941,6 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
     // ---- task 3.11: superficies racy, forced rendezvous --------------------------------------------
 
-    /// <summary>Pausa la transacción manual justo DESPUÉS de <c>BeginTransactionAsync</c> — mismo
-    /// patrón que <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c>
-    /// — hasta que el test la libera. Usada acá solo en el cliente de la TRANSFERENCIA (un
-    /// segundo <c>WebApplicationFactory</c>), nunca en el del checkout (<c>ctx.Admin</c>, sin
-    /// interceptor), así que solo la transferencia se detiene.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>Design: Backstop Map — superficie racy 3, "transferencia × checkout on the same
     /// (articulo, pv)". La transferencia arranca su transacción y se PAUSA antes de tocar el
     /// lock de fila de <c>stock</c>; mientras está pausada, una venta directa del mismo artículo
@@ -974,6 +956,9 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Solo el cliente de la TRANSFERENCIA lleva el interceptor (un segundo
+        // WebApplicationFactory); el del checkout es ctx.Admin, sin interceptor, así que la
+        // única que se detiene es la transferencia.
         var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
 
         await using var factory = fixture.WithWebHostBuilder(builder =>

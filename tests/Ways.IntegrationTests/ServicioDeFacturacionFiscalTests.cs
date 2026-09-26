@@ -7,7 +7,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Application.Abstracciones;
@@ -795,23 +794,6 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal("70000000000099", actual.Cae); // intocado
     }
 
-    /// <summary>Mismo patrón que <c>ServicioDeFacturacionDeRemitosTests.InterceptorDePausaTrasIniciarLaTransaccion</c>
-    /// (task 6.14) — pausa justo tras <c>TransactionStartedAsync</c>: el servicio bajo prueba usa la
-    /// transacción EF del caller (D1), así que este interceptor la ve directo, sin necesitar un
-    /// rendezvous de comandos.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<System.Data.Common.DbTransaction> TransactionStartedAsync(
-            System.Data.Common.DbConnection connection, TransactionEndEventData eventData,
-            System.Data.Common.DbTransaction transaction, CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>judgment 19a-slice-5 ronda 1 juez B — CRITICAL: el conjunct <c>AND resultado_fiscal =
     /// 'pendiente'</c> del <c>UPDATE</c> guardeado sobrevivía 9/9 a su eliminación porque
     /// <c>ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca</c> deja la fila 'aprobado' ANTES de
@@ -839,6 +821,8 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // El servicio bajo prueba usa la transacción EF del caller (D1), así que el interceptor
+        // la ve directo y no hace falta un rendezvous de comandos.
         var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
 
         await using var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>

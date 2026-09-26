@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Ways.Application.Abstracciones;
@@ -302,23 +300,6 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
     }
 
     // ---- task 4.6: superficie racy 5, forced rendezvous (row lock natural) --------------------
-
-    /// <summary>Pausa cada transacción manual (<c>ServicioDeGastos.InsertarGastoAsync</c>/
-    /// <c>ServicioDeCompras.EjecutarAnulacionAsync</c>) justo DESPUÉS de
-    /// <c>BeginTransactionAsync</c>, hasta que el test la libera — mismo patrón que
-    /// <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c>.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>design decisión 7, Backstop Map racy surface 5: la anulación gana la carrera —
     /// commitea ANTES de que la transacción del gasto retome y tome su <c>FOR SHARE</c>. El

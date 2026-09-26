@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Application.Abstracciones;
@@ -339,23 +337,6 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     }
 
     // ---- task 3.9: anulación × pago sobre la misma compra, por el call site REAL de ambos lados ----
-
-    /// <summary>Pausa la transacción manual (<c>ServicioDeCompras.EjecutarAnulacionAsync</c>) justo
-    /// DESPUÉS de <c>BeginTransactionAsync</c> — mismo patrón que
-    /// <c>GastosLigadosACompraTests.InterceptorDePausaTrasIniciarLaTransaccion</c> /
-    /// <c>ComprasAnulacionYConcurrenciaTests</c>.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>design decisión 7 / Concurrency guarantees: el pago toma <c>FOR SHARE</c> sobre el
     /// header (vía <c>ExigirCompraLigableAsync</c>, reusado sin cambios) ANTES que la anulación

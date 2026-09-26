@@ -594,19 +594,6 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     // ---- mutation target 44 (mitad id_punto_venta): la carrera del relink de PV --------------------
 
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<System.Data.Common.DbTransaction> TransactionStartedAsync(
-            System.Data.Common.DbConnection connection, TransactionEndEventData eventData,
-            System.Data.Common.DbTransaction transaction, CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>Mutation target 44 (mitad `id_punto_venta`, mismo patrón que
     /// <c>ServicioDePresupuestosTests.UnPutQueMuevePuntoDeVentaConcurrenteConEnviarReclasificaA409YElNumeroQuedaEnLaSerieVieja</c>):
     /// un `PUT` que mueve el remito del PV 1 al PV 2 gana la carrera y COMMITEA DESPUÉS de que el
