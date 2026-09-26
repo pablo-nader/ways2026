@@ -452,8 +452,8 @@ public class ServicioDeOrdenesDeCompraTests(WaysApiFixture fixture) : IClassFixt
     /// <summary>Mutation target #11 (task 2.16, design decisión 6): un <c>PUT</c> que mueve la OC
     /// del punto de venta 1 al punto de venta 2 gana la carrera y COMMITEA DESPUÉS de que el número
     /// ya fue dibujado (serie del PV 1) pero ANTES de que el <c>UPDATE</c> final de <c>enviar</c>
-    /// corra — pausado justo tras <c>BeginTransactionAsync</c> de <c>EjecutarEnvioAsync</c>, mismo
-    /// patrón que <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c>.
+    /// corra — pausado justo tras <c>BeginTransactionAsync</c> de <c>EjecutarEnvioAsync</c>, vía
+    /// <see cref="InterceptorDePausaTrasIniciarLaTransaccion"/>.
     /// El <c>WHERE id_punto_venta = $pv</c> (pineado al PV 1, capturado en la pre-lectura) no
     /// matchea la fila ya movida al PV 2 ⇒ 0 filas ⇒ <c>409</c>, el número dibujado para el PV 1
     /// queda quemado SIN aparecer en ninguna orden — nunca aterriza en la serie del PV 2.</summary>

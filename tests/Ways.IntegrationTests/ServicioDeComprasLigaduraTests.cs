@@ -782,8 +782,8 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
     /// <summary>Mutation target #20: si <c>encabezado.IdOrdenCompra</c> se leyera de
     /// <c>preLectura</c> (capturada ANTES de la transacción) en vez del <c>RETURNING</c> ensanchado
     /// de <c>ConfirmarHeaderAsync</c>, esta prueba lo detecta. Pausa <c>EjecutarConfirmarAsync</c>
-    /// justo tras <c>BeginTransactionAsync</c> (mismo patrón que
-    /// <c>ServicioDeOrdenesDeCompraTests.InterceptorDePausaTrasIniciarLaTransaccion</c>); mientras
+    /// justo tras <c>BeginTransactionAsync</c> (vía
+    /// <see cref="InterceptorDePausaTrasIniciarLaTransaccion"/>); mientras
     /// está pausado, un <c>PUT</c> concurrente relinkea el borrador de OC-A a OC-B y COMMITEA. Con
     /// el valor correcto (leído bajo el lock), la proyección opera sobre OC-B; con el mutante,
     /// operaría sobre la OC-A stale de <c>preLectura</c> — discriminado por cuál OC efectivamente
