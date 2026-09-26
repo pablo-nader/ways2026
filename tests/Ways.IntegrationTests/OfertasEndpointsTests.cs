@@ -299,6 +299,37 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
+    /// <summary>(judgment-day, hallazgo A-1) La PRECEDENCIA entre el 404 y el 400 del PUT: un id que
+    /// no existe rinde 404 AUNQUE el body sea inválido, nunca 400. Cuando la lectura de la oferta se
+    /// mudó adentro de la transacción (skill <c>single-read-under-lock</c>), la validación del payload
+    /// quedó primero y ese caso pasó a 400 — un cambio de contrato que ningún test fijaba. La cláusula
+    /// que este test prueba es el fast-path <c>EXISTS</c> del tope de
+    /// <see cref="ServicioDeOfertas.ActualizarAsync"/>; borrarlo devuelve 400 en la primera mitad.
+    ///
+    /// Las dos mitades son la MISMA afirmación y las dos hacen falta: sin la segunda, un body que
+    /// resultara VÁLIDO haría pasar la primera por la razón equivocada (cualquier PUT a un id
+    /// inexistente da 404). La segunda prueba que ese mismo body es de verdad un 400 cuando la oferta
+    /// existe, así que el 404 de la primera solo puede venir del fast-path.</summary>
+    [Fact]
+    public async Task UnPutConBodyInvalidoSobreUnaOfertaInexistenteDa404YNo400()
+    {
+        var (_, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPutConBodyInvalidoSobreUnaOfertaInexistenteDa404YNo400));
+
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var creada = await CrearOfertaAsync(admin, idGrupo);
+
+        var bodyInvalido = EdicionDesde(creada, idsListas: null) with { Nombre = "   " };
+
+        var inexistente = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id + 100_000}", bodyInvalido);
+        Assert.Equal(HttpStatusCode.NotFound, inexistente.StatusCode);
+
+        var existente = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", bodyInvalido);
+        Assert.Equal(HttpStatusCode.BadRequest, existente.StatusCode);
+        var problema = await existente.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("nombre_requerido", problema.GetProperty("codigo").GetString());
+    }
+
     [Fact]
     public async Task UnDeleteSobreUnaOfertaDeOtroTenantDevuelve404()
     {
@@ -648,17 +679,33 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// campos editables sobre una fila YA ELIMINADA: ghost edit, <c>deleted_at</c> seteado a la
     /// vez que los campos/targeting frescos del PUT persistidos con un 200.
     ///
-    /// Reusa <c>InterceptorDeRendezVousOfertas</c> para forzar DELETE-gana-el-lock de forma
-    /// DETERMINÍSTICA (no solo "concurrencia genuina"): el punto de rendezvous del DELETE es su
-    /// <c>BuscarAsync</c> POST-lock (<see cref="ServicioDeOfertas.EliminarAsync"/> ya no tiene
-    /// ninguna otra consulta a <c>ofertas</c>) — para que el DELETE llegue ahí, YA tiene que haber
-    /// tomado el <c>pg_advisory_xact_lock</c> primero. El punto de rendezvous del PUT es su
-    /// <c>BuscarAsync</c> PRE-transacción (antes de siquiera intentar el lock). El interceptor no
-    /// libera a ninguno de los dos hasta que AMBOS llegaron a su respectivo punto, así que,
-    /// estructuralmente, el DELETE siempre tiene el lock tomado ANTES de que el PUT llegue a
-    /// pedirlo — el PUT SIEMPRE espera detrás del DELETE, nunca al revés. Estable por
-    /// construcción, no por suerte de scheduling: se corre 3 veces (estado aislado por iteración)
-    /// para confirmarlo, no para "promediar" un resultado probabilístico.</summary>
+    /// Fuerza DELETE-gana-la-carrera de forma DETERMINÍSTICA (no solo "concurrencia genuina") con
+    /// <c>InterceptorDePausaTrasIniciarLaTransaccion</c>: el PUT queda pausado justo después de
+    /// abrir su transacción —antes de su primer statement, o sea antes de pedir el
+    /// <c>pg_advisory_xact_lock</c>—, el DELETE corre ENTERO sobre el cliente sin interceptor y
+    /// comitea, y solo entonces el PUT retoma. El PUT SIEMPRE ve la baja ya comiteada, nunca al
+    /// revés.
+    ///
+    /// Antes la asimetría la daba <c>InterceptorDeRendezVousOfertas</c>: el DELETE gateaba en su
+    /// <c>BuscarAsync</c> POST-lock (así que llegaba con el lock ya tomado) y el PUT en su
+    /// <c>BuscarAsync</c> PRE-transacción (antes de pedirlo). Esa asimetría desapareció cuando el
+    /// PUT dejó de tener una lectura pre-lock (skill <c>single-read-under-lock</c>): con los dos
+    /// puntos del mismo lado del lock, el barrier se auto-bloqueaba. La pausa es más simple y más
+    /// fuerte — no depende de dónde caiga la lectura de cada lado, solo de que el PUT abra su
+    /// transacción primero y decida después.
+    ///
+    /// Lo que el test prueba no cambió: el PUT lee la oferta bajo el lock y se niega. La cláusula
+    /// exacta es la EXISTENCIA de esa lectura post-lock, no cuál instancia se muta: con la lectura
+    /// devuelta a antes de la transacción PERO conservando una consulta post-lock descartada, el
+    /// test sigue VERDE —el filtro <c>BajaLogica</c> de esa consulta ya da 0 filas y el 404 sale
+    /// igual— y es correcto que siga verde, porque ese mutante no reintroduce ningún ghost edit.
+    /// El mutante que sí mata a este test es borrar la lectura post-lock ENTERA (verificado: el PUT
+    /// pasa a contestar 200 y pisa los campos). El lost update silencioso es una cláusula distinta,
+    /// con su propio test —<see cref="ElPutQuePierdeLaCarreraNoPierdeSuActivoPorLaFotoPreLock"/>—,
+    /// que sí muere cuando la instancia mutada vuelve a ser la pre-lock.
+    ///
+    /// Se corre 3 veces con estado aislado por iteración para confirmar que es estable por
+    /// construcción, no por suerte de scheduling.</summary>
     [Fact]
     public async Task UnPutYUnDeleteConcurrentesNuncaProducenUnGhostEdit()
     {
@@ -674,8 +721,9 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
             var edicion = EdicionDesde(creada, idsListas: [idListaNueva]) with { Nombre = "2x1 Verano editada" };
 
-            using var gate = new CountdownEvent(2);
-            var interceptor = new InterceptorDeRendezVousOfertas(gate);
+            var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
             await using var factory = fixture.WithWebHostBuilder(builder =>
                 builder.ConfigureServices(services =>
                     services.AddDbContext<WaysDbContext>((_, options) =>
@@ -686,16 +734,20 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
             var tareaPut = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
-            var tareaDelete = admin.DeleteAsync($"/api/ofertas/{creada.Id}");
 
-            await Task.WhenAll(tareaPut, tareaDelete);
+            // Que esta espera termine es la prueba de que el PUT ya abrió su transacción y todavía
+            // no pidió el lock: el DELETE recién entonces corre y comitea entero.
+            await transaccionIniciada.Task;
+
+            var respuestaDelete = await admin0.DeleteAsync($"/api/ofertas/{creada.Id}");
+
+            puedeContinuar.TrySetResult();
+
             var respuestaPut = await tareaPut;
-            var respuestaDelete = await tareaDelete;
 
-            Assert.True(interceptor.Participantes >= 2, $"iteración={iteracion} participantes={interceptor.Participantes}");
-
-            // El DELETE siempre gana la carrera del lock (ver doc-comment de arriba) — el PUT ve
-            // la oferta ya eliminada y responde el 404 uniforme, nunca un 200 con campos pisados.
+            // El DELETE siempre gana la carrera (ver doc-comment de arriba) — el PUT relee bajo su
+            // lock, ve la oferta ya eliminada y responde el 404 uniforme, nunca un 200 con campos
+            // pisados.
             Assert.Equal(HttpStatusCode.NoContent, respuestaDelete.StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, respuestaPut.StatusCode);
 
@@ -711,42 +763,138 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         }
     }
 
-    /// <summary>Retiene la primera consulta EF a <c>ofertas</c> (la lectura de
-    /// <c>ServicioDeOfertas.BuscarAsync</c>, el primer acceso a datos de <c>ActualizarAsync</c>,
-    /// ANTES de que abra su transacción y tome el <c>pg_advisory_xact_lock</c>) hasta que ambos
-    /// participantes llegaron — mismo mecanismo que
-    /// <c>PreciosEndpointsTests.InterceptorDeRendezVousListasPrecio</c>. El filtro excluye
-    /// <c>ofertas_listas</c> explícitamente porque su nombre de tabla comparte el prefijo
-    /// "ofertas".</summary>
-    private sealed class InterceptorDeRendezVousOfertas(CountdownEvent gate) : DbCommandInterceptor
+    /// <summary>Pausa la transacción manual de <c>ServicioDeOfertas.ActualizarAsync</c> justo
+    /// DESPUÉS de <c>BeginTransactionAsync</c> —o sea antes de su primer statement, el
+    /// <c>pg_advisory_xact_lock</c> de <c>TomarLockDeOfertaAsync</c>— hasta que el test la libera.
+    /// Mismo patrón que <c>OrganizacionTests.InterceptorDePausaTrasIniciarLaTransaccion</c>.</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// <c>single-read-under-lock</c> / <c>mutation-proof-tests</c> — LA CLÁUSULA: la ÚNICA lectura
+    /// de la oferta en <see cref="ServicioDeOfertas.ActualizarAsync"/> nace DESPUÉS de
+    /// <c>TomarLockDeOfertaAsync</c>. El perdedor queda pausado justo al abrir su transacción
+    /// manual —ANTES de siquiera pedir el lock, mismo punto que
+    /// <c>OrganizacionTests.ElFlipDeModoQuePierdeLaCarreraAuditaYEscribeSobreElEstadoQueVioBajoElLock</c>—
+    /// mientras el ganador corre su PUT completo sin pausa (cliente pelado de <c>fixture</c>, nunca
+    /// pasa por el interceptor) y comitea <c>Activo = false</c>. Bajo el fix, el perdedor retoma,
+    /// toma el lock YA LIBRE, y su ÚNICA lectura nace ahí: ve el <c>Activo = false</c> recién
+    /// comiteado, así que pedir <c>Activo = true</c> SÍ es un cambio para EF y la columna entra al
+    /// <c>UPDATE</c>. Bajo el mutante (lectura pre-lock que se muta, con la lectura post-lock
+    /// reducida a un discard sobre el identity map), el perdedor muta la instancia vieja cuyo valor
+    /// ORIGINAL de <c>Activo</c> ya era <c>true</c> (el seed) — pedir <c>true</c> no es un cambio
+    /// para EF, la columna se omite del <c>UPDATE</c>, y la fila se queda en el
+    /// <c>Activo = false</c> del ganador mientras el 200 del perdedor devuelve <c>true</c>.
+    ///
+    /// LA ÚNICA ASERCIÓN DISCRIMINANTE es sobre la FILA de la base releída con un contexto nuevo:
+    /// <c>Activo == true</c>. <c>Prioridad == 5</c> en la MISMA fila es contexto —prueba que el
+    /// <c>UPDATE</c> realmente corrió y que bajo el mutante solo <c>activo</c> se hubiera caído—
+    /// pero ni <c>Prioridad</c> ni el cuerpo de ninguna de las dos respuestas mueren bajo el
+    /// mutante (el cuerpo del perdedor proyecta la instancia ya mutada en memoria, así que afirma
+    /// <c>true</c> aunque la base diga <c>false</c>), así que esta prueba afirma UNA sola cosa.
+    /// </summary>
+    [Fact]
+    public async Task ElPutQuePierdeLaCarreraNoPierdeSuActivoPorLaFotoPreLock()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ElPutQuePierdeLaCarreraNoPierdeSuActivoPorLaFotoPreLock));
+
+        using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var altaConPrioridad = AltaValida(idGrupo) with { Prioridad = 1 };
+        var respuestaAlta = await admin0.PostAsJsonAsync("/api/ofertas", altaConPrioridad);
+        Assert.Equal(HttpStatusCode.Created, respuestaAlta.StatusCode);
+        var creada = (await respuestaAlta.Content.ReadFromJsonAsync<OfertaListado>())!;
+        Assert.True(creada.Activo);
+        Assert.Equal(1, creada.Prioridad);
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clientePerdedor = factory.CreateClient();
+        var loginPerdedor = await clientePerdedor.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+        Assert.Equal(HttpStatusCode.OK, loginPerdedor.StatusCode);
+
+        // Perdedor: Activo = true (sin cambio respecto del seed), Prioridad = 5.
+        var edicionPerdedor = EdicionDesde(creada, idsListas: null) with { Prioridad = 5 };
+        var tareaPerdedor = clientePerdedor.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicionPerdedor);
+
+        await transaccionIniciada.Task;
+
+        // Ganador: Activo = false, Prioridad = 1 (sin cambio respecto del seed) — corre y comitea
+        // ENTERO mientras el perdedor sigue pausado.
+        using var clienteGanador = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var edicionGanador = EdicionDesde(creada, idsListas: null) with { Activo = false };
+        var respuestaGanadora = await clienteGanador.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicionGanador);
+        var cuerpoGanador = await respuestaGanadora.Content.ReadAsStringAsync();
+        Assert.True(respuestaGanadora.StatusCode == HttpStatusCode.OK, cuerpoGanador);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaPerdedora = await tareaPerdedor;
+        var cuerpoPerdedor = await respuestaPerdedora.Content.ReadAsStringAsync();
+        Assert.True(respuestaPerdedora.StatusCode == HttpStatusCode.OK, cuerpoPerdedor);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await lectura.Ofertas.FirstAsync(o => o.Id == creada.Id);
+
+        // ÚNICA aserción discriminante.
+        Assert.True(fila.Activo);
+
+        // Contexto (ver doc-comment) — no discrimina el mutante por sí sola.
+        Assert.Equal(5, fila.Prioridad);
+    }
+
+    /// <summary>Retiene la APERTURA de la transacción de cada participante
+    /// (<c>BeginTransactionAsync</c>: después del BEGIN, antes del primer statement y por lo tanto
+    /// antes del <c>pg_advisory_xact_lock</c>) hasta que los dos llegaron — mismo mecanismo que
+    /// <c>PreciosEndpointsTests.InterceptorDeRendezVousListasPrecio</c>, un escalón más arriba.
+    ///
+    /// Antes el punto de rendezvous era la primera consulta EF a <c>ofertas</c>, que era la lectura
+    /// PRE-transacción de <c>ServicioDeOfertas.BuscarAsync</c>. Ese punto YA NO EXISTE: la única
+    /// lectura de la oferta nació adentro de la transacción y después del lock (skill
+    /// <c>single-read-under-lock</c>). Gatear ahí dejaba al primer participante esperando un
+    /// compañero que no podía llegar —el segundo estaba bloqueado detrás del advisory lock que el
+    /// primero ya tenía—, así que el barrier moría por timeout y el 500 tapaba lo que el test
+    /// afirmaba.
+    ///
+    /// La apertura de la transacción es el último punto que los dos participantes alcanzan SIN
+    /// haber pedido el lock, y es por eso el único que sirve para forzar solapamiento genuino: los
+    /// dos abren, los dos se liberan, y desde ahí contienden DE VERDAD por el lock. Cada request
+    /// abre exactamente una transacción, así que el contador de participantes es exacto sin
+    /// filtrar por tabla (antes había que excluir <c>ofertas_listas</c> a mano por el prefijo
+    /// compartido).</summary>
+    private sealed class InterceptorDeRendezVousOfertas(CountdownEvent gate) : DbTransactionInterceptor
     {
         private int _participantes;
 
         public int Participantes => _participantes;
 
-        public override InterceptionResult<DbDataReader> ReaderExecuting(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
-        {
-            EsperarSiCorresponde(command);
-            return base.ReaderExecuting(command, eventData, result);
-        }
-
-        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
             CancellationToken cancellationToken = default)
         {
-            EsperarSiCorresponde(command);
-            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+            Esperar();
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
         }
 
-        private void EsperarSiCorresponde(DbCommand command)
+        private void Esperar()
         {
-            if (!command.CommandText.Contains("ofertas", StringComparison.OrdinalIgnoreCase) ||
-                command.CommandText.Contains("ofertas_listas", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
             if (Interlocked.Increment(ref _participantes) > 2)
             {
                 return;

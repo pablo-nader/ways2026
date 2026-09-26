@@ -53,9 +53,18 @@ namespace Ways.Application.Ofertas;
 /// <c>deleted_at</c> seteado, sin que ninguno de los dos escritores fallara). Ahora
 /// <see cref="EliminarAsync"/> abre la MISMA transacción explícita y toma el MISMO
 /// <see cref="TomarLockDeOfertaAsync"/> ANTES de leer la fila, y <see cref="ActualizarAsync"/>
-/// re-chequea existencia con un <c>EXISTS</c> plano DESPUÉS de tomar el lock (nunca reusa la
-/// entidad trackeada desde antes de la transacción, que el identity map de EF no refresca sola)
-/// — cualquiera de los dos que pierda la carrera del lock ve el estado YA COMITEADO por el otro.</summary>
+/// hace lo mismo — cualquiera de los dos que pierda la carrera del lock ve el estado YA COMITEADO
+/// por el otro.
+///
+/// Ese último fix llegó primero como un <c>EXISTS</c> plano después del lock, y con él quedó
+/// abierta la mitad silenciosa del problema: el <c>EXISTS</c> cerraba el ghost edit, pero la
+/// entidad que se MUTABA seguía siendo la trackeada desde ANTES de la transacción, o sea la foto
+/// que EF usa como valor ORIGINAL para detectar cambios. Un campo cuyo valor pedido coincidía con
+/// esa foto vieja quedaba FUERA del <c>UPDATE</c>, así que dos PUT serializados por el lock
+/// terminaban con el campo del ganador intacto y un 200 mintiéndole al perdedor. Hoy las dos
+/// escrituras tienen UNA sola lectura de la fila, nacida adentro de la transacción y después del
+/// lock: una relectura extra no alcanzaría, porque resuelve contra el identity map y devuelve la
+/// misma instancia vieja.</summary>
 public class ServicioDeOfertas(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
 {
@@ -156,16 +165,33 @@ public class ServicioDeOfertas(
 
     public async Task<OfertaListado> ActualizarAsync(int id, EdicionOferta datos, CancellationToken ct = default)
     {
-        var oferta = await BuscarAsync(id, ct);
+        // Fast-path del 404 (judgment-day): preserva el orden observable que había cuando la lectura
+        // de la oferta vivía acá arriba — un id inexistente o de otro tenant rinde 404 aunque el body
+        // sea inválido, nunca 400. Mover esa lectura adentro de la transacción había invertido esa
+        // precedencia sin que ningún test lo fijara, y esta escritura no tiene por qué cambiar
+        // códigos de estado: lo único que vino a cambiar es la concurrencia.
+        //
+        // EXISTS y no una entidad, a propósito: no materializa nada, así que no puede ensuciar vía el
+        // identity map la lectura de abajo. Y best-effort a propósito, igual que el pre-chequeo de
+        // ServicioDeDispositivos.CrearAsync: la AUTORIDAD sigue siendo BuscarAsync bajo el lock —este
+        // EXISTS no puede ver una baja que comitee después de él, que es justo la carrera que el
+        // ghost edit necesita y que el test de PUT×DELETE sigue matando.
+        if (!await db.Ofertas.AnyAsync(o => o.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la oferta {id}.");
+        }
 
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var diasSemana = ConvertirDiasSemana(datos.DiasSemana);
         var idsListas = datos.IdsListas?.Distinct().ToList();
 
-        // Validar sobre un candidato transitorio (nunca agregado al DbSet) ANTES de tocar la
-        // fila trackeada: si ReglaDeOfertas rechaza el shape, `oferta` queda intacta en memoria
-        // (mismo espíritu de seguridad que ServicioDeArticulos.ActualizarAsync, que valida los
-        // datos crudos antes de asignar ningún campo).
+        // Validar sobre un candidato transitorio (nunca agregado al DbSet) antes de asignar nada a
+        // la fila: si ReglaDeOfertas rechaza el shape, no queda ninguna mutación a medio aplicar
+        // sobre la entidad. Ese es el espíritu que comparte con ServicioDeArticulos.ActualizarAsync
+        // —validar los datos crudos antes de asignar ningún campo—, y es lo único que comparte: ahí
+        // la entidad se lee primero y acá recién después del lock, así que la comparación NO alcanza
+        // para justificar este orden respecto de la LECTURA. El orden respecto de la lectura lo
+        // decide el lock (ver el bloque de abajo), no este bloque.
         var candidato = new Oferta
         {
             Nombre = nombre,
@@ -213,23 +239,23 @@ public class ServicioDeOfertas(
             // ningún otro escritor puede estar reemplazando el subconjunto en simultáneo.
             await TomarLockDeOfertaAsync(idTenant, id, ct);
 
-            // (judgment-day ronda 2, item 1 — CRITICAL) Re-chequeo de existencia DESPUÉS del
-            // lock, vía un EXISTS plano (nunca materializa entidad, así que nunca pasa por el
-            // identity map) en vez de reusar `oferta` (ya trackeada desde ANTES de la
-            // transacción, con su `DeletedAt` de esa foto vieja). Sin esto: un DELETE
-            // concurrente que gana la carrera del lock, comitea PRIMERO y sale de la
-            // transacción deja la fila con `deleted_at` seteado en la DB — pero `oferta` en
-            // memoria seguía "viva" (el identity map de EF NO refresca una entidad ya
-            // trackeada con los valores de una query posterior), así que este PUT hubiera
-            // seguido de largo, pisado los campos editables y comiteado un 200 sobre una
-            // oferta YA ELIMINADA (ghost edit — ni el DELETE lo revertía, porque nunca tocó
-            // `DeletedAt`). El filtro `BajaLogica` ya excluye la fila del EXISTS si está
-            // borrada, así que el mismo 404 uniforme (ADR-8) que `BuscarAsync` cubre acá el
-            // caso "borrada por otro escritor mientras esperaba el lock".
-            if (!await db.Ofertas.AnyAsync(o => o.Id == id, ct))
-            {
-                throw ErrorDominio.NoEncontrado($"No existe la oferta {id}.");
-            }
+            // (judgment-day ronda 2, item 1 — CRITICAL) La ÚNICA lectura de la oferta nace acá,
+            // DESPUÉS del lock, y es exactamente la instancia que se muta abajo. Antes había dos:
+            // una pre-transacción (la que se mutaba) y un EXISTS plano en este lugar. Esa forma
+            // cerraba el ghost edit —un DELETE concurrente que gana el lock y comitea primero deja
+            // la fila con `deleted_at` en la base mientras la instancia vieja sigue "viva" en el
+            // identity map— pero dejaba abierto un lost update SILENCIOSO: esa foto pre-lock es el
+            // valor ORIGINAL de EF para la detección de cambios, así que un campo cuyo valor pedido
+            // coincide con la foto vieja queda FUERA del UPDATE. Dos PUT concurrentes sobre la
+            // MISMA oferta —serializados por este mismo advisory lock— terminaban con el campo del
+            // ganador intacto y un 200 que devolvía el valor que el perdedor creía haber escrito.
+            //
+            // Una SEGUNDA lectura no arreglaría nada: con la instancia ya trackeada, la relectura
+            // resuelve contra el identity map y devuelve la MISMA foto vieja. Tiene que ser una
+            // sola y nacer acá. `BuscarAsync` aplica el filtro `BajaLogica`, así que cubre el mismo
+            // 404 uniforme (ADR-8) que cubría el EXISTS para el caso "borrada por otro escritor
+            // mientras esperaba el lock".
+            var oferta = await BuscarAsync(id, ct);
 
             oferta.Nombre = candidato.Nombre;
             oferta.IdEmpresa = candidato.IdEmpresa;
