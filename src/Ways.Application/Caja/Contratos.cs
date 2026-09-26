@@ -1,5 +1,6 @@
 using Ways.Domain.Caja;
 using Ways.Domain.Gastos;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
 
@@ -49,8 +50,17 @@ public readonly record struct ConteoDeclarado(int IdMedioPago, decimal ImporteDe
 
 /// <summary>Cuerpo de <c>POST /api/caja/turnos/{id}/cierre</c> (design: API Surface;
 /// Interfaces/Contracts) — sin ningún campo de total, subtotal o esperado (spec: No Request
-/// Shape Accepts A Total): <c>ImporteEsperado</c> SIEMPRE lo deriva el servidor.</summary>
-public sealed record SolicitudDeCierre(IReadOnlyList<ConteoDeclarado> Conteos, string? Observaciones);
+/// Shape Accepts A Total): <c>ImporteEsperado</c> SIEMPRE lo deriva el servidor.
+///
+/// <see cref="ForzarSinRendicion"/>/<see cref="MotivoSinRendicion"/>: el override supervisado de la
+/// guarda de rendición de dispositivos — ver <see cref="SolicitudDeCierrePorRetiro"/>, que los
+/// lleva con el MISMO contrato y el mismo destino (los dos modos de cierre comparten la guarda).
+/// </summary>
+public sealed record SolicitudDeCierre(
+    IReadOnlyList<ConteoDeclarado> Conteos,
+    string? Observaciones,
+    bool ForzarSinRendicion = false,
+    string? MotivoSinRendicion = null);
 
 /// <summary>Una línea de <see cref="ResumenDeTurno"/> — proyección de
 /// <see cref="Ways.Domain.Caja.LineaDeArqueo"/>, la misma derivación que el cierre va a
@@ -204,8 +214,39 @@ public sealed record PaginaDeMovimientosTesoreria(
 /// cajero no retira nada y dejó todo en el cajón) y en ese caso NO se inserta ningún
 /// <see cref="MovimientoCaja"/> (dto-contract-honesty: el campo sigue teniendo un único destino,
 /// la RAMA condicional de <c>ServicioDeTurnos.CerrarPorRetiroAsync</c>, nunca queda aceptado y
-/// descartado).</summary>
-public sealed record SolicitudDeCierrePorRetiro(decimal ImporteRetirado, string? Observaciones);
+/// descartado).
+///
+/// <see cref="ForzarSinRendicion"/>/<see cref="MotivoSinRendicion"/> son el override supervisado de
+/// la guarda de rendición de dispositivos, con el MISMO contrato que <see cref="SolicitudDeCierre"/>
+/// porque los dos modos de cierre comparten esa guarda. dto-contract-honesty, los dos campos con
+/// destino único y explícito: <c>ForzarSinRendicion = true</c> sin motivo es <c>400
+/// motivo_requerido</c>; un motivo con <c>ForzarSinRendicion = false</c> es <c>400
+/// motivo_sin_forzado</c> (aceptarlo y descartarlo sería exactamente el defecto que este skill
+/// existe para frenar); y un forzado válido SIEMPRE escribe la fila de auditoría
+/// <c>caja.forzado</c>, incluso cuando la guarda no encontró nada pendiente — así el motivo nunca
+/// se pierde y "un supervisor apretó el override sin necesidad" también queda registrado.</summary>
+public sealed record SolicitudDeCierrePorRetiro(
+    decimal ImporteRetirado,
+    string? Observaciones,
+    bool ForzarSinRendicion = false,
+    string? MotivoSinRendicion = null);
+
+// ---- guarda de rendición de cola de dispositivos (la cola local sin drenar de un POS de
+// escritorio no puede quedar del lado equivocado de un cierre) ----
+
+/// <summary>Un bloque de numeración VIVO cuyo dispositivo bloquea el cierre — la salida de
+/// <see cref="LectorDeRendicionDeDispositivos"/> ya resuelta por
+/// <see cref="ReglaDeRendicionDeCola"/>. <see cref="Pendientes"/>/<see cref="EntregadoHasta"/> son
+/// nullables porque un bloque que nunca rindió no los tiene (y es justamente el caso
+/// <see cref="MotivoDeRendicionPendiente.SinReporte"/>).</summary>
+public sealed record RendicionPendiente(
+    int IdDispositivo,
+    string NombreDispositivo,
+    string TipoComprobante,
+    MotivoDeRendicionPendiente Motivo,
+    int? Pendientes,
+    long Desde,
+    long? EntregadoHasta);
 
 /// <summary>Punto de venta de <see cref="ResumenDeCierrePorRetiro"/>. <see cref="Numero"/> es el
 /// MISMO valor que <see cref="Id"/> — <see cref="Ways.Domain.Organizacion.PuntoVenta"/> no tiene

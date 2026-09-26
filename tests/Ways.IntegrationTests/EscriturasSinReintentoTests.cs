@@ -1081,7 +1081,9 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var lectorDeTurno = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var turnos = new Ways.Application.Caja.ServicioDeTurnos(
             db, reloj, contexto, lectorDeTurno,
-            new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeTurno));
+            new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeTurno),
+            new Ways.Application.Caja.LectorDeRendicionDeDispositivos(db),
+            new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto));
         var lotes = new ServicioDeLotes(db, reloj, contexto);
         var auditoria = new ServicioDeAuditoria(db, reloj, contexto);
 

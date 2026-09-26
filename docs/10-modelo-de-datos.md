@@ -1630,7 +1630,7 @@ bloqueo" que `ItemComprobanteVenta.LoteVencido`):
    checkout fresco que detectó la discrepancia, como `LoteVencido`; una relectura/reprint no lo
    recalcula (siempre `false` ahí).
 2. Una fila en `auditoria` (`AccionAuditada.VentaDiscrepancia = ("venta.discrepancia",
-   "comprobante_venta")`, catálogo de 17 entradas) con el número/id del comprobante y, por línea
+   "comprobante_venta")`, catálogo de 18 entradas) con el número/id del comprobante y, por línea
    discrepante, artículo/cantidad/precio y descuento cobrados vs. esperados — durable, consultable
    vía `GET /api/auditoria`. Se escribe UNA fila por comprobante (no una por línea), solo cuando
    hay al menos una línea discrepante.
@@ -1652,3 +1652,83 @@ nuevas, cero columnas nuevas escritas.
 B (precio offline + discrepancia auditada). Sin migración: ningún cambio de esquema en esta
 etapa. Pendiente: el consumo desde el shell Tauri/React del dispositivo (outbox local, reintento
 de sync, UI de discrepancia) — etapa separada.
+
+### 9.4 Rendición de la cola offline y guarda de cierre de turno
+
+El agujero que cierra: un turno se podía cerrar mientras un dispositivo de escritorio todavía
+tenía ventas sin drenar en su cola local. La guarda existente era SOLO del cliente (`Pos.tsx`,
+`CierreDeCaja.tsx`) y leía el IndexedDB LOCAL, así que cerrar desde OTRA máquina o desde la web
+leía un almacén vacío y pasaba — esas ventas encoladas después drenaban y caían en el turno
+siguiente, corrompiendo los dos arqueos (o rebotaban con `409 turno_no_abierto`, que es el caso
+menos malo de los dos).
+
+**Tres columnas nuevas en `reservas_numeracion` (migración `RendicionDeColaDelDispositivo`, DB
+CHANGE GATE aprobado).** No hay tabla nueva: el bloque vivo es exactamente el lugar donde vive la
+capacidad de vender offline (`ExigirNumeroPreasignadoPropioAsync` rechaza cualquier número
+preasignado fuera de un bloque), así que es el lugar donde vive su rendición.
+
+| Columna | Tipo | Significado |
+| --- | --- | --- |
+| `entregado_hasta` | `bigint NULL` | Número más alto que el dispositivo ya le imprimió a un cliente (`proximo - 1` de su puntero local). `desde - 1` ⇒ todavía no repartió ninguno. NO es el `consumido_hasta` rechazado en §9.2: un número impreso que sigue en la cola local no tiene fila en `comprobantes_venta`, así que este dato NO es derivable del servidor. |
+| `pendientes` | `integer NULL` | Ventas que el dispositivo declara sin llegar al servidor (outbox + rechazadas). Existe para que el rechazo del cierre pueda decir CUÁNTAS faltan. |
+| `reportado_at` | `timestamptz NULL` | Cuándo rindió. `NULL` ⇒ nunca rindió, y la guarda falla CERRADO. |
+
+Tres CHECK, con sus backstops de traducción en `ManejadorDeErrores` (`db-error-backstops`):
+`ck_reservas_numeracion_entregado_en_rango` (`entregado_hasta IS NULL OR entregado_hasta BETWEEN
+desde - 1 AND hasta`), `ck_reservas_numeracion_pendientes_no_negativo` y
+`ck_reservas_numeracion_reporte_consistente` (las tres columnas se escriben juntas o ninguna:
+media rendición volvería ambiguo el fail-closed).
+
+**`POST /api/pos/rendicion-de-cola`.** Device-only (`Politicas.RequiereDispositivo` apilada sobre
+`OperacionDePos`) y siempre contra SU propio punto de venta (`PoliticaDeModoDePuntoVenta`, reusada
+tal cual) — el cuerpo es `{ codigoTipoComprobante, entregadoHasta, pendientes }`, sin
+`idPuntoVenta` ni `idDispositivo`, mismo criterio que `GET /api/pos/instantanea`. Responde `204`.
+Escribe el bloque VIVO (`abandonada_at IS NULL`) con SQL crudo, por
+`AsignadorDeNumeroComprobante.RegistrarRendicionAsync` — el único escritor legítimo de esta tabla
+sigue siendo esa clase. Rechazos: `403 prohibido` (sin claim, o dispositivo revocado — nunca
+`404`), `400 pendientes_invalido`, `400 tipo_comprobante_invalido`, `409
+rendicion_sin_bloque_vivo`, `400 entregado_hasta_invalido`.
+
+**La guarda, en los DOS modos de cierre** (`POST /api/caja/turnos/{id}/cierre` y
+`.../cierre-por-retiro`), dentro de la transacción del cierre y bajo su lock exclusivo, antes de
+derivar el arqueo. Por cada bloque vivo del punto de venta cuyo dispositivo siga VIGENTE
+(`dispositivos.deleted_at IS NULL`), `ReglaDeRendicionDeCola` (pura, sin base) bloquea con `409
+rendicion_de_dispositivo_pendiente` si: (a) nunca rindió; (b) el reporte tiene más de
+`VentanaDeFrescura` = 5 minutos (15 ciclos de los 20 s de `INTERVALO_DE_SINCRONIZACION_MS`);
+(c) declara `pendientes > 0`; o (d) faltan comprobantes en `[desde, entregado_hasta]` — el chequeo
+que hace el reporte VERIFICABLE en vez de meramente creído, contando `comprobantes_venta` por
+`(id_punto_venta, tipo)` vía `tipos_comprobante.codigo`.
+
+Dos válvulas de escape, ninguna de ellas un mecanismo nuevo: **revocar** el dispositivo muerto
+(`DELETE /api/dispositivos/{id}`) saca su bloque de la consulta, y un bloque **abandonado** no
+cuenta. La carrera irreducible (rinde limpio, pierde señal y vende mientras alguien cierra) se
+acepta sin locks: un dispositivo ONLINE manda sus ventas directo, y uno OFFLINE deja de poder
+rendir, así que su reporte envejece y a los 5 minutos el cierre se bloquea solo.
+
+**Override supervisado.** `SolicitudDeCierre`/`SolicitudDeCierrePorRetiro` aceptan
+`forzarSinRendicion` + `motivoSinRendicion` (`dto-contract-honesty`: forzar sin motivo es `400
+motivo_requerido`; motivo sin forzado es `400 motivo_sin_forzado`). Exige Supervisor o Admin,
+aplicado DENTRO del servicio y en un solo lugar, porque una policy no puede ser condicional a un
+campo del cuerpo (las dos rutas siguen bajo `OperacionDePos`: un Vendedor tiene que poder cerrar su
+turno). Sin constante espejo en `Politicas`: una policy registrada que ninguna ruta apila no la
+evalúa nadie, y el inerte sería justamente el que lleva nombre de control de seguridad. Un forzado válido SIEMPRE escribe
+`AccionAuditada.CierreForzadoSinRendicion = ("caja.forzado", "turno_caja")` con el motivo y la
+lista de bloqueos encontrados — incluso si no había ninguno, para que el motivo declarado nunca
+quede aceptado-y-descartado.
+
+**Estado: completo.** Migración `RendicionDeColaDelDispositivo`. El dispositivo rinde su cola como
+último paso de cada ciclo de `useSincronizacionOffline` (después del drenado, para que el conteo
+refleje el estado post-drenado); sin bloque local no rinde nada, y una rendición que falla no rompe
+el ciclo. `CierreDeCaja.tsx` revela el override recién ante un `409
+rendicion_de_dispositivo_pendiente`, nunca por defecto. Las guardas locales
+(`outboxBloqueaCierre`, `irACerrarCaja`) se conservan como defensa en profundidad: siguen
+bloqueando al dispositivo que tiene SU propia cola sin drenar, que es un caso que tiene que
+drenar, no forzar.
+
+**Hueco conocido, no resuelto:** descartar una venta rechazada (`descartarVentaConError`) la saca de
+la cola pero su número ya se gastó y `proximo` nunca rebobina — eso deja un
+`HuecoDeComprobantes` PERMANENTE, así que todo cierre posterior de ese punto de venta pide override
+hasta revocar el dispositivo. Contablemente es correcto (hay un comprobante en la mano de un cliente
+que no va a estar en ningún arqueo), pero empuja al override habituado. El arreglo sería que el
+dispositivo reporte los números que renunció para restarlos del esperado: columna nueva, etapa
+separada.

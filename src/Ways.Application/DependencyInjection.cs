@@ -100,6 +100,9 @@ public static class DependencyInjection
         // etapa 5 (cierre por retiro): armador compartido por ServicioDeTurnos.CerrarPorRetiroAsync
         // y ObtenerResumenDeCierreAsync — ver su doc-comment.
         services.AddScoped<LectorDeResumenDeCierrePorRetiro>();
+        // La IO de la guarda de rendición de dispositivos del cierre — consumida solo por
+        // ServicioDeTurnos (los dos modos de cierre), igual que los dos lectores de arriba.
+        services.AddScoped<LectorDeRendicionDeDispositivos>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();
