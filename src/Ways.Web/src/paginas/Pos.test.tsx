@@ -4223,6 +4223,52 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
     })
 
     /**
+     * Cláusula bajo prueba: un `409 rendicion_de_dispositivo_pendiente` NO es un resultado
+     * incierto. La guarda del servidor mira TODOS los dispositivos del punto de venta (no solo el
+     * de esta máquina, que `irACerrarCaja` ya chequeó contra su propio almacén local), así que su
+     * mensaje —que nombra cuál bloquea— se muestra tal cual, el turno sigue abierto y "Confirmar"
+     * sigue disponible para reintentar cuando el otro dispositivo sincronice.
+     */
+    it('409 rendicion_de_dispositivo_pendiente: muestra el mensaje del servidor, deja el turno abierto y no entra en modo incierto', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      const mensajeDelServidor =
+        "No se puede cerrar el turno: el dispositivo 'Caja 2' tiene 3 venta(s) sin sincronizar (TX)."
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) {
+          return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', mensajeDelServidor))
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      expect(
+        await modalMonto.findByText(
+          `${mensajeDelServidor} Esperá a que el dispositivo sincronice, o pedile a un supervisor que cierre el turno sin la rendición.`,
+        ),
+      ).toBeInTheDocument()
+      // Nunca el camino del 503: no hay "Reintentar", y "Confirmar" vuelve a estar disponible.
+      expect(modalMonto.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+      expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+      // El cierre no sucedió: nunca se encoló el comprobante de cierre.
+      expect(vi.mocked(cajaDeEscritorio.encolarImpresion).mock.calls.map((c) => c[0])).not.toContain(
+        'el comprobante de cierre de turno',
+      )
+    })
+
+    /**
      * Cláusula bajo prueba: un 503 `resultado_incierto` (o una falla de red) NUNCA vuelve a
      * postear `cerrarPorRetiro` — "Reintentar" solo consulta `obtenerResumenDeCierre`
      * (idempotente). Con un resumen disponible, el cierre SÍ sucedió: se completa igual que un

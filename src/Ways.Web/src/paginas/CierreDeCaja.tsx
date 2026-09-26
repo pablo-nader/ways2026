@@ -4,7 +4,9 @@ import { aSolicitudDeCierre, conteosCompletos, conteoValido, diferenciaPrevia } 
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
+import { puedeForzarCierreSinRendicion } from '../api/tipos'
+import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, SolicitudDeCierre, TurnoConArqueos } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
@@ -32,6 +34,11 @@ function formatearFechaHora(iso: string): string {
  * Es la pantalla con más obligaciones de `react-async-state` de toda la etapa (reglas 1, 4, 5, 6,
  * 7, 9): un cierre es irreversible, así que un doble submit es el peor defecto que puede tener.
  *
+ * Guarda de rendición de cola de dispositivos: un `409 rendicion_de_dispositivo_pendiente` del
+ * servidor se muestra tal cual (nombra qué dispositivo bloquea) y recién ahí aparece el override
+ * supervisado (`forzarSinRendicion` + motivo obligatorio). El gate local del outbox
+ * (`outboxBloqueaCierre`) sigue intacto y es independiente: el override no lo levanta.
+ *
  * stage-desktop-pos: dos seams opcionales para el shell del POS de escritorio, ninguno cambia el
  * comportamiento de la app web (quedan `undefined`/el default). `rutaVolver` reemplaza el destino
  * fijo `/caja` — el shell de escritorio no tiene esa ruta, la suya es `/vender`. `alCerrarExitosamente`
@@ -52,6 +59,7 @@ type PropsCierreDeCaja = {
 }
 
 export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: PropsCierreDeCaja = {}) {
+  const { usuario } = useAuth()
   const [searchParams] = useSearchParams()
   const crudo = searchParams.get('idTurno')
   const idTurno = crudo !== null && crudo.trim() !== '' ? Number(crudo) : Number.NaN
@@ -74,6 +82,14 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
   const cerrandoRef = useRef(false)
   const generacionCierreRef = useRef(0)
   const [errorCierre, setErrorCierre] = useState('')
+
+  // Guarda de rendición de cola del servidor (`409 rendicion_de_dispositivo_pendiente`): algún
+  // dispositivo de escritorio del punto de venta puede tener ventas sin drenar en SU almacén local,
+  // que este navegador no puede ver. El override supervisado (`forzarSinRendicion`) se ofrece SOLO
+  // después de ese rechazo — nunca es un control visible por defecto.
+  const [rendicionPendiente, setRendicionPendiente] = useState(false)
+  const [forzarSinRendicion, setForzarSinRendicion] = useState(false)
+  const [motivoSinRendicion, setMotivoSinRendicion] = useState('')
 
   // El comprobante Z viene en la propia respuesta 2xx del POST de cierre (design: The Cierre
   // Transaction) — `zReporte !== null` ES la señal de "el turno ya cerró", no hace falta un
@@ -172,6 +188,16 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
     setConteos((prev) => ({ ...prev, [idMedioPago]: valor }))
   }
 
+  function cambiarForzarSinRendicion(valor: boolean) {
+    if (cerrandoRef.current) return
+    setForzarSinRendicion(valor)
+  }
+
+  function cambiarMotivoSinRendicion(valor: string) {
+    if (cerrandoRef.current) return
+    setMotivoSinRendicion(valor)
+  }
+
   const errorCarga = errorMedios || errorResumen
   const cargaLista = !cargandoResumen && resumen !== null && medios !== null
   // fail-closed (mismo criterio que `bloqueadoPorTurno` de Pos.tsx): `outboxCount`/`cantidadConError`
@@ -180,8 +206,18 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
   // CRITICAL): una venta rechazada de forma permanente sigue bloqueando el cierre igual que el
   // outbox, aunque ya haya salido de él.
   const outboxBloqueaCierre = outboxCount === null || outboxCount > 0 || cantidadConError === null || cantidadConError > 0
+  // El servidor rechaza `forzarSinRendicion` sin motivo (`400 motivo_requerido`), así que el motivo
+  // se exige acá antes de intentar el cierre.
+  const motivoDeForzadoCompleto = motivoSinRendicion.trim() !== ''
+  const esSupervisorOAdmin = usuario !== null && puedeForzarCierreSinRendicion(usuario.rolId)
   const puedeFinalizar =
-    cargaLista && errorCarga === '' && confirmado && conteosCompletos(resumen?.medios ?? [], conteos) && !cerrando && !outboxBloqueaCierre
+    cargaLista &&
+    errorCarga === '' &&
+    confirmado &&
+    conteosCompletos(resumen?.medios ?? [], conteos) &&
+    !cerrando &&
+    !outboxBloqueaCierre &&
+    (!forzarSinRendicion || motivoDeForzadoCompleto)
 
   async function finalizarCierre() {
     // regla 9: guard de reentrancia de primera línea — un doble click en el mismo tick le gana
@@ -194,7 +230,12 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
     setCerrando(true)
     setErrorCierre('')
 
-    const solicitud = aSolicitudDeCierre(resumen.medios, conteos, observaciones)
+    const base = aSolicitudDeCierre(resumen.medios, conteos, observaciones)
+    // Los dos campos del override viajan juntos o no viajan: un motivo sin el flag es `400
+    // motivo_sin_forzado` del lado del servidor.
+    const solicitud: SolicitudDeCierre = forzarSinRendicion
+      ? { ...base, forzarSinRendicion: true, motivoSinRendicion: motivoSinRendicion.trim() }
+      : base
 
     try {
       const conArqueos = await clienteDeCaja.cerrar(idTurno, solicitud)
@@ -208,6 +249,26 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
       alCerrarExitosamente?.(conArqueos)
     } catch (e) {
       if (generacionCierreRef.current !== miGeneracion) return
+
+      if (e instanceof ErrorApi && e.codigo === 'rendicion_de_dispositivo_pendiente') {
+        // El mensaje del servidor nombra QUÉ dispositivo bloquea y por qué (cuántas ventas sin
+        // sincronizar, qué rango de comprobantes falta) — se muestra tal cual, y recién acá se
+        // ofrece el override.
+        setErrorCierre(e.message)
+        setRendicionPendiente(true)
+        cerrandoRef.current = false
+        setCerrando(false)
+        return
+      }
+
+      if (e instanceof ErrorApi && e.estado === 403 && forzarSinRendicion) {
+        // El rol del cliente nunca es fuente de verdad (`puedeForzarCierreSinRendicion` solo da
+        // forma a la copia): este 403 es alcanzable aunque la pantalla creyera que se podía.
+        setErrorCierre('Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.')
+        cerrandoRef.current = false
+        setCerrando(false)
+        return
+      }
 
       if (e instanceof ErrorApi && (e.codigo === 'arqueo_incompleto' || e.codigo === 'medio_sin_actividad_en_el_turno')) {
         // El checklist en pantalla quedó desactualizado contra el servidor (otro movimiento entró
@@ -421,6 +482,51 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                     reabrir ni corregir después.
                   </label>
                 </div>
+
+                {/* Override supervisado de la guarda de rendición — visible SOLO después de un
+                    `409 rendicion_de_dispositivo_pendiente`, nunca por defecto. Mismo patrón de
+                    opt-in explícito que la confirmación de irreversibilidad de arriba. */}
+                {rendicionPendiente && (
+                  <div className="border border-danger p-2 mb-3">
+                    <div className="form-check">
+                      <input
+                        id="cierre-forzar-sin-rendicion"
+                        type="checkbox"
+                        className="form-check-input rounded-0"
+                        checked={forzarSinRendicion}
+                        disabled={cerrando || !resumen}
+                        onChange={(e) => cambiarForzarSinRendicion(e.target.checked)}
+                      />
+                      <label className="form-check-label" htmlFor="cierre-forzar-sin-rendicion">
+                        Cerrar igual, sin la rendición del dispositivo. Las ventas que ese dispositivo sincronice
+                        después de este cierre no van a estar en el arqueo de este turno: van a caer en el turno
+                        siguiente, y los dos arqueos van a quedar mal.
+                      </label>
+                    </div>
+
+                    <div className="mt-2">
+                      <label className="form-label" htmlFor="cierre-motivo-sin-rendicion">
+                        Motivo del cierre forzado (obligatorio)
+                      </label>
+                      <input
+                        id="cierre-motivo-sin-rendicion"
+                        type="text"
+                        className="form-control rounded-0"
+                        value={motivoSinRendicion}
+                        disabled={cerrando || !forzarSinRendicion}
+                        onChange={(e) => cambiarMotivoSinRendicion(e.target.value)}
+                      />
+                      <div className="form-text">Queda registrado en la auditoría del cierre.</div>
+                    </div>
+
+                    {!esSupervisorOAdmin && (
+                      <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2 mb-0">
+                        Con tu rol el servidor va a rechazar el cierre forzado: pedile a un supervisor o a un
+                        administrador que lo haga.
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="d-flex gap-2">
                   <button

@@ -1709,6 +1709,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       cierreConfirmado(resumen)
     } catch (e) {
       if (!montadoRef.current) return
+      if (e instanceof ErrorApi && e.codigo === 'rendicion_de_dispositivo_pendiente') {
+        // El servidor tiene su propia guarda de cola sin drenar, sobre TODOS los dispositivos del
+        // punto de venta (no solo el de esta máquina, que `irACerrarCaja` ya chequeó): su mensaje
+        // nombra cuál bloquea, así que se muestra tal cual. El override es supervisado y vive en el
+        // cierre de caja de la web, nunca acá.
+        setErrorCierrePorRetiro(
+          `${e.message} Esperá a que el dispositivo sincronice, o pedile a un supervisor que cierre el turno sin la rendición.`,
+        )
+        return
+      }
       const resultadoIncierto = e instanceof ErrorApi ? e.codigo === 'resultado_incierto' && e.estado === 503 : true
       if (resultadoIncierto) {
         setCierreIncierto(true)
