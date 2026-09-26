@@ -6,7 +6,7 @@
  * solo lee el precio ya congelado que trajo la instantánea.
  */
 import type { AlmacenClaveValor } from './almacenPos'
-import type { ArticuloDeInstantanea, ArticuloEscaneado, InstantaneaDePos, OfertaAplicada, ResultadoDeResolucion } from '../api/tipos'
+import type { ArticuloDeInstantanea, ArticuloEscaneado, EscalonDeCantidad, InstantaneaDePos, OfertaAplicada, ResultadoDeResolucion } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 
 const CLAVE_INSTANTANEA = 'instantanea'
@@ -79,14 +79,61 @@ export function buscarArticuloOffline(instantanea: InstantaneaDePos, entradaCrud
   }
 }
 
-function aResultadoDeResolucion(articulo: ArticuloDeInstantanea, idListaPrecio: number): ResultadoDeResolucion {
+/**
+ * Tramo de cantidad vigente para `cantidad`: el que tiene el `cantidadDesde` MÁS ALTO entre los
+ * que cumplen `cantidadDesde <= cantidad`. `null` cuando el artículo no trae tramos (instantánea
+ * vieja, de antes del deploy — ver `ArticuloDeInstantanea.escalones`) o cuando ninguno califica
+ * todavía; en ambos casos rige el precio plano del artículo.
+ *
+ * ÚNICO lugar donde vive esta regla — la consumen la vista previa del carrito
+ * (`resolverPreciosOffline`), el payload que el servidor cobra literal
+ * (`enriquecerLineasConPrecioOffline`) y el ticket sintético
+ * (`construirComprobanteOfflineSintetico`): si divergieran, el cajero vería un importe y se
+ * cobraría otro.
+ *
+ * Elige por umbral, no por posición en el array: el contrato promete orden ascendente, pero
+ * depender de esa promesa para decidir dinero la vuelve un punto de falla silencioso. Sigue sin
+ * evaluar NINGUNA regla de oferta (design decisión del backend: "el dispositivo nunca vuelve a
+ * evaluar ofertas offline") — cada `precioFinal`/`descuentoUnitario` lo calculó el motor real
+ * server-side, esto es un lookup.
+ */
+export function elegirEscalon(articulo: ArticuloDeInstantanea, cantidad: number): EscalonDeCantidad | null {
+  let elegido: EscalonDeCantidad | null = null
+  for (const escalon of articulo.escalones ?? []) {
+    if (escalon.cantidadDesde <= cantidad && (elegido === null || escalon.cantidadDesde > elegido.cantidadDesde)) {
+      elegido = escalon
+    }
+  }
+  return elegido
+}
+
+/** Los cuatro campos de precio que rigen para `cantidad` — el escalón vigente pisa
+ * `precioFinal`/`descuentoUnitario`/`aplicadas`, y `precioOriginal` queda SIEMPRE el del artículo
+ * (el escalón no lo trae: es constante entre cantidades, ver `EscalonDeCantidad`). */
+export type PreciosVigentesOffline = Pick<ArticuloDeInstantanea, 'precioOriginal' | 'precioFinal' | 'descuentoUnitario' | 'aplicadas'>
+
+/** Proyección de `elegirEscalon` a los campos de precio efectivos — segundo tramo de la MISMA
+ * regla, exportado aparte para que los tres consumidores no repitan cada uno el "escalón, si no
+ * el plano" (una de esas copias terminaría divergiendo y cobrando distinto de lo mostrado). */
+export function preciosVigentesOffline(articulo: ArticuloDeInstantanea, cantidad: number): PreciosVigentesOffline {
+  const escalon = elegirEscalon(articulo, cantidad)
+  if (!escalon) {
+    const { precioOriginal, precioFinal, descuentoUnitario, aplicadas } = articulo
+    return { precioOriginal, precioFinal, descuentoUnitario, aplicadas }
+  }
+  return {
+    precioOriginal: articulo.precioOriginal,
+    precioFinal: escalon.precioFinal,
+    descuentoUnitario: escalon.descuentoUnitario,
+    aplicadas: escalon.aplicadas,
+  }
+}
+
+function aResultadoDeResolucion(articulo: ArticuloDeInstantanea, idListaPrecio: number, cantidad: number): ResultadoDeResolucion {
   return {
     idArticulo: articulo.idArticulo,
     idListaPrecio,
-    precioOriginal: articulo.precioOriginal,
-    precioFinal: articulo.precioFinal,
-    descuentoUnitario: articulo.descuentoUnitario,
-    aplicadas: articulo.aplicadas,
+    ...preciosVigentesOffline(articulo, cantidad),
   }
 }
 
@@ -100,6 +147,11 @@ function aResultadoDeResolucion(articulo: ArticuloDeInstantanea, idListaPrecio: 
  * del cliente de la venta (offline solo admite Consumidor Final, ver `reglasOffline.ts`) — la
  * instantánea ya congeló el precio contra esa lista server-side, este valor es solo para
  * completar el shape de `ResultadoDeResolucion`, ningún renderizado de la pantalla lo lee.
+ *
+ * La `cantidad` de cada línea elige el tramo de precio vigente (`preciosVigentesOffline`): sin
+ * esto, una oferta "3 o más" nunca aplicaba offline y el cliente que llevaba 3 pagaba precio
+ * pleno. Cambiar la cantidad en pantalla vuelve a correr esta resolución, así que el tramo se
+ * recalcula solo.
  */
 export function resolverPreciosOffline(
   lineas: LineaCarrito[],
@@ -110,7 +162,7 @@ export function resolverPreciosOffline(
   const indice: Record<number, ResultadoDeResolucion> = {}
   for (const linea of lineas) {
     const articulo = porId.get(linea.idArticulo)
-    if (articulo) indice[linea.idArticulo] = aResultadoDeResolucion(articulo, idListaPrecio)
+    if (articulo) indice[linea.idArticulo] = aResultadoDeResolucion(articulo, idListaPrecio, linea.cantidad)
   }
   return indice
 }
@@ -159,4 +211,4 @@ export function formatearVejezDeInstantanea(momento: string, ahora: Date): strin
 
 // Reexportado para que otros módulos (`outboxOffline.ts`) tipen sin importar desde `tipos.ts`
 // directamente donde no haga falta.
-export type { ArticuloDeInstantanea, OfertaAplicada }
+export type { ArticuloDeInstantanea, EscalonDeCantidad, OfertaAplicada }

@@ -2,16 +2,21 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSincronizacionOffline } from './useSincronizacionOffline'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerBloque, leerOutbox, leerRechazadas, type BloqueDeNumeracionLocal, type VentaEnCola } from './outboxOffline'
-import { guardarInstantaneaLocal } from './instantaneaOffline'
+import { guardarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
-import type { ArticuloDeInstantanea, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
+import { previaDeLinea } from '../api/ventas'
+import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
 
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
 const obtenerInstantaneaMock = vi.fn()
 
-vi.mock('../api/ventas', () => ({
+// Solo `clienteDeVentas` (el único HTTP que este hook toca) se reemplaza; el resto del módulo
+// queda REAL para que el test de acuerdo vista-previa/payload pueda usar la `previaDeLinea` de
+// producción en vez de reimplementar su fórmula.
+vi.mock('../api/ventas', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('../api/ventas')>()),
   clienteDeVentas: {
     emitir: (...args: unknown[]) => emitirMock(...args),
     reservarNumeracion: (...args: unknown[]) => reservarNumeracionMock(...args),
@@ -68,6 +73,15 @@ function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): Art
     porcentajeIva: 21,
     ...sobrescribir,
   }
+}
+
+/** Tramos con valores todos distintos entre sí y del precio plano — ver el mismo criterio en
+ * `instantaneaOffline.test.ts`. */
+const ESCALON_3: EscalonDeCantidad = { cantidadDesde: 3, precioFinal: 90, descuentoUnitario: 10, aplicadas: [{ idOferta: 31, nombre: '3 o más', descuentoUnitario: 10 }] }
+const ESCALON_6: EscalonDeCantidad = { cantidadDesde: 6, precioFinal: 80, descuentoUnitario: 20, aplicadas: [{ idOferta: 61, nombre: '6 o más', descuentoUnitario: 20 }] }
+
+function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+  return articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [], escalones: [ESCALON_3, ESCALON_6], ...sobrescribir })
 }
 
 function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): InstantaneaDePos {
@@ -673,6 +687,85 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(lineas).toHaveLength(2)
     expect(lineas.find((l) => l.idArticulo === 1)).toMatchObject({ cantidad: 1, precioUnitario: 100, descuentoUnitario: 0 })
     expect(lineas.find((l) => l.idArticulo === 2)).toMatchObject({ cantidad: 2, precioUnitario: 80, descuentoUnitario: 10 })
+  })
+
+  // El payload encolado es lo que el servidor cobra LITERAL (`precioUnitario`/`descuentoUnitario`
+  // salen de la línea tal cual, el servidor solo registra la discrepancia como auditoría), así que
+  // tiene que caer en el MISMO tramo que la vista previa. Cantidad 6 cruza los dos umbrales
+  // (3 y 6): el descuento del tramo es 20, el plano 0 y el del primer tramo 10 — los tres
+  // distintos, así que elegir mal cualquiera de ellos rompe la aserción.
+  it('con una cantidad que cruza un umbral, encola el descuentoUnitario del TRAMO y sigue mandando el precioOriginal bruto como precioUnitario', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 6, codigoBarra: '7790001234567', idLote: null }] }),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    const outbox = await leerOutbox(almacen)
+    expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ cantidad: 6, precioUnitario: 100, descuentoUnitario: 20 })
+  })
+
+  // Misma cláusula por el otro lado: por debajo del primer umbral el payload lleva el descuento
+  // PLANO. Un mutante que aplique siempre el primer (o el último) tramo pasa el test de arriba y
+  // muere acá.
+  it('con la cantidad por debajo del primer umbral, encola el descuento plano — nunca el del primer tramo', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }] }),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    const outbox = await leerOutbox(almacen)
+    expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ cantidad: 2, precioUnitario: 100, descuentoUnitario: 0 })
+  })
+
+  // El importe que el cajero VE (vista previa, `resolverPreciosOffline` + `previaDeLinea` reales)
+  // y el que el servidor va a COBRAR (payload encolado, `cantidad × (precioUnitario −
+  // descuentoUnitario)`, fórmula de `CalculadorDeTotales.Calcular`) tienen que coincidir a la misma
+  // cantidad. Si los dos caminos eligieran tramos distintos, se cobraría algo que nunca se mostró.
+  it.each([
+    ['por debajo del primer umbral', 2],
+    ['exactamente en el primer umbral', 3],
+    ['entre los dos umbrales', 4],
+    ['en el segundo umbral', 6],
+  ])('la vista previa y el payload encolado cobran el mismo importe con cantidad %s', async (_titulo, cantidad) => {
+    const almacen = almacenFake()
+    const instantanea = instantaneaFixture({ articulos: [articuloConEscalonesFixture()] })
+    await guardarInstantaneaLocal(almacen, instantanea)
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad, codigoBarra: '7790001234567', idLote: null }] }),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    const lineaCarrito = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad }
+    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, 5)[1])
+
+    const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
+    const cobrado = cantidad * ((encolada?.precioUnitario ?? 0) - (encolada?.descuentoUnitario ?? 0))
+    expect(cobrado).toBe(previa.total)
   })
 
   // judgment-day ronda 1 (BLOCKER): antes de este fix, `agregarAOutbox` tragaba CUALQUIER falla

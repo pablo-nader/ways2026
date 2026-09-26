@@ -12,12 +12,18 @@
  * cantidad, total de línea = bruto − descuento (neto). `subtotal`/`descuentoTotal`/`total` del
  * comprobante son la suma de esas mismas columnas — nunca un cálculo alternativo.
  *
+ * El descuento por unidad y la oferta salen de `preciosVigentesOffline` (no de los campos planos
+ * del artículo): este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
+ * resolvió la vista previa, así que sin ese lookup el ticket impreso quedaría con el descuento de
+ * cantidad 1 mientras la pantalla y el payload encolado cobran el del tramo.
+ *
  * `idArea`/`idListaPrecio` de cada item quedan en `0` — sentinels deliberados, nunca valores
  * inventados que alguien pudiera leer como reales: el servidor los resuelve del artículo FRESCO
  * recién al sincronizar (mismo motivo documentado en `ArticuloDeInstantanea.IdArea` del backend),
  * y NINGÚN consumidor de este comprobante sintético (`VentaFinalizada`, `ticketDeVenta`) lee esos
  * dos campos — verificado contra ambos archivos antes de fijar este contrato.
  */
+import { preciosVigentesOffline } from './instantaneaOffline'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
 
@@ -54,8 +60,9 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     const articulo = porId.get(linea.idArticulo)
     if (!articulo) return null
 
-    const bruto = redondear(linea.cantidad * articulo.precioOriginal)
-    const descuento = redondear(articulo.descuentoUnitario * linea.cantidad)
+    const precios = preciosVigentesOffline(articulo, linea.cantidad)
+    const bruto = redondear(linea.cantidad * precios.precioOriginal)
+    const descuento = redondear(precios.descuentoUnitario * linea.cantidad)
     subtotal += bruto
     descuentoTotal += descuento
 
@@ -66,11 +73,11 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       codigoBarra: linea.codigoBarra,
       idArea: 0,
       idListaPrecio: 0,
-      idOferta: articulo.aplicadas[0]?.idOferta ?? null,
+      idOferta: precios.aplicadas[0]?.idOferta ?? null,
       idAlicuotaIva: articulo.idAlicuotaIva,
       porcentajeIva: articulo.porcentajeIva,
       cantidad: linea.cantidad,
-      precioUnitario: articulo.precioOriginal,
+      precioUnitario: precios.precioOriginal,
       descuento,
       total: redondear(bruto - descuento),
       idLote: null,
