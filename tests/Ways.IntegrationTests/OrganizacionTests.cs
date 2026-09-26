@@ -1,9 +1,12 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
@@ -11,6 +14,7 @@ using Ways.Domain.Dispositivos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -464,5 +468,110 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var actualizado = await respuesta.Content.ReadFromJsonAsync<TenantListado>(OpcionesJson);
         Assert.NotNull(actualizado);
         Assert.Equal("Nombre editado", actualizado!.Nombre);
+    }
+
+    /// <summary>Pausa la transacción manual de <c>ActualizarModoPuntoVentaAsync</c> justo DESPUÉS
+    /// de <c>BeginTransactionAsync</c> —o sea antes de su primer statement, que es el
+    /// <c>FOR UPDATE</c>— hasta que el test la libera. Mismo patrón que
+    /// <c>GastosLigadosACompraTests.InterceptorDePausaTrasIniciarLaTransaccion</c>.</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// La carrera de dos flips de modo sobre el MISMO punto de venta. Prueba que la lectura de la
+    /// fila nace DESPUÉS del <c>FOR UPDATE</c> de
+    /// <see cref="ServicioDeOrganizacion.ActualizarModoPuntoVentaAsync"/>: el perdedor queda pausado
+    /// con su transacción abierta y todavía sin lock, el ganador flipea y comitea, y el perdedor
+    /// retoma. Con la lectura tomada ANTES de la transacción, el perdedor decide sobre una foto que
+    /// el ganador ya pisó, y eso rompe DOS cosas independientes —una aserción por cada una:
+    ///
+    /// <list type="number">
+    /// <item>la escritura se pierde EN SILENCIO. El punto de venta arranca en Web y el perdedor pide
+    /// Web, así que su foto pre-lock (Web) es el valor ORIGINAL de EF: asignar Web no es un cambio,
+    /// EF deja <c>modo</c> FUERA del <c>UPDATE</c> (igual emite uno por <c>updated_at</c>) y la fila
+    /// se queda en el Escritorio del ganador mientras el 200 devuelve ese mismo Escritorio. Las
+    /// aserciones que lo matan: el <c>Modo</c> del cuerpo y el de la fila;</item>
+    /// <item>la auditoría miente sobre lo que había antes. <c>valor_anterior</c> tiene que decir
+    /// <c>escritorio</c> —el estado que esta transacción vio bajo el lock— y no el <c>web</c> de la
+    /// foto vieja. La aserción que lo mata: <c>valor_anterior</c> de la última fila
+    /// <c>pv.modo</c>.</item>
+    /// </list>
+    ///
+    /// El ganador corre sobre el cliente SIN interceptor (<c>fixture</c> pelado), así que su
+    /// transacción no se pausa; solo la del perdedor pasa por el rendezvous.
+    /// </summary>
+    [Fact]
+    public async Task ElFlipDeModoQuePierdeLaCarreraAuditaYEscribeSobreElEstadoQueVioBajoElLock()
+    {
+        var (tenant, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(
+            nameof(ElFlipDeModoQuePierdeLaCarreraAuditaYEscribeSobreElEstadoQueVioBajoElLock));
+
+        await using (var contexto = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var pv = await contexto.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+            pv.Modo = ModoPuntoVenta.Web;
+            await contexto.SaveChangesAsync();
+        }
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clientePerdedor = factory.CreateClient();
+        var login = await clientePerdedor.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, Password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaPerdedor = clientePerdedor.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Web));
+
+        await transaccionIniciada.Task;
+
+        using var clienteGanador = await ClienteComoAdminAsync(mailAdmin);
+        var ganador = await clienteGanador.PostAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}/modo", new PuntoVentaModoEdicion(ModoPuntoVenta.Escritorio));
+        var cuerpoGanador = await ganador.Content.ReadAsStringAsync();
+        Assert.True(ganador.StatusCode == HttpStatusCode.OK, cuerpoGanador);
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaPerdedor;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        // Afirmación 1 — la escritura del perdedor no se perdió.
+        var actualizado = JsonSerializer.Deserialize<PuntoVentaListado>(cuerpo, OpcionesJson);
+        Assert.NotNull(actualizado);
+        Assert.Equal(ModoPuntoVenta.Web, actualizado!.Modo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var fila = await db.PuntosVenta.FirstAsync(p => p.Id == puntoVenta.Id);
+        Assert.Equal(ModoPuntoVenta.Web, fila.Modo);
+
+        // Afirmación 2 — el rastro del perdedor dice lo que vio bajo el lock.
+        var rastro = await db.Auditoria.IgnoreQueryFilters()
+            .Where(a => a.Accion == "pv.modo" && a.IdEntidad == puntoVenta.Id)
+            .OrderByDescending(a => a.Id)
+            .FirstAsync();
+        Assert.Equal(tenant.Id, rastro.IdTenant);
+        using var valorAnterior = JsonDocument.Parse(rastro.ValorAnterior!);
+        Assert.Equal("escritorio", valorAnterior.RootElement.GetProperty("modo").GetString());
+        using var valorNuevo = JsonDocument.Parse(rastro.ValorNuevo);
+        Assert.Equal("web", valorNuevo.RootElement.GetProperty("modo").GetString());
     }
 }

@@ -176,9 +176,15 @@ public class ServicioDeOrganizacion(
     /// <list type="number">
     /// <item>el <c>pg_advisory_xact_lock</c> (D11), que serializa esta baja contra cualquier otra
     /// del mismo tenant —incluida la de una de sus empresas, que toma la MISMA clave—;</item>
-    /// <item>la RELECTURA del ancla bajo el lock: si una baja concurrente ganó, la fila ya no es
-    /// visible bajo <c>"BajaLogica"</c> y esto es un 404 limpio en vez de un segundo
-    /// <c>deleted_at</c> pisando el primero;</item>
+    /// <item>la ÚNICA lectura del ancla, bajo el lock: si una baja concurrente ganó, la fila ya no
+    /// es visible bajo <c>"BajaLogica"</c> y esto es un 404 limpio en vez de un segundo
+    /// <c>deleted_at</c> pisando el primero. Era una RELECTURA (había un <c>BuscarTenantAsync</c>
+    /// pre-transacción para dar el 404 sin pagar transacción) y eso ensuciaba el rastro: con la
+    /// entidad ya trackeada desde antes del lock, esta consulta resolvía contra el identity map y
+    /// devolvía la MISMA foto vieja, así que <c>estadoAnterior</c> podía afirmar <c>activo</c>
+    /// sobre un tenant que una suspensión concurrente —que no toma este lock— ya había dejado en
+    /// <c>suspendido</c>. Un 404 ahora paga una transacción; es una acción de plataforma, rara y
+    /// manual, y el rastro exacto vale más que ese round trip;</item>
     /// <item>el guard de uso, evaluado UNA SOLA VEZ y sin ningún pre-chequeo afuera. Un pre-chequeo
     /// que espejara al guard es el confound más común de este repo (<c>mutation-proof-tests</c>
     /// regla 3): correrlo una sola vez lo elimina en vez de escribir pruebas que lo esquiven;</item>
@@ -196,9 +202,6 @@ public class ServicioDeOrganizacion(
     /// </summary>
     public async Task EliminarTenantAsync(int id, CancellationToken ct = default)
     {
-        // 404 antes de abrir nada: el caso normal de "ese id no existe" no paga transacción.
-        await BuscarTenantAsync(id, ct);
-
         await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(id, ct);
@@ -583,17 +586,32 @@ public class ServicioDeOrganizacion(
     /// bajas de este archivo: <see cref="ServicioDeAuditoria.Registrar"/> hace <c>Add</c> de una
     /// entidad nueva, y un reintento automático sobre el MISMO <c>ChangeTracker</c> duplicaría la
     /// fila de auditoría en vez de reemplazarla.
+    ///
+    /// La lectura de la fila nace ADENTRO de la transacción y DESPUÉS del lock, nunca antes. Leer
+    /// la entidad antes del lock rompe dos cosas distintas: <c>modoAnterior</c> describiría un
+    /// estado que esta transacción nunca vio bajo el lock (el rastro del perdedor de la carrera
+    /// mentiría sobre lo que había antes), y —peor— ese snapshot previo es el valor ORIGINAL de EF
+    /// para la detección de cambios: si el modo pedido coincide con el valor viejo, EF no detecta
+    /// cambio y OMITE la columna del <c>UPDATE</c>, así que la escritura se pierde en silencio y el
+    /// endpoint contesta 200 con el valor del ganador. Una SEGUNDA lectura no arregla nada: la
+    /// relectura resuelve contra el identity map y devuelve la MISMA instancia vieja (mismo
+    /// mecanismo que documenta <see cref="EnUnaTransaccionDeBajaAsync{T}"/>).
+    ///
+    /// El lock se toma con el <c>id</c> de la ruta y no con uno ya validado contra el alcance del
+    /// actor: RLS filtra la fila de otro tenant, así que ese <c>FOR UPDATE</c> no engancha ninguna
+    /// fila y el 404 lo sigue dando <see cref="BuscarPuntoVentaAsync"/> igual que antes.
     /// </summary>
     public async Task<PuntoVentaListado> ActualizarModoPuntoVentaAsync(
         int id, PuntoVentaModoEdicion datos, CancellationToken ct = default)
     {
         var modo = datos.Modo
             ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
-        var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
 
         return await EnUnaTransaccionDeBajaAsync(async () =>
         {
-            await TomarLockDePuntoVentaAsync(puntoVenta.Id, ct);
+            await TomarLockDePuntoVentaAsync(id, ct);
+
+            var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
 
             var tieneDispositivoActivo = await db.Dispositivos.AnyAsync(d => d.IdPuntoVenta == puntoVenta.Id, ct);
             if (tieneDispositivoActivo)
