@@ -146,8 +146,13 @@ describe('Vencimientos — reporte (stage-12-lotes-vencimientos, Slice 15 — we
     await screen.findByLabelText('Punto de venta')
     expect(screen.getByLabelText('Punto de venta')).toHaveValue('10')
 
-    const llamada = apiGetMock.mock.calls.find((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/vencimientos?'))!
-    expect(llamada[0] as string).not.toContain('dias=')
+    // La consulta del reporte la dispara un efecto POSTERIOR a que el punto de venta quede
+    // seleccionado: leer `mock.calls` en el mismo tick encuentra la lista todavía sin esa llamada.
+    await waitFor(() => {
+      const llamada = apiGetMock.mock.calls.find((call: unknown[]) => (call[0] as string).startsWith('/reportes/stock/vencimientos?'))
+      expect(llamada?.[0]).toBeDefined()
+      expect(llamada?.[0] as string).not.toContain('dias=')
+    })
   })
 
   it('un valor tipeado en "Días de alerta" viaja como dias en la query', async () => {
