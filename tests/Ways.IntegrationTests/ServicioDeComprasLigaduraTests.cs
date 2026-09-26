@@ -1,9 +1,7 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
@@ -780,19 +778,6 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
     // task 3.27 / mutation target #20: id_orden_compra tiene que venir del RETURNING del lock, nunca
     // de preLectura — una carrera de relink concurrente lo hace discriminante.
     // ================================================================================================
-
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
 
     /// <summary>Mutation target #20: si <c>encabezado.IdOrdenCompra</c> se leyera de
     /// <c>preLectura</c> (capturada ANTES de la transacción) en vez del <c>RETURNING</c> ensanchado

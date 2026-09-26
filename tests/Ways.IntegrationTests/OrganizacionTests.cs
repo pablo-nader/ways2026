@@ -306,26 +306,6 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(puntoVenta.Id, auditoria.IdPuntoVenta);
     }
 
-    /// <summary>Mismo patrón de rendezvous forzado que
-    /// <c>DispositivosTests.InterceptorDePausaTrasIniciarLaTransaccion</c> y que el original de
-    /// <c>ComprasAnulacionYConcurrenciaTests</c>: pausa justo DESPUÉS de
-    /// <c>BeginTransactionAsync</c> — antes del primer statement, y por lo tanto antes del
-    /// <c>FOR UPDATE</c> — hasta que el test la libera. Es lo que vuelve determinístico el
-    /// interleaving que interesa acá: el otro flip comitea ENTERO mientras esta transacción
-    /// ya está abierta pero todavía no tomó su lock.</summary>
-    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
-        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
-    {
-        public override async ValueTask<DbTransaction> TransactionStartedAsync(
-            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
-            CancellationToken cancellationToken = default)
-        {
-            transaccionIniciada.TrySetResult();
-            await puedeContinuar.Task;
-            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
-        }
-    }
-
     /// <summary>Cuenta las transacciones que abre el host. El chequeo temprano de 404 de
     /// <c>ActualizarModoPuntoVentaAsync</c> no cambia ningún status ni cuerpo — el
     /// <c>BuscarPuntoVentaAsync</c> de adentro del lock tira el MISMO 404—, así que su única
