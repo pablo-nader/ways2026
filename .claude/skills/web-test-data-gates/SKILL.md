@@ -39,6 +39,49 @@ await waitFor(() => expect(proveedor).toBeEnabled())
 await userEvent.selectOptions(proveedor, '4')
 ```
 
+**Variant 1b — always rendered and NOT disabled: `toBeEnabled()` is a FAKE gate.**
+`FormularioArticulo.tsx` (`art-alicuota-iva`) and `AltaRapidaCategoria.tsx`
+(`alta-rapida-categoria-padre`) render the `<select>` always, with only `Elegir…`/`— Ninguna —`
+until the catalog lands, and **without** a data-dependent `disabled`. So the Variant 1 gate is
+worse than useless here: `toBeEnabled()` resolves on the first tick and proves nothing. The only
+signal that the data landed is the option itself:
+
+```tsx
+// ✗ espera al diálogo, usa las OPCIONES: "Value 10 not found in options" bajo carga
+await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+await userEvent.selectOptions(screen.getByLabelText('Alícuota de IVA'), '10')
+
+// ✓ la opción concreta es la única prueba de que el catálogo aterrizó
+await screen.findByRole('option', { name: 'IVA 27% (27%)' })
+await userEvent.selectOptions(screen.getByLabelText('Alícuota de IVA'), '10')
+```
+
+Found 2026-09-26 as the sixth site of this class, surfaced by the two-concurrent-runs method in
+Execution Step 3 — the sequential full suite had been green five times in a row right before it.
+
+**How to prove THIS variant's gate has teeth.** Deleting the gate is not enough: these tests only
+lose the race under load. Make the race deterministic by delaying the fixture, then mutate:
+`alicuotasImpl: () => new Promise((r) => setTimeout(() => r([...]), 0))`, and confirm the gateless
+version fails with the exact production message.
+
+**Which sites are actually at risk: count the awaited `userEvent` calls in between.** This is the
+discriminator, measured on 2026-09-26 across five sites of `Articulos.test.tsx`. Every awaited
+`userEvent.click`/`type` flushes enough React work that a late fixture lands anyway, so it silently
+protects whatever follows:
+
+| Between opening the screen and using the data | Behavior under a delayed fixture |
+|---|---|
+| NOTHING awaited (`findByRole('dialog')` → `selectOptions`) | dies at `setTimeout 0` — this is the one that actually goes red in CI |
+| One awaited `userEvent.click` | survives 400ms; only dies on a never-resolving promise |
+| An awaited `userEvent.type` of 11 chars | survives 400ms too |
+
+So `art-alicuota-iva` was the real flake (nothing in between) while the three
+`getAllByRole('option')` reads and the `alta-rapida-categoria-padre` select all had an intervening
+awaited `userEvent`. Gate them anyway — a `waitFor` around an assertion costs nothing and the
+protection above is incidental, not a guarantee — but when the delay cannot kill the gate, say the
+gate is UNPROVEN instead of claiming a proven fix. Do not let an unprovable gate be presented as a
+fixed flake.
+
 **Variant 2 — asserting on `mock.calls` before the chained effect fires.**
 `Reposicion.tsx` and `Vencimientos.tsx` render the `<select>` only after `puntosVenta` loads (no
 `referenciaOk` flag on this control), so `findByLabelText` alone is a correct gate for the select
@@ -84,6 +127,7 @@ random red per run is a real hole, not noise.
 | Situation | Action |
 |---|---|
 | Control is rendered always, disabled while loading | `await waitFor(() => expect(control).toBeEnabled())` before interacting |
+| Control is rendered always and NOT disabled (only a placeholder `<option>` until the catalog lands) | `await screen.findByRole('option', { name })` — `toBeEnabled()` here is a fake gate that passes on the first tick |
 | Control is rendered only after its data (`x === null ? … : <select>`) | `findBy*` alone is enough — no extra wait |
 | Reading a `<select>` value precargado desde `location.state`, alone | `await waitFor(() => expect(select).toHaveValue(v))` |
 | Reading that same value when the test then reads a sibling select fed by an independent fetch | `await waitFor(() => expect(select).toBeEnabled())` — a bare `toHaveValue` only proves its own select's data landed, not the sibling's |
