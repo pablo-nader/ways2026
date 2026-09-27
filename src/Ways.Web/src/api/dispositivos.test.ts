@@ -29,13 +29,81 @@ function quitarPuenteTauri() {
 afterEach(() => {
   quitarPuenteTauri()
   invokeMock.mockReset()
+  apiGetMock.mockReset()
+  apiPostMock.mockReset()
   establecerTokenDeSesionBearer(null)
 })
 
-describe('clienteDeDispositivos', () => {
-  it('obtenerActual pide GET /dispositivos/actual', () => {
+/** `leer_credencial_de_dispositivo` devuelve `secreto`; cualquier otro comando resuelve `undefined`. */
+function conSecretoGuardado(secreto: string | null) {
+  invokeMock.mockImplementation((comando: string) =>
+    Promise.resolve(comando === 'leer_credencial_de_dispositivo' ? secreto : undefined),
+  )
+}
+
+const usuarioCajero = { id: 1, usuario: 'jperez', mail: 'jperez@ways.test', rolId: 4, rol: 'Vendedor', ultimaConexion: null, idTenant: 1 }
+
+describe('header Authorization: Dispositivo', () => {
+  it('fuera de Tauri, obtenerActual e iniciarSesion salen sin header propio', async () => {
     apiGetMock.mockResolvedValue(undefined)
-    void clienteDeDispositivos.obtenerActual()
+    apiPostMock.mockResolvedValue(usuarioCajero)
+
+    await clienteDeDispositivos.obtenerActual()
+    await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+
+    expect(apiGetMock.mock.calls).toEqual([['/dispositivos/actual']])
+    expect(apiPostMock.mock.calls).toEqual([
+      ['/auth/login-dispositivo', { usuario: 'jperez', password: 'secreta', solicitarBearer: false }],
+    ])
+  })
+
+  it('bajo Tauri con secreto guardado, obtenerActual manda Authorization: Dispositivo <secreto>', async () => {
+    instalarPuenteTauri()
+    conSecretoGuardado('secreto-del-equipo')
+    apiGetMock.mockResolvedValue(undefined)
+
+    await clienteDeDispositivos.obtenerActual()
+
+    expect(invokeMock).toHaveBeenCalledWith('leer_credencial_de_dispositivo')
+    expect(apiGetMock.mock.calls).toEqual([['/dispositivos/actual', { Authorization: 'Dispositivo secreto-del-equipo' }]])
+  })
+
+  it('bajo Tauri con secreto guardado, iniciarSesion manda Authorization: Dispositivo <secreto>', async () => {
+    instalarPuenteTauri()
+    conSecretoGuardado('secreto-del-equipo')
+    apiPostMock.mockResolvedValue({ usuario: usuarioCajero, token: 'token-de-sesion', expiraEl: '2026-06-01T00:00:00Z' })
+
+    await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+
+    expect(apiPostMock.mock.calls).toEqual([
+      [
+        '/auth/login-dispositivo',
+        { usuario: 'jperez', password: 'secreta', solicitarBearer: true },
+        { Authorization: 'Dispositivo secreto-del-equipo' },
+      ],
+    ])
+  })
+
+  it('bajo Tauri sin secreto guardado, ninguna de las dos manda header propio', async () => {
+    instalarPuenteTauri()
+    conSecretoGuardado(null)
+    apiGetMock.mockResolvedValue(undefined)
+    apiPostMock.mockResolvedValue({ usuario: usuarioCajero, token: 'token-de-sesion', expiraEl: '2026-06-01T00:00:00Z' })
+
+    await clienteDeDispositivos.obtenerActual()
+    await clienteDeDispositivos.iniciarSesion({ usuario: 'jperez', password: 'secreta' })
+
+    expect(apiGetMock.mock.calls).toEqual([['/dispositivos/actual']])
+    expect(apiPostMock.mock.calls).toEqual([
+      ['/auth/login-dispositivo', { usuario: 'jperez', password: 'secreta', solicitarBearer: true }],
+    ])
+  })
+})
+
+describe('clienteDeDispositivos', () => {
+  it('obtenerActual pide GET /dispositivos/actual', async () => {
+    apiGetMock.mockResolvedValue(undefined)
+    await clienteDeDispositivos.obtenerActual()
     expect(apiGetMock).toHaveBeenCalledWith('/dispositivos/actual')
   })
 

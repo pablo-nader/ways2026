@@ -13,7 +13,9 @@ namespace Ways.Api.Seguridad;
 /// (<see cref="ValidadorDeSesion.EsVigenteAsync"/>) antes de aceptar el principal — sin este
 /// paso, un dispositivo/usuario revocado seguiría autenticando por bearer aunque la cookie ya lo
 /// hubiera cortado (ver el comentario de <see cref="ValidadorDeSesion"/> sobre por qué esto no
-/// puede ser una copia).
+/// puede ser una copia). Un principal sin claim de dispositivo (el bearer corto de
+/// <c>POST /api/auth/login</c>) pasa por el mismo chequeo: el de dispositivo solo corre si la claim
+/// está.
 ///
 /// <see cref="AuthenticationSchemeOptions.TimeProvider"/> (no <see cref="DateTimeOffset.UtcNow"/>)
 /// para el chequeo de expiración: mismo mecanismo que

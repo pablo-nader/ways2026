@@ -155,6 +155,13 @@ supervisor sin tener permiso para convertirlo en admin.
 - **5 intentos fallidos** dejan la cuenta en `bloqueado`. Un root o admin la desbloquea
   desde el ABM, lo que también reinicia el contador.
 - Un ingreso exitoso limpia los intentos fallidos y actualiza `ultima_conexion`.
+- `{ mail, password, solicitarBearer: true }` cambia solo el transporte de la sesión: en vez de
+  la cookie `ways.sesion`, responde `{ usuario, token, expiraEl }` con un token bearer opaco de
+  **15 minutos fijos** (sin renovación) y no emite la cookie. Las credenciales se validan
+  exactamente igual (mismo mensaje, mismo lockout). Existe para la pantalla de vinculación del POS
+  de escritorio, que no puede recibir cookies (ver abajo). El token se manda como
+  `Authorization: Bearer <token>` y en cada request pasa por la misma revalidación que la cookie
+  (cuenta activa, rol sin cambios, tenant activo).
 
 ### Sesión
 
@@ -186,28 +193,38 @@ y las variables de entorno dejan de tener efecto.
 
 ## Login de dispositivo (stage-desktop-pos)
 
-El POS de escritorio (Tauri, `{server}/pos.html`, mismo origen que la API) no usa el login por
-mail de arriba: un dispositivo se vincula UNA VEZ (un Admin, con su propia sesión normal) y
+El POS de escritorio (Tauri) sirve `pos.html` desde una página local (`http://tauri.localhost`),
+de otro origen que la API: la política CORS `pos-local` no habilita credenciales y el cliente web
+manda `credentials: 'omit'`, así que ninguna cookie de la API viaja ahí. Por eso cada credencial
+tiene también una forma de header (detalle abajo). Tampoco usa el login por mail de arriba: un dispositivo se vincula UNA VEZ (un Admin, con su propia sesión normal) y
 después cualquier cajero autorizado entra con **usuario + contraseña** contra ESE dispositivo —
 la sesión resultante dura hasta logout o revocación, no 1 hora de inactividad. El esquema vive en
 doc 10 §9 (`dispositivos`).
 
-- **`GET /api/dispositivos/actual`** — anónimo. Lee la cookie HttpOnly `ways.dispositivo` y
-  resuelve el dispositivo (no revocado, su punto de venta no dado de baja, su tenant activo).
+- **`GET /api/dispositivos/actual`** — anónimo. Lee el secreto del header
+  `Authorization: Dispositivo <secreto>` o, si no viene, de la cookie HttpOnly `ways.dispositivo`
+  (`ResolucionDeCredencialDeDispositivo`), y resuelve el dispositivo (no revocado, su punto de venta no dado de baja, su tenant activo).
   `404 dispositivo_no_vinculado` para cookie ausente, desconocida o revocada — siempre el mismo
   código y mensaje, nunca se distingue cuál, mismo criterio de no-enumeración que el login por
   mail.
 - **`POST /api/dispositivos`** — Admin. `{ idPuntoVenta, nombre }`; valida que el punto de venta
   sea del tenant del actor y esté activo. Genera un secreto de 32 bytes (nunca se persiste; solo
   su hash SHA-256 en `token_hash`) y lo setea en la cookie `ways.dispositivo` (`HttpOnly`,
-  `SameSite=Lax`, `Secure` según el request, 10 años). Devuelve la misma forma que `actual`.
+  `SameSite=Lax`, `Secure` según el request, 10 años). Devuelve `{ datos, secreto }`: la misma
+  forma que `actual` más el secreto en texto plano, la única vez que viaja en un cuerpo — el shell
+  de escritorio lo guarda del lado de Rust porque no puede leer la cookie.
+- **Vinculación bajo Tauri.** El Admin entra con `POST /api/auth/login` y
+  `solicitarBearer: true`; el token de 15 minutos vive solo en memoria (nunca se persiste en disco)
+  y autentica `GET /api/puntos-venta` y `POST /api/dispositivos`. Se descarta al terminar la
+  vinculación, al abandonar el flujo o al cerrar la pantalla; si vence a mitad de camino, la
+  pantalla vuelve al login. Un usuario sin rol Admin no llega a instalar el token.
 - **`GET`/`DELETE /api/dispositivos/{id}`** — Admin. Listado de dispositivos activos del tenant y
   revocación (baja lógica de `deleted_at`, nunca física). En la web los opera la pantalla
   Administración → Organización → Equipos POS (`/organizacion/equipos-pos`, solo Admin). Un
   dispositivo revocado sigue bloqueando la baja de su punto de venta, de su tenant y del usuario
   que lo vinculó (`id_usuario_alta`): la guarda de uso cuenta historia, no filas vivas.
-- **`POST /api/auth/login-dispositivo`** — anónimo, `{ usuario, password }`. Exige la cookie de
-  dispositivo (si falta o es inválida, `404 dispositivo_no_vinculado`, sin llegar a validar
+- **`POST /api/auth/login-dispositivo`** — anónimo, `{ usuario, password, solicitarBearer? }`.
+  Exige el secreto de dispositivo, por header `Dispositivo` o por cookie como `actual` (si falta o es inválida, `404 dispositivo_no_vinculado`, sin llegar a validar
   credenciales). Busca la cuenta por `(id_tenant del dispositivo, usuario)` — reusa el mismo
   núcleo de `ServicioDeAutenticacion` que el login por mail (timing-safe, lockout a los 5
   intentos, rehash transparente, estado de cuenta/tenant), con un chequeo extra: el rol tiene que
@@ -232,6 +249,10 @@ doc 10 §9 (`dispositivos`).
   revocado y su punto de venta no dado de baja. Si cualquiera de las dos cambió, la sesión se
   corta en la request siguiente — igual que bloquear al usuario o suspender el tenant. Una
   sesión web normal (login por mail) no lleva la claim de dispositivo y no pasa por este chequeo.
+- Con `solicitarBearer: true` (lo que manda el shell de escritorio) la respuesta es
+  `{ usuario, token, expiraEl }`: el mismo principal como token bearer, con vencimiento **fijo** a
+  365 días (sin deslizamiento), revalidado en cada request por el mismo código que la cookie
+  (`ValidadorDeSesion`). A diferencia del login por mail, este camino además firma la cookie.
 
 ## Lo que todavía no está
 

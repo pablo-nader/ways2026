@@ -15,6 +15,9 @@ public static class EsquemasWays
     /// el header <c>Authorization: Bearer &lt;token&gt;</c> — pensado para el shell de escritorio
     /// (Tauri, slice 3), que va a correr en un origen distinto del de la API, donde ninguna
     /// cookie <c>SameSite=Lax</c> viaja en un <c>fetch</c> cross-site. Convive con el esquema de
-    /// cookie, nunca lo reemplaza — ver <see cref="Ways.Api.Seguridad.ManejadorBearerDeSesion"/>.</summary>
+    /// cookie, nunca lo reemplaza — ver <see cref="Ways.Api.Seguridad.ManejadorBearerDeSesion"/>.
+    /// <c>POST /api/auth/login</c> con <c>SolicitarBearer=true</c> también emite un token de este
+    /// esquema, de 15 minutos y sin claim de dispositivo, para que un Admin vincule el equipo
+    /// desde ese mismo shell.</summary>
     public const string Bearer = "ways.bearer";
 }
