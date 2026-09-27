@@ -9,8 +9,10 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// <summary>
 /// Mapea <see cref="ReservaNumeracion"/> (stage-pos-reserva-de-numeracion, DB CHANGE GATE
 /// aprobado): scoping <c>[operativa]</c> (<c>id_tenant</c> + <c>id_punto_venta</c>, doc 09), mismo
-/// criterio que <see cref="DispositivoConfiguration"/>. Solo <c>AsignadorDeNumeroComprobante</c>
-/// escribe esta tabla, con SQL crudo — este mapeo existe para que el modelo de EF conozca la forma
+/// criterio que <see cref="DispositivoConfiguration"/>. Esta tabla se escribe SIEMPRE con SQL crudo y
+/// solo desde dos lugares: <c>AsignadorDeNumeroComprobante</c> (los bloques y las columnas del
+/// reporte) y <c>ServicioDeTurnos.MarcarRendicionSaldadaAsync</c> (únicamente
+/// <c>rendicion_saldada_at</c>) — este mapeo existe para que el modelo de EF conozca la forma
 /// de la tabla (RLS, FKs, CHECK, índice único parcial, lecturas), no para que
 /// <c>SaveChangesAsync</c> la toque (mismo criterio que <c>NumeracionComprobanteConfiguration</c>).
 /// </summary>
@@ -21,6 +23,24 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.ToTable("reservas_numeracion", t =>
         {
             t.HasCheckConstraint("ck_reservas_numeracion_rango", "hasta >= desde");
+
+            // desde - 1 ⇒ el dispositivo reportó sin haber repartido ningún número todavía; hasta
+            // ⇒ agotó el bloque. Fuera de ese rango el reporte es de otro bloque o está corrupto.
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_entregado_en_rango",
+                "entregado_hasta IS NULL OR (entregado_hasta >= desde - 1 AND entregado_hasta <= hasta)");
+
+            // Las tres columnas del reporte son un solo hecho ("el dispositivo rindió ESTO en ESTE
+            // momento"): media rendición no existe, y dejarla entrar volvería ambiguo el
+            // fail-closed de la guarda (reportado_at IS NULL ⇒ nunca rindió).
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_reporte_consistente",
+                "(entregado_hasta IS NULL AND pendientes IS NULL AND reportado_at IS NULL) " +
+                "OR (entregado_hasta IS NOT NULL AND pendientes IS NOT NULL AND reportado_at IS NOT NULL)");
+
+            t.HasCheckConstraint(
+                "ck_reservas_numeracion_pendientes_no_negativo",
+                "pendientes IS NULL OR pendientes >= 0");
         });
 
         builder.HasKey(r => r.Id).HasName("pk_reservas_numeracion");
@@ -44,6 +64,29 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.Property(r => r.Desde).HasColumnName("desde").IsRequired();
         builder.Property(r => r.Hasta).HasColumnName("hasta").IsRequired();
         builder.Property(r => r.AbandonadaAt).HasColumnName("abandonada_at");
+
+        // Rendición del dispositivo (guarda de cierre de turno): las escribe
+        // AsignadorDeNumeroComprobante.RegistrarRendicionAsync con SQL crudo, como el resto de la
+        // tabla. bigint para entregado_hasta, mismo tipo que desde/hasta — es un número de la misma
+        // serie, no un conteo.
+        builder.Property(r => r.EntregadoHasta).HasColumnName("entregado_hasta");
+        builder.Property(r => r.Pendientes).HasColumnName("pendientes");
+        builder.Property(r => r.ReportadoAt).HasColumnName("reportado_at");
+
+        // Sin CHECK a propósito (gate del owner): el forzado tiene que poder saldar un bloque
+        // abandonado, con reporte o sin ninguno — un bloque que nunca rindió es en sí mismo un motivo
+        // de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas.
+        //
+        // Sin índice nuevo tampoco, y el costo se dice completo (judgment-day): las filas que la
+        // guarda de cierre escanea NO están acotadas. ix_reservas_numeracion_punto_venta cubre su
+        // entrada (id_punto_venta, id_tenant), pero adentro entra TODO bloque no saldado del punto de
+        // venta —uno más cada ~81 ventas offline por dispositivo (UMBRAL_DE_REPOSICION = 20 de
+        // outboxOffline.ts sobre CANTIDAD_A_RESERVAR = 100 de useSincronizacionOffline.ts)— y cada uno
+        // paga su propio escaneo lateral de comprobantes_venta. Un bloque sale de ese escaneo solo si
+        // un forzado lo salda o si se revoca el dispositivo, así que el costo crece con la HISTORIA
+        // del punto de venta y no con su estado. Acotarlo pide un índice parcial por
+        // rendicion_saldada_at: migración aparte, fuera del gate ya aprobado.
+        builder.Property(r => r.RendicionSaldadaAt).HasColumnName("rendicion_saldada_at");
 
         builder.Property(r => r.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(r => r.UpdatedAt).HasColumnName("updated_at").IsRequired();

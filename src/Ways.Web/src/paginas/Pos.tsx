@@ -26,6 +26,7 @@ import {
   type FilaPago,
 } from '../api/pagos'
 import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api/presupuestos'
+import { puedeForzarCierreSinRendicion } from '../api/tipos'
 import type {
   ClienteListado,
   ComprobanteEmitido,
@@ -38,6 +39,7 @@ import type {
   PuntoVentaListado,
   ResultadoDeResolucion,
   ResumenDeCierrePorRetiro,
+  SolicitudDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
 import {
@@ -49,6 +51,7 @@ import {
   indexarResolucionPorArticulo,
   previaDeLinea,
 } from '../api/ventas'
+import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
@@ -852,6 +855,11 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
 function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
+  // Solo da forma a la copia del override de rendición del cierre por retiro (ver
+  // `esSupervisorOAdmin`) — el rol del cliente nunca gatea el control. Disponible en los dos
+  // montajes reales de esta pantalla: `AuthProvider` en la app web (`App.tsx`) y el
+  // `AuthContext.Provider` propio del shell de escritorio (`ShellPos.tsx`).
+  const { usuario } = useAuth()
   const { puntoVenta: puntoVentaDeSesion, puntosVenta } = usePuntoVenta()
   // stage-pos-caja-en-cabecera: `null` en la app web (bajo `Layout.tsx`, sin `ShellPos` que provea
   // un valor) — ahí los controles de caja se renderizan en una franja propia en vez de portalearse
@@ -1056,6 +1064,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [cierreIncierto, setCierreIncierto] = useState(false)
   const [recuperandoCierre, setRecuperandoCierre] = useState(false)
   const recuperandoCierreRef = useRef(false)
+  // Guarda de rendición de cola del servidor (`409 rendicion_de_dispositivo_pendiente`): la guarda
+  // mira TODOS los dispositivos del punto de venta, incluidos los que este equipo no puede ver. El
+  // override supervisado (`forzarSinRendicion` + motivo obligatorio) se revela SOLO después de ese
+  // rechazo, nunca es un control visible por defecto — mismo opt-in con motivo obligatorio y mismo
+  // contrato de payload que el cierre clásico de `CierreDeCaja.tsx` (react-async-state regla 10:
+  // este es el ÚNICO camino de cierre del POS de escritorio, el shell no monta esa pantalla).
+  const [rendicionPendiente, setRendicionPendiente] = useState(false)
+  const [forzarSinRendicion, setForzarSinRendicion] = useState(false)
+  const [motivoSinRendicion, setMotivoSinRendicion] = useState('')
 
   // stage-pos-modales-de-cobro: reemplaza a la vieja pantalla de resumen completa — un cobro
   // exitoso ya no reemplaza toda la pantalla ni espera un click en "Nueva venta", solo muestra
@@ -1641,6 +1658,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setMontoCierre(null)
     setErrorCierrePorRetiro('')
     setCierreIncierto(false)
+    reiniciarOverrideDeRendicion()
+  }
+
+  /** Reset del override supervisado de rendición: el rechazo que lo reveló es de ESTE intento, así
+   * que el próximo "Cerrar caja" vuelve a arrancar sin el control a la vista. Lo llaman los dos
+   * caminos de salida del paso "monto": cancelar y un cierre confirmado (`cierreConfirmado`). */
+  function reiniciarOverrideDeRendicion() {
+    setRendicionPendiente(false)
+    setForzarSinRendicion(false)
+    setMotivoSinRendicion('')
+  }
+
+  function cambiarForzarSinRendicion(valor: boolean) {
+    if (cerrandoPorRetiroRef.current) return
+    setForzarSinRendicion(valor)
+  }
+
+  function cambiarMotivoSinRendicion(valor: string) {
+    if (cerrandoPorRetiroRef.current) return
+    setMotivoSinRendicion(valor)
   }
 
   /** Refresca el estado del turno a "cerrado" tras un cierre por retiro confirmado (por la propia
@@ -1668,6 +1705,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setMontoCierre(null)
     setCierreIncierto(false)
     setErrorCierrePorRetiro('')
+    reiniciarOverrideDeRendicion()
     // stage-pos-sesion-offline: cierre de turno es uno de los tres disparadores de limpieza de la
     // sesión persistida (ver el doc-comment de `limpiarSesionDeCajeroPersistida`) — un turno es de
     // UN cajero, el próximo tiene que loguearse como sí mismo. Este es el único choke point de
@@ -1686,11 +1724,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     void limpiarSesionDeCajeroPersistida()
   }
 
+  // El servidor rechaza `forzarSinRendicion` sin motivo (`400 motivo_requerido`), así que el motivo
+  // se exige acá antes de intentar el cierre: `cierrePorRetiroBloqueado` es el ÚNICO enforcement
+  // (el `disabled` de "Confirmar"), no hay un `if` espejo dentro del handler — con el botón
+  // deshabilitado esa rama nunca se ejecutaría y una guarda inmatable no se shippea (PR #257).
+  const motivoDeForzadoCompleto = motivoSinRendicion.trim() !== ''
+  const esSupervisorOAdmin = usuario !== null && puedeForzarCierreSinRendicion(usuario.rolId)
+  const cierrePorRetiroBloqueado = cerrandoPorRetiro || montoCierre === null || (forzarSinRendicion && !motivoDeForzadoCompleto)
+
   /**
    * Confirmar el monto — llama `cerrarPorRetiro` UNA sola vez por click. Un 503
    * `resultado_incierto` o una falla de red (no es `ErrorApi`: `fetch` la tira como excepción
    * cruda) entra en modo "cierre incierto" (`recuperarCierreIncierto`, abajo) — nunca vuelve a
-   * postear el cierre desde acá adentro.
+   * postear el cierre desde acá adentro. Un `409 rendicion_de_dispositivo_pendiente` nunca es un
+   * resultado incierto (el cierre definitivamente NO pasó): retorna antes de esa clasificación,
+   * revelando el override supervisado.
    */
   async function confirmarCierrePorRetiro() {
     if (cerrandoPorRetiroRef.current) return
@@ -1700,15 +1748,39 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setCerrandoPorRetiro(true)
     setErrorCierrePorRetiro('')
 
+    // Los dos campos del override viajan juntos o no viajan: un motivo sin el flag es `400
+    // motivo_sin_forzado` del lado del servidor.
+    const base = { importeRetirado: montoCierre, observaciones: null }
+    const solicitud: SolicitudDeCierrePorRetiro = forzarSinRendicion
+      ? { ...base, forzarSinRendicion: true, motivoSinRendicion: motivoSinRendicion.trim() }
+      : base
+
     try {
-      const resumen = await clienteDeCaja.cerrarPorRetiro(idTurnoACerrar, {
-        importeRetirado: montoCierre,
-        observaciones: null,
-      })
+      const resumen = await clienteDeCaja.cerrarPorRetiro(idTurnoACerrar, solicitud)
       if (!montadoRef.current) return
       cierreConfirmado(resumen)
     } catch (e) {
       if (!montadoRef.current) return
+      if (e instanceof ErrorApi && e.codigo === 'rendicion_de_dispositivo_pendiente') {
+        // El servidor tiene su propia guarda de cola sin drenar, sobre TODOS los dispositivos del
+        // punto de venta (no solo el de esta máquina, que `irACerrarCaja` ya chequeó): su mensaje
+        // nombra cuál bloquea y por qué, así que se muestra tal cual. Las tres salidas reales son
+        // las que nombra la copia de abajo — esta pantalla es el único cierre del POS de escritorio.
+        setErrorCierrePorRetiro(
+          `${e.message} Se destraba solo en cuanto ese dispositivo vuelva a rendir su cola; si no va a volver, un administrador puede revocarlo. Un supervisor también puede cerrar igual acá, con el motivo.`,
+        )
+        setRendicionPendiente(true)
+        return
+      }
+      if (e instanceof ErrorApi && e.codigo === 'prohibido' && forzarSinRendicion) {
+        // `ValidarOverrideDeRendicion` del servidor rechaza el forzado por rol con este código. Se
+        // exige el CÓDIGO (no un 403 cualquiera): otro 403 mientras se fuerza —sesión degradada,
+        // `OperacionDePos`, alcance de tenant— tiene otra causa y cae al mensaje real del servidor.
+        // El rol del cliente nunca es fuente de verdad (`puedeForzarCierreSinRendicion` solo da
+        // forma a la copia), así que este 403 es alcanzable aunque la pantalla creyera que se podía.
+        setErrorCierrePorRetiro('Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.')
+        return
+      }
       const resultadoIncierto = e instanceof ErrorApi ? e.codigo === 'resultado_incierto' && e.estado === 503 : true
       if (resultadoIncierto) {
         setCierreIncierto(true)
@@ -3476,7 +3548,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 <button
                   type="button"
                   className="btn btn-danger rounded-0"
-                  disabled={cerrandoPorRetiro || montoCierre === null}
+                  disabled={cierrePorRetiroBloqueado}
                   onClick={() => void confirmarCierrePorRetiro()}
                 >
                   {cerrandoPorRetiro ? 'Cerrando…' : 'Confirmar'}
@@ -3498,6 +3570,51 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 disabled={cerrandoPorRetiro}
                 onChange={setMontoCierre}
               />
+
+              {/* Override supervisado de la guarda de rendición — visible SOLO después de un
+                  `409 rendicion_de_dispositivo_pendiente`, nunca por defecto. Mismo opt-in
+                  explícito + motivo obligatorio que el bloque equivalente de `CierreDeCaja.tsx`. */}
+              {rendicionPendiente && (
+                <div className="border border-danger p-2 mt-3">
+                  <div className="form-check">
+                    <input
+                      id="pos-cierre-forzar-sin-rendicion"
+                      type="checkbox"
+                      className="form-check-input rounded-0"
+                      checked={forzarSinRendicion}
+                      disabled={cerrandoPorRetiro}
+                      onChange={(e) => cambiarForzarSinRendicion(e.target.checked)}
+                    />
+                    <label className="form-check-label" htmlFor="pos-cierre-forzar-sin-rendicion">
+                      Cerrar igual, sin la rendición del dispositivo. Las ventas que ese dispositivo sincronice
+                      después de este cierre no van a estar en el arqueo de este turno: van a caer en el turno
+                      siguiente, y los dos arqueos van a quedar mal.
+                    </label>
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="form-label" htmlFor="pos-cierre-motivo-sin-rendicion">
+                      Motivo del cierre forzado (obligatorio)
+                    </label>
+                    <input
+                      id="pos-cierre-motivo-sin-rendicion"
+                      type="text"
+                      className="form-control rounded-0"
+                      value={motivoSinRendicion}
+                      disabled={cerrandoPorRetiro || !forzarSinRendicion}
+                      onChange={(e) => cambiarMotivoSinRendicion(e.target.value)}
+                    />
+                    <div className="form-text">Queda registrado en la auditoría del cierre.</div>
+                  </div>
+
+                  {!esSupervisorOAdmin && (
+                    <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2 mb-0">
+                      Con tu rol el servidor va a rechazar el cierre forzado: pedile a un supervisor o a un
+                      administrador que lo haga.
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </Modal>

@@ -23,6 +23,20 @@ public static class PosEndpoints
             "vender sin red: catálogo con precio resuelto y congelado, medios de pago, " +
             "tolerancia de pago. Solo el propio punto de venta del dispositivo que la pide.");
 
+        // Rendición de la cola local: RequiereDispositivo apilado sobre OperacionDePos (AND) —
+        // mismo criterio exacto que /instantanea de arriba. El punto de venta y el dispositivo
+        // salen de la claim, nunca del cuerpo.
+        grupo.MapPost("/rendicion-de-cola", async (
+            ServicioDeRendicionDeCola servicio, SolicitudDeRendicionDeCola solicitud, CancellationToken ct) =>
+        {
+            await servicio.RegistrarAsync(solicitud, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.RequiereDispositivo)
+        .WithSummary(
+            "El dispositivo declara el estado de su cola local (hasta qué número repartió y " +
+            "cuántas ventas no llegaron) para que el cierre de turno pueda verificarlo.");
+
         return app;
     }
 }

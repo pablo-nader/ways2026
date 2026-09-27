@@ -3,9 +3,13 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
 
@@ -21,10 +25,16 @@ namespace Ways.Application.Caja;
 /// contado y DEJA el fondo inicial en el cajón, nada se cuenta — y reusa
 /// <see cref="InsertarArqueosYTesoreriaAsync"/>, el mismo statement 5/6 que <see
 /// cref="EjecutarCierreAsync"/> (spec arqueo-de-cierre: Cierre Por Retiro).
+///
+/// Los DOS modos de cierre comparten la guarda de rendición de cola de dispositivos
+/// (<see cref="ResolverRendicionDeDispositivosAsync"/>, statement 1.5 de las dos transacciones) y
+/// su override supervisado (<see cref="ValidarOverrideDeRendicion"/>): un turno no se cierra
+/// mientras un POS de escritorio del punto de venta tenga ventas sin drenar en su cola local.
 /// </summary>
 public class ServicioDeTurnos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lector,
-    LectorDeResumenDeCierrePorRetiro lectorDeResumenDeCierrePorRetiro)
+    LectorDeResumenDeCierrePorRetiro lectorDeResumenDeCierrePorRetiro,
+    LectorDeRendicionDeDispositivos lectorDeRendicion, ServicioDeAuditoria auditoria)
 {
     /// <summary>Apertura (design decisión 7): INSERT llano detrás de <c>ux_turnos_caja_abierto
     /// (id_punto_venta) WHERE estado = 'abierto'</c> — sin lectura previa, sin advisory lock. La
@@ -212,6 +222,8 @@ public class ServicioDeTurnos(
     public async Task<TurnoConArqueos> CerrarAsync(
         int idTurnoCaja, SolicitudDeCierre solicitud, CancellationToken ct = default)
     {
+        var motivoSinRendicion = ValidarOverrideDeRendicion(solicitud.ForzarSinRendicion, solicitud.MotivoSinRendicion);
+
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         // Pineado ACÁ, nunca releído dentro de la lambda reintentable (design: The Cierre
@@ -220,12 +232,12 @@ public class ServicioDeTurnos(
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarCierreAsync(idTurnoCaja, idTenant, idEmpleado, momento, solicitud, ct));
+            await EjecutarCierreAsync(idTurnoCaja, idTenant, idEmpleado, momento, solicitud, motivoSinRendicion, ct));
     }
 
     private async Task<TurnoConArqueos> EjecutarCierreAsync(
         int idTurnoCaja, int idTenant, int idEmpleado, DateTimeOffset momento, SolicitudDeCierre solicitud,
-        CancellationToken ct)
+        string? motivoSinRendicion, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -249,6 +261,14 @@ public class ServicioDeTurnos(
 
             throw new ErrorDominio("turno_ya_cerrado", "El turno ya está cerrado.", 409);
         }
+
+        // 1.5. Guarda de rendición de dispositivos — acá y no antes de abrir la transacción: tiene
+        // que correr DENTRO de ella y ANTES de escribir cualquier otra cosa, así un rechazo deshace
+        // también el UPDATE guardado de arriba. No comparte snapshot con la derivación (READ
+        // COMMITTED, y el lock es solo de la fila del turno): ver el doc-comment de
+        // ResolverRendicionDeDispositivosAsync.
+        await ResolverRendicionDeDispositivosAsync(
+            idTenant, idTurnoCaja, idPuntoVenta.Value, momento, solicitud.ForzarSinRendicion, motivoSinRendicion, ct);
 
         // 2. Insumos de la derivación (7 consultas agrupadas, cantidad fija) — bajo el lock.
         var insumos = await lector.LeerAsync(idTurnoCaja, ct);
@@ -294,20 +314,23 @@ public class ServicioDeTurnos(
                 "importe_retirado_invalido", "El importe retirado no puede ser negativo.", 400);
         }
 
+        var motivoSinRendicion = ValidarOverrideDeRendicion(solicitud.ForzarSinRendicion, solicitud.MotivoSinRendicion);
+
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var turno = await estrategia.ExecuteAsync(async () =>
-            await EjecutarCierrePorRetiroAsync(idTurnoCaja, idTenant, idEmpleado, momento, solicitud, ct));
+            await EjecutarCierrePorRetiroAsync(
+                idTurnoCaja, idTenant, idEmpleado, momento, solicitud, motivoSinRendicion, ct));
 
         return await lectorDeResumenDeCierrePorRetiro.LeerAsync(turno, ct);
     }
 
     private async Task<TurnoCaja> EjecutarCierrePorRetiroAsync(
         int idTurnoCaja, int idTenant, int idEmpleado, DateTimeOffset momento, SolicitudDeCierrePorRetiro solicitud,
-        CancellationToken ct)
+        string? motivoSinRendicion, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -326,6 +349,12 @@ public class ServicioDeTurnos(
 
             throw new ErrorDominio("turno_ya_cerrado", "El turno ya está cerrado.", 409);
         }
+
+        // 1.5. Guarda de rendición de dispositivos — mismo lugar exacto que en el cierre clásico:
+        // dentro de la transacción y antes de escribir nada más, para que un rechazo la aborte
+        // entera.
+        await ResolverRendicionDeDispositivosAsync(
+            idTenant, idTurnoCaja, idPuntoVenta.Value, momento, solicitud.ForzarSinRendicion, motivoSinRendicion, ct);
 
         // 2. El retiro de cierre, SI lo hay — ANTES de derivar, para que insumos.Retiros ya lo
         // cuente (spec: "insert a MovimientoCaja Retiro ... BEFORE deriving"). Importe 0 no
@@ -453,6 +482,222 @@ public class ServicioDeTurnos(
         ParametrosDeComando.Agregar(comando, idTenant);
         await comando.ExecuteNonQueryAsync(ct);
     }
+
+    // ---- guarda de rendición de cola de dispositivos (compartida por los DOS modos de cierre) ----
+
+    /// <summary>Validación de los dos campos del override, ANTES de abrir la transacción (mismo
+    /// lugar que <c>ImporteRetirado &lt; 0</c>): dto-contract-honesty, cada campo con un único
+    /// destino. Devuelve el motivo ya recortado cuando el forzado es válido, <c>null</c> cuando no
+    /// hay forzado — el llamador lo pasa tal cual al rastro de auditoría, así que un motivo
+    /// aceptado nunca puede quedar sin escribirse.
+    ///
+    /// El gate de rol vive ACÁ, y es el ÚNICO lugar donde vive, porque una policy de ASP.NET Core
+    /// no puede ser condicional a un campo del cuerpo: las dos rutas de cierre están bajo
+    /// <c>Politicas.OperacionDePos</c> (un Vendedor tiene que poder cerrar su turno). Deliberadamente
+    /// sin una constante espejo en <c>Politicas</c>: una policy registrada que ninguna ruta apila no
+    /// la evalúa nadie, así que no habría "un solo lugar donde cambiar" sino dos, y el inerte sería
+    /// el que lleva nombre de control de seguridad.</summary>
+    private string? ValidarOverrideDeRendicion(bool forzar, string? motivo)
+    {
+        if (!forzar)
+        {
+            if (!string.IsNullOrWhiteSpace(motivo))
+            {
+                throw new ErrorDominio(
+                    "motivo_sin_forzado",
+                    "motivoSinRendicion solo se acepta junto con forzarSinRendicion.",
+                    400);
+            }
+
+            return null;
+        }
+
+        if (contexto.Rol is not (RolConocido.Supervisor or RolConocido.Admin))
+        {
+            throw new ErrorDominio(
+                "prohibido", "Forzar el cierre sin rendición requiere un supervisor.", 403);
+        }
+
+        if (string.IsNullOrWhiteSpace(motivo))
+        {
+            throw new ErrorDominio(
+                "motivo_requerido", "Forzar el cierre sin rendición requiere un motivo.", 400);
+        }
+
+        return motivo.Trim();
+    }
+
+    /// <summary>La guarda en sí, dentro de la transacción del cierre: bloquea el cierre mientras
+    /// algún dispositivo del punto de venta tenga cola sin drenar (o no pueda probar que no la
+    /// tiene), y deja rastro auditable cuando un supervisor la fuerza.
+    ///
+    /// Con <paramref name="forzar"/> en true escribe la fila de auditoría incluso si la guarda no
+    /// encontró nada: es lo que garantiza que el motivo declarado nunca se descarte
+    /// (dto-contract-honesty) y "apretó el override sin necesidad" es en sí mismo un dato útil. Esa
+    /// fila vive DENTRO de la transacción del cierre, así que existe si y solo si el cierre comitea —
+    /// un forzado válido cuyo cierre después falla (<c>caja_sin_medio_efectivo_unico</c>,
+    /// <c>arqueo_incompleto</c>, cualquier rollback) no deja rastro, y está bien que sea así: no hubo
+    /// cierre forzado que auditar. Se usa el overload raw-ADO de
+    /// <see cref="ServicioDeAuditoria.RegistrarAsync"/> porque el cierre es una transacción ADO;
+    /// <c>ef-retry-safe-writes</c> forma (b): el cierre corre bajo
+    /// <see cref="FabricaDeEstrategiaSinReintento"/>, así que no hace falta ningún reset del
+    /// ChangeTracker (la lambda nunca se reintenta).
+    ///
+    /// Un forzado también SALDA los bloques ABANDONADOS que informó como bloqueantes y solo esos
+    /// (<see cref="MarcarRendicionSaldadaAsync"/>, que explica por qué el vivo queda afuera): sus
+    /// números sin rendir quedan explícitamente aceptados como tales, y por eso dejan de bloquear los
+    /// cierres siguientes. Es el único mecanismo que saca un bloque de la guarda además de revocar el
+    /// dispositivo.
+    ///
+    /// Carrera irreducible y ACEPTADA: el dispositivo puede rendir limpio, perder señal y vender
+    /// mientras alguien cierra. Nada de esto corre bajo un lock que cubra
+    /// <c>reservas_numeracion</c>/<c>dispositivos</c>/<c>comprobantes_venta</c> —el cierre lockea la
+    /// fila del turno y corre en READ COMMITTED— y no se agrega ninguno, porque la ventana está
+    /// acotada por construcción: un dispositivo ONLINE manda sus ventas directo al servidor (caen
+    /// dentro del turno o rebotan con <c>409 turno_no_abierto</c>, nunca quedan en la cola), y un
+    /// dispositivo que se quedó OFFLINE deja de poder rendir, así que el reporte de su bloque VIVO
+    /// —el único al que la frescura se le aplica— envejece y en
+    /// <see cref="ReglaDeRendicionDeCola.VentanaDeFrescura"/> el cierre se vuelve a bloquear solo.
+    /// </summary>
+    private async Task ResolverRendicionDeDispositivosAsync(
+        int idTenant, int idTurnoCaja, int idPuntoVenta, DateTimeOffset momento, bool forzar, string? motivo,
+        CancellationToken ct)
+    {
+        var pendientes = await lectorDeRendicion.LeerPendientesAsync(idTenant, idPuntoVenta, momento, ct);
+
+        if (!forzar)
+        {
+            if (pendientes.Count > 0)
+            {
+                throw new ErrorDominio(
+                    "rendicion_de_dispositivo_pendiente", DescribirPendientes(pendientes), 409);
+            }
+
+            return;
+        }
+
+        // ValidarOverrideDeRendicion ya garantizó no-nulo/no-vacío cuando forzar es true.
+        await RegistrarCierreForzadoAsync(idTenant, idTurnoCaja, idPuntoVenta, motivo!, pendientes, ct);
+        await MarcarRendicionSaldadaAsync(pendientes, momento, ct);
+    }
+
+    /// <summary>Marca como saldados EXACTAMENTE los bloques ABANDONADOS que
+    /// <see cref="ResolverRendicionDeDispositivosAsync"/> acaba de informar como bloqueantes — por
+    /// id, nunca "todos los del punto de venta": un bloque que no bloqueaba nada no tiene números
+    /// sin rendir que alguien esté aceptando, y saldarlo lo volvería ciego para el cierre siguiente.
+    /// Sin bloqueos abandonados no hay statement (el forzado innecesario igual queda auditado).
+    ///
+    /// El filtro por bloque VIVO es la mitad indispensable de esta regla (judgment-day, SEVERE):
+    /// saldar el bloque vivo del dispositivo lo volvía invisible para SIEMPRE —el único conjunto de
+    /// alcance de la guarda es <c>rendicion_saldada_at IS NULL</c>— mientras el dispositivo seguía
+    /// vendiendo sobre él, o sea exactamente la corrupción que esta guarda existe para evitar. Un
+    /// bloque vivo todavía acumula evidencia: no hay nada terminado que aceptar, así que se queda sin
+    /// saldar y sigue bloqueando hasta que rote. La convergencia, dicha en voz alta: un hueco en un
+    /// bloque VIVO cuesta un forzado por cada cierre hasta que el bloque rote, y exactamente UNO
+    /// después de rotar —ahí su evidencia quedó congelada y, si todavía muestra el hueco, ese forzado
+    /// lo salda de forma permanente.
+    ///
+    /// SQL crudo sobre la conexión/transacción del cierre, misma convención que el resto del
+    /// método: cae en el mismo COMMIT, así que un cierre que falla después no deja ningún bloque
+    /// saldado a medias. Sin conjunto de <c>id_tenant</c>, misma decisión que el <c>UPDATE</c> de
+    /// <c>numeraciones_comprobante</c> (ver el doc-comment de
+    /// <see cref="Ventas.AsignadorDeNumeroComprobante"/>): la clave del <c>WHERE</c> ya es la PK
+    /// global y el aislamiento por tenant lo impone RLS sobre esta misma conexión.</summary>
+    private async Task MarcarRendicionSaldadaAsync(
+        IReadOnlyList<RendicionPendiente> pendientes, DateTimeOffset momento, CancellationToken ct)
+    {
+        var abandonados = pendientes.Where(p => !p.BloqueVivo).Select(p => p.IdReserva).ToArray();
+
+        if (abandonados.Length == 0)
+        {
+            return;
+        }
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE reservas_numeracion SET rendicion_saldada_at = $1, updated_at = $1 " +
+            "WHERE id_reserva_numeracion = ANY($2)";
+
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, abandonados);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task RegistrarCierreForzadoAsync(
+        int idTenant, int idTurnoCaja, int idPuntoVenta, string motivo,
+        IReadOnlyList<RendicionPendiente> pendientes, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // Payload armado acá y no con una fábrica de PayloadDeAuditoria: lleva una LISTA (un punto
+        // de venta puede tener varios dispositivos bloqueando a la vez), mismo criterio que
+        // ServicioDeVentas usa para venta.discrepancia.
+        //
+        // id_reserva, techo_verificado y bloque_vivo son parte del rastro y no adornos
+        // (judgment-day): sin techo_verificado la fila no dice qué rango se aceptó como sin rendir
+        // (el declarado puede quedar por debajo, y el verificado es el que informa el mensaje del
+        // hueco); id_reserva identifica la fila, y bloque_vivo dice si ESA fila quedó saldada o no
+        // —MarcarRendicionSaldadaAsync salda solo las abandonadas, así que sin este campo un
+        // bloqueo vivo, que sigue bloqueando el cierre siguiente, se leería como aceptado.
+        var payload = new Dictionary<string, object?>
+        {
+            ["motivo"] = motivo,
+            ["bloqueos"] = pendientes
+                .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                {
+                    ["id_reserva"] = p.IdReserva,
+                    ["id_dispositivo"] = p.IdDispositivo,
+                    ["dispositivo"] = p.NombreDispositivo,
+                    ["tipo_comprobante"] = p.TipoComprobante,
+                    // El enum crudo, NO su ToString(): así lo serializa SerializadorDeAuditoria con
+                    // su JsonStringEnumConverter(SnakeCaseLower) y esta fila guarda la misma etiqueta
+                    // de base que cualquier otro enum auditado ("ventas_sin_llegar"), en vez del
+                    // PascalCase que produce C#.
+                    ["bloqueo"] = p.Motivo,
+                    ["pendientes"] = p.Pendientes,
+                    ["desde"] = p.Desde,
+                    ["entregado_hasta"] = p.EntregadoHasta,
+                    ["techo_verificado"] = p.TechoVerificado,
+                    ["bloque_vivo"] = p.BloqueVivo
+                })
+                .ToList()
+        };
+
+        await auditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(
+                idTenant, idPuntoVenta, AccionAuditada.CierreForzadoSinRendicion, idTurnoCaja,
+                valorAnterior: null, valorNuevo: payload),
+            ct);
+    }
+
+    private static string DescribirPendientes(IReadOnlyList<RendicionPendiente> pendientes) =>
+        "No se puede cerrar el turno: " + string.Join("; ", pendientes.Select(Describir)) + ".";
+
+    private static string Describir(RendicionPendiente pendiente) => pendiente.Motivo switch
+    {
+        MotivoDeRendicionPendiente.SinReporte =>
+            $"el dispositivo '{pendiente.NombreDispositivo}' no reportó el estado de su cola " +
+            $"({pendiente.TipoComprobante})",
+        MotivoDeRendicionPendiente.ReporteVencido =>
+            $"el último reporte del dispositivo '{pendiente.NombreDispositivo}' está vencido " +
+            $"({pendiente.TipoComprobante})",
+        MotivoDeRendicionPendiente.VentasSinLlegar =>
+            $"el dispositivo '{pendiente.NombreDispositivo}' tiene {pendiente.Pendientes} venta(s) sin " +
+            $"sincronizar ({pendiente.TipoComprobante})",
+        // El rango que se informa es el VERIFICADO, no el declarado: cuando el dispositivo declaró
+        // menos de lo que ya llegó, el declarado describiría un rango vacío (o más chico que el
+        // hueco real) y el mensaje mentiría.
+        MotivoDeRendicionPendiente.HuecoDeComprobantes =>
+            $"faltan comprobantes del dispositivo '{pendiente.NombreDispositivo}' en el rango " +
+            $"{pendiente.Desde}-{pendiente.TechoVerificado} ({pendiente.TipoComprobante})",
+        _ => throw new ArgumentOutOfRangeException(nameof(pendiente), pendiente.Motivo, "Motivo no reconocido.")
+    };
 
     /// <summary>Resumen de un cierre ya persistido (<c>GET …/resumen-de-cierre</c>) — reimpresión o
     /// recuperación tras una falla de red ambigua sobre <see cref="CerrarPorRetiroAsync"/>: sirve

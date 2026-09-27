@@ -647,7 +647,9 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
             var contexto = new ContextoFijoDePrueba(ctx.IdEmpleadoAdmin, ctx.IdTenant);
             var reloj = new RelojFijoDePrueba(DateTimeOffset.UtcNow);
             var lector = new LectorDeMovimientosDelTurno(db);
-            var servicio = new ServicioDeTurnos(db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector));
+            var servicio = new ServicioDeTurnos(db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector),
+            new LectorDeRendicionDeDispositivos(db),
+            new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto));
 
             var error = await Assert.ThrowsAnyAsync<Exception>(
                 () => servicio.CerrarPorRetiroAsync(turno.Id, new SolicitudDeCierrePorRetiro(75m, null)));

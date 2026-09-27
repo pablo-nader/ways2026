@@ -83,6 +83,11 @@ public static class DependencyInjection
         // ServicioDeOfertas (precio en lote), registrado junto al resto de Ventas/POS.
         services.AddScoped<ServicioDeInstantaneaDePos>();
 
+        // Rendición de la cola local del dispositivo (POST /api/pos/rendicion-de-cola) — el insumo
+        // de la guarda de cierre de turno; registrado junto a ServicioDeInstantaneaDePos por
+        // compartir su forma exacta (device-only, su propio punto de venta).
+        services.AddScoped<ServicioDeRendicionDeCola>();
+
         services.AddScoped<ServicioDeStock>();
         services.AddScoped<ServicioDeLotes>();
 
@@ -95,6 +100,9 @@ public static class DependencyInjection
         // etapa 5 (cierre por retiro): armador compartido por ServicioDeTurnos.CerrarPorRetiroAsync
         // y ObtenerResumenDeCierreAsync — ver su doc-comment.
         services.AddScoped<LectorDeResumenDeCierrePorRetiro>();
+        // La IO de la guarda de rendición de dispositivos del cierre — consumida solo por
+        // ServicioDeTurnos (los dos modos de cierre), igual que los dos lectores de arriba.
+        services.AddScoped<LectorDeRendicionDeDispositivos>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();
