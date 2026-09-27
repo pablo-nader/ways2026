@@ -7,6 +7,7 @@ import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/ca
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
+import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
 import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
@@ -28,11 +29,13 @@ import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  EstadoDeCuenta,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
   PresupuestoParaVenta,
+  PuntoVentaListado,
   ResultadoDeResolucion,
   ResumenDeCierrePorRetiro,
   TurnoResumen,
@@ -51,6 +54,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
+import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
 import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
@@ -58,6 +62,8 @@ import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineS
 import { buscarArticuloOffline, formatearVejezDeInstantanea, resolverPreciosOffline } from '../pos/instantaneaOffline'
 import { construirNumeroVisible, mensajeDeRechazoOffline } from '../pos/outboxOffline'
 import { medioAdmitidoOffline } from '../pos/reglasOffline'
+import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
+import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -587,6 +593,262 @@ export type CajaDeEscritorio = {
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
+
+function formatearFechaHoraCortaDeMovimiento(iso: string): string {
+  return new Date(iso).toLocaleString('es-AR')
+}
+
+type PropsModalCuentaCorrientePos = {
+  clienteInicial: ClienteListado | null
+  puntoVenta: PuntoVentaListado
+  medios: MedioPagoListado[]
+  onCerrar: () => void
+  onPagoRegistrado: (idCliente: number) => void
+}
+
+/**
+ * stage-pos-adjustments: consulta rápida de saldo + pago a cuenta desde el POS, sin salir de la
+ * venta en curso. Cliente por defecto: el ya elegido en la venta, salvo que sea Consumidor Final
+ * (sin cuenta corriente real) — ahí arranca en el buscador, igual que si el cajero lo cambiara a
+ * mano. El punto de venta lo fija el turno de la sesión (`puntoVentaFijo` de `ModalPagoACuenta`),
+ * nunca un selector — acá no hay ninguna elección manual de PV que replicar.
+ */
+function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar, onPagoRegistrado }: PropsModalCuentaCorrientePos) {
+  const [clienteElegido, setClienteElegido] = useState<ClienteListado | null>(
+    clienteInicial && !clienteInicial.esConsumidorFinal ? clienteInicial : null,
+  )
+
+  const [terminoBusqueda, setTerminoBusqueda] = useState('')
+  const [opcionesBusqueda, setOpcionesBusqueda] = useState<ClienteListado[]>([])
+  const [buscando, setBuscando] = useState(false)
+  const [errorBusqueda, setErrorBusqueda] = useState('')
+  const generacionBusquedaRef = useRef(0)
+
+  const [estado, setEstado] = useState<EstadoDeCuenta | null>(null)
+  const [cargandoEstado, setCargandoEstado] = useState(false)
+  const [errorEstado, setErrorEstado] = useState('')
+  const generacionEstadoRef = useRef(0)
+
+  const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
+  const [aviso, setAviso] = useState('')
+
+  // react-async-state regla 2: cada cambio de cliente elegido dispara su propia consulta — una
+  // respuesta desactualizada (ej. el cajero cambió de cliente mientras la anterior seguía en
+  // vuelo) nunca puede pisar la más reciente.
+  const cargarEstado = useCallback(() => {
+    if (!clienteElegido) return
+    const miGeneracion = (generacionEstadoRef.current += 1)
+    setCargandoEstado(true)
+    setErrorEstado('')
+    const ventana = rangoUltimoMes()
+
+    clienteDeCuentaCorriente
+      .obtenerEstado(clienteElegido.id, ventana.desde, ventana.hasta, false)
+      .then((datos) => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setEstado(datos)
+      })
+      .catch((e) => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setEstado(null)
+        setErrorEstado(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
+      })
+      .finally(() => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setCargandoEstado(false)
+      })
+  }, [clienteElegido])
+
+  useEffect(() => {
+    cargarEstado()
+  }, [cargarEstado])
+
+  async function buscar() {
+    if (buscando) return
+    const miGeneracion = (generacionBusquedaRef.current += 1)
+    setBuscando(true)
+    setErrorBusqueda('')
+    try {
+      const pagina = await clienteDeClientes.listar(terminoBusqueda, false)
+      if (generacionBusquedaRef.current !== miGeneracion) return
+      // El Consumidor Final no tiene cuenta corriente real — nunca aparece como resultado acá,
+      // aunque el término de búsqueda lo matchee.
+      setOpcionesBusqueda(pagina.items.filter((c) => !c.esConsumidorFinal))
+    } catch (e) {
+      if (generacionBusquedaRef.current !== miGeneracion) return
+      setErrorBusqueda(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
+    } finally {
+      if (generacionBusquedaRef.current === miGeneracion) setBuscando(false)
+    }
+  }
+
+  function elegirCliente(id: number) {
+    const encontrado = opcionesBusqueda.find((c) => c.id === id)
+    if (!encontrado) return
+    setAviso('')
+    setClienteElegido(encontrado)
+  }
+
+  const disponibilidad = estado ? disponibilidadPrevia(estado.header.saldo, estado.header.limiteCredito, estado.header.creditoIlimitado) : null
+
+  if (modalPagoAbierto && estado) {
+    return (
+      <ModalPagoACuenta
+        idCliente={clienteElegido!.id}
+        puntosVenta={[puntoVenta]}
+        puntoVentaFijo={puntoVenta.id}
+        medios={medios}
+        header={estado.header}
+        onCerrar={() => setModalPagoAbierto(false)}
+        onAntesDeEscribir={() => {
+          // regla 3: bumpear la generación ANTES de la escritura — un refetch en vuelo de un
+          // cliente ya abandonado no puede pisar el que dispara `onRegistrado` más abajo.
+          generacionEstadoRef.current += 1
+        }}
+        onRegistrado={(comprobante) => {
+          setModalPagoAbierto(false)
+          setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
+          // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
+          cargarEstado()
+          // JD-1: si el cliente pagado es el mismo de la venta en curso, `PantallaPos` refresca su
+          // `clienteSeleccionado` — su copia cacheada del saldo quedó vieja apenas se registra el pago.
+          onPagoRegistrado(clienteElegido!.id)
+        }}
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="modal d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog modal-lg" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-header">
+              <h5 className="modal-title">Cuenta corriente</h5>
+              <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
+            </div>
+            <div className="modal-body">
+              {!clienteElegido ? (
+                <>
+                  <div className="input-group input-group-sm mb-3">
+                    <input
+                      type="search"
+                      className="form-control rounded-0"
+                      placeholder="Buscar cliente…"
+                      aria-label="Buscar cliente de cuenta corriente"
+                      value={terminoBusqueda}
+                      disabled={buscando}
+                      onChange={(e) => setTerminoBusqueda(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
+                    />
+                    <button type="button" className="btn btn-outline-primary rounded-0" disabled={buscando} onClick={buscar}>
+                      {buscando ? 'Buscando…' : 'Buscar'}
+                    </button>
+                  </div>
+                  {errorBusqueda && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorBusqueda}</div>}
+                  {opcionesBusqueda.length > 0 && (
+                    <select
+                      className="form-select rounded-0"
+                      aria-label="Resultados de la búsqueda"
+                      size={Math.min(opcionesBusqueda.length, 6)}
+                      value=""
+                      onChange={(e) => elegirCliente(Number(e.target.value))}
+                    >
+                      <option value="" disabled>
+                        Elegir…
+                      </option>
+                      {opcionesBusqueda.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {etiquetaDeCliente(c)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="d-flex justify-content-between align-items-center mb-3">
+                    <strong>{etiquetaDeCliente(clienteElegido)}</strong>
+                    <button type="button" className="btn btn-outline-secondary btn-sm rounded-0" onClick={() => setClienteElegido(null)}>
+                      Cambiar cliente
+                    </button>
+                  </div>
+
+                  {aviso && <div className="alert alert-success rounded-0 py-1 px-2 small">{aviso}</div>}
+                  {errorEstado && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEstado}</div>}
+
+                  {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
+
+                  {!cargandoEstado && estado && (
+                    <>
+                      <div className="row g-3 mb-3">
+                        <div className="col-4">
+                          <div className="small text-muted">Saldo</div>
+                          <div className="fs-5">{formatearMoneda(estado.header.saldo)}</div>
+                        </div>
+                        <div className="col-4">
+                          <div className="small text-muted">Límite</div>
+                          <div>{estado.header.creditoIlimitado ? 'Ilimitado' : formatearMoneda(estado.header.limiteCredito)}</div>
+                        </div>
+                        <div className="col-4">
+                          <div className="small text-muted">Disponible</div>
+                          <div>{disponibilidad === null ? 'Ilimitado' : formatearMoneda(disponibilidad)}</div>
+                        </div>
+                      </div>
+
+                      <h6>Movimientos recientes</h6>
+                      {estado.movimientos.length === 0 ? (
+                        <p className="text-muted small">Sin movimientos en el último mes.</p>
+                      ) : (
+                        <div className="table-responsive">
+                          <table className="table table-sm">
+                            <thead>
+                              <tr>
+                                <th>Fecha</th>
+                                <th>Tipo</th>
+                                <th className="text-end">Importe</th>
+                                <th className="text-end">Saldo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {estado.movimientos.map((m) => (
+                                <tr key={m.id}>
+                                  <td>{formatearFechaHoraCortaDeMovimiento(m.fecha)}</td>
+                                  <td>{etiquetaDeMovimiento(m)}</td>
+                                  <td className="text-end">{formatearMoneda(m.importe)}</td>
+                                  <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCerrar}>
+                Cerrar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={!clienteElegido || cargandoEstado || estado === null}
+                onClick={() => setModalPagoAbierto(true)}
+              >
+                Registrar pago
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop show" />
+    </>
+  )
+}
+
 function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
@@ -596,15 +858,61 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // (ver `controlesTurno` más abajo).
   const nodoRanuraHeader = useContext(RanuraHeaderPosContext)
 
+  // stage-pos-adjustments: borrador del ticket en curso — solo venta libre (nunca bajo
+  // `?idPresupuesto=`, esa conversión se rehidrata siempre fresca desde el servidor). La clave
+  // usa el mismo punto de venta de SESIÓN que `Pos()` ya usa para el `key` de remontaje — nunca
+  // `puntoVentaSeleccionada` (más abajo), que bajo presupuesto sale de otro lado: acá siempre es
+  // el camino libre, así que ambos coinciden.
+  const almacenBorradores = useContext(BorradorDeTicketContext)
+  const claveBorrador = modoPresupuesto ? null : `libre:${puntoVentaDeSesion?.id ?? 'sin-pv'}`
+  // Leído una sola vez, en el primer render de esta instancia (`PantallaPos` se remonta entera
+  // por `key` ante cualquier cambio de punto de venta/presupuesto — ver `Pos()`) — nunca
+  // releído en renders posteriores, donde el propio efecto de guardado ya lo habría pisado con
+  // el estado en curso.
+  const borradorInicialRef = useRef<BorradorDeTicket | null | undefined>(undefined)
+  if (borradorInicialRef.current === undefined) {
+    borradorInicialRef.current = claveBorrador !== null ? (almacenBorradores?.obtener(claveBorrador) ?? null) : null
+  }
+  const borradorInicial = borradorInicialRef.current
+
   const [opcionesClientes, setOpcionesClientes] = useState<ClienteListado[]>([])
-  const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteListado | null>(null)
+  const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteListado | null>(() => borradorInicial?.clienteSeleccionado ?? null)
+  // El mount effect de más abajo (Consumidor Final por defecto) no debe pisar un cliente
+  // restaurado del borrador — se decide UNA sola vez, con el mismo `borradorInicial` congelado.
+  const clienteRestauradoDelBorradorRef = useRef(borradorInicial?.clienteSeleccionado != null)
   const [terminoCliente, setTerminoCliente] = useState('')
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [errorClientes, setErrorClientes] = useState('')
   const generacionClientesRef = useRef(0)
+  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
+  // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
+  // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
+  // valor congelado apenas se conoce.
+  const consumidorFinalRef = useRef<ClienteListado | null>(null)
 
-  const [lineas, setLineas] = useState<LineaCarrito[]>([])
-  const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
+  // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
+  // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
+  // borrador (JD-2) puede dejarlo con saldo desactualizado, y `validarPagosLocal` (más abajo) lee
+  // `saldo`/`limiteCredito`/`creditoIlimitado` directo de este estado. react-async-state regla 2:
+  // generación propia + chequeo del id vigente vía updater funcional — si el cajero cambió de
+  // cliente mientras el refetch estaba en vuelo, la respuesta desactualizada se descarta.
+  const generacionClienteSeleccionadoRef = useRef(0)
+  const refrescarClienteSeleccionado = useCallback((idCliente: number) => {
+    const miGeneracion = (generacionClienteSeleccionadoRef.current += 1)
+    clienteDeClientes
+      .obtener(idCliente)
+      .then((actualizado) => {
+        if (generacionClienteSeleccionadoRef.current !== miGeneracion) return
+        setClienteSeleccionado((prev) => (prev && prev.id === idCliente ? actualizado : prev))
+      })
+      .catch(() => {
+        // silencioso: si falla el refetch, se conserva el cliente en pantalla con el saldo que
+        // ya tenía — nunca se lo resetea a Consumidor Final por un error de red.
+      })
+  }, [])
+
+  const [lineas, setLineas] = useState<LineaCarrito[]>(() => borradorInicial?.lineas ?? [])
+  const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>(() => borradorInicial?.precios ?? {})
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
@@ -616,7 +924,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // cae al fallback offline; `null` en cualquier otro caso (vista previa online, o ninguna vista
   // previa todavía) — "el precio que se mostró es el que se cobra", nunca una relectura al cobrar.
   const instantaneaDeLaVistaPreviaRef = useRef<InstantaneaDePos | null>(null)
-  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
+  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -637,12 +945,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
 
+  // stage-pos-adjustments: modal de consulta de saldo + pago a cuenta — nunca bajo
+  // `?idPresupuesto=` (esa venta congelada no tiene ningún cliente que el cajero pueda cambiar
+  // acá adentro).
+  const [modalCuentaCorrienteAbierto, setModalCuentaCorrienteAbierto] = useState(false)
+
   const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
   const [errorParametros, setErrorParametros] = useState('')
   const generacionParametrosRef = useRef(0)
 
-  const proximaFilaPagoIdRef = useRef(1)
-  const [filasPago, setFilasPago] = useState<FilaPago[]>(() => [filaPagoInicial(proximaFilaPagoIdRef.current++, null)])
+  const proximaFilaPagoIdRef = useRef(borradorInicial?.proximoIdFilaPago ?? 1)
+  const [filasPago, setFilasPago] = useState<FilaPago[]>(
+    () => borradorInicial?.filasPago ?? [filaPagoInicial(proximaFilaPagoIdRef.current++, null)],
+  )
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
   // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
@@ -890,7 +1205,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // punto de venta (que bajo este modo sale del presupuesto y no de la sesión).
         if (!modoPresupuesto) {
           const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
-          setClienteSeleccionado(consumidorFinal)
+          consumidorFinalRef.current = consumidorFinal
+          // stage-pos-adjustments: un cliente restaurado desde el borrador (ver más arriba) ya
+          // dejó al cajero exactamente donde estaba antes de navegar afuera — el default de
+          // Consumidor Final nunca lo pisa.
+          if (!clienteRestauradoDelBorradorRef.current) {
+            setClienteSeleccionado(consumidorFinal)
+          }
         }
       })
       .catch((e) => {
@@ -918,6 +1239,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // igual para dejar el efecto exhaustivo, nunca dispara una segunda corrida.
   }, [modoPresupuesto])
 
+  // stage-pos-adjustments (JD-2): un cliente restaurado desde el borrador (navegación afuera y
+  // vuelta) trae el `ClienteListado` cacheado en el momento en que se guardó el borrador — su
+  // saldo puede haber cambiado desde entonces (ej. un pago a cuenta registrado desde otra
+  // pantalla). Refetch único al montar, gateado igual que `refrescarClienteSeleccionado`; si
+  // falla se conserva el cliente restaurado tal cual, nunca se lo resetea.
+  useEffect(() => {
+    if (!clienteRestauradoDelBorradorRef.current) return
+    const idClienteRestaurado = borradorInicial?.clienteSeleccionado?.id
+    if (idClienteRestaurado == null) return
+    refrescarClienteSeleccionado(idClienteRestaurado)
+    // `borradorInicial` proviene de `borradorInicialRef`, congelado en el primer render de esta
+    // instancia — nunca cambia, así que este efecto corre una sola vez.
+  }, [borradorInicial, refrescarClienteSeleccionado])
+
   // stage-pos-turno-y-foco: `medios` todavía no cargó cuando se arma el estado inicial de
   // `filasPago` (`filaPagoInicial(id, null)` más arriba nunca preselecciona nada) — apenas carga,
   // se preselecciona Efectivo SOLO si la fila sigue intacta (una sola fila, sin medio elegido)
@@ -928,6 +1263,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (idEfectivo === '') return
     setFilasPago((prev) => (prev.length === 1 && prev[0].idMedioPago === '' ? [{ ...prev[0], idMedioPago: idEfectivo }] : prev))
   }, [medios])
+
+  // stage-pos-adjustments: guarda el borrador del ticket en curso ante cualquier cambio de lo
+  // que compone la venta libre — nunca bajo `?idPresupuesto=` (`claveBorrador` es `null` ahí) ni
+  // sin `Provider` (`almacenBorradores` es `null` fuera de `ShellPos`/`Layout`). Deliberadamente
+  // NO mira `entradaEscaneo`/`terminoCliente` (búfer de escaneo, término de búsqueda) — solo lo
+  // que de verdad hace falta reconstruir.
+  useEffect(() => {
+    if (claveBorrador === null || !almacenBorradores) return
+    almacenBorradores.guardar(claveBorrador, {
+      lineas,
+      precios,
+      cantidadesEnEdicion,
+      filasPago,
+      proximoIdFilaPago: proximaFilaPagoIdRef.current,
+      clienteSeleccionado,
+    })
+  }, [claveBorrador, almacenBorradores, lineas, precios, cantidadesEnEdicion, filasPago, clienteSeleccionado])
 
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
@@ -2237,6 +2589,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
+      // stage-pos-adjustments: en venta libre, el próximo ticket vuelve a arrancar en Consumidor
+      // Final — nunca bajo `?idPresupuesto=` (esa conversión mantiene el cliente que trae el
+      // presupuesto). Si Consumidor Final no llegó a cargar, se deja el cliente como está: una
+      // falla de carga no puede vaciar una selección que sí funciona.
+      if (!modoPresupuesto && consumidorFinalRef.current) {
+        setClienteSeleccionado(consumidorFinalRef.current)
+      }
+      // stage-pos-adjustments: una venta recién cobrada nunca resucita al volver de otra
+      // pantalla — el borrador de ESTE ticket se descarta (el efecto de guardado de arriba va a
+      // volver a escribir uno equivalente-a-vacío enseguida, pero un borrador vacío restaura
+      // exactamente el mismo estado por defecto, así que da lo mismo).
+      if (claveBorrador !== null) {
+        almacenBorradores?.limpiar(claveBorrador)
+      }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
@@ -2782,6 +3148,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </div>
             )}
 
+            {!modoPresupuesto && (
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+                disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
+                onClick={() => setModalCuentaCorrienteAbierto(true)}
+              >
+                Cuenta corriente
+              </button>
+            )}
+
             <hr />
 
             <div className="d-flex justify-content-between mb-3">
@@ -2959,6 +3336,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           motivoSinAgregar={motivoSinAgregarEnBuscador}
           onAgregar={agregarDesdeBusqueda}
           onCerrar={cerrarBuscador}
+        />
+      )}
+
+      {modalCuentaCorrienteAbierto && !modoPresupuesto && puntoVentaSeleccionada && medios && (
+        <ModalCuentaCorrientePos
+          clienteInicial={clienteSeleccionado}
+          puntoVenta={puntoVentaSeleccionada}
+          medios={medios}
+          onCerrar={() => setModalCuentaCorrienteAbierto(false)}
+          onPagoRegistrado={refrescarClienteSeleccionado}
         />
       )}
 
