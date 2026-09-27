@@ -74,8 +74,10 @@ public static class ReglaDeRendicionDeCola
     /// repartir un número más: su evidencia quedó CONGELADA en el momento de la rotación, así que la
     /// frescura no significa nada para él y exigírsela rechazaría TODO cierre del punto de venta
     /// cinco minutos después de cada reposición rutinaria, sin ningún hueco que mostrar. Los otros
-    /// tres disyuntos valen igual para los dos: lo que un bloque abandonado dejó sin explicar sigue
-    /// sin explicarse.</param>
+    /// tres disyuntos valen igual para los dos. Residual conocido de (c) sobre un bloque abandonado:
+    /// su <c>pendientes</c> quedó congelado y nadie puede corregirlo, así que sigue bloqueando aun
+    /// cuando esas ventas después hayan llegado — la salida es el forzado supervisado (que lo salda
+    /// definitivamente, porque ya está abandonado) o revocar el dispositivo.</param>
     /// <param name="techoVerificado">El MAYOR entre <paramref name="entregadoHasta"/> y el número
     /// más alto del bloque que ya llegó a <c>comprobantes_venta</c> (<c>desde - 1</c> cuando no
     /// llegó ninguno): el techo que el servidor puede sostener por sí mismo, así que nunca queda

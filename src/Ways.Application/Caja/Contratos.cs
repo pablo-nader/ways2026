@@ -239,8 +239,9 @@ public sealed record SolicitudDeCierrePorRetiro(
 /// <see cref="ReglaDeRendicionDeCola"/>. <see cref="Pendientes"/>/<see cref="EntregadoHasta"/> son
 /// nullables porque un bloque que nunca rindió no los tiene (y es justamente el caso
 /// <see cref="MotivoDeRendicionPendiente.SinReporte"/>). <see cref="IdReserva"/> es lo que el
-/// forzado supervisado usa para saldar EXACTAMENTE los bloques que informó como bloqueantes, nunca
-/// todos los del punto de venta.</summary>
+/// forzado supervisado usa para saldar exactamente los bloques ABANDONADOS que informó como
+/// bloqueantes —nunca todos los del punto de venta, y nunca uno vivo— y
+/// <see cref="BloqueVivo"/> es lo que distingue esos dos casos.</summary>
 /// <param name="EntregadoHasta">Lo que el dispositivo DECLARÓ, tal cual — el dato del rastro de
 /// auditoría.</param>
 /// <param name="TechoVerificado">El techo que el servidor sostiene (ver

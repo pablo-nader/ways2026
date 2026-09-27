@@ -1707,8 +1707,9 @@ media rendición volvería ambiguo el fail-closed).
 tal cual) — el cuerpo es `{ codigoTipoComprobante, entregadoHasta, pendientes }`, sin
 `idPuntoVenta` ni `idDispositivo`, mismo criterio que `GET /api/pos/instantanea`. Responde `204`.
 Escribe el bloque VIVO (`abandonada_at IS NULL`) con SQL crudo, por
-`AsignadorDeNumeroComprobante.RegistrarRendicionAsync` — el único escritor legítimo de esta tabla
-sigue siendo esa clase. Rechazos: `403 prohibido` (sin claim, o dispositivo revocado — nunca
+`AsignadorDeNumeroComprobante.RegistrarRendicionAsync`, que sigue siendo el único escritor de las
+columnas del reporte. La única otra escritura cruda de esta tabla es
+`ServicioDeTurnos.MarcarRendicionSaldadaAsync`, que toca exclusivamente `rendicion_saldada_at`. Rechazos: `403 prohibido` (sin claim, o dispositivo revocado — nunca
 `404`), `400 pendientes_invalido`, `400 tipo_comprobante_invalido`, `409
 rendicion_sin_bloque_vivo`, `400 entregado_hasta_invalido`, `409 rendicion_regresiva`, `409
 rendicion_de_bloque_reemplazado`.
@@ -1744,8 +1745,10 @@ reporte viejo no dice nada de lo que vendió después de mandarlo. Un bloque aba
 nunca más (`RegistrarRendicionAsync` solo toca el vivo) ni va a repartir un número más: su evidencia
 quedó congelada al rotar, así que exigirle frescura rechazaría TODO cierre del punto de venta cinco
 minutos después de cada reposición rutinaria —sin ningún hueco que mostrar, y sin salida para un
-cajero Vendedor, que no puede forzar. Los otros tres disyuntos valen igual para vivos y abandonados:
-lo que un bloque abandonado dejó sin explicar sigue sin explicarse.
+cajero Vendedor, que no puede forzar. Los otros tres disyuntos valen igual para vivos y abandonados.
+Residual conocido de (c) sobre un abandonado: su `pendientes` quedó congelado y nadie puede
+corregirlo, así que sigue bloqueando aun cuando esas ventas después hayan llegado — ahí la salida es
+el forzado (que lo salda definitivamente) o revocar el dispositivo.
 
 El `techo` de (d) lo deriva el SERVIDOR y no el reporte: es
 `GREATEST(entregado_hasta declarado, máximo número del bloque que ya llegó)`. Sin eso, declarar
@@ -1795,10 +1798,16 @@ un hueco en un bloque VIVO cuesta un forzado por cada cierre hasta que ese bloqu
 UNO después de rotar (ahí su evidencia quedó congelada y, si todavía muestra el hueco, ese forzado lo
 salda de forma permanente).
 
-El rastro `caja.forzado` lleva, por bloqueo: `id_reserva` (la fila que el forzado dejó invisible para
-siempre), `id_dispositivo`, `dispositivo`, `tipo_comprobante`, `bloqueo`, `pendientes`, `desde`,
-`entregado_hasta` (lo DECLARADO) y `techo_verificado` (el rango que de verdad se aceptó como sin
-rendir, que es el que el operador vio en el mensaje del `409`).
+El rastro `caja.forzado` lleva, por bloqueo: `id_reserva` (qué fila), `bloque_vivo` (si esa fila
+quedó saldada o no — un bloqueo VIVO se registra pero NO se salda, y vuelve a bloquear el cierre
+siguiente; sin este campo el rastro se leería como si lo hubiera aceptado), `id_dispositivo`,
+`dispositivo`, `tipo_comprobante`, `bloqueo`, `pendientes`, `desde`, `entregado_hasta` (lo DECLARADO)
+y `techo_verificado` (el rango que de verdad se aceptó como sin rendir; es el que informa el mensaje
+del hueco, mientras los otros tres motivos no muestran rango).
+
+Un bloque VIVO que bloquea y nunca rota —el dispositivo se rompió y no vuelve— pide un forzado en
+cada cierre: ahí el arreglo de fondo es revocar el dispositivo, que lo saca de la guarda de una
+vez.
 
 **Estado: completo.** Migraciones `RendicionDeColaDelDispositivo` y
 `RendicionSaldadaEnReservaNumeracion`. El dispositivo rinde su cola como

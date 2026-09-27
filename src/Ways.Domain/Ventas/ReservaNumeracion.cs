@@ -63,11 +63,13 @@ public class ReservaNumeracion
     /// después de mandarlo.</summary>
     public DateTimeOffset? ReportadoAt { get; set; }
 
-    /// <summary>Cuándo un supervisor forzó un cierre mientras ESTE bloque lo estaba bloqueando: sus
-    /// números sin rendir quedaron explícitamente aceptados como tales. <c>null</c> ⇒ el bloque
-    /// sigue contando para la guarda de cierre, esté vivo o abandonado — es esta columna, y no
-    /// <see cref="AbandonadaAt"/>, la que saca un bloque de esa guarda (judgment-day: rotar el
-    /// bloque no puede borrar un hueco sin explicar).</summary>
+    /// <summary>Cuándo un supervisor forzó un cierre mientras este bloque, YA abandonado, lo estaba
+    /// bloqueando: sus números sin rendir quedaron explícitamente aceptados como tales. Solo se
+    /// salda un bloque abandonado — uno vivo todavía acumula evidencia, así que saldarlo lo volvería
+    /// ciego para los cierres siguientes. <c>null</c> ⇒ el bloque sigue contando para la guarda,
+    /// esté vivo o abandonado: es esta columna, y no <see cref="AbandonadaAt"/>, la que saca un
+    /// bloque de esa guarda (judgment-day: rotar el bloque no puede borrar un hueco sin
+    /// explicar).</summary>
     public DateTimeOffset? RendicionSaldadaAt { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }

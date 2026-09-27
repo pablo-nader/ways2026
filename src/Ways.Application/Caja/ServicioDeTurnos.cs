@@ -638,11 +638,12 @@ public class ServicioDeTurnos(
         // de venta puede tener varios dispositivos bloqueando a la vez), mismo criterio que
         // ServicioDeVentas usa para venta.discrepancia.
         //
-        // id_reserva y techo_verificado son parte del rastro y no adornos (judgment-day): sin
-        // techo_verificado la fila no dice qué rango se aceptó como sin rendir —el declarado puede
-        // quedar por debajo, y es el verificado el que el operador vio en el mensaje del 409—, y sin
-        // id_reserva no se puede reconstruir qué filas dejó invisibles para siempre
-        // MarcarRendicionSaldadaAsync.
+        // id_reserva, techo_verificado y bloque_vivo son parte del rastro y no adornos
+        // (judgment-day): sin techo_verificado la fila no dice qué rango se aceptó como sin rendir
+        // (el declarado puede quedar por debajo, y el verificado es el que informa el mensaje del
+        // hueco); id_reserva identifica la fila, y bloque_vivo dice si ESA fila quedó saldada o no
+        // —MarcarRendicionSaldadaAsync salda solo las abandonadas, así que sin este campo un
+        // bloqueo vivo, que sigue bloqueando el cierre siguiente, se leería como aceptado.
         var payload = new Dictionary<string, object?>
         {
             ["motivo"] = motivo,
@@ -661,7 +662,8 @@ public class ServicioDeTurnos(
                     ["pendientes"] = p.Pendientes,
                     ["desde"] = p.Desde,
                     ["entregado_hasta"] = p.EntregadoHasta,
-                    ["techo_verificado"] = p.TechoVerificado
+                    ["techo_verificado"] = p.TechoVerificado,
+                    ["bloque_vivo"] = p.BloqueVivo
                 })
                 .ToList()
         };

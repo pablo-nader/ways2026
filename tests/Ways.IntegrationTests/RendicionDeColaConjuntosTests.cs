@@ -227,8 +227,10 @@ public class RendicionDeColaConjuntosTests(WaysApiFixture fixture) : IClassFixtu
     /// <summary>Conjunto <c>abandonada_at IS NULL</c>: un bloque abandonado ya no reparte números,
     /// así que rendir sobre él no tiene sentido — 0 filas, y el 409
     /// <c>rendicion_sin_bloque_vivo</c> que el servicio devuelve sale justamente de este conteo.
-    /// Sin el conjunto afectaría 1, y el reporte quedaría escrito sobre un bloque muerto, invisible
-    /// para la guarda de cierre (que también filtra por <c>abandonada_at IS NULL</c>).</summary>
+    /// Sin el conjunto afectaría 1, y el reporte quedaría escrito sobre un bloque muerto: la guarda
+    /// de cierre SÍ mira los abandonados (su único filtro de alcance es
+    /// <c>rendicion_saldada_at IS NULL</c>), pero le daría una frescura que ese bloque no puede
+    /// tener, porque ya nadie puede rendir sobre él.</summary>
     [Fact]
     public async Task ElConjuntoDeAbandonadaImpideRendirSobreUnBloqueMuerto()
     {

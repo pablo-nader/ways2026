@@ -9,8 +9,10 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// <summary>
 /// Mapea <see cref="ReservaNumeracion"/> (stage-pos-reserva-de-numeracion, DB CHANGE GATE
 /// aprobado): scoping <c>[operativa]</c> (<c>id_tenant</c> + <c>id_punto_venta</c>, doc 09), mismo
-/// criterio que <see cref="DispositivoConfiguration"/>. Solo <c>AsignadorDeNumeroComprobante</c>
-/// escribe esta tabla, con SQL crudo — este mapeo existe para que el modelo de EF conozca la forma
+/// criterio que <see cref="DispositivoConfiguration"/>. Esta tabla se escribe SIEMPRE con SQL crudo y
+/// solo desde dos lugares: <c>AsignadorDeNumeroComprobante</c> (los bloques y las columnas del
+/// reporte) y <c>ServicioDeTurnos.MarcarRendicionSaldadaAsync</c> (únicamente
+/// <c>rendicion_saldada_at</c>) — este mapeo existe para que el modelo de EF conozca la forma
 /// de la tabla (RLS, FKs, CHECK, índice único parcial, lecturas), no para que
 /// <c>SaveChangesAsync</c> la toque (mismo criterio que <c>NumeracionComprobanteConfiguration</c>).
 /// </summary>
