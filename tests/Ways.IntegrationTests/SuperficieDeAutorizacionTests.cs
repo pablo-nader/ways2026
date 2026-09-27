@@ -56,6 +56,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // rol real (un cajero Vendedor logueado por dispositivo reservando con éxito) lo cubre
         // ReservaDeNumeracionEndpointsTests.ReservarUnBloqueDevuelveElRangoYCreaUnaFilaViva.
         ("POST", "/api/ventas/reservas-numeracion"),
+        // Rendición de la cola local del dispositivo — mismo grupo /api/pos y mismo criterio que
+        // GET /api/pos/instantanea: sin GestionDeCatalogo apilado (es el cajero Vendedor del
+        // dispositivo el que rinde, no un admin), con RequiereDispositivo en su lugar. El positivo
+        // por rol real lo cubre
+        // RendicionDeColaEndpointsTests.UnCajeroVendedorDeDispositivoRindeSuColaYQuedaPersistida.
+        ("POST", "/api/pos/rendicion-de-cola"),
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
@@ -298,7 +304,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// </summary>
     private static readonly (string Metodo, string Ruta, string PolicyAdicionalExigida)[] RutasConPolicyAdicionalSobreSuGrupo =
     [
-        ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo)
+        ("POST", "/api/ventas/reservas-numeracion", Politicas.RequiereDispositivo),
+        ("POST", "/api/pos/rendicion-de-cola", Politicas.RequiereDispositivo)
     ];
 
     [Fact]

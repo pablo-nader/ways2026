@@ -3,7 +3,8 @@
  * carga la instantánea persistida apenas monta (sobrevive un restart, goal A), y corre un ciclo
  * oportunista — al montar, cada `intervaloMs`, y en el evento `online` del navegador — que (1)
  * drena el outbox EN ORDEN, (2) refresca la instantánea si hay señal, y (3) repone el bloque de
- * numeración si está bajo, todo en un único lugar para que las tres tareas nunca corran
+ * numeración si está bajo, y (4) rinde el estado de la cola local al servidor para que el cierre
+ * de turno pueda verificarlo, todo en un único lugar para que las tareas nunca corran
  * entrelazadas entre sí (ver `encolarOperacion`, más abajo). El módulo de negocio puro
  * (`instantaneaOffline.ts`/`outboxOffline.ts`/`reglasOffline.ts`) no sabe nada de React ni de
  * timers — este hook es la única pieza con estado/efectos.
@@ -263,12 +264,48 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
   }
 
+  /**
+   * Rinde la cola local al servidor (`POST /api/pos/rendicion-de-cola`) para que el cierre de
+   * turno pueda verificarla contra `comprobantes_venta` en vez de creerle al almacén local de UNA
+   * máquina (`ReglaDeRendicionDeCola`): `entregadoHasta` es el número más alto que este
+   * dispositivo ya le imprimió a un cliente y `pendientes` cuántas de esas ventas todavía no
+   * llegaron (outbox + rechazadas — una venta rechazada también tiene su ticket entregado).
+   */
+  async function rendirColaLocal(): Promise<void> {
+    // Los conteos salen del almacén y no del estado de React: este ciclo vive en un closure del
+    // efecto del intervalo, que leería el snapshot del render en que se creó.
+    const declaracion = await encolarOperacion(async () => {
+      const bloque = bloqueRef.current
+      // Sin bloque local no hay nada que rendir: un dispositivo que perdió su almacén no puede dar
+      // fe de su cola, y el servidor bloquea el cierre por sí mismo ante un reporte ausente.
+      if (bloque === null) return null
+      const [outbox, rechazadas] = await Promise.all([leerOutbox(almacenRef.current), leerRechazadas(almacenRef.current)])
+      return {
+        codigoTipoComprobante: bloque.codigoTipoComprobante,
+        entregadoHasta: bloque.proximo - 1,
+        pendientes: outbox.length + rechazadas.length,
+      }
+    })
+
+    if (declaracion === null) return
+
+    try {
+      await clienteDePos.rendirCola(declaracion)
+    } catch {
+      // Sin señal (o el servidor rechazó) — se reintenta en el próximo ciclo. Un reporte que no
+      // llega deja al cierre bloqueado del lado del servidor, que es el desenlace correcto.
+    }
+  }
+
   async function ciclo(idPv: number): Promise<void> {
     await encolarOperacion(() => drenarOutbox())
     const conSenal = await refrescarInstantaneaSiHaySenal()
     if (conSenal) {
       await encolarOperacion(() => reponerBloqueSiNecesario(idPv))
     }
+    // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el bloque
+    // YA repuesto (el servidor rinde contra el bloque vivo, y reponer abandona el anterior).
+    await rendirColaLocal()
   }
 
   // Carga inicial: instantánea + outbox + bloque YA persistidos, sin esperar ningún fetch — la

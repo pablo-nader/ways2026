@@ -183,6 +183,15 @@ OPEN de arriba),
 `ServicioDeOrganizacion.EnUnaTransaccionAsync`. Son diez, no nueve: el paso de numeración de
 `EnviarAsync` faltaba en esta lista y es exactamente igual que los otros cinco.
 
+**Once con `ServicioDeRendicionDeCola.RegistrarAsync`** (stage-pos-rendicion-de-cola; faltaba en esta
+lista y lo encontró judgment-day). Es un `UPDATE` de un solo statement sobre una fila que ya existe:
+escribe los valores que el dispositivo DECLARÓ en vez de incrementar nada, así que un reintento sobre
+un commit ambiguo reescribe exactamente la misma fila — no hay nada que duplicar y ningún `Add` en el
+lambda. El piso monótono de su `WHERE`
+(`$1 >= COALESCE(entregado_hasta, desde - 1)`, `AsignadorDeNumeroComprobante.RegistrarRendicionAsync`)
+no lo cambia: compara con `>=`, justamente para que el reintento del MISMO valor sobre un intento que
+sí comiteó vuelva a afectar la fila en vez de parecer un rechazo regresivo.
+
 La prueba estructural que congela la lista es
 `Ways.Application.Tests.Abstracciones.EscriturasSinReintentoEstructuralesTests` (sin contenedor);
 la conductual, `Ways.IntegrationTests.EscriturasSinReintentoTests`.

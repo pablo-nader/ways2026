@@ -79,6 +79,20 @@ public sealed record InstantaneaDePos(
     IReadOnlyList<MedioPagoDeInstantanea> MediosDePago,
     decimal ToleranciaPago);
 
+/// <summary>
+/// Cuerpo de <c>POST /api/pos/rendicion-de-cola</c> — el dispositivo declara el estado de su cola
+/// local para que el cierre de turno pueda verificarlo (ver
+/// <see cref="Ways.Domain.Ventas.ReglaDeRendicionDeCola"/>). Sin <c>idPuntoVenta</c> ni
+/// <c>idDispositivo</c> a propósito, mismo criterio que <see cref="InstantaneaDePos"/>: los dos
+/// salen de <c>IContextoDeUsuario.IdDispositivo</c>, nunca del request.
+///
+/// <see cref="EntregadoHasta"/> es el número más alto que el dispositivo ya le imprimió a un
+/// cliente (<c>proximo - 1</c> de su puntero local); <c>desde - 1</c> del bloque vivo ⇒ todavía no
+/// repartió ninguno. <see cref="Pendientes"/> es cuántas de esas ventas no llegaron al servidor
+/// (outbox + rechazadas) — existe para que el rechazo del cierre pueda decir CUÁNTAS faltan.
+/// </summary>
+public sealed record SolicitudDeRendicionDeCola(string CodigoTipoComprobante, long EntregadoHasta, int Pendientes);
+
 /// <summary>Recorte de <c>MedioPagoListado</c> (catálogo genérico) a lo que el checkout offline
 /// necesita para armar <c>PagoDeVenta</c> y decidir vuelto/referencia sin ida y vuelta — mismo
 /// criterio que <c>ComprobanteListado</c> vs. el detalle completo: nunca <c>IdEmpresa</c>/

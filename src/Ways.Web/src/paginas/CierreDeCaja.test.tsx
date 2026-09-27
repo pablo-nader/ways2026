@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +7,30 @@ import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { agregarAOutbox, agregarARechazada } from '../pos/outboxOffline'
-import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
+import { ROL } from '../api/tipos'
+import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos, UsuarioAutenticado } from '../api/tipos'
+
+/** `usuarioActual` es mutable a propósito (reset en `beforeEach`) — los tests del override de
+ * rendición lo sobrescriben para probar la copia de rol sin remockear el módulo entero (mismo
+ * patrón que `CuentaCorriente.test.tsx`). */
+function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
+  return {
+    id: 9,
+    usuario: 'supervisor',
+    mail: 'supervisor@ways.test',
+    rolId: ROL.Supervisor,
+    rol: 'Supervisor',
+    ultimaConexion: null,
+    idTenant: 1,
+    ...sobrescribir,
+  }
+}
+
+let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
+
+vi.mock('../auth/useAuth', () => ({
+  useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
+}))
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -108,6 +131,7 @@ function borrarAlmacenOffline(): Promise<void> {
 beforeEach(async () => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  usuarioActual = usuarioFixture()
   await borrarAlmacenOffline()
 })
 
@@ -199,10 +223,14 @@ describe('CierreDeCaja — reentrancia (react-async-state regla 9)', () => {
     await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
     await userEvent.click(screen.getByRole('checkbox'))
 
+    // Los dos clicks van SINCRÓNICOS dentro del mismo `act`: con `userEvent`/`fireEvent` React
+    // alcanza a re-renderizar entre uno y otro y el `disabled` del botón tapa la guarda de
+    // reentrancia por `ref` (mutation-proof-tests: el mutante que la borra sobrevivía a este test).
     const boton = screen.getByRole('button', { name: 'Finalizar cierre' })
-    await userEvent.click(boton)
-    await userEvent.click(boton)
-    fireEvent.click(boton)
+    await act(async () => {
+      boton.click()
+      boton.click()
+    })
 
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos/501/cierre')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Cerrando…' })).toBeDisabled()
@@ -508,5 +536,273 @@ describe('CierreDeCaja — re-lee el outbox/las rechazadas (nunca queda desactua
     })
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+  })
+})
+
+// Guarda de rendición de cola de dispositivos: el gate local del outbox de arriba solo ve EL
+// almacén de ESTA máquina, así que un cierre desde otra pasaba igual. El servidor tiene ahora su
+// propia guarda (`409 rendicion_de_dispositivo_pendiente`) y un override supervisado.
+describe('CierreDeCaja — rechazo por rendición de dispositivo pendiente', () => {
+  const MENSAJE_DEL_SERVIDOR =
+    "No se puede cerrar el turno: el dispositivo 'Caja 1' tiene 2 venta(s) sin sincronizar (TX)."
+  const NOMBRE_OVERRIDE = /Cerrar igual, sin la rendición del dispositivo/
+  const NOMBRE_CONFIRMACION = /Confirmo que estoy cerrando este turno de forma definitiva/
+
+  /** Deja la pantalla lista y dispara un cierre que el servidor rechaza por rendición pendiente. */
+  async function intentarCierreYRecibirElRechazo() {
+    await screen.findByText('Efectivo')
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_CONFIRMACION }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+    expect(await screen.findByText(MENSAJE_DEL_SERVIDOR)).toBeInTheDocument()
+  }
+
+  it('muestra el mensaje del servidor (nunca el genérico) y recién ahí revela el override', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    // Antes del rechazo el override no existe: nunca es un control visible por defecto.
+    expect(screen.queryByRole('checkbox', { name: NOMBRE_OVERRIDE })).not.toBeInTheDocument()
+
+    await intentarCierreYRecibirElRechazo()
+
+    expect(screen.queryByText('No se pudo cerrar el turno.')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE })).toBeInTheDocument()
+    expect(screen.getByLabelText('Motivo del cierre forzado (obligatorio)')).toBeInTheDocument()
+  })
+
+  it('forzar manda forzarSinRendicion + motivoSinRendicion; el intento anterior no mandó ninguno de los dos', async () => {
+    mockearRutasBase()
+    let rechazar = true
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        if (rechazar) {
+          rechazar = false
+          return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+        }
+        return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE }))
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), '  Caja 1 se llevó la tablet  ')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    await screen.findByText('Turno #501 cerrado')
+
+    const cierres = apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos/501/cierre')
+    expect(cierres).toHaveLength(2)
+    // Sin forzar: ninguno de los dos campos viaja (un motivo sin el flag es `400
+    // motivo_sin_forzado` del lado del servidor).
+    expect(cierres[0][1]).toEqual({ conteos: [{ idMedioPago: 1, importeDeclarado: 640 }], observaciones: null })
+    expect(cierres[1][1]).toEqual({
+      conteos: [{ idMedioPago: 1, importeDeclarado: 640 }],
+      observaciones: null,
+      forzarSinRendicion: true,
+      motivoSinRendicion: 'Caja 1 se llevó la tablet',
+    })
+  })
+
+  it('con el override marcado y el motivo vacío o en blanco, "Finalizar cierre" queda deshabilitado', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled())
+
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), '   ')
+    expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), 'motivo real')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+  })
+
+  /** react-async-state regla 9/11: un cierre es irreversible, así que un doble submit es el peor
+   * defecto posible — y un forzado escribe además su fila de auditoría por cada POST. */
+  it('doble click en el cierre forzado dispara exactamente un POST', async () => {
+    mockearRutasBase()
+    let rechazar = true
+    let resolverCierre: (t: TurnoConArqueos) => void = () => {}
+    const cierrePendiente = new Promise<TurnoConArqueos>((resolve) => {
+      resolverCierre = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        if (rechazar) {
+          rechazar = false
+          return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+        }
+        return cierrePendiente
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE }))
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), 'motivo real')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+
+    // Dos clicks SINCRÓNICOS dentro del mismo `act`: sin esto React alcanza a re-renderizar entre
+    // uno y otro (`fireEvent` flushea por su cuenta) y el `disabled` del botón tapa la guarda de
+    // reentrancia por `ref`, que es la única que sobrevive a un doble click del mismo tick.
+    const boton = screen.getByRole('button', { name: 'Finalizar cierre' })
+    await act(async () => {
+      boton.click()
+      boton.click()
+    })
+
+    // Dos POST en total: el rechazado de antes + exactamente UNO forzado.
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos/501/cierre')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Cerrando…' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE })).toBeDisabled()
+    expect(screen.getByLabelText('Motivo del cierre forzado (obligatorio)')).toBeDisabled()
+
+    await act(async () => {
+      resolverCierre(turnoConArqueosFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('un 403 al forzar dice que hace falta un supervisor y no cierra el turno', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor', usuario: 'jperez' })
+    mockearRutasBase()
+    let rechazarPorRendicion = true
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        if (rechazarPorRendicion) {
+          rechazarPorRendicion = false
+          return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+        }
+        return Promise.reject(new ErrorApi(403, 'prohibido', 'Forzar el cierre sin rendición requiere un supervisor.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+
+    // El rol del cliente no esconde el control: el 403 tiene que ser alcanzable.
+    expect(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE })).toBeEnabled()
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE }))
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), 'motivo real')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    expect(
+      await screen.findByText(
+        'Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Turno #501 cerrado')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunto `e.codigo === 'prohibido'` de la rama de rol. Un 403 con OTRO
+   * código mientras se fuerza (sesión degradada, alcance de tenant, `OperacionDePos`) tiene otra
+   * causa: se muestra el mensaje real del servidor, nunca el de "hace falta un supervisor", que
+   * ocultaría el motivo verdadero.
+   */
+  it('un 403 con otro código mientras se fuerza muestra el mensaje real del servidor', async () => {
+    mockearRutasBase()
+    let rechazarPorRendicion = true
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        if (rechazarPorRendicion) {
+          rechazarPorRendicion = false
+          return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+        }
+        return Promise.reject(new ErrorApi(403, 'punto_venta_fuera_de_alcance', 'El punto de venta no está en tu alcance.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_OVERRIDE }))
+    await userEvent.type(screen.getByLabelText('Motivo del cierre forzado (obligatorio)'), 'motivo real')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    expect(await screen.findByText('El punto de venta no está en tu alcance.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Turno #501 cerrado')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunto `forzarSinRendicion` de la misma rama. Un 403 `prohibido` en
+   * un cierre que NO pidió forzar nada no tiene nada que ver con el rol del override: se muestra el
+   * mensaje real del servidor y el override sigue sin revelarse.
+   */
+  it('un 403 prohibido SIN forzar muestra el mensaje real del servidor y no revela el override', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.reject(new ErrorApi(403, 'prohibido', 'Tu sesión ya no puede operar esta caja.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox', { name: NOMBRE_CONFIRMACION }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    expect(await screen.findByText('Tu sesión ya no puede operar esta caja.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.'),
+    ).not.toBeInTheDocument()
+    // Este rechazo no es la guarda de rendición: el override sigue sin existir.
+    expect(screen.queryByRole('checkbox', { name: NOMBRE_OVERRIDE })).not.toBeInTheDocument()
+  })
+
+  it('con rol vendedor avisa que el servidor va a rechazar el forzado; con rol supervisor no', async () => {
+    const avisoDeRol =
+      'Con tu rol el servidor va a rechazar el cierre forzado: pedile a un supervisor o a un administrador que lo haga.'
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.reject(new ErrorApi(409, 'rendicion_de_dispositivo_pendiente', MENSAJE_DEL_SERVIDOR))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor', usuario: 'jperez' })
+    const vista = renderCierre()
+    await intentarCierreYRecibirElRechazo()
+    expect(screen.getByText(avisoDeRol)).toBeInTheDocument()
+    vista.unmount()
+
+    usuarioActual = usuarioFixture()
+    renderCierre()
+    await intentarCierreYRecibirElRechazo()
+    expect(screen.queryByText(avisoDeRol)).not.toBeInTheDocument()
   })
 })

@@ -7,8 +7,10 @@ using Ways.Infrastructure.Multitenancy;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-pos-reserva-de-numeracion (db-error-backstops): los dos backstops de esquema de
-/// <c>reservas_numeracion</c>, probados por INSERT crudo fuera de banda.
+/// stage-pos-reserva-de-numeracion (db-error-backstops): los backstops de esquema de
+/// <c>reservas_numeracion</c>, probados por escritura cruda fuera de banda — los dos
+/// originales (rango e índice único de bloque vivo) más los TRES de la rendición de cola
+/// (<c>entregado_hasta</c>/<c>pendientes</c>/<c>reportado_at</c>).
 ///
 /// <c>ck_reservas_numeracion_rango</c> — defensa pura (misma familia que
 /// <c>ck_precios_ventana_valida</c>): el único escritor legítimo calcula <c>hasta</c> como
@@ -159,5 +161,145 @@ public class ReservaDeNumeracionBackstopTests(WaysApiFixture fixture) : IClassFi
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => segunda.ExecuteNonQueryAsync());
         Assert.Equal("23505", excepcion.SqlState);
         Assert.Equal("ux_reservas_numeracion_dispositivo_activo", excepcion.ConstraintName);
+    }
+    // ---- rendición de cola: los tres CHECK nuevos ---------------------------------------------
+
+    /// <summary><c>ck_reservas_numeracion_entregado_en_rango</c>, con input de CLIENTE detrás:
+    /// <c>ServicioDeRendicionDeCola</c> pre-valida <c>entregadoHasta</c> contra
+    /// <c>[desde - 1, hasta]</c> (por eso el camino de servicio devuelve 400
+    /// <c>entregado_hasta_invalido</c> y no 500), y este backstop prueba que el esquema rechaza igual
+    /// una escritura que esquive esa pre-validación. Los dos valores son los primeros FUERA del
+    /// rango a cada lado del bloque <c>[5, 10]</c>.</summary>
+    [Theory]
+    [InlineData(3)]
+    [InlineData(11)]
+    public async Task UnEntregadoHastaFueraDelBloqueViolaLaCheckDeRangoEntregado(long entregadoHasta)
+    {
+        var e = await SembrarEscenarioAsync(
+            $"{nameof(UnEntregadoHastaFueraDelBloqueViolaLaCheckDeRangoEntregado)}{entregadoHasta}");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, " +
+            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
+            "VALUES ($1, $2, 'TX', $3, 5, 10, $4, 0, now(), now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdDispositivo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = entregadoHasta });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_reservas_numeracion_entregado_en_rango", excepcion.ConstraintName);
+    }
+
+    /// <summary>Los dos bordes VÁLIDOS del mismo CHECK (<c>desde - 1</c> = no repartió ninguno;
+    /// <c>hasta</c> = agotó el bloque): sin este test, un CHECK escrito con <c>&gt;</c>/<c>&lt;</c>
+    /// en vez de <c>&gt;=</c>/<c>&lt;=</c> rechazaría las dos rendiciones legítimas del borde y el
+    /// test de arriba seguiría verde.</summary>
+    [Theory]
+    [InlineData(4)]
+    [InlineData(10)]
+    public async Task LosBordesDelBloqueNoViolanLaCheckDeRangoEntregado(long entregadoHasta)
+    {
+        var e = await SembrarEscenarioAsync(
+            $"{nameof(LosBordesDelBloqueNoViolanLaCheckDeRangoEntregado)}{entregadoHasta}");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, " +
+            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
+            "VALUES ($1, $2, 'TX', $3, 5, 10, $4, 0, now(), now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdDispositivo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = entregadoHasta });
+
+        await comando.ExecuteNonQueryAsync(); // no debe tirar
+    }
+
+    /// <summary><c>ck_reservas_numeracion_pendientes_no_negativo</c>, el segundo CHECK con input de
+    /// cliente detrás (<c>ServicioDeRendicionDeCola</c> lo pre-valida con 400
+    /// <c>pendientes_invalido</c>).</summary>
+    [Fact]
+    public async Task UnaCantidadDePendientesNegativaViolaLaCheckDeNoNegatividad()
+    {
+        var e = await SembrarEscenarioAsync(nameof(UnaCantidadDePendientesNegativaViolaLaCheckDeNoNegatividad));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, " +
+            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
+            "VALUES ($1, $2, 'TX', $3, 5, 10, 7, -1, now(), now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdDispositivo });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_reservas_numeracion_pendientes_no_negativo", excepcion.ConstraintName);
+    }
+
+    /// <summary><c>ck_reservas_numeracion_reporte_consistente</c>: las tres columnas del reporte son
+    /// UN hecho, así que media rendición no existe. Es el único de los tres sin pre-validación
+    /// posible (el único escritor legítimo escribe las tres en el mismo statement) — backstop de
+    /// esquema puro, y el que sostiene el fail-closed de la guarda de cierre (<c>reportado_at IS
+    /// NULL</c> ⇒ nunca rindió, sin un cuarto estado ambiguo). Se prueban las tres combinaciones de
+    /// UNA columna presente.</summary>
+    [Theory]
+    [InlineData("7, NULL, NULL")]
+    [InlineData("NULL, 0, NULL")]
+    [InlineData("NULL, NULL, now()")]
+    public async Task UnaRendicionAMediasViolaLaCheckDeConsistenciaDelReporte(string columnas)
+    {
+        var e = await SembrarEscenarioAsync(
+            $"{nameof(UnaRendicionAMediasViolaLaCheckDeConsistenciaDelReporte)}{Math.Abs(columnas.GetHashCode())}");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, " +
+            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
+            $"VALUES ($1, $2, 'TX', $3, 5, 10, {columnas}, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdDispositivo });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_reservas_numeracion_reporte_consistente", excepcion.ConstraintName);
+    }
+
+    /// <summary>El otro lado del MISMO CHECK: sin ninguna de las tres (bloque recién reservado, tal
+    /// como lo escribe <c>InsertarReservaAsync</c>) y con las tres (una rendición completa) son los
+    /// dos estados legítimos. Sin este test, un CHECK que exigiera SIEMPRE las tres columnas dejaría
+    /// verde al de arriba y rompería toda reserva nueva.</summary>
+    [Theory]
+    [InlineData("NULL, NULL, NULL")]
+    [InlineData("7, 2, now()")]
+    public async Task LosDosEstadosCompletosNoViolanLaCheckDeConsistenciaDelReporte(string columnas)
+    {
+        var e = await SembrarEscenarioAsync(
+            $"{nameof(LosDosEstadosCompletosNoViolanLaCheckDeConsistenciaDelReporte)}{Math.Abs(columnas.GetHashCode())}");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO reservas_numeracion " +
+            "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, " +
+            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
+            $"VALUES ($1, $2, 'TX', $3, 5, 10, {columnas}, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = e.IdDispositivo });
+
+        await comando.ExecuteNonQueryAsync(); // no debe tirar
     }
 }

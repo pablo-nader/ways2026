@@ -401,6 +401,26 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_reservas_numeracion_rango" } =>
                 (StatusCodes.Status400BadRequest, "hasta no puede ser anterior a desde.", "rango_de_reserva_invalido"),
 
+            // Los tres CHECK de la rendición de cola (db-error-backstops). A diferencia de
+            // ck_reservas_numeracion_rango, dos de estos SÍ reciben input de cliente
+            // (entregadoHasta/pendientes de POST /api/pos/rendicion-de-cola), así que
+            // ServicioDeRendicionDeCola los pre-valida y estas ramas devuelven el MISMO código de
+            // dominio que esa pre-validación — una escritura cruda que la esquive no se cuela como
+            // 500. ck_reservas_numeracion_reporte_consistente no tiene pre-validación posible: el
+            // único escritor legítimo escribe las tres columnas en el mismo statement, así que es
+            // backstop de esquema puro (misma familia que ck_precios_ventana_valida).
+            { SqlState: "23514", ConstraintName: "ck_reservas_numeracion_entregado_en_rango" } =>
+                (StatusCodes.Status400BadRequest,
+                    "entregadoHasta tiene que caer dentro del bloque reservado.", "entregado_hasta_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_reservas_numeracion_pendientes_no_negativo" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La cantidad de ventas pendientes no puede ser negativa.", "pendientes_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_reservas_numeracion_reporte_consistente" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La rendición de la cola se escribe completa o no se escribe.", "rendicion_inconsistente"),
+
             // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
             // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
             // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
