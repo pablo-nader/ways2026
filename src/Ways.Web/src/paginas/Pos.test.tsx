@@ -29,7 +29,7 @@ import type {
 } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
-import { ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
+import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
@@ -1602,11 +1602,9 @@ describe('Pos — el borrador sobrevive a un restart entero (stage-pos-borrador-
     clienteSeleccionado: ClienteListado | null
   }) {
     const almacen = crearAlmacenIndexedDb()
-    await almacen.escribir('borradores-ticket', {
+    await almacen.escribir(claveIndexedDbDeBorrador(usuarioDeSesion, 'libre:7'), {
       version: 1,
-      idUsuario: usuarioDeSesion.id,
-      idTenant: usuarioDeSesion.idTenant,
-      borradores: { 'libre:7': borrador },
+      borrador,
     })
   }
 

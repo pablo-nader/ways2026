@@ -3536,8 +3536,22 @@ type PropsPos = {
 export function Pos({ alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPos = {}) {
   const [searchParams] = useSearchParams()
   const { puntoVenta } = usePuntoVenta()
+  const almacenBorradores = useContext(BorradorDeTicketContext)
   const crudo = searchParams.get('idPresupuesto')
   const idPresupuesto = crudo !== null && Number.isFinite(Number(crudo)) ? Number(crudo) : null
+
+  // JD-2: `PantallaPos` lee su borrador inicial de forma síncrona en el primer render de su
+  // propio `useRef` — bajo un `Provider` (`Layout`/`ShellPos`) hay que esperar acá, ANTES de
+  // montarla, a que la hidratación desde IndexedDB termine (o venza su propio timeout). Sin
+  // `Provider` (la mayoría de los tests, rutas que no cuelgan de `Layout`) `almacenBorradores` es
+  // `null` y el comportamiento es el de siempre: listo desde el primer render.
+  if (almacenBorradores && !almacenBorradores.listo) {
+    return (
+      <div className="container-fluid py-4">
+        <Cargando />
+      </div>
+    )
+  }
 
   return (
     <PantallaPos

@@ -39,6 +39,37 @@ describe('almacenPos — IndexedDB real (fake-indexeddb)', () => {
     await expect(almacen.leer('a')).resolves.toBe('valor-a')
     await expect(almacen.leer('b')).resolves.toBe('valor-b')
   })
+
+  it('eliminar borra la clave: una lectura posterior vuelve a devolver null', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await almacen.escribir('clave-3', { x: 1 })
+
+    await expect(almacen.eliminar('clave-3')).resolves.toBe(true)
+    await expect(almacen.leer('clave-3')).resolves.toBeNull()
+  })
+
+  it('eliminar una clave nunca escrita resuelve true igual (no-op, nunca lanza)', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await expect(almacen.eliminar('nunca-escrita')).resolves.toBe(true)
+  })
+
+  it('leerPrefijo devuelve solo las entradas cuya clave empieza con el prefijo dado', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await almacen.escribir('borrador:1:a', { n: 1 })
+    await almacen.escribir('borrador:1:b', { n: 2 })
+    await almacen.escribir('borrador:2:a', { n: 3 })
+    await almacen.escribir('otra-cosa', { n: 4 })
+
+    const entradas = await almacen.leerPrefijo('borrador:1:')
+
+    expect(entradas).toHaveLength(2)
+    expect(entradas.map((e) => e.clave).sort()).toEqual(['borrador:1:a', 'borrador:1:b'])
+  })
+
+  it('leerPrefijo sin coincidencias devuelve un array vacío, no null', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await expect(almacen.leerPrefijo('sin-coincidencias:')).resolves.toEqual([])
+  })
 })
 
 describe('almacenPos — degrada sin romper cuando IndexedDB no está disponible', () => {
@@ -64,5 +95,15 @@ describe('almacenPos — degrada sin romper cuando IndexedDB no está disponible
   it('escribir sin IndexedDB resuelve false (no-op, nunca rechaza) — reporta que no persistió', async () => {
     const almacen = crearAlmacenIndexedDb()
     await expect(almacen.escribir('cualquier-clave', { x: 1 })).resolves.toBe(false)
+  })
+
+  it('eliminar sin IndexedDB resuelve false (no-op, nunca rechaza)', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await expect(almacen.eliminar('cualquier-clave')).resolves.toBe(false)
+  })
+
+  it('leerPrefijo sin IndexedDB resuelve un array vacío en vez de rechazar', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    await expect(almacen.leerPrefijo('cualquier-prefijo:')).resolves.toEqual([])
   })
 })

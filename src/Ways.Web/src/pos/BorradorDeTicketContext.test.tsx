@@ -1,12 +1,12 @@
 import 'fake-indexeddb/auto'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BorradorDeTicketContext, ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
+import { BorradorDeTicketContext, ProveedorDeBorradoresDeTicket, claveIndexedDbDeBorrador } from './BorradorDeTicketContext'
 import type { BorradorDeTicket } from './BorradorDeTicketContext'
-import type { AlmacenClaveValor } from './almacenPos'
+import type { AlmacenDeClavesMultiples, EntradaDeAlmacen } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
 import { AuthContext } from '../auth/AuthContext'
 import type { UsuarioAutenticado } from '../api/tipos'
@@ -82,6 +82,33 @@ function Consumidor({ clave }: { clave: string }) {
   )
 }
 
+/** Mismo `Consumidor` de arriba, pero exponiendo además `almacen.listo` (JD-2) — un componente
+ * aparte en vez de agregarle esto al de arriba para no ensuciar los asserts existentes que no les
+ * importa el estado de hidratación. */
+function ConsumidorListo({ clave }: { clave: string }) {
+  const almacen = useContext(BorradorDeTicketContext)
+  const [, forzarRerender] = useState(0)
+  if (!almacen) return <span>sin-provider</span>
+
+  const encontrado = almacen.obtener(clave)
+
+  return (
+    <div>
+      <span data-testid="listo">{almacen.listo ? 'listo' : 'cargando'}</span>
+      <span data-testid="estado">{encontrado ? `proximoId:${encontrado.proximoIdFilaPago}` : 'vacio'}</span>
+      <button
+        type="button"
+        onClick={() => {
+          almacen.guardar(clave, borradorDeEjemplo)
+          forzarRerender((n) => n + 1)
+        }}
+      >
+        guardar
+      </button>
+    </div>
+  )
+}
+
 describe('BorradorDeTicketContext', () => {
   it('sin Provider en el árbol, el contexto es null (no-op)', () => {
     render(<Consumidor clave="libre:1" />)
@@ -114,7 +141,7 @@ describe('BorradorDeTicketContext', () => {
     expect(screen.getByTestId('estado')).toHaveTextContent('vacio')
   })
 
-  it('dos claves distintas no se pisan entre sí (aislamiento por clave)', async () => {
+  it('dos claves distintas no se pisan entre sí (aislamiento por clave, en memoria)', async () => {
     function DosConsumidores() {
       return (
         <>
@@ -142,6 +169,29 @@ describe('BorradorDeTicketContext', () => {
     expect(contenedorA.querySelector('[data-testid="estado"]')).toHaveTextContent('proximoId:3')
     expect(contenedorB.querySelector('[data-testid="estado"]')).toHaveTextContent('vacio')
   })
+
+  it('JD-2: los children se renderizan aunque la hidratación siga en vuelo (una lectura que nunca resuelve no bloquea el árbol)', () => {
+    const promesaQueNuncaResuelve = new Promise<Array<EntradaDeAlmacen<unknown>>>(() => {})
+    const almacenLento: AlmacenDeClavesMultiples = {
+      leer: () => Promise.resolve(null),
+      escribir: () => Promise.resolve(true),
+      eliminar: () => Promise.resolve(true),
+      leerPrefijo: <T,>() => promesaQueNuncaResuelve as Promise<Array<EntradaDeAlmacen<T>>>,
+    }
+
+    render(
+      <ConAuth usuario={usuarioFixture()}>
+        <ProveedorDeBorradoresDeTicket almacen={almacenLento}>
+          <span>contenido ajeno al borrador (ej. el resto de Layout)</span>
+        </ProveedorDeBorradoresDeTicket>
+      </ConAuth>,
+    )
+
+    // Sin `await` a propósito: si el `Provider` todavía bloqueara el render mientras la
+    // hidratación está en vuelo, este `span` (montado en el MISMO render que el `Provider`)
+    // no aparecería nunca en este assert síncrono.
+    expect(screen.getByText('contenido ajeno al borrador (ej. el resto de Layout)')).toBeInTheDocument()
+  })
 })
 
 /** Borra la base fake entre tests — sin esto, un borrador persistido por un test filtraría al
@@ -165,11 +215,9 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
   it('hidrata desde IndexedDB antes de renderizar los hijos: un borrador guardado por una sesión previa aparece en el primer render útil', async () => {
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture()
-    await almacen.escribir('borradores-ticket', {
+    await almacen.escribir(claveIndexedDbDeBorrador(usuario, CLAVE), {
       version: 1,
-      idUsuario: usuario.id,
-      idTenant: usuario.idTenant,
-      borradores: { [CLAVE]: { ...borradorDeEjemplo, proximoIdFilaPago: 9 } },
+      borrador: { ...borradorDeEjemplo, proximoIdFilaPago: 9 },
     })
 
     render(
@@ -180,18 +228,19 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       </ConAuth>,
     )
 
-    expect(await screen.findByTestId('estado')).toHaveTextContent('proximoId:9')
+    // `waitFor` (no `findByTestId` + assert): el `<span data-testid="estado">` existe desde el
+    // PRIMER render ("vacio", JD-2 — los `children` nunca esperan la hidratación), así que hay que
+    // esperar a que su CONTENIDO cambie, no solo a que el nodo exista.
+    await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('proximoId:9'))
   })
 
-  it('mutación: sin el chequeo de usuario, un borrador guardado por OTRO usuario se restauraría igual', async () => {
+  it('JD-1: un borrador guardado bajo la clave de OTRO usuario nunca se restaura bajo esta sesión (aislamiento estructural por prefijo de clave)', async () => {
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture({ id: 10 })
     const otroUsuario = usuarioFixture({ id: 99 })
-    await almacen.escribir('borradores-ticket', {
+    await almacen.escribir(claveIndexedDbDeBorrador(otroUsuario, CLAVE), {
       version: 1,
-      idUsuario: otroUsuario.id,
-      idTenant: otroUsuario.idTenant,
-      borradores: { [CLAVE]: { ...borradorDeEjemplo, proximoIdFilaPago: 9 } },
+      borrador: { ...borradorDeEjemplo, proximoIdFilaPago: 9 },
     })
 
     render(
@@ -202,20 +251,19 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       </ConAuth>,
     )
 
-    // El borrador de `otroUsuario` NUNCA aparece bajo la sesión de `usuario` — si el chequeo
-    // `guardado.idUsuario === usuario.id` se borrara, este assert (`vacio`) pasaría a fallar con
-    // `proximoId:9`, confirmando que la mutación mata este test (mutation-proof-tests).
+    // El borrador de `otroUsuario` NUNCA aparece bajo la sesión de `usuario` — la hidratación solo
+    // escanea el prefijo (`claveIndexedDbDeBorrador`) del usuario en curso, así que una clave con
+    // otro id de usuario queda directamente fuera del rango que se lee.
     expect(await screen.findByTestId('estado')).toHaveTextContent('vacio')
   })
 
-  it('mutación: sin el chequeo de tenant, un borrador de otro tenant con el mismo id de usuario se restauraría igual', async () => {
+  it('JD-1: un borrador de otro tenant con el mismo id de usuario tampoco se restaura (el prefijo también incluye el tenant)', async () => {
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture({ id: 10, idTenant: 1 })
-    await almacen.escribir('borradores-ticket', {
+    const usuarioDeOtroTenant = usuarioFixture({ id: 10, idTenant: 2 })
+    await almacen.escribir(claveIndexedDbDeBorrador(usuarioDeOtroTenant, CLAVE), {
       version: 1,
-      idUsuario: usuario.id,
-      idTenant: 2,
-      borradores: { [CLAVE]: { ...borradorDeEjemplo, proximoIdFilaPago: 9 } },
+      borrador: { ...borradorDeEjemplo, proximoIdFilaPago: 9 },
     })
 
     render(
@@ -232,11 +280,9 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
   it('mutación: sin el chequeo de versión, un payload de un esquema futuro/desconocido se restauraría igual', async () => {
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture()
-    await almacen.escribir('borradores-ticket', {
+    await almacen.escribir(claveIndexedDbDeBorrador(usuario, CLAVE), {
       version: 2,
-      idUsuario: usuario.id,
-      idTenant: usuario.idTenant,
-      borradores: { [CLAVE]: { ...borradorDeEjemplo, proximoIdFilaPago: 9 } },
+      borrador: { ...borradorDeEjemplo, proximoIdFilaPago: 9 },
     })
 
     render(
@@ -254,14 +300,12 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture()
     const preciosViejos = { 1: { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] } }
-    await almacen.escribir('borradores-ticket', {
+    await almacen.escribir(claveIndexedDbDeBorrador(usuario, CLAVE), {
       version: 1,
-      idUsuario: usuario.id,
-      idTenant: usuario.idTenant,
       // El tipo persistido (`BorradorPersistido`) no tiene `precios` — se fuerza el campo acá
       // para simular una escritura que SÍ lo hubiera incluido (el escenario que el discard
       // previene) y probar que el `Provider`, del lado de la LECTURA, nunca lo confía.
-      borradores: { [CLAVE]: { ...borradorDeEjemplo, precios: preciosViejos, proximoIdFilaPago: 9 } },
+      borrador: { ...borradorDeEjemplo, precios: preciosViejos, proximoIdFilaPago: 9 },
     })
 
     function ConsumidorDePrecios({ clave }: { clave: string }) {
@@ -287,9 +331,11 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
 
   it('lectura fallida degrada a almacén vacío en vez de romper el montaje', async () => {
     const usuario = usuarioFixture()
-    const almacenQueFalla: AlmacenClaveValor = {
+    const almacenQueFalla: AlmacenDeClavesMultiples = {
       leer: () => Promise.resolve(null),
       escribir: () => Promise.resolve(false),
+      eliminar: () => Promise.resolve(false),
+      leerPrefijo: () => Promise.reject(new Error('boom')),
     }
 
     render(
@@ -309,7 +355,7 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
    * `vi.advanceTimersByTimeAsync` nunca lo destraba. Este fake resuelve por microtarea pura
    * (`Promise.resolve()`), que sí avanza con timers falsos — el propio debounce (un `setTimeout`
    * de este módulo) es lo único que hace falta destrabar acá. */
-  function crearAlmacenEnMemoria(): AlmacenClaveValor & { datos: Map<string, unknown> } {
+  function crearAlmacenEnMemoria(): AlmacenDeClavesMultiples & { datos: Map<string, unknown> } {
     const datos = new Map<string, unknown>()
     return {
       datos,
@@ -318,6 +364,16 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
         datos.set(clave, valor)
         return Promise.resolve(true)
       },
+      eliminar: (clave) => {
+        datos.delete(clave)
+        return Promise.resolve(true)
+      },
+      leerPrefijo: <T,>(prefijo: string) =>
+        Promise.resolve(
+          Array.from(datos.entries())
+            .filter(([clave]) => clave.startsWith(prefijo))
+            .map(([clave, valor]) => ({ clave, valor: valor as T })),
+        ),
     }
   }
 
@@ -326,6 +382,7 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
     try {
       const almacen = crearAlmacenEnMemoria()
       const usuario = usuarioFixture()
+      const claveDb = claveIndexedDbDeBorrador(usuario, CLAVE)
 
       render(
         <ConAuth usuario={usuario}>
@@ -339,11 +396,11 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       screen.getByRole('button', { name: 'guardar' }).click()
       // Todavía no venció el debounce: nada persistido.
       await vi.advanceTimersByTimeAsync(100)
-      expect(almacen.datos.has('borradores-ticket')).toBe(false)
+      expect(almacen.datos.has(claveDb)).toBe(false)
 
       await vi.advanceTimersByTimeAsync(400)
-      const persistido = almacen.datos.get('borradores-ticket') as { borradores: Record<string, BorradorDeTicket> }
-      expect(persistido.borradores[CLAVE]?.proximoIdFilaPago).toBe(3)
+      const persistido = almacen.datos.get(claveDb) as { borrador: BorradorDeTicket }
+      expect(persistido.borrador.proximoIdFilaPago).toBe(3)
     } finally {
       vi.useRealTimers()
     }
@@ -417,6 +474,7 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
     try {
       const almacen = crearAlmacenEnMemoria()
       const usuario = usuarioFixture()
+      const claveDb = claveIndexedDbDeBorrador(usuario, CLAVE)
 
       const { unmount } = render(
         <ConAuth usuario={usuario}>
@@ -432,8 +490,8 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       unmount()
       await vi.advanceTimersByTimeAsync(0)
 
-      const persistido = almacen.datos.get('borradores-ticket') as { borradores: Record<string, BorradorDeTicket> }
-      expect(persistido.borradores[CLAVE]?.proximoIdFilaPago).toBe(3)
+      const persistido = almacen.datos.get(claveDb) as { borrador: BorradorDeTicket }
+      expect(persistido.borrador.proximoIdFilaPago).toBe(3)
     } finally {
       vi.useRealTimers()
     }
@@ -456,7 +514,192 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       await vi.waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('proximoId:3'))
 
       await vi.advanceTimersByTimeAsync(400)
-      expect(almacen.datos.has('borradores-ticket')).toBe(false)
+      expect(almacen.datos.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('BorradorDeTicketContext — aislamiento entre pestañas (JD-1)', () => {
+  const CLAVE_A = 'libre:1'
+  const CLAVE_B = 'libre:2'
+
+  beforeEach(() => borrarAlmacenOffline())
+  afterEach(() => borrarAlmacenOffline())
+
+  it('dos Provider concurrentes del mismo usuario (dos pestañas), cada uno guardando una clave distinta, no se pisan: ambos borradores sobreviven a un restart', async () => {
+    const usuario = usuarioFixture()
+
+    function DosPestanas() {
+      return (
+        <>
+          <div data-testid="pestana-a">
+            <ProveedorDeBorradoresDeTicket>
+              <Consumidor clave={CLAVE_A} />
+            </ProveedorDeBorradoresDeTicket>
+          </div>
+          <div data-testid="pestana-b">
+            <ProveedorDeBorradoresDeTicket>
+              <Consumidor clave={CLAVE_B} />
+            </ProveedorDeBorradoresDeTicket>
+          </div>
+        </>
+      )
+    }
+
+    const { unmount } = render(
+      <ConAuth usuario={usuario}>
+        <DosPestanas />
+      </ConAuth>,
+    )
+
+    const pestanaA = within(await screen.findByTestId('pestana-a'))
+    const pestanaB = within(screen.getByTestId('pestana-b'))
+
+    // Cada "pestaña" guarda SU propia clave — si ambas escribieran el mismo registro entero (el
+    // bug de JD-1), la segunda escritura pisaría lo que la primera acababa de guardar.
+    await userEvent.click(pestanaA.getByRole('button', { name: 'guardar' }))
+    await userEvent.click(pestanaB.getByRole('button', { name: 'guardar' }))
+
+    expect(pestanaA.getByTestId('estado')).toHaveTextContent('proximoId:3')
+    expect(pestanaB.getByTestId('estado')).toHaveTextContent('proximoId:3')
+
+    // Desmonta ambas juntas (flush del cleanup de cada una) y remonta — simula "las dos pestañas
+    // se cerraron y la app volvió a abrir" — para verificar contra IndexedDB real, no memoria.
+    unmount()
+
+    render(
+      <ConAuth usuario={usuario}>
+        <ProveedorDeBorradoresDeTicket>
+          <div data-testid="a">
+            <Consumidor clave={CLAVE_A} />
+          </div>
+          <div data-testid="b">
+            <Consumidor clave={CLAVE_B} />
+          </div>
+        </ProveedorDeBorradoresDeTicket>
+      </ConAuth>,
+    )
+
+    // `waitFor`, no `findByTestId` + assert: los contenedores existen desde el primer render
+    // (JD-2), así que hay que esperar a que el `Provider` termine de hidratar para que el
+    // contenido dentro de cada uno deje de ser "vacio".
+    await waitFor(() => expect(screen.getByTestId('a')).toHaveTextContent('proximoId:3'))
+    await waitFor(() => expect(screen.getByTestId('b')).toHaveTextContent('proximoId:3'))
+  })
+
+  it('limpiar en una pestaña borra solo esa clave — la otra clave, escrita por otra pestaña, sobrevive', async () => {
+    const usuario = usuarioFixture()
+
+    // Simula dos pestañas ya con un borrador guardado cada una (estado previo a este test).
+    const almacenA = crearAlmacenIndexedDb()
+    await almacenA.escribir(claveIndexedDbDeBorrador(usuario, CLAVE_A), { version: 1, borrador: borradorDeEjemplo })
+    await almacenA.escribir(claveIndexedDbDeBorrador(usuario, CLAVE_B), { version: 1, borrador: borradorDeEjemplo })
+
+    const { unmount } = render(
+      <ConAuth usuario={usuario}>
+        <ProveedorDeBorradoresDeTicket>
+          <Consumidor clave={CLAVE_A} />
+        </ProveedorDeBorradoresDeTicket>
+      </ConAuth>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('proximoId:3'))
+    await userEvent.click(screen.getByRole('button', { name: 'limpiar' }))
+    unmount()
+
+    render(
+      <ConAuth usuario={usuario}>
+        <ProveedorDeBorradoresDeTicket>
+          <div data-testid="a">
+            <Consumidor clave={CLAVE_A} />
+          </div>
+          <div data-testid="b">
+            <Consumidor clave={CLAVE_B} />
+          </div>
+        </ProveedorDeBorradoresDeTicket>
+      </ConAuth>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('b')).toHaveTextContent('proximoId:3'))
+    expect(screen.getByTestId('a')).toHaveTextContent('vacio')
+  })
+})
+
+describe('BorradorDeTicketContext — timeout de hidratación (JD-2)', () => {
+  const CLAVE = 'libre:7'
+
+  it('hidratación que nunca resuelve: pasado el timeout, listo pasa a true con el almacén vacío', async () => {
+    vi.useFakeTimers()
+    try {
+      const promesaQueNuncaResuelve = new Promise<Array<EntradaDeAlmacen<unknown>>>(() => {})
+      const almacenLento: AlmacenDeClavesMultiples = {
+        leer: () => Promise.resolve(null),
+        escribir: () => Promise.resolve(true),
+        eliminar: () => Promise.resolve(true),
+        leerPrefijo: <T,>() => promesaQueNuncaResuelve as Promise<Array<EntradaDeAlmacen<T>>>,
+      }
+      const usuario = usuarioFixture()
+
+      render(
+        <ConAuth usuario={usuario}>
+          <ProveedorDeBorradoresDeTicket almacen={almacenLento}>
+            <ConsumidorListo clave={CLAVE} />
+          </ProveedorDeBorradoresDeTicket>
+        </ConAuth>,
+      )
+
+      expect(screen.getByTestId('listo')).toHaveTextContent('cargando')
+
+      await vi.advanceTimersByTimeAsync(2000)
+
+      await vi.waitFor(() => expect(screen.getByTestId('listo')).toHaveTextContent('listo'))
+      expect(screen.getByTestId('estado')).toHaveTextContent('vacio')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una lectura que llega DESPUÉS del timeout no pisa un borrador guardado mientras tanto', async () => {
+    vi.useFakeTimers()
+    try {
+      const usuario = usuarioFixture()
+      const claveDb = claveIndexedDbDeBorrador(usuario, CLAVE)
+      let resolverLectura: ((entradas: Array<EntradaDeAlmacen<unknown>>) => void) | null = null
+      const lecturaControlada = new Promise<Array<EntradaDeAlmacen<unknown>>>((resolve) => {
+        resolverLectura = resolve
+      })
+      const almacenLento: AlmacenDeClavesMultiples = {
+        leer: () => Promise.resolve(null),
+        escribir: () => Promise.resolve(true),
+        eliminar: () => Promise.resolve(true),
+        leerPrefijo: <T,>() => lecturaControlada as Promise<Array<EntradaDeAlmacen<T>>>,
+      }
+
+      render(
+        <ConAuth usuario={usuario}>
+          <ProveedorDeBorradoresDeTicket almacen={almacenLento}>
+            <ConsumidorListo clave={CLAVE} />
+          </ProveedorDeBorradoresDeTicket>
+        </ConAuth>,
+      )
+
+      await vi.advanceTimersByTimeAsync(2000)
+      await vi.waitFor(() => expect(screen.getByTestId('listo')).toHaveTextContent('listo'))
+
+      // El cajero arma un ticket nuevo DESPUÉS de que el timeout ya dio por vencida la
+      // hidratación — `mapaRef` ya no está vacío cuando la lectura vieja llega.
+      screen.getByRole('button', { name: 'guardar' }).click()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.getByTestId('estado')).toHaveTextContent('proximoId:3')
+
+      // La lectura vieja llega tarde con un valor (potencialmente desactualizado) para la MISMA
+      // clave — si se aplicara igual, pisaría el borrador recién guardado.
+      resolverLectura!([{ clave: claveDb, valor: { version: 1, borrador: { ...borradorDeEjemplo, proximoIdFilaPago: 99 } } }])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(screen.getByTestId('estado')).toHaveTextContent('proximoId:3')
     } finally {
       vi.useRealTimers()
     }
