@@ -121,6 +121,33 @@ describe('header Authorization bajo Tauri (slice bearer)', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer un-token-de-sesion')
   })
 
+  it('un Authorization propio del llamador reemplaza al bearer en esa solicitud (api.get y api.post)', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token-de-sesion')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo', { Authorization: 'Dispositivo un-secreto' })
+    await api.post('/algo', { x: 1 }, { Authorization: 'Dispositivo un-secreto' })
+
+    const autorizaciones = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).headers as Record<string, string>)
+    expect(autorizaciones.map((h) => h.Authorization)).toEqual(['Dispositivo un-secreto', 'Dispositivo un-secreto'])
+    expect(autorizaciones[1]['Content-Type']).toBe('application/json')
+  })
+
+  it('un 401 de una solicitud con Authorization propio no limpia el bearer vigente ni dispara los observadores', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token-de-sesion')
+    const observador = vi.fn()
+    const dejarDeEscuchar = alPerderLaSesion(observador)
+    fetchMock.mockResolvedValue(respuestaMock({ status: 401, ok: false }))
+
+    await expect(api.post('/algo', { x: 1 }, { Authorization: 'Dispositivo un-secreto' })).rejects.toBeInstanceOf(ErrorApi)
+
+    expect(tokenDeSesionBearerActual()).toBe('un-token-de-sesion')
+    expect(observador).not.toHaveBeenCalled()
+    dejarDeEscuchar()
+  })
+
   it('un 401 limpia el token bearer guardado (ya no sirve)', async () => {
     instalarPuenteTauri()
     establecerTokenDeSesionBearer('un-token-vencido')

@@ -3,11 +3,18 @@
  * tiene login por mail/password como el resto de la app: primero se vincula el dispositivo a un
  * punto de venta (una vez, con sesión de un Admin) y después cada cajero entra con usuario +
  * contraseña contra ESE dispositivo (`POST /auth/login-dispositivo`). `obtenerActual` es anónimo
- * (lee la cookie `ways.dispositivo`, nunca la de sesión) — un 404 `dispositivo_no_vinculado` es
- * el camino esperado la primera vez, o si el dispositivo fue desvinculado del lado del servidor.
+ * (lee la cookie `ways.dispositivo` o, bajo Tauri, el header `Dispositivo`; nunca la sesión) — un
+ * 404 `dispositivo_no_vinculado` es el camino esperado la primera vez, o si el dispositivo fue
+ * desvinculado del lado del servidor.
  */
 import { api } from './cliente'
-import { calcularExpiracionPersistida, corriendoEnTauri, establecerTokenDeSesionBearer, guardarSesionDeCajeroPersistida } from './entornoTauri'
+import {
+  calcularExpiracionPersistida,
+  corriendoEnTauri,
+  establecerTokenDeSesionBearer,
+  guardarSesionDeCajeroPersistida,
+  leerCredencialDeDispositivo,
+} from './entornoTauri'
 import type { UsuarioAutenticado } from './tipos'
 
 export type DispositivoActual = {
@@ -29,7 +36,7 @@ export type DispositivoVinculado = { datos: DispositivoActual; secreto: string }
 
 export type CredencialesDeDispositivo = { usuario: string; password: string }
 
-/** Espejo de `AuthEndpoints.SesionDeDispositivoConBearer` — solo llega cuando la solicitud pidió
+/** Espejo de `AuthEndpoints.SesionConBearer` — solo llega cuando la solicitud pidió
  * `solicitarBearer: true` (ver `iniciarSesion`); el resto de los casos siguen devolviendo
  * `UsuarioAutenticado` a secas. */
 type RespuestaLoginDeDispositivo = UsuarioAutenticado | { usuario: UsuarioAutenticado; token: string; expiraEl: string }
@@ -49,14 +56,30 @@ export type DispositivoListado = {
   ultimoUsoAt: string | null
 }
 
+/**
+ * Bajo Tauri la cookie `ways.dispositivo` no viaja (`cliente.ts` manda `credentials: 'omit'` a la
+ * API de otro origen): el secreto guardado del lado de Rust va en `Authorization: Dispositivo
+ * <secreto>`, que la API lee en `ResolucionDeCredencialDeDispositivo`. `undefined` fuera de Tauri
+ * (sin consultar la credencial local) o sin secreto guardado.
+ */
+async function headerDeDispositivo(): Promise<Record<string, string> | undefined> {
+  if (!corriendoEnTauri()) return undefined
+  const secreto = await leerCredencialDeDispositivo()
+  return secreto ? { Authorization: `Dispositivo ${secreto}` } : undefined
+}
+
 export const clienteDeDispositivos = {
-  obtenerActual: () => api.get<DispositivoActual>('/dispositivos/actual'),
+  obtenerActual: async (): Promise<DispositivoActual> => {
+    const headers = await headerDeDispositivo()
+    return headers ? api.get<DispositivoActual>('/dispositivos/actual', headers) : api.get<DispositivoActual>('/dispositivos/actual')
+  },
   /** Devuelve el sobre completo (`DispositivoVinculado`, datos + secreto) — a propósito, no solo
    * `DispositivoActual`: es responsabilidad del LLAMADOR (`PantallaDeVinculacion.tsx`) decidir
    * qué hacer con el secreto (persistirlo del lado de Rust bajo Tauri), no de este cliente. */
   vincular: (datos: AltaDispositivo) => api.post<DispositivoVinculado>('/dispositivos', datos),
   /** `POST /auth/login-dispositivo` — misma forma de respuesta que `POST /auth/login` para el
-   * navegador normal (exige la cookie de dispositivo, nunca funciona en la app web sin ella).
+   * navegador normal (exige la cookie de dispositivo, nunca funciona en la app web sin ella; bajo
+   * Tauri, el header `Dispositivo`, ver `headerDeDispositivo`).
    * Bajo Tauri pide ADEMÁS el token bearer (`solicitarBearer: true`) y lo guarda en memoria
    * (`entornoTauri.ts`) para que `cliente.ts` lo adjunte en las requests siguientes — preparación
    * para la slice 3, donde la cookie va a dejar de viajar por ser cross-site.
@@ -70,10 +93,11 @@ export const clienteDeDispositivos = {
    * local mucho más corta (ver `entornoTauri.ts`, `VENTANA_SESION_OFFLINE_MS`). */
   iniciarSesion: async (credenciales: CredencialesDeDispositivo): Promise<UsuarioAutenticado> => {
     const solicitarBearer = corriendoEnTauri()
-    const respuesta = await api.post<RespuestaLoginDeDispositivo>('/auth/login-dispositivo', {
-      ...credenciales,
-      solicitarBearer,
-    })
+    const cuerpo = { ...credenciales, solicitarBearer }
+    const headers = await headerDeDispositivo()
+    const respuesta = headers
+      ? await api.post<RespuestaLoginDeDispositivo>('/auth/login-dispositivo', cuerpo, headers)
+      : await api.post<RespuestaLoginDeDispositivo>('/auth/login-dispositivo', cuerpo)
 
     if (esRespuestaConBearer(respuesta)) {
       establecerTokenDeSesionBearer(respuesta.token)

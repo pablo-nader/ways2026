@@ -163,8 +163,11 @@ async function ejecutarFetch(url: string, init: RequestInit): Promise<Response> 
 
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   // Capturado ANTES del fetch (FIX 5, ver el doc-comment de `exigirRespuestaOk`): es el token con
-  // el que ESTA solicitud sale a la red, no el que esté vigente cuando la respuesta vuelva.
-  const tokenDeLaSolicitud = tokenDeSesionBearerActual()
+  // el que ESTA solicitud sale a la red, no el que esté vigente cuando la respuesta vuelva. Si el
+  // llamador trae su propio `Authorization`, la solicitud no lleva el bearer: su 401 no habla de
+  // esa sesión.
+  const reemplazaAuthorization = init?.headers !== undefined && 'Authorization' in init.headers
+  const tokenDeLaSolicitud = reemplazaAuthorization ? null : tokenDeSesionBearerActual()
   const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     ...init,
     credentials: credencialesDeLaSolicitud(),
@@ -232,10 +235,12 @@ async function descargar(ruta: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+/** `headers` se aplica DESPUÉS del bearer en `pedir`: un `Authorization` propio (el
+ * `Dispositivo <secreto>` de `dispositivos.ts`) reemplaza al de la sesión en esa sola solicitud. */
 export const api = {
-  get: <T>(ruta: string) => pedir<T>(ruta),
-  post: <T>(ruta: string, cuerpo?: unknown) =>
-    pedir<T>(ruta, { method: 'POST', body: cuerpo ? JSON.stringify(cuerpo) : undefined }),
+  get: <T>(ruta: string, headers?: Record<string, string>) => pedir<T>(ruta, headers ? { headers } : undefined),
+  post: <T>(ruta: string, cuerpo?: unknown, headers?: Record<string, string>) =>
+    pedir<T>(ruta, { method: 'POST', body: cuerpo ? JSON.stringify(cuerpo) : undefined, ...(headers ? { headers } : {}) }),
   put: <T>(ruta: string, cuerpo: unknown) =>
     pedir<T>(ruta, { method: 'PUT', body: JSON.stringify(cuerpo) }),
   delete: <T>(ruta: string) => pedir<T>(ruta, { method: 'DELETE' }),
