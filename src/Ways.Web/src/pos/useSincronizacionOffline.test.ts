@@ -834,9 +834,12 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
     }
   }
 
-  /** Espera un ciclo completo (drenado + instantánea + rendición) sin depender de ningún assert
-   * sobre la rendición misma — para los tests que prueban que NO se rinde. */
-  async function esperarUnCicloCompleto() {
+  /** Espera a que el ciclo haya llegado AL MENOS hasta el refresco de instantánea (paso 2 de los 4
+   * de `ciclo`) y después drena las microtareas pendientes con un `setTimeout(0)`. NO observa
+   * ninguna señal del paso de rendición (paso 4): un test que afirme que NO se rindió necesita
+   * además su propio control positivo de que ese paso corre de verdad — ver el test de "sin bloque
+   * local", que lo consigue con una segunda fase. */
+  async function esperarHastaElRefrescoDeInstantanea() {
     await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalled())
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -883,15 +886,43 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
     ])
   })
 
+  /**
+   * Cláusula bajo prueba: `if (bloque === null) return null` de `rendirColaLocal` — un dispositivo
+   * que perdió su bloque no puede dar fe de su cola, así que no rinde nada (el servidor bloquea el
+   * cierre por sí mismo ante un reporte ausente).
+   *
+   * La afirmación negativa necesita un control POSITIVO en el mismo test: el paso de rendición no
+   * emite ninguna señal observable cuando saltea, así que esperar "un ciclo" dejaría el assert verde
+   * incluso con el `await rendirColaLocal()` borrado entero de `ciclo`. La segunda fase es ese
+   * control: apenas hay señal, el ciclo repone el bloque (`reponerBloqueSiNecesario`) y ese mismo
+   * paso SÍ rinde — recién ahí queda probado que el paso corre, y por lo tanto que en la primera
+   * fase corrió y eligió no rendir.
+   */
   it('sin bloque local no rinde nada: no hay cola de la que dar fe', async () => {
     const almacen = almacenFake()
     await agregarAOutbox(almacen, ventaEnCola('a', 100))
     emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+    // Sin señal (default del `beforeEach`): `reponerBloqueSiNecesario` ni se intenta, así que el
+    // bloque sigue ausente durante toda la primera fase.
 
     renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
-    await esperarUnCicloCompleto()
+    await esperarHastaElRefrescoDeInstantanea()
     expect(rendirColaMock).not.toHaveBeenCalled()
+
+    // Control positivo: con señal, el ciclo repone el bloque y el paso de rendición del MISMO ciclo
+    // declara la cola. `entregadoHasta` (99) y `pendientes` (1) son valores distintos entre sí y
+    // distintos de `desde` (100), así que ninguno puede coincidir por casualidad.
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    reservarNumeracionMock.mockResolvedValue({ desde: 100, hasta: 199, idPuntoVenta: 7, codigoTipoComprobante: 'TX' })
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await waitFor(() =>
+      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 99, pendientes: 1 }),
+    )
   })
 
   it('una rendición que falla no rompe el drenado del mismo ciclo ni el ciclo siguiente, y no deja una rejection sin manejar', async () => {

@@ -261,7 +261,10 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
         return
       }
 
-      if (e instanceof ErrorApi && e.estado === 403 && forzarSinRendicion) {
+      if (e instanceof ErrorApi && e.codigo === 'prohibido' && forzarSinRendicion) {
+        // Se exige el CÓDIGO de `ValidarOverrideDeRendicion` (403 `prohibido`), no un 403
+        // cualquiera: otro 403 mientras se fuerza —sesión degradada, `OperacionDePos`, alcance de
+        // tenant— tiene otra causa y cae al mensaje real del servidor, nunca a este.
         // El rol del cliente nunca es fuente de verdad (`puedeForzarCierreSinRendicion` solo da
         // forma a la copia): este 403 es alcanzable aunque la pantalla creyera que se podía.
         setErrorCierre('Solo un supervisor o un administrador puede cerrar el turno sin la rendición del dispositivo.')
