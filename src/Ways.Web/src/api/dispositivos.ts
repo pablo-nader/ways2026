@@ -40,6 +40,15 @@ function esRespuestaConBearer(
   return 'token' in respuesta
 }
 
+/** Fila de `GET /api/dispositivos` (Admin): solo los dispositivos activos del tenant. */
+export type DispositivoListado = {
+  id: number
+  nombre: string
+  puntoVenta: { numero: number; nombre: string }
+  createdAt: string
+  ultimoUsoAt: string | null
+}
+
 export const clienteDeDispositivos = {
   obtenerActual: () => api.get<DispositivoActual>('/dispositivos/actual'),
   /** Devuelve el sobre completo (`DispositivoVinculado`, datos + secreto) — a propósito, no solo
@@ -74,4 +83,8 @@ export const clienteDeDispositivos = {
 
     return respuesta
   },
+  listar: () => api.get<DispositivoListado[]>('/dispositivos'),
+  /** `DELETE /api/dispositivos/{id}` — baja lógica; las sesiones abiertas en el equipo se cortan en
+   * su próxima request. */
+  revocar: (id: number) => api.delete<void>(`/dispositivos/${id}`),
 }

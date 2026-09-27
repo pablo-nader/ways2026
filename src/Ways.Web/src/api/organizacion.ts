@@ -36,7 +36,7 @@ export const clienteDeOrganizacion = {
     api.put<PuntoVentaListado>(`/puntos-venta/${id}`, datos),
   eliminarPuntoVenta: (id: number) => api.delete<void>(`/puntos-venta/${id}`),
   // stage-desktop-pos (DB CHANGE GATE aprobado): flip de modo — 409 si el punto de venta tiene
-  // un dispositivo activo (revocalo primero desde la pantalla de dispositivos).
+  // un dispositivo activo (revocalo primero desde Organización → Equipos POS).
   actualizarModoPuntoVenta: (id: number, datos: PuntoVentaModoEdicion) =>
     api.post<PuntoVentaListado>(`/puntos-venta/${id}/modo`, datos),
 }
