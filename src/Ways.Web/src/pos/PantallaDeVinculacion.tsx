@@ -1,9 +1,14 @@
-import { useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent, RefObject } from 'react'
 import { clienteDeDispositivos } from '../api/dispositivos'
 import type { DispositivoActual, DispositivoVinculado } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
-import { guardarCredencialDeDispositivo } from '../api/entornoTauri'
+import {
+  corriendoEnTauri,
+  establecerTokenDeSesionBearer,
+  guardarCredencialDeDispositivo,
+  tokenDeSesionBearerActual,
+} from '../api/entornoTauri'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { puedeGestionarCatalogos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
@@ -24,10 +29,28 @@ type Paso =
   // bloqueo, el enforcement tiene que ser real).
   | { paso: 'credencial-fallida' }
 
+/** Respuesta de `POST /auth/login` con `solicitarBearer: true` (`AuthEndpoints.SesionConBearer`). */
+type SesionAdminConBearer = { usuario: UsuarioAutenticado; token: string; expiraEl: string }
+
+/** Quita de memoria el bearer de admin que instaló esta pantalla, solo si sigue siendo el vigente:
+ * nunca pisa un token que otro flujo haya instalado después. */
+function soltarTokenAdmin(tokenAdminRef: RefObject<string | null>) {
+  const propio = tokenAdminRef.current
+  tokenAdminRef.current = null
+  if (propio !== null && tokenDeSesionBearerActual() === propio) establecerTokenDeSesionBearer(null)
+}
+
 /**
  * Pantalla de vinculación del POS de escritorio (stage-desktop-pos) — corre una única vez por
  * equipo. Login admin → elegir PV + nombre → `POST /api/dispositivos` → logout del admin (la
  * sesión que sigue es la del cajero, nunca la de quien vinculó) → `LoginDeDispositivo`.
+ *
+ * Bajo Tauri la página no recibe cookies de la API (otro origen): el login admin pide un bearer de
+ * 15 minutos (`solicitarBearer: true`) que vive solo en memoria (`establecerTokenDeSesionBearer`,
+ * nunca `guardarSesionDeCajeroPersistida`). Para un no-admin nunca se instala; se suelta al
+ * vincular, al abandonar el flujo (falla del listado de PV, 401 al vincular, credencial local
+ * fallida) y al desmontar. Fuera de Tauri sigue la cookie de siempre, cerrada con
+ * `POST /auth/logout`.
  */
 export function PantallaDeVinculacion({ alVinculado }: Props) {
   const [paso, setPaso] = useState<Paso>({ paso: 'login' })
@@ -38,6 +61,16 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
   const [error, setError] = useState('')
   const [enviando, setEnviando] = useState(false)
   const enviandoRef = useRef(false)
+  const tokenAdminRef = useRef<string | null>(null)
+  const montadoRef = useRef(true)
+
+  useEffect(() => {
+    montadoRef.current = true
+    return () => {
+      montadoRef.current = false
+      soltarTokenAdmin(tokenAdminRef)
+    }
+  }, [])
 
   async function iniciarSesionAdmin(evento: FormEvent) {
     evento.preventDefault()
@@ -47,17 +80,32 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
     setError('')
 
     try {
-      const usuario = await api.post<UsuarioAutenticado>('/auth/login', { mail, password })
+      if (corriendoEnTauri()) {
+        const sesion = await api.post<SesionAdminConBearer>('/auth/login', { mail, password, solicitarBearer: true })
+        // Desmontada mientras el login estaba en vuelo: el cleanup ya corrió y nadie soltaría este token.
+        if (!montadoRef.current) return
 
-      if (!puedeGestionarCatalogos(usuario.rolId)) {
-        setError('Se necesita un usuario administrador para vincular el dispositivo.')
-        await api.post('/auth/logout').catch(() => undefined)
-        return
+        if (!puedeGestionarCatalogos(sesion.usuario.rolId)) {
+          setError('Se necesita un usuario administrador para vincular el dispositivo.')
+          return
+        }
+
+        tokenAdminRef.current = sesion.token
+        establecerTokenDeSesionBearer(sesion.token)
+      } else {
+        const usuario = await api.post<UsuarioAutenticado>('/auth/login', { mail, password })
+
+        if (!puedeGestionarCatalogos(usuario.rolId)) {
+          setError('Se necesita un usuario administrador para vincular el dispositivo.')
+          await api.post('/auth/logout').catch(() => undefined)
+          return
+        }
       }
 
       const puntosVenta = await clienteDeOrganizacion.listarPuntosVenta()
       setPaso({ paso: 'elegir-pv', puntosVenta })
     } catch (e) {
+      soltarTokenAdmin(tokenAdminRef)
       setError(e instanceof ErrorApi ? e.message : 'No se pudo iniciar sesión.')
       setPassword('')
     } finally {
@@ -87,7 +135,16 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
         nombre: nombreDispositivo.trim(),
       })
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el dispositivo.')
+      // El bearer de admin venció (15 minutos): el formulario ya no puede autenticar, se vuelve al
+      // login en vez de dejar un botón que solo puede volver a dar 401.
+      if (tokenAdminRef.current !== null && e instanceof ErrorApi && e.estado === 401) {
+        soltarTokenAdmin(tokenAdminRef)
+        setPassword('')
+        setError('La sesión de administrador venció. Volvé a ingresar.')
+        setPaso({ paso: 'login' })
+      } else {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el dispositivo.')
+      }
       enviandoRef.current = false
       setEnviando(false)
       return
@@ -109,6 +166,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
           'Revocalo desde Dispositivos y volvé a vincularlo.',
       )
       setPaso({ paso: 'credencial-fallida' })
+      soltarTokenAdmin(tokenAdminRef)
       enviandoRef.current = false
       setEnviando(false)
       return
@@ -116,7 +174,11 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
 
     // La sesión de admin ya cumplió su propósito: se cierra antes de avisar, así el próximo
     // paso (login del cajero) arranca sin ninguna sesión activa.
-    await api.post('/auth/logout').catch(() => undefined)
+    if (tokenAdminRef.current !== null) {
+      soltarTokenAdmin(tokenAdminRef)
+    } else {
+      await api.post('/auth/logout').catch(() => undefined)
+    }
     enviandoRef.current = false
     setEnviando(false)
     alVinculado(vinculado.datos)

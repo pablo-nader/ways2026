@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PantallaDeVinculacion } from './PantallaDeVinculacion'
 import { ErrorApi } from '../api/cliente'
+import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 
@@ -36,10 +37,21 @@ vi.mock('../api/dispositivos', () => ({
   clienteDeDispositivos: { vincular: (...args: unknown[]) => vincularMock(...args) },
 }))
 
+// Solo se reemplaza el guardado de la credencial: `corriendoEnTauri`, el token en memoria y la
+// persistencia de sesión son los reales, así que "nunca persiste" se observa en el IPC.
 const guardarCredencialDeDispositivoMock = vi.fn()
-vi.mock('../api/entornoTauri', () => ({
+vi.mock('../api/entornoTauri', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('../api/entornoTauri')>()),
   guardarCredencialDeDispositivo: (...args: unknown[]) => guardarCredencialDeDispositivoMock(...args),
 }))
+
+type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
+const invokeMock = vi.fn()
+
+function instalarPuenteTauri() {
+  invokeMock.mockResolvedValue(undefined)
+  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: invokeMock } }
+}
 
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
@@ -72,6 +84,12 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
     ...sobrescribir,
   }
 }
+
+afterEach(() => {
+  delete (globalThis as GlobalConTauri).__TAURI__
+  invokeMock.mockReset()
+  establecerTokenDeSesionBearer(null)
+})
 
 beforeEach(() => {
   apiPostMock.mockReset()
@@ -211,5 +229,195 @@ describe('PantallaDeVinculacion', () => {
     expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Nombre del equipo')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Vincular' })).not.toBeInTheDocument()
+  })
+})
+
+const dispositivoFixture = {
+  id: 1,
+  nombre: 'Caja 1',
+  idPuntoVenta: 7,
+  puntoVenta: { numero: 1, nombre: 'Local Centro' },
+  empresa: { nombre: 'Empresa Demo' },
+}
+
+/** Bajo Tauri el login admin responde con el bearer (`solicitarBearer: true`). */
+async function iniciarSesionBajoTauriComo(usuario: UsuarioAutenticado, token = 'token-admin') {
+  apiPostMock.mockImplementation((ruta: string) =>
+    ruta === '/auth/login' ? Promise.resolve({ usuario, token, expiraEl: '2026-09-27T12:15:00Z' }) : Promise.resolve(undefined),
+  )
+  await userEvent.type(screen.getByPlaceholderText('Correo electrónico'), usuario.mail)
+  await userEvent.type(screen.getByPlaceholderText('Contraseña'), 'secreta123')
+  await userEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+}
+
+async function completarVinculacion() {
+  await screen.findByLabelText('Punto de venta')
+  await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
+  await userEvent.type(screen.getByLabelText('Nombre del equipo'), 'Caja 1')
+  await userEvent.click(screen.getByRole('button', { name: 'Vincular' }))
+}
+
+function nuncaPersistioSesion() {
+  expect(invokeMock.mock.calls.filter(([comando]) => comando === 'guardar_sesion_de_cajero')).toEqual([])
+}
+
+describe('PantallaDeVinculacion bajo Tauri (bearer de admin en memoria)', () => {
+  it('fuera de Tauri el login admin no pide bearer ni instala token', async () => {
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionComo(usuarioFixture())
+    await screen.findByLabelText('Punto de venta')
+
+    expect(apiPostMock).toHaveBeenCalledWith('/auth/login', { mail: 'admin@ways.test', password: 'secreta123' })
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('pide solicitarBearer, instala el token en memoria antes de listar los PV y nunca lo persiste', async () => {
+    instalarPuenteTauri()
+    let tokenAlListar: string | null = 'sin-llamar'
+    listarPuntosVentaMock.mockImplementation(() => {
+      tokenAlListar = tokenDeSesionBearerActual()
+      return Promise.resolve([puntoVentaFixture()])
+    })
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await screen.findByLabelText('Punto de venta')
+
+    expect(apiPostMock).toHaveBeenCalledWith('/auth/login', { mail: 'admin@ways.test', password: 'secreta123', solicitarBearer: true })
+    expect(tokenAlListar).toBe('token-admin')
+    expect(tokenDeSesionBearerActual()).toBe('token-admin')
+    nuncaPersistioSesion()
+  })
+
+  it('un no-admin ve el error, el token nunca queda instalado y no se llama a /auth/logout', async () => {
+    instalarPuenteTauri()
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' }))
+
+    expect(await screen.findByText('Se necesita un usuario administrador para vincular el dispositivo.')).toBeInTheDocument()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalledWith('/auth/logout')
+    expect(listarPuntosVentaMock).not.toHaveBeenCalled()
+    nuncaPersistioSesion()
+  })
+
+  it('al vincular, suelta el token ANTES de avisar alVinculado y no llama a /auth/logout', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    vincularMock.mockResolvedValue({ datos: dispositivoFixture, secreto: 'un-secreto-de-prueba' })
+    let tokenAlAvisar: string | null = 'sin-llamar'
+    const alVinculado = vi.fn(() => {
+      tokenAlAvisar = tokenDeSesionBearerActual()
+    })
+    render(<PantallaDeVinculacion alVinculado={alVinculado} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await completarVinculacion()
+
+    await waitFor(() => expect(alVinculado).toHaveBeenCalledWith(dispositivoFixture))
+    expect(tokenAlAvisar).toBeNull()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+    expect(apiPostMock).not.toHaveBeenCalledWith('/auth/logout')
+    nuncaPersistioSesion()
+  })
+
+  it('si falla el listado de PV después del login, suelta el token', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockRejectedValue(new ErrorApi(500, 'error', 'Falló el listado.'))
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+
+    expect(await screen.findByText('Falló el listado.')).toBeInTheDocument()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('si el guardado local de la credencial falla (flujo terminal), suelta el token', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    vincularMock.mockResolvedValue({ datos: dispositivoFixture, secreto: 'un-secreto-de-prueba' })
+    guardarCredencialDeDispositivoMock.mockRejectedValue(new Error('IPC falló'))
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await completarVinculacion()
+
+    expect(await screen.findByText(/El dispositivo quedó vinculado, pero no se pudo guardar la credencial/)).toBeInTheDocument()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('un 401 al vincular (bearer vencido) vuelve al login y suelta el token', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    vincularMock.mockRejectedValue(new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.'))
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await completarVinculacion()
+
+    expect(await screen.findByText('La sesión de administrador venció. Volvé a ingresar.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continuar' })).toBeEnabled()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+  })
+
+  it('otro error al vincular deja el token para reintentar sin volver a loguear', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    vincularMock.mockRejectedValue(new ErrorApi(409, 'punto_de_venta_ya_vinculado', 'El punto de venta ya tiene un dispositivo vinculado.'))
+    render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await completarVinculacion()
+
+    expect(await screen.findByText('El punto de venta ya tiene un dispositivo vinculado.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Punto de venta')).toBeInTheDocument()
+    expect(tokenDeSesionBearerActual()).toBe('token-admin')
+  })
+
+  it('si se desmonta con el login en vuelo, el token que llega tarde nunca se instala', async () => {
+    instalarPuenteTauri()
+    let resolverLogin: (valor: unknown) => void = () => {}
+    apiPostMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolverLogin = resolve
+        }),
+    )
+    const vista = render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+    await userEvent.type(screen.getByPlaceholderText('Correo electrónico'), 'admin@ways.test')
+    await userEvent.type(screen.getByPlaceholderText('Contraseña'), 'secreta123')
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+
+    vista.unmount()
+    await act(async () => {
+      resolverLogin({ usuario: usuarioFixture(), token: 'token-tardio', expiraEl: '2026-09-27T12:15:00Z' })
+    })
+
+    expect(tokenDeSesionBearerActual()).toBeNull()
+    expect(listarPuntosVentaMock).not.toHaveBeenCalled()
+  })
+
+  it('al desmontar suelta su token, pero no uno que otro flujo instaló después', async () => {
+    instalarPuenteTauri()
+    listarPuntosVentaMock.mockResolvedValue([puntoVentaFixture()])
+    const primera = render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+    await iniciarSesionBajoTauriComo(usuarioFixture())
+    await screen.findByLabelText('Punto de venta')
+    expect(tokenDeSesionBearerActual()).toBe('token-admin')
+
+    primera.unmount()
+    expect(tokenDeSesionBearerActual()).toBeNull()
+
+    const segunda = render(<PantallaDeVinculacion alVinculado={vi.fn()} />)
+    await iniciarSesionBajoTauriComo(usuarioFixture(), 'token-admin-2')
+    await screen.findByLabelText('Punto de venta')
+    establecerTokenDeSesionBearer('token-de-otro-flujo')
+
+    segunda.unmount()
+    expect(tokenDeSesionBearerActual()).toBe('token-de-otro-flujo')
   })
 })
