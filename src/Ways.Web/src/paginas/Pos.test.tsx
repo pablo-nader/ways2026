@@ -1094,6 +1094,31 @@ describe('Pos — checkout', () => {
     expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
   })
 
+  it('un cobro exitoso en venta libre vuelve a dejar seleccionado a Consumidor Final, aunque el cajero haya elegido otro cliente', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id)))
+  })
+
   /**
    * Cláusula bajo prueba: `evento.repeat` en la rama de `ventaFinalizada` del listener de F9 — un
    * F9 sostenido desde la propia confirmación de cobro (F9 que abrió "¿Finalizar venta?" y sigue

@@ -602,6 +602,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [errorClientes, setErrorClientes] = useState('')
   const generacionClientesRef = useRef(0)
+  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
+  // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
+  // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
+  // valor congelado apenas se conoce.
+  const consumidorFinalRef = useRef<ClienteListado | null>(null)
 
   const [lineas, setLineas] = useState<LineaCarrito[]>([])
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
@@ -890,6 +895,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // punto de venta (que bajo este modo sale del presupuesto y no de la sesión).
         if (!modoPresupuesto) {
           const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
+          consumidorFinalRef.current = consumidorFinal
           setClienteSeleccionado(consumidorFinal)
         }
       })
@@ -2237,6 +2243,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
+      // stage-pos-adjustments: en venta libre, el próximo ticket vuelve a arrancar en Consumidor
+      // Final — nunca bajo `?idPresupuesto=` (esa conversión mantiene el cliente que trae el
+      // presupuesto). Si Consumidor Final no llegó a cargar, se deja el cliente como está: una
+      // falla de carga no puede vaciar una selección que sí funciona.
+      if (!modoPresupuesto && consumidorFinalRef.current) {
+        setClienteSeleccionado(consumidorFinalRef.current)
+      }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
