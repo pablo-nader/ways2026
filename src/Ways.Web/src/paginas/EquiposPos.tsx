@@ -10,11 +10,12 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 const AVISO_REFRESCO_FALLIDO = 'Se revocó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /** OD4: la revocación no libera las bajas que el equipo bloquea, y la puerta tiene que decirlo antes
- * de confirmar. */
+ * de confirmar. También avisa que la cola offline sin rendir queda perdida (`LectorDeRendicionDeDispositivos`). */
 export const NOTA_DE_REVOCACION =
   'El equipo deja de poder iniciar sesión y las sesiones abiertas en él se cortan en su próxima operación. ' +
   'La revocación es lógica: el equipo sigue contando como uso, así que su punto de venta, el tenant y el ' +
-  'usuario que lo vinculó no se van a poder dar de baja.'
+  'usuario que lo vinculó no se van a poder dar de baja. Si el equipo tiene ventas sin conexión que todavía ' +
+  'no sincronizó, se pierden: un equipo revocado ya no puede rendir su cola.'
 
 function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
