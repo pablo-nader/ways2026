@@ -603,6 +603,7 @@ type PropsModalCuentaCorrientePos = {
   puntoVenta: PuntoVentaListado
   medios: MedioPagoListado[]
   onCerrar: () => void
+  onPagoRegistrado: (idCliente: number) => void
 }
 
 /**
@@ -612,7 +613,7 @@ type PropsModalCuentaCorrientePos = {
  * mano. El punto de venta lo fija el turno de la sesión (`puntoVentaFijo` de `ModalPagoACuenta`),
  * nunca un selector — acá no hay ninguna elección manual de PV que replicar.
  */
-function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar }: PropsModalCuentaCorrientePos) {
+function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar, onPagoRegistrado }: PropsModalCuentaCorrientePos) {
   const [clienteElegido, setClienteElegido] = useState<ClienteListado | null>(
     clienteInicial && !clienteInicial.esConsumidorFinal ? clienteInicial : null,
   )
@@ -709,6 +710,9 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar 
           setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
           // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
           cargarEstado()
+          // JD-1: si el cliente pagado es el mismo de la venta en curso, `PantallaPos` refresca su
+          // `clienteSeleccionado` — su copia cacheada del saldo quedó vieja apenas se registra el pago.
+          onPagoRegistrado(clienteElegido!.id)
         }}
       />
     )
@@ -885,6 +889,27 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
+
+  // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
+  // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
+  // borrador (JD-2) puede dejarlo con saldo desactualizado, y `validarPagosLocal` (más abajo) lee
+  // `saldo`/`limiteCredito`/`creditoIlimitado` directo de este estado. react-async-state regla 2:
+  // generación propia + chequeo del id vigente vía updater funcional — si el cajero cambió de
+  // cliente mientras el refetch estaba en vuelo, la respuesta desactualizada se descarta.
+  const generacionClienteSeleccionadoRef = useRef(0)
+  const refrescarClienteSeleccionado = useCallback((idCliente: number) => {
+    const miGeneracion = (generacionClienteSeleccionadoRef.current += 1)
+    clienteDeClientes
+      .obtener(idCliente)
+      .then((actualizado) => {
+        if (generacionClienteSeleccionadoRef.current !== miGeneracion) return
+        setClienteSeleccionado((prev) => (prev && prev.id === idCliente ? actualizado : prev))
+      })
+      .catch(() => {
+        // silencioso: si falla el refetch, se conserva el cliente en pantalla con el saldo que
+        // ya tenía — nunca se lo resetea a Consumidor Final por un error de red.
+      })
+  }, [])
 
   const [lineas, setLineas] = useState<LineaCarrito[]>(() => borradorInicial?.lineas ?? [])
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>(() => borradorInicial?.precios ?? {})
@@ -1213,6 +1238,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // `idPresupuesto`, y `PantallaPos` se remonta entera por `key` cuando cambia) — se declara
     // igual para dejar el efecto exhaustivo, nunca dispara una segunda corrida.
   }, [modoPresupuesto])
+
+  // stage-pos-adjustments (JD-2): un cliente restaurado desde el borrador (navegación afuera y
+  // vuelta) trae el `ClienteListado` cacheado en el momento en que se guardó el borrador — su
+  // saldo puede haber cambiado desde entonces (ej. un pago a cuenta registrado desde otra
+  // pantalla). Refetch único al montar, gateado igual que `refrescarClienteSeleccionado`; si
+  // falla se conserva el cliente restaurado tal cual, nunca se lo resetea.
+  useEffect(() => {
+    if (!clienteRestauradoDelBorradorRef.current) return
+    const idClienteRestaurado = borradorInicial?.clienteSeleccionado?.id
+    if (idClienteRestaurado == null) return
+    refrescarClienteSeleccionado(idClienteRestaurado)
+    // `borradorInicial` proviene de `borradorInicialRef`, congelado en el primer render de esta
+    // instancia — nunca cambia, así que este efecto corre una sola vez.
+  }, [borradorInicial, refrescarClienteSeleccionado])
 
   // stage-pos-turno-y-foco: `medios` todavía no cargó cuando se arma el estado inicial de
   // `filasPago` (`filaPagoInicial(id, null)` más arriba nunca preselecciona nada) — apenas carga,
@@ -3306,6 +3345,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           puntoVenta={puntoVentaSeleccionada}
           medios={medios}
           onCerrar={() => setModalCuentaCorrienteAbierto(false)}
+          onPagoRegistrado={refrescarClienteSeleccionado}
         />
       )}
 

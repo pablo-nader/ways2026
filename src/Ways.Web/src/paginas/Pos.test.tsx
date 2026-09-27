@@ -1506,6 +1506,52 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
   })
+
+  it('JD-2: un cliente restaurado del borrador se refetchea — el chequeo local de crédito usa el saldo del servidor, no el cacheado en el borrador', async () => {
+    const clienteEnBorrador = { ...otroCliente, limiteCredito: 400, creditoIlimitado: false, saldo: 100 }
+    const clienteActualizado = { ...clienteEnBorrador, saldo: 500 }
+    let llamadasClienteId = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/clientes?busqueda=')) {
+        const pagina: PaginaDe<ClienteListado> = { items: [clienteEnBorrador], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta === '/clientes/2') {
+        llamadasClienteId += 1
+        return Promise.resolve<ClienteListado>(clienteActualizado)
+      }
+      return undefined
+    })
+
+    render(arbolDePosConBorrador())
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+
+    await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
+    await screen.findByText('Acá no hay nada de Pos')
+    await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
+
+    await waitFor(() => expect(llamadasClienteId).toBe(1))
+    expect(await screen.findByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioCuentaCorriente.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioCuentaCorriente.nombre} (fila 1)`)
+    await userEvent.type(importe, '100')
+
+    // Con el saldo cacheado (100) el pago de $100 quedaría dentro del límite de $400 — solo el
+    // saldo refrescado del servidor (500) hace que esta fila supere el límite.
+    expect(await screen.findByText('El pago supera el límite de crédito del cliente.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
 })
 
 describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
@@ -1595,6 +1641,87 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
     // Vuelve al panel de saldo (el modal de pago se cierra solo) con el saldo ya refrescado.
     await screen.findByRole('heading', { name: 'Cuenta corriente' })
     expect(await screen.findByText('$ 0,00', { selector: '.fs-5' })).toBeInTheDocument()
+  })
+
+  it('JD-1: pagar la cuenta corriente del cliente de la venta desde el modal refresca `clienteSeleccionado` — el chequeo local de crédito del ticket usa el saldo nuevo', async () => {
+    const clienteAlLimite = { ...otroCliente, limiteCredito: 400, creditoIlimitado: false, saldo: 400 }
+    let clienteRefrescado: ClienteListado | null = null
+    let llamadasEstado = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/clientes?busqueda=')) {
+        const pagina: PaginaDe<ClienteListado> = { items: [clienteAlLimite], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        llamadasEstado += 1
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoDeCuentaFixture(
+            llamadasEstado === 1
+              ? { header: { saldo: 400, limiteCredito: 400, creditoIlimitado: false, disponibilidad: 0 } }
+              : { header: { saldo: 200, limiteCredito: 400, creditoIlimitado: false, disponibilidad: 200 } },
+          ),
+        )
+      }
+      if (ruta === '/clientes/2') {
+        clienteRefrescado = { ...clienteAlLimite, saldo: 200 }
+        return Promise.resolve<ClienteListado>(clienteRefrescado)
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/clientes/2/cuenta-corriente/pagos') {
+        return Promise.resolve<ComprobanteEmitido>(comprobanteEmitidoFixture({ id: 901, numeroVisible: '0007-00000901', idCliente: 2 }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioCuentaCorriente.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioCuentaCorriente.nombre} (fila 1)`)
+    await userEvent.type(importe, '100')
+
+    // Con el saldo al límite (400/400), esta fila de cuenta corriente queda rechazada.
+    expect(await screen.findByText('El pago supera el límite de crédito del cliente.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cuenta corriente' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '200')
+    await waitFor(() => expect(modalDePago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await waitFor(() => expect(clienteRefrescado?.saldo).toBe(200))
+
+    const dialogoCc = screen.getAllByRole('dialog').at(-1)!
+    await userEvent.click(within(dialogoCc).getAllByRole('button', { name: 'Cerrar' })[0])
+
+    // El nuevo saldo (200) deja lugar bajo el límite (400) para la fila de $100 ya cargada.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    expect(screen.queryByText('El pago supera el límite de crédito del cliente.')).not.toBeInTheDocument()
   })
 })
 
