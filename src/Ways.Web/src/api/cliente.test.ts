@@ -308,6 +308,45 @@ describe('URL base y credentials bajo Tauri (slice 3: pos.html local, cross-site
     expect(init.credentials).toBe('omit')
   })
 
+  /** Cláusula bajo prueba: `'omit'` exige una URL base de otro origen. El POS de escritorio hasta
+   * v0.1.1 carga `pos.html` remoto con `__TAURI__` presente pero sin permiso para `info_app`; con
+   * `'omit'` perdía la cookie de dispositivo y quedaba sin poder vincular ni vender. */
+  it('bajo Tauri sin URL base (pos.html servido por el propio servidor) la URL sigue relativa y credentials sigue "include"', async () => {
+    instalarPuenteTauri(() => Promise.reject(new Error('comando no permitido')))
+    await inicializarUrlServidor()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/algo')
+    expect(init.credentials).toBe('include')
+  })
+
+  it('bajo Tauri sin URL base descargar también sigue con credentials "include"', async () => {
+    instalarPuenteTauri(() => Promise.reject(new Error('comando no permitido')))
+    await inicializarUrlServidor()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, blob: () => Promise.resolve(new Blob()) }))
+
+    await api.descargar('/algo/export')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/algo/export')
+    expect(init.credentials).toBe('include')
+  })
+
+  it('bajo Tauri con una URL base del mismo origen que la página credentials sigue "include"', async () => {
+    instalarPuenteTauri(() => Promise.resolve({ url_servidor: window.location.origin }))
+    await inicializarUrlServidor()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ ok: true }) }))
+
+    await api.get('/algo')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`${window.location.origin}/api/algo`)
+    expect(init.credentials).toBe('include')
+  })
+
   it('en el navegador normal la URL sigue relativa y credentials sigue "include", aunque haya quedado una URL cacheada de un uso previo bajo Tauri', async () => {
     // Nunca puede haber una regresión donde "omit"/absoluta se filtre al camino del navegador
     // normal: se cachea una URL real bajo Tauri primero para que, si `pedir`/`descargar` alguna

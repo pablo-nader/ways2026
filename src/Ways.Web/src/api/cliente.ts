@@ -9,7 +9,8 @@
  * 1. La URL se antepone con `urlBaseApi()` (`entornoTauri.ts`, cacheada desde `info_app`): una
  *    ruta relativa a `http://tauri.localhost` la resuelve el protocolo de asset de Tauri, no la
  *    red.
- * 2. `credentials` pasa a `'omit'` en vez de `'include'`. La sesión bajo Tauri viaja por el
+ * 2. `credentials` pasa a `'omit'` en vez de `'include'` — solo si esa URL es de OTRO origen que
+ *    la página (ver `credencialesDeLaSolicitud`). La sesión bajo Tauri viaja por el
  *    header `Authorization: Bearer <token>` (adjuntado abajo cuando hay uno guardado, ver
  *    `entornoTauri.ts`) — nunca por cookie, a propósito: la API no habilita
  *    `AllowCredentials` en su política CORS para ese origen (`Program.cs`), así que un fetch
@@ -130,6 +131,20 @@ function headerBearerSiCorresponde(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+/** `'omit'` solo cuando la API vive en otro origen que la página (el shell local de Tauri). El POS de
+ * escritorio hasta v0.1.1 carga `pos.html` desde el propio servidor: ahí `window.__TAURI__` existe
+ * pero `info_app` no está permitido para una página remota, la URL base queda vacía y la sesión
+ * tiene que seguir viajando por la cookie de siempre. */
+function credencialesDeLaSolicitud(): RequestCredentials {
+  const base = urlBaseApi()
+  if (!base) return 'include'
+  try {
+    return new URL(base).origin === window.location.origin ? 'include' : 'omit'
+  } catch {
+    return 'omit'
+  }
+}
+
 /**
  * stage-pos-venta-offline-backend (Parte C): el ÚNICO lugar que llama a `fetch` crudo — tanto
  * `pedir` como `descargar` pasan por acá para compartir el mismo camino de error (mismo motivo
@@ -152,7 +167,7 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   const tokenDeLaSolicitud = tokenDeSesionBearerActual()
   const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
     ...init,
-    credentials: corriendoEnTauri() ? 'omit' : 'include',
+    credentials: credencialesDeLaSolicitud(),
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -198,7 +213,7 @@ export function nombreDeArchivo(respuesta: Response): string {
 async function descargar(ruta: string): Promise<void> {
   const tokenDeLaSolicitud = tokenDeSesionBearerActual()
   const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
-    credentials: corriendoEnTauri() ? 'omit' : 'include',
+    credentials: credencialesDeLaSolicitud(),
     headers: headerBearerSiCorresponde(),
   })
   await exigirRespuestaOk(respuesta, tokenDeLaSolicitud)
