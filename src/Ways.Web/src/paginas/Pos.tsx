@@ -58,6 +58,8 @@ import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineS
 import { buscarArticuloOffline, formatearVejezDeInstantanea, resolverPreciosOffline } from '../pos/instantaneaOffline'
 import { construirNumeroVisible, mensajeDeRechazoOffline } from '../pos/outboxOffline'
 import { medioAdmitidoOffline } from '../pos/reglasOffline'
+import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
+import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -596,8 +598,28 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // (ver `controlesTurno` más abajo).
   const nodoRanuraHeader = useContext(RanuraHeaderPosContext)
 
+  // stage-pos-adjustments: borrador del ticket en curso — solo venta libre (nunca bajo
+  // `?idPresupuesto=`, esa conversión se rehidrata siempre fresca desde el servidor). La clave
+  // usa el mismo punto de venta de SESIÓN que `Pos()` ya usa para el `key` de remontaje — nunca
+  // `puntoVentaSeleccionada` (más abajo), que bajo presupuesto sale de otro lado: acá siempre es
+  // el camino libre, así que ambos coinciden.
+  const almacenBorradores = useContext(BorradorDeTicketContext)
+  const claveBorrador = modoPresupuesto ? null : `libre:${puntoVentaDeSesion?.id ?? 'sin-pv'}`
+  // Leído una sola vez, en el primer render de esta instancia (`PantallaPos` se remonta entera
+  // por `key` ante cualquier cambio de punto de venta/presupuesto — ver `Pos()`) — nunca
+  // releído en renders posteriores, donde el propio efecto de guardado ya lo habría pisado con
+  // el estado en curso.
+  const borradorInicialRef = useRef<BorradorDeTicket | null | undefined>(undefined)
+  if (borradorInicialRef.current === undefined) {
+    borradorInicialRef.current = claveBorrador !== null ? (almacenBorradores?.obtener(claveBorrador) ?? null) : null
+  }
+  const borradorInicial = borradorInicialRef.current
+
   const [opcionesClientes, setOpcionesClientes] = useState<ClienteListado[]>([])
-  const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteListado | null>(null)
+  const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteListado | null>(() => borradorInicial?.clienteSeleccionado ?? null)
+  // El mount effect de más abajo (Consumidor Final por defecto) no debe pisar un cliente
+  // restaurado del borrador — se decide UNA sola vez, con el mismo `borradorInicial` congelado.
+  const clienteRestauradoDelBorradorRef = useRef(borradorInicial?.clienteSeleccionado != null)
   const [terminoCliente, setTerminoCliente] = useState('')
   const [buscandoClientes, setBuscandoClientes] = useState(false)
   const [errorClientes, setErrorClientes] = useState('')
@@ -608,8 +630,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
 
-  const [lineas, setLineas] = useState<LineaCarrito[]>([])
-  const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
+  const [lineas, setLineas] = useState<LineaCarrito[]>(() => borradorInicial?.lineas ?? [])
+  const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>(() => borradorInicial?.precios ?? {})
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
@@ -621,7 +643,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // cae al fallback offline; `null` en cualquier otro caso (vista previa online, o ninguna vista
   // previa todavía) — "el precio que se mostró es el que se cobra", nunca una relectura al cobrar.
   const instantaneaDeLaVistaPreviaRef = useRef<InstantaneaDePos | null>(null)
-  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
+  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -646,8 +668,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [errorParametros, setErrorParametros] = useState('')
   const generacionParametrosRef = useRef(0)
 
-  const proximaFilaPagoIdRef = useRef(1)
-  const [filasPago, setFilasPago] = useState<FilaPago[]>(() => [filaPagoInicial(proximaFilaPagoIdRef.current++, null)])
+  const proximaFilaPagoIdRef = useRef(borradorInicial?.proximoIdFilaPago ?? 1)
+  const [filasPago, setFilasPago] = useState<FilaPago[]>(
+    () => borradorInicial?.filasPago ?? [filaPagoInicial(proximaFilaPagoIdRef.current++, null)],
+  )
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
   // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
@@ -896,7 +920,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (!modoPresupuesto) {
           const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
           consumidorFinalRef.current = consumidorFinal
-          setClienteSeleccionado(consumidorFinal)
+          // stage-pos-adjustments: un cliente restaurado desde el borrador (ver más arriba) ya
+          // dejó al cajero exactamente donde estaba antes de navegar afuera — el default de
+          // Consumidor Final nunca lo pisa.
+          if (!clienteRestauradoDelBorradorRef.current) {
+            setClienteSeleccionado(consumidorFinal)
+          }
         }
       })
       .catch((e) => {
@@ -934,6 +963,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (idEfectivo === '') return
     setFilasPago((prev) => (prev.length === 1 && prev[0].idMedioPago === '' ? [{ ...prev[0], idMedioPago: idEfectivo }] : prev))
   }, [medios])
+
+  // stage-pos-adjustments: guarda el borrador del ticket en curso ante cualquier cambio de lo
+  // que compone la venta libre — nunca bajo `?idPresupuesto=` (`claveBorrador` es `null` ahí) ni
+  // sin `Provider` (`almacenBorradores` es `null` fuera de `ShellPos`/`Layout`). Deliberadamente
+  // NO mira `entradaEscaneo`/`terminoCliente` (búfer de escaneo, término de búsqueda) — solo lo
+  // que de verdad hace falta reconstruir.
+  useEffect(() => {
+    if (claveBorrador === null || !almacenBorradores) return
+    almacenBorradores.guardar(claveBorrador, {
+      lineas,
+      precios,
+      cantidadesEnEdicion,
+      filasPago,
+      proximoIdFilaPago: proximaFilaPagoIdRef.current,
+      clienteSeleccionado,
+    })
+  }, [claveBorrador, almacenBorradores, lineas, precios, cantidadesEnEdicion, filasPago, clienteSeleccionado])
 
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
@@ -2249,6 +2295,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // falla de carga no puede vaciar una selección que sí funciona.
       if (!modoPresupuesto && consumidorFinalRef.current) {
         setClienteSeleccionado(consumidorFinalRef.current)
+      }
+      // stage-pos-adjustments: una venta recién cobrada nunca resucita al volver de otra
+      // pantalla — el borrador de ESTE ticket se descarta (el efecto de guardado de arriba va a
+      // volver a escribir uno equivalente-a-vacío enseguida, pero un borrador vacío restaura
+      // exactamente el mismo estado por defecto, así que da lo mismo).
+      if (claveBorrador !== null) {
+        almacenBorradores?.limpiar(claveBorrador)
       }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return

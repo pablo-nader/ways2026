@@ -14,6 +14,7 @@ import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFi
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
 import { ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 
 type Props = {
@@ -214,6 +215,10 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             (mantiene chico el diff de un archivo que otro trabajo en paralelo también toca, en las
             rutas de más abajo) — `RanuraHeaderPosContext` solo agrega el `Provider` alrededor. */}
         <RanuraHeaderPosContext.Provider value={nodoRanuraHeader}>
+        {/* stage-pos-adjustments: por encima de `<Routes>`, para que el borrador de un ticket en
+            curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Gastos" — el `Provider` es
+            una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
+        <ProveedorDeBorradoresDeTicket>
         <div className="d-flex flex-column min-vh-100">
           <header className="navbar navbar-dark bg-dark px-3 py-2 d-print-none">
             <div className="d-flex flex-column">
@@ -287,6 +292,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </Routes>
           </main>
         </div>
+        </ProveedorDeBorradoresDeTicket>
         </RanuraHeaderPosContext.Provider>
       </ProveedorDePuntoVentaFijo>
     </AuthContext.Provider>

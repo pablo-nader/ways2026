@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
@@ -25,6 +25,7 @@ import type {
   TurnoResumen,
 } from '../api/tipos'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
+import { ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
@@ -1413,6 +1414,70 @@ describe('Pos — checkout', () => {
     expect(await screen.findByText('El pago ingresado no cubre el total, ni siquiera con la tolerancia.')).toBeInTheDocument()
     expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
     expect(screen.queryByText(/^Venta /)).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage-pos-adjustments)', () => {
+  /** Mismo criterio que `arbolDePos` pero con `ProveedorDeBorradoresDeTicket` envolviendo TODO el
+   * router (como en `Layout.tsx`/`ShellPos.tsx`) — una navegación real a otra ruta y de vuelta,
+   * nunca solo un desmontaje/remontaje de `Pos` sin salir del árbol del `Provider`. */
+  function arbolDePosConBorrador(ruta = '/pos') {
+    return (
+      <MemoryRouter initialEntries={[ruta]}>
+        <ProveedorDeBorradoresDeTicket>
+          <nav>
+            <Link to="/pos">Vender</Link>
+            <Link to="/otra-pantalla">Otra pantalla</Link>
+          </nav>
+          <Routes>
+            <Route path="/pos" element={<Pos />} />
+            <Route path="/otra-pantalla" element={<div>Acá no hay nada de Pos</div>} />
+          </Routes>
+        </ProveedorDeBorradoresDeTicket>
+      </MemoryRouter>
+    )
+  }
+
+  it('una línea agregada al carrito sigue ahí después de navegar a otra pantalla y volver', async () => {
+    render(arbolDePosConBorrador())
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
+    await screen.findByText('Acá no hay nada de Pos')
+
+    await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
+
+    expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+  })
+
+  it('después de un cobro exitoso, navegar afuera y volver no resucita el carrito ya vendido', async () => {
+    render(arbolDePosConBorrador())
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    await userEvent.click(screen.getByRole('button', { name: 'Aceptar' }))
+
+    await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
+    await screen.findByText('Acá no hay nada de Pos')
+    await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
   })
 })
 

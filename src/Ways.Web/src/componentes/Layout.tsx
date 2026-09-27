@@ -4,6 +4,7 @@ import type { Location } from 'react-router'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
+import { ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { colorDePuntoVenta } from '../puntoVenta/colorDePuntoVenta'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { MenuDesplegable } from './MenuDesplegable'
@@ -181,7 +182,13 @@ export function Layout() {
       <div id="content">
         <div className="outer">
           <div className="inner bg-light lter">
-            <Outlet />
+            {/* stage-pos-adjustments: `Layout` es la instancia estable que React Router mantiene
+                montada al navegar entre rutas hermanas (`/pos` → `/caja` → `/pos`) — el `Provider`
+                acá adentro sobrevive a esa navegación, así que el borrador del ticket en curso
+                también. */}
+            <ProveedorDeBorradoresDeTicket>
+              <Outlet />
+            </ProveedorDeBorradoresDeTicket>
           </div>
         </div>
       </div>
