@@ -14,8 +14,10 @@ import type {
   ArticuloListado,
   ClienteListado,
   ComprobanteEmitido,
+  EstadoDeCuenta,
   InstantaneaDePos,
   MedioPagoListado,
+  MovimientoDeCuentaCorriente,
   PaginaDe,
   ParametroResuelto,
   PresupuestoParaVenta,
@@ -223,6 +225,31 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
     idPresupuestoOrigen: null,
+    ...sobrescribir,
+  }
+}
+
+function movimientoCcFixture(sobrescribir: Partial<MovimientoDeCuentaCorriente> = {}): MovimientoDeCuentaCorriente {
+  return {
+    id: 1,
+    fecha: '2026-09-10T15:00:00Z',
+    tipo: 'Consumo',
+    importe: 500,
+    saldoResultante: 500,
+    detalle: null,
+    idComprobanteVenta: 30,
+    etiqueta: null,
+    ...sobrescribir,
+  }
+}
+
+function estadoDeCuentaFixture(sobrescribir: Partial<EstadoDeCuenta> = {}): EstadoDeCuenta {
+  return {
+    header: { saldo: 500, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 4500 },
+    movimientos: [movimientoCcFixture()],
+    historico: false,
+    desde: '2026-08-10T00:00:00Z',
+    hasta: null,
     ...sobrescribir,
   }
 }
@@ -1478,6 +1505,96 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
 
     expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+  })
+})
+
+describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
+  /** Deja `otroCliente` (no Consumidor Final) elegido en la venta y abre el modal de cuenta
+   * corriente — mismo camino de búsqueda que "Pos — selector de cliente". */
+  async function abrirModalCuentaCorriente() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cuenta corriente' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+  }
+
+  it('al abrir con un cliente ya elegido (no Consumidor Final), muestra su saldo sin pedir que se busque de nuevo', async () => {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+      }
+      return undefined
+    })
+
+    await abrirModalCuentaCorriente()
+
+    const modal = within(screen.getAllByRole('dialog').at(-1)!)
+    expect(modal.getByText('#2 — Juan Pérez')).toBeInTheDocument()
+    expect(await modal.findByText('$ 500,00', { selector: '.fs-5' })).toBeInTheDocument()
+    expect(modal.getByText('$ 4.500,00')).toBeInTheDocument()
+    expect(modal.queryByLabelText('Buscar cliente de cuenta corriente')).not.toBeInTheDocument()
+  })
+
+  it('registra un pago con dos medios y refresca el saldo mostrado con la respuesta más reciente', async () => {
+    let llamadasEstado = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        llamadasEstado += 1
+        // Primera carga: saldo 500. Después del pago, el refetch trae el saldo ya actualizado —
+        // nunca un recálculo local del importe aplicado.
+        return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture(llamadasEstado === 1 ? {} : { header: { saldo: 0, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 5000 } }))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/2/cuenta-corriente/pagos') {
+        return Promise.resolve<ComprobanteEmitido>(comprobanteEmitidoFixture({ id: 900, numeroVisible: '0007-00000900', idCliente: 2 }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalCuentaCorriente()
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+
+    await userEvent.click(modalDePago.getByRole('button', { name: '+ Agregar otro medio' }))
+    const selectsDeMedio = modalDePago.getAllByLabelText('Medio de pago')
+    const camposDeImporte = modalDePago.getAllByLabelText('Importe')
+    const camposDeReferencia = modalDePago.getAllByLabelText(/Referencia/)
+    await userEvent.selectOptions(selectsDeMedio[1], medioTarjeta.nombre)
+    await userEvent.type(camposDeImporte[1], '200')
+    await userEvent.type(camposDeReferencia[1], 'AUT999')
+
+    await waitFor(() => expect(modalDePago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() => {
+      const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/2/cuenta-corriente/pagos')
+      expect(llamada?.[1]).toEqual({
+        idPuntoVenta: 7,
+        pagos: [
+          { idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 },
+          { idMedioPago: medioTarjeta.id, importe: 200, referencia: 'AUT999', vuelto: 0 },
+        ],
+        observaciones: null,
+      })
+    })
+
+    // Vuelve al panel de saldo (el modal de pago se cierra solo) con el saldo ya refrescado.
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    expect(await screen.findByText('$ 0,00', { selector: '.fs-5' })).toBeInTheDocument()
   })
 })
 

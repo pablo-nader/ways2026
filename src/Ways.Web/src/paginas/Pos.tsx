@@ -7,6 +7,7 @@ import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/ca
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
+import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
 import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
@@ -28,11 +29,13 @@ import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  EstadoDeCuenta,
   InstantaneaDePos,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
   PresupuestoParaVenta,
+  PuntoVentaListado,
   ResultadoDeResolucion,
   ResumenDeCierrePorRetiro,
   TurnoResumen,
@@ -51,6 +54,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
+import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
 import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
@@ -589,6 +593,258 @@ export type CajaDeEscritorio = {
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
+
+function formatearFechaHoraCortaDeMovimiento(iso: string): string {
+  return new Date(iso).toLocaleString('es-AR')
+}
+
+type PropsModalCuentaCorrientePos = {
+  clienteInicial: ClienteListado | null
+  puntoVenta: PuntoVentaListado
+  medios: MedioPagoListado[]
+  onCerrar: () => void
+}
+
+/**
+ * stage-pos-adjustments: consulta rápida de saldo + pago a cuenta desde el POS, sin salir de la
+ * venta en curso. Cliente por defecto: el ya elegido en la venta, salvo que sea Consumidor Final
+ * (sin cuenta corriente real) — ahí arranca en el buscador, igual que si el cajero lo cambiara a
+ * mano. El punto de venta lo fija el turno de la sesión (`puntoVentaFijo` de `ModalPagoACuenta`),
+ * nunca un selector — acá no hay ninguna elección manual de PV que replicar.
+ */
+function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar }: PropsModalCuentaCorrientePos) {
+  const [clienteElegido, setClienteElegido] = useState<ClienteListado | null>(
+    clienteInicial && !clienteInicial.esConsumidorFinal ? clienteInicial : null,
+  )
+
+  const [terminoBusqueda, setTerminoBusqueda] = useState('')
+  const [opcionesBusqueda, setOpcionesBusqueda] = useState<ClienteListado[]>([])
+  const [buscando, setBuscando] = useState(false)
+  const [errorBusqueda, setErrorBusqueda] = useState('')
+  const generacionBusquedaRef = useRef(0)
+
+  const [estado, setEstado] = useState<EstadoDeCuenta | null>(null)
+  const [cargandoEstado, setCargandoEstado] = useState(false)
+  const [errorEstado, setErrorEstado] = useState('')
+  const generacionEstadoRef = useRef(0)
+
+  const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
+  const [aviso, setAviso] = useState('')
+
+  // react-async-state regla 2: cada cambio de cliente elegido dispara su propia consulta — una
+  // respuesta desactualizada (ej. el cajero cambió de cliente mientras la anterior seguía en
+  // vuelo) nunca puede pisar la más reciente.
+  const cargarEstado = useCallback(() => {
+    if (!clienteElegido) return
+    const miGeneracion = (generacionEstadoRef.current += 1)
+    setCargandoEstado(true)
+    setErrorEstado('')
+    const ventana = rangoUltimoMes()
+
+    clienteDeCuentaCorriente
+      .obtenerEstado(clienteElegido.id, ventana.desde, ventana.hasta, false)
+      .then((datos) => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setEstado(datos)
+      })
+      .catch((e) => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setEstado(null)
+        setErrorEstado(e instanceof ErrorApi ? e.message : 'No se pudo cargar el estado de cuenta.')
+      })
+      .finally(() => {
+        if (generacionEstadoRef.current !== miGeneracion) return
+        setCargandoEstado(false)
+      })
+  }, [clienteElegido])
+
+  useEffect(() => {
+    cargarEstado()
+  }, [cargarEstado])
+
+  async function buscar() {
+    if (buscando) return
+    const miGeneracion = (generacionBusquedaRef.current += 1)
+    setBuscando(true)
+    setErrorBusqueda('')
+    try {
+      const pagina = await clienteDeClientes.listar(terminoBusqueda, false)
+      if (generacionBusquedaRef.current !== miGeneracion) return
+      // El Consumidor Final no tiene cuenta corriente real — nunca aparece como resultado acá,
+      // aunque el término de búsqueda lo matchee.
+      setOpcionesBusqueda(pagina.items.filter((c) => !c.esConsumidorFinal))
+    } catch (e) {
+      if (generacionBusquedaRef.current !== miGeneracion) return
+      setErrorBusqueda(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
+    } finally {
+      if (generacionBusquedaRef.current === miGeneracion) setBuscando(false)
+    }
+  }
+
+  function elegirCliente(id: number) {
+    const encontrado = opcionesBusqueda.find((c) => c.id === id)
+    if (!encontrado) return
+    setAviso('')
+    setClienteElegido(encontrado)
+  }
+
+  const disponibilidad = estado ? disponibilidadPrevia(estado.header.saldo, estado.header.limiteCredito, estado.header.creditoIlimitado) : null
+
+  if (modalPagoAbierto && estado) {
+    return (
+      <ModalPagoACuenta
+        idCliente={clienteElegido!.id}
+        puntosVenta={[puntoVenta]}
+        puntoVentaFijo={puntoVenta.id}
+        medios={medios}
+        header={estado.header}
+        onCerrar={() => setModalPagoAbierto(false)}
+        onAntesDeEscribir={() => {
+          // regla 3: bumpear la generación ANTES de la escritura — un refetch en vuelo de un
+          // cliente ya abandonado no puede pisar el que dispara `onRegistrado` más abajo.
+          generacionEstadoRef.current += 1
+        }}
+        onRegistrado={(comprobante) => {
+          setModalPagoAbierto(false)
+          setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
+          // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
+          cargarEstado()
+        }}
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="modal d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog modal-lg" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-header">
+              <h5 className="modal-title">Cuenta corriente</h5>
+              <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
+            </div>
+            <div className="modal-body">
+              {!clienteElegido ? (
+                <>
+                  <div className="input-group input-group-sm mb-3">
+                    <input
+                      type="search"
+                      className="form-control rounded-0"
+                      placeholder="Buscar cliente…"
+                      aria-label="Buscar cliente de cuenta corriente"
+                      value={terminoBusqueda}
+                      disabled={buscando}
+                      onChange={(e) => setTerminoBusqueda(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
+                    />
+                    <button type="button" className="btn btn-outline-primary rounded-0" disabled={buscando} onClick={buscar}>
+                      {buscando ? 'Buscando…' : 'Buscar'}
+                    </button>
+                  </div>
+                  {errorBusqueda && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorBusqueda}</div>}
+                  {opcionesBusqueda.length > 0 && (
+                    <select
+                      className="form-select rounded-0"
+                      aria-label="Resultados de la búsqueda"
+                      size={Math.min(opcionesBusqueda.length, 6)}
+                      value=""
+                      onChange={(e) => elegirCliente(Number(e.target.value))}
+                    >
+                      <option value="" disabled>
+                        Elegir…
+                      </option>
+                      {opcionesBusqueda.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {etiquetaDeCliente(c)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="d-flex justify-content-between align-items-center mb-3">
+                    <strong>{etiquetaDeCliente(clienteElegido)}</strong>
+                    <button type="button" className="btn btn-outline-secondary btn-sm rounded-0" onClick={() => setClienteElegido(null)}>
+                      Cambiar cliente
+                    </button>
+                  </div>
+
+                  {aviso && <div className="alert alert-success rounded-0 py-1 px-2 small">{aviso}</div>}
+                  {errorEstado && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEstado}</div>}
+
+                  {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
+
+                  {!cargandoEstado && estado && (
+                    <>
+                      <div className="row g-3 mb-3">
+                        <div className="col-4">
+                          <div className="small text-muted">Saldo</div>
+                          <div className="fs-5">{formatearMoneda(estado.header.saldo)}</div>
+                        </div>
+                        <div className="col-4">
+                          <div className="small text-muted">Límite</div>
+                          <div>{estado.header.creditoIlimitado ? 'Ilimitado' : formatearMoneda(estado.header.limiteCredito)}</div>
+                        </div>
+                        <div className="col-4">
+                          <div className="small text-muted">Disponible</div>
+                          <div>{disponibilidad === null ? 'Ilimitado' : formatearMoneda(disponibilidad)}</div>
+                        </div>
+                      </div>
+
+                      <h6>Movimientos recientes</h6>
+                      {estado.movimientos.length === 0 ? (
+                        <p className="text-muted small">Sin movimientos en el último mes.</p>
+                      ) : (
+                        <div className="table-responsive">
+                          <table className="table table-sm">
+                            <thead>
+                              <tr>
+                                <th>Fecha</th>
+                                <th>Tipo</th>
+                                <th className="text-end">Importe</th>
+                                <th className="text-end">Saldo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {estado.movimientos.map((m) => (
+                                <tr key={m.id}>
+                                  <td>{formatearFechaHoraCortaDeMovimiento(m.fecha)}</td>
+                                  <td>{etiquetaDeMovimiento(m)}</td>
+                                  <td className="text-end">{formatearMoneda(m.importe)}</td>
+                                  <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCerrar}>
+                Cerrar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={!clienteElegido || cargandoEstado || estado === null}
+                onClick={() => setModalPagoAbierto(true)}
+              >
+                Registrar pago
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop show" />
+    </>
+  )
+}
+
 function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
@@ -663,6 +919,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
+
+  // stage-pos-adjustments: modal de consulta de saldo + pago a cuenta — nunca bajo
+  // `?idPresupuesto=` (esa venta congelada no tiene ningún cliente que el cajero pueda cambiar
+  // acá adentro).
+  const [modalCuentaCorrienteAbierto, setModalCuentaCorrienteAbierto] = useState(false)
 
   const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
   const [errorParametros, setErrorParametros] = useState('')
@@ -2848,6 +3109,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </div>
             )}
 
+            {!modoPresupuesto && (
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+                disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
+                onClick={() => setModalCuentaCorrienteAbierto(true)}
+              >
+                Cuenta corriente
+              </button>
+            )}
+
             <hr />
 
             <div className="d-flex justify-content-between mb-3">
@@ -3025,6 +3297,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           motivoSinAgregar={motivoSinAgregarEnBuscador}
           onAgregar={agregarDesdeBusqueda}
           onCerrar={cerrarBuscador}
+        />
+      )}
+
+      {modalCuentaCorrienteAbierto && !modoPresupuesto && puntoVentaSeleccionada && medios && (
+        <ModalCuentaCorrientePos
+          clienteInicial={clienteSeleccionado}
+          puntoVenta={puntoVentaSeleccionada}
+          medios={medios}
+          onCerrar={() => setModalCuentaCorrienteAbierto(false)}
         />
       )}
 
