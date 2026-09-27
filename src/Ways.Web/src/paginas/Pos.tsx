@@ -18,6 +18,7 @@ import {
   filaPagoVacia,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
+  filasConMedioInvalidoReseteado,
   idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
@@ -1922,6 +1923,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return cambio ? siguiente : prev
     })
   }, [clienteSeleccionado, medioPorId])
+
+  // stage-pos-borrador-persistente: una fila de pago restaurada de un borrador persistido puede
+  // referenciar un medio de pago que ya no existe (dado de baja mientras la app estaba cerrada) —
+  // se resetea a "sin elegir" en vez de dejar un id sin `<option>` que lo respalde en el `<select>`
+  // (ver el render de "Pagos" más abajo). Gateado a `medios !== null` a propósito: `medioPorId`
+  // arranca vacío mientras `medios` todavía carga, y sin este guard CUALQUIER fila con un medio
+  // elegido (restaurada o no) se resetearía en ese instante inicial, antes de que el catálogo real
+  // llegue a decidir si el id es válido.
+  useEffect(() => {
+    if (medios === null) return
+    setFilasPago((prev) => filasConMedioInvalidoReseteado(prev, medioPorId))
+  }, [medios, medioPorId])
 
   const mutarCarrito = useCallback((accion: AccionCarrito) => {
     if (cobrandoRef.current) return

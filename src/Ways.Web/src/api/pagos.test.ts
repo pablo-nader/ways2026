@@ -12,6 +12,7 @@ import {
   filaPagoVacia,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
+  filasConMedioInvalidoReseteado,
   idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
@@ -219,6 +220,45 @@ describe('pagos — filasAPagosParaCalculo', () => {
         importe: 20,
         referencia: 'auth-123',
       },
+    ])
+  })
+})
+
+describe('pagos — filasConMedioInvalidoReseteado (stage-pos-borrador-persistente)', () => {
+  const medioPorId: Record<number, MedioPagoListado> = {
+    1: medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', admiteVuelto: true }),
+  }
+
+  it('resetea a "sin elegir" una fila cuyo medio no existe en el índice', () => {
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 999, importe: 100, referencia: '', vueltoManual: null }]
+    expect(filasConMedioInvalidoReseteado(filas, medioPorId)).toEqual([
+      { id: 1, idMedioPago: '', importe: 100, referencia: '', vueltoManual: null },
+    ])
+  })
+
+  it('deja intacta una fila cuyo medio SÍ existe en el índice', () => {
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: 100, referencia: '', vueltoManual: null }]
+    expect(filasConMedioInvalidoReseteado(filas, medioPorId)).toEqual(filas)
+  })
+
+  it('deja intacta una fila sin medio elegido (ya está en "sin elegir")', () => {
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: '', importe: null, referencia: '', vueltoManual: null }]
+    expect(filasConMedioInvalidoReseteado(filas, medioPorId)).toEqual(filas)
+  })
+
+  it('sin ninguna fila para resetear, devuelve la MISMA referencia del array de entrada', () => {
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: 100, referencia: '', vueltoManual: null }]
+    expect(filasConMedioInvalidoReseteado(filas, medioPorId)).toBe(filas)
+  })
+
+  it('en una lista de varias filas, resetea solo la que tiene el medio inválido', () => {
+    const filas: FilaPago[] = [
+      { id: 1, idMedioPago: 1, importe: 60, referencia: '', vueltoManual: null },
+      { id: 2, idMedioPago: 999, importe: 40, referencia: '', vueltoManual: null },
+    ]
+    expect(filasConMedioInvalidoReseteado(filas, medioPorId)).toEqual([
+      { id: 1, idMedioPago: 1, importe: 60, referencia: '', vueltoManual: null },
+      { id: 2, idMedioPago: '', importe: 40, referencia: '', vueltoManual: null },
     ])
   })
 })
