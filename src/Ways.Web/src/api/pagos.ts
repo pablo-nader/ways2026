@@ -183,6 +183,27 @@ export function filasAPagosParaCalculo(filas: FilaPago[], medioPorId: Record<num
 }
 
 /**
+ * stage-pos-borrador-persistente: filas con el medio reseteado a "sin elegir" cuando referencian
+ * un id que no existe en `medioPorId` — el caso real es una fila restaurada de un borrador
+ * persistido cuyo medio se dio de baja mientras la app estaba cerrada. `filasAPagosParaCalculo`
+ * (arriba) YA excluye estas filas de cualquier cálculo (`if (!medio) continue`), así que ninguna
+ * venta se cobra jamás contra un medio inválido con o sin esta función — esto solo repara el
+ * ESTADO visible en el `<select>` del panel de pagos, para que el cajero no vea una fila
+ * "elegida" que en los hechos no cuenta para nada (y cuyo importe, sin este reset, parecería
+ * ignorado sin explicación). Devuelve la MISMA referencia de `filas` sin cambios (para no
+ * disparar un re-render de más) cuando ninguna fila necesita resetearse.
+ */
+export function filasConMedioInvalidoReseteado(filas: FilaPago[], medioPorId: Record<number, MedioPagoListado>): FilaPago[] {
+  let cambio = false
+  const siguiente = filas.map((fila) => {
+    if (fila.idMedioPago === '' || medioPorId[fila.idMedioPago]) return fila
+    cambio = true
+    return { ...fila, idMedioPago: '' as const }
+  })
+  return cambio ? siguiente : filas
+}
+
+/**
  * Asigna el excedente completo como vuelto al PRIMER pago cuyo medio admite vuelto — nunca se
  * reparte entre varios (evita ambigüedad de a qué medio "le sobra" el pago); el resto queda en
  * `0`. Si ningún medio de la mezcla admite vuelto, el excedente completo queda sin asignar (el

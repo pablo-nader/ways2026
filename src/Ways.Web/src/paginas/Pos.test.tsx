@@ -28,8 +28,9 @@ import type {
   TurnoResumen,
   UsuarioAutenticado,
 } from '../api/tipos'
+import { AuthContext } from '../auth/AuthContext'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
-import { ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
+import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
@@ -1578,6 +1579,109 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     // saldo refrescado del servidor (500) hace que esta fila supere el límite.
     expect(await screen.findByText('El pago supera el límite de crédito del cliente.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+})
+
+describe('Pos — el borrador sobrevive a un restart entero (stage-pos-borrador-persistente)', () => {
+  const usuarioDeSesion: UsuarioAutenticado = {
+    id: 10,
+    usuario: 'cajera1',
+    mail: 'cajera1@ways.test',
+    rolId: 3,
+    rol: 'Vendedor',
+    ultimaConexion: null,
+    idTenant: 1,
+  }
+
+  /** Mismo anidado que `ShellPos`/`Layout` en producción: `AuthContext` YA resuelto por encima
+   * de `ProveedorDeBorradoresDeTicket` (ver su doc-comment) — acá `ProveedorDeBorradoresDeTicket`
+   * usa su almacén REAL por defecto (`crearAlmacenIndexedDb`), nunca inyectado, así que lee de la
+   * MISMA base fake que `prepararAlmacenOffline`/`borrarAlmacenOffline` — la única forma de
+   * simular "la app se cerró y volvió a abrir" es un `Provider` nuevo (montaje fresco) leyendo lo
+   * que un montaje anterior (o, acá, el propio test) ya dejó escrito ahí. */
+  function arbolDePosConAuthYBorrador(ruta = '/pos') {
+    return (
+      <MemoryRouter initialEntries={[ruta]}>
+        <AuthContext.Provider
+          value={{
+            usuario: usuarioDeSesion,
+            cargando: false,
+            iniciarSesion: () => Promise.reject(new Error('no usado en este test')),
+            cerrarSesion: () => Promise.resolve(),
+          }}
+        >
+          <ProveedorDeBorradoresDeTicket>
+            <Routes>
+              <Route path="/pos" element={<Pos />} />
+            </Routes>
+          </ProveedorDeBorradoresDeTicket>
+        </AuthContext.Provider>
+      </MemoryRouter>
+    )
+  }
+
+  async function persistirBorrador(borrador: {
+    lineas: unknown[]
+    cantidadesEnEdicion: Record<number, string>
+    filasPago: unknown[]
+    proximoIdFilaPago: number
+    clienteSeleccionado: ClienteListado | null
+  }) {
+    const almacen = crearAlmacenIndexedDb()
+    await almacen.escribir(claveIndexedDbDeBorrador(usuarioDeSesion, 'libre:7'), {
+      version: 1,
+      borrador,
+    })
+  }
+
+  it('restaura las líneas de un borrador persistido y la pantalla vuelve a pedir el precio al servidor contra esas líneas', async () => {
+    // El chequeo mutation-proof de que el `Provider` DESCARTA cualquier `precios` persistido (en
+    // vez de heredarlo) vive en `BorradorDeTicketContext.test.tsx` — acá el efecto de resolución
+    // de `Pos.tsx` (`useEffect` de precios, no depende de `precios` en sus deps) volvería a pedir
+    // el precio igual aunque el discard no existiera, así que esto no puede matar esa mutación por
+    // sí solo; corrobora la integración real: el carrito restaurado dispara la MISMA resolución
+    // que un carrito armado a mano, y el precio que termina en pantalla es el de la respuesta del
+    // servidor (mock de `/ofertas/resolver`, $ 100), no uno "heredado" del borrador.
+    await persistirBorrador({
+      lineas: [{ idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1 }],
+      cantidadesEnEdicion: {},
+      filasPago: [{ id: 1, idMedioPago: '', importe: null, referencia: '', vueltoManual: null }],
+      proximoIdFilaPago: 2,
+      clienteSeleccionado: consumidorFinal,
+    })
+
+    render(arbolDePosConAuthYBorrador())
+
+    // La línea restaurada aparece SIN que el cajero vuelva a escanear nada.
+    expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', expect.anything()))
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+  })
+
+  it('una fila de pago restaurada con un medio que ya no existe monta sin romper y el panel queda usable', async () => {
+    // El chequeo real de que ESTA fila se resetea a `idMedioPago: ''` (en vez de quedar con el id
+    // huérfano 999) vive en `pagos.test.ts` (`filasConMedioInvalidoReseteado`, mutation-proof) —
+    // el `<select>` controlado de React ya muestra "" para cualquier `value` sin `<option>` que lo
+    // respalde (confound de DOM verificado: el mismo assert de acá abajo pasa igual con el reset
+    // BORRADO), así que esto solo corrobora la integración end to end: la pantalla monta, no
+    // rompe, y el panel de pagos sigue operable con la fila restaurada.
+    await persistirBorrador({
+      lineas: [{ idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1 }],
+      cantidadesEnEdicion: {},
+      // 999: ningún medio con ese id existe en el mock de `/catalogos/medios-pago` — simula un
+      // medio dado de baja mientras la app estaba cerrada.
+      filasPago: [{ id: 1, idMedioPago: 999, importe: 100, referencia: '', vueltoManual: null }],
+      proximoIdFilaPago: 2,
+      clienteSeleccionado: consumidorFinal,
+    })
+
+    render(arbolDePosConAuthYBorrador())
+
+    expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+    const selectorDeMedio = await screen.findByLabelText('Medio de pago')
+    await waitFor(() => expect(selectorDeMedio).toBeEnabled())
+    expect(selectorDeMedio).toHaveValue('')
   })
 })
 
