@@ -20,6 +20,8 @@ public static class AuthEndpoints
             ServicioDeAutenticacion servicio,
             TenantActualDeSesion tenantActual,
             HttpContext contexto,
+            IRelojDelSistema reloj,
+            FormateadorDeTicketBearer formateadorBearer,
             CancellationToken ct) =>
         {
             // Único momento en que el contexto de tenant de la request se pone en modo
@@ -30,6 +32,16 @@ public static class AuthEndpoints
             tenantActual.Establecer(ModoDeAcceso.Login, idTenant: null);
 
             var usuario = await servicio.IniciarSesionAsync(solicitud, ct);
+
+            // Con SolicitarBearer la sesión viaja SOLO como token: no se firma la cookie, porque
+            // el llamador (la vinculación del POS de escritorio, en otro origen) no la puede
+            // recibir y una sesión de cookie paralela quedaría viva sin que nadie la cierre.
+            if (solicitud.SolicitarBearer)
+            {
+                var expira = reloj.Ahora.Add(VigenciaDelBearerDeLogin);
+                var token = EmitirBearer(ConstruirClaims(usuario), expira, formateadorBearer);
+                return Results.Ok(new SesionConBearer(usuario, token, expira));
+            }
 
             var identidad = new ClaimsIdentity(
                 ConstruirClaims(usuario), CookieAuthenticationDefaults.AuthenticationScheme);
@@ -44,7 +56,9 @@ public static class AuthEndpoints
             return Results.Ok(usuario);
         })
         .AllowAnonymous()
-        .WithSummary("Inicia sesión y emite la cookie de sesión.");
+        .WithSummary(
+            "Inicia sesión y emite la cookie de sesión. Con SolicitarBearer=true, en cambio, " +
+            "devuelve un token bearer de 15 minutos y no emite la cookie.");
 
         // stage-desktop-pos: login del cajero contra un dispositivo YA vinculado. Exige la
         // cookie ways.dispositivo (nunca funciona en la app web normal, que no la tiene) y emite
@@ -123,15 +137,10 @@ public static class AuthEndpoints
                 return Results.Ok(usuario);
             }
 
-            var identidadBearer = new ClaimsIdentity(claims, EsquemasWays.Bearer);
             var expiraToken = reloj.Ahora.AddDays(365);
-            var ticketBearer = new AuthenticationTicket(
-                new ClaimsPrincipal(identidadBearer),
-                new AuthenticationProperties { ExpiresUtc = expiraToken },
-                EsquemasWays.Bearer);
-            var tokenBearer = formateadorBearer.Formato.Protect(ticketBearer);
+            var tokenBearer = EmitirBearer(claims, expiraToken, formateadorBearer);
 
-            return Results.Ok(new SesionDeDispositivoConBearer(usuario, tokenBearer, expiraToken));
+            return Results.Ok(new SesionConBearer(usuario, tokenBearer, expiraToken));
         })
         .AllowAnonymous()
         .WithSummary(
@@ -158,11 +167,30 @@ public static class AuthEndpoints
         return app;
     }
 
-    /// <summary>Cuerpo de <c>POST /api/auth/login-dispositivo</c> cuando el llamador pidió
-    /// <c>SolicitarBearer=true</c> — el mismo <see cref="UsuarioAutenticado"/> de siempre, más el
-    /// token bearer y su vencimiento (para que el cliente sepa cuándo va a tener que volver a
-    /// loguear sin necesidad de decodificar el token, que es opaco).</summary>
-    private record SesionDeDispositivoConBearer(UsuarioAutenticado Usuario, string Token, DateTimeOffset ExpiraEl);
+    /// <summary>Vigencia fija del bearer que emite <c>POST /api/auth/login</c> con
+    /// <c>SolicitarBearer=true</c>. Corta a propósito: su único uso es que un Admin vincule un
+    /// equipo desde la pantalla de vinculación del POS de escritorio, y el token no tiene
+    /// revocación propia más allá de <see cref="ValidadorDeSesion"/>.</summary>
+    private static readonly TimeSpan VigenciaDelBearerDeLogin = TimeSpan.FromMinutes(15);
+
+    /// <summary>Cuerpo de <c>POST /api/auth/login</c> y <c>POST /api/auth/login-dispositivo</c>
+    /// cuando el llamador pidió <c>SolicitarBearer=true</c> — el mismo
+    /// <see cref="UsuarioAutenticado"/> de siempre, más el token bearer y su vencimiento (para que
+    /// el cliente sepa cuándo va a tener que volver a loguear sin necesidad de decodificar el
+    /// token, que es opaco).</summary>
+    private record SesionConBearer(UsuarioAutenticado Usuario, string Token, DateTimeOffset ExpiraEl);
+
+    /// <summary>Cifra un ticket del esquema <see cref="EsquemasWays.Bearer"/> con vencimiento fijo
+    /// en <paramref name="expira"/>, que <see cref="ManejadorBearerDeSesion"/> hace cumplir.</summary>
+    private static string EmitirBearer(
+        List<Claim> claims, DateTimeOffset expira, FormateadorDeTicketBearer formateador)
+    {
+        var ticket = new AuthenticationTicket(
+            new ClaimsPrincipal(new ClaimsIdentity(claims, EsquemasWays.Bearer)),
+            new AuthenticationProperties { ExpiresUtc = expira },
+            EsquemasWays.Bearer);
+        return formateador.Formato.Protect(ticket);
+    }
 
     /// <summary>Claims base compartidas por <c>/login</c> y <c>/login-dispositivo</c>.</summary>
     private static List<Claim> ConstruirClaims(UsuarioAutenticado usuario)

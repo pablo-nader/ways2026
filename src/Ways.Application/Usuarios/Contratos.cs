@@ -4,8 +4,11 @@ namespace Ways.Application.Usuarios;
 
 /// <summary>Login es por <c>mail</c>, no por <c>usuario</c> (flow B, doc 09 stage 1): el
 /// mail resuelve la cuenta y, con ella, el tenant, sin que el request cargue contexto de
-/// tenant alguno.</summary>
-public record SolicitudDeLogin(string Mail, string Password);
+/// tenant alguno. <paramref name="SolicitarBearer"/>: <c>false</c> por default (cookie
+/// <c>ways.sesion</c>, sin cambio de forma en la respuesta). En <c>true</c> la respuesta trae un
+/// token bearer de vida corta en vez de la cookie: lo usa la pantalla de vinculación del POS de
+/// escritorio, que corre en otro origen y no puede recibir cookies (<c>AuthEndpoints</c>).</summary>
+public record SolicitudDeLogin(string Mail, string Password, bool SolicitarBearer = false);
 
 /// <summary>Login de cajero contra un dispositivo ya vinculado (stage-desktop-pos,
 /// <c>POST /api/auth/login-dispositivo</c>): por <c>usuario</c>, no por <c>mail</c> — el

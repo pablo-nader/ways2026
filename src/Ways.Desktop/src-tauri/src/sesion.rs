@@ -6,7 +6,7 @@
 //! caja registradora, vigente durante toda la vida del equipo); este archivo identifica a la
 //! PERSONA logueada en ese dispositivo en este momento (el token bearer que emite
 //! `POST /auth/login-dispositivo` con `solicitarBearer: true`, más su vencimiento explícito
-//! `expiraEl` — ver `AuthEndpoints.SesionDeDispositivoConBearer` del lado del servidor). Mezclar
+//! `expiraEl` — ver `AuthEndpoints.SesionConBearer` del lado del servidor). Mezclar
 //! los dos en un solo archivo acoplaría dos ciclos de vida completamente distintos (el
 //! dispositivo sobrevive a todos los cajeros que lo usan; la sesión de un cajero termina en el
 //! logout, en un cierre de turno, o cuando el servidor la revoca) — separar el archivo hace que
