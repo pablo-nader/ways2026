@@ -234,19 +234,29 @@ public sealed record SolicitudDeCierrePorRetiro(
 // ---- guarda de rendición de cola de dispositivos (la cola local sin drenar de un POS de
 // escritorio no puede quedar del lado equivocado de un cierre) ----
 
-/// <summary>Un bloque de numeración VIVO cuyo dispositivo bloquea el cierre — la salida de
-/// <see cref="LectorDeRendicionDeDispositivos"/> ya resuelta por
+/// <summary>Un bloque de numeración todavía no saldado cuyo dispositivo bloquea el cierre — la
+/// salida de <see cref="LectorDeRendicionDeDispositivos"/> ya resuelta por
 /// <see cref="ReglaDeRendicionDeCola"/>. <see cref="Pendientes"/>/<see cref="EntregadoHasta"/> son
 /// nullables porque un bloque que nunca rindió no los tiene (y es justamente el caso
-/// <see cref="MotivoDeRendicionPendiente.SinReporte"/>).</summary>
+/// <see cref="MotivoDeRendicionPendiente.SinReporte"/>). <see cref="IdReserva"/> es lo que el
+/// forzado supervisado usa para saldar EXACTAMENTE los bloques que informó como bloqueantes, nunca
+/// todos los del punto de venta.</summary>
+/// <param name="EntregadoHasta">Lo que el dispositivo DECLARÓ, tal cual — el dato del rastro de
+/// auditoría.</param>
+/// <param name="TechoVerificado">El techo que el servidor sostiene (ver
+/// <see cref="ReglaDeRendicionDeCola.Evaluar"/>): nunca menor que
+/// <paramref name="EntregadoHasta"/>, y es el que describe el rango de un
+/// <see cref="MotivoDeRendicionPendiente.HuecoDeComprobantes"/>.</param>
 public sealed record RendicionPendiente(
+    long IdReserva,
     int IdDispositivo,
     string NombreDispositivo,
     string TipoComprobante,
     MotivoDeRendicionPendiente Motivo,
     int? Pendientes,
     long Desde,
-    long? EntregadoHasta);
+    long? EntregadoHasta,
+    long TechoVerificado);
 
 /// <summary>Punto de venta de <see cref="ResumenDeCierrePorRetiro"/>. <see cref="Numero"/> es el
 /// MISMO valor que <see cref="Id"/> — <see cref="Ways.Domain.Organizacion.PuntoVenta"/> no tiene

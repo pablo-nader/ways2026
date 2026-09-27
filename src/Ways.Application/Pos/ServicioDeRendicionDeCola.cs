@@ -10,9 +10,10 @@ namespace Ways.Application.Pos;
 /// <summary>
 /// Rendición de la cola local del dispositivo (<c>POST /api/pos/rendicion-de-cola</c>): el
 /// dispositivo declara hasta qué número repartió y cuántas ventas todavía no llegaron, y el cierre
-/// de turno usa ese reporte —verificándolo contra <c>comprobantes_venta</c>, ver
-/// <see cref="Ways.Domain.Ventas.ReglaDeRendicionDeCola"/>— para no cerrar sobre una cola sin
-/// drenar.
+/// de turno usa ese reporte —contrastándolo contra <c>comprobantes_venta</c>, que puede
+/// contradecirlo pero no confirmarlo; ver
+/// <see cref="Ways.Domain.Ventas.MotivoDeRendicionPendiente.HuecoDeComprobantes"/>— para no cerrar
+/// sobre una cola sin drenar.
 ///
 /// Device-only, su propio punto de venta únicamente: mismo criterio EXACTO que
 /// <see cref="ServicioDeInstantaneaDePos"/> — el punto de venta se deriva de
@@ -57,21 +58,14 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
         var puntoVenta = await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVentaDelDispositivo, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVentaDelDispositivo}.");
 
-        // Regla ÚNICA compartida con el checkout — nunca reimplementada acá (ver el doc-comment de
-        // PoliticaDeModoDePuntoVenta): confina el dispositivo a SU PROPIO punto de venta
-        // Escritorio, incluso si el modo cambió administrativamente después de vincularlo.
+        // Regla ÚNICA compartida con el checkout, reusada y nunca reimplementada acá (ver el
+        // doc-comment de PoliticaDeModoDePuntoVenta): confina el dispositivo a SU PROPIO punto de
+        // venta Escritorio.
         await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
 
         var tipo = await ResolverTipoAsync(solicitud.CodigoTipoComprobante, ct);
 
-        var bloque = await db.ReservasNumeracion
-            .Where(r => r.IdTenant == idTenant
-                && r.IdPuntoVenta == puntoVenta.Id
-                && r.TipoComprobante == tipo.Codigo
-                && r.IdDispositivo == idDispositivo
-                && r.AbandonadaAt == null)
-            .Select(r => new { r.Desde, r.Hasta })
-            .FirstOrDefaultAsync(ct);
+        var bloque = await LeerBloqueVivoAsync(idTenant, puntoVenta.Id, tipo.Codigo, idDispositivo, ct);
 
         if (bloque is null)
         {
@@ -93,11 +87,26 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
                 400);
         }
 
+        // Piso monótono, sobre la fila que ya se leyó arriba: entregado_hasta es una marca de agua y
+        // nunca puede bajar (un POST en vuelo que llega tarde, un puntero local reiniciado). Quien
+        // de verdad lo IMPONE es el conjunto homónimo del UPDATE —ver
+        // AsignadorDeNumeroComprobante.RegistrarRendicionAsync—, que además cubre la carrera que esta
+        // lectura no puede ver; acá el chequeo existe para que el camino normal falle sin pagar el
+        // statement, misma forma que el pre-chequeo de bloque vivo de arriba.
+        var piso = bloque.EntregadoHasta ?? bloque.Desde - 1;
+
+        if (solicitud.EntregadoHasta < piso)
+        {
+            throw new ErrorDominio("rendicion_regresiva", MensajeDeRegresion(piso), 409);
+        }
+
         var momento = reloj.Ahora;
 
         // Estrategia REINTENTABLE (nunca FabricaDeEstrategiaSinReintento): el UPDATE escribe los
         // valores que el dispositivo declaró, no los incrementa, así que reintentarlo sobre un
         // commit ambiguo deja exactamente la misma fila — es idempotente, no hay nada que duplicar.
+        // El piso monótono no rompe eso: compara con >=, así que el reintento del MISMO valor sobre
+        // un intento que sí comiteó vuelve a afectar la fila en vez de parecer un rechazo.
         var estrategia = db.Database.CreateExecutionStrategy();
         var filas = await estrategia.ExecuteAsync(async () =>
             await AsignadorDeNumeroComprobante.RegistrarRendicionAsync(
@@ -106,14 +115,42 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
 
         if (filas == 0)
         {
-            // El bloque se abandonó entre la lectura de arriba y este UPDATE (el dispositivo pidió
-            // uno nuevo en paralelo): mismo 409 que la ausencia de bloque, porque es lo mismo.
-            throw new ErrorDominio(
-                "rendicion_sin_bloque_vivo",
-                "Este dispositivo no tiene un bloque de numeración vigente para esa serie.",
-                409);
+            // Los dos conjuntos que pueden haber rechazado el UPDATE describen situaciones
+            // distintas, así que la relectura decide cuál informar: sin bloque vivo se abandonó
+            // entre la lectura de arriba y el UPDATE; con bloque vivo, otra rendición ganó la
+            // carrera y dejó la marca de agua más alta que lo que este reporte declara.
+            var actual = await LeerBloqueVivoAsync(idTenant, puntoVenta.Id, tipo.Codigo, idDispositivo, ct);
+
+            throw actual is null
+                ? new ErrorDominio(
+                    "rendicion_sin_bloque_vivo",
+                    "Este dispositivo no tiene un bloque de numeración vigente para esa serie.",
+                    409)
+                : new ErrorDominio(
+                    "rendicion_regresiva", MensajeDeRegresion(actual.EntregadoHasta ?? actual.Desde - 1), 409);
         }
     }
+
+    private static string MensajeDeRegresion(long piso) =>
+        $"Este bloque ya tiene registrado hasta el número {piso}: una rendición no puede declarar menos.";
+
+    /// <summary>El bloque VIVO del dispositivo para esa serie, o <c>null</c> si no hay ninguno.
+    /// Mismo predicado exacto que el <c>WHERE</c> de
+    /// <see cref="AsignadorDeNumeroComprobante.RegistrarRendicionAsync"/> (menos el piso monótono),
+    /// y por eso vive en un solo lugar: lo usan el pre-chequeo y la relectura que separa las dos
+    /// causas de un UPDATE sin filas.</summary>
+    private async Task<BloqueVivo?> LeerBloqueVivoAsync(
+        int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo, CancellationToken ct) =>
+        await db.ReservasNumeracion
+            .Where(r => r.IdTenant == idTenant
+                && r.IdPuntoVenta == idPuntoVenta
+                && r.TipoComprobante == tipoComprobante
+                && r.IdDispositivo == idDispositivo
+                && r.AbandonadaAt == null)
+            .Select(r => new BloqueVivo(r.Desde, r.Hasta, r.EntregadoHasta))
+            .FirstOrDefaultAsync(ct);
+
+    private sealed record BloqueVivo(long Desde, long Hasta, long? EntregadoHasta);
 
     /// <summary>Mismo predicado EXACTO que <c>ServicioDeReservasDeNumeracion.ResolverTipoAsync</c>
     /// (que a su vez lo duplica de <c>ServicioDeVentas.ResolverTipoComprobanteAsync</c>) —

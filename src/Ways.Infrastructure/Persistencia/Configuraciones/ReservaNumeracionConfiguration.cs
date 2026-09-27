@@ -71,6 +71,14 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.Property(r => r.Pendientes).HasColumnName("pendientes");
         builder.Property(r => r.ReportadoAt).HasColumnName("reportado_at");
 
+        // Sin CHECK a propósito (gate del owner): el forzado tiene que poder saldar un bloque vivo o
+        // abandonado, con reporte o sin ninguno — un bloque que nunca rindió es en sí mismo un motivo
+        // de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas. Sin
+        // índice nuevo tampoco: ix_reservas_numeracion_punto_venta ya cubre la entrada
+        // (id_punto_venta, id_tenant) de la guarda de cierre y las filas por punto de venta están
+        // acotadas.
+        builder.Property(r => r.RendicionSaldadaAt).HasColumnName("rendicion_saldada_at");
+
         builder.Property(r => r.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(r => r.UpdatedAt).HasColumnName("updated_at").IsRequired();
 

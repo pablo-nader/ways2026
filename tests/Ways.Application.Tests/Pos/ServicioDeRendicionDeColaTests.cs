@@ -3,6 +3,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Pos;
 using Ways.Domain.Common;
 using Ways.Domain.Dispositivos;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -122,11 +123,37 @@ public class ServicioDeRendicionDeColaTests
 
     /// <summary>Borde inferior de la misma guarda: <c>0</c> es válido (un dispositivo con la cola
     /// vacía tiene que poder rendir limpio) — un mutante que cambie <c>&lt; 0</c> por <c>&lt;= 0</c>
-    /// pone este test en rojo. Sigue hasta el chequeo siguiente, que es lo que se afirma.</summary>
+    /// pone este test en rojo. Sigue hasta el chequeo siguiente, que es lo que se afirma.
+    ///
+    /// judgment-day: antes esperaba <c>no_encontrado</c>, un resultado que producción no puede
+    /// alcanzar (el punto de venta se lee de la fila del dispositivo y la FK garantiza que exista),
+    /// así que el test fijaba una rama imposible. Con el punto de venta sembrado el flujo llega hasta
+    /// donde tiene que llegar: <c>tipo_comprobante_invalido</c>, el rechazo siguiente que sí es
+    /// alcanzable (un código que no existe).</summary>
     [Fact]
     public async Task CeroPendientesNoEsInvalido()
     {
         await using var db = CrearContexto();
+        SembrarDispositivoConSuPuntoVenta(db);
+        await db.SaveChangesAsync();
+
+        var servicio = new ServicioDeRendicionDeCola(
+            db, new RelojFijo(Ahora), new ContextoFijo(IdTenant, idDispositivo: 1));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => servicio.RegistrarAsync(new SolicitudDeRendicionDeCola("NO_EXISTE", 10, 0)));
+
+        Assert.NotEqual("pendientes_invalido", error.Codigo);
+        Assert.Equal("tipo_comprobante_invalido", error.Codigo);
+    }
+
+    private static void SembrarDispositivoConSuPuntoVenta(WaysDbContext db)
+    {
+        db.PuntosVenta.Add(new PuntoVenta
+        {
+            Id = 5, IdTenant = IdTenant, IdEmpresa = 1, Nombre = "Local 1",
+            Modo = ModoPuntoVenta.Escritorio, CreatedAt = Ahora, UpdatedAt = Ahora
+        });
         db.Dispositivos.Add(new Dispositivo
         {
             IdTenant = IdTenant,
@@ -137,15 +164,5 @@ public class ServicioDeRendicionDeColaTests
             CreatedAt = Ahora,
             UpdatedAt = Ahora
         });
-        await db.SaveChangesAsync();
-
-        var servicio = new ServicioDeRendicionDeCola(
-            db, new RelojFijo(Ahora), new ContextoFijo(IdTenant, idDispositivo: 1));
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(
-            () => servicio.RegistrarAsync(new SolicitudDeRendicionDeCola("TX", 10, 0)));
-
-        Assert.NotEqual("pendientes_invalido", error.Codigo);
-        Assert.Equal("no_encontrado", error.Codigo);
     }
 }

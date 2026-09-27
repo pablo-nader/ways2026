@@ -30,8 +30,9 @@ namespace Ways.IntegrationTests;
 /// es exactamente el camino que antes no tenía guarda ninguna.
 ///
 /// Los bloques de <c>reservas_numeracion</c> se siembran por SQL crudo para poder expresar estados
-/// que el endpoint de rendición no produce (un reporte vencido, un bloque abandonado) — mismo
-/// criterio y mismo motivo que <c>ReservaDeNumeracionEndpointsTests.SembrarReservaDirectaAsync</c>.
+/// que el endpoint de rendición no produce (un reporte vencido, un bloque abandonado, un bloque ya
+/// saldado) — mismo criterio y mismo motivo que
+/// <c>ReservaDeNumeracionEndpointsTests.SembrarReservaDirectaAsync</c>.
 /// El camino real (dispositivo → <c>POST /api/pos/rendicion-de-cola</c> → cierre) tiene su propio
 /// test al final.
 /// </summary>
@@ -115,22 +116,23 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
     /// que el endpoint de rendición nunca escribiría (un <c>reportado_at</c> viejo).</summary>
     private Task SembrarBloqueAsync(
         Contexto ctx, long desde, long hasta, long? entregadoHasta, int? pendientes, DateTimeOffset? reportadoAt,
-        DateTimeOffset? abandonadaAt = null) =>
+        DateTimeOffset? abandonadaAt = null, DateTimeOffset? rendicionSaldadaAt = null) =>
         SembrarBloqueEnPuntoVentaAsync(
             ctx, ctx.IdPuntoVenta, ctx.IdDispositivo, desde, hasta, entregadoHasta, pendientes, reportadoAt,
-            abandonadaAt);
+            abandonadaAt, rendicionSaldadaAt);
 
     private async Task SembrarBloqueEnPuntoVentaAsync(
         Contexto ctx, int idPuntoVenta, int idDispositivo, long desde, long hasta, long? entregadoHasta,
-        int? pendientes, DateTimeOffset? reportadoAt, DateTimeOffset? abandonadaAt = null)
+        int? pendientes, DateTimeOffset? reportadoAt, DateTimeOffset? abandonadaAt = null,
+        DateTimeOffset? rendicionSaldadaAt = null)
     {
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO reservas_numeracion " +
             "(id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, abandonada_at, " +
-            " entregado_hasta, pendientes, reportado_at, created_at, updated_at) " +
-            "VALUES ($1, $2, 'TX', $3, $4, $5, $6, $7, $8, $9, now(), now())";
+            " entregado_hasta, pendientes, reportado_at, rendicion_saldada_at, created_at, updated_at) " +
+            "VALUES ($1, $2, 'TX', $3, $4, $5, $6, $7, $8, $9, $10, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = idDispositivo });
@@ -140,7 +142,30 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         comando.Parameters.Add(new NpgsqlParameter { Value = (object?)entregadoHasta ?? DBNull.Value });
         comando.Parameters.Add(new NpgsqlParameter { Value = (object?)pendientes ?? DBNull.Value });
         comando.Parameters.Add(new NpgsqlParameter { Value = (object?)reportadoAt ?? DBNull.Value });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)rendicionSaldadaAt ?? DBNull.Value });
         await comando.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Los <c>rendicion_saldada_at</c> del punto de venta, por <c>desde</c> (que es lo que
+    /// distingue a los bloques sembrados de cada test): la aserción del forzado necesita ver CUÁLES
+    /// quedaron saldados y cuáles no, no solo cuántos.</summary>
+    private async Task<Dictionary<long, bool>> LeerSaldadosPorDesdeAsync(Contexto ctx)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "SELECT desde, rendicion_saldada_at IS NOT NULL FROM reservas_numeracion " +
+            "WHERE id_punto_venta = $1 ORDER BY desde";
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdPuntoVenta });
+
+        var saldados = new Dictionary<long, bool>();
+        await using var lector = await comando.ExecuteReaderAsync();
+        while (await lector.ReadAsync())
+        {
+            saldados[lector.GetInt64(0)] = lector.GetBoolean(1);
+        }
+
+        return saldados;
     }
 
     /// <summary>Un comprobante SIN pagos: la guarda cuenta filas de <c>comprobantes_venta</c> en el
@@ -401,22 +426,52 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(EstadoTurno.Cerrado, await LeerEstadoAsync(ctx, turno.Id));
     }
 
-    /// <summary>Kill del conjunto <c>r.abandonada_at IS NULL</c> de la consulta de la guarda: un
-    /// bloque ABANDONADO (el dispositivo pidió uno nuevo) declara 5 pendientes y NO bloquea — ese
-    /// bloque ya no reparte números, y el vivo que lo reemplazó es el único que importa. Borrar ese
-    /// conjunto deja este test en 409.</summary>
+    /// <summary>La INVERSIÓN de un test que codificaba el defecto (judgment-day, SEVERE): abandonar
+    /// un bloque NO es una válvula de escape. <c>ReservarBloqueAsync</c> abandona el bloque vivo en
+    /// CADA reposición (<c>UMBRAL_DE_REPOSICION = 20</c> de <c>CANTIDAD_A_RESERVAR = 100</c>, o sea
+    /// más o menos cada 81 ventas), así que filtrar por <c>abandonada_at</c> hacía que la rotación
+    /// rutinaria del bloque borrara el hueco sola: un bloque con ventas sin llegar dejaba de bloquear
+    /// por el solo hecho de que el dispositivo pidiera números nuevos. Acá el bloque abandonado
+    /// declara 5 ventas sin sincronizar y TIENE que seguir bloqueando — volver el conjunto a
+    /// <c>r.abandonada_at IS NULL</c> deja este test en 200.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ElCierreAvanzaCuandoElUnicoBloqueConPendientesFueAbandonado(bool porRetiro)
+    public async Task UnBloqueAbandonadoConPendientesSigueBloqueandoElCierre(bool porRetiro)
     {
         var ctx = await PrepararAsync(
-            $"{nameof(ElCierreAvanzaCuandoElUnicoBloqueConPendientesFueAbandonado)}{porRetiro}");
+            $"{nameof(UnBloqueAbandonadoConPendientesSigueBloqueandoElCierre)}{porRetiro}");
         using var _admin = ctx.Admin;
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarBloqueAsync(
             ctx, desde: 1, hasta: 10, entregadoHasta: 0, pendientes: 5, reportadoAt: DateTimeOffset.UtcNow,
             abandonadaAt: DateTimeOffset.UtcNow);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro, turno.Id);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+        Assert.Equal("rendicion_de_dispositivo_pendiente", codigo);
+        Assert.Contains("5 venta(s) sin sincronizar", mensaje, StringComparison.Ordinal);
+        Assert.Equal(EstadoTurno.Abierto, await LeerEstadoAsync(ctx, turno.Id));
+    }
+
+    /// <summary>Kill del conjunto <c>r.rendicion_saldada_at IS NULL</c> de la consulta de la guarda,
+    /// y la válvula de escape que REEMPLAZA al abandono: el MISMO bloque del test de arriba —mismos 5
+    /// pendientes— pero ya saldado, o sea que un supervisor forzó un cierre mientras bloqueaba y sus
+    /// números sin rendir quedaron aceptados como tales. Ese bloque no vuelve a bloquear nunca.
+    /// Borrar el conjunto deja este test en 409.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnBloqueYaSaldadoNoBloqueaElCierre(bool porRetiro)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnBloqueYaSaldadoNoBloqueaElCierre)}{porRetiro}");
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarBloqueAsync(
+            ctx, desde: 1, hasta: 10, entregadoHasta: 0, pendientes: 5, reportadoAt: DateTimeOffset.UtcNow,
+            abandonadaAt: DateTimeOffset.UtcNow, rendicionSaldadaAt: DateTimeOffset.UtcNow);
 
         var respuesta = await CerrarAsync(ctx.Admin, porRetiro, turno.Id);
 
@@ -463,10 +518,52 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(ctx.IdDispositivo, bloqueo.GetProperty("id_dispositivo").GetInt32());
         Assert.Equal(ctx.NombreDispositivo, bloqueo.GetProperty("dispositivo").GetString());
         Assert.Equal("TX", bloqueo.GetProperty("tipo_comprobante").GetString());
-        Assert.Equal(nameof(MotivoDeRendicionPendiente.VentasSinLlegar), bloqueo.GetProperty("bloqueo").GetString());
+        // snake_case, NO el PascalCase de ToString(): el payload pasa por SerializadorDeAuditoria y
+        // esta fila tiene que guardar la misma etiqueta de base que cualquier otro enum auditado.
+        Assert.Equal("ventas_sin_llegar", bloqueo.GetProperty("bloqueo").GetString());
         Assert.Equal(4, bloqueo.GetProperty("pendientes").GetInt32());
         Assert.Equal(1, bloqueo.GetProperty("desde").GetInt64());
         Assert.Equal(2, bloqueo.GetProperty("entregado_hasta").GetInt64());
+    }
+
+    /// <summary>El forzado salda EXACTAMENTE los bloques que informó como bloqueantes, y solo esos.
+    /// Dos bloques del mismo dispositivo y la misma serie: el abandonado <c>1-10</c> nunca rindió
+    /// (bloquea, fail-closed) y el vivo <c>11-20</c> rindió limpio y fresco (no bloquea). Después del
+    /// forzado el primero queda saldado y el SEGUNDO NO — saldar todo el punto de venta de una dejaría
+    /// ciego para siempre al bloque que hoy está sano, que es justo el que va a acumular la cola de
+    /// mañana. Los dos valores por fila son el discriminante: un mutante que saldara por punto de
+    /// venta, o ninguno, mueve uno de los dos.</summary>
+    [Fact]
+    public async Task ElForzadoSaldaSoloLosBloquesQueInformoComoBloqueantes()
+    {
+        var ctx = await PrepararAsync(nameof(ElForzadoSaldaSoloLosBloquesQueInformoComoBloqueantes));
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        await SembrarBloqueAsync(
+            ctx, desde: 1, hasta: 10, entregadoHasta: null, pendientes: null, reportadoAt: null,
+            abandonadaAt: DateTimeOffset.UtcNow);
+        await SembrarBloqueAsync(
+            ctx, desde: 11, hasta: 20, entregadoHasta: 10, pendientes: 0, reportadoAt: DateTimeOffset.UtcNow);
+
+        using var supervisor = await CrearActorWebAsync(ctx, "saldo", RolConocido.Supervisor);
+
+        var respuesta = await CerrarAsync(
+            supervisor, porRetiro: false, turno.Id, forzar: true, motivo: "El bloque viejo ya no vuelve.");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var saldados = await LeerSaldadosPorDesdeAsync(ctx);
+        Assert.Equal(2, saldados.Count);
+        Assert.True(saldados[1], "El bloque bloqueante (1-10) tenía que quedar saldado.");
+        Assert.False(saldados[11], "El bloque sano (11-20) NO tenía que quedar saldado.");
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.Auditoria.SingleAsync(a => a.Accion == "caja.forzado");
+        var bloqueo = Assert.Single(
+            JsonDocument.Parse(fila.ValorNuevo).RootElement.GetProperty("bloqueos").EnumerateArray().ToList());
+        Assert.Equal(1, bloqueo.GetProperty("desde").GetInt64());
+        Assert.Equal("sin_reporte", bloqueo.GetProperty("bloqueo").GetString());
     }
 
     /// <summary>El forzado SIN nada pendiente también deja rastro: es lo que garantiza que el motivo
@@ -627,15 +724,18 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal("rendicion_de_dispositivo_pendiente", (await ProblemaAsync(respuesta)).Codigo);
     }
 
-    /// <summary>Kill del límite SUPERIOR de la subconsulta
-    /// (<c>cv.numero &lt;= COALESCE(r.entregado_hasta, r.desde - 1)</c>): el dispositivo dice haber
-    /// entregado 1..3 y llegaron la 1, la 2 y la 9. La 9 está dentro del BLOQUE pero fuera de lo
-    /// entregado, así que no cuenta — sin el límite el conteo daría 3 y taparía el hueco de la
-    /// 3.</summary>
+    /// <summary>Kill del <c>GREATEST</c> que deriva el techo verificado (judgment-day, SEVERE): el
+    /// dispositivo dice haber entregado 1..3 y llegaron la 1, la 2 y la 9. Esa 9 PRUEBA que repartió
+    /// hasta 9 por lo menos, así que el techo verificado es 9, el esperado 9 y llegaron 3 — bloquea.
+    /// Sin el <c>GREATEST</c> el techo sería el declarado 3, el esperado 3, y los tres comprobantes
+    /// que llegaron taparían el hueco: el cierre pasaría sobre seis números que nunca llegaron.
+    ///
+    /// judgment-day: este test antes afirmaba lo contrario —que la 9 "no cuenta" por estar arriba de
+    /// lo entregado— y era exactamente el agujero: declarar poco encogía el rango verificado.</summary>
     [Fact]
-    public async Task ElHuecoNoSeTapaConUnComprobantePorArribaDeLoEntregado()
+    public async Task ElTechoVerificadoSubeConUnComprobantePorArribaDeLoDeclarado()
     {
-        var ctx = await PrepararAsync(nameof(ElHuecoNoSeTapaConUnComprobantePorArribaDeLoEntregado));
+        var ctx = await PrepararAsync(nameof(ElTechoVerificadoSubeConUnComprobantePorArribaDeLoDeclarado));
         using var _admin = ctx.Admin;
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarBloqueAsync(
@@ -647,7 +747,57 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         var respuesta = await CerrarAsync(ctx.Admin, porRetiro: false, turno.Id);
 
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
-        Assert.Equal("rendicion_de_dispositivo_pendiente", (await ProblemaAsync(respuesta)).Codigo);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+        Assert.Equal("rendicion_de_dispositivo_pendiente", codigo);
+        // El rango informado es el VERIFICADO (1-9), no el declarado (1-3): es el valor que solo el
+        // GREATEST puede producir.
+        Assert.Contains("1-9", mensaje, StringComparison.Ordinal);
+    }
+
+    /// <summary>El otro lado del borde del techo derivado: el dispositivo declara <c>desde - 1</c>
+    /// ("no repartí nada") con cero pendientes y reporte fresco, y llegaron las TX 1 y 2 de su bloque.
+    /// El techo verificado sube a 2, el esperado es 2 y llegaron 2 — no hay hueco y el cierre pasa. Sin
+    /// este caso, el test de arriba podría estar pasando porque el techo derivado bloquea SIEMPRE, no
+    /// porque detecte un hueco.</summary>
+    [Fact]
+    public async Task UnaDeclaracionDeCeroConTodosSusComprobantesLlegadosNoBloquea()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDeclaracionDeCeroConTodosSusComprobantesLlegadosNoBloquea));
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarBloqueAsync(
+            ctx, desde: 1, hasta: 10, entregadoHasta: 0, pendientes: 0, reportadoAt: DateTimeOffset.UtcNow);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 1);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 2);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro: false, turno.Id);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(EstadoTurno.Cerrado, await LeerEstadoAsync(ctx, turno.Id));
+    }
+
+    /// <summary>Kill del límite SUPERIOR del lateral (<c>cv.numero &lt;= r.hasta</c>): el bloque es
+    /// 1..10, entregó 1..3, los tres llegaron — no hay hueco— y además existe una TX 20, de un bloque
+    /// POSTERIOR de la misma serie. Ese 20 no pertenece a este bloque: no puede subirle el techo ni
+    /// sumarse a su conteo. Sin el límite, el techo verificado sería 20, el esperado 20 y el conteo 4:
+    /// un hueco fabricado que bloquearía todo cierre del punto de venta.</summary>
+    [Fact]
+    public async Task ElTechoNoSubePorUnComprobanteDeUnBloquePosterior()
+    {
+        var ctx = await PrepararAsync(nameof(ElTechoNoSubePorUnComprobanteDeUnBloquePosterior));
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarBloqueAsync(
+            ctx, desde: 1, hasta: 10, entregadoHasta: 3, pendientes: 0, reportadoAt: DateTimeOffset.UtcNow);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 1);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 2);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 3);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 20);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro: false, turno.Id);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(EstadoTurno.Cerrado, await LeerEstadoAsync(ctx, turno.Id));
     }
 
     /// <summary>Kill del límite INFERIOR de la subconsulta (<c>cv.numero &gt;= r.desde</c>): el

@@ -262,8 +262,11 @@ public class ServicioDeTurnos(
             throw new ErrorDominio("turno_ya_cerrado", "El turno ya está cerrado.", 409);
         }
 
-        // 1.5. Guarda de rendición de dispositivos — bajo el MISMO lock, para leer el mismo
-        // snapshot que la derivación de abajo.
+        // 1.5. Guarda de rendición de dispositivos — acá y no antes de abrir la transacción: tiene
+        // que correr DENTRO de ella y ANTES de escribir cualquier otra cosa, así un rechazo deshace
+        // también el UPDATE guardado de arriba. No comparte snapshot con la derivación (READ
+        // COMMITTED, y el lock es solo de la fila del turno): ver el doc-comment de
+        // ResolverRendicionDeDispositivosAsync.
         await ResolverRendicionDeDispositivosAsync(
             idTenant, idTurnoCaja, idPuntoVenta.Value, momento, solicitud.ForzarSinRendicion, motivoSinRendicion, ct);
 
@@ -347,8 +350,9 @@ public class ServicioDeTurnos(
             throw new ErrorDominio("turno_ya_cerrado", "El turno ya está cerrado.", 409);
         }
 
-        // 1.5. Guarda de rendición de dispositivos — mismo lugar exacto que en el cierre clásico
-        // (bajo el mismo lock, antes de escribir nada más).
+        // 1.5. Guarda de rendición de dispositivos — mismo lugar exacto que en el cierre clásico:
+        // dentro de la transacción y antes de escribir nada más, para que un rechazo la aborte
+        // entera.
         await ResolverRendicionDeDispositivosAsync(
             idTenant, idTurnoCaja, idPuntoVenta.Value, momento, solicitud.ForzarSinRendicion, motivoSinRendicion, ct);
 
@@ -523,21 +527,32 @@ public class ServicioDeTurnos(
         return motivo.Trim();
     }
 
-    /// <summary>La guarda en sí, dentro de la transacción del cierre y bajo su lock exclusivo:
-    /// bloquea el cierre mientras algún dispositivo del punto de venta tenga cola sin drenar (o no
-    /// pueda probar que no la tiene), y deja rastro auditable cuando un supervisor la fuerza.
+    /// <summary>La guarda en sí, dentro de la transacción del cierre: bloquea el cierre mientras
+    /// algún dispositivo del punto de venta tenga cola sin drenar (o no pueda probar que no la
+    /// tiene), y deja rastro auditable cuando un supervisor la fuerza.
     ///
-    /// Con <paramref name="forzar"/> en true SIEMPRE escribe la fila de auditoría, incluso si la
-    /// guarda no encontró nada: es lo que garantiza que el motivo declarado nunca se descarte
-    /// (dto-contract-honesty) y "apretó el override sin necesidad" es en sí mismo un dato útil.
-    /// Se usa el overload raw-ADO de <see cref="ServicioDeAuditoria.RegistrarAsync"/> porque el
-    /// cierre es una transacción ADO; <c>ef-retry-safe-writes</c> forma (b): el cierre corre bajo
+    /// Con <paramref name="forzar"/> en true escribe la fila de auditoría incluso si la guarda no
+    /// encontró nada: es lo que garantiza que el motivo declarado nunca se descarte
+    /// (dto-contract-honesty) y "apretó el override sin necesidad" es en sí mismo un dato útil. Esa
+    /// fila vive DENTRO de la transacción del cierre, así que existe si y solo si el cierre comitea —
+    /// un forzado válido cuyo cierre después falla (<c>caja_sin_medio_efectivo_unico</c>,
+    /// <c>arqueo_incompleto</c>, cualquier rollback) no deja rastro, y está bien que sea así: no hubo
+    /// cierre forzado que auditar. Se usa el overload raw-ADO de
+    /// <see cref="ServicioDeAuditoria.RegistrarAsync"/> porque el cierre es una transacción ADO;
+    /// <c>ef-retry-safe-writes</c> forma (b): el cierre corre bajo
     /// <see cref="FabricaDeEstrategiaSinReintento"/>, así que no hace falta ningún reset del
     /// ChangeTracker (la lambda nunca se reintenta).
     ///
+    /// Un forzado también SALDA los bloques que informó como bloqueantes y solo esos
+    /// (<see cref="MarcarRendicionSaldadaAsync"/>): sus números sin rendir quedan explícitamente
+    /// aceptados como tales, y por eso dejan de bloquear los cierres siguientes. Es el único
+    /// mecanismo que saca un bloque de la guarda además de revocar el dispositivo.
+    ///
     /// Carrera irreducible y ACEPTADA: el dispositivo puede rendir limpio, perder señal y vender
-    /// mientras alguien cierra. No se agrega ningún lock por eso, y la razón es que la ventana está
-    /// acotada por construcción — un dispositivo ONLINE manda sus ventas directo al servidor (caen
+    /// mientras alguien cierra. Nada de esto corre bajo un lock que cubra
+    /// <c>reservas_numeracion</c>/<c>dispositivos</c>/<c>comprobantes_venta</c> —el cierre lockea la
+    /// fila del turno y corre en READ COMMITTED— y no se agrega ninguno, porque la ventana está
+    /// acotada por construcción: un dispositivo ONLINE manda sus ventas directo al servidor (caen
     /// dentro del turno o rebotan con <c>409 turno_no_abierto</c>, nunca quedan en la cola), y un
     /// dispositivo que se quedó OFFLINE deja de poder rendir, así que su reporte envejece y en
     /// <see cref="ReglaDeRendicionDeCola.VentanaDeFrescura"/> el cierre se vuelve a bloquear solo.
@@ -561,6 +576,41 @@ public class ServicioDeTurnos(
 
         // ValidarOverrideDeRendicion ya garantizó no-nulo/no-vacío cuando forzar es true.
         await RegistrarCierreForzadoAsync(idTenant, idTurnoCaja, idPuntoVenta, motivo!, pendientes, ct);
+        await MarcarRendicionSaldadaAsync(pendientes, momento, ct);
+    }
+
+    /// <summary>Marca como saldados EXACTAMENTE los bloques que
+    /// <see cref="ResolverRendicionDeDispositivosAsync"/> acaba de informar como bloqueantes — por
+    /// id, nunca "todos los del punto de venta": un bloque que no bloqueaba nada no tiene números
+    /// sin rendir que alguien esté aceptando, y saldarlo lo volvería ciego para el cierre siguiente.
+    /// Sin bloqueos no hay statement (el forzado innecesario igual queda auditado).
+    ///
+    /// SQL crudo sobre la conexión/transacción del cierre, misma convención que el resto del
+    /// método: cae en el mismo COMMIT, así que un cierre que falla después no deja ningún bloque
+    /// saldado a medias. Sin conjunto de <c>id_tenant</c>, misma decisión que el <c>UPDATE</c> de
+    /// <c>numeraciones_comprobante</c> (ver el doc-comment de
+    /// <see cref="Ventas.AsignadorDeNumeroComprobante"/>): la clave del <c>WHERE</c> ya es la PK
+    /// global y el aislamiento por tenant lo impone RLS sobre esta misma conexión.</summary>
+    private async Task MarcarRendicionSaldadaAsync(
+        IReadOnlyList<RendicionPendiente> pendientes, DateTimeOffset momento, CancellationToken ct)
+    {
+        if (pendientes.Count == 0)
+        {
+            return;
+        }
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE reservas_numeracion SET rendicion_saldada_at = $1, updated_at = $1 " +
+            "WHERE id_reserva_numeracion = ANY($2)";
+
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, pendientes.Select(p => p.IdReserva).ToArray());
+
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     private async Task RegistrarCierreForzadoAsync(
@@ -582,7 +632,11 @@ public class ServicioDeTurnos(
                     ["id_dispositivo"] = p.IdDispositivo,
                     ["dispositivo"] = p.NombreDispositivo,
                     ["tipo_comprobante"] = p.TipoComprobante,
-                    ["bloqueo"] = p.Motivo.ToString(),
+                    // El enum crudo, NO su ToString(): así lo serializa SerializadorDeAuditoria con
+                    // su JsonStringEnumConverter(SnakeCaseLower) y esta fila guarda la misma etiqueta
+                    // de base que cualquier otro enum auditado ("ventas_sin_llegar"), en vez del
+                    // PascalCase que produce C#.
+                    ["bloqueo"] = p.Motivo,
                     ["pendientes"] = p.Pendientes,
                     ["desde"] = p.Desde,
                     ["entregado_hasta"] = p.EntregadoHasta
@@ -612,9 +666,12 @@ public class ServicioDeTurnos(
         MotivoDeRendicionPendiente.VentasSinLlegar =>
             $"el dispositivo '{pendiente.NombreDispositivo}' tiene {pendiente.Pendientes} venta(s) sin " +
             $"sincronizar ({pendiente.TipoComprobante})",
+        // El rango que se informa es el VERIFICADO, no el declarado: cuando el dispositivo declaró
+        // menos de lo que ya llegó, el declarado describiría un rango vacío (o más chico que el
+        // hueco real) y el mensaje mentiría.
         MotivoDeRendicionPendiente.HuecoDeComprobantes =>
             $"faltan comprobantes del dispositivo '{pendiente.NombreDispositivo}' en el rango " +
-            $"{pendiente.Desde}-{pendiente.EntregadoHasta} ({pendiente.TipoComprobante})",
+            $"{pendiente.Desde}-{pendiente.TechoVerificado} ({pendiente.TipoComprobante})",
         _ => throw new ArgumentOutOfRangeException(nameof(pendiente), pendiente.Motivo, "Motivo no reconocido.")
     };
 

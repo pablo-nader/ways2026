@@ -20,18 +20,31 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: null, pendientes: null, entregadoHasta: null, desde: 10,
-            comprobantesEnElRango: 0, momento: Momento);
+            techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.SinReporte, motivo);
     }
 
     /// <summary>Mismo disyunto (a) por la otra puerta: una rendición a medias (lo que
     /// <c>ck_reservas_numeracion_reporte_consistente</c> impide en la base) nunca se completa con
-    /// un default optimista — las tres combinaciones parciales caen en SinReporte.</summary>
+    /// un default optimista.
+    ///
+    /// Las dos últimas filas son las que matan esos defaults, y son las que faltaban (judgment-day):
+    /// con <c>reportadoAt</c> presente y EXACTAMENTE una de las otras dos en null, el flujo llega a
+    /// los disyuntos siguientes, así que <c>pendientes ?? 0</c> y <c>entregadoHasta ?? desde - 1</c>
+    /// devuelven <c>null</c> (no bloquea) en vez de <c>SinReporte</c>. Con <c>reportadoAt</c> en null
+    /// —las tres primeras filas— ningún default de esos dos cambia el resultado, que es exactamente
+    /// por qué los dos mutantes sobrevivían al archivo entero.
+    ///
+    /// Queda sin cubrir la sexta combinación parcial (<c>reportadoAt</c> null con las otras dos
+    /// presentes): es la que mataría <c>reportadoAt ?? momento</c>, un mutante distinto que este
+    /// archivo no cubre.</summary>
     [Theory]
     [InlineData(true, false, false)]
     [InlineData(false, true, false)]
     [InlineData(false, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
     public void UnReporteAMediasBloqueaIgual(bool conReportadoAt, bool conPendientes, bool conEntregadoHasta)
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
@@ -39,6 +52,7 @@ public class ReglaDeRendicionDeColaTests
             pendientes: conPendientes ? 0 : null,
             entregadoHasta: conEntregadoHasta ? 9 : null,
             desde: 10,
+            techoVerificado: 9,
             comprobantesEnElRango: 0,
             momento: Momento);
 
@@ -51,7 +65,8 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromSeconds(1),
-            pendientes: 0, entregadoHasta: 9, desde: 10, comprobantesEnElRango: 0, momento: Momento);
+            pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
+            momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.ReporteVencido, motivo);
     }
@@ -64,7 +79,8 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura,
-            pendientes: 0, entregadoHasta: 9, desde: 10, comprobantesEnElRango: 0, momento: Momento);
+            pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
+            momento: Momento);
 
         Assert.Null(motivo);
     }
@@ -76,7 +92,7 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 1, entregadoHasta: 9, desde: 10,
-            comprobantesEnElRango: 0, momento: Momento);
+            techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.VentasSinLlegar, motivo);
     }
@@ -89,7 +105,7 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
-            comprobantesEnElRango: 2, momento: Momento);
+            techoVerificado: 12, comprobantesEnElRango: 2, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.HuecoDeComprobantes, motivo);
     }
@@ -102,7 +118,7 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
-            comprobantesEnElRango: 3, momento: Momento);
+            techoVerificado: 12, comprobantesEnElRango: 3, momento: Momento);
 
         Assert.Null(motivo);
     }
@@ -116,7 +132,7 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
-            comprobantesEnElRango: 0, momento: Momento);
+            techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Null(motivo);
     }
@@ -131,9 +147,38 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 0, entregadoHasta: 10, desde: 10,
-            comprobantesEnElRango: comprobantes, momento: Momento);
+            techoVerificado: 10, comprobantesEnElRango: comprobantes, momento: Momento);
 
         Assert.Equal(esperado, motivo);
+    }
+
+    /// <summary>El techo VERIFICADO manda sobre lo declarado (judgment-day, SEVERE): el dispositivo
+    /// declara no haber repartido nada (<c>entregadoHasta == desde - 1</c>) y cero pendientes, pero el
+    /// servidor ya vio llegar el 12 de ese bloque — o sea que repartió hasta 12 por lo menos. El
+    /// esperado es 3 y llegó 1, así que bloquea. Es el kill de la aritmética contra
+    /// <c>techoVerificado</c>: medirla contra <c>entregadoHasta</c> da esperado 0, <c>1 &lt; 0</c> es
+    /// falso y el bloque pasa limpio con lo que tenga en la cola.</summary>
+    [Fact]
+    public void UnTechoVerificadoPorEncimaDeLoDeclaradoDescubreLaRetraccion()
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
+            techoVerificado: 12, comprobantesEnElRango: 1, momento: Momento);
+
+        Assert.Equal(MotivoDeRendicionPendiente.HuecoDeComprobantes, motivo);
+    }
+
+    /// <summary>El otro lado del mismo borde: con el techo verificado en 12 y los TRES comprobantes
+    /// de <c>[10, 12]</c> llegados, no hay hueco — así el test de arriba no puede pasar por el simple
+    /// hecho de que el techo sea mayor que lo declarado.</summary>
+    [Fact]
+    public void UnTechoVerificadoConTodosSusComprobantesNoBloquea()
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
+            techoVerificado: 12, comprobantesEnElRango: 3, momento: Momento);
+
+        Assert.Null(motivo);
     }
 
     /// <summary>El ORDEN de los disyuntos es parte del contrato (el motivo que viaja al operador):
@@ -145,7 +190,8 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromMinutes(1),
-            pendientes: 3, entregadoHasta: 12, desde: 10, comprobantesEnElRango: 0, momento: Momento);
+            pendientes: 3, entregadoHasta: 12, desde: 10, techoVerificado: 12, comprobantesEnElRango: 0,
+            momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.ReporteVencido, motivo);
     }
@@ -157,7 +203,7 @@ public class ReglaDeRendicionDeColaTests
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
             reportadoAt: Momento, pendientes: 3, entregadoHasta: 12, desde: 10,
-            comprobantesEnElRango: 0, momento: Momento);
+            techoVerificado: 12, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.VentasSinLlegar, motivo);
     }

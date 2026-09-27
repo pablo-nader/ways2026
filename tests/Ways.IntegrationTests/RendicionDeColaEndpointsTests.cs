@@ -195,6 +195,68 @@ public class RendicionDeColaEndpointsTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(0, fila.Pendientes);
     }
 
+    /// <summary>El piso monótono visto desde el endpoint (judgment-day, SEVERE): la segunda rendición
+    /// declara MENOS que la primera y se rechaza con su propio código, en vez de pisar la marca de agua
+    /// hacia abajo — lo que dejaba el rango esperado vacío y hacía pasar el cierre con cualquier cosa en
+    /// la cola. Se afirma además que lo persistido sigue siendo el valor alto: el 409 sin eso no
+    /// probaría que no escribió.</summary>
+    [Fact]
+    public async Task UnaRendicionQueBajaElMaximoDeclaradoEs409()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnaRendicionQueBajaElMaximoDeclaradoEs409));
+        var (cajero, idDispositivo) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "regresiva");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var (desde, _) = await ReservarBloqueAsync(cajero, idPuntoVenta);
+
+        var primera = await cajero.PostAsJsonAsync(
+            "/api/pos/rendicion-de-cola", new SolicitudDeRendicionDeCola("TX", desde + 6, 0));
+        Assert.Equal(HttpStatusCode.NoContent, primera.StatusCode);
+
+        var segunda = await cajero.PostAsJsonAsync(
+            "/api/pos/rendicion-de-cola", new SolicitudDeRendicionDeCola("TX", desde + 4, 0));
+
+        Assert.Equal(HttpStatusCode.Conflict, segunda.StatusCode);
+        var problema = await segunda.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("rendicion_regresiva", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await db.ReservasNumeracion.SingleAsync(r => r.IdDispositivo == idDispositivo);
+        Assert.Equal(desde + 6, fila.EntregadoHasta);
+    }
+
+    /// <summary>El borde VÁLIDO del mismo piso: repetir EXACTAMENTE el último valor declarado sigue
+    /// siendo un 204 (es lo que hace un reintento honesto del ciclo de sincronización), y actualiza
+    /// <c>pendientes</c>, que es el dato que cambió. Un mutante que use <c>&gt;</c> en vez de
+    /// <c>&gt;=</c> deja este test en 409.</summary>
+    [Fact]
+    public async Task RepetirElMismoMaximoDeclaradoSigueSiendoValido()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(RepetirElMismoMaximoDeclaradoSigueSiendoValido));
+        var (cajero, idDispositivo) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "repite");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var (desde, _) = await ReservarBloqueAsync(cajero, idPuntoVenta);
+
+        var primera = await cajero.PostAsJsonAsync(
+            "/api/pos/rendicion-de-cola", new SolicitudDeRendicionDeCola("TX", desde + 6, 2));
+        Assert.Equal(HttpStatusCode.NoContent, primera.StatusCode);
+
+        var segunda = await cajero.PostAsJsonAsync(
+            "/api/pos/rendicion-de-cola", new SolicitudDeRendicionDeCola("TX", desde + 6, 0));
+
+        Assert.Equal(HttpStatusCode.NoContent, segunda.StatusCode);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await db.ReservasNumeracion.SingleAsync(r => r.IdDispositivo == idDispositivo);
+        Assert.Equal(desde + 6, fila.EntregadoHasta);
+        Assert.Equal(0, fila.Pendientes);
+    }
+
     [Fact]
     public async Task RendirSinBloqueVivoEs409()
     {
