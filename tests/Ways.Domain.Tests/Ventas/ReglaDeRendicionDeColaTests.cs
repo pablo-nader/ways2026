@@ -19,7 +19,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnBloqueQueNuncaRindioBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: null, pendientes: null, entregadoHasta: null, desde: 10,
+            bloqueVivo: true, reportadoAt: null, pendientes: null, entregadoHasta: null, desde: 10,
             techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.SinReporte, motivo);
@@ -48,7 +48,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnReporteAMediasBloqueaIgual(bool conReportadoAt, bool conPendientes, bool conEntregadoHasta)
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: conReportadoAt ? Momento : null,
+            bloqueVivo: true, reportadoAt: conReportadoAt ? Momento : null,
             pendientes: conPendientes ? 0 : null,
             entregadoHasta: conEntregadoHasta ? 9 : null,
             desde: 10,
@@ -64,7 +64,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnReporteMasViejoQueLaVentanaBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromSeconds(1),
+            bloqueVivo: true, reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromSeconds(1),
             pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
             momento: Momento);
 
@@ -78,7 +78,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnReporteJustoEnElBordeDeLaVentanaNoBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura,
+            bloqueVivo: true, reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura,
             pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
             momento: Momento);
 
@@ -91,7 +91,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnaSolaVentaPendienteBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 1, entregadoHasta: 9, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 1, entregadoHasta: 9, desde: 10,
             techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.VentasSinLlegar, motivo);
@@ -104,7 +104,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnHuecoDeComprobantesBloqueaAunqueNoHayaPendientes()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
             techoVerificado: 12, comprobantesEnElRango: 2, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.HuecoDeComprobantes, motivo);
@@ -117,7 +117,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnReporteFrescoSinPendientesYSinHuecoNoBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 12, desde: 10,
             techoVerificado: 12, comprobantesEnElRango: 3, momento: Momento);
 
         Assert.Null(motivo);
@@ -131,7 +131,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnBloqueSinNumerosRepartidosNoTieneHueco()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
             techoVerificado: 9, comprobantesEnElRango: 0, momento: Momento);
 
         Assert.Null(motivo);
@@ -146,7 +146,7 @@ public class ReglaDeRendicionDeColaTests
     public void ConUnSoloNumeroRepartidoElEsperadoEsUno(int comprobantes, MotivoDeRendicionPendiente? esperado)
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 10, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 10, desde: 10,
             techoVerificado: 10, comprobantesEnElRango: comprobantes, momento: Momento);
 
         Assert.Equal(esperado, motivo);
@@ -162,7 +162,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnTechoVerificadoPorEncimaDeLoDeclaradoDescubreLaRetraccion()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
             techoVerificado: 12, comprobantesEnElRango: 1, momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.HuecoDeComprobantes, motivo);
@@ -175,7 +175,7 @@ public class ReglaDeRendicionDeColaTests
     public void UnTechoVerificadoConTodosSusComprobantesNoBloquea()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 0, entregadoHasta: 9, desde: 10,
             techoVerificado: 12, comprobantesEnElRango: 3, momento: Momento);
 
         Assert.Null(motivo);
@@ -189,7 +189,7 @@ public class ReglaDeRendicionDeColaTests
     public void ElReporteVencidoGanaSobreLosDemasMotivos()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromMinutes(1),
+            bloqueVivo: true, reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromMinutes(1),
             pendientes: 3, entregadoHasta: 12, desde: 10, techoVerificado: 12, comprobantesEnElRango: 0,
             momento: Momento);
 
@@ -202,8 +202,89 @@ public class ReglaDeRendicionDeColaTests
     public void LosPendientesGananSobreElHueco()
     {
         var motivo = ReglaDeRendicionDeCola.Evaluar(
-            reportadoAt: Momento, pendientes: 3, entregadoHasta: 12, desde: 10,
+            bloqueVivo: true, reportadoAt: Momento, pendientes: 3, entregadoHasta: 12, desde: 10,
             techoVerificado: 12, comprobantesEnElRango: 0, momento: Momento);
+
+        Assert.Equal(MotivoDeRendicionPendiente.VentasSinLlegar, motivo);
+    }
+
+    // ---- la frescura es del bloque VIVO, y solo de él (judgment-day ronda 3, SEVERE) ------------
+
+    /// <summary>Kill del conjunto <c>bloqueVivo</c> del disyunto (b): el MISMO reporte vencido y
+    /// limpio de <see cref="UnReporteMasViejoQueLaVentanaBloquea"/>, pero sobre un bloque ABANDONADO,
+    /// NO bloquea. Un bloque abandonado no puede rendir nunca más —el <c>UPDATE</c> de
+    /// <c>RegistrarRendicionAsync</c> solo toca el vivo— ni va a repartir un número más: su evidencia
+    /// quedó congelada al rotar, así que su reporte no puede refrescarse y tampoco hace falta.
+    /// Borrar el conjunto (volver a <c>momento - reporte &gt; VentanaDeFrescura</c> pelado) deja este
+    /// test en rojo con <c>ReporteVencido</c>, que es EXACTAMENTE el defecto que rechazaba todo cierre
+    /// del punto de venta cinco minutos después de cada reposición rutinaria.</summary>
+    [Fact]
+    public void UnReporteVencidoDeUnBloqueAbandonadoNoBloquea()
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            bloqueVivo: false,
+            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromSeconds(1),
+            pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
+            momento: Momento);
+
+        Assert.Null(motivo);
+    }
+
+    /// <summary>El otro lado del MISMO conjunto, y el par que mata el mutante invertido
+    /// (<c>!bloqueVivo &amp;&amp;</c>): el bloque VIVO con ese reporte vencido sigue bloqueando. Junto
+    /// con el test de arriba, ningún mutante del conjunto sobrevive — ni borrarlo ni negarlo.</summary>
+    [Fact]
+    public void UnReporteVencidoDeUnBloqueVivoSigueBloqueando()
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            bloqueVivo: true,
+            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromSeconds(1),
+            pendientes: 0, entregadoHasta: 9, desde: 10, techoVerificado: 9, comprobantesEnElRango: 0,
+            momento: Momento);
+
+        Assert.Equal(MotivoDeRendicionPendiente.ReporteVencido, motivo);
+    }
+
+    /// <summary>Los otros TRES disyuntos no dependen de la vigencia: lo que un bloque abandonado dejó
+    /// sin explicar sigue sin explicarse. Las tres filas son (a) nunca rindió, (c) declara ventas sin
+    /// llegar y (d) faltan comprobantes del rango verificado, todas con <c>bloqueVivo: false</c>.
+    /// Condicionar cualquiera de los tres a la vigencia —<c>bloqueVivo &amp;&amp;</c> delante de (c) o
+    /// (d), <c>bloqueVivo ? SinReporte : null</c> en (a)— deja la fila correspondiente en rojo con
+    /// <c>null</c>.</summary>
+    [Theory]
+    [InlineData(null, null, null, 9L, 0L, MotivoDeRendicionPendiente.SinReporte)]
+    [InlineData(0, 5, 9L, 9L, 0L, MotivoDeRendicionPendiente.VentasSinLlegar)]
+    [InlineData(0, 0, 12L, 12L, 2L, MotivoDeRendicionPendiente.HuecoDeComprobantes)]
+    public void LosOtrosTresDisyuntosBloqueanIgualSobreUnBloqueAbandonado(
+        int? minutosDelReporte, int? pendientes, long? entregadoHasta, long techoVerificado,
+        long comprobantesEnElRango, MotivoDeRendicionPendiente esperado)
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            bloqueVivo: false,
+            reportadoAt: minutosDelReporte is { } minutos ? Momento - TimeSpan.FromMinutes(minutos) : null,
+            pendientes: pendientes,
+            entregadoHasta: entregadoHasta,
+            desde: 10,
+            techoVerificado: techoVerificado,
+            comprobantesEnElRango: comprobantesEnElRango,
+            momento: Momento);
+
+        Assert.Equal(esperado, motivo);
+    }
+
+    /// <summary>El ORDEN de los disyuntos sobre un bloque ABANDONADO: con el reporte vencido Y 3
+    /// ventas sin llegar, el motivo que viaja al operador es <c>VentasSinLlegar</c> y no
+    /// <c>ReporteVencido</c> — la frescura ya no compite. Es el espejo de
+    /// <see cref="ElReporteVencidoGanaSobreLosDemasMotivos"/>, que sigue valiendo para el bloque vivo,
+    /// y el discriminante es el MOTIVO, no el hecho de bloquear: los dos estados bloquean.</summary>
+    [Fact]
+    public void SobreUnBloqueAbandonadoElMotivoQueGanaEsElDeLosPendientes()
+    {
+        var motivo = ReglaDeRendicionDeCola.Evaluar(
+            bloqueVivo: false,
+            reportadoAt: Momento - ReglaDeRendicionDeCola.VentanaDeFrescura - TimeSpan.FromMinutes(1),
+            pendientes: 3, entregadoHasta: 12, desde: 10, techoVerificado: 12, comprobantesEnElRango: 0,
+            momento: Momento);
 
         Assert.Equal(MotivoDeRendicionPendiente.VentasSinLlegar, motivo);
     }

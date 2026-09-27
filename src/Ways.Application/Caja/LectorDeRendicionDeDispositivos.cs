@@ -42,6 +42,10 @@ public class LectorDeRendicionDeDispositivos(IWaysDbContext db)
         // bloque sale de esta consulta solo cuando alguien se hizo cargo de sus números sin rendir:
         // un supervisor que forzó el cierre mientras ESTE bloque lo bloqueaba.
         //
+        // `abandonada_at` sí se SELECCIONA —como `vivo`— porque la REGLA lo necesita: la frescura del
+        // reporte solo aplica al bloque vivo (ver el parámetro `bloqueVivo` de
+        // `ReglaDeRendicionDeCola.Evaluar`). Es un dato de la decisión, nunca un filtro de alcance.
+        //
         // El join a dispositivos con `d.deleted_at IS NULL` ES LA OTRA VÁLVULA DE ESCAPE: revocar un
         // dispositivo muerto (baja lógica, DELETE /api/dispositivos/{id}) saca sus bloques de esta
         // consulta y el turno vuelve a poder cerrarse, sin ningún mecanismo nuevo. Un dispositivo
@@ -67,7 +71,7 @@ public class LectorDeRendicionDeDispositivos(IWaysDbContext db)
                    GREATEST(
                        COALESCE(r.entregado_hasta, r.desde - 1),
                        COALESCE(llegado.maximo, r.desde - 1)) AS techo,
-                   llegado.emitidos
+                   llegado.emitidos, r.abandonada_at IS NULL AS vivo
               FROM reservas_numeracion r
               INNER JOIN dispositivos d ON d.id_dispositivo = r.id_dispositivo AND d.id_tenant = r.id_tenant
               CROSS JOIN LATERAL (
@@ -106,15 +110,16 @@ public class LectorDeRendicionDeDispositivos(IWaysDbContext db)
                 : lector.GetFieldValue<DateTimeOffset>(7);
             var techo = lector.GetInt64(8);
             var emitidos = lector.GetInt64(9);
+            var vivo = lector.GetBoolean(10);
 
             var motivo = ReglaDeRendicionDeCola.Evaluar(
-                reportadoAt, sinLlegar, entregadoHasta, desde, techo, emitidos, momento);
+                vivo, reportadoAt, sinLlegar, entregadoHasta, desde, techo, emitidos, momento);
 
             if (motivo is { } bloqueo)
             {
                 pendientes.Add(new RendicionPendiente(
                     idReserva, idDispositivo, nombre, tipoComprobante, bloqueo, sinLlegar, desde,
-                    entregadoHasta, techo));
+                    entregadoHasta, techo, vivo));
             }
         }
 

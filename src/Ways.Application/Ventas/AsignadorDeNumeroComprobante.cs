@@ -175,8 +175,11 @@ public static class AsignadorDeNumeroComprobante
     /// Devuelve la cantidad de filas afectadas para que el llamador pueda distinguir un rechazo (0)
     /// de una rendición efectiva (1) — el índice parcial
     /// <c>ux_reservas_numeracion_dispositivo_activo</c> garantiza que nunca sea más de 1. El 0 tiene
-    /// DOS causas y el llamador las separa releyendo la fila: no hay bloque vivo, o el valor era
-    /// regresivo (ver el conjunto de abajo). Idempotente por construcción (escribe los valores que
+    /// TRES causas y el llamador las separa releyendo la fila —por identidad, no solo por rango—: no
+    /// hay bloque vivo; el bloque vivo es el MISMO y el valor era regresivo (ver el conjunto de
+    /// abajo); o el bloque ROTÓ mientras la request estaba en vuelo y el UPDATE murió contra el piso
+    /// del bloque nuevo, sobre el que este reporte nunca declaró nada
+    /// (<c>Pos.ServicioDeRendicionDeCola</c>). Idempotente por construcción (escribe los valores que
     /// le pasan, no los incrementa), así que un reintento sobre un commit ambiguo no duplica nada —
     /// y el piso monótono acepta la igualdad justamente para que ese reintento siga pasando.
     ///

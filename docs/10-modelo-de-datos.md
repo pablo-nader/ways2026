@@ -1673,17 +1673,27 @@ que es el lugar donde vive su rendición.
 | `entregado_hasta` | `bigint NULL` | Número más alto que el dispositivo ya le imprimió a un cliente (`proximo - 1` de su puntero local). `desde - 1` ⇒ todavía no repartió ninguno. NO es el `consumido_hasta` rechazado en §9.2: un número impreso que sigue en la cola local no tiene fila en `comprobantes_venta`, así que este dato NO es derivable del servidor. |
 | `pendientes` | `integer NULL` | Ventas que el dispositivo declara sin llegar al servidor (outbox + rechazadas). Existe para que el rechazo del cierre pueda decir CUÁNTAS faltan. |
 | `reportado_at` | `timestamptz NULL` | Cuándo rindió. `NULL` ⇒ nunca rindió, y la guarda falla CERRADO. |
-| `rendicion_saldada_at` | `timestamptz NULL` | Cuándo un supervisor forzó un cierre **mientras este bloque lo bloqueaba**: sus números sin rendir quedaron aceptados como tales. `NULL` ⇒ el bloque sigue contando para la guarda, esté vivo o abandonado. |
+| `rendicion_saldada_at` | `timestamptz NULL` | Cuándo un supervisor forzó un cierre **mientras este bloque, ya abandonado, lo bloqueaba**: sus números sin rendir quedaron aceptados como tales. `NULL` ⇒ el bloque sigue contando para la guarda, esté vivo o abandonado. Un bloque VIVO nunca se salda (sigue acumulando evidencia: no hay nada terminado que aceptar). |
 
 `rendicion_saldada_at` no lleva CHECK a propósito (gate del owner): el forzado tiene que poder
-saldar un bloque vivo o abandonado, con reporte o sin ninguno — un bloque que nunca rindió es en sí
-mismo un motivo de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas.
-Tampoco lleva índice nuevo: `ix_reservas_numeracion_punto_venta` ya cubre la entrada
-`(id_punto_venta, id_tenant)` de la guarda y las filas por punto de venta están acotadas. Su
+saldar un bloque abandonado con reporte o sin ninguno — un bloque que nunca rindió es en sí mismo un
+motivo de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas. Su
 migración trae un backfill obligatorio (`SET LOCAL app.acceso = 'plataforma'` en el mismo bloque,
 `rls-migration-backfills`): al dejar de excluir los bloques abandonados, cada bloque abandonado
 histórico habría entrado en el alcance de la guarda con `reportado_at NULL` — `SinReporte`,
-bloqueando para siempre los cierres de su punto de venta sin que nadie pudiera rendirlos.
+bloqueando para siempre los cierres de su punto de venta sin que nadie pudiera rendirlos. Ese
+backfill es correcto UNA vez: rodar su `Down` y volver a aplicar el `Up` saldaría también los bloques
+abandonados posteriores al despliegue, incluidos los que estaban bloqueando de verdad con ventas sin
+drenar (advertencia escrita en la migración).
+
+**Tampoco lleva índice nuevo, y el costo va dicho completo:** las filas que la guarda escanea NO
+están acotadas. `ix_reservas_numeracion_punto_venta` cubre su entrada `(id_punto_venta, id_tenant)`,
+pero adentro entra TODO bloque no saldado del punto de venta —uno más cada ~81 ventas offline por
+dispositivo (`UMBRAL_DE_REPOSICION` = 20 sobre `CANTIDAD_A_RESERVAR` = 100)— y cada uno paga su
+propio escaneo lateral de `comprobantes_venta`; un bloque sale de ese escaneo solo si un forzado lo
+salda o si se revoca el dispositivo. O sea que el costo de la guarda crece con la HISTORIA del punto
+de venta, no con su estado. Acotarlo pide un índice parcial por `rendicion_saldada_at`: migración
+aparte.
 
 Tres CHECK sobre las otras columnas, con sus backstops de traducción en `ManejadorDeErrores`
 (`db-error-backstops`):
@@ -1700,7 +1710,8 @@ Escribe el bloque VIVO (`abandonada_at IS NULL`) con SQL crudo, por
 `AsignadorDeNumeroComprobante.RegistrarRendicionAsync` — el único escritor legítimo de esta tabla
 sigue siendo esa clase. Rechazos: `403 prohibido` (sin claim, o dispositivo revocado — nunca
 `404`), `400 pendientes_invalido`, `400 tipo_comprobante_invalido`, `409
-rendicion_sin_bloque_vivo`, `400 entregado_hasta_invalido`, `409 rendicion_regresiva`.
+rendicion_sin_bloque_vivo`, `400 entregado_hasta_invalido`, `409 rendicion_regresiva`, `409
+rendicion_de_bloque_reemplazado`.
 
 **`entregado_hasta` es una MARCA DE AGUA: el reporte nunca puede bajarla.** El `UPDATE` lleva el
 conjunto `$1 >= COALESCE(entregado_hasta, desde - 1)`, así que un POST en vuelo que llega tarde —o un
@@ -1708,32 +1719,49 @@ cliente cuyo puntero local se reinició— se rechaza con `409 rendicion_regresi
 valor más alto (la igualdad sí pasa: un reintento honesto del mismo valor tiene que seguir
 funcionando). El servicio pre-valida el piso sobre la fila que ya leyó para no pagar el statement en
 el camino normal, pero quien lo IMPONE es ese conjunto, que además cubre la carrera entre dos
-rendiciones concurrentes. Cuando el `UPDATE` no afecta ninguna fila, el servicio relee para separar
-las dos causas: sin bloque vivo → `409 rendicion_sin_bloque_vivo`; bloque vivo con la marca más alta
-→ `409 rendicion_regresiva`.
+rendiciones concurrentes. Cuando el `UPDATE` no afecta ninguna fila, el servicio relee —por
+IDENTIDAD de la reserva, no solo por rango— para separar las TRES causas: sin bloque vivo → `409
+rendicion_sin_bloque_vivo`; el MISMO bloque vivo con la marca más alta → `409 rendicion_regresiva`;
+OTRO bloque vivo → el bloque rotó en esa ventana (`ReservarBloqueAsync` abandona y repone en una sola
+transacción) y el `UPDATE` murió contra el piso del bloque NUEVO → `409
+rendicion_de_bloque_reemplazado`. Sin el término de identidad, ese tercer caso salía como
+`rendicion_regresiva` citando un piso que el dispositivo nunca declaró, de un bloque sobre el que
+nunca rindió.
 
 **La guarda, en los DOS modos de cierre** (`POST /api/caja/turnos/{id}/cierre` y
 `.../cierre-por-retiro`), dentro de la transacción del cierre y antes de escribir nada más, así un
 rechazo deshace también el `UPDATE` guardado que ya marcó el turno cerrado. Por cada bloque del punto
 de venta todavía NO saldado (`rendicion_saldada_at IS NULL`, vivo o abandonado) cuyo dispositivo siga
 VIGENTE (`dispositivos.deleted_at IS NULL`), `ReglaDeRendicionDeCola` (pura, sin base) bloquea con
-`409 rendicion_de_dispositivo_pendiente` si: (a) nunca rindió; (b) el reporte tiene más de
-`VentanaDeFrescura` = 5 minutos (15 ciclos de los 20 s de `INTERVALO_DE_SINCRONIZACION_MS`);
+`409 rendicion_de_dispositivo_pendiente` si: (a) nunca rindió; (b) **estando VIVO**, el reporte tiene
+más de `VentanaDeFrescura` = 5 minutos (15 ciclos de los 20 s de `INTERVALO_DE_SINCRONIZACION_MS`);
 (c) declara `pendientes > 0`; o (d) faltan comprobantes en `[desde, techo]`, contando
 `comprobantes_venta` por `(id_punto_venta, tipo)` vía `tipos_comprobante.codigo`.
+
+La frescura de (b) es el ÚNICO disyunto que depende de que el bloque siga vivo, y la distinción no es
+una sutileza: un bloque vivo todavía puede rendir y todavía puede repartir números nuevos, así que un
+reporte viejo no dice nada de lo que vendió después de mandarlo. Un bloque abandonado no puede rendir
+nunca más (`RegistrarRendicionAsync` solo toca el vivo) ni va a repartir un número más: su evidencia
+quedó congelada al rotar, así que exigirle frescura rechazaría TODO cierre del punto de venta cinco
+minutos después de cada reposición rutinaria —sin ningún hueco que mostrar, y sin salida para un
+cajero Vendedor, que no puede forzar. Los otros tres disyuntos valen igual para vivos y abandonados:
+lo que un bloque abandonado dejó sin explicar sigue sin explicarse.
 
 El `techo` de (d) lo deriva el SERVIDOR y no el reporte: es
 `GREATEST(entregado_hasta declarado, máximo número del bloque que ya llegó)`. Sin eso, declarar
 `desde - 1` con `pendientes = 0` vaciaba el rango esperado y el bloque pasaba con cualquier cosa en la
-cola. Lo que (d) cubre, dicho sin adornos: **detecta que el dispositivo se retracte** (declare un
-techo por debajo de lo que el servidor ya vio llegar) **y que falten comprobantes del tramo
-verificado**. Lo que NO cubre, y no puede porque es inforjable desde el servidor: un número que el
+cola. Lo que (d) cubre, dicho sin adornos: **que falten comprobantes del tramo verificado**, y que
+una retracción del dispositivo (declarar un techo por debajo de lo que el servidor ya vio llegar) ya
+no pueda **TAPAR un hueco existente**, porque el rango esperado no se encoge con lo declarado.
+Retractarse por sí solo NO bloquea: con llegadas contiguas el techo verificado es el máximo llegado y
+los comprobantes del rango son exactamente los esperados. Lo que NO cubre, y no puede porque es
+inforjable desde el servidor: un número que el
 dispositivo imprimió, nunca mandó y nunca declara — de ese caso no hay ninguna traza del lado del
 servidor. El reporte no queda "verificado"; queda acotado por lo que el servidor puede contradecir.
 
 Dos válvulas de escape, ninguna de ellas un mecanismo nuevo: **revocar** el dispositivo muerto
 (`DELETE /api/dispositivos/{id}`) saca sus bloques de la consulta, y un forzado supervisado **salda**
-los bloques que informó como bloqueantes. Abandonar un bloque NO es una de ellas: `ReservarBloqueAsync`
+los bloques ABANDONADOS que informó como bloqueantes. Abandonar un bloque NO es una de ellas: `ReservarBloqueAsync`
 abandona el bloque vivo en cada reposición (`UMBRAL_DE_REPOSICION`), o sea rutina, así que filtrar por
 `abandonada_at` hacía que la rotación del bloque borrara el hueco sola. La carrera irreducible (rinde
 limpio, pierde señal y vende mientras alguien cierra) se acepta sin locks —el cierre lockea la fila de
@@ -1756,10 +1784,21 @@ escribe **si y solo si el cierre comitea**: un forzado válido cuyo cierre despu
 hubo cierre forzado que auditar. Sacarla de la transacción para que "siempre" fuera literal rompería
 la atomicidad del cierre, que vale más.
 
-En el mismo `COMMIT`, el forzado **salda** (`rendicion_saldada_at`) EXACTAMENTE los bloques que
-informó como bloqueantes, por id, nunca todos los del punto de venta: un bloque que no bloqueaba nada
-no tiene números sin rendir que alguien esté aceptando, y saldarlo lo volvería ciego para el cierre
-siguiente.
+En el mismo `COMMIT`, el forzado **salda** (`rendicion_saldada_at`) EXACTAMENTE los bloques
+ABANDONADOS que informó como bloqueantes, por id, nunca todos los del punto de venta: un bloque que no
+bloqueaba nada no tiene números sin rendir que alguien esté aceptando, y saldarlo lo volvería ciego
+para el cierre siguiente. El bloque VIVO queda afuera por la misma razón, y es la mitad
+indispensable de la regla: saldarlo lo volvería invisible para siempre —el único conjunto de alcance
+de la guarda es `rendicion_saldada_at IS NULL`— mientras el dispositivo sigue vendiendo sobre él, o
+sea exactamente la corrupción que la guarda existe para evitar. La convergencia, dicha en voz alta:
+un hueco en un bloque VIVO cuesta un forzado por cada cierre hasta que ese bloque rote, y exactamente
+UNO después de rotar (ahí su evidencia quedó congelada y, si todavía muestra el hueco, ese forzado lo
+salda de forma permanente).
+
+El rastro `caja.forzado` lleva, por bloqueo: `id_reserva` (la fila que el forzado dejó invisible para
+siempre), `id_dispositivo`, `dispositivo`, `tipo_comprobante`, `bloqueo`, `pendientes`, `desde`,
+`entregado_hasta` (lo DECLARADO) y `techo_verificado` (el rango que de verdad se aceptó como sin
+rendir, que es el que el operador vio en el mensaje del `409`).
 
 **Estado: completo.** Migraciones `RendicionDeColaDelDispositivo` y
 `RendicionSaldadaEnReservaNumeracion`. El dispositivo rinde su cola como
@@ -1773,9 +1812,11 @@ drenar, no forzar.
 
 **Hueco conocido, no resuelto:** descartar una venta rechazada (`descartarVentaConError`) la saca de
 la cola pero su número ya se gastó y `proximo` nunca rebobina — eso deja un `HuecoDeComprobantes` que
-el dispositivo no puede cerrar rindiendo: el cierre siguiente de ese punto de venta pide override, y
-ese override lo salda (o se revoca el dispositivo). O sea: no es permanente, pero **cada** bloque que
-arrastre un número descartado va a exigir un forzado supervisado una vez. Contablemente es correcto
+el dispositivo no puede cerrar rindiendo: el cierre siguiente de ese punto de venta pide override.
+Mientras ese bloque siga VIVO el override no lo salda, así que el costo es un forzado por CADA cierre
+hasta que el bloque rote; una vez abandonado, el primer forzado lo salda y no vuelve (o se revoca el
+dispositivo). O sea: no es permanente, pero **cada** bloque que arrastre un número descartado va a
+exigir forzados supervisados hasta rotar, y uno más después. Contablemente es correcto
 (hay un comprobante en la mano de un cliente que no va a estar en ningún arqueo), pero empuja al
 override habituado. El arreglo sería que el dispositivo reporte los números que renunció para
 restarlos del esperado: columna nueva, etapa separada.

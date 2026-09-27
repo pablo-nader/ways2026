@@ -247,6 +247,10 @@ public sealed record SolicitudDeCierrePorRetiro(
 /// <see cref="ReglaDeRendicionDeCola.Evaluar"/>): nunca menor que
 /// <paramref name="EntregadoHasta"/>, y es el que describe el rango de un
 /// <see cref="MotivoDeRendicionPendiente.HuecoDeComprobantes"/>.</param>
+/// <param name="BloqueVivo"><c>abandonada_at IS NULL</c>: gobierna los dos lugares donde vivo y
+/// abandonado NO son lo mismo — qué disyuntos se le aplican
+/// (<see cref="ReglaDeRendicionDeCola.Evaluar"/>) y si el forzado puede saldarlo
+/// (<c>ServicioDeTurnos.MarcarRendicionSaldadaAsync</c>: solo los abandonados).</param>
 public sealed record RendicionPendiente(
     long IdReserva,
     int IdDispositivo,
@@ -256,7 +260,8 @@ public sealed record RendicionPendiente(
     int? Pendientes,
     long Desde,
     long? EntregadoHasta,
-    long TechoVerificado);
+    long TechoVerificado,
+    bool BloqueVivo);
 
 /// <summary>Punto de venta de <see cref="ResumenDeCierrePorRetiro"/>. <see cref="Numero"/> es el
 /// MISMO valor que <see cref="Id"/> — <see cref="Ways.Domain.Organizacion.PuntoVenta"/> no tiene

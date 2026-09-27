@@ -168,6 +168,51 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         return saldados;
     }
 
+    /// <summary>El id de la reserva sembrada con ese <c>desde</c> — el payload de auditoría lo
+    /// informa, así que la aserción necesita el valor real y no un "existe algo".</summary>
+    private async Task<long> LeerIdReservaAsync(Contexto ctx, long desde)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "SELECT id_reserva_numeracion FROM reservas_numeracion " +
+            "WHERE id_punto_venta = $1 AND desde = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = desde });
+
+        return Convert.ToInt64(await comando.ExecuteScalarAsync());
+    }
+
+    /// <summary>Reserva —o ROTA— el bloque con el escritor de PRODUCCIÓN
+    /// (<c>AsignadorDeNumeroComprobante.ReservarBloqueAsync</c>), que abandona el vivo e inserta el
+    /// nuevo en una sola transacción: exactamente lo que hace la reposición del dispositivo cada ~81
+    /// ventas offline. <paramref name="momento"/> es el único motivo para no ir por el endpoint HTTP:
+    /// los tests de rotación necesitan poder fechar el bloque y su reporte en el pasado, y el reloj
+    /// del endpoint es el real.</summary>
+    private async Task<(long Desde, long Hasta)> ReservarBloqueDeProduccionAsync(
+        Contexto ctx, DateTimeOffset momento, int cantidad = 10)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        return await Ways.Application.Ventas.AsignadorDeNumeroComprobante.ReservarBloqueAsync(
+            db, ctx.IdTenant, ctx.IdPuntoVenta, "TX", ctx.IdDispositivo, cantidad, momento);
+    }
+
+    /// <summary>Rinde con el escritor de PRODUCCIÓN
+    /// (<c>AsignadorDeNumeroComprobante.RegistrarRendicionAsync</c>) sobre el bloque VIVO del
+    /// dispositivo, con el <paramref name="momento"/> que la prueba necesita — un reporte viejo no lo
+    /// puede producir el endpoint. La aserción de UNA fila afectada es parte del arreglo: sin ella un
+    /// reporte que el conjunto del <c>UPDATE</c> rechazara dejaría el bloque sin rendir y el test
+    /// mediría otra cosa.</summary>
+    private async Task RendirConEscritorDeProduccionAsync(
+        Contexto ctx, long entregadoHasta, int pendientes, DateTimeOffset momento)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var filas = await Ways.Application.Ventas.AsignadorDeNumeroComprobante.RegistrarRendicionAsync(
+            db, ctx.IdTenant, ctx.IdPuntoVenta, "TX", ctx.IdDispositivo, entregadoHasta, pendientes, momento);
+
+        Assert.Equal(1, filas);
+    }
+
     /// <summary>Un comprobante SIN pagos: la guarda cuenta filas de <c>comprobantes_venta</c> en el
     /// rango, no importes, y sin pagos el turno no tiene ningún medio arqueable — así el cierre
     /// clásico acepta <c>Conteos: []</c> y el test mide la guarda y nada más.
@@ -483,7 +528,11 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
 
     /// <summary>El override, por un SUPERVISOR: el cierre avanza y queda el rastro auditable
     /// <c>caja.forzado</c> con el motivo declarado, el dispositivo y el rango sin rendir — el
-    /// round-trip de <c>MotivoSinRendicion</c> que <c>dto-contract-honesty</c> exige.</summary>
+    /// round-trip de <c>MotivoSinRendicion</c> que <c>dto-contract-honesty</c> exige.
+    ///
+    /// La TX 5 se siembra para que el techo VERIFICADO (5) no coincida con lo DECLARADO (2): sin esa
+    /// diferencia, un mutante que guardara <c>entregado_hasta</c> en el campo
+    /// <c>techo_verificado</c> —o al revés— sobreviviría a las dos aserciones.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -494,6 +543,7 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarBloqueAsync(
             ctx, desde: 1, hasta: 10, entregadoHasta: 2, pendientes: 4, reportadoAt: DateTimeOffset.UtcNow);
+        await SembrarComprobanteAsync(ctx, turno.Id, numero: 5);
 
         using var supervisor = await CrearActorWebAsync(ctx, $"sup{porRetiro}", RolConocido.Supervisor);
 
@@ -515,6 +565,7 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal("La tablet se rompió y no vuelve.", nuevo.GetProperty("motivo").GetString());
 
         var bloqueo = Assert.Single(nuevo.GetProperty("bloqueos").EnumerateArray().ToList());
+        Assert.Equal(await LeerIdReservaAsync(ctx, desde: 1), bloqueo.GetProperty("id_reserva").GetInt64());
         Assert.Equal(ctx.IdDispositivo, bloqueo.GetProperty("id_dispositivo").GetInt32());
         Assert.Equal(ctx.NombreDispositivo, bloqueo.GetProperty("dispositivo").GetString());
         Assert.Equal("TX", bloqueo.GetProperty("tipo_comprobante").GetString());
@@ -524,6 +575,10 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(4, bloqueo.GetProperty("pendientes").GetInt32());
         Assert.Equal(1, bloqueo.GetProperty("desde").GetInt64());
         Assert.Equal(2, bloqueo.GetProperty("entregado_hasta").GetInt64());
+        // El techo VERIFICADO, que acá es 5 y NO el 2 declarado: llegó la TX 5 del bloque, así que el
+        // rango que el forzado aceptó como sin rendir es 1-5 (es el que el operador vio en el 409).
+        // Sin este campo la fila de auditoría no permite reconstruir qué se aceptó (judgment-day).
+        Assert.Equal(5, bloqueo.GetProperty("techo_verificado").GetInt64());
     }
 
     /// <summary>El forzado salda EXACTAMENTE los bloques que informó como bloqueantes, y solo esos.
@@ -564,6 +619,9 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
             JsonDocument.Parse(fila.ValorNuevo).RootElement.GetProperty("bloqueos").EnumerateArray().ToList());
         Assert.Equal(1, bloqueo.GetProperty("desde").GetInt64());
         Assert.Equal("sin_reporte", bloqueo.GetProperty("bloqueo").GetString());
+        // El id de la fila que este forzado dejó invisible para siempre, y NO el del bloque sano: es
+        // lo único del payload que ata el rastro a las filas que el UPDATE de saldado tocó.
+        Assert.Equal(await LeerIdReservaAsync(ctx, desde: 1), bloqueo.GetProperty("id_reserva").GetInt64());
     }
 
     /// <summary>El forzado SIN nada pendiente también deja rastro: es lo que garantiza que el motivo
@@ -777,10 +835,16 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
     }
 
     /// <summary>Kill del límite SUPERIOR del lateral (<c>cv.numero &lt;= r.hasta</c>): el bloque es
-    /// 1..10, entregó 1..3, los tres llegaron — no hay hueco— y además existe una TX 20, de un bloque
-    /// POSTERIOR de la misma serie. Ese 20 no pertenece a este bloque: no puede subirle el techo ni
-    /// sumarse a su conteo. Sin el límite, el techo verificado sería 20, el esperado 20 y el conteo 4:
-    /// un hueco fabricado que bloquearía todo cierre del punto de venta.</summary>
+    /// 1..10, entregó 1..3, los tres llegaron — no hay hueco— y además existe una TX 20, o sea un
+    /// número de la MISMA serie por ENCIMA del tope del bloque. Ese 20 no pertenece a este bloque: no
+    /// puede subirle el techo ni sumarse a su conteo. Sin el límite, el techo verificado sería 20, el
+    /// esperado 20 y el conteo 4: un hueco fabricado que bloquearía todo cierre del punto de venta.
+    ///
+    /// No se siembra ninguna fila de <c>reservas_numeracion</c> que contenga a ese 20, y es a
+    /// propósito: lo que se prueba es el límite del RANGO del bloque contra
+    /// <c>comprobantes_venta</c>, y un segundo bloque —abandonado y sin reporte— entraría por su
+    /// cuenta en la guarda (<c>SinReporte</c>) y bloquearía el cierre, tapando justo lo que este test
+    /// mide.</summary>
     [Fact]
     public async Task ElTechoNoSubePorUnComprobanteDeUnBloquePosterior()
     {
@@ -820,6 +884,201 @@ public class CierreConRendicionPendienteTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         Assert.Equal("rendicion_de_dispositivo_pendiente", (await ProblemaAsync(respuesta)).Codigo);
     }
+
+    // ---- la ROTACIÓN del bloque contra el cierre (judgment-day ronda 3) -------------------------
+    //
+    // El agujero que estos cinco tests cierran: NINGÚN test del repo rotaba un bloque de numeración y
+    // después cerraba un turno, así que las 3339 pruebas verdes de la ronda 2 no vieron ni que la
+    // rotación rutinaria dejaba un bloque con reporte incongelable (todo cierre del punto de venta
+    // rechazado a los 5 minutos, sin salida para un Vendedor) ni que un forzado saldaba el bloque
+    // VIVO y lo volvía invisible para siempre. La rotación va con el escritor de PRODUCCIÓN, que es
+    // donde el interleaving existe de verdad.
+
+    /// <summary>Kill del conjunto <c>bloqueVivo</c> del disyunto de frescura, punta a punta: el bloque
+    /// rindió LIMPIO hace una hora y después rotó; el bloque nuevo rindió limpio ahora. No hay nada
+    /// pendiente en ninguno de los dos, así que el cierre PASA. Sin el conjunto, el bloque abandonado
+    /// entra con su reporte de hace una hora, cae en <c>ReporteVencido</c> —un reporte que ya nadie
+    /// puede refrescar, porque <c>RegistrarRendicionAsync</c> solo toca el vivo— y este test muere con
+    /// <c>409 rendicion_de_dispositivo_pendiente</c>: la caja no cierra más, cada ~81 ventas
+    /// offline.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnBloqueQueRotaDespuesDeUnReporteLimpioNoBloqueaElCierre(bool porRetiro)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnBloqueQueRotaDespuesDeUnReporteLimpioNoBloqueaElCierre)}{porRetiro}");
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var haceUnaHora = ahora - TimeSpan.FromHours(1);
+
+        var (desde, _) = await ReservarBloqueDeProduccionAsync(ctx, haceUnaHora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desde - 1, pendientes: 0, momento: haceUnaHora);
+
+        var (desdeNuevo, _) = await ReservarBloqueDeProduccionAsync(ctx, ahora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desdeNuevo - 1, pendientes: 0, momento: ahora);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro, turno.Id);
+
+        await ExigirCierreOkAsync(respuesta);
+        Assert.Equal(EstadoTurno.Cerrado, await LeerEstadoAsync(ctx, turno.Id));
+    }
+
+    /// <summary>El otro lado de lo mismo, y la prueba de que el arreglo de la ronda 2 sigue vivo: el
+    /// bloque rotó arrastrando un HUECO real (declaró tres números repartidos y solo llegaron dos), y
+    /// el cierre TIENE que seguir bloqueado, con el rango verificado en el mensaje. Volver el conjunto
+    /// de la consulta a <c>r.abandonada_at IS NULL</c> deja este test en 200 —la rotación borraría el
+    /// hueco sola—, y extender el conjunto <c>bloqueVivo</c> al disyunto del hueco, también.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnBloqueQueRotaConUnHuecoRealSigueBloqueandoElCierre(bool porRetiro)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnBloqueQueRotaConUnHuecoRealSigueBloqueandoElCierre)}{porRetiro}");
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var haceUnaHora = ahora - TimeSpan.FromHours(1);
+
+        var (desde, _) = await ReservarBloqueDeProduccionAsync(ctx, haceUnaHora);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde + 1);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desde + 2, pendientes: 0, momento: haceUnaHora);
+
+        var (desdeNuevo, _) = await ReservarBloqueDeProduccionAsync(ctx, ahora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desdeNuevo - 1, pendientes: 0, momento: ahora);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro, turno.Id);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+        Assert.Equal("rendicion_de_dispositivo_pendiente", codigo);
+        Assert.Contains($"en el rango {desde}-{desde + 2}", mensaje, StringComparison.Ordinal);
+        Assert.Equal(EstadoTurno.Abierto, await LeerEstadoAsync(ctx, turno.Id));
+    }
+
+    /// <summary>Tercera combinación de la rotación: el último reporte del bloque declaró 3 ventas sin
+    /// llegar y después el bloque rotó. Esas ventas siguen sin llegar, así que el cierre bloquea — y el
+    /// MOTIVO tiene que ser el de los pendientes, aunque el reporte sea de hace una hora: sobre un
+    /// bloque abandonado la frescura ya no compite, y un mensaje de "reporte vencido" mandaría a
+    /// refrescar un reporte que nadie puede refrescar.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnBloqueQueRotaConVentasSinLlegarSigueBloqueandoElCierre(bool porRetiro)
+    {
+        var ctx = await PrepararAsync(
+            $"{nameof(UnBloqueQueRotaConVentasSinLlegarSigueBloqueandoElCierre)}{porRetiro}");
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var haceUnaHora = ahora - TimeSpan.FromHours(1);
+
+        var (desde, _) = await ReservarBloqueDeProduccionAsync(ctx, haceUnaHora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desde - 1, pendientes: 3, momento: haceUnaHora);
+
+        var (desdeNuevo, _) = await ReservarBloqueDeProduccionAsync(ctx, ahora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desdeNuevo - 1, pendientes: 0, momento: ahora);
+
+        var respuesta = await CerrarAsync(ctx.Admin, porRetiro, turno.Id);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+        Assert.Equal("rendicion_de_dispositivo_pendiente", codigo);
+        Assert.Contains("3 venta(s) sin sincronizar", mensaje, StringComparison.Ordinal);
+        Assert.Equal(EstadoTurno.Abierto, await LeerEstadoAsync(ctx, turno.Id));
+    }
+
+    /// <summary>Kill del filtro <c>!p.BloqueVivo</c> del saldado (judgment-day ronda 3, SEVERE): el
+    /// bloque que bloquea está VIVO —con un hueco real— y el forzado NO tiene que saldarlo. Saldarlo
+    /// lo volvería invisible para siempre (el único conjunto de alcance de la guarda es
+    /// <c>rendicion_saldada_at IS NULL</c>) mientras el dispositivo sigue vendiendo sobre él, o sea
+    /// exactamente la corrupción que esta guarda existe para evitar. El discriminante es doble y las
+    /// dos mitades importan: la fila sigue sin saldar Y el cierre SIGUIENTE vuelve a bloquear por el
+    /// mismo rango. Sin el filtro la fila queda saldada y el segundo cierre pasa en silencio, así que
+    /// el test muere en la PRIMERA de las dos aserciones.</summary>
+    [Fact]
+    public async Task UnForzadoSobreUnBloqueVivoNoLoSaldaYElCierreSiguienteVuelveABloquear()
+    {
+        var ctx = await PrepararAsync(nameof(UnForzadoSobreUnBloqueVivoNoLoSaldaYElCierreSiguienteVuelveABloquear));
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var (desde, _) = await ReservarBloqueDeProduccionAsync(ctx, ahora);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde + 1);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desde + 2, pendientes: 0, momento: ahora);
+
+        using var supervisor = await CrearActorWebAsync(ctx, "vivo", RolConocido.Supervisor);
+        var forzado = await CerrarAsync(
+            supervisor, porRetiro: false, turno.Id, forzar: true, motivo: "Cierro y sigo mañana.");
+
+        await ExigirCierreOkAsync(forzado);
+
+        var saldados = await LeerSaldadosPorDesdeAsync(ctx);
+        Assert.False(saldados[desde], "El bloque VIVO no tenía que quedar saldado: todavía acumula evidencia.");
+
+        var siguiente = await AbrirTurnoAsync(ctx);
+        var segundoCierre = await CerrarAsync(ctx.Admin, porRetiro: false, siguiente.Id);
+
+        Assert.Equal(HttpStatusCode.Conflict, segundoCierre.StatusCode);
+        var (codigo, mensaje) = await ProblemaAsync(segundoCierre);
+        Assert.Equal("rendicion_de_dispositivo_pendiente", codigo);
+        Assert.Contains($"en el rango {desde}-{desde + 2}", mensaje, StringComparison.Ordinal);
+    }
+
+    /// <summary>El PAR del test de arriba, y la convergencia completa: el mismo hueco, pero sobre un
+    /// bloque ya ABANDONADO (rotó) y con el bloque nuevo rindiendo limpio. Ahí la evidencia quedó
+    /// congelada y no hay nada más que esperar, así que el forzado SÍ lo salda y el cierre siguiente
+    /// pasa sin override. Los dos valores por fila son el discriminante (el abandonado saldado, el
+    /// vivo NO): un mutante que saldara todo, o ninguno, mueve uno de los dos.</summary>
+    [Fact]
+    public async Task UnForzadoSobreUnBloqueAbandonadoLoSaldaYElCierreSiguientePasa()
+    {
+        var ctx = await PrepararAsync(nameof(UnForzadoSobreUnBloqueAbandonadoLoSaldaYElCierreSiguientePasa));
+        using var _admin = ctx.Admin;
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var haceUnaHora = ahora - TimeSpan.FromHours(1);
+
+        var (desde, _) = await ReservarBloqueDeProduccionAsync(ctx, haceUnaHora);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde);
+        await SembrarComprobanteAsync(ctx, turno.Id, desde + 1);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desde + 2, pendientes: 0, momento: haceUnaHora);
+
+        var (desdeNuevo, _) = await ReservarBloqueDeProduccionAsync(ctx, ahora);
+        await RendirConEscritorDeProduccionAsync(ctx, entregadoHasta: desdeNuevo - 1, pendientes: 0, momento: ahora);
+
+        using var supervisor = await CrearActorWebAsync(ctx, "rotado", RolConocido.Supervisor);
+        var forzado = await CerrarAsync(
+            supervisor, porRetiro: false, turno.Id, forzar: true, motivo: "El bloque viejo ya no vuelve.");
+
+        await ExigirCierreOkAsync(forzado);
+
+        var saldados = await LeerSaldadosPorDesdeAsync(ctx);
+        Assert.True(saldados[desde], "El bloque ABANDONADO que bloqueaba tenía que quedar saldado.");
+        Assert.False(saldados[desdeNuevo], "El bloque VIVO y sano NO tenía que quedar saldado.");
+
+        var siguiente = await AbrirTurnoAsync(ctx);
+        var segundoCierre = await CerrarAsync(ctx.Admin, porRetiro: false, siguiente.Id);
+
+        await ExigirCierreOkAsync(segundoCierre);
+        Assert.Equal(EstadoTurno.Cerrado, await LeerEstadoAsync(ctx, siguiente.Id));
+    }
+
+    /// <summary>Exige el 200 con el cuerpo pegado al mensaje, mismo criterio que
+    /// <see cref="AbrirTurnoAsync"/>: cuando uno de estos cierres falla, la diferencia entre "la
+    /// guarda bloqueó" y "el arqueo se quejó" está en el <c>codigo</c> del ProblemDetails, y sin verlo
+    /// el rojo no dice nada.</summary>
+    private static async Task ExigirCierreOkAsync(HttpResponseMessage respuesta) =>
+        Assert.True(
+            respuesta.StatusCode == HttpStatusCode.OK,
+            $"{(int)respuesta.StatusCode}: {await respuesta.Content.ReadAsStringAsync()}");
 
     // ---- el camino real, punta a punta ---------------------------------------------------------
 

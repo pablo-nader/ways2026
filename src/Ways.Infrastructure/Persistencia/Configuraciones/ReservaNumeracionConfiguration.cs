@@ -71,12 +71,19 @@ public class ReservaNumeracionConfiguration : IEntityTypeConfiguration<ReservaNu
         builder.Property(r => r.Pendientes).HasColumnName("pendientes");
         builder.Property(r => r.ReportadoAt).HasColumnName("reportado_at");
 
-        // Sin CHECK a propósito (gate del owner): el forzado tiene que poder saldar un bloque vivo o
+        // Sin CHECK a propósito (gate del owner): el forzado tiene que poder saldar un bloque
         // abandonado, con reporte o sin ninguno — un bloque que nunca rindió es en sí mismo un motivo
-        // de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas. Sin
-        // índice nuevo tampoco: ix_reservas_numeracion_punto_venta ya cubre la entrada
-        // (id_punto_venta, id_tenant) de la guarda de cierre y las filas por punto de venta están
-        // acotadas.
+        // de bloqueo, así que no hay ninguna invariante que afirmar contra las otras columnas.
+        //
+        // Sin índice nuevo tampoco, y el costo se dice completo (judgment-day): las filas que la
+        // guarda de cierre escanea NO están acotadas. ix_reservas_numeracion_punto_venta cubre su
+        // entrada (id_punto_venta, id_tenant), pero adentro entra TODO bloque no saldado del punto de
+        // venta —uno más cada ~81 ventas offline por dispositivo (UMBRAL_DE_REPOSICION = 20 de
+        // outboxOffline.ts sobre CANTIDAD_A_RESERVAR = 100 de useSincronizacionOffline.ts)— y cada uno
+        // paga su propio escaneo lateral de comprobantes_venta. Un bloque sale de ese escaneo solo si
+        // un forzado lo salda o si se revoca el dispositivo, así que el costo crece con la HISTORIA
+        // del punto de venta y no con su estado. Acotarlo pide un índice parcial por
+        // rendicion_saldada_at: migración aparte, fuera del gate ya aprobado.
         builder.Property(r => r.RendicionSaldadaAt).HasColumnName("rendicion_saldada_at");
 
         builder.Property(r => r.CreatedAt).HasColumnName("created_at").IsRequired();

@@ -17,9 +17,9 @@ using Ways.Infrastructure.Multitenancy;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// Las dos CARRERAS que las guardas transaccionales de
+/// Las TRES CARRERAS que las guardas transaccionales de
 /// <see cref="ServicioDeRendicionDeCola"/> existen para cubrir, más el delta estructural del
-/// pre-chequeo del piso. Las tres nacen del mismo fenómeno que <c>mutation-proof-tests</c> regla 3
+/// pre-chequeo del piso. Las cuatro nacen del mismo fenómeno que <c>mutation-proof-tests</c> regla 3
 /// describe: el servicio pre-chequea lo mismo que el <c>WHERE</c> del <c>UPDATE</c> impone, así que
 /// todo camino SECUENCIAL muere en el pre-chequeo y la rama <c>filas == 0</c> sobrevive a su borrado.
 /// Sin estos casos, borrarla entera dejaba un <c>204</c> sobre una rendición que no escribió nada.
@@ -243,11 +243,61 @@ public class RendicionDeColaConcurrenciaTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(e.Desde + 5, await LeerEntregadoHastaVivoAsync(e));
     }
 
+    /// <summary>La TERCERA causa de un <c>UPDATE</c> sin filas, y la única que ocurre en producción por
+    /// rutina (judgment-day): el bloque ROTA entre el pre-chequeo y el <c>UPDATE</c>. La rotación va
+    /// con <c>ReservarBloqueAsync</c> —el escritor de producción, que abandona e inserta en una sola
+    /// transacción—, así que después de la pausa hay un bloque vivo NUEVO y el <c>UPDATE</c> muere
+    /// contra SU piso (<c>desdeNuevo - 1</c>), que está por encima de cualquier número del bloque
+    /// viejo.
+    ///
+    /// Kill del término de IDENTIDAD de la relectura (<c>otro.Id != bloque.Id</c>): sin él este caso
+    /// salía como <c>rendicion_regresiva</c> con "este bloque ya tiene registrado hasta N", citando un
+    /// piso que el dispositivo nunca declaró, de un bloque sobre el que nunca rindió. Las dos
+    /// aserciones discriminantes son el CÓDIGO y el <c>desde</c> del bloque nuevo en el mensaje; y que
+    /// el bloque nuevo siga SIN reporte es la tercera: el reporte del bloque viejo no tiene que
+    /// aterrizar en el nuevo.</summary>
+    [Fact]
+    public async Task LaRendicionSeRechazaCuandoElBloqueRotaEntreElPreChequeoYElUpdate()
+    {
+        var e = await PrepararAsync(nameof(LaRendicionSeRechazaCuandoElBloqueRotaEntreElPreChequeoYElUpdate));
+
+        var lecturaHecha = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var db = fixture.CrearContextoDeAplicacion(
+            new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant),
+            new InterceptorDePausaTrasLeerLaReserva(lecturaHecha, puedeContinuar));
+        var servicio = new ServicioDeRendicionDeCola(
+            db, new RelojFijo(Momento), new ContextoDeDispositivo(e.IdTenant, e.IdDispositivo));
+
+        var rendicion = Assert.ThrowsAsync<ErrorDominio>(
+            () => servicio.RegistrarAsync(new SolicitudDeRendicionDeCola("TX", e.Desde + 2, 0)));
+
+        await lecturaHecha.Task;
+
+        long desdeNuevo;
+        await using (var otro = fixture.CrearContextoDeAplicacion(
+            new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant)))
+        {
+            (desdeNuevo, _) = await AsignadorDeNumeroComprobante.ReservarBloqueAsync(
+                otro, e.IdTenant, e.IdPuntoVenta, "TX", e.IdDispositivo, cantidad: 10, momento: Momento);
+        }
+
+        puedeContinuar.TrySetResult();
+
+        var error = await rendicion;
+
+        Assert.Equal("rendicion_de_bloque_reemplazado", error.Codigo);
+        Assert.Equal(409, error.EstadoHttp);
+        Assert.Contains(desdeNuevo.ToString(), error.Message, StringComparison.Ordinal);
+        Assert.Null(await LeerEntregadoHastaVivoAsync(e));
+    }
+
     /// <summary>El pre-chequeo del piso NO tiene efecto observable en la respuesta —el conjunto del
     /// <c>UPDATE</c> produce el MISMO código y el MISMO mensaje— así que su único efecto real es un
     /// recurso que no se gasta, y se afirma como pide <c>mutation-proof-tests</c> regla 17: la
     /// cantidad de lecturas de <c>reservas_numeracion</c>. Con el pre-chequeo vivo hay UNA (la del
-    /// pre-chequeo); borrándolo, el <c>UPDATE</c> se manda igual y la relectura que separa las dos
+    /// pre-chequeo); borrándolo, el <c>UPDATE</c> se manda igual y la relectura que separa las tres
     /// causas suma una SEGUNDA, así que el test muere con <c>Expected 1, Actual 2</c>.</summary>
     [Fact]
     public async Task ElPreChequeoDelPisoRechazaSinVolverALeerElBloque()

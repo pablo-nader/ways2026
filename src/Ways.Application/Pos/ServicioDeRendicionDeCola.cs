@@ -115,19 +115,31 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
 
         if (filas == 0)
         {
-            // Los dos conjuntos que pueden haber rechazado el UPDATE describen situaciones
-            // distintas, así que la relectura decide cuál informar: sin bloque vivo se abandonó
-            // entre la lectura de arriba y el UPDATE; con bloque vivo, otra rendición ganó la
-            // carrera y dejó la marca de agua más alta que lo que este reporte declara.
+            // Los dos conjuntos que pueden haber rechazado el UPDATE describen TRES situaciones
+            // distintas, así que la relectura decide cuál informar, y necesita la IDENTIDAD del
+            // bloque para separar las dos últimas: sin bloque vivo se abandonó sin reponer entre la
+            // lectura de arriba y el UPDATE; con el MISMO bloque vivo, otra rendición ganó la carrera
+            // y dejó la marca de agua más alta que lo que este reporte declara; con OTRO bloque vivo
+            // el bloque rotó en esa ventana (ReservarBloqueAsync abandona y repone en una sola
+            // transacción), y entonces el UPDATE murió contra el piso del bloque NUEVO — informar
+            // "este bloque ya tiene registrado hasta N" citaría un piso que el dispositivo nunca
+            // declaró, de un bloque sobre el que nunca rindió (judgment-day).
             var actual = await LeerBloqueVivoAsync(idTenant, puntoVenta.Id, tipo.Codigo, idDispositivo, ct);
 
-            throw actual is null
-                ? new ErrorDominio(
+            throw actual switch
+            {
+                null => new ErrorDominio(
                     "rendicion_sin_bloque_vivo",
                     "Este dispositivo no tiene un bloque de numeración vigente para esa serie.",
-                    409)
-                : new ErrorDominio(
-                    "rendicion_regresiva", MensajeDeRegresion(actual.EntregadoHasta ?? actual.Desde - 1), 409);
+                    409),
+                var otro when otro.Id != bloque.Id => new ErrorDominio(
+                    "rendicion_de_bloque_reemplazado",
+                    "El bloque que se estaba rindiendo fue reemplazado por otro que arranca en " +
+                    $"{otro.Desde}: rendí sobre el bloque vigente.",
+                    409),
+                var mismo => new ErrorDominio(
+                    "rendicion_regresiva", MensajeDeRegresion(mismo.EntregadoHasta ?? mismo.Desde - 1), 409)
+            };
         }
     }
 
@@ -137,8 +149,12 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
     /// <summary>El bloque VIVO del dispositivo para esa serie, o <c>null</c> si no hay ninguno.
     /// Mismo predicado exacto que el <c>WHERE</c> de
     /// <see cref="AsignadorDeNumeroComprobante.RegistrarRendicionAsync"/> (menos el piso monótono),
-    /// y por eso vive en un solo lugar: lo usan el pre-chequeo y la relectura que separa las dos
-    /// causas de un UPDATE sin filas.</summary>
+    /// y por eso vive en un solo lugar: lo usan el pre-chequeo y la relectura que separa las tres
+    /// causas de un UPDATE sin filas.
+    ///
+    /// Lleva <c>Id</c> —y no solo el rango— porque sin él la relectura no puede distinguir "el mismo
+    /// bloque con la marca más alta" de "otro bloque, más nuevo": las dos cosas se ven igual desde el
+    /// rango.</summary>
     private async Task<BloqueVivo?> LeerBloqueVivoAsync(
         int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo, CancellationToken ct) =>
         await db.ReservasNumeracion
@@ -147,10 +163,10 @@ public class ServicioDeRendicionDeCola(IWaysDbContext db, IRelojDelSistema reloj
                 && r.TipoComprobante == tipoComprobante
                 && r.IdDispositivo == idDispositivo
                 && r.AbandonadaAt == null)
-            .Select(r => new BloqueVivo(r.Desde, r.Hasta, r.EntregadoHasta))
+            .Select(r => new BloqueVivo(r.Id, r.Desde, r.Hasta, r.EntregadoHasta))
             .FirstOrDefaultAsync(ct);
 
-    private sealed record BloqueVivo(long Desde, long Hasta, long? EntregadoHasta);
+    private sealed record BloqueVivo(long Id, long Desde, long Hasta, long? EntregadoHasta);
 
     /// <summary>Mismo predicado EXACTO que <c>ServicioDeReservasDeNumeracion.ResolverTipoAsync</c>
     /// (que a su vez lo duplica de <c>ServicioDeVentas.ResolverTipoComprobanteAsync</c>) —

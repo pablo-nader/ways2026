@@ -28,6 +28,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             // tenant) no vería ninguna fila y reportaría éxito. Por eso el SET LOCAL va dentro del
             // mismo bloque Sql(), igual que en TurnosCajaMedioPagoEfectivo y CostoCongeladoEnVentaEtapa9
             // (skill rls-migration-backfills). El WHERE excluye lo ya saldado, así que es idempotente.
+            //
+            // CUIDADO con rodar Down y volver a aplicar Up (judgment-day): Down DROPEA la columna, así
+            // que el segundo Up vuelve a saldar TODOS los bloques abandonados, incluidos los
+            // posteriores al despliegue que estaban bloqueando de verdad con ventas sin drenar — su
+            // bloqueo desaparecería en silencio. El backfill es correcto UNA vez, contra los bloques
+            // históricos anteriores a la guarda; un rollback casual de esta migración no es una
+            // operación sin consecuencias.
             migrationBuilder.Sql(
                 """
                 SET LOCAL app.acceso = 'plataforma';

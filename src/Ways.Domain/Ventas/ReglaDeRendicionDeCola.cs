@@ -11,7 +11,9 @@ public enum MotivoDeRendicionPendiente
     SinReporte,
 
     /// <summary>El reporte existe pero es viejo: no dice nada sobre lo que el dispositivo vendió
-    /// DESPUÉS de mandarlo (ver <see cref="ReglaDeRendicionDeCola.VentanaDeFrescura"/>).</summary>
+    /// DESPUÉS de mandarlo (ver <see cref="ReglaDeRendicionDeCola.VentanaDeFrescura"/>). Solo aplica
+    /// a un bloque VIVO — ver el parámetro <c>bloqueVivo</c> de
+    /// <see cref="ReglaDeRendicionDeCola.Evaluar"/>.</summary>
     ReporteVencido,
 
     /// <summary>El dispositivo declara ventas que todavía no llegaron al servidor (outbox +
@@ -20,11 +22,13 @@ public enum MotivoDeRendicionPendiente
 
     /// <summary>El reporte se contradice con los comprobantes: faltan filas en
     /// <c>comprobantes_venta</c> dentro del rango verificado (<c>[desde, techoVerificado]</c>).
-    /// Cubre exactamente dos cosas, y conviene nombrarlas por separado: que el dispositivo se
-    /// RETRACTE (declare un techo por debajo del número más alto que el servidor ya vio llegar de
-    /// ese bloque) y que falten comprobantes del tramo verificado. NO cubre —ni puede, porque es
-    /// inforjable desde el servidor— un número que el dispositivo imprimió, nunca mandó y nunca
-    /// declara: de ese caso el servidor no tiene ninguna traza.</summary>
+    /// Lo que el techo VERIFICADO agrega, dicho sin adornos: que el dispositivo se RETRACTE (declare
+    /// un techo por debajo del número más alto que el servidor ya vio llegar de ese bloque) ya no
+    /// puede TAPAR un hueco existente, porque el rango esperado no se encoge con lo declarado.
+    /// Retractarse por sí solo NO bloquea: con llegadas contiguas el techo verificado es el máximo
+    /// llegado y los comprobantes del rango son exactamente los esperados. NO cubre —ni puede,
+    /// porque es inforjable desde el servidor— un número que el dispositivo imprimió, nunca mandó y
+    /// nunca declara: de ese caso el servidor no tiene ninguna traza.</summary>
     HuecoDeComprobantes
 }
 
@@ -61,6 +65,17 @@ public static class ReglaDeRendicionDeCola
     /// habilita a creerle sus números, y el hueco es el único que necesita haber contado
     /// comprobantes.
     /// </summary>
+    /// <param name="bloqueVivo">Si el bloque todavía está vigente (<c>abandonada_at IS NULL</c>).
+    /// Parte la regla en dos, y no es una sutileza (judgment-day, SEVERE): un bloque VIVO todavía
+    /// puede rendir y todavía puede repartir números nuevos, así que la FRESCURA de su reporte es
+    /// información — un reporte viejo no dice nada de lo que se vendió después de mandarlo. Un
+    /// bloque ABANDONADO no puede rendir nunca más (el <c>UPDATE</c> de
+    /// <c>AsignadorDeNumeroComprobante.RegistrarRendicionAsync</c> solo toca el bloque vivo) ni va a
+    /// repartir un número más: su evidencia quedó CONGELADA en el momento de la rotación, así que la
+    /// frescura no significa nada para él y exigírsela rechazaría TODO cierre del punto de venta
+    /// cinco minutos después de cada reposición rutinaria, sin ningún hueco que mostrar. Los otros
+    /// tres disyuntos valen igual para los dos: lo que un bloque abandonado dejó sin explicar sigue
+    /// sin explicarse.</param>
     /// <param name="techoVerificado">El MAYOR entre <paramref name="entregadoHasta"/> y el número
     /// más alto del bloque que ya llegó a <c>comprobantes_venta</c> (<c>desde - 1</c> cuando no
     /// llegó ninguno): el techo que el servidor puede sostener por sí mismo, así que nunca queda
@@ -69,6 +84,7 @@ public static class ReglaDeRendicionDeCola
     /// <param name="comprobantesEnElRango">Cuántas filas de <c>comprobantes_venta</c> existen de
     /// verdad en <c>[desde, techoVerificado]</c> para la misma serie y punto de venta.</param>
     public static MotivoDeRendicionPendiente? Evaluar(
+        bool bloqueVivo,
         DateTimeOffset? reportadoAt,
         int? pendientes,
         long? entregadoHasta,
@@ -87,7 +103,10 @@ public static class ReglaDeRendicionDeCola
             return MotivoDeRendicionPendiente.SinReporte;
         }
 
-        if (momento - reporte > VentanaDeFrescura)
+        // La frescura es el único disyunto que depende de que el bloque siga vivo: el reporte de un
+        // bloque abandonado no puede refrescarse nunca más y tampoco hace falta, porque ese bloque ya
+        // no reparte números (ver el parámetro bloqueVivo).
+        if (bloqueVivo && momento - reporte > VentanaDeFrescura)
         {
             return MotivoDeRendicionPendiente.ReporteVencido;
         }

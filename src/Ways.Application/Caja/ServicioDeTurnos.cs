@@ -543,10 +543,11 @@ public class ServicioDeTurnos(
     /// <see cref="FabricaDeEstrategiaSinReintento"/>, así que no hace falta ningún reset del
     /// ChangeTracker (la lambda nunca se reintenta).
     ///
-    /// Un forzado también SALDA los bloques que informó como bloqueantes y solo esos
-    /// (<see cref="MarcarRendicionSaldadaAsync"/>): sus números sin rendir quedan explícitamente
-    /// aceptados como tales, y por eso dejan de bloquear los cierres siguientes. Es el único
-    /// mecanismo que saca un bloque de la guarda además de revocar el dispositivo.
+    /// Un forzado también SALDA los bloques ABANDONADOS que informó como bloqueantes y solo esos
+    /// (<see cref="MarcarRendicionSaldadaAsync"/>, que explica por qué el vivo queda afuera): sus
+    /// números sin rendir quedan explícitamente aceptados como tales, y por eso dejan de bloquear los
+    /// cierres siguientes. Es el único mecanismo que saca un bloque de la guarda además de revocar el
+    /// dispositivo.
     ///
     /// Carrera irreducible y ACEPTADA: el dispositivo puede rendir limpio, perder señal y vender
     /// mientras alguien cierra. Nada de esto corre bajo un lock que cubra
@@ -554,7 +555,8 @@ public class ServicioDeTurnos(
     /// fila del turno y corre en READ COMMITTED— y no se agrega ninguno, porque la ventana está
     /// acotada por construcción: un dispositivo ONLINE manda sus ventas directo al servidor (caen
     /// dentro del turno o rebotan con <c>409 turno_no_abierto</c>, nunca quedan en la cola), y un
-    /// dispositivo que se quedó OFFLINE deja de poder rendir, así que su reporte envejece y en
+    /// dispositivo que se quedó OFFLINE deja de poder rendir, así que el reporte de su bloque VIVO
+    /// —el único al que la frescura se le aplica— envejece y en
     /// <see cref="ReglaDeRendicionDeCola.VentanaDeFrescura"/> el cierre se vuelve a bloquear solo.
     /// </summary>
     private async Task ResolverRendicionDeDispositivosAsync(
@@ -579,11 +581,21 @@ public class ServicioDeTurnos(
         await MarcarRendicionSaldadaAsync(pendientes, momento, ct);
     }
 
-    /// <summary>Marca como saldados EXACTAMENTE los bloques que
+    /// <summary>Marca como saldados EXACTAMENTE los bloques ABANDONADOS que
     /// <see cref="ResolverRendicionDeDispositivosAsync"/> acaba de informar como bloqueantes — por
     /// id, nunca "todos los del punto de venta": un bloque que no bloqueaba nada no tiene números
     /// sin rendir que alguien esté aceptando, y saldarlo lo volvería ciego para el cierre siguiente.
-    /// Sin bloqueos no hay statement (el forzado innecesario igual queda auditado).
+    /// Sin bloqueos abandonados no hay statement (el forzado innecesario igual queda auditado).
+    ///
+    /// El filtro por bloque VIVO es la mitad indispensable de esta regla (judgment-day, SEVERE):
+    /// saldar el bloque vivo del dispositivo lo volvía invisible para SIEMPRE —el único conjunto de
+    /// alcance de la guarda es <c>rendicion_saldada_at IS NULL</c>— mientras el dispositivo seguía
+    /// vendiendo sobre él, o sea exactamente la corrupción que esta guarda existe para evitar. Un
+    /// bloque vivo todavía acumula evidencia: no hay nada terminado que aceptar, así que se queda sin
+    /// saldar y sigue bloqueando hasta que rote. La convergencia, dicha en voz alta: un hueco en un
+    /// bloque VIVO cuesta un forzado por cada cierre hasta que el bloque rote, y exactamente UNO
+    /// después de rotar —ahí su evidencia quedó congelada y, si todavía muestra el hueco, ese forzado
+    /// lo salda de forma permanente.
     ///
     /// SQL crudo sobre la conexión/transacción del cierre, misma convención que el resto del
     /// método: cae en el mismo COMMIT, así que un cierre que falla después no deja ningún bloque
@@ -594,7 +606,9 @@ public class ServicioDeTurnos(
     private async Task MarcarRendicionSaldadaAsync(
         IReadOnlyList<RendicionPendiente> pendientes, DateTimeOffset momento, CancellationToken ct)
     {
-        if (pendientes.Count == 0)
+        var abandonados = pendientes.Where(p => !p.BloqueVivo).Select(p => p.IdReserva).ToArray();
+
+        if (abandonados.Length == 0)
         {
             return;
         }
@@ -608,7 +622,7 @@ public class ServicioDeTurnos(
             "WHERE id_reserva_numeracion = ANY($2)";
 
         ParametrosDeComando.Agregar(comando, momento);
-        ParametrosDeComando.Agregar(comando, pendientes.Select(p => p.IdReserva).ToArray());
+        ParametrosDeComando.Agregar(comando, abandonados);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -623,12 +637,19 @@ public class ServicioDeTurnos(
         // Payload armado acá y no con una fábrica de PayloadDeAuditoria: lleva una LISTA (un punto
         // de venta puede tener varios dispositivos bloqueando a la vez), mismo criterio que
         // ServicioDeVentas usa para venta.discrepancia.
+        //
+        // id_reserva y techo_verificado son parte del rastro y no adornos (judgment-day): sin
+        // techo_verificado la fila no dice qué rango se aceptó como sin rendir —el declarado puede
+        // quedar por debajo, y es el verificado el que el operador vio en el mensaje del 409—, y sin
+        // id_reserva no se puede reconstruir qué filas dejó invisibles para siempre
+        // MarcarRendicionSaldadaAsync.
         var payload = new Dictionary<string, object?>
         {
             ["motivo"] = motivo,
             ["bloqueos"] = pendientes
                 .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
                 {
+                    ["id_reserva"] = p.IdReserva,
                     ["id_dispositivo"] = p.IdDispositivo,
                     ["dispositivo"] = p.NombreDispositivo,
                     ["tipo_comprobante"] = p.TipoComprobante,
@@ -639,7 +660,8 @@ public class ServicioDeTurnos(
                     ["bloqueo"] = p.Motivo,
                     ["pendientes"] = p.Pendientes,
                     ["desde"] = p.Desde,
-                    ["entregado_hasta"] = p.EntregadoHasta
+                    ["entregado_hasta"] = p.EntregadoHasta,
+                    ["techo_verificado"] = p.TechoVerificado
                 })
                 .ToList()
         };
