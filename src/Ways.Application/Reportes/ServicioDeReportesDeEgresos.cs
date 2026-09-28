@@ -99,7 +99,11 @@ public class ServicioDeReportesDeEgresos(IWaysDbContext db, LectorDeSerieTempora
         var porCategoria = idsPuntoVenta.Count == 0
             ? []
             : await db.Gastos
-                .Where(g => idsPuntoVenta.Contains(g.IdPuntoVenta))
+                // Gasto.IdPuntoVenta es nullable (un gasto de origen tesorería, etapa futura, no
+                // nace de ningún punto de venta) — un gasto sin PV nunca pertenece a un alcance
+                // filtrado por punto de venta, así que se excluye explícitamente en vez de dejar
+                // que la comparación lifted lo excluya en silencio.
+                .Where(g => g.IdPuntoVenta != null && idsPuntoVenta.Contains(g.IdPuntoVenta.Value))
                 .Where(g => g.Fecha >= rango.DesdeUtc && g.Fecha < rango.HastaUtcExclusivo)
                 .GroupBy(g => g.Categoria)
                 .Select(g => new GastoPorCategoria(g.Key, g.Sum(x => x.Importe), g.Count()))

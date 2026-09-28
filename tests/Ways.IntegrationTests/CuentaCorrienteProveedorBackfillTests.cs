@@ -76,6 +76,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 // del repo a propósito (ver el comentario de MigrateAsync() más abajo), así que
                 // necesita conocer cada enum nuevo que aparezca, para siempre.
                 npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
+                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
+                npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
             })
             .Options;
 
@@ -258,30 +260,37 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         return (int)(await comando.ExecuteScalarAsync())!;
     }
 
+    /// <summary>GastosOrigenFondosYTesoreriaPorEmpresa: misma trampa ya documentada en
+    /// <see cref="SembrarProveedorPreMigracionAsync"/>/<see cref="SembrarCompraAsync"/>/
+    /// <see cref="SembrarTurnoPreMigracionAsync"/> — <c>gastos.id_empresa</c>/<c>origen_fondos</c>
+    /// NO existen todavía en el esquema pre-migración (<see cref="MigracionAnterior"/> se detiene
+    /// muy ANTES de esa migración) — INSERT crudo con la lista de columnas de ANTES de esa etapa,
+    /// nunca vía EF (que, con el modelo HEAD, incluiría las columnas nuevas en el INSERT y
+    /// rompería contra el esquema viejo con <c>42703</c>).</summary>
     private static async Task SembrarGastoAsync(
-        WaysDbContext db, Entorno ctx, int? idProveedor, int? idComprobanteCompra, decimal importe, bool eliminado,
+        NpgsqlConnection cruda, Entorno ctx, int? idProveedor, int? idComprobanteCompra, decimal importe, bool eliminado,
         CategoriaGasto categoria = CategoriaGasto.Proveedor)
     {
         var ahora = DateTimeOffset.UtcNow;
-        var gasto = new Gasto
-        {
-            IdTenant = ctx.IdTenant,
-            Fecha = ahora,
-            IdPuntoVenta = ctx.IdPuntoVenta,
-            IdTurnoCaja = ctx.IdTurnoCaja,
-            IdEmpleado = ctx.IdEmpleado,
-            Categoria = categoria,
-            IdProveedor = idProveedor,
-            IdComprobanteCompra = idComprobanteCompra,
-            Concepto = "Gasto de prueba",
-            IdMedioPago = ctx.IdMedioPago,
-            Importe = importe,
-            CreatedAt = ahora,
-            UpdatedAt = ahora,
-            DeletedAt = eliminado ? ahora : null
-        };
-        db.Gastos.Add(gasto);
-        await db.SaveChangesAsync();
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO gastos " +
+            "(id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, categoria, id_proveedor, " +
+            " id_comprobante_compra, concepto, id_medio_pago, importe, created_at, updated_at, deleted_at) " +
+            "VALUES ($1, $2, $3, $4, $5, $6::categoria_gasto, $7, $8, 'Gasto de prueba', $9, $10, $2, $2, $11)";
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ahora });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdTurnoCaja });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdEmpleado });
+        comando.Parameters.Add(new NpgsqlParameter { Value = categoria.ToString().ToLowerInvariant() });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)idProveedor ?? DBNull.Value });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)idComprobanteCompra ?? DBNull.Value });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ctx.IdMedioPago });
+        comando.Parameters.Add(new NpgsqlParameter { Value = importe });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)(eliminado ? (DateTimeOffset?)ahora : null) ?? DBNull.Value });
+        await comando.ExecuteNonQueryAsync();
     }
 
     /// <summary>La fórmula RETIRADA, verbatim (mismo predicado que
@@ -363,8 +372,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         var idCompraConDeuda = await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 2000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000001");
         await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 500m, EstadoCompra.Anulada, eliminada: false, "F0001-00000002");
         await SembrarCompraAsync(conexionCruda, ctx, idConDeuda, 300m, EstadoCompra.Borrador, eliminada: false, "F0001-00000003");
-        await SembrarGastoAsync(db2, ctx, idConDeuda, idCompraConDeuda, 700m, eliminado: false);
-        await SembrarGastoAsync(db2, ctx, idConDeuda, null, 200m, eliminado: false);
+        await SembrarGastoAsync(conexionCruda, ctx, idConDeuda, idCompraConDeuda, 700m, eliminado: false);
+        await SembrarGastoAsync(conexionCruda, ctx, idConDeuda, null, 200m, eliminado: false);
 
         // Target #1: deleted_at IS NULL en comprobantes_compra — una compra confirmada de 1000
         // pero soft-deleted no debe generar fila ni saldo.
@@ -375,7 +384,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         // soft-deleted: si el filtro se respeta, el gasto NO resta y el saldo derivado es 1000.
         var idSoftDeleteGasto = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SoftDeleteGasto", eliminado: false);
         var idCompraSoftDeleteGasto = await SembrarCompraAsync(conexionCruda, ctx, idSoftDeleteGasto, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000005");
-        await SembrarGastoAsync(db2, ctx, idSoftDeleteGasto, idCompraSoftDeleteGasto, 1000m, eliminado: true);
+        await SembrarGastoAsync(conexionCruda, ctx, idSoftDeleteGasto, idCompraSoftDeleteGasto, 1000m, eliminado: true);
 
         // Target #3: deleted_at IS NULL en proveedores — el proveedor mismo está soft-deleted:
         // ninguna fila de apertura, sin importar que tenga una compra vigente de 1000.
@@ -387,7 +396,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         // proveedor tiene su propia compra de 1000 sin gastos ligados: derivado = 1000.
         var idGastoHuerfano = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "GastoHuerfano", eliminado: false);
         await SembrarCompraAsync(conexionCruda, ctx, idGastoHuerfano, 1000m, EstadoCompra.Confirmada, eliminada: false, "F0001-00000007");
-        await SembrarGastoAsync(db2, ctx, null, null, 9999m, eliminado: false);
+        await SembrarGastoAsync(conexionCruda, ctx, null, null, 9999m, eliminado: false);
 
         // Target #5: estado = 'confirmada' — solo borrador + anulada, ninguna confirmada:
         // derivado = 0, sin fila.

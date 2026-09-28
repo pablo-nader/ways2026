@@ -104,6 +104,7 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         var movimiento = new MovimientoTesoreria
         {
             IdTenant = ctx.IdTenant,
+            IdEmpresa = ctx.IdEmpresa,
             IdPuntoVenta = idPuntoVenta,
             Fecha = fecha,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,

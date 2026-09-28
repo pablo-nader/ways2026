@@ -19,15 +19,32 @@ public class Gasto : EntidadTenant
 
     public DateTimeOffset Fecha { get; set; }
 
-    public int IdPuntoVenta { get; set; }
+    /// <summary>FK compuesta a <see cref="Ways.Domain.Organizacion.Empresa"/> — resuelta
+    /// server-side desde <see cref="IdPuntoVenta"/> (<c>PuntoVenta.IdEmpresa</c>), nunca input de
+    /// cliente. Backfill de <c>GastosOrigenFondosYTesoreriaPorEmpresa</c> para las filas
+    /// preexistentes.</summary>
+    public int IdEmpresa { get; set; }
+
+    /// <summary>Punto de venta de origen (FK compuesta). Nullable: un gasto de origen
+    /// <see cref="OrigenFondosGasto.Tesoreria"/> (etapa futura, fuera de alcance en PR1) no nace
+    /// contra ningún punto de venta puntual — solo <see cref="IdEmpresa"/> lo escopa.</summary>
+    public int? IdPuntoVenta { get; set; }
 
     /// <summary>Resuelto server-side del turno abierto — nunca input de cliente (spec: Gasto
-    /// Requires An Open Turno).</summary>
-    public int IdTurnoCaja { get; set; }
+    /// Requires An Open Turno). Nullable desde <c>GastosOrigenFondosYTesoreriaPorEmpresa</c>: solo
+    /// <see cref="OrigenFondos"/> = <see cref="OrigenFondosGasto.CajaTurno"/> exige un turno
+    /// (<c>ck_gastos_caja_turno_requiere_turno</c>) — un gasto de tesorería futuro no tiene
+    /// ninguno.</summary>
+    public int? IdTurnoCaja { get; set; }
 
     public int IdEmpleado { get; set; }
 
     public CategoriaGasto Categoria { get; set; }
+
+    /// <summary>De dónde salen los fondos (doc 10 §5/§7) — hoy siempre <see
+    /// cref="OrigenFondosGasto.CajaTurno"/> (<c>ServicioDeGastos.RegistrarAsync</c> no ofrece
+    /// todavía la alternativa de tesorería).</summary>
+    public OrigenFondosGasto OrigenFondos { get; set; }
 
     public int? IdProveedor { get; set; }
     public int? IdArea { get; set; }

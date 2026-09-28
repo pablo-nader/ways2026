@@ -187,7 +187,7 @@ public sealed record DetalleDeTurno(
 /// contrato solo los transporta.</summary>
 public sealed record MovimientoTesoreriaListado(
     int Id,
-    int IdPuntoVenta,
+    int? IdPuntoVenta,
     DateTimeOffset Fecha,
     TipoMovimientoTesoreria Tipo,
     int? IdTurnoCaja,

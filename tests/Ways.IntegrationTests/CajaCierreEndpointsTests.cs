@@ -565,6 +565,75 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         }
     }
 
+    /// <summary>GastosOrigenFondosYTesoreriaPorEmpresa: crea un segundo punto de venta de la MISMA
+    /// empresa que <c>ctx.IdPuntoVenta</c> — mismo helper que
+    /// <c>CajaTurnosEndpointsTests.SembrarSegundoPuntoDeVentaAsync</c>.</summary>
+    private async Task<int> SembrarSegundoPuntoDeVentaAsync(Contexto ctx)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
+
+        var otro = new PuntoVenta
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = idEmpresa, Nombre = "Local 2", CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.PuntosVenta.Add(otro);
+        await db.SaveChangesAsync();
+
+        return otro.Id;
+    }
+
+    /// <summary>GastosOrigenFondosYTesoreriaPorEmpresa (design aprobado): la cadena inicio→final
+    /// ahora se ancla por <c>(id_tenant, id_empresa)</c>, no ya por <c>id_punto_venta</c> — dos
+    /// puntos de venta de la MISMA empresa comparten un solo fondo de tesorería. Mismo esqueleto
+    /// que <see cref="LaTesoreriaEncadenaDesdeElFinalDeLaUltimaFilaDelMismoPuntoDeVenta"/> pero
+    /// cerrando el SEGUNDO turno en un PUNTO DE VENTA DISTINTO: si la cadena siguiera anclada por
+    /// PV, el segundo turno arrancaría en 0 en vez de encadenar desde el final del primero.</summary>
+    [Fact]
+    public async Task LaTesoreriaEncadenaEntreDosPuntosDeVentaDeLaMismaEmpresa()
+    {
+        var ctx = await PrepararAsync(nameof(LaTesoreriaEncadenaEntreDosPuntosDeVentaDeLaMismaEmpresa));
+
+        var turnoPv1 = await AbrirTurnoAsync(ctx);
+        await RegistrarMovimientoAsync(ctx, turnoPv1.Id, TipoMovimientoCaja.Retiro, 100m, "retiro PV1");
+        var cierrePv1 = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{turnoPv1.Id}/cierre",
+            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
+        Assert.Equal(HttpStatusCode.OK, cierrePv1.StatusCode);
+
+        var idPuntoVenta2 = await SembrarSegundoPuntoDeVentaAsync(ctx);
+        var aperturaPv2 = await ctx.Admin.PostAsJsonAsync(
+            "/api/caja/turnos", new SolicitudDeApertura(idPuntoVenta2, 0m, "Apertura PV2"));
+        var cuerpoAperturaPv2 = await aperturaPv2.Content.ReadAsStringAsync();
+        Assert.True(aperturaPv2.StatusCode == HttpStatusCode.Created, cuerpoAperturaPv2);
+        var turnoPv2 = JsonSerializer.Deserialize<TurnoResumen>(cuerpoAperturaPv2, OpcionesJson)!;
+
+        await RegistrarMovimientoAsync(ctx, turnoPv2.Id, TipoMovimientoCaja.Retiro, 50m, "retiro PV2");
+        var cierrePv2 = await ctx.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{turnoPv2.Id}/cierre",
+            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
+        Assert.Equal(HttpStatusCode.OK, cierrePv2.StatusCode);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var filaPv1 = await db.MovimientosTesoreria.Where(m => m.IdTurnoCaja == turnoPv1.Id).SingleAsync();
+        Assert.Equal(0m, filaPv1.Inicio);
+        Assert.Equal(100m, filaPv1.Final);
+
+        // La aserción discriminante: el turno de PV2 encadena desde el FINAL de PV1 (100), no
+        // desde 0 — si la cadena estuviera anclada por id_punto_venta, Inicio sería 0 acá.
+        var filaPv2 = await db.MovimientosTesoreria.Where(m => m.IdTurnoCaja == turnoPv2.Id).SingleAsync();
+        Assert.Equal(100m, filaPv2.Inicio);
+        Assert.Equal(50m, filaPv2.Ingreso);
+        Assert.Equal(0m, filaPv2.Egreso);
+        Assert.Equal(150m, filaPv2.Final);
+
+        Assert.Equal(idPuntoVenta2, filaPv2.IdPuntoVenta);
+        Assert.Equal(filaPv1.IdEmpresa, filaPv2.IdEmpresa);
+        Assert.Equal(2, await db.MovimientosTesoreria.CountAsync(m => m.IdEmpresa == filaPv1.IdEmpresa));
+    }
+
     // ---- autorización -------------------------------------------------------------------------
 
     [Fact]

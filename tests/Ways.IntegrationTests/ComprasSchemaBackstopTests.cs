@@ -29,7 +29,7 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
     private const int IdInexistente = 999_999;
 
     private sealed record Prerequisitos(
-        int IdTenant, int IdProveedor, int IdPuntoVenta, int IdEmpleado, int IdArticulo,
+        int IdTenant, int IdEmpresa, int IdProveedor, int IdPuntoVenta, int IdEmpleado, int IdArticulo,
         int IdAlicuotaIva, int IdTipoComprobanteCompra);
 
     private async Task<Prerequisitos> SembrarPrerequisitosAsync(string nombre)
@@ -108,7 +108,7 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         var idTipoCompra = await db.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
 
         return new Prerequisitos(
-            tenant.Id, proveedor.Id, puntoVenta.Id, usuario.Id, articulo.Id, idAlicuotaIva, idTipoCompra);
+            tenant.Id, empresa.Id, proveedor.Id, puntoVenta.Id, usuario.Id, articulo.Id, idAlicuotaIva, idTipoCompra);
     }
 
     private static async Task<int> InsertarComprobanteAsync(
@@ -619,10 +619,11 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
-            "INSERT INTO gastos (id_tenant, fecha, id_punto_venta, id_turno_caja, id_empleado, categoria, " +
-            "concepto, id_medio_pago, importe, id_comprobante_compra, created_at, updated_at) " +
-            "VALUES ($1, now(), $2, $3, $4, 'proveedor', 'pago de prueba', $5, 10, $6, now(), now())";
+            "INSERT INTO gastos (id_tenant, fecha, id_empresa, id_punto_venta, id_turno_caja, id_empleado, " +
+            "categoria, origen_fondos, concepto, id_medio_pago, importe, id_comprobante_compra, created_at, updated_at) " +
+            "VALUES ($1, now(), $2, $3, $4, $5, 'proveedor', 'caja_turno', 'pago de prueba', $6, 10, $7, now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpresa });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = turno.Id });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });

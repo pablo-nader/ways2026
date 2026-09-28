@@ -432,9 +432,27 @@ public class ServicioDeTurnos(
         db.ArqueosTurno.AddRange(arqueos);
         await db.SaveChangesAsync(ct);
 
+        // GastosOrigenFondosYTesoreriaPorEmpresa: IdEmpresa sale de una proyección escalar de una
+        // columna inmutable de PuntoVenta (single-read-under-lock regla 6) — hace falta ANTES de
+        // poder tomar el lock de la cadena, y no es una entidad trackeada.
+        var idEmpresa = await db.PuntosVenta
+            .Where(pv => pv.Id == idPuntoVenta)
+            .Select(pv => pv.IdEmpresa)
+            .FirstAsync(ct);
+
+        // La cadena inicio→final pasa a ser por (id_tenant, id_empresa) — varios puntos de venta
+        // de la misma empresa comparten un solo fondo de tesorería, así que dos cierres
+        // concurrentes de PVs DISTINTOS de la MISMA empresa tienen que serializarse ANTES de leer
+        // el `inicio` compartido (single-read-under-lock regla 1). Primer advisory lock del repo:
+        // no hay ninguna fila de "cadena de tesorería de la empresa" sobre la que tomar un FOR
+        // UPDATE, así que se lockea la clave lógica (id_tenant, id_empresa) directamente —
+        // literal, nunca un hash— con alcance de transacción (se libera solo al commit/rollback de
+        // ESTA transacción del cierre).
+        await TomarLockDeTesoreriaDeEmpresaAsync(idTenant, idEmpresa, ct);
+
         var totalGastos = insumos.Actividad.Sum(a => a.Gastos);
         var inicio = await db.MovimientosTesoreria
-            .Where(m => m.IdPuntoVenta == idPuntoVenta)
+            .Where(m => m.IdEmpresa == idEmpresa && m.IdTenant == idTenant)
             .OrderByDescending(m => m.Id)
             .Select(m => m.Final)
             .FirstOrDefaultAsync(ct);
@@ -443,6 +461,7 @@ public class ServicioDeTurnos(
         db.MovimientosTesoreria.Add(new MovimientoTesoreria
         {
             IdTenant = idTenant,
+            IdEmpresa = idEmpresa,
             IdPuntoVenta = idPuntoVenta,
             Fecha = momento,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,
@@ -457,6 +476,24 @@ public class ServicioDeTurnos(
         await db.SaveChangesAsync(ct);
 
         return arqueos;
+    }
+
+    /// <summary>Serializa el append a la cadena de tesorería de una empresa (ver el doc-comment del
+    /// llamador): <c>pg_advisory_xact_lock(id_tenant, id_empresa)</c>, tomado como statement previo
+    /// a la lectura del último <c>Final</c> de la cadena — nunca después. Se libera solo al
+    /// commit/rollback de la transacción actual (variante <c>_xact_</c>, nunca la de sesión, que
+    /// exigiría un release explícito que el cierre no tiene dónde poner).</summary>
+    private async Task TomarLockDeTesoreriaDeEmpresaAsync(int idTenant, int idEmpresa, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idEmpresa);
+        await comando.ExecuteScalarAsync(ct);
     }
 
     /// <summary>judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): pinea <see

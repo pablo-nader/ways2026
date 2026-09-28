@@ -356,6 +356,19 @@ public class ManejadorDeErrores(
                     "Este dispositivo ya tiene una reserva de numeración vigente para esa serie.",
                     "reserva_de_numeracion_duplicada"),
 
+            // GastosOrigenFondosYTesoreriaPorEmpresa: ux_movimientos_tesoreria_id_gasto — un gasto
+            // no puede originar dos movimientos de tesorería. Exact-match, sin ordering trap: "
+            // _id_gasto" no colisiona con ninguna substring de ClasificarUnicidad. Inalcanzable
+            // hoy — ningún escritor de esta etapa puebla IdGasto todavía (ver el doc-comment de
+            // MovimientoTesoreria.IdGasto); queda como backstop de esquema puro para la etapa
+            // futura que sí lo escriba.
+            { SqlState: "23505", ConstraintName: string uxMovimientoTesoreriaGasto }
+                when string.Equals(
+                    uxMovimientoTesoreriaGasto, "ux_movimientos_tesoreria_id_gasto", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Este gasto ya tiene un movimiento de tesorería vinculado.",
+                    "movimiento_de_tesoreria_de_gasto_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -941,6 +954,15 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El importe del gasto tiene que ser positivo.",
                     "gasto_importe_invalido"),
+
+            // GastosOrigenFondosYTesoreriaPorEmpresa: defensa en profundidad de
+            // ServicioDeGastos.RegistrarAsync, que hoy solo emite origen_fondos = caja_turno y
+            // siempre con un turno resuelto. Inalcanzable por operación normal — backstop de una
+            // escritura cruda/fuera de banda (misma familia que ck_turnos_caja_medio_efectivo_solo_cerrado).
+            "ck_gastos_caja_turno_requiere_turno" =>
+                (StatusCodes.Status400BadRequest,
+                    "Un gasto de caja de turno tiene que tener un turno.",
+                    "gasto_caja_turno_requiere_turno"),
 
             "ck_movimientos_tesoreria_cadena" =>
                 (StatusCodes.Status400BadRequest,

@@ -152,6 +152,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
 
         var idMedioPago = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
         var turno = new TurnoCaja
         {
@@ -163,8 +164,9 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         db.Gastos.Add(new Gasto
         {
-            IdTenant = ctx.IdTenant, Fecha = ahora, IdPuntoVenta = ctx.IdPuntoVenta, IdTurnoCaja = turno.Id,
-            IdEmpleado = idEmpleado, Categoria = CategoriaGasto.Proveedor, IdProveedor = ctx.IdProveedor,
+            IdTenant = ctx.IdTenant, Fecha = ahora, IdEmpresa = idEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
+            IdTurnoCaja = turno.Id, IdEmpleado = idEmpleado, Categoria = CategoriaGasto.Proveedor,
+            OrigenFondos = OrigenFondosGasto.CajaTurno, IdProveedor = ctx.IdProveedor,
             Concepto = "Pago de prueba", IdMedioPago = idMedioPago, Importe = 100m,
             IdComprobanteCompra = idComprobanteCompra, CreatedAt = ahora, UpdatedAt = ahora
         });

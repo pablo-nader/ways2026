@@ -22,6 +22,14 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         builder.ToTable("gastos", t =>
         {
             t.HasCheckConstraint("ck_gastos_importe_positivo", "importe > 0");
+
+            // Backfill GastosOrigenFondosYTesoreriaPorEmpresa: hoy el único origen implementado
+            // es caja_turno, y ese origen exige un turno — un gasto de tesorería (etapa futura)
+            // no lo exige. Defensa en profundidad: ServicioDeGastos.RegistrarAsync todavía no
+            // ofrece el origen tesorería, así que el service-side check no puede protegerlo.
+            t.HasCheckConstraint(
+                "ck_gastos_caja_turno_requiere_turno",
+                "origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL");
         });
 
         builder.HasKey(g => g.Id).HasName("pk_gastos");
@@ -33,13 +41,30 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         builder.Property(g => g.IdTenant).HasColumnName("id_tenant").IsRequired();
 
         builder.Property(g => g.Fecha).HasColumnName("fecha").IsRequired();
-        builder.Property(g => g.IdPuntoVenta).HasColumnName("id_punto_venta").IsRequired();
-        builder.Property(g => g.IdTurnoCaja).HasColumnName("id_turno_caja").IsRequired();
+
+        // GastosOrigenFondosYTesoreriaPorEmpresa: backfill desde puntos_venta.id_empresa de cada
+        // gasto existente (ver el comentario del backfill en la migración).
+        builder.Property(g => g.IdEmpresa).HasColumnName("id_empresa").IsRequired();
+
+        // Nullable (design aprobado): un gasto de origen tesoreria (etapa futura) no nace de
+        // ningún punto de venta puntual — mismo idioma "sin .IsRequired()" que IdTurnoCaja.
+        builder.Property(g => g.IdPuntoVenta).HasColumnName("id_punto_venta");
+
+        // Nullable desde GastosOrigenFondosYTesoreriaPorEmpresa (ck_gastos_caja_turno_requiere_turno
+        // exige un turno solo para origen_fondos = caja_turno) — mismo idioma "sin .IsRequired()"
+        // que MovimientoTesoreriaConfiguration.IdTurnoCaja.
+        builder.Property(g => g.IdTurnoCaja).HasColumnName("id_turno_caja");
+
         builder.Property(g => g.IdEmpleado).HasColumnName("id_empleado").IsRequired();
 
         builder.Property(g => g.Categoria)
             .HasColumnName("categoria")
             .HasColumnType("categoria_gasto")
+            .IsRequired();
+
+        builder.Property(g => g.OrigenFondos)
+            .HasColumnName("origen_fondos")
+            .HasColumnType("origen_fondos_gasto")
             .IsRequired();
 
         builder.Property(g => g.IdProveedor).HasColumnName("id_proveedor");
@@ -64,6 +89,7 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         builder.Ignore(g => g.EstaEliminada);
 
         builder.HasIndex(g => g.IdTenant).HasDatabaseName("ix_gastos_tenant");
+        builder.HasIndex(g => new { g.IdEmpresa, g.IdTenant }).HasDatabaseName("ix_gastos_empresa");
         builder.HasIndex(g => new { g.IdTurnoCaja, g.IdTenant }).HasDatabaseName("ix_gastos_turno");
         builder.HasIndex(g => new { g.IdPuntoVenta, g.IdTenant, g.Fecha }).HasDatabaseName("ix_gastos_punto_venta_fecha");
         builder.HasIndex(g => new { g.IdProveedor, g.IdTenant }).HasDatabaseName("ix_gastos_proveedor");
@@ -79,6 +105,13 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
             .WithMany()
             .HasForeignKey(g => g.IdTenant)
             .HasConstraintName("fk_gastos_tenant")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Empresa>()
+            .WithMany()
+            .HasForeignKey(g => new { g.IdEmpresa, g.IdTenant })
+            .HasPrincipalKey(e => new { e.Id, e.IdTenant })
+            .HasConstraintName("fk_gastos_empresa")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<PuntoVenta>()

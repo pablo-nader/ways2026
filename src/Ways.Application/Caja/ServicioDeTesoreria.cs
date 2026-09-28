@@ -12,8 +12,8 @@ namespace Ways.Application.Caja;
 /// persistidos por <see cref="ServicioDeTurnos"/> al cierre — este servicio solo lee, ordenado por
 /// <c>Id</c> ascendente (design decisión 11: NUNCA por <c>Fecha</c> — el significado del libro es
 /// el orden de inserción; la cadena <c>Inicio</c>/<c>Final</c> no tiene por qué coincidir con el
-/// orden cronológico si dos cierres caen en el mismo segundo). <c>IdPuntoVenta</c> es obligatorio
-/// (a diferencia de G2): mezclar puntos de venta rompería el propio significado de la cadena.
+/// orden cronológico si dos cierres caen en el mismo segundo). La cadena es una por empresa: el
+/// filtro por punto de venta muestra un subconjunto cuyos saldos no se encadenan entre sí.
 /// </summary>
 public class ServicioDeTesoreria(IWaysDbContext db)
 {
@@ -21,6 +21,7 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         int idPuntoVenta,
         DateTimeOffset? desde = null,
         DateTimeOffset? hasta = null,
+        int? idEmpresa = null,
         int pagina = 1,
         int tamanio = 25,
         CancellationToken ct = default)
@@ -28,7 +29,7 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(idPuntoVenta, desde, hasta);
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta, idEmpresa);
 
         var total = await query.CountAsync(ct);
 
@@ -56,9 +57,10 @@ public class ServicioDeTesoreria(IWaysDbContext db)
         DateTimeOffset? desde,
         DateTimeOffset? hasta,
         int topeDeFilas,
+        int? idEmpresa = null,
         CancellationToken ct = default)
     {
-        var query = ConstruirQuery(idPuntoVenta, desde, hasta);
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta, idEmpresa);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -79,9 +81,19 @@ public class ServicioDeTesoreria(IWaysDbContext db)
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> (design decisión 7): un solo lugar declara el
     /// predicado, nunca dos copias que puedan derivar.</summary>
-    private IQueryable<MovimientoTesoreria> ConstruirQuery(int idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta)
+    private IQueryable<MovimientoTesoreria> ConstruirQuery(
+        int idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null)
     {
         var query = db.MovimientosTesoreria.Where(m => m.IdPuntoVenta == idPuntoVenta);
+
+        // GastosOrigenFondosYTesoreriaPorEmpresa: filtro adicional, opcional — la cadena ahora es
+        // por empresa, pero esta lectura sigue exigiendo idPuntoVenta (ver doc-comment de la
+        // clase); idEmpresa aterriza como filtro extra, ninguna otra semántica de la cadena/lectura
+        // cambia en este PR (queda para una etapa posterior repensar la lectura en sí).
+        if (idEmpresa is { } e)
+        {
+            query = query.Where(m => m.IdEmpresa == e);
+        }
 
         if (desde is { } d)
         {

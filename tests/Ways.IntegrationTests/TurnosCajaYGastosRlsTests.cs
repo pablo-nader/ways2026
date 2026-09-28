@@ -144,6 +144,7 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
         var movimientoTesoreria = new MovimientoTesoreria
         {
             IdTenant = tenant.Id,
+            IdEmpresa = empresa.Id,
             IdPuntoVenta = puntoVenta.Id,
             Fecha = ahora,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,
@@ -162,10 +163,12 @@ public class TurnosCajaYGastosRlsTests(WaysApiFixture fixture) : IClassFixture<W
         {
             IdTenant = tenant.Id,
             Fecha = ahora,
+            IdEmpresa = empresa.Id,
             IdPuntoVenta = puntoVenta.Id,
             IdTurnoCaja = turno.Id,
             IdEmpleado = usuario.Id,
             Categoria = CategoriaGasto.Otros,
+            OrigenFondos = OrigenFondosGasto.CajaTurno,
             Concepto = "gasto de prueba de RLS",
             IdMedioPago = medioPago.Id,
             Importe = 50m,

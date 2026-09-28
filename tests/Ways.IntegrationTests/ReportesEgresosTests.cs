@@ -173,15 +173,18 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
         var gasto = new Gasto
         {
             IdTenant = ctx.IdTenant,
             Fecha = fecha,
+            IdEmpresa = idEmpresa,
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = idTurno,
             IdEmpleado = 1,
             Categoria = categoria,
+            OrigenFondos = OrigenFondosGasto.CajaTurno,
             Concepto = "Gasto de reporte",
             IdMedioPago = ctx.IdMedioEfectivo,
             Importe = importe,

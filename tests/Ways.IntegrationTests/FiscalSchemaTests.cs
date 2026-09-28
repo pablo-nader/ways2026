@@ -915,6 +915,8 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 // Assert.False(HasPendingModelChanges()) más abajo lo exigen) — necesita conocer
                 // cada enum nuevo que aparezca, para siempre.
                 npgsql.MapEnum<Ways.Domain.Organizacion.ModoPuntoVenta>("modo_punto_venta");
+                // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
+                npgsql.MapEnum<Ways.Domain.Gastos.OrigenFondosGasto>("origen_fondos_gasto");
             })
             .Options;
 
