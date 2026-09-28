@@ -750,13 +750,18 @@ proveedores embrionaria sin tabla extra.
 
 ```sql
 gastos (                      -- [operativa]
-    id_gasto, fecha, id_punto_venta, id_turno_caja NULL, id_empleado,
+    id_gasto, fecha, id_empresa, id_punto_venta,
+    id_turno_caja NULL, id_empleado,
     categoria  categoria_gasto,              -- enum: proveedor | sueldos | viaticos
                                              --     | impuestos | servicios | otros
+    origen_fondos  origen_fondos_gasto,      -- enum: caja_turno | tesoreria
     id_proveedor NULL, id_comprobante_compra NULL,
     id_area NULL, concepto, detalle,
     id_medio_pago integer NOT NULL,          -- con qué se pagó (efectivo de caja, transferencia…)
-    numero_factura text NULL, importe
+    numero_factura text NULL, importe,
+
+    CONSTRAINT ck_gastos_caja_turno_requiere_turno
+        CHECK (origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL)
 );
 ```
 
@@ -766,10 +771,9 @@ van a `movimientos_caja` (§7).
 > **Estado (Etapa 6, Slice 1):** `gastos` se crea en esta etapa, pero **sin**
 > `id_comprobante_compra`: `comprobantes_compra` no existe todavía (etapa 8), así que un
 > `int NULL` sin FK sería una referencia sin garantía — mismo criterio que
-> `movimientos_stock.id_comprobante_compra` (§6). `id_turno_caja` sí se crea **NOT NULL**
-> desde esta etapa (a diferencia de la ambigüedad de la tabla de arriba, que lo muestra
-> nullable): todo gasto se registra contra un turno abierto, resuelto server-side, nunca
-> input de cliente.
+> `movimientos_stock.id_comprobante_compra` (§6). `id_turno_caja` se crea **NOT NULL** en esta
+> etapa: todo gasto se registra contra un turno abierto, resuelto server-side, nunca input de
+> cliente.
 >
 > **Estado (Etapa 8, Slice 1 — RESUELTO):** `gastos.id_comprobante_compra` aterriza en esta
 > slice, junto con su FK compuesta `(id_comprobante_compra, id_tenant)` RESTRICT y su índice
@@ -779,6 +783,16 @@ van a `movimientos_caja` (§7).
 > cuando `categoria = proveedor` y la compra referenciada está `confirmada`. El vínculo es
 > historia, no un bloqueo: anular la compra vinculada sigue permitido (design decisión 6 —
 > ningún camino de reversión de gasto existe todavía).
+>
+> **Estado (admin-panel-expense-upload, PR1 — RESUELTO):** `gastos.id_turno_caja` pasa a ser
+> **NULLABLE** — deja de ser el único origen de fondos posible. `id_empresa` aterriza NOT NULL
+> (FK compuesta `(id_empresa, id_tenant)` a `empresas`, RESTRICT), resuelto server-side desde
+> `puntos_venta.id_empresa` del punto de venta del gasto — backfill de una sola vez para las
+> filas preexistentes. `origen_fondos` aterriza NOT NULL (enum nativo `origen_fondos_gasto`),
+> hoy siempre `caja_turno`: `ServicioDeGastos.RegistrarAsync` todavía no ofrece la alternativa
+> `tesoreria` (pagar un gasto directo desde el fondo de tesorería, sin turno — etapa futura).
+> `ck_gastos_caja_turno_requiere_turno` es el backstop de esquema: solo el origen `caja_turno`
+> exige un turno.
 
 ### Órdenes de compra (Etapa 16)
 
@@ -1013,15 +1027,32 @@ y encadena tesorería. Todo en una transacción.
 
 ```sql
 movimientos_tesoreria (       -- [operativa] — ex cajaz: el fondo fuera de la caja diaria
-    id_movimiento, id_punto_venta, fecha,
+    id_movimiento, id_empresa, id_punto_venta, fecha,
     tipo tipo_movimiento_tesoreria,          -- enum: retiro_caja | deposito | gasto | ajuste
-    id_turno_caja NULL, concepto,
-    inicio, ingreso, egreso, final,          -- encadenado inicio→final como hoy
+    id_turno_caja NULL, id_gasto NULL, concepto,
+    inicio, ingreso, egreso, final,          -- encadenado inicio→final por (id_tenant, id_empresa)
     id_empleado
 );
 
 arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (cajaV)
 ```
+
+> **Estado (admin-panel-expense-upload, PR1 — RESUELTO):** la cadena `inicio`/`final` se
+> re-ancla de `id_punto_venta` a `(id_tenant, id_empresa)` — varios puntos de venta de la misma
+> empresa comparten un solo fondo de tesorería, en vez de uno por punto de venta. `id_empresa`
+> aterriza NOT NULL (FK compuesta a `empresas`, RESTRICT), resuelto server-side igual que en
+> `gastos`, con backfill de una sola vez para las filas preexistentes: el backfill re-computa
+> `inicio`/`final` de TODAS las filas existentes como una suma acumulada de
+> `(ingreso − egreso)` ordenada por `(fecha, id)` dentro de cada partición `(id_tenant,
+> id_empresa)` — el invariante `final = inicio + ingreso − egreso`
+> (`ck_movimientos_tesoreria_cadena`) se preserva por construcción. El append a la cadena se
+> serializa por `(id_tenant, id_empresa)` con `pg_advisory_xact_lock`
+> (`ServicioDeTurnos.TomarLockDeTesoreriaDeEmpresaAsync`), tomado ANTES de leer el último
+> `final` de la cadena. `id_gasto NULL` aterriza la columna + FK compuesta a
+> `gastos.ak_gastos_id_gasto_id_tenant` (RESTRICT) y su índice único parcial
+> (`ux_movimientos_tesoreria_id_gasto`, solo cuando no es nulo) para una etapa futura donde un
+> gasto de origen `tesoreria` puede originar directamente un movimiento — ningún escritor de
+> esta etapa lo puebla todavía.
 
 ## 8. Cuenta corriente de clientes
 

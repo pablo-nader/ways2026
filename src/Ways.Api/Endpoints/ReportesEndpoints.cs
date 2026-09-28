@@ -568,7 +568,7 @@ public static class ReportesEndpoints
         grupo.MapGet("/tesoreria", (
             ServicioDeTesoreria servicio, int idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
             int? pagina, int? tamanio, CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25, ct: ct))
         .WithSummary(
             "Libro de tesorería encadenado de un punto de venta, ordenado por id (nunca por " +
             "fecha): cero derivación, cada fila ya trae su inicio/final persistidos al cierre.");
@@ -585,7 +585,7 @@ public static class ReportesEndpoints
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
-                idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
+                idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct: ct);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);

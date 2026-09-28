@@ -13,6 +13,7 @@ Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marc
 Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | gastos via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | gastos | id_empresa,id_tenant | marcado
 Empresa | grupos | id_empresa,id_tenant | marcado
 Empresa | listas_precio | id_empresa,id_tenant | marcado
 Empresa | marcas | id_empresa,id_tenant | marcado
@@ -22,6 +23,7 @@ Empresa | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_ven
 Empresa | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | movimientos_stock via puntos_venta | id_punto_venta_destino,id_tenant | sinmarca
 Empresa | movimientos_tesoreria via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | movimientos_tesoreria | id_empresa,id_tenant | sinmarca
 Empresa | numeraciones_comprobante via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | ofertas | id_empresa,id_tenant | marcado

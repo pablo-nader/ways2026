@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
@@ -85,10 +86,12 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var fecha = new DateTimeOffset(dia.Year, dia.Month, dia.Day, 12, 0, 0, TimeSpan.Zero);
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
         var movimiento = new MovimientoTesoreria
         {
             IdTenant = ctx.IdTenant,
+            IdEmpresa = idEmpresa,
             IdPuntoVenta = ctx.IdPuntoVenta,
             Fecha = fecha,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,

@@ -872,6 +872,8 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     // HEAD por dentro — necesita conocer cada enum nuevo que aparezca, para
                     // siempre (mismo motivo que CuentaCorrienteProveedorBackfillTests).
                     npgsql.MapEnum<ModoPuntoVenta>("modo_punto_venta");
+                    // GastosOrigenFondosYTesoreriaPorEmpresa: mismo gap, ahora con origen_fondos_gasto.
+                    npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
                 })
                 .Options;
 

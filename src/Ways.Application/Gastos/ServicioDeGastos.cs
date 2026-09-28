@@ -43,12 +43,13 @@ public class ServicioDeGastos(
         // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
 
-        await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var gasto = await estrategia.ExecuteAsync(async () =>
-            await InsertarGastoAsync(idTenant, turno.Id, solicitud, idEmpleado, momento, ct));
+            await InsertarGastoAsync(
+                idTenant, puntoVenta.IdEmpresa, turno.Id, solicitud, idEmpleado, momento, ct));
 
         return Proyectar(gasto);
     }
@@ -149,8 +150,8 @@ public class ServicioDeGastos(
     /// turno — mismo orden que el design pseudocódigo (Transactions — GASTO LIGADO A UNA
     /// COMPRA).</summary>
     private async Task<Gasto> InsertarGastoAsync(
-        int idTenant, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado, DateTimeOffset momento,
-        CancellationToken ct)
+        int idTenant, int idEmpresa, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -165,11 +166,13 @@ public class ServicioDeGastos(
         var gasto = new Gasto
         {
             IdTenant = idTenant,
+            IdEmpresa = idEmpresa,
             Fecha = momento,
             IdPuntoVenta = solicitud.IdPuntoVenta,
             IdTurnoCaja = idTurnoCaja,
             IdEmpleado = idEmpleado,
             Categoria = solicitud.Categoria,
+            OrigenFondos = OrigenFondosGasto.CajaTurno,
             IdProveedor = idProveedor,
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,

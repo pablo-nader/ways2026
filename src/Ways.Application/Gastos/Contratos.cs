@@ -28,8 +28,8 @@ public sealed record SolicitudDeGasto(
 /// /api/gastos</c>.</summary>
 public sealed record GastoRegistrado(
     int Id,
-    int IdTurnoCaja,
-    int IdPuntoVenta,
+    int? IdTurnoCaja,
+    int? IdPuntoVenta,
     DateTimeOffset Fecha,
     CategoriaGasto Categoria,
     int? IdProveedor,
@@ -43,10 +43,11 @@ public sealed record GastoRegistrado(
     int? IdComprobanteCompra);
 
 /// <summary>Fila de <c>GET /api/gastos</c> (historial paginado) — mismo criterio de shape
-/// reducido que <c>Ways.Application.Caja.TurnoListado</c>.</summary>
+/// reducido que <c>Ways.Application.Caja.TurnoListado</c>. <c>IdPuntoVenta</c> nullable: un gasto
+/// de origen tesorería (etapa futura) no nace de ningún punto de venta puntual.</summary>
 public sealed record GastoListado(
     int Id,
-    int IdPuntoVenta,
+    int? IdPuntoVenta,
     DateTimeOffset Fecha,
     CategoriaGasto Categoria,
     int IdMedioPago,

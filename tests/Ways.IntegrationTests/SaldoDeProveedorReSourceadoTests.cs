@@ -174,15 +174,18 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
+        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
         db.Gastos.Add(new Gasto
         {
             IdTenant = ctx.IdTenant,
             Fecha = ahora,
+            IdEmpresa = idEmpresa,
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdTurnoCaja = idTurno,
             IdEmpleado = ctx.IdEmpleadoAdmin,
             Categoria = CategoriaGasto.Proveedor,
+            OrigenFondos = OrigenFondosGasto.CajaTurno,
             IdProveedor = ctx.IdProveedor,
             Concepto = "Pago pre-cutover (mecanismo retirado)",
             IdMedioPago = ctx.IdMedioEfectivo,

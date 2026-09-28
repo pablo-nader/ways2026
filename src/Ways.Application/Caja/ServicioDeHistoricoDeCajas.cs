@@ -157,14 +157,17 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
     private async Task<Dictionary<int, EgresosDeTurno>> LeerEgresosDeLaPaginaAsync(
         IReadOnlyList<int> ids, CancellationToken ct)
     {
+        // Gasto.IdTurnoCaja ya es nullable (GastosOrigenFondosYTesoreriaPorEmpresa) — un gasto sin
+        // turno no pertenece a ninguna página de historico-de-turnos, así que se excluye con el
+        // mismo `!= null` que cierra el hueco de tipos de ids.Contains<int>.
         var gastosPorCategoria = await db.Gastos
-            .Where(g => ids.Contains(g.IdTurnoCaja))
+            .Where(g => g.IdTurnoCaja != null && ids.Contains(g.IdTurnoCaja.Value))
             .GroupBy(g => new { g.IdTurnoCaja, g.Categoria })
             .Select(g => new { g.Key.IdTurnoCaja, g.Key.Categoria, Total = g.Sum(x => x.Importe) })
             .ToListAsync(ct);
 
         var gastosPorArea = await db.Gastos
-            .Where(g => ids.Contains(g.IdTurnoCaja))
+            .Where(g => g.IdTurnoCaja != null && ids.Contains(g.IdTurnoCaja.Value))
             .GroupBy(g => new { g.IdTurnoCaja, g.IdArea })
             .Select(g => new { g.Key.IdTurnoCaja, g.Key.IdArea, Total = g.Sum(x => x.Importe) })
             .ToListAsync(ct);
