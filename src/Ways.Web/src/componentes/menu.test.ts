@@ -81,6 +81,21 @@ const COMPRAS: Resumen = {
     },
   ],
 }
+// stage-gastos-admin-retroactivos (PR3): "Gastos" es Admin-only (puedeGestionarCatalogos) dentro
+// del MISMO grupo "Compras" que Vendedor/Supervisor sí ven — por eso es un fixture aparte, no un
+// campo agregado a COMPRAS de arriba.
+const COMPRAS_DE_ADMIN: Resumen = {
+  grupo: 'Compras',
+  secciones: [
+    {
+      enlaces: [
+        ['Compras', '/compras'],
+        ['Órdenes de compra', '/ordenes-compra'],
+        ['Gastos', '/gastos'],
+      ],
+    },
+  ],
+}
 const REPORTES: Resumen = {
   grupo: 'Reportes',
   secciones: [
@@ -176,7 +191,7 @@ describe('construirMenu', () => {
       VENDER,
       CAJA,
       VENTAS,
-      COMPRAS,
+      COMPRAS_DE_ADMIN,
       REPORTES,
       ADMINISTRACION_DE_ADMIN,
     ])
