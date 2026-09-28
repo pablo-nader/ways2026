@@ -34,7 +34,9 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: src/Ways.Desktop/package-lock.json
+          cache-dependency-path: |
+            src/Ways.Desktop/package-lock.json
+            src/Ways.Web/package-lock.json
 
       - name: Configurar Rust
         uses: dtolnay/rust-toolchain@stable
@@ -58,6 +60,11 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
         working-directory: src/Ways.Desktop
+
+      # sync-frontend-local.mjs compila Ways.Web antes del build de Tauri.
+      - name: Instalar dependencias de Ways.Web
+        run: npm ci
+        working-directory: src/Ways.Web
 
       - name: Compilar la app (Tauri build)
         run: npm run build
