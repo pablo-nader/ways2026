@@ -34,6 +34,19 @@ public static class GastosEndpoints
             servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Historial de gastos, paginado.");
 
+        // stage-gasto-a-compra (PR4), owner requirement: cualquier gasto (POS o admin) se liga a
+        // una compra DESPUÉS de creado — GestionDeCatalogo propio (apila sobre el
+        // Politicas.OperacionDePos del grupo), mismo criterio que las escrituras de
+        // "/api/compras" (ComprasEndpoints): la vinculación mueve el saldo de un proveedor.
+        grupo.MapPost("/{id:int}/vincular-compra", async (
+            ServicioDeGastos servicio, int id, SolicitudDeVincularCompra solicitud, CancellationToken ct) =>
+        {
+            var gasto = await servicio.VincularCompraAsync(id, solicitud, ct);
+            return Results.Ok(gasto);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Vincula (o convierte a proveedor) un gasto existente a una compra confirmada.");
+
         // stage-gastos-admin-retroactivos (PR3, owner's use case 2): grupo propio bajo
         // GestionDeCatalogo (Admin-only) — mismo gate que toda escritura de /api/compras: el
         // gasto administrativo mueve dinero de la tesorería de la empresa sin pasar por un turno,
@@ -48,9 +61,13 @@ public static class GastosEndpoints
             ServicioDeGastos servicio, SolicitudDeGastoDeAdministracion solicitud, CancellationToken ct) =>
         {
             var gasto = await servicio.RegistrarDeAdministracionAsync(solicitud, ct);
-            return Results.Created($"/api/gastos/{gasto.Id}", gasto);
+            return Results.Created($"/api/gastos/administracion/{gasto.Id}", gasto);
         })
         .WithSummary("Registra un gasto administrativo sin turno, pagado de la tesorería de la empresa.");
+
+        grupoAdministracion.MapGet("/{id:int}", (ServicioDeGastos servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerDeAdministracionAsync(id, ct))
+        .WithSummary("Detalle de un gasto de gestión (mismo shape que el listado).");
 
         grupoAdministracion.MapGet("/", (
             ServicioDeGastos servicio,

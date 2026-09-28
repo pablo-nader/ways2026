@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 import {
   aSolicitudDeGastoDeAdministracion,
+  clienteDeGastos,
   clienteDeGastosDeAdministracion,
   filtrosDeGastosDeAdministracionVacios,
   formularioDeGastoDeAdministracionCompleto,
@@ -10,6 +12,7 @@ import {
   type FormularioDeGastoDeAdministracion,
 } from '../api/gastos'
 import { clienteDeCatalogo } from '../api/catalogos'
+import { clienteDeCompras, filtrosDeComprasVacios } from '../api/compras'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeProveedores } from '../api/proveedores'
 import { ErrorApi } from '../api/cliente'
@@ -18,6 +21,7 @@ import type {
   AreaListado,
   AreaAlta,
   CategoriaGasto,
+  CompraListada,
   EmpresaListado,
   MedioPagoAlta,
   MedioPagoListado,
@@ -73,6 +77,7 @@ function mediosValidosParaGastoDeAdministracion(medios: MedioPagoListado[]): Med
  * mismo tick lo bloquea `guardandoRef` antes de que el re-render deshabilite el botón (regla 11).
  */
 export function Gastos() {
+  const navigate = useNavigate()
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
@@ -95,6 +100,68 @@ export function Gastos() {
   const [aviso, setAviso] = useState('')
 
   const generacionRef = useRef(0)
+
+  // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un gasto sin compra ligada --
+  const [pickerGastoId, setPickerGastoId] = useState<number | null>(null)
+  const [pickerCompras, setPickerCompras] = useState<CompraListada[] | null>(null)
+  const [pickerError, setPickerError] = useState('')
+  const [vinculando, setVinculando] = useState(false)
+  const vinculandoRef = useRef(false)
+  const generacionPickerRef = useRef(0)
+
+  function abrirPicker(gasto: PaginaDeGastosDeAdministracion['items'][number]) {
+    setPickerGastoId(gasto.id)
+    setPickerCompras(null)
+    setPickerError('')
+
+    const miGeneracion = (generacionPickerRef.current += 1)
+    clienteDeCompras
+      .listar({ ...filtrosDeComprasVacios(), idProveedor: gasto.idProveedor, estado: 'Confirmada', tamanio: 50 })
+      .then((datos) => {
+        if (generacionPickerRef.current !== miGeneracion) return
+        setPickerCompras(datos.items)
+      })
+      .catch((e) => {
+        if (generacionPickerRef.current !== miGeneracion) return
+        setPickerCompras([])
+        setPickerError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las compras confirmadas.')
+      })
+  }
+
+  function cerrarPicker() {
+    // regla 3 (react-async-state): bumpea la generación al cerrar — una respuesta del fetch en
+    // vuelo (u otro vínculo en curso) nunca reabre/repuebla el picker después de cerrado.
+    generacionPickerRef.current += 1
+    setPickerGastoId(null)
+    setPickerCompras(null)
+    setPickerError('')
+  }
+
+  async function vincularACompra(idComprobanteCompra: number) {
+    if (vinculandoRef.current || pickerGastoId === null) return
+    vinculandoRef.current = true
+    setVinculando(true)
+    setPickerError('')
+
+    const idGasto = pickerGastoId
+    const miGeneracion = (generacionRef.current += 1)
+
+    try {
+      await clienteDeGastos.vincularCompra(idGasto, idComprobanteCompra)
+      if (generacionRef.current !== miGeneracion) return
+      cerrarPicker()
+      setAviso('Gasto vinculado a la compra.')
+    } catch (e) {
+      if (generacionRef.current !== miGeneracion) return
+      setPickerError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto a la compra.')
+      return
+    } finally {
+      vinculandoRef.current = false
+      setVinculando(false)
+    }
+
+    cargar()
+  }
 
   // Carga inicial: catálogos de tenant, independientes del filtro/formulario.
   useEffect(() => {
@@ -584,6 +651,7 @@ export function Gastos() {
                     <th>Medio de pago</th>
                     <th>Origen</th>
                     <th className="text-end">Importe</th>
+                    <th>Compra</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -603,11 +671,35 @@ export function Gastos() {
                         </span>
                       </td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
+                      <td>
+                        {g.idComprobanteCompra !== null ? (
+                          <a href={`/compras/${g.idComprobanteCompra}`} onClick={(e) => { e.preventDefault(); navigate(`/compras/${g.idComprobanteCompra}`) }}>
+                            Compra #{g.idComprobanteCompra}
+                          </a>
+                        ) : (
+                          <div className="d-flex gap-1">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-primary rounded-0"
+                              onClick={() => abrirPicker(g)}
+                            >
+                              Vincular a compra
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary rounded-0"
+                              onClick={() => navigate(`/compras/nueva?desdeGasto=${g.id}`)}
+                            >
+                              Crear compra
+                            </button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="text-center text-muted py-4">
+                      <td colSpan={11} className="text-center text-muted py-4">
                         No hay gastos que coincidan con los filtros.
                       </td>
                     </tr>
@@ -640,6 +732,59 @@ export function Gastos() {
               </div>
             </div>
           </>
+        )}
+
+        {pickerGastoId !== null && (
+          <div
+            className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+            style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
+          >
+            <div className="bg-white p-3 border" style={{ minWidth: 420, maxWidth: 600 }}>
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <h5 className="m-0">Vincular a compra</h5>
+                <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={cerrarPicker} disabled={vinculando}>
+                  Cerrar
+                </button>
+              </div>
+
+              {pickerError && <div className="alert alert-danger rounded-0 py-1 px-2 small">{pickerError}</div>}
+
+              {pickerCompras === null && <Cargando />}
+
+              {pickerCompras !== null && pickerCompras.length === 0 && (
+                <p className="text-muted mb-0">No hay compras confirmadas para este proveedor.</p>
+              )}
+
+              {pickerCompras !== null && pickerCompras.length > 0 && (
+                <fieldset disabled={vinculando} className="table-responsive">
+                  <table className="table table-sm table-striped">
+                    <thead>
+                      <tr>
+                        <th>N° externo</th>
+                        <th>Fecha</th>
+                        <th className="text-end">Total</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pickerCompras.map((c) => (
+                        <tr key={c.id}>
+                          <td>{c.numeroExterno ?? `#${c.id}`}</td>
+                          <td>{c.fechaRecepcion ? formatearFecha(c.fechaRecepcion) : '—'}</td>
+                          <td className="text-end">{formatearMoneda(c.total)}</td>
+                          <td>
+                            <button type="button" className="btn btn-sm btn-primary rounded-0" onClick={() => void vincularACompra(c.id)}>
+                              {vinculando ? 'Vinculando…' : 'Elegir'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </fieldset>
+              )}
+            </div>
+          </div>
         )}
       </Box>
     </div>

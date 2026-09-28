@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Gastos } from './Gastos'
 import type {
@@ -11,6 +12,16 @@ import type {
   PaginaDeGastosDeAdministracion,
   PuntoVentaListado,
 } from '../api/tipos'
+
+// stage-gasto-a-compra (PR4): Gastos.tsx ahora usa useNavigate (acciones "Vincular a compra" /
+// "Crear compra") — necesita un Router alrededor, mismo criterio que CompraEditor.test.tsx.
+function renderGastos() {
+  return render(
+    <MemoryRouter initialEntries={['/gastos']}>
+      <Gastos />
+    </MemoryRouter>,
+  )
+}
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -150,7 +161,7 @@ beforeEach(() => {
 describe('Gastos (administración) — carga inicial', () => {
   it('con una única empresa, la preselecciona en el filtro y en el formulario de alta', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     // web-test-data-gates: esperar a que la opción de la empresa (el DATO) llegue, no a que el
     // <select> exista de entrada vacío.
@@ -167,7 +178,7 @@ describe('Gastos (administración) — carga inicial', () => {
 describe('Gastos (administración) — medio de pago', () => {
   it('excluye del selector del formulario los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
@@ -186,7 +197,7 @@ describe('Gastos (administración) — proveedor cambia la categoría', () => {
 
   it('elegir un proveedor cambia la categoría a Proveedor', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
@@ -199,7 +210,7 @@ describe('Gastos (administración) — proveedor cambia la categoría', () => {
 
   it('limpiar el proveedor mientras la categoría sigue en Proveedor la vuelve a Otros', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
@@ -214,7 +225,7 @@ describe('Gastos (administración) — proveedor cambia la categoría', () => {
 describe('Gastos (administración) — fecha', () => {
   it('el campo de fecha no admite un valor posterior a hoy (atributo max)', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     const campoFecha = await screen.findByLabelText('Fecha')
@@ -225,7 +236,7 @@ describe('Gastos (administración) — fecha', () => {
 
   it('una fecha futura (bypaseando el atributo max) se rechaza sin llegar a pegarle al servidor', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
@@ -254,7 +265,7 @@ describe('Gastos (administración) — alta', () => {
   it('arma el cuerpo del POST con fecha, empresa y medio de pago elegidos, sin turno', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -278,7 +289,7 @@ describe('Gastos (administración) — alta', () => {
   it('una fecha retroactiva elegida por el admin viaja tal cual en el POST', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-01-15' } })
@@ -290,7 +301,7 @@ describe('Gastos (administración) — alta', () => {
   it('al confirmar con éxito, limpia y cierra el formulario, y refresca el listado', async () => {
     mockearRutas({})
     apiPostMock.mockResolvedValueOnce({ id: 1 })
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 9, importe: 1500, concepto: 'Alquiler de septiembre' })]) })
@@ -310,7 +321,7 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -328,7 +339,7 @@ describe('Gastos (administración) — alta', () => {
           resolverPost = resolve
         }),
     )
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     const boton = screen.getByRole('button', { name: 'Registrar' })
@@ -341,7 +352,7 @@ describe('Gastos (administración) — alta', () => {
 
   it('un concepto en blanco se rechaza sin llegar a pegarle al servidor', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
@@ -357,7 +368,7 @@ describe('Gastos (administración) — alta', () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({})
     apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_fecha_futura', 'La fecha del gasto no puede ser futura.'))
-    render(<Gastos />)
+    renderGastos()
 
     await abrirYCompletarFormulario()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -375,7 +386,7 @@ describe('Gastos (administración) — listado y filtros', () => {
         gastoFixture({ id: 2, idPuntoVenta: 7, origenFondos: 'Tesoreria' }),
       ]),
     })
-    render(<Gastos />)
+    renderGastos()
 
     const tabla = await screen.findByRole('table')
     expect(within(tabla).getByText('Distribuidora Sur SRL')).toBeInTheDocument()
@@ -386,7 +397,7 @@ describe('Gastos (administración) — listado y filtros', () => {
     mockearRutas({
       pagina: paginaFixture([gastoFixture({ id: 1, categoria: 'Proveedor', idProveedor: 5, nombreProveedor: null })]),
     })
-    render(<Gastos />)
+    renderGastos()
 
     const tabla = await screen.findByRole('table')
     expect(within(tabla).getByText('(no disponible)')).toBeInTheDocument()
@@ -394,7 +405,7 @@ describe('Gastos (administración) — listado y filtros', () => {
 
   it('cambiar el filtro de categoría dispara una nueva consulta con ese filtro', async () => {
     mockearRutas({})
-    render(<Gastos />)
+    renderGastos()
 
     await screen.findByRole('table')
     apiGetMock.mockClear()
@@ -410,8 +421,67 @@ describe('Gastos (administración) — listado y filtros', () => {
 
   it('sin resultados, muestra el mensaje de listado vacío', async () => {
     mockearRutas({ pagina: paginaFixture([]) })
-    render(<Gastos />)
+    renderGastos()
 
     await screen.findByText('No hay gastos que coincidan con los filtros.')
+  })
+})
+
+// stage-gasto-a-compra (PR4): acciones por fila para un gasto sin compra ligada — "Vincular a
+// compra" abre un picker filtrado por el proveedor del gasto (si tiene), "Crear compra" navega.
+describe('Gastos (administración) — vincular a una compra existente', () => {
+  function compraListadaFixture(sobrescribir: Partial<{ id: number; idProveedor: number; numeroExterno: string | null; estado: string; fechaRecepcion: string | null; total: number }> = {}) {
+    return { id: 9, idProveedor: 2, idTipoComprobante: 5, numeroExterno: '0003-00000009', estado: 'Confirmada', fechaRecepcion: '2026-08-20T12:00:00Z', total: 500, ...sobrescribir }
+  }
+
+  function mockearConCompras(opciones: { pagina?: PaginaDeGastosDeAdministracion; compras?: ReturnType<typeof compraListadaFixture>[] } = {}) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaFixture()])
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo, medioCuentaCorriente])
+      if (ruta === '/catalogos/areas') return Promise.resolve([areaFixture()])
+      if (ruta === '/proveedores/opciones') return Promise.resolve([proveedorFixture()])
+      if (ruta.startsWith('/gastos/administracion')) return Promise.resolve(opciones.pagina ?? paginaFixture())
+      if (ruta.startsWith('/compras')) {
+        const items = opciones.compras ?? [compraListadaFixture()]
+        return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  it('un gasto con proveedor abre el picker filtrado por ESE proveedor', async () => {
+    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
+
+    await waitFor(() =>
+      expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('idProveedor=1')),
+    )
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('estado=Confirmada'))
+    expect(await screen.findByText('0003-00000009')).toBeInTheDocument()
+  })
+
+  it('elegir una compra del picker vincula el gasto y refresca el listado', async () => {
+    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3 })]) })
+    apiPostMock.mockResolvedValue({ id: 3, idComprobanteCompra: 9 })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/3/vincular-compra', { idComprobanteCompra: 9 }))
+    expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
+    // El picker se cierra tras el éxito.
+    expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
+  })
+
+  it('un gasto ya vinculado muestra el link a la compra en vez de las acciones', async () => {
+    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idComprobanteCompra: 9 })]) })
+    renderGastos()
+
+    expect(await screen.findByRole('link', { name: 'Compra #9' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Vincular a compra' })).not.toBeInTheDocument()
   })
 })

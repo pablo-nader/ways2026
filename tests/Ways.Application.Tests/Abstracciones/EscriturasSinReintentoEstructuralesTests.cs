@@ -79,6 +79,13 @@ public class EscriturasSinReintentoEstructuralesTests
         // fix/bajas-catalogos-guarda-de-uso: misma razón que la baja de catálogos, para
         // proveedores (entidad dedicada, no extiende ServicioDeCatalogo).
         { "Ways.Application/Proveedores/ServicioDeProveedores.cs", "EliminarAsync" },
+
+        // stage-gasto-a-compra (PR4): vincular un gasto a una compra muta saldo de proveedor y
+        // ledger de CC sin ninguna clave de idempotencia — un reintento sobre un commit ambiguo
+        // podría re-imputar o re-descontar, mismo criterio que ServicioDeGastos.RegistrarAsync/
+        // RegistrarDeAdministracionAsync (que ya usan la fábrica, fuera de esta lista porque no
+        // son parte del audit original de fix/retry-double-add).
+        { "Ways.Application/Gastos/ServicioDeGastos.cs", "VincularCompraAsync" },
     };
 
     /// <summary>
