@@ -8,9 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
+using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
+using Ways.Domain.Catalogos;
+using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -41,7 +44,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     };
 
     private sealed record Contexto(
-        int IdTenant, int IdPuntoVenta, int IdEmpleadoAdmin, HttpClient Admin, HttpClient Vendedor);
+        int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdEmpleadoAdmin, HttpClient Admin, HttpClient Vendedor);
 
     private static async Task<Contexto> PrepararAsync(string nombre, WebApplicationFactory<Program> factory)
     {
@@ -62,7 +65,8 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var vendedor = await CrearYLoguearAsync(admin, factory, nombre);
 
-        return new Contexto(resultado.IdTenant, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, admin, vendedor);
+        return new Contexto(
+            resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, admin, vendedor);
     }
 
     private static async Task<HttpClient> CrearYLoguearAsync(HttpClient admin, WebApplicationFactory<Program> factory, string nombre)
@@ -86,12 +90,11 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var fecha = new DateTimeOffset(dia.Year, dia.Month, dia.Day, 12, 0, 0, TimeSpan.Zero);
-        var idEmpresa = await db.PuntosVenta.Where(p => p.Id == ctx.IdPuntoVenta).Select(p => p.IdEmpresa).FirstAsync();
 
         var movimiento = new MovimientoTesoreria
         {
             IdTenant = ctx.IdTenant,
-            IdEmpresa = idEmpresa,
+            IdEmpresa = ctx.IdEmpresa,
             IdPuntoVenta = ctx.IdPuntoVenta,
             Fecha = fecha,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,
@@ -109,21 +112,43 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         return movimiento.Id;
     }
 
+    /// <summary>judgment-day PR5, hallazgo #2: registra un gasto de administración real (mismo
+    /// camino que <c>GastosDeAdministracionEndpointsTests</c>) para que
+    /// <c>EscriturasDeTesoreria</c> escriba su propia fila `tipo = gasto` en la cadena — necesario
+    /// para probar que el export usa la ETIQUETA en español de <see cref="CategoriaGasto"/>, no el
+    /// nombre crudo del enum.</summary>
+    private async Task RegistrarGastoDeAdministracionAsync(
+        Contexto ctx, DateOnly dia, CategoriaGasto categoria, string concepto, decimal importe)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idMedioEfectivo = await db.MediosPago
+            .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).Select(m => m.Id).FirstAsync();
+
+        // idPuntoVenta = ctx.IdPuntoVenta (no null): LlamarExportAsync de esta clase siempre
+        // filtra por ctx.IdPuntoVenta (ConstruirQuery no admite "Todos" acá) — una fila sin punto
+        // de venta quedaría afuera del export y este test nunca vería la celda.
+        var solicitud = new SolicitudDeGastoDeAdministracion(
+            dia, ctx.IdEmpresa, ctx.IdPuntoVenta, categoria, null, null, concepto, null, idMedioEfectivo, null, importe);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+    }
+
     // judgment-day fix (Juez B, WARNING, residual cerrado): offset -03:00 REAL (no "Z") — así
     // revertir el call site de /reportes/tesoreria/export al viejo
     // `DateOnly.FromDateTime(...UtcDateTime)` corre la fecha MOSTRADA, y el assert de nombre de
     // archivo que YA tiene ElExportEsIgualAlLibroJsonFilaPorFila (línea 142-144) lo atrapa — un
     // offset "Z" nunca lo discriminaba.
-    private static string ConstruirQuery(int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato) =>
-        $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00-03:00&hasta={hasta:yyyy-MM-dd}T23:59:59-03:00" +
+    private static string ConstruirQuery(int idEmpresa, int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato) =>
+        $"idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00-03:00&hasta={hasta:yyyy-MM-dd}T23:59:59-03:00" +
         (formato is null ? string.Empty : $"&formato={formato}");
 
-    private static Task<HttpResponseMessage> LlamarLibroAsync(HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta) =>
-        cliente.GetAsync($"/api/reportes/tesoreria?{ConstruirQuery(idPuntoVenta, desde, hasta, null)}&tamanio=200");
+    private static Task<HttpResponseMessage> LlamarLibroAsync(HttpClient cliente, Contexto ctx, DateOnly desde, DateOnly hasta) =>
+        cliente.GetAsync($"/api/reportes/tesoreria?{ConstruirQuery(ctx.IdEmpresa, ctx.IdPuntoVenta, desde, hasta, null)}&tamanio=200");
 
     private static Task<HttpResponseMessage> LlamarExportAsync(
-        HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta, string formato = "xlsx") =>
-        cliente.GetAsync($"/api/reportes/tesoreria/export?{ConstruirQuery(idPuntoVenta, desde, hasta, formato)}");
+        HttpClient cliente, Contexto ctx, DateOnly desde, DateOnly hasta, string formato = "xlsx") =>
+        cliente.GetAsync($"/api/reportes/tesoreria/export?{ConstruirQuery(ctx.IdEmpresa, ctx.IdPuntoVenta, desde, hasta, formato)}");
 
     // ---- task 7.10: equality test, por fila ----------------------------------------------------
 
@@ -138,12 +163,12 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await SembrarMovimientoAsync(ctx, desde, 60m, 40m, 0m, 100m);
         await SembrarMovimientoAsync(ctx, hasta, 100m, 60m, 15m, 145m, "Cierre de turno de mediodía");
 
-        var jsonRespuesta = await LlamarLibroAsync(ctx.Admin, ctx.IdPuntoVenta, desde, hasta);
+        var jsonRespuesta = await LlamarLibroAsync(ctx.Admin, ctx, desde, hasta);
         Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
         var libro = JsonSerializer.Deserialize<PaginaDeMovimientosTesoreria>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
         Assert.Equal(3, libro.Items.Count);
 
-        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, desde, hasta);
+        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx, desde, hasta);
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
         Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
         Assert.Equal(ContentTypeXlsx, exportRespuesta.Content.Headers.ContentType?.MediaType);
@@ -157,28 +182,60 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
         // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido porque
-        // el test de igualdad de abajo solo lee celdas por posición.
+        // el test de igualdad de abajo solo lee celdas por posición. PR5 agrega "Tipo" y "Punto de
+        // venta" — mismas columnas que la tabla web (Tesoreria.tsx).
         const int filaDeEncabezados = 6;
         Assert.Equal(
-            ["Inicio", "Ingreso", "Egreso", "Final", "Concepto", "Empleado", "Fecha"],
-            Enumerable.Range(1, 7).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+            ["Tipo", "Inicio", "Ingreso", "Egreso", "Final", "Concepto", "Punto de venta", "Empleado", "Fecha"],
+            Enumerable.Range(1, 9).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
 
-        // Los datos empiezan en la fila 7, mismo orden de cadena que el libro JSON
-        // (inicio/ingreso/egreso/final/concepto/empleado/fecha, design: Slice 7 task 7.5).
+        // Los datos empiezan en la fila 7, mismo orden de cadena que el libro JSON.
         var zonaArgentina = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < libro.Items.Count; i++)
         {
             var item = libro.Items[i];
             var fila = hoja.Row(primeraFilaDeDatos + i);
-            Assert.Equal(item.Inicio, fila.Cell(1).GetValue<decimal>());
-            Assert.Equal(item.Ingreso, fila.Cell(2).GetValue<decimal>());
-            Assert.Equal(item.Egreso, fila.Cell(3).GetValue<decimal>());
-            Assert.Equal(item.Final, fila.Cell(4).GetValue<decimal>());
-            Assert.Equal(item.Concepto, fila.Cell(5).GetString());
-            Assert.Equal(item.IdEmpleado, fila.Cell(6).GetValue<int>());
-            Assert.Equal(TimeZoneInfo.ConvertTime(item.Fecha, zonaArgentina).DateTime, fila.Cell(7).GetValue<DateTime>());
+            Assert.Equal("Retiro de caja", fila.Cell(1).GetString());
+            Assert.Equal(item.Inicio, fila.Cell(2).GetValue<decimal>());
+            Assert.Equal(item.Ingreso, fila.Cell(3).GetValue<decimal>());
+            Assert.Equal(item.Egreso, fila.Cell(4).GetValue<decimal>());
+            Assert.Equal(item.Final, fila.Cell(5).GetValue<decimal>());
+            Assert.Equal(item.Concepto, fila.Cell(6).GetString());
+            Assert.Equal(item.NombrePuntoVenta ?? "—", fila.Cell(7).GetString());
+            Assert.Equal(item.IdEmpleado, fila.Cell(8).GetValue<int>());
+            Assert.Equal(TimeZoneInfo.ConvertTime(item.Fecha, zonaArgentina).DateTime, fila.Cell(9).GetValue<DateTime>());
         }
+    }
+
+    /// <summary>judgment-day PR5, hallazgo confirmado #2: el export usa la MISMA etiqueta en
+    /// español que <c>Tesoreria.tsx</c>/<c>CATEGORIAS_GASTO</c> ("Viáticos"), nunca el nombre
+    /// crudo del enum <see cref="CategoriaGasto"/> ("Viaticos", sin tilde y en inglés-ish). Mutación
+    /// aplicada (revertir <c>EtiquetaDeCategoriaGasto</c> a interpolar <c>f.GastoCategoria</c>
+    /// crudo): esta prueba pasó de FALLAR (celda "Viaticos — ...") a pasar al revertir — evidencia
+    /// registrada en el cuerpo de esta corrección.</summary>
+    [Fact]
+    public async Task LaCeldaDeConceptoDeUnaFilaDeGastoUsaLaEtiquetaEnEspanolDeLaCategoria()
+    {
+        var ctx = await PrepararAsync(nameof(LaCeldaDeConceptoDeUnaFilaDeGastoUsaLaEtiquetaEnEspanolDeLaCategoria), fixture);
+        // Fecha de NEGOCIO retroactiva del gasto (lo único que el admin controla) — el movimiento
+        // de tesorería que escribe EscriturasDeTesoreria lleva su propia Fecha = reloj.Ahora (hoy),
+        // así que el rango del export tiene que cubrir HOY, no la fecha retroactiva del gasto.
+        var fechaDeNegocio = new DateOnly(2026, 8, 1);
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        await RegistrarGastoDeAdministracionAsync(ctx, fechaDeNegocio, CategoriaGasto.Viaticos, "Pasaje a Rosario", 5000m);
+
+        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx, hoy, hoy);
+        var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
+        Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        using var libroXlsx = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libroXlsx.Worksheets.First();
+
+        const int primeraFilaDeDatos = 7;
+        Assert.Equal("Gasto", hoja.Cell(primeraFilaDeDatos, 1).GetString());
+        Assert.Equal("Viáticos — Pasaje a Rosario", hoja.Cell(primeraFilaDeDatos, 6).GetString());
     }
 
     // ---- cap guard test (design decisión 6: la tesorería es un LISTADO, COUNT(*) real) --------
@@ -203,7 +260,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             await SembrarMovimientoAsync(ctx, dia, 0m, 10m + i, 0m, 10m + i);
         }
 
-        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, dia, dia);
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx, dia, dia);
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
@@ -234,7 +291,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             await SembrarMovimientoAsync(ctx, dia, 0m, 10m + i, 0m, 10m + i);
         }
 
-        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, dia, dia);
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx, dia, dia);
         var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
         Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
@@ -263,7 +320,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeTesoreria), fixture);
         var hoy = new DateOnly(2026, 8, 1);
 
-        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, hoy, hoy, formato: "pdf");
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx, hoy, hoy, formato: "pdf");
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
@@ -280,7 +337,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoDelExportDeTesoreria), fixture);
         var hoy = new DateOnly(2026, 8, 1);
 
-        var respuesta = await LlamarExportAsync(ctx.Vendedor, ctx.IdPuntoVenta, hoy, hoy);
+        var respuesta = await LlamarExportAsync(ctx.Vendedor, ctx, hoy, hoy);
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }

@@ -193,20 +193,28 @@ export function construirQueryDeHistoricoDeCajas(filtros: FiltrosDeHistoricoDeCa
   return `?${parametros.toString()}`
 }
 
-/** Filtro de `GET /api/reportes/tesoreria` — `idPuntoVenta` es OBLIGATORIO (a diferencia de
- * `FiltrosDeHistoricoDeCajas`): mezclar puntos de venta rompería el significado de la cadena
- * inicio/final (design decisión 11), así que acá no existe la opción "Todos". */
+/** Filtro de `GET /api/reportes/tesoreria` — `idEmpresa` es OBLIGATORIO (stage-tesoreria-por-
+ * empresa, PR5: la cadena inicio/final es por empresa, doc 10 §7); `idPuntoVenta` es OPCIONAL,
+ * un filtro adicional sobre esa misma cadena — a diferencia de antes de este PR, acá SÍ existe la
+ * opción "Todos" (`idPuntoVenta: null`), porque mezclar empresas nunca fue el riesgo (design
+ * decisión 11 protegía contra mezclar puntos de venta de la MISMA empresa, algo que ya no aplica
+ * porque la cadena nunca fue por punto de venta). Un `idPuntoVenta` puntual muestra un
+ * subconjunto de la cadena de la empresa, no una cadena propia. */
 export type FiltrosDeTesoreria = {
-  idPuntoVenta: number
+  idEmpresa: number
+  idPuntoVenta: number | null
   desde: string
   hasta: string
   pagina: number
   tamanio: number
 }
 
-function construirQueryDeAlcanceDeTesoreria(filtros: { idPuntoVenta: number; desde: string; hasta: string }): string {
+function construirQueryDeAlcanceDeTesoreria(
+  filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string },
+): string {
   const parametros = new URLSearchParams()
-  parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
   if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
   if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   return `?${parametros.toString()}`
@@ -239,7 +247,7 @@ export const rutasDeExportacion = {
   historicoDeCajas: (filtros: { idPuntoVenta: number | null; desde: string; hasta: string }) =>
     `/reportes/cajas/export${construirQueryDeAlcanceDeCajas(filtros)}&formato=xlsx`,
   /** `desde`/`hasta` OBLIGATORIOS en `/tesoreria/export`, mismo criterio que `historicoDeCajas`. */
-  tesoreria: (filtros: { idPuntoVenta: number; desde: string; hasta: string }) =>
+  tesoreria: (filtros: { idEmpresa: number; idPuntoVenta: number | null; desde: string; hasta: string }) =>
     `/reportes/tesoreria/export${construirQueryDeAlcanceDeTesoreria(filtros)}&formato=xlsx`,
   /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
    * servidor (mismo criterio que la ruta JSON hermana). */

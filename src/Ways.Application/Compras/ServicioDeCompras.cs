@@ -63,6 +63,7 @@ public class ServicioDeCompras(
         EstadoCompra? estado = null,
         DateTimeOffset? desde = null,
         DateTimeOffset? hasta = null,
+        int? idEmpresa = null,
         int pagina = 1,
         int tamanio = 25,
         CancellationToken ct = default)
@@ -70,7 +71,7 @@ public class ServicioDeCompras(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
 
         var total = await query.CountAsync(ct);
 
@@ -95,9 +96,10 @@ public class ServicioDeCompras(
         DateTimeOffset? desde,
         DateTimeOffset? hasta,
         int topeDeFilas,
+        int? idEmpresa = null,
         CancellationToken ct = default)
     {
-        var query = ConstruirQuery(idProveedor, estado, desde, hasta);
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta, idEmpresa);
 
         var cantidad = await query.CountAsync(ct);
         GuardaDeTope.Exigir(cantidad, topeDeFilas);
@@ -116,7 +118,7 @@ public class ServicioDeCompras(
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
     /// <see cref="ListarParaExportacionAsync"/> (design decisión 7).</summary>
     private IQueryable<ComprobanteCompra> ConstruirQuery(
-        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta)
+        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta, int? idEmpresa = null)
     {
         var query = db.ComprobantesCompra.AsQueryable();
 
@@ -138,6 +140,15 @@ public class ServicioDeCompras(
         if (hasta is { } h)
         {
             query = query.Where(c => c.FechaRecepcion <= h);
+        }
+
+        // stage-tesoreria-por-empresa (PR5): una compra no tiene IdEmpresa propio — solo su punto
+        // de venta lo tiene (dangling-fk-read-models: un PV dado de baja lógica ya no matchea
+        // ningún `Any`, así que una compra de un PV de baja queda legítimamente afuera de un
+        // filtro por empresa — no rompe nada, esa compra sigue visible sin el filtro).
+        if (idEmpresa is { } emp)
+        {
+            query = query.Where(c => db.PuntosVenta.Any(pv => pv.Id == c.IdPuntoVenta && pv.IdEmpresa == emp));
         }
 
         return query;

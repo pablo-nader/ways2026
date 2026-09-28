@@ -27,26 +27,33 @@ public static class ComprasEndpoints
             EstadoCompra? estado,
             DateTimeOffset? desde,
             DateTimeOffset? hasta,
+            int? idEmpresa,
             int? pagina,
             int? tamanio,
             CancellationToken ct) =>
-            servicio.ListarAsync(idProveedor, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista comprobantes de compra con filtros y paginado.");
+            servicio.ListarAsync(idProveedor, estado, desde, hasta, idEmpresa, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Lista comprobantes de compra con filtros y paginado. idEmpresa (stage-tesoreria-por-" +
+            "empresa, PR5) filtra por la empresa del punto de venta de la compra — usado por el " +
+            "picker 'Vincular a compra' de Gastos para no ofrecer compras de otra empresa.");
 
         // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
         // inmediatamente después de su ruta fuente — hereda OperacionDePos por co-locación.
         // Sin idPuntoVenta (el listado JSON tampoco lo tiene): Empresa/zona usan el default de
-        // AlcanceDeListadoHttp, no una consulta nueva.
+        // AlcanceDeListadoHttp, no una consulta nueva. judgment-day PR5, hallazgo #3: idEmpresa
+        // viaja EXACTAMENTE igual que en GET /api/compras (contrato "el export es igual al
+        // JSON") — ServicioDeCompras.ListarParaExportacionAsync ya lo acepta, solo faltaba
+        // reenviarlo desde acá.
         grupo.MapGet("/export", async (
             ServicioDeCompras servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj,
-            int? idProveedor, EstadoCompra? estado, DateTimeOffset desde, DateTimeOffset hasta, string formato,
-            CancellationToken ct) =>
+            int? idProveedor, EstadoCompra? estado, DateTimeOffset desde, DateTimeOffset hasta, int? idEmpresa,
+            string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
-                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, ct);
+                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, idEmpresa, ct);
 
             var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
             var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);

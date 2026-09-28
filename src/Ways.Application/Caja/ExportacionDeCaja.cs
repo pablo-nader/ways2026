@@ -1,4 +1,5 @@
 using Ways.Application.Exportacion;
+using Ways.Domain.Caja;
 using Ways.Domain.Gastos;
 
 namespace Ways.Application.Caja;
@@ -13,18 +14,57 @@ public static class ExportacionDeCaja
 {
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasTesoreria =
     [
+        new ColumnaExportable("Tipo", TipoDeColumna.Texto),
         new ColumnaExportable("Inicio", TipoDeColumna.Moneda),
         new ColumnaExportable("Ingreso", TipoDeColumna.Moneda),
         new ColumnaExportable("Egreso", TipoDeColumna.Moneda),
         new ColumnaExportable("Final", TipoDeColumna.Moneda),
         new ColumnaExportable("Concepto", TipoDeColumna.Texto),
+        new ColumnaExportable("Punto de venta", TipoDeColumna.Texto),
         new ColumnaExportable("Empleado", TipoDeColumna.Entero),
         new ColumnaExportable("Fecha", TipoDeColumna.FechaHora)
     ];
 
+    private static string EtiquetaDeTipoMovimiento(TipoMovimientoTesoreria tipo) => tipo switch
+    {
+        TipoMovimientoTesoreria.RetiroCaja => "Retiro de caja",
+        TipoMovimientoTesoreria.Deposito => "Depósito",
+        TipoMovimientoTesoreria.Gasto => "Gasto",
+        TipoMovimientoTesoreria.Ajuste => "Ajuste",
+        _ => tipo.ToString()
+    };
+
+    /// <summary>judgment-day PR5, hallazgo #2: mismas etiquetas en español que
+    /// <c>CATEGORIAS_GASTO</c> (<c>Ways.Web/src/api/tipos.ts</c>) — no existía ningún mapeo de
+    /// <see cref="CategoriaGasto"/> a etiqueta del lado del servidor (se buscó en
+    /// <c>Ways.Application.Exportacion</c>/<c>Ways.Application.Reportes</c>, ninguno lo tenía), así
+    /// que este mapeo nace acá, junto al único lugar que hoy lo necesita.</summary>
+    private static string EtiquetaDeCategoriaGasto(CategoriaGasto categoria) => categoria switch
+    {
+        CategoriaGasto.Proveedor => "Proveedores",
+        CategoriaGasto.Sueldos => "Sueldos",
+        CategoriaGasto.Viaticos => "Viáticos",
+        CategoriaGasto.Impuestos => "Impuestos",
+        CategoriaGasto.Servicios => "Servicios",
+        CategoriaGasto.Otros => "Otros",
+        _ => categoria.ToString()
+    };
+
+    /// <summary>stage-tesoreria-por-empresa (PR5): mismo criterio de "concepto efectivo" que
+    /// <c>Tesoreria.tsx</c> — una fila de tipo <see cref="TipoMovimientoTesoreria.Gasto"/> muestra
+    /// la categoría/concepto del gasto de origen (más legible que el <c>Concepto</c> genérico del
+    /// movimiento); cualquier otra fila muestra su propio <c>Concepto</c>. judgment-day hallazgo
+    /// #2: la categoría usa <see cref="EtiquetaDeCategoriaGasto"/> — antes interpolaba el enum
+    /// crudo (p.ej. "Viaticos") en vez de la etiqueta en español que ya muestra la UI
+    /// ("Viáticos").</summary>
+    private static string ConceptoEfectivo(MovimientoTesoreriaListado f) =>
+        f.GastoConcepto is null || f.GastoCategoria is null
+            ? f.Concepto
+            : $"{EtiquetaDeCategoriaGasto(f.GastoCategoria.Value)} — {f.GastoConcepto}";
+
     /// <summary>Libro de tesorería (G3, spec tesoreria: The Book Has An Export Sibling Equal To
     /// Its JSON) — misma orden de columnas que la tabla del libro (design: Slice 7 task 7.5,
-    /// "inicio/ingreso/egreso/final/concepto/empleado/fecha"), en el MISMO orden de filas que
+    /// extendida en PR5 con "tipo"/"punto de venta"), en el MISMO orden de filas que
     /// <see cref="ServicioDeTesoreria.ListarAsync"/> devuelve (cadena por <c>Id</c> ascendente,
     /// nunca re-ordenado acá).</summary>
     public static TablaExportable De(IReadOnlyList<MovimientoTesoreriaListado> filas, ContextoDeExportacion ctx, TimeZoneInfo zona)
@@ -32,11 +72,13 @@ public static class ExportacionDeCaja
         var celdas = filas
             .Select(f => (IReadOnlyList<Celda>)
             [
+                Celda.Texto(EtiquetaDeTipoMovimiento(f.Tipo)),
                 Celda.Moneda(f.Inicio),
                 Celda.Moneda(f.Ingreso),
                 Celda.Moneda(f.Egreso),
                 Celda.Moneda(f.Final),
-                Celda.Texto(f.Concepto),
+                Celda.Texto(ConceptoEfectivo(f)),
+                Celda.Texto(f.NombrePuntoVenta ?? "—"),
                 Celda.Entero(f.IdEmpleado),
                 Celda.FechaHora(f.Fecha, zona)
             ])

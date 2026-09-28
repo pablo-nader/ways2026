@@ -62,7 +62,7 @@ function filtrosHistoricoDeCajasFixture(sobrescribir: Partial<FiltrosDeHistorico
 }
 
 function filtrosTesoreriaFixture(sobrescribir: Partial<FiltrosDeTesoreria> = {}): FiltrosDeTesoreria {
-  return { idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11', pagina: 1, tamanio: 25, ...sobrescribir }
+  return { idEmpresa: 1, idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11', pagina: 1, tamanio: 25, ...sobrescribir }
 }
 
 function filtrosReporteDeArticulosFixture(
@@ -184,11 +184,22 @@ describe('rutasDeExportacion', () => {
   it('tesoreria reutiliza el offset de /tesoreria y suma formato=xlsx, sin pagina/tamanio', () => {
     const offsetDesde = offsetEsperado(2026, 8, 5)
     const offsetHasta = offsetEsperado(2026, 8, 11)
-    const ruta = decodeURIComponent(rutasDeExportacion.tesoreria({ idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11' }))
+    const ruta = decodeURIComponent(
+      rutasDeExportacion.tesoreria({ idEmpresa: 1, idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11' }),
+    )
 
     expect(ruta).toBe(
-      `/reportes/tesoreria/export?idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&formato=xlsx`,
+      `/reportes/tesoreria/export?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&formato=xlsx`,
     )
+  })
+
+  it('tesoreria omite idPuntoVenta cuando es null ("Todos")', () => {
+    const ruta = decodeURIComponent(
+      rutasDeExportacion.tesoreria({ idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11' }),
+    )
+
+    expect(ruta).toContain('idEmpresa=1')
+    expect(ruta).not.toContain('idPuntoVenta=')
   })
 })
 
@@ -219,12 +230,21 @@ describe('construirQueryDeHistoricoDeCajas', () => {
 })
 
 describe('construirQueryDeTesoreria', () => {
-  it('idPuntoVenta viaja siempre (obligatorio), con desde/hasta y pagina/tamanio', () => {
+  it('idEmpresa viaja siempre (obligatorio), con idPuntoVenta/desde/hasta y pagina/tamanio', () => {
     const offsetDesde = offsetEsperado(2026, 8, 5)
     const offsetHasta = offsetEsperado(2026, 8, 11)
     const query = decodeURIComponent(construirQueryDeTesoreria(filtrosTesoreriaFixture()))
 
-    expect(query).toBe(`?idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&pagina=1&tamanio=25`)
+    expect(query).toBe(
+      `?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05T00:00:00${offsetDesde}&hasta=2026-08-11T23:59:59.999${offsetHasta}&pagina=1&tamanio=25`,
+    )
+  })
+
+  it('idPuntoVenta se omite cuando es null ("Todos")', () => {
+    const query = decodeURIComponent(construirQueryDeTesoreria(filtrosTesoreriaFixture({ idPuntoVenta: null })))
+
+    expect(query).toContain('idEmpresa=1')
+    expect(query).not.toContain('idPuntoVenta=')
   })
 })
 
@@ -253,7 +273,7 @@ describe('clienteDeReportes.historicoDeCajas / clienteDeReportes.tesoreria', () 
     apiGetMock.mockClear()
     await clienteDeReportes.tesoreria(filtrosTesoreriaFixture())
 
-    expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/tesoreria\?idPuntoVenta=7/))
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/tesoreria\?idEmpresa=1&idPuntoVenta=7/))
   })
 })
 

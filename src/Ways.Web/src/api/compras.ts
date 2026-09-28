@@ -52,12 +52,16 @@ export type FiltrosDeCompras = {
   estado: EstadoCompra | null
   desde: string
   hasta: string
+  /** stage-tesoreria-por-empresa (PR5): filtro opcional por la empresa del punto de venta de la
+   * compra — usado por el picker "Vincular a compra" de Gastos para no ofrecer compras de otra
+   * empresa que la del gasto. */
+  idEmpresa: number | null
   pagina: number
   tamanio: number
 }
 
 export function filtrosDeComprasVacios(): FiltrosDeCompras {
-  return { idProveedor: null, estado: null, desde: '', hasta: '', pagina: 1, tamanio: 25 }
+  return { idProveedor: null, estado: null, desde: '', hasta: '', idEmpresa: null, pagina: 1, tamanio: 25 }
 }
 
 /** Arma el query string de `GET /api/compras` — `desde`/`hasta` filtran por `fecha_recepcion`
@@ -69,6 +73,7 @@ export function construirQueryDeCompras(filtros: FiltrosDeCompras): string {
   if (filtros.estado !== null) parametros.set('estado', filtros.estado)
   if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
   if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
+  if (filtros.idEmpresa !== null) parametros.set('idEmpresa', String(filtros.idEmpresa))
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
