@@ -66,6 +66,10 @@ const MODELO: EntradaDelModelo[] = [
         enlaces: [
           enlace(puedeOperarPos, 'Compras', '/compras'),
           enlace(puedeOperarPos, 'Órdenes de compra', '/ordenes-compra'),
+          // stage-gastos-admin-retroactivos (PR3): admin-only (a diferencia de sus dos hermanas
+          // de arriba) — mismo gate que Proveedores, la pantalla entera vive bajo
+          // Politicas.GestionDeCatalogo del lado del servidor.
+          enlace(puedeGestionarCatalogos, 'Gastos', '/gastos'),
         ],
       },
     ],

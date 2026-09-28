@@ -36,6 +36,7 @@ import { Presupuestos } from './paginas/Presupuestos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
+import { Gastos } from './paginas/Gastos'
 import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
 import { ReporteDeArticulos } from './paginas/ReporteDeArticulos'
@@ -320,6 +321,19 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <CompraEditor />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-gastos-admin-retroactivos (PR3, owner's use case 2): árbol propio, admin-only
+                end a end — mismo gate que /proveedores (Politicas.GestionDeCatalogo del lado del
+                servidor): el gasto administrativo mueve la tesorería de la empresa sin pasar por
+                un turno, a diferencia de "Gastos del turno" (POS, Politicas.OperacionDePos). */}
+            <Route
+              path="/gastos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Gastos />
                 </RutaProtegida>
               }
             />

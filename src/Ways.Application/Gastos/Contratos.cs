@@ -67,3 +67,70 @@ public sealed record GastoListado(
 /// <summary>Página de resultados de <c>GET /api/gastos</c> — mismo shape que
 /// <c>Ways.Application.Caja.PaginaDeTurnos</c>.</summary>
 public sealed record PaginaDeGastos(IReadOnlyList<GastoListado> Items, int Total, int Pagina, int Tamanio);
+
+// ---- Gastos de administración (stage-gastos-admin-retroactivos, PR3) -----------------------
+//
+// Owner's use case 2: el admin registra, en cualquier momento (incluida una fecha RETROACTIVA),
+// un gasto que nunca pasó por un turno — pagado directo de la tesorería (caja general) de la
+// empresa. Contrato propio, no una extensión de SolicitudDeGasto: la forma es distinta a
+// propósito (IdEmpresa + Fecha de negocio en vez de IdPuntoVenta obligatorio resolviendo turno)
+// — mezclar los dos en un solo record con campos condicionales sería más confuso que dos
+// contratos chicos, mismo criterio que separar SolicitudDeCompra de SolicitudDeAjuste.
+
+/// <summary>Cuerpo de <c>POST /api/gastos/administracion</c>. <see cref="Fecha"/> es la fecha de
+/// NEGOCIO elegida por el admin — puede ser retroactiva (spec: owner's use case 2), nunca futura
+/// respecto del "hoy" local de <see cref="IdEmpresa"/>/<see cref="IdPuntoVenta"/>
+/// (<c>ServicioDeGastos.ExigirFechaNoFutura</c>) — mismo shape <c>DateOnly</c> que
+/// <c>SolicitudDeCompra.FechaComprobante</c>: la hora la sigue poniendo el servidor
+/// (<c>reloj.Ahora</c>) para los movimientos de ledger, la fecha de negocio es lo único que el
+/// admin controla. <see cref="IdEmpresa"/> reemplaza a <c>IdPuntoVenta</c> como ancla del gasto
+/// (la tesorería es un fondo POR EMPRESA, doc 10 §7) — <see cref="IdPuntoVenta"/> es opcional,
+/// solo trazabilidad, nunca resuelve un turno (no hay turno en este camino:
+/// <see cref="Ways.Application.Gastos.ServicioDeGastos.RegistrarDeAdministracionAsync"/> nunca
+/// llama a <c>ServicioDeTurnos</c>). <see cref="IdComprobanteCompra"/>/<see cref="IdProveedor"/>
+/// siguen las mismas reglas de ligadura que <c>SolicitudDeGasto</c> (categoría proveedor
+/// obligatoria, proveedor derivado/validado contra la compra).</summary>
+public sealed record SolicitudDeGastoDeAdministracion(
+    DateOnly Fecha,
+    int IdEmpresa,
+    int? IdPuntoVenta,
+    CategoriaGasto Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    int IdMedioPago,
+    string? NumeroFactura,
+    decimal Importe,
+    int? IdComprobanteCompra = null);
+
+/// <summary>Fila de <c>GET /api/gastos/administracion</c> — proyección más rica que
+/// <see cref="GastoListado"/> (pensada para el historial operativo del turno, esta es la
+/// pantalla de gestión completa): nombres resueltos de proveedor/área/medio de pago vía LEFT
+/// JOIN (dangling-fk-read-models — un catálogo dado de baja lógica nunca puede tirar la fila ni
+/// romper el listado, el nombre simplemente sale <c>null</c>) y el número de compra ligada para
+/// trazabilidad.</summary>
+public sealed record GastoDeAdministracionListado(
+    int Id,
+    DateTimeOffset Fecha,
+    int IdEmpresa,
+    int? IdPuntoVenta,
+    int? IdTurnoCaja,
+    CategoriaGasto Categoria,
+    int? IdProveedor,
+    string? NombreProveedor,
+    int? IdArea,
+    string? NombreArea,
+    string Concepto,
+    string? Detalle,
+    int IdMedioPago,
+    string? NombreMedioPago,
+    string? NumeroFactura,
+    decimal Importe,
+    OrigenFondosGasto OrigenFondos,
+    int? IdComprobanteCompra);
+
+/// <summary>Página de resultados de <c>GET /api/gastos/administracion</c> — mismo shape que
+/// <see cref="PaginaDeGastos"/>.</summary>
+public sealed record PaginaDeGastosDeAdministracion(
+    IReadOnlyList<GastoDeAdministracionListado> Items, int Total, int Pagina, int Tamanio);

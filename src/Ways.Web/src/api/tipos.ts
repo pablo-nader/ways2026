@@ -1184,6 +1184,61 @@ export type GastoRegistrado = {
   origenFondos: OrigenFondosGasto
 }
 
+// --- Gastos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
+// la tesorería de la empresa, con fecha de negocio potencialmente retroactiva — espejo de los
+// gastos de administración de `Ways.Application.Gastos.Contratos`.
+
+/** Cuerpo de `POST /api/gastos/administracion` — espejo de
+ * `SolicitudDeGastoDeAdministracion`. `fecha` viaja como `YYYY-MM-DD` (mismo shape que
+ * `SolicitudDeCompra.fechaComprobante`) — nunca un ISO con hora: la hora la pone el servidor. */
+export type SolicitudDeGastoDeAdministracion = {
+  fecha: string
+  idEmpresa: number
+  idPuntoVenta: number | null
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
+  idComprobanteCompra: number | null
+}
+
+/** Fila de `GET /api/gastos/administracion` — espejo de `GastoDeAdministracionListado`, con
+ * nombres ya resueltos (proveedor/área/medio) — un catálogo dado de baja lógica los deja en
+ * `null`, la fila nunca desaparece. */
+export type GastoDeAdministracionListado = {
+  id: number
+  fecha: string
+  idEmpresa: number
+  idPuntoVenta: number | null
+  idTurnoCaja: number | null
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  nombreProveedor: string | null
+  idArea: number | null
+  nombreArea: string | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  nombreMedioPago: string | null
+  numeroFactura: string | null
+  importe: number
+  origenFondos: OrigenFondosGasto
+  idComprobanteCompra: number | null
+}
+
+/** Página de resultados de `GET /api/gastos/administracion` — espejo de
+ * `PaginaDeGastosDeAdministracion`. */
+export type PaginaDeGastosDeAdministracion = {
+  items: GastoDeAdministracionListado[]
+  total: number
+  pagina: number
+  tamanio: number
+}
+
 // --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
 // `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
 // cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
