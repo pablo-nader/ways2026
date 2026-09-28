@@ -112,6 +112,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     categoria: 'Otros',
     idMedioPago: 1,
     importe: 300,
+    origenFondos: 'CajaTurno',
     ...sobrescribir,
   }
 }
@@ -232,6 +233,61 @@ describe('GastosDelTurno — categoría auto-switch', () => {
   })
 })
 
+describe('GastosDelTurno — pagado desde (origenFondos)', () => {
+  it('por default el selector queda en "Caja del turno" y el POST manda origenFondos CajaTurno', async () => {
+    mockearRutas({})
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+
+    await screen.findByLabelText('Importe')
+    expect(screen.getByLabelText('Pagado desde')).toHaveValue('CajaTurno')
+
+    await userEvent.type(screen.getByLabelText('Importe'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ origenFondos: 'CajaTurno' })),
+    )
+  })
+
+  it('elegir "Caja general" manda origenFondos Tesoreria', async () => {
+    mockearRutas({})
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+
+    await screen.findByLabelText('Importe')
+    await userEvent.type(screen.getByLabelText('Importe'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.selectOptions(screen.getByLabelText('Pagado desde'), 'Caja general')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ origenFondos: 'Tesoreria' })),
+    )
+  })
+
+  it('el selector "Pagado desde" queda deshabilitado mientras el alta está en vuelo', async () => {
+    mockearRutas({})
+    let resolverPost: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverPost = resolve
+        }),
+    )
+    render(<GastosDelTurno />)
+
+    await screen.findByLabelText('Importe')
+    await userEvent.type(screen.getByLabelText('Importe'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Pagado desde')).toBeDisabled())
+    resolverPost({ id: 1 })
+  })
+})
+
 describe('GastosDelTurno — alta', () => {
   async function completarFormulario() {
     await screen.findByLabelText('Importe')
@@ -262,6 +318,7 @@ describe('GastosDelTurno — alta', () => {
           idArea: null,
           numeroFactura: null,
           idComprobanteCompra: null,
+          origenFondos: 'CajaTurno',
         }),
       ),
     )
@@ -392,5 +449,23 @@ describe('GastosDelTurno — listado', () => {
 
     await screen.findByText('Este turno todavía no tiene gastos.')
     expect(screen.getByText('Total: $ 0,00')).toBeInTheDocument()
+  })
+
+  it('un gasto de origen Tesoreria se etiqueta "Caja general"; uno CajaTurno no lleva etiqueta', async () => {
+    mockearRutas({
+      medios: [medioEfectivo],
+      detalle: detalleFixture([
+        gastoFixture({ id: 1, categoria: 'Servicios', importe: 300, origenFondos: 'CajaTurno' }),
+        gastoFixture({ id: 2, categoria: 'Viaticos', importe: 150, origenFondos: 'Tesoreria' }),
+      ]),
+    })
+    render(<GastosDelTurno />)
+
+    const tabla = await screen.findByRole('table')
+    const filaCajaTurno = within(tabla).getByRole('row', { name: /Servicios/ })
+    expect(within(filaCajaTurno).queryByText('Caja general')).not.toBeInTheDocument()
+
+    const filaTesoreria = within(tabla).getByRole('row', { name: /Viáticos/ })
+    expect(within(filaTesoreria).getByText('Caja general')).toBeInTheDocument()
   })
 })

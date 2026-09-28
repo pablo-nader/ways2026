@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoUltimosSieteDias, rutasDeExportacion, type FiltrosDeTesoreria } from '../api/reportes'
-import type { PaginaDeMovimientosTesoreria, PuntoVentaListado } from '../api/tipos'
+import type { PaginaDeMovimientosTesoreria, PuntoVentaListado, TipoMovimientoTesoreria } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -14,6 +14,23 @@ function formatearMoneda(valor: number): string {
 
 function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
+}
+
+/** Etiqueta en español de `TipoMovimientoTesoreria` — stage-gastos-origen-fondos-pos (PR2):
+ * `Gasto` empieza a aparecer en este libro (un gasto de origen Tesoreria escribe su propia fila,
+ * `ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) y necesitaba una columna propia; antes de
+ * este PR la columna `tipo` se traía pero nunca se mostraba. */
+function etiquetaDeTipoMovimiento(tipo: TipoMovimientoTesoreria): string {
+  switch (tipo) {
+    case 'RetiroCaja':
+      return 'Retiro de caja'
+    case 'Deposito':
+      return 'Depósito'
+    case 'Gasto':
+      return 'Gasto'
+    case 'Ajuste':
+      return 'Ajuste'
+  }
 }
 
 /**
@@ -182,6 +199,7 @@ export function Tesoreria() {
                   <table className="table table-sm table-striped table-bordered align-middle">
                     <thead>
                       <tr>
+                        <th>Tipo</th>
                         <th className="text-end">Inicio</th>
                         <th className="text-end">Ingreso</th>
                         <th className="text-end">Egreso</th>
@@ -194,6 +212,7 @@ export function Tesoreria() {
                     <tbody>
                       {pagina.items.map((m) => (
                         <tr key={m.id}>
+                          <td>{etiquetaDeTipoMovimiento(m.tipo)}</td>
                           <td className="text-end">{formatearMoneda(m.inicio)}</td>
                           <td className="text-end">{formatearMoneda(m.ingreso)}</td>
                           <td className="text-end">{formatearMoneda(m.egreso)}</td>
@@ -205,7 +224,7 @@ export function Tesoreria() {
                       ))}
                       {pagina.items.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="text-center text-muted py-4">
+                          <td colSpan={8} className="text-center text-muted py-4">
                             No hay movimientos que coincidan con los filtros.
                           </td>
                         </tr>

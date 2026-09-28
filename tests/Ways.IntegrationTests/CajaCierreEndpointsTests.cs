@@ -539,11 +539,14 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
+            // stage-gastos-origen-fondos-pos (PR2): Egreso pasa a ser SIEMPRE 0 en la fila del
+            // cierre — el gasto de 40 (origen caja_turno por default) ya descontó el efectivo del
+            // cajón (ver el -140 de arriba), restarlo de nuevo acá lo descontaría dos veces.
             var fila = await db.MovimientosTesoreria.Where(m => m.IdTurnoCaja == primerTurno.Id).SingleAsync();
             Assert.Equal(0m, fila.Inicio);
             Assert.Equal(100m, fila.Ingreso);
-            Assert.Equal(40m, fila.Egreso);
-            Assert.Equal(60m, fila.Final);
+            Assert.Equal(0m, fila.Egreso);
+            Assert.Equal(100m, fila.Final);
         }
 
         var segundoTurno = await AbrirTurnoAsync(ctx);
@@ -556,10 +559,10 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
             var fila = await db.MovimientosTesoreria.Where(m => m.IdTurnoCaja == segundoTurno.Id).SingleAsync();
-            Assert.Equal(60m, fila.Inicio);
+            Assert.Equal(100m, fila.Inicio);
             Assert.Equal(50m, fila.Ingreso);
             Assert.Equal(0m, fila.Egreso);
-            Assert.Equal(110m, fila.Final);
+            Assert.Equal(150m, fila.Final);
 
             Assert.Equal(2, await db.MovimientosTesoreria.CountAsync(m => m.IdPuntoVenta == ctx.IdPuntoVenta));
         }

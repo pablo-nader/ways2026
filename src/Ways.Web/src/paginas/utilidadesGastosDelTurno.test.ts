@@ -4,6 +4,7 @@ import {
   aSolicitudDeGasto,
   categoriaAlElegirProveedor,
   etiquetaDeCategoriaGasto,
+  etiquetaDeOrigenFondos,
   formatearFechaHora,
   formatearMoneda,
   mediosValidosParaGasto,
@@ -34,6 +35,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     categoria: 'Otros',
     idMedioPago: 1,
     importe: 100,
+    origenFondos: 'CajaTurno',
     ...sobrescribir,
   }
 }
@@ -46,6 +48,7 @@ function formularioFixture(sobrescribir: Partial<FormularioDeGasto> = {}): Formu
     categoria: 'Otros',
     idProveedor: null,
     observaciones: '',
+    origenFondos: 'CajaTurno',
     ...sobrescribir,
   }
 }
@@ -55,6 +58,13 @@ describe('etiquetaDeCategoriaGasto', () => {
     expect(etiquetaDeCategoriaGasto('Proveedor')).toBe('Proveedores')
     expect(etiquetaDeCategoriaGasto('Sueldos')).toBe('Sueldos')
     expect(etiquetaDeCategoriaGasto('Otros')).toBe('Otros')
+  })
+})
+
+describe('etiquetaDeOrigenFondos', () => {
+  it('traduce cada valor de OrigenFondosGasto a su etiqueta en español', () => {
+    expect(etiquetaDeOrigenFondos('CajaTurno')).toBe('Caja del turno')
+    expect(etiquetaDeOrigenFondos('Tesoreria')).toBe('Caja general')
   })
 })
 
@@ -137,6 +147,13 @@ describe('aSolicitudDeGasto', () => {
     expect(solicitud.idMedioPago).toBe(3)
     expect(solicitud.categoria).toBe('Proveedor')
     expect(solicitud.idProveedor).toBe(42)
+  })
+
+  // dto-contract-honesty: origenFondos se manda tal cual lo eligió el cajero, nunca inferido ni
+  // forzado a un default silencioso dentro del mapeo.
+  it('manda origenFondos tal cual lo trae el formulario, sea cual sea', () => {
+    expect(aSolicitudDeGasto(formularioFixture({ origenFondos: 'CajaTurno' })).origenFondos).toBe('CajaTurno')
+    expect(aSolicitudDeGasto(formularioFixture({ origenFondos: 'Tesoreria' })).origenFondos).toBe('Tesoreria')
   })
 })
 

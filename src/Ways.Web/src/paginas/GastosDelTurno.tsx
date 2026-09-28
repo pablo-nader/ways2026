@@ -4,13 +4,14 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeGastos } from '../api/gastos'
 import { clienteDeProveedores } from '../api/proveedores'
-import { CATEGORIAS_GASTO } from '../api/tipos'
+import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
 import type {
   CategoriaGasto,
   DetalleDeTurno,
   MedioPagoAlta,
   MedioPagoListado,
   OpcionDeProveedor,
+  OrigenFondosGasto,
   TurnoResumen,
 } from '../api/tipos'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -22,6 +23,7 @@ import {
   aSolicitudDeGasto,
   categoriaAlElegirProveedor,
   etiquetaDeCategoriaGasto,
+  etiquetaDeOrigenFondos,
   formatearFechaHora,
   formatearMoneda,
   mediosValidosParaGasto,
@@ -75,6 +77,7 @@ export function GastosDelTurno() {
   const [categoria, setCategoria] = useState<CategoriaGasto>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
+  const [origenFondos, setOrigenFondos] = useState<OrigenFondosGasto>('CajaTurno')
 
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
@@ -180,6 +183,7 @@ export function GastosDelTurno() {
     setCategoria('Otros')
     setIdProveedor('')
     setObservaciones('')
+    setOrigenFondos('CajaTurno')
   }
 
   async function registrarGasto() {
@@ -219,6 +223,7 @@ export function GastosDelTurno() {
           categoria,
           idProveedor: idProveedor === '' ? null : idProveedor,
           observaciones,
+          origenFondos,
         }),
       )
       if (generacionRef.current !== miGeneracion) return
@@ -338,7 +343,31 @@ export function GastosDelTurno() {
                 </select>
               </div>
 
-              <div className="col-md-3">
+              <div className="col-md-2">
+                <label className="form-label" htmlFor="gasto-origen-fondos">
+                  Pagado desde
+                </label>
+                <select
+                  id="gasto-origen-fondos"
+                  className="form-select rounded-0"
+                  value={origenFondos}
+                  onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosGasto)}
+                >
+                  {ORIGENES_DE_FONDOS_GASTO.map((o) => (
+                    <option key={o.valor} value={o.valor}>
+                      {o.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="col-md-2">
+                <button type="button" className="btn btn-primary rounded-0 w-100" onClick={() => void registrarGasto()}>
+                  {guardando ? 'Guardando…' : 'Registrar'}
+                </button>
+              </div>
+
+              <div className="col-12">
                 <label className="form-label" htmlFor="gasto-observaciones">
                   Observaciones (opcional)
                 </label>
@@ -349,12 +378,6 @@ export function GastosDelTurno() {
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
                 />
-              </div>
-
-              <div className="col-md-1">
-                <button type="button" className="btn btn-primary rounded-0 w-100" onClick={() => void registrarGasto()}>
-                  {guardando ? 'Guardando…' : 'Registrar'}
-                </button>
               </div>
             </fieldset>
 
@@ -376,7 +399,12 @@ export function GastosDelTurno() {
                   {gastos.map((g) => (
                     <tr key={g.id}>
                       <td>{formatearFechaHora(g.fecha)}</td>
-                      <td>{etiquetaDeCategoriaGasto(g.categoria)}</td>
+                      <td>
+                        {etiquetaDeCategoriaGasto(g.categoria)}
+                        {g.origenFondos === 'Tesoreria' && (
+                          <span className="badge bg-secondary rounded-0 ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>
+                        )}
+                      </td>
                       <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                     </tr>

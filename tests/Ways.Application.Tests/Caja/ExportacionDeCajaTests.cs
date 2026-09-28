@@ -122,7 +122,7 @@ public class ExportacionDeCajaTests
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var ticket = new ComprobanteListado(
             1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m);
-        var gasto = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m);
+        var gasto = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno);
         var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [gasto]);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
@@ -139,5 +139,20 @@ public class ExportacionDeCajaTests
         Assert.Equal("Otros", tabla.Filas[2][1].Valor);
         Assert.Equal(new DateTime(2026, 8, 1, 9, 0, 0), tabla.Filas[2][2].Valor);
         Assert.Equal(40m, tabla.Filas[2][3].Valor);
+    }
+
+    [Fact]
+    public void DetalleEtiquetaLosGastosDeCajaGeneralParaDistinguirlosDeLosEgresosDelArqueo()
+    {
+        var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var deCaja = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno);
+        var deTesoreria = new GastoListado(2, 3, fecha, CategoriaGasto.Proveedor, 1, 70m, OrigenFondosGasto.Tesoreria);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [], [deCaja, deTesoreria]);
+
+        var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
+
+        Assert.Equal("Gastos", tabla.Filas[1][0].Valor);
+        Assert.Equal("Gastos (caja general)", tabla.Filas[2][0].Valor);
+        Assert.Equal(70m, tabla.Filas[2][3].Valor);
     }
 }

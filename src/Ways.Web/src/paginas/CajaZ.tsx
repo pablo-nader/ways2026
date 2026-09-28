@@ -11,6 +11,7 @@ import { enEscritorio, imprimir } from '../impresion/impresora'
 import { reporteZ } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
+import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -255,7 +256,10 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
                   {detalle.gastos.map((g) => (
                     <tr key={g.id}>
                       <td>{formatearFechaHora(g.fecha)}</td>
-                      <td>{g.categoria}</td>
+                      <td>
+                        {g.categoria}
+                        {g.origenFondos === 'Tesoreria' && <span className="badge bg-secondary rounded-0 ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>}
+                      </td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                     </tr>
                   ))}

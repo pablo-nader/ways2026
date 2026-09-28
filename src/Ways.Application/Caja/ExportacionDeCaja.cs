@@ -1,4 +1,5 @@
 using Ways.Application.Exportacion;
+using Ways.Domain.Gastos;
 
 namespace Ways.Application.Caja;
 
@@ -154,9 +155,10 @@ public static class ExportacionDeCaja
 
         foreach (var gasto in respuesta.Gastos)
         {
+            // Los gastos de caja general no entran en los egresos por categoría/área del arqueo.
             filas.Add(
             [
-                Celda.Texto("Gastos"),
+                Celda.Texto(gasto.OrigenFondos == OrigenFondosGasto.Tesoreria ? "Gastos (caja general)" : "Gastos"),
                 Celda.Texto(gasto.Categoria.ToString()),
                 Celda.FechaHora(gasto.Fecha, zona),
                 Celda.Moneda(gasto.Importe)

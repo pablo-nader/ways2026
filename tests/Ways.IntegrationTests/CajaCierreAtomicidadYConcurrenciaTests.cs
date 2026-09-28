@@ -303,14 +303,19 @@ public class CajaCierreAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IC
         }
     }
 
-    /// <summary>Mismo invariante que el movimiento, para gastos: <c>Σ gastos = Egreso</c> sin
-    /// importar si el gasto ganó o perdió la carrera contra el cierre.</summary>
+    /// <summary>stage-gastos-origen-fondos-pos (PR2): el invariante de esta carrera cambió. Antes
+    /// (PR1) el cierre restaba <c>Σ gastos</c> de la tesorería, así que el `Egreso` de la fila de
+    /// cierre dependía de si el gasto ganó o perdió la carrera. Ahora un gasto de origen
+    /// <see cref="OrigenFondosGasto.CajaTurno"/> (default de esta solicitud) ya descuenta el
+    /// efectivo del cajón en el momento en que se registra — el cierre NUNCA vuelve a tocar la
+    /// tesorería por gastos, gane o pierda la carrera. El invariante nuevo es más simple:
+    /// <c>Egreso = 0</c> siempre, y el gasto (si ganó) queda contado en <c>gastos</c> igual.</summary>
     [Fact]
-    public async Task UnGastoQueCompiteConUnCierreQuedaContadoORechazadoNuncaSinContar()
+    public async Task UnGastoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria()
     {
         for (var ronda = 0; ronda < 3; ronda++)
         {
-            var ctx = await PrepararAsync($"{nameof(UnGastoQueCompiteConUnCierreQuedaContadoORechazadoNuncaSinContar)}-{ronda}");
+            var ctx = await PrepararAsync($"{nameof(UnGastoQueCompiteConUnCierreQuedaContadoORechazadoPeroNuncaDescontadoDeLaTesoreria)}-{ronda}");
             var turno = await AbrirTurnoAsync(ctx);
             await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, 500m);
 
@@ -337,10 +342,14 @@ public class CajaCierreAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IC
 
             await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
             var sumaDeGastos = await db.Gastos.Where(g => g.IdTurnoCaja == turno.Id).SumAsync(g => g.Importe);
-            var egresoDeTesoreria = await db.MovimientosTesoreria
-                .Where(m => m.IdTurnoCaja == turno.Id).Select(m => m.Egreso).SingleAsync();
+            // Si el gasto ganó la carrera queda contado (30); si la perdió, 0 — ambos representan
+            // "nunca sin contar" (el 409 no dejó un gasto fantasma).
+            Assert.Equal(respuestaGasto.StatusCode == HttpStatusCode.Created ? 30m : 0m, sumaDeGastos);
 
-            Assert.Equal(sumaDeGastos, egresoDeTesoreria);
+            var egresoDeTesoreria = await db.MovimientosTesoreria
+                .Where(m => m.IdTurnoCaja == turno.Id && m.Tipo == TipoMovimientoTesoreria.RetiroCaja)
+                .Select(m => m.Egreso).SingleAsync();
+            Assert.Equal(0m, egresoDeTesoreria);
         }
     }
 

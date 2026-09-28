@@ -23,10 +23,10 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         {
             t.HasCheckConstraint("ck_gastos_importe_positivo", "importe > 0");
 
-            // Backfill GastosOrigenFondosYTesoreriaPorEmpresa: hoy el único origen implementado
-            // es caja_turno, y ese origen exige un turno — un gasto de tesorería (etapa futura)
-            // no lo exige. Defensa en profundidad: ServicioDeGastos.RegistrarAsync todavía no
-            // ofrece el origen tesorería, así que el service-side check no puede protegerlo.
+            // origen_fondos = caja_turno exige un turno; tesoreria (stage-gastos-origen-fondos-pos,
+            // PR2) no lo exige aunque ServicioDeGastos igual lo puebla (trazabilidad) — la CHECK es
+            // defensa en profundidad, nunca el único guard: RegistrarAsync ya resuelve el turno
+            // abierto antes de insertar cualquier gasto, sea cual sea su origen.
             t.HasCheckConstraint(
                 "ck_gastos_caja_turno_requiere_turno",
                 "origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL");
@@ -46,8 +46,8 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         // gasto existente (ver el comentario del backfill en la migración).
         builder.Property(g => g.IdEmpresa).HasColumnName("id_empresa").IsRequired();
 
-        // Nullable (design aprobado): un gasto de origen tesoreria (etapa futura) no nace de
-        // ningún punto de venta puntual — mismo idioma "sin .IsRequired()" que IdTurnoCaja.
+        // Nullable en el esquema (design aprobado) aunque ServicioDeGastos siempre lo puebla hoy,
+        // sea cual sea el origen — mismo idioma "sin .IsRequired()" que IdTurnoCaja.
         builder.Property(g => g.IdPuntoVenta).HasColumnName("id_punto_venta");
 
         // Nullable desde GastosOrigenFondosYTesoreriaPorEmpresa (ck_gastos_caja_turno_requiere_turno
