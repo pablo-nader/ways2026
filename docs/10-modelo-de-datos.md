@@ -788,11 +788,23 @@ van a `movimientos_caja` (§7).
 > **NULLABLE** — deja de ser el único origen de fondos posible. `id_empresa` aterriza NOT NULL
 > (FK compuesta `(id_empresa, id_tenant)` a `empresas`, RESTRICT), resuelto server-side desde
 > `puntos_venta.id_empresa` del punto de venta del gasto — backfill de una sola vez para las
-> filas preexistentes. `origen_fondos` aterriza NOT NULL (enum nativo `origen_fondos_gasto`),
-> hoy siempre `caja_turno`: `ServicioDeGastos.RegistrarAsync` todavía no ofrece la alternativa
-> `tesoreria` (pagar un gasto directo desde el fondo de tesorería, sin turno — etapa futura).
+> filas preexistentes. `origen_fondos` aterriza NOT NULL (enum nativo `origen_fondos_gasto`).
 > `ck_gastos_caja_turno_requiere_turno` es el backstop de esquema: solo el origen `caja_turno`
 > exige un turno.
+>
+> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `ServicioDeGastos.RegistrarAsync`
+> ofrece los dos orígenes de `SolicitudDeGasto.OrigenFondos` (default `caja_turno`, retrocompat).
+> Un gasto `tesoreria` sigue atado al turno abierto (`id_turno_caja` poblado, trazabilidad) pero
+> se paga directo del fondo de tesorería de la empresa: en la MISMA transacción del insert,
+> `EscriturasDeTesoreria.ApendearAsync` agrega una fila `movimientos_tesoreria` con
+> `tipo = 'gasto'`, `id_gasto` = el gasto recién insertado, `ingreso = 0`, `egreso = importe`.
+> Un gasto `caja_turno` sigue descontando el efectivo del cajón como antes. Los totales del turno
+> que alimentan el arqueo/cierre (`LectorDeMovimientosDelTurno`, `LectorDeContenidoDeResumen`)
+> filtran `origen_fondos = 'caja_turno'`: un gasto `tesoreria` nunca resta de ningún medio ni lo
+> vuelve arqueable — ya se descontó de tesorería en el momento en que se registró. El Z-report/
+> historial (`LectorDeLineasDelTurno.LeerGastosAsync`, `GET /api/gastos`) sigue listando los dos
+> orígenes sin filtrar (informativo, expone `OrigenFondos` para que la UI etiquete "Caja
+> general").
 
 ### Órdenes de compra (Etapa 16)
 
@@ -1047,12 +1059,20 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > id_empresa)` — el invariante `final = inicio + ingreso − egreso`
 > (`ck_movimientos_tesoreria_cadena`) se preserva por construcción. El append a la cadena se
 > serializa por `(id_tenant, id_empresa)` con `pg_advisory_xact_lock`
-> (`ServicioDeTurnos.TomarLockDeTesoreriaDeEmpresaAsync`), tomado ANTES de leer el último
-> `final` de la cadena. `id_gasto NULL` aterriza la columna + FK compuesta a
-> `gastos.ak_gastos_id_gasto_id_tenant` (RESTRICT) y su índice único parcial
-> (`ux_movimientos_tesoreria_id_gasto`, solo cuando no es nulo) para una etapa futura donde un
-> gasto de origen `tesoreria` puede originar directamente un movimiento — ningún escritor de
-> esta etapa lo puebla todavía.
+> (`EscriturasDeTesoreria.TomarLockDeEmpresaAsync`), tomado ANTES de leer el último `final` de la
+> cadena. `id_gasto NULL` aterriza la columna + FK compuesta a `gastos.ak_gastos_id_gasto_id_tenant`
+> (RESTRICT) y su índice único parcial (`ux_movimientos_tesoreria_id_gasto`, solo cuando no es
+> nulo).
+>
+> **Estado (stage-gastos-origen-fondos-pos, PR2 — RESUELTO):** `id_gasto` ya tiene escritor: un
+> gasto de origen `tesoreria` (`ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync`) agrega, en la
+> MISMA transacción del insert del gasto, una fila `tipo = 'gasto'` con `id_gasto` = ese gasto,
+> `ingreso = 0`, `egreso = importe` — mismo protocolo lock+lectura+append que el cierre, extraído a
+> `EscriturasDeTesoreria` (única clase que escribe esta tabla). El cierre cambia de forma: su fila
+> `retiro_caja` pasa a llevar SIEMPRE `egreso = 0` (antes, PR1: `egreso` = suma de TODOS los gastos
+> del turno) — un gasto `caja_turno` ya salió del cajón, y un gasto `tesoreria` ya escribió su
+> propio movimiento en el momento en que se registró; restarlo de nuevo al cerrar lo descontaría
+> dos veces. `ingreso` sigue siendo la suma de los retiros físicos del turno, sin cambios.
 
 ## 8. Cuenta corriente de clientes
 

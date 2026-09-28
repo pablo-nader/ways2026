@@ -9,8 +9,9 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
 /// Mapea <see cref="MovimientoTesoreria"/> (design: Table Shapes — write path D).
-/// <c>ck_movimientos_tesoreria_cadena</c> es defensa en profundidad — el único escritor de esta
-/// etapa (<c>ServicioDeTurnos.CerrarAsync</c>, Slice 4) ya calcula <c>Final</c> como
+/// <c>ck_movimientos_tesoreria_cadena</c> es defensa en profundidad — los dos escritores de esta
+/// tabla (<c>ServicioDeTurnos</c> al cerrar y <c>ServicioDeGastos</c> para un gasto de origen
+/// tesorería, ambos vía <c>EscriturasDeTesoreria.ApendearAsync</c>) ya calculan <c>Final</c> como
 /// <c>Inicio + Ingreso − Egreso</c> antes de insertar.
 /// </summary>
 public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<MovimientoTesoreria>
@@ -34,8 +35,8 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
         // cadena inicio→final se re-ancla a (id_tenant, id_empresa).
         builder.Property(m => m.IdEmpresa).HasColumnName("id_empresa").IsRequired();
 
-        // Nullable (design aprobado): un movimiento originado por un gasto de tesorería (etapa
-        // futura) no nace de ningún cierre de punto de venta puntual.
+        // Nullable en el esquema (design aprobado) aunque los dos escritores de hoy (cierre y
+        // gasto de origen tesorería) lo pueblan siempre.
         builder.Property(m => m.IdPuntoVenta).HasColumnName("id_punto_venta");
         builder.Property(m => m.Fecha).HasColumnName("fecha").IsRequired();
 
@@ -46,8 +47,8 @@ public class MovimientoTesoreriaConfiguration : IEntityTypeConfiguration<Movimie
 
         builder.Property(m => m.IdTurnoCaja).HasColumnName("id_turno_caja");
 
-        // Nullable: ningún escritor de esta etapa lo puebla todavía (ver doc-comment de la
-        // entidad) — aterriza la columna + FK + índice único para la etapa futura de tesorería.
+        // Nullable: solo un movimiento tipo Gasto (ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync,
+        // stage-gastos-origen-fondos-pos) lo puebla — null para cierre/ajuste/depósito.
         builder.Property(m => m.IdGasto).HasColumnName("id_gasto");
 
         builder.Property(m => m.Concepto).HasColumnName("concepto").HasColumnType("text").IsRequired();

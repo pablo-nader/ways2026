@@ -229,12 +229,15 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(ctx.IdEmpleadoAdmin, turnoPersistido.IdEmpleadoCierre);
         Assert.Equal("Apertura de prueba\nCierre por retiro de prueba", turnoPersistido.Observaciones);
 
-        // Tesorería: UN movimiento, ingreso = Σ retiros (280), egreso = Σ gastos (60).
+        // Tesorería: UN movimiento, ingreso = Σ retiros (280). stage-gastos-origen-fondos-pos
+        // (PR2): egreso pasa a ser SIEMPRE 0 — el gasto de 60 (origen caja_turno por default) ya
+        // descontó el efectivo del cajón (ver el esperado del ancla arriba), restarlo de nuevo acá
+        // lo descontaría dos veces.
         var tesoreria = await db.MovimientosTesoreria.SingleAsync(m => m.IdTurnoCaja == turno.Id);
         Assert.Equal(0m, tesoreria.Inicio);
         Assert.Equal(280m, tesoreria.Ingreso);
-        Assert.Equal(60m, tesoreria.Egreso);
-        Assert.Equal(220m, tesoreria.Final);
+        Assert.Equal(0m, tesoreria.Egreso);
+        Assert.Equal(280m, tesoreria.Final);
 
         // El movimiento de retiro de cierre quedó persistido como cualquier otro retiro.
         var movimientos = await db.MovimientosCaja

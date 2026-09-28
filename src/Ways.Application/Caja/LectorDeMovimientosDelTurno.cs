@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Caja;
+using Ways.Domain.Gastos;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Caja;
@@ -44,8 +45,12 @@ public class LectorDeMovimientosDelTurno(IWaysDbContext db)
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);
 
         // 3. gastos por medio — el gasto resta según SU PROPIO id_medio_pago, nunca todo al ancla.
+        // stage-gastos-origen-fondos-pos (PR2): filtra a OrigenFondos.CajaTurno — un gasto de
+        // origen Tesoreria ya salió del fondo de tesorería en el momento en que se registró
+        // (ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync), nunca del efectivo del cajón, así
+        // que no puede restar del arqueo de NINGÚN medio ni volverlo arqueable por sí solo.
         var gastosPorMedio = await db.Gastos
-            .Where(g => g.IdTurnoCaja == idTurnoCaja)
+            .Where(g => g.IdTurnoCaja == idTurnoCaja && g.OrigenFondos == OrigenFondosGasto.CajaTurno)
             .GroupBy(g => g.IdMedioPago)
             .Select(g => new { IdMedioPago = g.Key, Total = g.Sum(x => x.Importe) })
             .ToDictionaryAsync(x => x.IdMedioPago, x => x.Total, ct);

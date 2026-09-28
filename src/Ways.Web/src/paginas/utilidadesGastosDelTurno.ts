@@ -3,8 +3,8 @@
  * `GastosDelTurno.tsx` para poder testearlos sin DOM (`web-descriptor-tests`/
  * `mutation-proof-tests`), mismo criterio que `utilidadesVentasDelTurno.ts`.
  */
-import { CATEGORIAS_GASTO } from '../api/tipos'
-import type { CategoriaGasto, GastoDeTurno, MedioPagoListado, SolicitudDeGasto } from '../api/tipos'
+import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
+import type { CategoriaGasto, GastoDeTurno, MedioPagoListado, OrigenFondosGasto, SolicitudDeGasto } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 
 export function formatearMoneda(valor: number): string {
@@ -17,6 +17,10 @@ export function formatearFechaHora(iso: string): string {
 
 export function etiquetaDeCategoriaGasto(categoria: CategoriaGasto): string {
   return CATEGORIAS_GASTO.find((c) => c.valor === categoria)?.etiqueta ?? categoria
+}
+
+export function etiquetaDeOrigenFondos(origenFondos: OrigenFondosGasto): string {
+  return ORIGENES_DE_FONDOS_GASTO.find((o) => o.valor === origenFondos)?.etiqueta ?? origenFondos
 }
 
 /**
@@ -50,6 +54,7 @@ export type FormularioDeGasto = {
   categoria: CategoriaGasto
   idProveedor: number | null
   observaciones: string
+  origenFondos: OrigenFondosGasto
 }
 
 /**
@@ -57,7 +62,8 @@ export type FormularioDeGasto = {
  * cuando no está vacía, o el texto fijo "Gasto del turno" en caso contrario — nunca viaja en
  * blanco (el servidor lo rechaza con 400 `gasto_concepto_requerido`,
  * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`idArea`/`numeroFactura`/
- * `idComprobanteCompra` no los pide este formulario: viajan `null`.
+ * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` aterriza en
+ * stage-gastos-origen-fondos-pos (PR2) — se manda tal cual lo eligió el cajero, nunca inferido.
  */
 export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
   const observaciones = form.observaciones.trim()
@@ -72,6 +78,7 @@ export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
     numeroFactura: null,
     importe: form.importe,
     idComprobanteCompra: null,
+    origenFondos: form.origenFondos,
   }
 }
 

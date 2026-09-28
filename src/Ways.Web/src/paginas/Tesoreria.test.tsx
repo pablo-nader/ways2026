@@ -168,23 +168,50 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
   // tesoreria: Book Preserves Chain Order) — sin ningún sort del lado del cliente. Tres filas
   // encadenadas con `final` values 60, 100, 145 (mismo fixture que el test de backend).
   it('renderiza las filas en el orden de cadena que devuelve el backend, con cada columna', async () => {
-    const filaUno = movimientoFixture({ id: 60, inicio: 5, ingreso: 55, egreso: 0, final: 60, concepto: 'Apertura', idEmpleado: 4 })
-    const filaDos = movimientoFixture({ id: 61, inicio: 60, ingreso: 40, egreso: 0, final: 100, concepto: 'Depósito', idEmpleado: 5 })
-    const filaTres = movimientoFixture({ id: 62, inicio: 100, ingreso: 0, egreso: 45, final: 55, concepto: 'Retiro', idEmpleado: 4 })
+    // stage-gastos-origen-fondos-pos (PR2): `concepto` se elige DISTINTO de toda etiqueta de
+    // `Tipo` ("Retiro de caja"/"Depósito"/"Gasto"/"Ajuste") — la columna Tipo nueva reusa esas
+    // mismas palabras, así que un concepto homónimo sería ambiguo para `getByText`.
+    const filaUno = movimientoFixture({ id: 60, inicio: 5, ingreso: 55, egreso: 0, final: 60, concepto: 'Apertura de caja', idEmpleado: 4 })
+    const filaDos = movimientoFixture({ id: 61, inicio: 60, ingreso: 40, egreso: 0, final: 100, concepto: 'Carga de fondos', idEmpleado: 5 })
+    const filaTres = movimientoFixture({ id: 62, inicio: 100, ingreso: 0, egreso: 45, final: 55, concepto: 'Retiro físico', idEmpleado: 4 })
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/tesoreria?')) return Promise.resolve(paginaFixture([filaUno, filaDos, filaTres]))
       return undefined
     })
     renderTesoreria()
 
-    await screen.findByText('Apertura')
+    await screen.findByText('Apertura de caja')
     const filas = screen.getAllByRole('row').slice(1) // sin la fila de encabezado
-    expect(within(filas[0]).getByText('Apertura')).toBeInTheDocument()
+    expect(within(filas[0]).getByText('Apertura de caja')).toBeInTheDocument()
     expect(within(filas[0]).getByText('$ 60,00')).toBeInTheDocument()
-    expect(within(filas[1]).getByText('Depósito')).toBeInTheDocument()
+    expect(within(filas[1]).getByText('Carga de fondos')).toBeInTheDocument()
     expect(within(filas[1]).getByText('$ 100,00')).toBeInTheDocument()
-    expect(within(filas[2]).getByText('Retiro')).toBeInTheDocument()
+    expect(within(filas[2]).getByText('Retiro físico')).toBeInTheDocument()
     expect(within(filas[2]).getByText('$ 55,00')).toBeInTheDocument()
+  })
+
+  // Cláusula bajo prueba: `etiquetaDeTipoMovimiento` — mapea las cuatro variantes de
+  // `TipoMovimientoTesoreria` a su etiqueta en español (stage-gastos-origen-fondos-pos, PR2: la
+  // columna Tipo empieza a mostrarse; antes se traía pero nunca se renderizaba).
+  it('la columna Tipo muestra la etiqueta en español de cada TipoMovimientoTesoreria', async () => {
+    const filaRetiro = movimientoFixture({ id: 70, tipo: 'RetiroCaja', concepto: 'Cierre de turno' })
+    const filaDeposito = movimientoFixture({ id: 71, tipo: 'Deposito', concepto: 'Ingreso manual' })
+    const filaGasto = movimientoFixture({ id: 72, tipo: 'Gasto', concepto: 'Flete de mercadería' })
+    const filaAjuste = movimientoFixture({ id: 73, tipo: 'Ajuste', concepto: 'Ajuste manual' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/tesoreria?')) {
+        return Promise.resolve(paginaFixture([filaRetiro, filaDeposito, filaGasto, filaAjuste]))
+      }
+      return undefined
+    })
+    renderTesoreria()
+
+    const filaDeRetiro = await screen.findByRole('row', { name: /Cierre de turno/ })
+    expect(within(filaDeRetiro).getByText('Retiro de caja')).toBeInTheDocument()
+
+    expect(within(screen.getByRole('row', { name: /Ingreso manual/ })).getByText('Depósito')).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: /Flete de mercadería/ })).getByText('Gasto')).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: /Ajuste manual/ })).getByText('Ajuste')).toBeInTheDocument()
   })
 
   it('cambiar el punto de venta dispara una nueva consulta con el idPuntoVenta elegido', async () => {

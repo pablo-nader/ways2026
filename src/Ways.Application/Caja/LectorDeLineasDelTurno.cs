@@ -39,6 +39,6 @@ public class LectorDeLineasDelTurno(IWaysDbContext db)
         await db.Gastos
             .Where(g => g.IdTurnoCaja == idTurnoCaja)
             .OrderBy(g => g.Fecha).ThenBy(g => g.Id)
-            .Select(g => new GastoListado(g.Id, g.IdPuntoVenta, g.Fecha, g.Categoria, g.IdMedioPago, g.Importe))
+            .Select(g => new GastoListado(g.Id, g.IdPuntoVenta, g.Fecha, g.Categoria, g.IdMedioPago, g.Importe, g.OrigenFondos))
             .ToListAsync(ct);
 }

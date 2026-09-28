@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
+using Ways.Domain.Caja;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
@@ -90,7 +91,7 @@ public class ServicioDeGastos(
             .OrderByDescending(g => g.Fecha)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(g => new GastoListado(g.Id, g.IdPuntoVenta, g.Fecha, g.Categoria, g.IdMedioPago, g.Importe))
+            .Select(g => new GastoListado(g.Id, g.IdPuntoVenta, g.Fecha, g.Categoria, g.IdMedioPago, g.Importe, g.OrigenFondos))
             .ToListAsync(ct);
 
         return new PaginaDeGastos(items, total, pagina, tamanio);
@@ -148,7 +149,16 @@ public class ServicioDeGastos(
     ///
     /// Slice 4 (design decisión 7): el guard de la compra ligada corre DESPUÉS de ese lock de
     /// turno — mismo orden que el design pseudocódigo (Transactions — GASTO LIGADO A UNA
-    /// COMPRA).</summary>
+    /// COMPRA).
+    ///
+    /// stage-gastos-origen-fondos-pos (PR2): cuando <see cref="SolicitudDeGasto.OrigenFondos"/> es
+    /// <see cref="OrigenFondosGasto.Tesoreria"/>, <see cref="EscribirMovimientoDeTesoreriaAsync"/>
+    /// corre COMO ÚLTIMO paso antes del commit — después del turno <c>FOR SHARE</c>, la compra
+    /// ligada <c>FOR SHARE</c> (si aplica) y el pago a proveedor (si aplica): mismo orden relativo
+    /// que <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c> (locks de fila primero, advisory
+    /// de tesorería de la empresa al final) — ver el doc-comment de clase de
+    /// <see cref="EscriturasDeTesoreria"/> para el análisis completo de por qué esto no puede
+    /// formar un ciclo con el cierre.</summary>
     private async Task<Gasto> InsertarGastoAsync(
         int idTenant, int idEmpresa, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado,
         DateTimeOffset momento, CancellationToken ct)
@@ -172,7 +182,7 @@ public class ServicioDeGastos(
             IdTurnoCaja = idTurnoCaja,
             IdEmpleado = idEmpleado,
             Categoria = solicitud.Categoria,
-            OrigenFondos = OrigenFondosGasto.CajaTurno,
+            OrigenFondos = solicitud.OrigenFondos,
             IdProveedor = idProveedor,
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
@@ -200,9 +210,40 @@ public class ServicioDeGastos(
             await EscribirPagoAProveedorAsync(idTenant, idProveedorDelPago, solicitud, gasto, idEmpleado, momento, ct);
         }
 
+        if (solicitud.OrigenFondos == OrigenFondosGasto.Tesoreria)
+        {
+            await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, gasto, idEmpleado, momento, ct);
+        }
+
         await transaccion.CommitAsync(ct);
 
         return gasto;
+    }
+
+    /// <summary>stage-gastos-origen-fondos-pos (PR2): un gasto de origen
+    /// <see cref="OrigenFondosGasto.Tesoreria"/> se paga DIRECTO del fondo de tesorería de la
+    /// empresa, sin pasar por el efectivo del cajón — sigue atado al turno abierto
+    /// (<c>gasto.IdTurnoCaja</c>, trazabilidad) pero NO afecta ningún arqueo (<see
+    /// cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/> excluye este origen de
+    /// <c>gastosPorMedio</c>). Reusa <see cref="EscriturasDeTesoreria"/> — el mismo protocolo
+    /// lock+lectura+insert que el cierre — para que la cadena de tesorería tenga un solo escritor
+    /// real. <c>Ingreso = 0</c>/<c>Egreso = gasto.Importe</c> (design: la tesorería se reduce en el
+    /// momento del gasto, no se difiere al cierre); <c>Tipo = Gasto</c>, <c>IdGasto = gasto.Id</c>
+    /// (único por <c>ux_movimientos_tesoreria_id_gasto</c> — este es el ÚNICO call site que puebla
+    /// esa columna).</summary>
+    private async Task EscribirMovimientoDeTesoreriaAsync(
+        int idTenant, int idEmpresa, Gasto gasto, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // Último lock de esta transacción, después del turno/compra/proveedor (ver el doc-comment
+        // de InsertarGastoAsync) — mismo orden relativo que el cierre, nunca puede formar un ciclo.
+        await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, idEmpresa, ct);
+
+        await EscriturasDeTesoreria.ApendearAsync(
+            db, idTenant, idEmpresa, gasto.IdPuntoVenta, momento, TipoMovimientoTesoreria.Gasto, gasto.IdTurnoCaja,
+            gasto.Id, gasto.Concepto, ingreso: 0m, egreso: gasto.Importe, idEmpleado, ct);
     }
 
     /// <summary>stage-15-cc-proveedores-ledger, Slice 3: el ÚNICO call site de
@@ -329,5 +370,6 @@ public class ServicioDeGastos(
         gasto.NumeroFactura,
         gasto.Importe,
         gasto.IdEmpleado,
-        gasto.IdComprobanteCompra);
+        gasto.IdComprobanteCompra,
+        gasto.OrigenFondos);
 }

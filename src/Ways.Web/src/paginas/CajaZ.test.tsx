@@ -84,8 +84,8 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idPuntoVenta: 10, idCliente: 2, total: 250 },
     ],
     gastos: [
-      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300 },
-      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120 },
+      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno' },
+      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria' },
     ],
     ...sobrescribir,
   }
@@ -162,8 +162,13 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
 
     const filaGastoUno = screen.getByRole('row', { name: /Sueldos/ })
     expect(within(filaGastoUno).getByText('$ 300,00')).toBeInTheDocument()
+    // origenFondos CajaTurno: sin badge "Caja general".
+    expect(within(filaGastoUno).queryByText('Caja general')).not.toBeInTheDocument()
+
     const filaGastoDos = screen.getByRole('row', { name: /Viaticos/ })
     expect(within(filaGastoDos).getByText('$ 120,00')).toBeInTheDocument()
+    // origenFondos Tesoreria: la fila lleva el badge "Caja general".
+    expect(within(filaGastoDos).getByText('Caja general')).toBeInTheDocument()
   })
 
   it('sin medios/tickets/gastos muestra los estados vacíos de cada sección', async () => {

@@ -407,10 +407,20 @@ public class ServicioDeTurnos(
     /// <paramref name="lineas"/>, NUNCA re-resuelto después), INSERT de <c>arqueos_turno</c> (una
     /// fila por medio arqueable; <paramref name="declarar"/> es la ÚNICA diferencia entre los dos
     /// modos — de dónde sale <c>ImporteDeclarado</c>) y la tesorería encadenada (UN único
-    /// movimiento tipo <c>retiro_caja</c>, inicio = final de la última fila del mismo punto de
-    /// venta, egreso = Σ gastos sobre TODOS los medios — design decisión 9, paridad legacy). Debe
-    /// llamarse DENTRO de la transacción ya abierta por el llamador, después del UPDATE guardado
-    /// (statement 1, que YA transicionó <c>estado</c> a <c>cerrado</c> — satisface
+    /// movimiento tipo <c>retiro_caja</c>, inicio = final de la última fila de la misma empresa).
+    ///
+    /// stage-gastos-origen-fondos-pos (PR2): <c>Egreso</c> pasa a ser SIEMPRE <c>0</c> acá — antes
+    /// (PR1) restaba la Σ de TODOS los gastos del turno (paridad legacy, design decisión 9); ahora
+    /// un gasto de origen <see cref="Ways.Domain.Gastos.OrigenFondosGasto.CajaTurno"/> ya salió del
+    /// EFECTIVO DEL CAJÓN (reduce lo que el cajero cuenta, nunca la tesorería) y un gasto de origen
+    /// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/> ya escribió SU PROPIO movimiento
+    /// de tesorería en el momento en que se registró (<c>ServicioDeGastos</c>) — restarlo de nuevo
+    /// acá sería descontarlo DOS veces. <paramref name="insumos"/>.Actividad[].Gastos ya viene
+    /// filtrado a solo <c>CajaTurno</c> (<see cref="LectorDeMovimientosDelTurno"/>), así que ni
+    /// siquiera se lee para la tesorería — solo alimenta <see cref="CalculadorDeArqueo"/>.
+    ///
+    /// Debe llamarse DENTRO de la transacción ya abierta por el llamador, después del UPDATE
+    /// guardado (statement 1, que YA transicionó <c>estado</c> a <c>cerrado</c> — satisface
     /// <c>ck_turnos_caja_medio_efectivo_solo_cerrado</c>) y de derivar el ancla.</summary>
     private async Task<IReadOnlyList<ArqueoTurno>> InsertarArqueosYTesoreriaAsync(
         int idTenant, int idTurnoCaja, int idPuntoVenta, int idEmpleado, DateTimeOffset momento,
@@ -440,60 +450,21 @@ public class ServicioDeTurnos(
             .Select(pv => pv.IdEmpresa)
             .FirstAsync(ct);
 
-        // La cadena inicio→final pasa a ser por (id_tenant, id_empresa) — varios puntos de venta
-        // de la misma empresa comparten un solo fondo de tesorería, así que dos cierres
-        // concurrentes de PVs DISTINTOS de la MISMA empresa tienen que serializarse ANTES de leer
-        // el `inicio` compartido (single-read-under-lock regla 1). Primer advisory lock del repo:
-        // no hay ninguna fila de "cadena de tesorería de la empresa" sobre la que tomar un FOR
-        // UPDATE, así que se lockea la clave lógica (id_tenant, id_empresa) directamente —
-        // literal, nunca un hash— con alcance de transacción (se libera solo al commit/rollback de
-        // ESTA transacción del cierre).
-        await TomarLockDeTesoreriaDeEmpresaAsync(idTenant, idEmpresa, ct);
-
-        var totalGastos = insumos.Actividad.Sum(a => a.Gastos);
-        var inicio = await db.MovimientosTesoreria
-            .Where(m => m.IdEmpresa == idEmpresa && m.IdTenant == idTenant)
-            .OrderByDescending(m => m.Id)
-            .Select(m => m.Final)
-            .FirstOrDefaultAsync(ct);
-        var final = inicio + insumos.Retiros - totalGastos;
-
-        db.MovimientosTesoreria.Add(new MovimientoTesoreria
-        {
-            IdTenant = idTenant,
-            IdEmpresa = idEmpresa,
-            IdPuntoVenta = idPuntoVenta,
-            Fecha = momento,
-            Tipo = TipoMovimientoTesoreria.RetiroCaja,
-            IdTurnoCaja = idTurnoCaja,
-            Concepto = "Cierre de turno",
-            Inicio = inicio,
-            Ingreso = insumos.Retiros,
-            Egreso = totalGastos,
-            Final = final,
-            IdEmpleado = idEmpleado
-        });
-        await db.SaveChangesAsync(ct);
-
-        return arqueos;
-    }
-
-    /// <summary>Serializa el append a la cadena de tesorería de una empresa (ver el doc-comment del
-    /// llamador): <c>pg_advisory_xact_lock(id_tenant, id_empresa)</c>, tomado como statement previo
-    /// a la lectura del último <c>Final</c> de la cadena — nunca después. Se libera solo al
-    /// commit/rollback de la transacción actual (variante <c>_xact_</c>, nunca la de sesión, que
-    /// exigiría un release explícito que el cierre no tiene dónde poner).</summary>
-    private async Task TomarLockDeTesoreriaDeEmpresaAsync(int idTenant, int idEmpresa, CancellationToken ct)
-    {
+        // La cadena inicio→final es por (id_tenant, id_empresa) — varios puntos de venta de la
+        // misma empresa comparten un solo fondo de tesorería, así que dos cierres concurrentes de
+        // PVs DISTINTOS de la MISMA empresa tienen que serializarse ANTES de leer el `inicio`
+        // compartido (single-read-under-lock regla 1). Mismo lock que un gasto de origen Tesoreria
+        // toma en `ServicioDeGastos` — ver el doc-comment de clase de `EscriturasDeTesoreria` para
+        // el análisis de orden que evita el ciclo entre los dos escritores.
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+        await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, idEmpresa, ct);
 
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccionCruda;
-        comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idEmpresa);
-        await comando.ExecuteScalarAsync(ct);
+        await EscriturasDeTesoreria.ApendearAsync(
+            db, idTenant, idEmpresa, idPuntoVenta, momento, TipoMovimientoTesoreria.RetiroCaja, idTurnoCaja,
+            idGasto: null, concepto: "Cierre de turno", ingreso: insumos.Retiros, egreso: 0m, idEmpleado, ct);
+
+        return arqueos;
     }
 
     /// <summary>judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): pinea <see

@@ -1107,14 +1107,18 @@ export type VentaDeTurnoListado = {
 }
 
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
- * `Ways.Application.Gastos.GastoListado`. */
+ * `Ways.Application.Gastos.GastoListado`. `idPuntoVenta` es `number | null` porque el DTO de C#
+ * ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal tipado desde
+ * antes de este PR). `origenFondos` es informativo acá (Z-report/historial, nunca un total de
+ * arqueo) — la UI lo usa para etiquetar "Caja general". */
 export type GastoDeTurno = {
   id: number
-  idPuntoVenta: number
+  idPuntoVenta: number | null
   fecha: string
   categoria: CategoriaGasto
   idMedioPago: number
   importe: number
+  origenFondos: OrigenFondosGasto
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1128,9 +1132,23 @@ export type DetalleDeTurno = {
 // --- Gastos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
 // espejo de `Ways.Application.Gastos.Contratos`.
 
+/** Espejo del enum `OrigenFondosGasto` (Ways.Domain.Gastos) — viaja como texto, mismas dos
+ * variantes PascalCase que el resto de los enums de este archivo (`CategoriaGasto`,
+ * `TipoMovimientoTesoreria`): nunca camelCase. `CajaTurno` descuenta el efectivo del cajón del
+ * turno; `Tesoreria` (stage-gastos-origen-fondos-pos, PR2) paga directo del fondo de tesorería de
+ * la empresa, sin afectar el arqueo. */
+export type OrigenFondosGasto = 'CajaTurno' | 'Tesoreria'
+
+export const ORIGENES_DE_FONDOS_GASTO: { valor: OrigenFondosGasto; etiqueta: string }[] = [
+  { valor: 'CajaTurno', etiqueta: 'Caja del turno' },
+  { valor: 'Tesoreria', etiqueta: 'Caja general' },
+]
+
 /** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Gastos.SolicitudDeGasto`. Sin
  * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Gasto Requires An Open
- * Turno), nunca viaja en el cuerpo. */
+ * Turno), nunca viaja en el cuerpo. `origenFondos` aterriza en stage-gastos-origen-fondos-pos
+ * (PR2) — el POS siempre lo manda explícito (la UI no tiene default silencioso), aunque el
+ * contrato de C# lo acepta opcional para retrocompatibilidad de otros clientes. */
 export type SolicitudDeGasto = {
   idPuntoVenta: number
   categoria: CategoriaGasto
@@ -1142,13 +1160,16 @@ export type SolicitudDeGasto = {
   numeroFactura: string | null
   importe: number
   idComprobanteCompra: number | null
+  origenFondos: OrigenFondosGasto
 }
 
-/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`. */
+/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`.
+ * `idTurnoCaja`/`idPuntoVenta` son `number | null` porque el DTO de C# ya los declara `int?`
+ * (stage-gastos-origen-fondos-pos, PR2: el mirror los tenía mal tipados desde antes de este PR). */
 export type GastoRegistrado = {
   id: number
-  idTurnoCaja: number
-  idPuntoVenta: number
+  idTurnoCaja: number | null
+  idPuntoVenta: number | null
   fecha: string
   categoria: CategoriaGasto
   idProveedor: number | null
@@ -1160,6 +1181,7 @@ export type GastoRegistrado = {
   importe: number
   idEmpleado: number
   idComprobanteCompra: number | null
+  origenFondos: OrigenFondosGasto
 }
 
 // --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
@@ -1170,10 +1192,13 @@ export type GastoRegistrado = {
 export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Ajuste'
 
 /** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
- * `idTenant` (nunca expuesto en una respuesta, doc 09). */
+ * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
+ * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
+ * tipado desde antes de este PR — un gasto de origen Tesoreria puede originar una fila con
+ * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo). */
 export type MovimientoTesoreriaListado = {
   id: number
-  idPuntoVenta: number
+  idPuntoVenta: number | null
   fecha: string
   tipo: TipoMovimientoTesoreria
   idTurnoCaja: number | null

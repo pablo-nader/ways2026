@@ -25,25 +25,30 @@ public class Gasto : EntidadTenant
     /// preexistentes.</summary>
     public int IdEmpresa { get; set; }
 
-    /// <summary>Punto de venta de origen (FK compuesta). Nullable: un gasto de origen
-    /// <see cref="OrigenFondosGasto.Tesoreria"/> (etapa futura, fuera de alcance en PR1) no nace
-    /// contra ningún punto de venta puntual — solo <see cref="IdEmpresa"/> lo escopa.</summary>
+    /// <summary>Punto de venta de origen (FK compuesta). Nullable en el esquema desde
+    /// <c>GastosOrigenFondosYTesoreriaPorEmpresa</c>, pero <c>ServicioDeGastos.RegistrarAsync</c>
+    /// siempre lo puebla hoy (viene de <see cref="SolicitudDeGasto"/>) — CajaTurno y Tesoreria
+    /// nacen por igual contra un punto de venta puntual.</summary>
     public int? IdPuntoVenta { get; set; }
 
     /// <summary>Resuelto server-side del turno abierto — nunca input de cliente (spec: Gasto
-    /// Requires An Open Turno). Nullable desde <c>GastosOrigenFondosYTesoreriaPorEmpresa</c>: solo
-    /// <see cref="OrigenFondos"/> = <see cref="OrigenFondosGasto.CajaTurno"/> exige un turno
-    /// (<c>ck_gastos_caja_turno_requiere_turno</c>) — un gasto de tesorería futuro no tiene
-    /// ninguno.</summary>
+    /// Requires An Open Turno). Nullable en el esquema: solo <see cref="OrigenFondos"/> = <see
+    /// cref="OrigenFondosGasto.CajaTurno"/> lo EXIGE (<c>ck_gastos_caja_turno_requiere_turno</c>).
+    /// stage-gastos-origen-fondos-pos (PR2): un gasto de origen <see cref="OrigenFondosGasto.Tesoreria"/>
+    /// también lo trae poblado — sigue atado al turno abierto para trazabilidad — pero la CHECK no
+    /// lo exige porque ese origen no descuenta el cajón.</summary>
     public int? IdTurnoCaja { get; set; }
 
     public int IdEmpleado { get; set; }
 
     public CategoriaGasto Categoria { get; set; }
 
-    /// <summary>De dónde salen los fondos (doc 10 §5/§7) — hoy siempre <see
-    /// cref="OrigenFondosGasto.CajaTurno"/> (<c>ServicioDeGastos.RegistrarAsync</c> no ofrece
-    /// todavía la alternativa de tesorería).</summary>
+    /// <summary>De dónde salen los fondos (doc 10 §5/§7). <c>ServicioDeGastos.RegistrarAsync</c>
+    /// persiste el valor que trae <c>SolicitudDeGasto.OrigenFondos</c> (default <see
+    /// cref="OrigenFondosGasto.CajaTurno"/> por retrocompatibilidad) — <see
+    /// cref="OrigenFondosGasto.Tesoreria"/> excluye el gasto de todo arqueo (<see
+    /// cref="Ways.Application.Caja.LectorDeMovimientosDelTurno"/>) y le escribe su propio <see
+    /// cref="Ways.Domain.Caja.MovimientoTesoreria"/>.</summary>
     public OrigenFondosGasto OrigenFondos { get; set; }
 
     public int? IdProveedor { get; set; }

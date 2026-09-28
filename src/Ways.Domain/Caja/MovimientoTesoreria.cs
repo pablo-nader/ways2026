@@ -25,25 +25,28 @@ public class MovimientoTesoreria
     public int IdEmpresa { get; set; }
 
     /// <summary>De qué punto de venta se originó el movimiento (información de origen, ya no
-    /// determina el encadenado). Nullable: un movimiento originado por un gasto de tesorería
-    /// (etapa futura, <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/>) no nace de
-    /// ningún cierre de punto de venta puntual.</summary>
+    /// determina el encadenado). Nullable: el cierre y un gasto de origen
+    /// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/> (<c>ServicioDeGastos</c>) lo
+    /// pueblan los dos hoy; queda nullable para futuras entradas manuales de tesorería sin punto de
+    /// venta (decisión 4, todavía fuera de alcance).</summary>
     public int? IdPuntoVenta { get; set; }
     public DateTimeOffset Fecha { get; set; }
     public TipoMovimientoTesoreria Tipo { get; set; }
 
-    /// <summary>Turno que originó la fila — único escritor de esta etapa es el cierre, siempre
-    /// la puebla. Nullable en el esquema para admitir tesorería sin turno (futuras entradas
-    /// manuales, decisión 4, fuera de alcance hoy).</summary>
+    /// <summary>Turno que originó la fila. El cierre siempre lo puebla; desde
+    /// stage-gastos-origen-fondos-pos (PR2), un gasto de origen
+    /// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/> también lo puebla (el turno
+    /// abierto contra el que se registró el gasto — trazabilidad). Nullable en el esquema para
+    /// futuras entradas manuales de tesorería sin turno (decisión 4, todavía fuera de alcance).</summary>
     public int? IdTurnoCaja { get; set; }
 
     /// <summary>Gasto que originó este movimiento cuando
     /// <see cref="Ways.Domain.Gastos.OrigenFondosGasto.Tesoreria"/> paga directo desde tesorería
-    /// (etapa futura, fuera de alcance en PR1) — hoy siempre
-    /// <c>null</c>: ningún escritor de esta etapa lo puebla todavía. FK compuesta a
-    /// <c>gastos.ak_gastos_id_gasto_id_tenant</c>; único por fila vía
-    /// <c>ux_movimientos_tesoreria_id_gasto</c> (parcial, solo cuando no es nulo) — un gasto nunca
-    /// puede originar dos movimientos de tesorería.</summary>
+    /// (stage-gastos-origen-fondos-pos, PR2: <c>ServicioDeGastos.EscribirMovimientoDeTesoreriaAsync</c>
+    /// es el único escritor) — <c>null</c> para cualquier otro tipo de movimiento (cierre, ajuste
+    /// manual, depósito). FK compuesta a <c>gastos.ak_gastos_id_gasto_id_tenant</c>; único por fila
+    /// vía <c>ux_movimientos_tesoreria_id_gasto</c> (parcial, solo cuando no es nulo) — un gasto
+    /// nunca puede originar dos movimientos de tesorería.</summary>
     public int? IdGasto { get; set; }
 
     public required string Concepto { get; set; }
