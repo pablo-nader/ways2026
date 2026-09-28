@@ -85,6 +85,35 @@ public static class EscriturasDeCuentaCorrienteProveedor
         return Convert.ToInt32(resultado);
     }
 
+    /// <summary>stage-gasto-a-compra (PR4): el ÚNICO <c>UPDATE</c> de
+    /// <c>movimientos_cuenta_corriente_proveedor</c> — pone la imputación (<c>id_comprobante_compra</c>)
+    /// en el movimiento <c>Pago</c> que un gasto YA escribió al crearse (<see
+    /// cref="Ways.Application.Gastos.ServicioDeGastos"/>, categoría proveedor con proveedor). El
+    /// saldo no cambia (el pago ya estaba contado): esto es solo trazabilidad, nunca un segundo
+    /// <c>ActualizarSaldoProveedorAsync</c>. 0 filas es un defecto de invariante (todo gasto con
+    /// categoría proveedor + proveedor no nulo escribe exactamente un <c>Pago</c> al crearse) — no
+    /// un <c>ErrorDominio</c> 4xx, mismo criterio que el resto de esta clase.</summary>
+    public static async Task ImputarMovimientoDePagoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idGasto, int idComprobanteCompra,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE movimientos_cuenta_corriente_proveedor SET id_comprobante_compra = $1 " +
+            "WHERE id_gasto = $2 AND id_tenant = $3 AND tipo = $4 RETURNING id_movimiento";
+
+        ParametrosDeComando.Agregar(comando, idComprobanteCompra);
+        ParametrosDeComando.Agregar(comando, idGasto);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, TipoMovimientoCcProveedor.Pago);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException(
+                $"El gasto {idGasto} no tiene un movimiento de pago para imputar — invariante de escritura violado.");
+        _ = resultado;
+    }
+
     /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx: una
     /// violación es un defecto de un call site, no un error de cliente) — pinea acá, en el único
     /// escritor, la forma por tipo de la matriz 4×3 (design.md:113-118, gate §B CHECK). Un arm por

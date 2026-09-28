@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -11,8 +12,10 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 
 namespace Ways.Application.Gastos;
 
@@ -51,6 +54,18 @@ public class ServicioDeGastos(
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
 
+        // judgment-day PR3 follow-up: sin compra ligada, id_proveedor es un input crudo que
+        // ActualizarSaldoProveedorAsync solo descubre inválido con un InvalidOperationException
+        // (500) — mismo criterio 404 que ResolverProveedorAsync de ServicioDeCompras, ANTES de
+        // abrir la transacción de escritura. Con compra ligada, ExigirCompraLigableAsync (abajo,
+        // ya bajo lock) deriva/valida el proveedor contra la compra — ese YA es un proveedor
+        // existente (viene de la fila de comprobantes_compra), así que este chequeo solo aplica
+        // cuando NO hay compra.
+        if (solicitud.IdComprobanteCompra is null && solicitud.IdProveedor is { } idProveedorSolicitado)
+        {
+            await ResolverProveedorAsync(idProveedorSolicitado, ct);
+        }
+
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var gasto = await estrategia.ExecuteAsync(async () =>
             await InsertarGastoAsync(
@@ -80,6 +95,13 @@ public class ServicioDeGastos(
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
         ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, solicitud.IdPuntoVenta);
 
+        // judgment-day PR3 follow-up: mismo guard 404 que RegistrarAsync arriba — ver ese
+        // doc-comment para el análisis completo.
+        if (solicitud.IdComprobanteCompra is null && solicitud.IdProveedor is { } idProveedorSolicitado)
+        {
+            await ResolverProveedorAsync(idProveedorSolicitado, ct);
+        }
+
         var empresa = await ResolverEmpresaAsync(solicitud.IdEmpresa, ct);
         if (solicitud.IdPuntoVenta is { } idPuntoVenta)
         {
@@ -98,6 +120,199 @@ public class ServicioDeGastos(
                 idTenant, empresa.Id, fechaDeNegocio, solicitud, idEmpleado, momento, ct));
 
         return Proyectar(gasto);
+    }
+
+    /// <summary>stage-gasto-a-compra (PR4), owner requirement: cualquier gasto (POS o admin) se
+    /// puede ligar a una compra DESPUÉS de creado — a diferencia de
+    /// <see cref="SolicitudDeGasto.IdComprobanteCompra"/>/<see
+    /// cref="SolicitudDeGastoDeAdministracion.IdComprobanteCompra"/>, que solo aplican en el alta.
+    ///
+    /// Orden de locks de la transacción (single-read-under-lock + deadlock-safe ordering):
+    /// 1) compra <c>FOR SHARE</c> (mismo statement/orden relativo que <see
+    ///    cref="ExigirCompraLigableAsync"/> en el alta: PRIMER lock, así que un alta concurrente
+    ///    con <c>idComprobanteCompra</c> y esta vinculación nunca se ordenan al revés) →
+    /// 2) gasto <c>FOR UPDATE</c> (lock-only, mismo patrón que <c>ServicioDeOrganizacion.
+    ///    TomarLockDePuntoVentaAsync</c> — la ÚNICA lectura EF de la fila nace DESPUÉS, bajo este
+    ///    lock) → 3) fila de proveedor/movimiento de CC (adentro de <see
+    ///    cref="EscribirPagoAProveedorAsync"/>/<see
+    ///    cref="EscriturasDeCuentaCorrienteProveedor.ImputarMovimientoDePagoAsync"/>, ÚLTIMO lock,
+    ///    mismo criterio "el ledger de proveedor es el último lock de fila" que el resto de esta
+    ///    clase).
+    ///
+    /// Análisis de ciclo: la anulación de compra (<c>ServicioDeCompras.MarcarAnuladaAsync</c>) toma
+    /// el header EXCLUSIVO como su ÚNICO y primer lock — nunca toca <c>gastos</c> ni el ledger de
+    /// proveedor, así que no puede formar un ciclo con el orden 1→2→3 de acá (se serializa contra
+    /// el paso 1, nunca espera detrás del 2 o el 3). La confirmación de compra
+    /// (<c>ServicioDeCompras.ConfirmarAsync</c>) tampoco toca <c>gastos</c>: su único lock
+    /// compartido con esta transacción es el propio header de la compra (paso 1 acá, primer
+    /// statement allá también) — mismo orden relativo, sin ciclo. El cierre de turno
+    /// (<c>ServicioDeTurnos</c>) no lockea ni compras ni gastos existentes (solo el turno mismo y,
+    /// al insertar, filas nuevas de tesorería/CC) — no comparte ningún recurso con este método,
+    /// así que tampoco puede ciclar. Los caminos de alta de gasto (<see cref="InsertarGastoAsync"/>/
+    /// <see cref="InsertarGastoDeAdministracionAsync"/>) toman compra (paso 1, mismo orden) y DESPUÉS
+    /// insertan una fila NUEVA de <c>gastos</c> (sin lock: es un insert) — nunca lockean una fila de
+    /// <c>gastos</c> EXISTENTE, así que no compiten con el paso 2 de acá.</summary>
+    public async Task<GastoRegistrado> VincularCompraAsync(
+        int idGasto, SolicitudDeVincularCompra solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        var gasto = await estrategia.ExecuteAsync(async () =>
+            await EjecutarVincularCompraAsync(idTenant, idGasto, solicitud.IdComprobanteCompra, idEmpleado, momento, ct));
+
+        return Proyectar(gasto);
+    }
+
+    /// <summary>Ver el doc-comment de <see cref="VincularCompraAsync"/> para el orden de locks y el
+    /// análisis de ciclo completos.</summary>
+    private async Task<Gasto> EjecutarVincularCompraAsync(
+        int idTenant, int idGasto, int idComprobanteCompra, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // Paso 1 — compra FOR SHARE, PRIMER lock (mismo statement que ExigirCompraLigableAsync).
+        var (idProveedorDeLaCompra, idPuntoVentaDeLaCompra) =
+            await ExigirCompraParaVincularAsync(idComprobanteCompra, idTenant, ct);
+
+        // Paso 2 — gasto FOR UPDATE (lock-only), y la ÚNICA lectura EF de la fila, DESPUÉS del
+        // lock (single-read-under-lock).
+        await TomarLockDeGastoAsync(idGasto, idTenant, ct);
+        var gasto = await db.Gastos.FirstAsync(g => g.Id == idGasto, ct);
+
+        if (gasto.IdComprobanteCompra is not null)
+        {
+            throw new ErrorDominio(
+                "gasto_ya_vinculado", "El gasto ya está vinculado a una compra.", 409);
+        }
+
+        // dangling-fk-read-models no aplica acá (no es un read model), pero la misma idea de
+        // "el FK inmutable puede apuntar a una fila invisible" no corre: PuntosVenta no tiene baja
+        // lógica sobre id_empresa, y toda compra confirmada YA validó su punto de venta al crearse.
+        var idEmpresaDeLaCompra = await db.PuntosVenta
+            .Where(pv => pv.Id == idPuntoVentaDeLaCompra)
+            .Select(pv => pv.IdEmpresa)
+            .FirstAsync(ct);
+
+        if (idEmpresaDeLaCompra != gasto.IdEmpresa)
+        {
+            throw new ErrorDominio(
+                "compra_de_otra_empresa", "La compra indicada pertenece a otra empresa.", 400);
+        }
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        if (gasto.Categoria == CategoriaGasto.Proveedor && gasto.IdProveedor is { } idProveedorDelGasto)
+        {
+            // El gasto YA tiene proveedor: solo se admite si coincide con el de la compra —
+            // reusa el mismo código que ExigirCompraLigableAsync para el mismo caso en el alta.
+            if (idProveedorDelGasto != idProveedorDeLaCompra)
+            {
+                throw new ErrorDominio(
+                    "proveedor_no_coincide_con_la_compra",
+                    "El proveedor indicado no coincide con el proveedor de la compra.", 400);
+            }
+
+            // El pago ya se escribió al crear el gasto (saldo ya descontado) — solo se imputa
+            // la compra en el movimiento existente, el saldo NO cambia.
+            gasto.IdComprobanteCompra = idComprobanteCompra;
+            gasto.UpdatedAt = momento;
+            await db.SaveChangesAsync(ct);
+
+            await EscriturasDeCuentaCorrienteProveedor.ImputarMovimientoDePagoAsync(
+                conexion, transaccionCruda, idTenant, gasto.Id, idComprobanteCompra, ct);
+        }
+        else
+        {
+            // Conversión: el gasto (categoría distinta de Proveedor, o Proveedor sin proveedor
+            // asignado) nunca escribió un Pago al crearse — se convierte y se escribe AHORA, con
+            // el importe reduciendo el saldo del proveedor por primera vez.
+            gasto.Categoria = CategoriaGasto.Proveedor;
+            gasto.IdProveedor = idProveedorDeLaCompra;
+            gasto.IdComprobanteCompra = idComprobanteCompra;
+            gasto.UpdatedAt = momento;
+            await db.SaveChangesAsync(ct);
+
+            // El ledger de CC exige un punto de venta (ValidarFormaPorTipo): un gasto admin sin
+            // punto de venta propio usa el de la compra (las compras siempre tienen uno) — nunca
+            // al revés, el punto de venta DEL GASTO manda cuando existe (es el que realmente pagó).
+            var idPuntoVentaDelPago = gasto.IdPuntoVenta ?? idPuntoVentaDeLaCompra;
+
+            await EscribirPagoAProveedorAsync(
+                idTenant, idProveedorDeLaCompra, idPuntoVentaDelPago, gasto.Importe, gasto, idEmpleado, momento, ct);
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return gasto;
+    }
+
+    /// <summary>Fila devuelta por <see cref="ExigirCompraParaVincularAsync"/> — mismos códigos
+    /// 404/409 que <see cref="ExigirCompraLigableAsync"/> (compra no encontrada/anulada/no
+    /// confirmada), pero también expone <c>id_punto_venta</c> para el fallback de PV y la
+    /// resolución de empresa.</summary>
+    private async Task<(int IdProveedor, int IdPuntoVenta)> ExigirCompraParaVincularAsync(
+        int idComprobanteCompra, int idTenant, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText =
+            "SELECT estado::text, id_proveedor, id_punto_venta FROM comprobantes_compra " +
+            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 FOR SHARE";
+        ParametrosDeComando.Agregar(comando, idComprobanteCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {idComprobanteCompra}.");
+        }
+
+        var estado = lector.GetString(0);
+        var idProveedor = lector.GetInt32(1);
+        var idPuntoVenta = lector.GetInt32(2);
+
+        if (estado == "anulada")
+        {
+            throw new ErrorDominio("compra_anulada", "La compra ligada está anulada.", 409);
+        }
+
+        if (estado != "confirmada")
+        {
+            throw new ErrorDominio(
+                "compra_no_confirmada", "La compra ligada todavía no está confirmada.", 409);
+        }
+
+        return (idProveedor, idPuntoVenta);
+    }
+
+    /// <summary>Lock-only, mismo patrón que <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c>
+    /// (<c>SELECT 1 ... FOR UPDATE</c>): nunca materializa una entidad — la ÚNICA lectura EF de la
+    /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock).</summary>
+    private async Task TomarLockDeGastoAsync(int idGasto, int idTenant, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 FOR UPDATE";
+        ParametrosDeComando.Agregar(comando, idGasto);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+        }
     }
 
     /// <summary>Historial paginado (design: API Surface, <c>GET /api/gastos</c>) — mismo criterio
@@ -191,29 +406,44 @@ public class ServicioDeGastos(
             .OrderByDescending(g => g.Fecha).ThenByDescending(g => g.Id)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(g => new GastoDeAdministracionListado(
-                g.Id,
-                g.Fecha,
-                g.IdEmpresa,
-                g.IdPuntoVenta,
-                g.IdTurnoCaja,
-                g.Categoria,
-                g.IdProveedor,
-                g.IdProveedor == null ? null : db.Proveedores.Where(p => p.Id == g.IdProveedor).Select(p => p.RazonSocial).FirstOrDefault(),
-                g.IdArea,
-                g.IdArea == null ? null : db.Areas.Where(a => a.Id == g.IdArea).Select(a => a.Nombre).FirstOrDefault(),
-                g.Concepto,
-                g.Detalle,
-                g.IdMedioPago,
-                db.MediosPago.Where(m => m.Id == g.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
-                g.NumeroFactura,
-                g.Importe,
-                g.OrigenFondos,
-                g.IdComprobanteCompra))
+            .Select(ProyeccionDeAdministracion())
             .ToListAsync(ct);
 
         return new PaginaDeGastosDeAdministracion(items, total, pagina, tamanio);
     }
+
+    /// <summary>stage-gasto-a-compra (PR4), judgment follow-up: <c>GET
+    /// /api/gastos/administracion/{id}</c> — mismo shape/joins que <see
+    /// cref="ListarDeAdministracionAsync"/> (dangling-fk-read-models), pero de una sola fila. Nace
+    /// para que <c>POST /api/gastos/administracion</c> tenga un <c>Location</c> que realmente
+    /// resuelve (antes apuntaba a <c>/api/gastos/{id}</c>, que exige <c>OperacionDePos</c> pero
+    /// devuelve el shape reducido de <see cref="GastoListado"/> — un mismatch de contrato para un
+    /// cliente que siguiera el header).</summary>
+    public async Task<GastoDeAdministracionListado> ObtenerDeAdministracionAsync(int id, CancellationToken ct = default) =>
+        await db.Gastos.Where(g => g.Id == id).Select(ProyeccionDeAdministracion()).FirstOrDefaultAsync(ct)
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {id}.");
+
+    private Expression<Func<Gasto, GastoDeAdministracionListado>> ProyeccionDeAdministracion() => g =>
+        new GastoDeAdministracionListado(
+            g.Id,
+            g.Fecha,
+            g.IdEmpresa,
+            g.IdPuntoVenta,
+            g.IdTurnoCaja,
+            g.Categoria,
+            g.IdProveedor,
+            g.IdProveedor == null ? null : db.Proveedores.Where(p => p.Id == g.IdProveedor).Select(p => p.RazonSocial).FirstOrDefault(),
+            g.IdArea,
+            g.IdArea == null ? null : db.Areas.Where(a => a.Id == g.IdArea).Select(a => a.Nombre).FirstOrDefault(),
+            g.Concepto,
+            g.Detalle,
+            g.IdMedioPago,
+            db.MediosPago.Where(m => m.Id == g.IdMedioPago).Select(m => m.Nombre).FirstOrDefault(),
+            g.NumeroFactura,
+            g.Importe,
+            g.OrigenFondos,
+            g.IdComprobanteCompra);
 
     // ---- validación de dominio -------------------------------------------------------------
 
@@ -644,6 +874,14 @@ public class ServicioDeGastos(
             // ServicioDeTurnos.ResolverPuntoVentaAsync/ServicioDeStock.ResolverPuntoVentaAsync/
             // ServicioDeVentas.ResolverPuntoVentaAsync.
             ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+    /// <summary>judgment-day PR3 follow-up: mismo criterio EXACTO que
+    /// <c>ServicioDeCompras.ResolverProveedorAsync</c> — <c>db.Proveedores</c> ya trae el filtro
+    /// global de baja lógica, así que un proveedor dado de baja también da 404 acá (OD4: una
+    /// referencia NUEVA solo puede apuntar a una fila VISIBLE).</summary>
+    private async Task<Proveedor> ResolverProveedorAsync(int idProveedor, CancellationToken ct) =>
+        await db.Proveedores.FirstOrDefaultAsync(p => p.Id == idProveedor, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el proveedor {idProveedor}.");
 
     private int ExigirTenantDeLaSesion() =>
         contexto.IdTenant

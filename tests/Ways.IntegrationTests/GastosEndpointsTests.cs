@@ -201,10 +201,17 @@ public class GastosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
     }
 
+    // stage-gasto-a-compra (PR4), judgment-day PR3 follow-up: antes de este chequeo, un
+    // id_proveedor apócrifo llegaba hasta el INSERT y salía como 400 referencia_invalida por el
+    // backstop genérico de fk_gastos_proveedor (23503) — o, en el peor caso, como el 500 sin
+    // traducir de ActualizarSaldoProveedorAsync si la fila de gastos llegaba a insertarse contra
+    // un proveedor que desaparecía justo después. ResolverProveedorAsync (ANTES de abrir la
+    // transacción) da el mismo 404 ADR-8 que el resto del repo usa para una referencia nueva que
+    // no existe — nunca 400 ni 500.
     [Fact]
-    public async Task UnGastoConProveedorInexistenteEsRechazadoCon400()
+    public async Task UnGastoConProveedorInexistenteEsRechazadoConNoEncontrado()
     {
-        var ctx = await PrepararAsync(nameof(UnGastoConProveedorInexistenteEsRechazadoCon400));
+        var ctx = await PrepararAsync(nameof(UnGastoConProveedorInexistenteEsRechazadoConNoEncontrado));
         await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
@@ -213,9 +220,7 @@ public class GastosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 ctx.IdPuntoVenta, CategoriaGasto.Proveedor, 999999, null, "Proveedor apócrifo", null,
                 ctx.IdMedioPago, null, 100m));
 
-        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
-        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     // ---- task 3.5: autorización -------------------------------------------------------------------

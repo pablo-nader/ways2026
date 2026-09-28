@@ -6,6 +6,7 @@
 import { api } from './cliente'
 import type {
   CategoriaGasto,
+  GastoDeAdministracionListado,
   GastoRegistrado,
   OrigenFondosGasto,
   PaginaDeGastosDeAdministracion,
@@ -17,6 +18,11 @@ export const clienteDeGastos = {
   /** `POST /api/gastos` — 201 + gasto registrado, o `409 turno_no_abierto` si el punto de venta
    * no tiene un turno abierto. */
   registrar: (solicitud: SolicitudDeGasto) => api.post<GastoRegistrado>('/gastos', solicitud),
+  /** stage-gasto-a-compra (PR4): `POST /api/gastos/{id}/vincular-compra` — liga (o convierte a
+   * proveedor) un gasto YA existente a una compra confirmada. `GestionDeCatalogo` del lado del
+   * servidor (mismo gate que toda escritura de `/api/compras`). */
+  vincularCompra: (id: number, idComprobanteCompra: number) =>
+    api.post<GastoRegistrado>(`/gastos/${id}/vincular-compra`, { idComprobanteCompra }),
 }
 
 // --- Gastos de administración (stage-gastos-admin-retroactivos, PR3): alta SIN turno, pagada de
@@ -84,6 +90,10 @@ export const clienteDeGastosDeAdministracion = {
     api.get<PaginaDeGastosDeAdministracion>(`/gastos/administracion${construirQueryDeGastosDeAdministracion(filtros)}`),
   registrar: (solicitud: SolicitudDeGastoDeAdministracion) =>
     api.post<GastoRegistrado>('/gastos/administracion', solicitud),
+  /** stage-gasto-a-compra (PR4), judgment follow-up: `GET /api/gastos/administracion/{id}` — un
+   * solo gasto, mismo shape que el listado. Usado por `CompraEditor.tsx` para prefillear desde
+   * `?desdeGasto=`. */
+  obtener: (id: number) => api.get<GastoDeAdministracionListado>(`/gastos/administracion/${id}`),
 }
 
 export type FormularioDeGastoDeAdministracion = {

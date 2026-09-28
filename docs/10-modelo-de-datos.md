@@ -805,6 +805,21 @@ van a `movimientos_caja` (§7).
 > historial (`LectorDeLineasDelTurno.LeerGastosAsync`, `GET /api/gastos`) sigue listando los dos
 > orígenes sin filtrar (informativo, expone `OrigenFondos` para que la UI etiquete "Caja
 > general").
+>
+> **Estado (stage-gasto-a-compra, PR4 — RESUELTO):** `gastos.id_comprobante_compra` deja de
+> poblarse solo al crear el gasto — `POST /api/gastos/{id}/vincular-compra`
+> (`ServicioDeGastos.VincularCompraAsync`) liga un gasto YA EXISTENTE (POS o administración) a una
+> compra confirmada, sin cambio de esquema. Si el gasto ya es `categoria = proveedor` con
+> `id_proveedor` coincidente, el vínculo es solo trazabilidad: se imputa la compra en el movimiento
+> `pago` que ese gasto ya escribió al crearse (`EscriturasDeCuentaCorrienteProveedor.
+> ImputarMovimientoDePagoAsync`, el único `UPDATE` de esa tabla), el saldo del proveedor no cambia
+> (el pago ya estaba contado). Si el gasto no tenía proveedor (`categoria` distinta o
+> `id_proveedor` nulo), el vínculo lo CONVIERTE: pasa a `categoria = proveedor` con el proveedor de
+> la compra y recién ahí se escribe el `pago` (nunca se escribió antes), reduciendo el saldo por
+> primera vez, con el punto de venta del propio gasto o, si no tiene uno, el de la compra
+> (`ValidarFormaPorTipo` exige punto de venta en cualquier movimiento que no sea `apertura`). Mismo
+> orden de locks que el alta (compra `FOR SHARE` primero — nunca abre un ciclo contra la anulación,
+> que toma el header EXCLUSIVO como su único lock) seguido del gasto `FOR UPDATE`.
 
 ### Órdenes de compra (Etapa 16)
 

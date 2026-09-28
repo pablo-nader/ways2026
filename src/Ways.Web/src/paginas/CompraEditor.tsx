@@ -17,6 +17,7 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeGastos, clienteDeGastosDeAdministracion } from '../api/gastos'
 import { clienteDeOrdenesDeCompra } from '../api/ordenesDeCompra'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePrecios } from '../api/precios'
@@ -25,6 +26,7 @@ import type {
   AlicuotaIvaListado,
   ArticuloListado,
   CompraDetalle,
+  GastoDeAdministracionListado,
   ListaPrecioListado,
   OrdenDeCompraDetalle,
   PaginaDe,
@@ -46,6 +48,17 @@ function formatearMoneda(valor: number): string {
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('es-AR') : '—'
+}
+
+/** `gasto.fecha` es un `timestamptz` (instante) — el `<input type="date">` de
+ * `fechaComprobante` necesita el día LOCAL, mismo criterio que el resto de esta web (nunca el día
+ * UTC, que puede desplazarse un día en ART). */
+function fechaLocalDesdeIso(iso: string): string {
+  const d = new Date(iso)
+  const anio = d.getFullYear()
+  const mes = String(d.getMonth() + 1).padStart(2, '0')
+  const dia = String(d.getDate()).padStart(2, '0')
+  return `${anio}-${mes}-${dia}`
 }
 
 function encabezadoVacio(): EncabezadoDeCompraFormulario {
@@ -482,12 +495,12 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
 
 // ---- Pantalla principal -------------------------------------------------------------------------
 
-type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null }
+type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null; idDesdeGasto: number | null }
 
 /** Remontada por `key={idCompra ?? 'nuevo-' + (idOrdenCompra ?? 's')}` (react-async-state regla 8)
  * — ningún estado de acá (borrador en edición, paneles de confirmar/anular) sobrevive a un cambio
  * de compra. */
-function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
+function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPantalla) {
   const navigate = useNavigate()
   const { usuario } = useAuth()
   const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
@@ -625,6 +638,33 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
     }
   }, [esNuevo, idOrdenCompra])
 
+  // ---- pre-carga desde un gasto (stage-gasto-a-compra, PR4): "Crear compra" de Gastos.tsx navega
+  // acá con `?desdeGasto=` — se resuelve UNA vez, para un borrador NUEVO, y el vínculo se re-arma
+  // automáticamente al confirmar (ver `confirmar` más abajo). El id sobrevive al remontaje
+  // nuevo→existente porque `guardarBorrador` lo reenvía en el `navigate` de creación. ------------
+  const [gastoOrigen, setGastoOrigen] = useState<GastoDeAdministracionListado | null>(null)
+  const [errorGastoOrigen, setErrorGastoOrigen] = useState('')
+
+  useEffect(() => {
+    if (idDesdeGasto === null) return
+    let vigente = true
+
+    clienteDeGastosDeAdministracion
+      .obtener(idDesdeGasto)
+      .then((gasto) => {
+        if (!vigente) return
+        setGastoOrigen(gasto)
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setErrorGastoOrigen(e instanceof ErrorApi ? e.message : 'No se pudo cargar el gasto de origen.')
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idDesdeGasto])
+
   // ---- formulario editable (nuevo o borrador existente) ------------------------------------------
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
@@ -641,6 +681,20 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
     const pendientes = ordenParaPrecargar.cobertura.filter((c) => c.pendiente > 0)
     setLineas(pendientes.map((c) => lineaDesdeCoberturaDeOrden(proximaClaveRef.current++, c, ordenParaPrecargar.items)))
   }, [ordenParaPrecargar])
+
+  // Prefill desde el gasto de origen: SOLO para un borrador nuevo (una compra ya creada/en edición
+  // no vuelve a pisar lo que el operador ya tocó — mismo criterio que ordenParaPrecargar arriba).
+  useEffect(() => {
+    if (!esNuevo || gastoOrigen === null) return
+    setEncabezado((prev) => ({
+      ...prev,
+      idProveedor: gastoOrigen.idProveedor ?? prev.idProveedor,
+      idPuntoVenta: gastoOrigen.idPuntoVenta ?? prev.idPuntoVenta,
+      numeroExterno: gastoOrigen.numeroFactura ?? prev.numeroExterno,
+      fechaComprobante: fechaLocalDesdeIso(gastoOrigen.fecha),
+      observaciones: gastoOrigen.concepto,
+    }))
+  }, [esNuevo, gastoOrigen])
 
   useEffect(() => {
     if (compra === null) return
@@ -673,6 +727,31 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
   const [confirmadoParaConfirmar, setConfirmadoParaConfirmar] = useState(false)
   const [errorConfirmar, setErrorConfirmar] = useState('')
 
+  // ---- vínculo automático con el gasto de origen, DESPUÉS de confirmar (stage-gasto-a-compra,
+  // PR4): un fallo acá NUNCA revierte la confirmación — la compra queda confirmada igual, con un
+  // botón para reintentar el vínculo solo. --------------------------------------------------------
+  const [gastoVinculado, setGastoVinculado] = useState(false)
+  const [vinculandoGasto, setVinculandoGasto] = useState(false)
+  const vinculandoGastoRef = useRef(false)
+  const [errorVincularGasto, setErrorVincularGasto] = useState('')
+
+  async function vincularConGastoDeOrigen(idCompraConfirmada: number) {
+    if (idDesdeGasto === null || vinculandoGastoRef.current) return
+    vinculandoGastoRef.current = true
+    setVinculandoGasto(true)
+    setErrorVincularGasto('')
+
+    try {
+      await clienteDeGastos.vincularCompra(idDesdeGasto, idCompraConfirmada)
+      setGastoVinculado(true)
+    } catch (e) {
+      setErrorVincularGasto(e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto de origen a esta compra.')
+    } finally {
+      vinculandoGastoRef.current = false
+      setVinculandoGasto(false)
+    }
+  }
+
   const [anulando, setAnulando] = useState(false)
   const anulandoRef = useRef(false)
   const [panelAnularAbierto, setPanelAnularAbierto] = useState(false)
@@ -685,7 +764,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
   // todavía en curso — el gate queda asimétrico.
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
-  const ocupado = guardando || confirmando || anulando || aplicandoPrecios
+  const ocupado = guardando || confirmando || anulando || aplicandoPrecios || vinculandoGasto
 
   function cambiarLinea(clave: number, cambios: Partial<LineaDeCompraFormulario>) {
     if (ocupado) return
@@ -727,7 +806,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
         setGuardando(false)
         // Remontaje completo vía cambio de `key` (regla 8): navega a la ruta real de la compra
         // recién creada, nunca reutiliza este estado de "nuevo" para simular la edición.
-        navigate(`/compras/${creada.id}`, { replace: true })
+        // `desdeGasto` viaja en la nueva URL — sin esto, el remontaje (nuevo → existente) perdería
+        // el vínculo pendiente y `confirmar()` no sabría a qué gasto ligar.
+        navigate(`/compras/${creada.id}${idDesdeGasto !== null ? `?desdeGasto=${idDesdeGasto}` : ''}`, { replace: true })
       } else if (idCompra !== null) {
         const actualizada = await clienteDeCompras.actualizar(idCompra, solicitud)
         guardandoRef.current = false
@@ -761,6 +842,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
       setPanelConfirmarAbierto(false)
       setConfirmadoParaConfirmar(false)
       setAviso('Compra confirmada: el stock y el costo ya se actualizaron.')
+
+      // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
+      // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
+      if (idDesdeGasto !== null) {
+        void vincularConGastoDeOrigen(confirmada.id)
+      }
     } catch (e) {
       confirmandoRef.current = false
       setConfirmando(false)
@@ -848,10 +935,32 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
           </div>
         )}
         {errorOrdenParaPrecargar && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
+        {errorGastoOrigen && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorGastoOrigen}</div>}
         {encabezado.idOrdenCompra !== null && (
           <div className="alert alert-info rounded-0 py-1 px-2 small">
             Vinculada a la orden de compra{' '}
             <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
+          </div>
+        )}
+        {idDesdeGasto !== null && !gastoVinculado && (
+          <div className="alert alert-info rounded-0 py-1 px-2 small">
+            Se vinculará al gasto #{idDesdeGasto} al confirmar.
+          </div>
+        )}
+        {gastoVinculado && (
+          <div className="alert alert-success rounded-0 py-1 px-2 small">Vinculada al gasto #{idDesdeGasto}.</div>
+        )}
+        {errorVincularGasto && (
+          <div className="alert alert-danger rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center">
+            <span>{errorVincularGasto}</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-danger rounded-0"
+              disabled={vinculandoGasto}
+              onClick={() => compra && void vincularConGastoDeOrigen(compra.id)}
+            >
+              {vinculandoGasto ? 'Reintentando…' : 'Reintentar vínculo'}
+            </button>
           </div>
         )}
 
@@ -1234,6 +1343,14 @@ export function CompraEditor() {
   const idOrdenCompra =
     idOrdenCompraParam !== null && Number.isFinite(Number(idOrdenCompraParam)) ? Number(idOrdenCompraParam) : null
 
+  // stage-gasto-a-compra (PR4): a diferencia de `idOrdenCompra` (solo aplica a un borrador nuevo),
+  // `desdeGasto` se lee SIEMPRE — sobrevive al remontaje nuevo→existente (`guardarBorrador` lo
+  // reenvía en el `navigate` de creación) porque el vínculo real recién se dispara al CONFIRMAR,
+  // no al crear el borrador.
+  const idDesdeGastoParam = searchParams.get('desdeGasto')
+  const idDesdeGasto =
+    idDesdeGastoParam !== null && Number.isFinite(Number(idDesdeGastoParam)) ? Number(idDesdeGastoParam) : null
+
   if (!idValido) {
     return (
       <div className="container-fluid py-4">
@@ -1249,9 +1366,10 @@ export function CompraEditor() {
 
   return (
     <PantallaCompraEditor
-      key={idNumerico ?? `nuevo-${idOrdenCompra ?? 's'}`}
+      key={idNumerico ?? `nuevo-${idOrdenCompra ?? 's'}-${idDesdeGasto ?? 'g'}`}
       idCompra={idNumerico}
       idOrdenCompra={idOrdenCompra}
+      idDesdeGasto={idDesdeGasto}
     />
   )
 }

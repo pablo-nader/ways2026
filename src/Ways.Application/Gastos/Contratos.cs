@@ -134,3 +134,13 @@ public sealed record GastoDeAdministracionListado(
 /// <see cref="PaginaDeGastos"/>.</summary>
 public sealed record PaginaDeGastosDeAdministracion(
     IReadOnlyList<GastoDeAdministracionListado> Items, int Total, int Pagina, int Tamanio);
+
+// ---- Vinculación posterior a una compra (stage-gasto-a-compra, PR4) ------------------------
+//
+// Owner requirement: cualquier gasto (POS o admin) puede ligarse a una compra DESPUÉS de creado,
+// no solo al momento del alta (a diferencia de SolicitudDeGasto.IdComprobanteCompra/
+// SolicitudDeGastoDeAdministracion.IdComprobanteCompra, que solo aplican en el alta).
+
+/// <summary>Cuerpo de <c>POST /api/gastos/{id}/vincular-compra</c> — un solo campo a propósito,
+/// mismo criterio minimalista que <c>SolicitudDeAplicarPrecios</c> para un comando puntual.</summary>
+public sealed record SolicitudDeVincularCompra(int IdComprobanteCompra);
