@@ -1250,13 +1250,23 @@ export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Aju
  * `idTenant` (nunca expuesto en una respuesta, doc 09). `idPuntoVenta` es `number | null` porque
  * el DTO de C# ya lo declara `int?` (stage-gastos-origen-fondos-pos, PR2: el mirror lo tenía mal
  * tipado desde antes de este PR — un gasto de origen Tesoreria puede originar una fila con
- * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo). */
+ * `idPuntoVenta` presente hoy, pero el esquema siempre lo permitió nulo).
+ *
+ * stage-tesoreria-por-empresa (PR5): agrega `idEmpresa` (la cadena es por empresa),
+ * `nombrePuntoVenta` (dangling-fk-read-models: `null` sin punto de venta o con uno dado de baja
+ * lógica, mismo criterio que `nombreProveedor`/`nombreArea` de `GastoDeAdministracionListado`) y,
+ * para una fila `tipo: 'Gasto'`, `gastoCategoria`/`gastoConcepto` resueltos del gasto de origen. */
 export type MovimientoTesoreriaListado = {
   id: number
+  idEmpresa: number
   idPuntoVenta: number | null
+  nombrePuntoVenta: string | null
   fecha: string
   tipo: TipoMovimientoTesoreria
   idTurnoCaja: number | null
+  idGasto: number | null
+  gastoCategoria: CategoriaGasto | null
+  gastoConcepto: string | null
   concepto: string
   inicio: number
   ingreso: number

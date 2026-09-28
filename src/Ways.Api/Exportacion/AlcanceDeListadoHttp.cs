@@ -41,4 +41,17 @@ public static class AlcanceDeListadoHttp
 
         return (idEmpresa.ToString(), zonaId);
     }
+
+    /// <summary>Variante empresa-primero (stage-tesoreria-por-empresa, PR5): a diferencia de
+    /// <see cref="ResolverAsync"/> (que arranca desde un punto de venta opcional y RESUELVE la
+    /// empresa), acá la empresa ya es el filtro ancla del caller — solo resuelve la zona horaria
+    /// (PV → empresa → default, ADR-13), reusando la validación de pertenencia PV/empresa de
+    /// <see cref="ServicioDeParametros.ResolverAsync"/> cuando viene un
+    /// <paramref name="idPuntoVenta"/>.</summary>
+    public static async Task<string> ResolverZonaParaEmpresaAsync(
+        ServicioDeParametros parametros, int idEmpresa, int? idPuntoVenta, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idPuntoVenta, ct);
+        return JsonSerializer.Deserialize<string>(resuelto.Valor)!;
+    }
 }

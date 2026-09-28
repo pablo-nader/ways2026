@@ -108,6 +108,11 @@ export function Gastos() {
   const [vinculando, setVinculando] = useState(false)
   const vinculandoRef = useRef(false)
   const generacionPickerRef = useRef(0)
+  // regla 10 (react-async-state): guard AISLADO de la escritura de vínculo — a diferencia del
+  // `generacionRef` compartido con el listado (que `vincularACompra` usaba antes), este token es
+  // propio, mismo criterio que `vinculandoGastoRef` de CompraEditor.tsx: un refresco del listado
+  // en vuelo nunca puede pisar/invalidar la finalización de este vínculo puntual.
+  const generacionVinculoRef = useRef(0)
 
   function abrirPicker(gasto: PaginaDeGastosDeAdministracion['items'][number]) {
     setPickerGastoId(gasto.id)
@@ -116,7 +121,7 @@ export function Gastos() {
 
     const miGeneracion = (generacionPickerRef.current += 1)
     clienteDeCompras
-      .listar({ ...filtrosDeComprasVacios(), idProveedor: gasto.idProveedor, estado: 'Confirmada', tamanio: 50 })
+      .listar({ ...filtrosDeComprasVacios(), idProveedor: gasto.idProveedor, idEmpresa: gasto.idEmpresa, estado: 'Confirmada', tamanio: 50 })
       .then((datos) => {
         if (generacionPickerRef.current !== miGeneracion) return
         setPickerCompras(datos.items)
@@ -144,15 +149,15 @@ export function Gastos() {
     setPickerError('')
 
     const idGasto = pickerGastoId
-    const miGeneracion = (generacionRef.current += 1)
+    const miGeneracion = (generacionVinculoRef.current += 1)
 
     try {
       await clienteDeGastos.vincularCompra(idGasto, idComprobanteCompra)
-      if (generacionRef.current !== miGeneracion) return
+      if (generacionVinculoRef.current !== miGeneracion) return
       cerrarPicker()
       setAviso('Gasto vinculado a la compra.')
     } catch (e) {
-      if (generacionRef.current !== miGeneracion) return
+      if (generacionVinculoRef.current !== miGeneracion) return
       setPickerError(e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto a la compra.')
       return
     } finally {

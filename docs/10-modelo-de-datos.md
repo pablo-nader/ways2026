@@ -1088,6 +1088,17 @@ arqueos_recargas / arqueos_recargas_canales  -- se mantienen como en el doc 03 (
 > del turno) — un gasto `caja_turno` ya salió del cajón, y un gasto `tesoreria` ya escribió su
 > propio movimiento en el momento en que se registró; restarlo de nuevo al cerrar lo descontaría
 > dos veces. `ingreso` sigue siendo la suma de los retiros físicos del turno, sin cambios.
+>
+> **Estado (stage-tesoreria-por-empresa, PR5 — RESUELTO):** confirmado, UNA sola cadena por
+> `(id_tenant, id_empresa)` — hay exactamente tres escritores, los dos de arriba más el gasto de
+> administración (`ServicioDeGastos.RegistrarDeAdministracionAsync`, mismo camino de
+> `EscriturasDeTesoreria` que un gasto de origen `tesoreria` del POS): cierre de turno
+> (`tipo = 'retiro_caja'`, `egreso` SIEMPRE 0), gasto de origen `tesoreria` desde el POS y gasto de
+> administración (ambos `tipo = 'gasto'`, `egreso = importe`). La lectura
+> (`ServicioDeTesoreria.ListarAsync`/`GET /api/reportes/tesoreria`) toma `id_empresa` como filtro
+> OBLIGATORIO (ADR-8) y admite `id_punto_venta` como filtro OPCIONAL adicional sobre esa misma
+> cadena — un filtro por punto de venta muestra un SUBCONJUNTO de filas (las originadas ahí), que
+> no se encadenan entre sí porque la cadena entera vive a nivel empresa, nunca por punto de venta.
 
 ## 8. Cuenta corriente de clientes
 

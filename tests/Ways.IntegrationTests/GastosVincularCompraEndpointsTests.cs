@@ -175,6 +175,28 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         return await db.Proveedores.Where(p => p.Id == idProveedor).Select(p => p.Saldo).SingleAsync();
     }
 
+    /// <summary>stage-tesoreria-por-empresa (PR5): segunda empresa + punto de venta del MISMO
+    /// tenant, para probar el filtro <c>idEmpresa</c> de <c>GET /api/compras</c> — el picker
+    /// "Vincular a compra" de <c>Gastos.tsx</c> nunca debe ofrecer una compra de otra empresa.</summary>
+    private async Task<(int IdEmpresa, int IdPuntoVenta)> SembrarOtraEmpresaAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var empresa = new Ways.Domain.Organizacion.Empresa { IdTenant = ctx.IdTenant, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+
+        var puntoVenta = new Ways.Domain.Organizacion.PuntoVenta
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = $"{nombre} - Local", CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.PuntosVenta.Add(puntoVenta);
+        await db.SaveChangesAsync();
+
+        return (empresa.Id, puntoVenta.Id);
+    }
+
     // ---- vínculo feliz: proveedor ya coincide → solo imputación, saldo sin cambios -------------
 
     [Fact]
@@ -427,5 +449,86 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         var persistido = await db.Gastos.SingleAsync(g => g.Id == gasto.Id);
         Assert.Null(persistido.IdComprobanteCompra);
         Assert.Equal(CategoriaGasto.Otros, persistido.Categoria);
+    }
+
+    // ---- stage-tesoreria-por-empresa (PR5): GET /api/compras?idEmpresa= filtra por la empresa
+    // del punto de venta de la compra (join contra PuntosVenta), usado por el picker "Vincular a
+    // compra" de Gastos.tsx para no ofrecer compras de otra empresa. ---------------------------
+
+    /// <summary>mutation-proof-tests — la cláusula bajo prueba es el
+    /// <c>Where(c => db.PuntosVenta.Any(pv => pv.Id == c.IdPuntoVenta &amp;&amp; pv.IdEmpresa ==
+    /// idEmpresa))</c> agregado a <see cref="ServicioDeCompras"/>. Dos compras de la MISMA
+    /// empresa+tenant, una en cada punto de venta — filtrar por <c>idEmpresa</c> tiene que EXCLUIR
+    /// la compra de la otra empresa (mismo tenant) sin excluir la propia.</summary>
+    [Fact]
+    public async Task ElFiltroDeEmpresaExcluyeCompasDeOtraEmpresaDelMismoTenant()
+    {
+        var ctx = await PrepararAsync(nameof(ElFiltroDeEmpresaExcluyeCompasDeOtraEmpresaDelMismoTenant));
+        var (idOtraEmpresa, idPuntoVentaDeOtraEmpresa) = await SembrarOtraEmpresaAsync(ctx, "Otra empresa");
+
+        var compraPropia = await CrearYConfirmarCompraAsync(ctx, numeroExterno: "0001-00000001");
+
+        var solicitudOtra = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de otra empresa", 5m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var respuestaCrearOtra = await ctx.Admin.PostAsJsonAsync("/api/compras", solicitudOtra);
+        Assert.Equal(HttpStatusCode.Created, respuestaCrearOtra.StatusCode);
+        var compraDeOtraEmpresa = JsonSerializer.Deserialize<CompraDetalle>(await respuestaCrearOtra.Content.ReadAsStringAsync(), OpcionesJson)!;
+        var confirmarOtra = await ctx.Admin.PostAsync($"/api/compras/{compraDeOtraEmpresa.Id}/confirmar", null);
+        Assert.Equal(HttpStatusCode.OK, confirmarOtra.StatusCode);
+
+        var sinFiltro = await ctx.Admin.GetFromJsonAsync<PaginaDeCompras>("/api/compras?tamanio=200", OpcionesJson);
+        Assert.NotNull(sinFiltro);
+        Assert.Contains(sinFiltro!.Items, c => c.Id == compraPropia.Id);
+        Assert.Contains(sinFiltro.Items, c => c.Id == compraDeOtraEmpresa.Id);
+
+        var conFiltro = await ctx.Admin.GetFromJsonAsync<PaginaDeCompras>($"/api/compras?idEmpresa={ctx.IdEmpresa}&tamanio=200", OpcionesJson);
+        Assert.NotNull(conFiltro);
+        Assert.Contains(conFiltro!.Items, c => c.Id == compraPropia.Id);
+        Assert.DoesNotContain(conFiltro.Items, c => c.Id == compraDeOtraEmpresa.Id);
+    }
+
+    /// <summary>judgment-day PR5, hallazgo confirmado #3 (parity contract): <c>GET
+    /// /api/compras/export</c> tiene que aceptar y reenviar <c>idEmpresa</c> EXACTAMENTE igual que
+    /// <c>GET /api/compras</c> — <c>ServicioDeCompras.ListarParaExportacionAsync</c> ya lo acepta,
+    /// solo faltaba que el endpoint lo reenviara. Mutación aplicada (borrar el parámetro
+    /// <c>idEmpresa</c> del lambda de <c>/export</c> en <c>ComprasEndpoints.cs</c>): esta prueba
+    /// pasó de FALLAR (2 filas en el export filtrado, la de la otra empresa no se excluía) a pasar
+    /// al revertir — evidencia registrada en el cuerpo de esta corrección.</summary>
+    [Fact]
+    public async Task ElExportDeComprasAceptaYReenviaElFiltroDeEmpresa()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportDeComprasAceptaYReenviaElFiltroDeEmpresa));
+        var (_, idPuntoVentaDeOtraEmpresa) = await SembrarOtraEmpresaAsync(ctx, "Otra empresa");
+
+        await CrearYConfirmarCompraAsync(ctx, numeroExterno: "0001-00000001");
+
+        var solicitudOtra = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de otra empresa", 5m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var respuestaCrearOtra = await ctx.Admin.PostAsJsonAsync("/api/compras", solicitudOtra);
+        var compraDeOtraEmpresa = JsonSerializer.Deserialize<CompraDetalle>(await respuestaCrearOtra.Content.ReadAsStringAsync(), OpcionesJson)!;
+        await ctx.Admin.PostAsync($"/api/compras/{compraDeOtraEmpresa.Id}/confirmar", null);
+
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var rango = $"desde={hoy:yyyy-MM-dd}T00:00:00-03:00&hasta={hoy:yyyy-MM-dd}T23:59:59-03:00";
+
+        // Mismo layout que ComprasListadoExportTests: encabezado fila 6, datos desde la 7.
+        const int primeraFilaDeDatos = 7;
+
+        var exportSinFiltro = await ctx.Admin.GetAsync($"/api/compras/export?{rango}&formato=xlsx");
+        Assert.Equal(HttpStatusCode.OK, exportSinFiltro.StatusCode);
+        using var libroSinFiltro = new ClosedXML.Excel.XLWorkbook(new MemoryStream(await exportSinFiltro.Content.ReadAsByteArrayAsync()));
+        var hojaSinFiltro = libroSinFiltro.Worksheets.First();
+        Assert.False(hojaSinFiltro.Row(primeraFilaDeDatos).IsEmpty());
+        Assert.False(hojaSinFiltro.Row(primeraFilaDeDatos + 1).IsEmpty());
+        Assert.True(hojaSinFiltro.Row(primeraFilaDeDatos + 2).IsEmpty());
+
+        var exportConFiltro = await ctx.Admin.GetAsync($"/api/compras/export?idEmpresa={ctx.IdEmpresa}&{rango}&formato=xlsx");
+        Assert.Equal(HttpStatusCode.OK, exportConFiltro.StatusCode);
+        using var libroConFiltro = new ClosedXML.Excel.XLWorkbook(new MemoryStream(await exportConFiltro.Content.ReadAsByteArrayAsync()));
+        var hojaConFiltro = libroConFiltro.Worksheets.First();
+        Assert.False(hojaConFiltro.Row(primeraFilaDeDatos).IsEmpty());
+        Assert.True(hojaConFiltro.Row(primeraFilaDeDatos + 1).IsEmpty());
     }
 }

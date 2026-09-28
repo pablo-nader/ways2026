@@ -463,6 +463,17 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
     expect(await screen.findByText('0003-00000009')).toBeInTheDocument()
   })
 
+  // stage-tesoreria-por-empresa (PR5): el picker filtra por la EMPRESA del gasto (join PV→empresa
+  // del lado del servidor) para no ofrecer nunca una compra de otra empresa.
+  it('el picker filtra las compras por la empresa del gasto', async () => {
+    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3, idEmpresa: 1, idProveedor: 1, nombreProveedor: 'Distribuidora Sur SRL' })]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
+
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('idEmpresa=1')))
+  })
+
   it('elegir una compra del picker vincula el gasto y refresca el listado', async () => {
     mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3 })]) })
     apiPostMock.mockResolvedValue({ id: 3, idComprobanteCompra: 9 })
@@ -483,5 +494,36 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
 
     expect(await screen.findByRole('link', { name: 'Compra #9' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Vincular a compra' })).not.toBeInTheDocument()
+  })
+
+  // stage-tesoreria-por-empresa (PR5, react-async-state regla 10): `vincularACompra` usaba el
+  // `generacionRef` COMPARTIDO con el listado — un refresco del listado disparado mientras el
+  // vínculo está en vuelo bumpeaba ese mismo contador y hacía que la finalización del vínculo se
+  // tratara como "obsoleta" (nunca cerraba el picker ni mostraba el aviso), aunque el POST hubiera
+  // tenido éxito. Con el guard AISLADO (`generacionVinculoRef`), un refresco del listado en el
+  // medio nunca puede pisar la finalización de este vínculo puntual.
+  it('un refresco del listado en vuelo durante el vínculo no le impide cerrar el picker ni avisar', async () => {
+    mockearConCompras({ pagina: paginaFixture([gastoFixture({ id: 3 })]) })
+    let resolverPost: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverPost = resolve
+        }),
+    )
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Elegir' }))
+
+    // Dispara un refresco del listado (bumpea el `generacionRef` COMPARTIDO del listado) mientras
+    // el vínculo sigue en vuelo — con el bug pre-PR5 esto haría que la finalización de abajo se
+    // descartara como "obsoleta".
+    await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Otros')
+
+    resolverPost({ id: 3, idComprobanteCompra: 9 })
+
+    expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
+    expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
   })
 })

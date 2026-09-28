@@ -563,15 +563,19 @@ public static class ReportesEndpoints
         // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
         // MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec
         // tesoreria: Tesorería Book Has A Read/Listing Endpoint): gate heredado del grupo, sin
-        // política propia. idPuntoVenta es OBLIGATORIO (a diferencia de /cajas): mezclar puntos de
-        // venta rompería el significado de la cadena Inicio/Final (design decisión 11).
+        // política propia. stage-tesoreria-por-empresa (PR5): idEmpresa pasa a ser el filtro
+        // OBLIGATORIO (ADR-8, la cadena es por empresa, doc 10 §7); idPuntoVenta es un filtro
+        // opcional adicional sobre esa misma cadena — muestra un SUBCONJUNTO, nunca una cadena
+        // propia (design decisión 11 sigue vigente: nunca se mezclan dos empresas).
         grupo.MapGet("/tesoreria", (
-            ServicioDeTesoreria servicio, int idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
+            ServicioDeTesoreria servicio, int idEmpresa, int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
             int? pagina, int? tamanio, CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25, ct: ct))
+            servicio.ListarAsync(idEmpresa, idPuntoVenta, desde, hasta, pagina: pagina ?? 1, tamanio: tamanio ?? 25, ct: ct))
         .WithSummary(
-            "Libro de tesorería encadenado de un punto de venta, ordenado por id (nunca por " +
-            "fecha): cero derivación, cada fila ya trae su inicio/final persistidos al cierre.");
+            "Libro de tesorería encadenado de una empresa, ordenado por id (nunca por fecha): cero " +
+            "derivación, cada fila ya trae su inicio/final persistidos al cierre. idPuntoVenta es " +
+            "un filtro opcional sobre el mismo libro: el subconjunto resultante no se encadena " +
+            "entre sí (la cadena completa es por empresa).");
 
         // Sibling declarado inmediatamente después de su ruta fuente (design: Data Flow) — hereda
         // LecturaDeReportes por co-locación. `desde`/`hasta` son OBLIGATORIOS acá (mismo criterio
@@ -579,24 +583,25 @@ public static class ReportesEndpoints
         // archivo determinístico necesita ambas fechas.
         grupo.MapGet("/tesoreria/export", async (
             ServicioDeTesoreria servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
-            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros,
+            int idEmpresa, int? idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
-                idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct: ct);
+                idEmpresa, idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
 
-            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var zonaId = await AlcanceDeListadoHttp.ResolverZonaParaEmpresaAsync(parametros, idEmpresa, idPuntoVenta, ct);
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
             var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"PV {idPuntoVenta}", desdeFecha, hastaFecha, zonaId);
+                usuario, reloj, idEmpresa.ToString(), idPuntoVenta is { } pv ? $"PV {pv}" : null, desdeFecha, hastaFecha, zonaId);
             var tabla = ExportacionDeCaja.De(filas, ctx, zona);
 
             var bytes = exportador.Generar(tabla);
-            var nombre = NombreDeArchivo.Construir("tesoreria", $"pv{idPuntoVenta}", desdeFecha, hastaFecha);
+            var alcance = idPuntoVenta is { } id ? $"pv{id}" : $"empresa{idEmpresa}";
+            var nombre = NombreDeArchivo.Construir("tesoreria", alcance, desdeFecha, hastaFecha);
 
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })

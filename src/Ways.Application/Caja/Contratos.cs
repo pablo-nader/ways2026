@@ -184,13 +184,26 @@ public sealed record DetalleDeTurno(
 /// mismo criterio "mirror the entity's real columns" que <see cref="FilaDeHistoricoDeCajas"/>. Cero
 /// derivación: <see cref="Inicio"/>/<see cref="Final"/> ya vienen calculados y persistidos por
 /// <see cref="ServicioDeTurnos"/> al cierre (design decisión 6 de stage-6-turnos-caja) — este
-/// contrato solo los transporta.</summary>
+/// contrato solo los transporta.
+///
+/// stage-tesoreria-por-empresa (PR5): agrega <see cref="IdEmpresa"/> (la cadena es por empresa,
+/// no por punto de venta), <see cref="NombrePuntoVenta"/> (dangling-fk-read-models: <c>null</c>
+/// tanto sin punto de venta como con uno dado de baja lógica — mismo predicado, nunca dos) y,
+/// cuando <see cref="IdGasto"/> está seteado, <see cref="GastoCategoria"/>/<see cref="GastoConcepto"/>
+/// resueltos del gasto de origen (para que el libro sea legible sin una segunda consulta) — ambos
+/// <c>null</c> cuando la fila no es de tipo <see cref="TipoMovimientoTesoreria.Gasto"/> o el gasto
+/// referenciado ya no es visible.</summary>
 public sealed record MovimientoTesoreriaListado(
     int Id,
+    int IdEmpresa,
     int? IdPuntoVenta,
+    string? NombrePuntoVenta,
     DateTimeOffset Fecha,
     TipoMovimientoTesoreria Tipo,
     int? IdTurnoCaja,
+    int? IdGasto,
+    CategoriaGasto? GastoCategoria,
+    string? GastoConcepto,
     string Concepto,
     decimal Inicio,
     decimal Ingreso,
