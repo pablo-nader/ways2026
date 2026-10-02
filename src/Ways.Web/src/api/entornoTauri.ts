@@ -12,7 +12,10 @@
 import type { DispositivoActual } from './dispositivos'
 import type { PuntoVentaListado } from './tipos'
 
-type PuenteTauri = { core: { invoke: (comando: string, args?: Record<string, unknown>) => Promise<unknown> } }
+type PuenteTauri = {
+  core: { invoke: (comando: string, args?: Record<string, unknown>) => Promise<unknown> }
+  event?: { listen: (evento: string, manejador: (evento: { payload: unknown }) => void) => Promise<() => void> }
+}
 
 function puenteTauri(): PuenteTauri | null {
   if (typeof window === 'undefined') return null
@@ -434,4 +437,58 @@ export async function refrescarVentanaDeSesionPersistida(snapshot: SnapshotDeSes
   const token = tokenDeSesionBearerActual()
   if (!token) return
   await guardarSesionDeCajeroPersistida(token, new Date(Date.now() + VENTANA_SESION_OFFLINE_MS).toISOString(), snapshot)
+}
+
+/** Versión descargada por el shell de escritorio y lista para instalar (`actualizacion.rs`). */
+export type ActualizacionDisponible = { version: string; notas: string | null }
+
+function comoActualizacion(valor: unknown): ActualizacionDisponible | null {
+  if (!valor || typeof valor !== 'object') return null
+  const { version, notas } = valor as { version?: unknown; notas?: unknown }
+  if (typeof version !== 'string' || version === '') return null
+  return { version, notas: typeof notas === 'string' ? notas : null }
+}
+
+/** `null` fuera de Tauri, sin actualización descargada o ante un fallo de IPC: nunca lanza. */
+export async function leerActualizacionDisponible(): Promise<ActualizacionDisponible | null> {
+  const tauri = puenteTauri()
+  if (!tauri) return null
+  try {
+    return comoActualizacion(await tauri.core.invoke('estado_actualizacion'))
+  } catch {
+    return null
+  }
+}
+
+/** Se suscribe al evento que emite Rust al terminar de descargar una versión nueva. Devuelve la
+ * función para desuscribirse; fuera de Tauri no hace nada. */
+export function escucharActualizacionDescargada(manejador: (actualizacion: ActualizacionDisponible) => void): () => void {
+  const eventos = puenteTauri()?.event
+  if (!eventos) return () => {}
+
+  let desuscrito = false
+  let desuscribir: (() => void) | null = null
+  eventos
+    .listen('actualizacion-descargada', (evento) => {
+      const actualizacion = comoActualizacion(evento.payload)
+      if (actualizacion && !desuscrito) manejador(actualizacion)
+    })
+    .then((fn) => {
+      if (desuscrito) fn()
+      else desuscribir = fn
+    })
+    .catch(() => undefined)
+
+  return () => {
+    desuscrito = true
+    desuscribir?.()
+  }
+}
+
+/** Cierra la app, instala la versión descargada y la vuelve a abrir. Si vuelve, es porque la
+ * instalación falló: el error de Rust se propaga para mostrarlo. */
+export async function instalarActualizacion(): Promise<void> {
+  const tauri = puenteTauri()
+  if (!tauri) return
+  await tauri.core.invoke('instalar_actualizacion')
 }

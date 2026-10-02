@@ -15,6 +15,7 @@ import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFi
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
 import { ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import { AvisoDeActualizacion } from './AvisoDeActualizacion'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 
@@ -56,6 +57,9 @@ type Props = {
  */
 export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: Props) {
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
+  // Si el cajero sale de "Vender" con ítems en el carrito, el último valor informado se mantiene:
+  // el borrador sigue vivo y la actualización sigue bloqueada.
+  const [ventaEnCurso, setVentaEnCurso] = useState(false)
   const cerrandoSesionRef = useRef(false)
 
   // stage-pos-caja-en-cabecera: nodo del contenedor que reserva en el header para los controles
@@ -254,6 +258,8 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </div>
           </header>
 
+          <AvisoDeActualizacion ventaEnCurso={ventaEnCurso} />
+
           {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
               propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
               a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
@@ -285,7 +291,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
 
           <main className="flex-grow-1">
             <Routes>
-              <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} />} />
+              <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
               <Route path="/gastos-del-turno" element={<GastosDelTurno />} />
               <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />

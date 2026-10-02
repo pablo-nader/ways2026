@@ -39,6 +39,9 @@ vi.mock('../api/entornoTauri', () => ({
   limpiarSesionDeCajeroPersistida: (...args: unknown[]) => limpiarSesionDeCajeroPersistidaMock(...args),
   urlBaseApi: () => '',
   inicializarUrlServidor: () => Promise.resolve(),
+  leerActualizacionDisponible: () => Promise.resolve(null),
+  escucharActualizacionDescargada: () => () => {},
+  instalarActualizacion: () => Promise.resolve(),
 }))
 
 /** Espejo mínimo del observador real de `../api/cliente`: `dispararPerdidaDeSesion` simula lo que

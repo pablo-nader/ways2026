@@ -611,6 +611,10 @@ type PropsPantallaPos = {
    * (bajo `Layout.tsx`) deja el comportamiento intacto: sin "Retirar", "Cerrar caja" sigue el
    * camino viejo de arriba. */
   cajaDeEscritorio?: CajaDeEscritorio
+  /** Avisa si hay una venta en curso (carrito con ítems, cobro en vuelo o modal de caja/venta
+   * abierto). El shell de escritorio lo usa para no reiniciar la app por una actualización en
+   * medio de una venta. */
+  alCambiarVentaEnCurso?: (enCurso: boolean) => void
 }
 
 export type CajaDeEscritorio = {
@@ -887,7 +891,7 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
   )
 }
 
-function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPantallaPos) {
+function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio, alCambiarVentaEnCurso }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
   // Solo da forma a la copia del override de rendición del cierre por retiro (ver
@@ -2064,6 +2068,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // `pasoRetiro`/`pasoCierre` hasta que la operación termina), la pantalla de venta entera queda
   // tan inerte como durante el propio checkout — se suma a `pantallaCobroInerte` más abajo.
   const cajaDeEscritorioOcupada = pasoRetiro !== null || pasoCierre !== null
+
+  const ventaEnCurso =
+    lineas.length > 0 || cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
+  useEffect(() => {
+    alCambiarVentaEnCurso?.(ventaEnCurso)
+  }, [ventaEnCurso, alCambiarVentaEnCurso])
 
   // stage-pos-turno-y-foco: mientras no hay un turno CONFIRMADO abierto, la venta libre queda
   // bloqueada (solo búsqueda/consulta de precio) — `turno === null` cubre tanto "confirmado
@@ -4023,9 +4033,10 @@ type PropsPos = {
   alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
   alIrACerrarCaja?: (idTurno: number) => void
   cajaDeEscritorio?: CajaDeEscritorio
+  alCambiarVentaEnCurso?: (enCurso: boolean) => void
 }
 
-export function Pos({ alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPos = {}) {
+export function Pos({ alEmitir, alIrACerrarCaja, cajaDeEscritorio, alCambiarVentaEnCurso }: PropsPos = {}) {
   const [searchParams] = useSearchParams()
   const { puntoVenta } = usePuntoVenta()
   const almacenBorradores = useContext(BorradorDeTicketContext)
@@ -4052,6 +4063,7 @@ export function Pos({ alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPos = 
       alEmitir={alEmitir}
       alIrACerrarCaja={alIrACerrarCaja}
       cajaDeEscritorio={cajaDeEscritorio}
+      alCambiarVentaEnCurso={alCambiarVentaEnCurso}
     />
   )
 }

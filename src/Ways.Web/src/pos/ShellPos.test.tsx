@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
@@ -843,5 +843,38 @@ describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola F
       ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
     )
     expect(await screen.findByText('No se pudo imprimir la reimpresión del ticket 0007-00000001: sin papel')).toBeInTheDocument()
+  })
+})
+
+describe('ShellPos — aviso de actualización del escritorio', () => {
+  type GlobalConTauri = typeof globalThis & {
+    __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> }; event: { listen: ReturnType<typeof vi.fn> } }
+  }
+
+  beforeEach(() => {
+    const invoke = vi.fn((comando: string) =>
+      Promise.resolve(comando === 'estado_actualizacion' ? { version: '0.4.0', notas: null } : undefined),
+    )
+    const listen = vi.fn(() => Promise.resolve(() => {}))
+    ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke }, event: { listen } }
+  })
+
+  afterEach(() => {
+    delete (globalThis as GlobalConTauri).__TAURI__
+  })
+
+  it('"Instalar y reiniciar" se deshabilita mientras el carrito de "Vender" tiene ítems', async () => {
+    renderShell()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const boton = await screen.findByRole('button', { name: 'Instalar y reiniciar' })
+    expect(boton).toBeEnabled()
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    expect(boton).toBeDisabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    await waitFor(() => expect(boton).toBeEnabled())
   })
 })
