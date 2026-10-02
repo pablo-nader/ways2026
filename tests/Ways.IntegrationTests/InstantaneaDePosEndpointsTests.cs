@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Dispositivos;
 using Ways.Application.Organizacion;
@@ -272,6 +274,10 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         // ServicioDeInstantaneaDePos.ObtenerAsync, este mismo request cayó en 200 en vez de 409 —
         // observado, no razonado — y ningún otro test de este archivo (los 6 restantes) se movió.
         // Revertida, vuelve a verde.
+        // Una instantánea ya armada (y en la caché del servidor) antes del cambio de modo no se
+        // sirve después: la política se valida en cada pedido, antes de la caché.
+        Assert.Equal(HttpStatusCode.OK, (await cajero.GetAsync("/api/pos/instantanea")).StatusCode);
+
         await CambiarModoDePuntoVentaDirectoAsync(idTenant, idPuntoVenta, ModoPuntoVenta.Web);
 
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
@@ -459,6 +465,11 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
 
     private const string RutaV2 = "/api/pos/instantanea?version=2";
 
+    /// <summary>Vence la caché de instantáneas del servidor (<c>ServicioDeInstantaneaDePos.VigenciaDeLaCache</c>)
+    /// sin esperar sus 60 s reales.</summary>
+    private void VaciarCacheDeInstantaneas() =>
+        ((MemoryCache)fixture.Services.GetRequiredService<IMemoryCache>()).Compact(1.0);
+
     private async Task<int> SembrarListaAsync(int idTenant, string nombre, bool activa = true)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
@@ -540,6 +551,10 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "v2");
         using var _cajero = cajero;
         admin.Dispose();
+
+        // El formato original (solo la lista del Consumidor Final) se pide antes: la caché del
+        // servidor no puede servirle esa versión recortada al pedido de version=2.
+        Assert.Equal(HttpStatusCode.OK, (await cajero.GetAsync("/api/pos/instantanea")).StatusCode);
 
         var respuesta = await cajero.GetAsync(RutaV2);
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
@@ -641,12 +656,21 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         }
 
         // El saldo se escribe por SQL directo, sin tocar updated_at — el mismo camino que
-        // EscriturasDeCuentaCorriente. La etiqueta igual tiene que cambiar.
+        // EscriturasDeCuentaCorriente. Mientras dura la caché del servidor el contenido no se
+        // rearma (sigue 304); vencida, la etiqueta tiene que cambiar.
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
         {
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE clientes SET saldo = 25 WHERE id_cliente = {cliente.Id}");
         }
+
+        using (var cacheada = new HttpRequestMessage(HttpMethod.Get, RutaV2))
+        {
+            cacheada.Headers.IfNoneMatch.Add(etiqueta);
+            Assert.Equal(HttpStatusCode.NotModified, (await cajero.SendAsync(cacheada)).StatusCode);
+        }
+
+        VaciarCacheDeInstantaneas();
 
         using var vieja = new HttpRequestMessage(HttpMethod.Get, RutaV2);
         vieja.Headers.IfNoneMatch.Add(etiqueta);
@@ -661,19 +685,26 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
     public async Task LaInstantaneaDeUnTenantNoTraeArticulosClientesNiListasDeOtro()
     {
         var (adminA, idTenantA, idPuntoVentaA) = await AprovisionarComoAdminAsync("InstantaneaAisladaA");
-        var (adminB, idTenantB, _) = await AprovisionarComoAdminAsync("InstantaneaAisladaB");
-        adminB.Dispose();
+        var (adminB, idTenantB, idPuntoVentaB) = await AprovisionarComoAdminAsync("InstantaneaAisladaB");
         var idArticuloA = await SembrarArticuloConPrecioYBarrasAsync(idTenantA, "aislado-a", 100m);
         var idArticuloB = await SembrarArticuloConPrecioYBarrasAsync(idTenantB, "aislado-b", 200m);
         var idListaB = await SembrarListaAsync(idTenantB, "ListaB");
         var clienteB = await SembrarClienteAsync(idTenantB, "ClienteB", idListaB);
 
-        var cajero = await LoguearComoCajeroDeDispositivoAsync(adminA, idTenantA, idPuntoVentaA, "aislado");
-        using var _cajero = cajero;
+        var cajeroA = await LoguearComoCajeroDeDispositivoAsync(adminA, idTenantA, idPuntoVentaA, "aislado-a");
+        var cajeroB = await LoguearComoCajeroDeDispositivoAsync(adminB, idTenantB, idPuntoVentaB, "aislado-b");
+        using var _cajeroA = cajeroA;
+        using var _cajeroB = cajeroB;
         adminA.Dispose();
+        adminB.Dispose();
 
-        var instantanea = (await (await cajero.GetAsync(RutaV2)).Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        // El tenant B arma (y deja en la caché del servidor) la suya primero.
+        var deB = (await (await cajeroB.GetAsync(RutaV2)).Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        Assert.Contains(deB.Articulos, a => a.IdArticulo == idArticuloB);
 
+        var instantanea = (await (await cajeroA.GetAsync(RutaV2)).Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Equal(idPuntoVentaA, instantanea.IdPuntoVenta);
         Assert.Contains(instantanea.Articulos, a => a.IdArticulo == idArticuloA);
         Assert.DoesNotContain(instantanea.Articulos, a => a.IdArticulo == idArticuloB);
         Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == clienteB.Id);

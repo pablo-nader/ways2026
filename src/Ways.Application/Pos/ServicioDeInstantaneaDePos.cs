@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
 
 namespace Ways.Application.Pos;
 
@@ -38,8 +40,18 @@ namespace Ways.Application.Pos;
 /// (<see cref="EtiquetaDeInstantanea"/>); un cursor por fila no sería correcto (ver ese tipo).
 /// </summary>
 public class ServicioDeInstantaneaDePos(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas, IMemoryCache cache)
 {
+    /// <summary>
+    /// Cuánto se reutiliza una instantánea ya armada para el mismo tenant y punto de venta: el
+    /// refresco periódico de varios dispositivos (y su <c>304</c>) no rearma todo en cada pedido. Es
+    /// también la demora máxima con la que un cambio de precio, oferta o saldo llega a la
+    /// instantánea, además del intervalo de sincronización del dispositivo.
+    /// </summary>
+    public static readonly TimeSpan VigenciaDeLaCache = TimeSpan.FromSeconds(60);
+
+    private sealed record ClaveDeCache(int? IdTenant, int IdPuntoVenta, bool SoloListaDelConsumidorFinal);
+
     /// <param name="soloListaDelConsumidorFinal">Resuelve solo la lista del Consumidor Final: lo único que
     /// necesita el formato original (<see cref="ArmadorDeInstantanea.ProyectarLegada"/>).</param>
     public async Task<InstantaneaDePos> ObtenerAsync(bool soloListaDelConsumidorFinal = false, CancellationToken ct = default)
@@ -70,6 +82,22 @@ public class ServicioDeInstantaneaDePos(
         // Escritorio, incluso si el modo cambió administrativamente después de vincularlo.
         await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
 
+        // La caché se consulta recién acá, después de validar el dispositivo y el modo del punto
+        // de venta en cada pedido, y su clave lleva tenant y punto de venta: nunca devuelve la
+        // instantánea de otro.
+        var clave = new ClaveDeCache(contexto.IdTenant, puntoVenta.Id, soloListaDelConsumidorFinal);
+        if (cache.TryGetValue(clave, out InstantaneaDePos? cacheada) && cacheada is not null)
+        {
+            return cacheada;
+        }
+
+        var armada = await ArmarAsync(puntoVenta, soloListaDelConsumidorFinal, ct);
+        cache.Set(clave, armada, VigenciaDeLaCache);
+        return armada;
+    }
+
+    private async Task<InstantaneaDePos> ArmarAsync(PuntoVenta puntoVenta, bool soloListaDelConsumidorFinal, CancellationToken ct)
+    {
         var momento = reloj.Ahora;
         var idEmpresa = puntoVenta.IdEmpresa;
 
