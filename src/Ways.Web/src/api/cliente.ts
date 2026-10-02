@@ -71,8 +71,11 @@ type ProblemDetails = {
   codigo?: string
 }
 
-/** Se dispara ante cualquier 401 para que el contexto de auth limpie la sesión. */
-type ObservadorDeSesion = () => void
+/** Se dispara ante cualquier 401 para que el contexto de auth limpie la sesión. `conSesionBearer` es
+ * `true` solo si la solicitud rechazada llevaba un token de sesión: un login fallido (sin token)
+ * también da 401, pero no termina ninguna sesión. */
+export type PerdidaDeSesion = { conSesionBearer: boolean }
+type ObservadorDeSesion = (perdida: PerdidaDeSesion) => void
 const observadores = new Set<ObservadorDeSesion>()
 
 export function alPerderLaSesion(observador: ObservadorDeSesion) {
@@ -103,7 +106,7 @@ async function exigirRespuestaOk(respuesta: Response, tokenDeLaSolicitud: string
     // login más nuevo ya lo reemplazó y este 401 es tardío, no hay nada que cerrar.
     if (tokenDeLaSolicitud === tokenDeSesionBearerActual()) {
       establecerTokenDeSesionBearer(null)
-      observadores.forEach((o) => o())
+      observadores.forEach((o) => o({ conSesionBearer: tokenDeLaSolicitud !== null }))
     }
     throw new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.')
   }

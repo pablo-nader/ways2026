@@ -17,7 +17,7 @@ import {
   type VentaEnCola,
 } from './outboxOffline'
 import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
-import { guardarInstantaneaLocal, leerInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
+import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { previaDeLinea } from '../api/ventas'
@@ -1710,6 +1710,37 @@ describe('useSincronizacionOffline — fin de sesión', () => {
     unmount()
 
     await act(async () => {
+      resolver(instantaneaFixture())
+    })
+
+    await expect(leerInstantaneaLocal(almacen)).resolves.toBeNull()
+  })
+})
+
+describe('useSincronizacionOffline — sesión terminada con una sincronización en vuelo', () => {
+  it('una instantánea que llega después de la purga no se vuelve a guardar, aunque el hook siga montado', async () => {
+    const datos = new Map<string, unknown>()
+    const almacen: AlmacenClaveValor & { eliminar(clave: string): Promise<boolean> } = {
+      async leer<T>(clave: string) {
+        return (datos.get(clave) as T) ?? null
+      },
+      async escribir<T>(clave: string, valor: T) {
+        datos.set(clave, valor)
+        return true
+      },
+      async eliminar(clave: string) {
+        datos.delete(clave)
+        return true
+      },
+    }
+    let resolver: (i: InstantaneaDePos) => void = () => {}
+    obtenerInstantaneaMock.mockReturnValue(new Promise<InstantaneaDePos>((r) => (resolver = r)))
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalled())
+
+    await act(async () => {
+      await purgarInstantaneaLocal(almacen)
       resolver(instantaneaFixture())
     })
 

@@ -390,7 +390,17 @@ export function formatearVejezDeInstantanea(momento: string, ahora: Date): strin
 // directamente donde no haga falta.
 export type { ArticuloDeInstantanea, EscalonDeCantidad, OfertaAplicada, PrecioDeListaDeInstantanea }
 
-/** Borra la instantánea guardada (y la de la forma anterior, que nadie más lee). Nunca rechaza. */
+/** Época de la sesión local: cada purga la avanza. Una sincronización captura la época al empezar y
+ * no persiste nada si cambió mientras tanto (la sesión terminó con la respuesta en vuelo). */
+let epocaDeSesionLocal = 0
+
+export function epocaDeSesionLocalActual(): number {
+  return epocaDeSesionLocal
+}
+
+/** Borra la instantánea guardada (y la de la forma anterior, que nadie más lee) y avanza la época
+ * antes de borrar, para que ninguna respuesta en vuelo la vuelva a escribir. Nunca rechaza. */
 export async function purgarInstantaneaLocal(almacen: Pick<AlmacenDeClavesMultiples, 'eliminar'>): Promise<void> {
+  epocaDeSesionLocal += 1
   await Promise.all([almacen.eliminar(CLAVE_INSTANTANEA), almacen.eliminar(CLAVE_INSTANTANEA_ANTERIOR)])
 }

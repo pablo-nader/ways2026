@@ -6,7 +6,7 @@ vi.mock('../api/entornoTauri', () => ({
   limpiarSesionDeCajeroPersistida: (...args: unknown[]) => limpiarSesionDeCajeroPersistidaMock(...args),
 }))
 
-const { terminarSesionLocalDelPos } = await import('./finDeSesionLocal')
+const { alPerderLaSesionDelPos, terminarSesionLocalDelPos } = await import('./finDeSesionLocal')
 
 function almacenFake(datosIniciales: Record<string, unknown>): AlmacenDeClavesMultiples & { datos: Map<string, unknown> } {
   const datos = new Map<string, unknown>(Object.entries(datosIniciales))
@@ -42,5 +42,25 @@ describe('terminarSesionLocalDelPos', () => {
 
     expect(limpiarSesionDeCajeroPersistidaMock).toHaveBeenCalledTimes(1)
     expect([...almacen.datos.keys()].sort()).toEqual(['bloqueNumeracion', 'outbox'])
+  })
+})
+
+describe('alPerderLaSesionDelPos', () => {
+  it('un 401 sin sesión (login fallido) limpia la sesión persistida pero conserva la instantánea', async () => {
+    const almacen = almacenFake({ 'instantanea.v2': { version: 2 } })
+
+    await alPerderLaSesionDelPos({ conSesionBearer: false }, almacen)
+
+    expect(limpiarSesionDeCajeroPersistidaMock).toHaveBeenCalledTimes(1)
+    expect(almacen.datos.has('instantanea.v2')).toBe(true)
+  })
+
+  it('un 401 de una sesión real también borra la instantánea', async () => {
+    const almacen = almacenFake({ 'instantanea.v2': { version: 2 } })
+
+    await alPerderLaSesionDelPos({ conSesionBearer: true }, almacen)
+
+    expect(limpiarSesionDeCajeroPersistidaMock).toHaveBeenCalledTimes(1)
+    expect(almacen.datos.has('instantanea.v2')).toBe(false)
   })
 })

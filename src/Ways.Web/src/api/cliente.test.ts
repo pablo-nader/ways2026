@@ -565,3 +565,41 @@ describe('api.getCondicional (refresco condicional de la instantánea)', () => {
     await expect(api.getCondicional('/pos/instantanea?version=2', null)).rejects.toBeInstanceOf(ErrorDeRed)
   })
 })
+
+describe('alPerderLaSesion: distingue una sesión que terminó de un login fallido', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  afterEach(() => {
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('un 401 de una solicitud con sesión bearer avisa conSesionBearer: true', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('token-vivo')
+    const observador = vi.fn()
+    const desuscribir = alPerderLaSesion(observador)
+    fetchMock.mockResolvedValue(respuestaMock({ status: 401, ok: false }))
+
+    await expect(api.get('/algo')).rejects.toBeInstanceOf(ErrorApi)
+
+    expect(observador).toHaveBeenCalledWith({ conSesionBearer: true })
+    desuscribir()
+  })
+
+  it('un 401 del login del dispositivo (contraseña mal tipeada, sin sesión) avisa conSesionBearer: false', async () => {
+    instalarPuenteTauri()
+    const observador = vi.fn()
+    const desuscribir = alPerderLaSesion(observador)
+    fetchMock.mockResolvedValue(respuestaMock({ status: 401, ok: false }))
+
+    await expect(api.post('/auth/login-dispositivo', { usuario: 'x' }, { Authorization: 'Dispositivo secreto' })).rejects.toBeInstanceOf(ErrorApi)
+
+    expect(observador).toHaveBeenCalledWith({ conSesionBearer: false })
+    desuscribir()
+  })
+})

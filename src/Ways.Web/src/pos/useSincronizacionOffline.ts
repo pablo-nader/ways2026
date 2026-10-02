@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AlmacenClaveValor } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
 import {
+  epocaDeSesionLocalActual,
   esInstantaneaValida,
   guardarInstantaneaLocal,
   leerInstantaneaLocal,
@@ -354,10 +355,10 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return true
   }
 
-  /** Adopta una instantánea local como la vigente (estado + etiqueta + persistencia). */
-  async function adoptarInstantaneaLocal(local: Omit<InstantaneaLocal, 'version'>): Promise<void> {
-    // Una respuesta que llega después de desmontar (cierre de sesión, que además borra la
-    // instantánea guardada) no vuelve a escribirla.
+  async function adoptarInstantaneaLocal(local: Omit<InstantaneaLocal, 'version'>, epocaAlPedir: number): Promise<void> {
+    // Una respuesta que llega después de desmontar o después de terminar la sesión (que borra la
+    // instantánea guardada y avanza la época) no vuelve a escribirla.
+    if (!montadoRef.current || epocaDeSesionLocalActual() !== epocaAlPedir) return
     if (!montadoRef.current) return
     instantaneaLocalRef.current = { version: 2, ...local }
     setInstantanea(local.instantanea)
@@ -370,18 +371,19 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   async function refrescarInstantaneaSiHaySenal(): Promise<boolean> {
     try {
       const local = instantaneaLocalRef.current
+      const epocaAlPedir = epocaDeSesionLocalActual()
       const respuesta = await conTiempoLimite(() => clienteDePos.obtenerInstantanea(local?.etag ?? null), TIEMPO_LIMITE_DE_INSTANTANEA_MS)
       const ahora = new Date().toISOString()
       setEnLinea(true)
       setVerificacionesConElServidor((n) => n + 1)
       if (!respuesta.modificada) {
-        if (local !== null) await adoptarInstantaneaLocal({ instantanea: local.instantanea, etag: local.etag, verificadaEn: ahora })
+        if (local !== null) await adoptarInstantaneaLocal({ instantanea: local.instantanea, etag: local.etag, verificadaEn: ahora }, epocaAlPedir)
         return true
       }
       // Un servidor anterior a los precios por lista ignora `?version=2` y responde la forma vieja:
       // se conserva la copia local en vez de cotizar con algo que no se puede leer.
       if (!esInstantaneaValida(respuesta.cuerpo)) return true
-      await adoptarInstantaneaLocal({ instantanea: respuesta.cuerpo, etag: respuesta.etag, verificadaEn: ahora })
+      await adoptarInstantaneaLocal({ instantanea: respuesta.cuerpo, etag: respuesta.etag, verificadaEn: ahora }, epocaAlPedir)
       return true
     } catch (e) {
       // Sin conexión, o el servidor rechazó — la instantánea local (potencialmente vieja) se
