@@ -42,6 +42,82 @@ npm run build                                     # instalador NSIS (release)
 `src-tauri/target/release/bundle/nsis/`. Es una instalacion por usuario
 (`installMode: currentUser`), sin privilegios de administrador.
 
+Como `bundle.createUpdaterArtifacts` esta activo, `npm run build` firma el
+instalador y necesita las variables `TAURI_SIGNING_PRIVATE_KEY` (contenido de
+la clave privada) y `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (ver "Custodia de la
+clave de firma"). `cargo build`/`npm run dev` no las necesitan.
+
+## Actualizaciones automaticas
+
+Desde la 0.4.0 la app se actualiza sola con `tauri-plugin-updater`
+(`src-tauri/src/actualizacion.rs`):
+
+1. Un hilo propio busca una version nueva 60 s despues del arranque y despues
+   cada 6 h, contra
+   `https://github.com/pablo-nader/ways2026/releases/latest/download/latest.json`
+   (`plugins.updater.endpoints` en `tauri.conf.json`). La busqueda tiene un
+   timeout de 30 s y la descarga uno de 30 min; nada de esto bloquea el
+   arranque ni el POS. Un fallo de red o de firma se descarta y se reintenta
+   en la siguiente vuelta.
+2. Si hay una version nueva, la descarga en segundo plano y verifica su firma
+   contra `plugins.updater.pubkey`. Recien entonces emite el evento
+   `actualizacion-descargada`.
+3. El POS muestra el banner "Actualizacion X disponible" con "Instalar y
+   reiniciar" (`AvisoDeActualizacion.tsx`). El boton queda deshabilitado
+   mientras hay una venta en curso: carrito con items (aunque el cajero este
+   en otra pantalla del shell), cobro en vuelo, confirmacion de cobro, modal
+   "Venta finalizada" abierto o un retiro/cierre de caja en curso. Nunca se
+   instala sin ese click.
+4. Al instalar, la app lanza el instalador NSIS en modo pasivo
+   (`plugins.updater.windows.installMode: "passive"`, barra de progreso sin
+   preguntas), se cierra y el instalador la vuelve a abrir. Es una
+   actualizacion en el lugar, en el mismo perfil de usuario: la cola de
+   ventas offline, la instantanea y los borradores de ticket (IndexedDB de
+   WebView2) y los archivos de `%APPDATA%/site.aipos.pos` se conservan.
+
+La pagina del POS solo recibe dos comandos propios, `estado_actualizacion` e
+`instalar_actualizacion` (`capabilities/pos.json`); ninguna ventana recibe los
+permisos `updater:*` del plugin, y la ventana `main` no recibe ninguno de los
+dos (el test `las_capacidades_locales_no_se_solapan_en_los_comandos_sensibles`
+lo chequea sobre los JSON de capacidades).
+
+### Publicar una version
+
+1. Subir la version en los cinco archivos: `package.json`,
+   `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` y
+   `src-tauri/tauri.conf.json`.
+2. Taggear `pos-vX.Y.Z`. El workflow `pos-escritorio-release.yml` compila
+   con la clave privada, sube `WaysPOS-X.Y.Z-setup.exe`, su `.sig`,
+   `WaysPOS-setup.exe` (mismo binario, para descargas manuales) y
+   `latest.json`, que apunta al instalador versionado de ese tag con la firma
+   de esos mismos bytes (`scripts/generar-latest-json.mjs`).
+
+Si faltan los secretos de firma el workflow falla antes de compilar y no
+publica nada: un release sin `latest.json` dejaria a las cajas sin enterarse
+de la version nueva.
+
+### Primera instalacion de la 0.4.0
+
+La 0.3.0 y anteriores no traen el updater: cada caja tiene que instalar la
+0.4.0 a mano una sola vez (descargando `WaysPOS-setup.exe` del release). De
+ahi en adelante las versiones nuevas llegan solas.
+
+### Custodia de la clave de firma
+
+La clave publica esta en `tauri.conf.json`. La privada y su contraseña NO
+estan en el repo: el dueño las guarda fuera y las carga como secretos del
+repositorio en GitHub:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: el contenido del archivo de clave privada.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: su contraseña.
+
+Perder la clave privada significa que las apps ya instaladas nunca mas se
+pueden actualizar solas: solo aceptan paquetes firmados con esa clave. Para
+recuperarse hay que generar un par nuevo (`npx tauri signer generate`),
+reemplazar `pubkey`, publicar y reinstalar a mano en cada caja. Lo mismo si la
+clave se filtra: quien la tenga puede firmar un instalador que las cajas
+aceptarian si llegara a publicarse en el release.
+
 ## Dos ventanas, dos capacidades
 
 La app usa DOS ventanas Tauri, cada una con su propia capacidad (ver
