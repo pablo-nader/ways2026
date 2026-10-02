@@ -5978,6 +5978,45 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         expect(selector).toHaveValue('30')
       }))
 
+    it('la recarga de clientes al volver la red no traba una búsqueda en vuelo ni pisa su resultado', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararCopiaLocal()
+        let cargasDeClientes = 0
+        let resolverBusqueda: (p: PaginaDe<ClienteListado>) => void = () => {}
+        let resolverRecarga: (p: PaginaDe<ClienteListado>) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta === '/clientes') {
+            cargasDeClientes += 1
+            return cargasDeClientes < 3 ? sinRed() : new Promise<PaginaDe<ClienteListado>>((r) => (resolverRecarga = r))
+          }
+          if (ruta.startsWith('/clientes?busqueda=')) return new Promise<PaginaDe<ClienteListado>>((r) => (resolverBusqueda = r))
+          if (ruta === '/pos/instantanea') return Promise.resolve(instantaneaFixture({ mediosDePago: [efectivoDeInstantanea] }))
+          return undefined
+        })
+
+        renderPos()
+        const sincronizar = await screen.findByRole('button', { name: 'Sincronizar ahora' })
+        await waitFor(() => expect(cargasDeClientes).toBe(2))
+
+        await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+        await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+        await screen.findByRole('button', { name: 'Buscando…' })
+
+        await userEvent.click(sincronizar)
+        await waitFor(() => expect(cargasDeClientes).toBe(3))
+
+        await act(async () => {
+          resolverBusqueda({ items: [otroCliente], total: 1, pagina: 1, tamanio: 25 })
+        })
+        expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Buscar' })).toBeEnabled()
+
+        await act(async () => {
+          resolverRecarga({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
+        })
+        expect(screen.getByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+      }))
+
     it.each([
       ['los medios de pago', '/catalogos/medios-pago'],
       ['la tolerancia de pago', '/parametros/tolerancia_pago'],

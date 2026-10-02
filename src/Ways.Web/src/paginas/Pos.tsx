@@ -913,7 +913,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [errorClientes, setErrorClientes] = useState('')
   const [errorCargaClientes, setErrorCargaClientes] = useState('')
   const [errorCargaClientesEsDeRed, setErrorCargaClientesEsDeRed] = useState(false)
+  // Generación de las búsquedas de clientes; la carga inicial tiene la suya, así una recarga al
+  // volver la red nunca deja colgado el "Buscando…" de una búsqueda en vuelo.
   const generacionClientesRef = useRef(0)
+  const generacionCargaClientesRef = useRef(0)
   // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
   // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
@@ -1331,14 +1334,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // respuesta tardía de una carga anterior (la del arranque, cuando ya se reintentó al volver la
   // red) nunca pisa a la más nueva.
   function cargarClientesIniciales() {
-    const generacionClientes = (generacionClientesRef.current += 1)
+    const generacionCarga = (generacionCargaClientesRef.current += 1)
 
     clienteDeClientes
       .listar('', false)
       .then((pagina) => {
-        if (!montadoRef.current || generacionClientesRef.current !== generacionClientes) return
-        opcionesDesdeInstantaneaRef.current = false
-        setOpcionesClientes(pagina.items)
+        if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
+        // La primera página es la lista de antes de buscar: si el cajero ya buscó, su resultado manda.
+        if (generacionClientesRef.current === 0) {
+          opcionesDesdeInstantaneaRef.current = false
+          setOpcionesClientes(pagina.items)
+        }
         setErrorCargaClientes('')
         setErrorCargaClientesEsDeRed(false)
         // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
@@ -1358,7 +1364,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         }
       })
       .catch((e) => {
-        if (!montadoRef.current || generacionClientesRef.current !== generacionClientes) return
+        if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
         setErrorCargaClientes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
         setErrorCargaClientesEsDeRed(e instanceof ErrorDeRed)
       })
