@@ -1,9 +1,12 @@
 using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Busqueda;
 using Ways.Application.Clientes;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
@@ -221,6 +224,38 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     private sealed class NormalizacionAUtc()
         : ValueConverter<DateTimeOffset, DateTimeOffset>(v => v.ToUniversalTime(), v => v);
 
+    private static void MapearBusquedaSinAcentos(ModelBuilder modelBuilder)
+    {
+        var coincide = typeof(BusquedaSinAcentos).GetMethod(
+            nameof(BusquedaSinAcentos.Coincide), [typeof(string), typeof(string)])!;
+
+        // lower(public.sin_acentos(x)) LIKE lower(public.sin_acentos(patrón)) ESCAPE '\'.
+        // sin_acentos es IMMUTABLE (migración SinAcentosBusqueda); lower() la deja insensible
+        // a mayúsculas sin depender del locale de la base.
+        static SqlExpression Normalizar(SqlExpression texto) =>
+            new SqlFunctionExpression(
+                "lower",
+                [new SqlFunctionExpression(
+                    "public",
+                    "sin_acentos",
+                    [texto],
+                    nullable: true,
+                    argumentsPropagateNullability: [true],
+                    typeof(string),
+                    texto.TypeMapping)],
+                nullable: true,
+                argumentsPropagateNullability: [true],
+                typeof(string),
+                texto.TypeMapping);
+
+        modelBuilder.HasDbFunction(coincide).HasTranslation(argumentos =>
+            new LikeExpression(
+                Normalizar(argumentos[0]),
+                Normalizar(argumentos[1]),
+                new SqlConstantExpression("\\", argumentos[0].TypeMapping),
+                new BoolTypeMapping("boolean")));
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -228,6 +263,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         // citext: comparación de texto case-insensitive a nivel motor.
         // Evita índices sobre lower(columna) para el unique de usuario y mail.
         modelBuilder.HasPostgresExtension("citext");
+
+        // unaccent: base de la función sin_acentos() de la búsqueda sin acentos.
+        modelBuilder.HasPostgresExtension("unaccent");
+        MapearBusquedaSinAcentos(modelBuilder);
 
         // El enum estado_usuario / estado_tenant NO se declara acá: lo registra el
         // MapEnum<T>() de las opciones de Npgsql. Declararlo en los dos lados genera el

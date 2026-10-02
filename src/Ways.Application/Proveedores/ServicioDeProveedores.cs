@@ -4,6 +4,7 @@ using Ways.Application.Bajas;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
 using Ways.Domain.Proveedores;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Proveedores;
 
@@ -51,14 +52,12 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
 
         if (!string.IsNullOrWhiteSpace(busqueda))
         {
-            // Columnas citext: el Contains ya es case-insensitive sin ILIKE explícito. Cuit
-            // no es citext (formateado, no texto buscado) pero Contains sigue funcionando
-            // como comparación de texto normal.
-            var termino = busqueda.Trim();
+            // Sin mayúsculas ni acentos (BusquedaSinAcentos).
+            var patron = PatronDeContiene(busqueda.Trim());
             query = query.Where(p =>
-                p.RazonSocial.Contains(termino) ||
-                (p.NombreFantasia != null && p.NombreFantasia.Contains(termino)) ||
-                (p.Cuit != null && p.Cuit.Contains(termino)));
+                Coincide(p.RazonSocial, patron) ||
+                Coincide(p.NombreFantasia, patron) ||
+                Coincide(p.Cuit, patron));
         }
 
         var total = await query.CountAsync(ct);

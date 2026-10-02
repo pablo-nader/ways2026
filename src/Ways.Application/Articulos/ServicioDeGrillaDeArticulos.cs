@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Application.Precios;
 using Ways.Domain.Common;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Articulos;
 
@@ -195,16 +196,16 @@ public class ServicioDeGrillaDeArticulos(
 
         if (!string.IsNullOrWhiteSpace(codigo))
         {
-            var termino = codigo.Trim();
+            var patron = PatronDeContiene(codigo.Trim());
             query = query.Where(a =>
-                a.CodigoInterno.Contains(termino) ||
-                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Codigo.Contains(termino)));
+                Coincide(a.CodigoInterno, patron) ||
+                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && Coincide(c.Codigo, patron)));
         }
 
         if (!string.IsNullOrWhiteSpace(nombre))
         {
-            var terminoNombre = nombre.Trim();
-            query = query.Where(a => a.Nombre.Contains(terminoNombre));
+            var patronNombre = PatronDeContiene(nombre.Trim());
+            query = query.Where(a => Coincide(a.Nombre, patronNombre));
         }
 
         if (idProveedor is { } idProveedorValor)

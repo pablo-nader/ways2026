@@ -10,6 +10,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Articulos;
 
@@ -92,15 +93,15 @@ public class ServicioDeArticulos(
 
         if (!string.IsNullOrWhiteSpace(busqueda))
         {
-            // Columnas citext: el Contains ya es case-insensitive sin ILIKE explícito. El
+            // Sin mayúsculas ni acentos (BusquedaSinAcentos). El
             // término también busca por codigo_interno y por cualquiera de los codigos_barra
             // del artículo (subquery correlacionada, mismo shape que el EXISTS de
             // DisponibleEnEmpresa).
-            var termino = busqueda.Trim();
+            var patron = PatronDeContiene(busqueda.Trim());
             query = query.Where(a =>
-                a.Nombre.Contains(termino) ||
-                a.CodigoInterno.Contains(termino) ||
-                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Codigo.Contains(termino)));
+                Coincide(a.Nombre, patron) ||
+                Coincide(a.CodigoInterno, patron) ||
+                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && Coincide(c.Codigo, patron)));
         }
 
         // stage-18-etiquetas-y-consulta, Slice 2 (task 2.5; design.md:219-224): tres filtros

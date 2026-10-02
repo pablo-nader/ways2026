@@ -26,6 +26,11 @@
    redundante con el catálogo.
 7. **Nada de saldos sin libro.** Todo saldo cacheado (cliente, stock) tiene su tabla
    de movimientos que lo reconstruye y audita.
+8. **Extensiones y funciones de base.** `citext` (comparación sin mayúsculas en columnas de
+   texto) y `unaccent`, más la función `public.sin_acentos(text)` (`IMMUTABLE`, envoltorio de
+   `unaccent`). Toda búsqueda de texto del servidor compara
+   `lower(sin_acentos(columna)) LIKE lower(sin_acentos(patrón))`, así "jose" encuentra
+   "José"; `unaccent` mapea ñ a n. Ver `BusquedaSinAcentos` (Application).
 
 ---
 
