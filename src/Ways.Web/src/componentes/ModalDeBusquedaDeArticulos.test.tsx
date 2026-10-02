@@ -257,3 +257,56 @@ describe('ModalDeBusquedaDeArticulos — motivoSinAgregar (stage-pos-turno-y-foc
     expect(await screen.findByRole('button', { name: 'Agregar' })).toBeEnabled()
   })
 })
+
+describe('ModalDeBusquedaDeArticulos — columna de costo (solo back-office)', () => {
+  async function buscarFanta(props: Partial<Parameters<typeof ModalDeBusquedaDeArticulos>[0]>) {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa')
+        ? Promise.resolve(paginaDe([articuloListadoFixture({ costoNominal: 1234.5 })]))
+        : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver'
+        ? Promise.resolve<ResultadoDeResolucion[]>([
+            { idArticulo: 9, precioFinal: 2000, precioOriginal: 2000, ofertaAplicada: null } as unknown as ResultadoDeResolucion,
+          ])
+        : Promise.reject(new Error(ruta)),
+    )
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe(props)} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    // Espera el DATO (el precio resuelto, que llega después de la fila), no solo el nombre.
+    await screen.findByText('$ 2.000,00')
+  }
+
+  it('con mostrarCosto, la columna Costo muestra el costoNominal junto al precio', async () => {
+    await buscarFanta({ mostrarCosto: true })
+
+    expect(screen.getByRole('columnheader', { name: 'Costo' })).toBeInTheDocument()
+    expect(screen.getByText('$ 1.234,50')).toBeInTheDocument()
+  })
+
+  it('con mostrarCosto y costoNominal null, la celda muestra "—"', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture({ costoNominal: null })])) : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockResolvedValue([{ idArticulo: 9, precioFinal: 2000 }])
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ mostrarCosto: true })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await screen.findByText('$ 2.000,00')
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('uso del POS (sin la prop): ni la columna ni el costo se renderizan aunque la API lo mande', async () => {
+    await buscarFanta({})
+
+    expect(screen.queryByRole('columnheader', { name: 'Costo' })).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 1.234,50')).not.toBeInTheDocument()
+  })
+})
