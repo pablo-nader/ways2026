@@ -136,4 +136,27 @@ public class CorsPosLocalTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var headersPermitidos = string.Join(",", respuesta.Headers.GetValues("Access-Control-Allow-Headers"));
         Assert.Contains("Authorization", headersPermitidos, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>El refresco condicional de la instantánea del POS manda <c>If-None-Match</c> y lee
+    /// <c>ETag</c>: ninguno de los dos está en la lista CORS-safelisted, así que sin la política el
+    /// navegador del shell bloquea el preflight o esconde el header.</summary>
+    [Fact]
+    public async Task El_refresco_condicional_puede_mandar_if_none_match_y_leer_el_etag()
+    {
+        using var cliente = fixture.CreateClient();
+        using var preflight = PreflightHacia("/api/pos/instantanea", OrigenTauri);
+        preflight.Headers.Add("Access-Control-Request-Headers", "If-None-Match");
+
+        using var respuestaPreflight = await cliente.SendAsync(preflight);
+
+        Assert.True(respuestaPreflight.IsSuccessStatusCode, $"preflight inesperado: {respuestaPreflight.StatusCode}");
+        var headersPermitidos = string.Join(",", respuestaPreflight.Headers.GetValues("Access-Control-Allow-Headers"));
+        Assert.Contains("If-None-Match", headersPermitidos, StringComparison.OrdinalIgnoreCase);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/salud");
+        request.Headers.Add("Origin", OrigenTauri);
+        using var respuesta = await cliente.SendAsync(request);
+        var headersExpuestos = string.Join(",", respuesta.Headers.GetValues("Access-Control-Expose-Headers"));
+        Assert.Contains("ETag", headersExpuestos, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Options;
 using Ways.Api.Endpoints;
 using Ways.Api.Seguridad;
@@ -155,11 +156,23 @@ builder.Services.AddCors(opciones =>
         politica
             .WithOrigins("http://tauri.localhost")
             .WithMethods("GET", "POST", "PUT", "DELETE")
-            .WithHeaders("Content-Type", "Authorization", "Accept")
+            // If-None-Match: el refresco condicional de la instantánea del POS (304 sin cuerpo).
+            .WithHeaders("Content-Type", "Authorization", "Accept", "If-None-Match")
             // Content-Disposition no esta en la lista CORS-safelisted de headers de respuesta:
             // sin exponerlo, el JS del shell de escritorio (`cliente.ts`, `nombreDeArchivo`) no
             // puede leerlo y toda descarga (por ejemplo la Caja Z XLSX) cae al nombre generico.
-            .WithExposedHeaders("Content-Disposition"));
+            // ETag, por lo mismo: sin leerlo el POS no puede pedir el refresco condicional.
+            .WithExposedHeaders("Content-Disposition", "ETag"));
+});
+
+// Compresión solo para la instantánea del POS (ver el UseWhen más abajo): es la única respuesta
+// grande que se pide periódicamente. No refleja nada del request ni lleva secretos, así que
+// comprimirla bajo HTTPS no abre la clase de ataque BREACH.
+builder.Services.AddResponseCompression(opciones =>
+{
+    opciones.EnableForHttps = true;
+    opciones.Providers.Add<BrotliCompressionProvider>();
+    opciones.Providers.Add<GzipCompressionProvider>();
 });
 
 // No hay zonas públicas: todo pide sesión salvo lo marcado con AllowAnonymous.
@@ -210,6 +223,10 @@ app.UseStaticFiles();
 // navegador la ve como un error de red opaco en vez de una respuesta 401 legible por JavaScript
 // (`cliente.ts` sí la lee: parsea el cuerpo, dispara `alPerderLaSesion`).
 app.UseCors(PoliticaCorsPosLocal);
+
+app.UseWhen(
+    ctx => ctx.Request.Path.Equals("/api/pos/instantanea", StringComparison.OrdinalIgnoreCase),
+    rama => rama.UseResponseCompression());
 
 app.UseAuthentication();
 app.UseAuthorization();

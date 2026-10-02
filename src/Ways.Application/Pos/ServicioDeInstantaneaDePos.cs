@@ -22,38 +22,20 @@ namespace Ways.Application.Pos;
 /// instantánea, siempre es el suyo — derivado de <see cref="IContextoDeUsuario.IdDispositivo"/>,
 /// nunca del request.
 ///
-/// Precios: <see cref="ServicioDeOfertas.ResolverConEscalonesAsync"/> corre en LOTE, una sola vez
-/// para TODO el catálogo activo, a <c>cantidad = 1</c>, contra la lista de precio del Consumidor
-/// Final del tenant (<see cref="ReglaDeClientes.NumeroConsumidorFinal"/>) y la empresa del punto de
-/// venta — el mismo par (lista, empresa) que un walk-in sin cliente seleccionado resolvería online.
-/// NUNCA se reimplementa el motor de reglas en el dispositivo (decisión del dueño, rechazada
-/// explícitamente): el precio queda CONGELADO al momento de la instantánea, el dispositivo nunca
-/// vuelve a evaluarlo.
-///
-/// Ofertas por volumen: resolver solo a <c>cantidad = 1</c> dejaba afuera toda oferta con
-/// <c>cantidadMinima > 1</c>, y eso NO era cosmético — el precio del dispositivo es autoritativo
-/// (<c>ServicioDeVentas.MaterializarItems</c> cobra <c>linea.PrecioUnitario</c> tal cual), así que
-/// la venta offline de varias unidades se cobraba sin el descuento por volumen. Por eso cada
-/// artículo viaja con su tabla de quiebres (<see cref="ArticuloDeInstantanea.Escalones"/>), CADA
-/// entrada calculada por el motor real acá en el servidor: el dispositivo solo elige el último
-/// escalón cuyo umbral entra en la cantidad del carrito. Sin consultas extra — los umbrales salen
-/// de las mismas candidatas que el lote ya materializó (ver
-/// <see cref="ServicioDeOfertas.ResolverConEscalonesAsync"/>).
+/// Precios: <see cref="ServicioDeOfertas.ResolverConEscalonesAsync"/> corre en LOTE, una sola vez,
+/// para TODO el catálogo activo × TODAS las listas que el punto de venta puede usar
+/// (<see cref="ArmadorDeInstantanea.ListasAResolver"/>), a <c>cantidad = 1</c> y contra la empresa
+/// del punto de venta: el dispositivo cotiza a cualquier cliente con su propia lista sin ir a la
+/// red. Sus consultas no dependen de la cantidad de líneas, así que la cantidad de idas a la base
+/// de esta instantánea es fija. NUNCA se reimplementa el motor de reglas en el dispositivo
+/// (decisión del dueño): el precio queda CONGELADO al momento de la instantánea. Cada precio viaja
+/// con su curva de escalones por cantidad, calculada por el motor real acá en el servidor.
 ///
 /// Paginado: NO. <see cref="InstantaneaDePos.Momento"/> es el único invariante real de esta
-/// respuesta — cada artículo quedó resuelto contra el MISMO instante. Paginar (aun con el mismo
-/// tope de <c>ServicioDeArticulos.TamanioMaximoDePagina</c> de la grilla interactiva) exigiría N
-/// requests secuenciales, y un precio que cambia entre la página 3 y la página 4 volvería la
-/// instantánea INCONSISTENTE contra sí misma — exactamente lo que este endpoint existe para
-/// evitar. Con ~6000 artículos (la referencia del legacy) y los 10 campos mínimos de
-/// <see cref="ArticuloDeInstantanea"/>, el JSON completo pesa un puñado de cientos de KB (varios
-/// menos comprimido) — un solo response, aceptable para un pull en background, ocasional, sobre
-/// Wi-Fi/LAN de local. Tampoco hay refresco incremental (If-Modified-Since/ETag): no existe
-/// change-tracking entre <c>articulos</c>/<c>precios</c>/<c>ofertas</c>/<c>codigos_barra</c> como
-/// para construir un delta correcto sin inventar infraestructura nueva, y el propio diseño de esta
-/// etapa encuadra la vejez como "acotada por el intervalo de refresco" (el dispositivo vuelve a
-/// pedir la instantánea COMPLETA cada vez que tiene señal), no por el tamaño de un delta — agregar
-/// eso ahora sería optimización especulativa sin un problema de tamaño medido que la justifique.
+/// respuesta — cada precio quedó resuelto contra el MISMO instante; paginar volvería la instantánea
+/// inconsistente contra sí misma si un precio cambia entre páginas. Para que el refresco periódico
+/// sea barato, el endpoint responde <c>304</c> cuando el contenido no cambió
+/// (<see cref="EtiquetaDeInstantanea"/>); un cursor por fila no sería correcto (ver ese tipo).
 /// </summary>
 public class ServicioDeInstantaneaDePos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas)
@@ -87,27 +69,60 @@ public class ServicioDeInstantaneaDePos(
         await PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync(db, contexto, puntoVenta, ct);
 
         var momento = reloj.Ahora;
+        var idEmpresa = puntoVenta.IdEmpresa;
 
-        // Spec: "Omitted idCliente defaults to Consumidor Final" (ServicioDeVentas.
-        // ResolverClienteAsync) — la instantánea resuelve precio contra el MISMO walk-in que un
-        // checkout online sin cliente seleccionado.
-        var cliente = await db.Clientes.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal, ct)
-            ?? throw new InvalidOperationException("El tenant actual no tiene un Consumidor Final sembrado.");
+        // Todas las listas visibles (no dadas de baja) del tenant, en una consulta: de acá salen
+        // tanto las listas a resolver como la detección de una FK de cliente a una lista dada de
+        // baja.
+        var listasVisibles = await db.ListasPrecio.AsNoTracking()
+            .OrderBy(l => l.Id)
+            .Select(l => new ArmadorDeInstantanea.ListaVisible(l.Id, l.IdEmpresa, l.Activo, l.Modo, l.IdListaBase))
+            .ToListAsync(ct);
+        var idsListaVisibles = listasVisibles.Select(l => l.Id).ToHashSet();
+
+        // Los clientes que el punto de venta puede elegir: activos, compartidos o de su empresa, y
+        // el Consumidor Final siempre (spec: "Omitted idCliente defaults to Consumidor Final").
+        var clientesCrudos = await db.Clientes.AsNoTracking()
+            .Where(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal
+                || (c.Activo && (c.IdEmpresa == null || c.IdEmpresa == idEmpresa)))
+            .OrderBy(c => c.Numero)
+            .Select(c => new
+            {
+                c.Id, c.Numero, c.Nombre, c.Apellido, c.RazonSocial, c.TipoDocumento, c.NumeroDocumento,
+                c.IdCondicionFiscal, c.IdEmpresa, c.IdListaPrecio, c.Saldo, c.LimiteCredito, c.CreditoIlimitado
+            })
+            .ToListAsync(ct);
+
+        if (!clientesCrudos.Any(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal))
+        {
+            throw new InvalidOperationException("El tenant actual no tiene un Consumidor Final sembrado.");
+        }
+
+        var clientes = clientesCrudos
+            .Select(c => new ClienteDeInstantanea(
+                c.Id, c.Numero, c.Nombre, c.Apellido, c.RazonSocial, c.TipoDocumento, c.NumeroDocumento,
+                c.IdCondicionFiscal, c.IdEmpresa, ArmadorDeInstantanea.ListaEfectiva(c.IdListaPrecio, idsListaVisibles),
+                ReglaDeClientes.EsConsumidorFinal(c.Numero), c.Saldo, c.LimiteCredito, c.CreditoIlimitado))
+            .ToList();
+
+        var idsLista = ArmadorDeInstantanea.ListasAResolver(listasVisibles, idEmpresa, clientes.Select(c => c.IdListaPrecio));
 
         // Mismo scope que ServicioDeEscaneo (solo Activo, sin filtro de disponibilidad por
         // empresa): un artículo que el dispositivo puede escanear y vender ONLINE tiene que poder
         // vender OFFLINE también — la disponibilidad por empresa es un filtro de vidriera/grilla,
-        // nunca una restricción de venta.
+        // nunca una restricción de venta. Ordenado por id: la etiqueta de contenido depende del
+        // orden.
         var articulos = await db.Articulos.AsNoTracking()
             .Where(a => a.Activo)
-            .Select(a => new { a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva })
+            .OrderBy(a => a.Id)
+            .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva))
             .ToListAsync(ct);
 
         var idsArticulo = articulos.Select(a => a.Id).ToList();
 
         var codigosPorArticulo = (await db.CodigosBarra.AsNoTracking()
                 .Where(c => c.Activo && idsArticulo.Contains(c.IdArticulo))
+                .OrderBy(c => c.IdArticulo).ThenBy(c => c.Codigo)
                 .Select(c => new { c.IdArticulo, c.Codigo })
                 .ToListAsync(ct))
             .GroupBy(c => c.IdArticulo)
@@ -118,50 +133,14 @@ public class ServicioDeInstantaneaDePos(
             .Where(a => idsAlicuota.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a.Porcentaje, ct);
 
-        // La ÚNICA autoridad de precio, en lote, para TODO el catálogo activo a la vez — mismo
-        // llamado que el checkout, nunca una reimplementación (ver el doc-comment de la clase).
-        var lineasDeResolucion = articulos
-            .Select(a => new LineaDeResolucion(a.Id, puntoVenta.IdEmpresa, cliente.IdListaPrecio, 1m))
-            .ToList();
-        var resolucion = await servicioDeOfertas.ResolverConEscalonesAsync(lineasDeResolucion, momento, ct);
+        // La ÚNICA autoridad de precio, en lote, para TODO el catálogo activo y TODAS las listas a
+        // la vez — mismo llamado que el checkout, nunca una reimplementación. Una sola llamada:
+        // sus consultas no crecen con artículos × listas.
+        var resolucion = await servicioDeOfertas.ResolverConEscalonesAsync(
+            ArmadorDeInstantanea.LineasDeResolucion(articulos, idsLista, idEmpresa), momento, ct);
 
-        var articulosDeInstantanea = new List<ArticuloDeInstantanea>(articulos.Count);
-        for (var i = 0; i < articulos.Count; i++)
-        {
-            var resultado = resolucion[i].Resultado;
-
-            // Un artículo sin precio vigente HOY ya rechazaría 400 articulo_sin_precio_vigente en
-            // el camino online (ServicioDeVentas.MaterializarItems) — ofrecerlo offline sin poder
-            // cobrarlo no tiene sentido: se omite de la instantánea en vez de viajar con un precio
-            // inventado.
-            if (resultado.PrecioOriginal is null)
-            {
-                continue;
-            }
-
-            var articulo = articulos[i];
-
-            // Sin escalones viaja `null`, NUNCA `[]`: con el JsonIgnore de
-            // ArticuloDeInstantanea.Escalones eso deja la clave AUSENTE del payload (la mayoría de los
-            // artículos no tiene ninguna oferta por volumen) y además es exactamente lo que lee un
-            // dispositivo que quedó offline cruzando el deploy — su IndexedDB no tiene versión de
-            // esquema ni validación, así que el JSON viejo y el nuevo tienen que significar lo
-            // mismo para un artículo sin quiebres.
-            var escalones = resolucion[i].Escalones;
-
-            articulosDeInstantanea.Add(new ArticuloDeInstantanea(
-                articulo.Id,
-                articulo.CodigoInterno,
-                articulo.Nombre,
-                codigosPorArticulo.GetValueOrDefault(articulo.Id, (IReadOnlyList<string>)[]),
-                resultado.PrecioOriginal.Value,
-                resultado.PrecioFinal ?? resultado.PrecioOriginal.Value,
-                resultado.DescuentoUnitario,
-                resultado.Aplicadas,
-                articulo.IdAlicuotaIva,
-                porcentajePorAlicuota[articulo.IdAlicuotaIva],
-                escalones.Count == 0 ? null : escalones));
-        }
+        var articulosDeInstantanea = ArmadorDeInstantanea.ArmarArticulos(
+            articulos, idsLista, resolucion, codigosPorArticulo, porcentajePorAlicuota);
 
         // Mismo scope que ServicioDeVentas.EmitirAsync (db.MediosPago.Where(idsMedioPago.Contains)):
         // el checkout no filtra medios de pago por empresa al validar un pago, así que la
@@ -169,7 +148,7 @@ public class ServicioDeInstantaneaDePos(
         // se ofrece offline.
         var mediosDePago = await db.MediosPago.AsNoTracking()
             .Where(m => m.Activo)
-            .OrderBy(m => m.Orden)
+            .OrderBy(m => m.Orden).ThenBy(m => m.Id)
             .Select(m => new MedioPagoDeInstantanea(m.Id, m.Nombre, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia))
             .ToListAsync(ct);
 
@@ -184,6 +163,6 @@ public class ServicioDeInstantaneaDePos(
         var toleranciaPago = JsonSerializer.Deserialize<decimal>(
             ResolucionDeParametros.Resolver(ParametroConocido.ToleranciaPago.Clave, candidatosTolerancia, puntoVenta.Id));
 
-        return new InstantaneaDePos(momento, puntoVenta.Id, articulosDeInstantanea, mediosDePago, toleranciaPago);
+        return new InstantaneaDePos(momento, puntoVenta.Id, articulosDeInstantanea, clientes, mediosDePago, toleranciaPago);
     }
 }

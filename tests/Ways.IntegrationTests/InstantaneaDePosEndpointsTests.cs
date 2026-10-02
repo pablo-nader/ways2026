@@ -10,6 +10,7 @@ using Ways.Application.Pos;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
@@ -111,7 +112,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
     }
 
     /// <summary>Artículo con precio vigente en la lista default y dos códigos de barra — la forma
-    /// mínima que <see cref="ArticuloDeInstantanea"/> tiene que reflejar completa.</summary>
+    /// mínima que <see cref="ArticuloDeInstantaneaLegada"/> tiene que reflejar completa.</summary>
     private async Task<int> SembrarArticuloConPrecioYBarrasAsync(
         int idTenant, string sufijo, decimal precio, params string[] codigosBarra)
     {
@@ -208,7 +209,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
     /// CUALQUIER resolución de ese artículo (<c>ListasObjetivo</c> vacío = sin restricción, ver
     /// <c>ResolvedorDeOfertas.Coincide</c>). Con <paramref name="cantidadMinima"/> seteada es una
     /// oferta por volumen: NO aplica a la cantidad 1 con la que la instantánea resuelve el
-    /// resultado plano, solo a partir de su umbral (<c>ArticuloDeInstantanea.Escalones</c>).</summary>
+    /// resultado plano, solo a partir de su umbral (<c>ArticuloDeInstantaneaLegada.Escalones</c>).</summary>
     private async Task SembrarOfertaDePorcentajeAsync(
         int idTenant, int idArticulo, decimal porcentaje, decimal? cantidadMinima = null)
     {
@@ -293,7 +294,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
 
-        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
         Assert.Equal(idPuntoVenta, instantanea.IdPuntoVenta);
         Assert.True((DateTimeOffset.UtcNow - instantanea.Momento).Duration() < TimeSpan.FromMinutes(1));
 
@@ -325,7 +326,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         admin.Dispose();
 
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
-        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
 
         Assert.Contains(instantanea.Articulos, a => a.IdArticulo == idConPrecio);
         Assert.DoesNotContain(instantanea.Articulos, a => a.IdArticulo == idSinPrecio);
@@ -343,7 +344,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         admin.Dispose();
 
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
-        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
 
         var articulo = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idArticulo);
         Assert.Equal(200m, articulo.PrecioOriginal);
@@ -384,7 +385,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
 
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
-        var instantanea = JsonSerializer.Deserialize<InstantaneaDePos>(cuerpo, OpcionesJson)!;
+        var instantanea = JsonSerializer.Deserialize<InstantaneaLegadaDePos>(cuerpo, OpcionesJson)!;
 
         var conVolumen = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idConVolumen);
         Assert.Equal(200m, conVolumen.PrecioOriginal);
@@ -423,7 +424,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         admin.Dispose();
 
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
-        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
 
         Assert.Equal(cantidad, instantanea.Articulos.Count);
     }
@@ -441,7 +442,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         admin.Dispose();
 
         var respuesta = await cajero.GetAsync("/api/pos/instantanea");
-        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
 
         var medio = Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == efectivo.Id);
         Assert.Equal(efectivo.Nombre, medio.Nombre);
@@ -452,5 +453,267 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         // ParametroConocido.ToleranciaPago.ValorPorDefecto == "10", sin fila en `parametros` para
         // este tenant nuevo.
         Assert.Equal(10m, instantanea.ToleranciaPago);
+    }
+
+    // --- version=2: precios por lista, clientes, ETag/304 ---
+
+    private const string RutaV2 = "/api/pos/instantanea?version=2";
+
+    private async Task<int> SembrarListaAsync(int idTenant, string nombre, bool activa = true)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var lista = new ListaPrecio
+        {
+            IdTenant = idTenant, Nombre = $"{nombre}-{Guid.NewGuid():N}", EsDefault = false, Modo = ModoLista.Fija,
+            Activo = activa, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+        return lista.Id;
+    }
+
+    private async Task SembrarPrecioAsync(int idTenant, int idArticulo, int idLista, decimal monto)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        db.Precios.Add(new Precio
+        {
+            IdTenant = idTenant, IdArticulo = idArticulo, IdListaPrecio = idLista, Monto = monto,
+            VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<Cliente> SembrarClienteAsync(
+        int idTenant, string nombre, int idLista, bool activo = true, int? idEmpresa = null, decimal saldo = 0m)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idCondicionFiscal = await db.CondicionesFiscales.OrderByDescending(c => c.Id).Select(c => c.Id).FirstAsync();
+        var cliente = new Cliente
+        {
+            IdTenant = idTenant, Numero = 1000 + Random.Shared.Next(1, 100_000), Nombre = nombre, Apellido = $"Ap-{nombre}",
+            RazonSocial = $"RS-{nombre}", TipoDocumento = TipoDocumento.Cuit, NumeroDocumento = "20-30405060-7",
+            IdCondicionFiscal = idCondicionFiscal, IdEmpresa = idEmpresa, IdListaPrecio = idLista,
+            LimiteCredito = 7_500m, CreditoIlimitado = false, Saldo = saldo, Activo = activo,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Clientes.Add(cliente);
+        await db.SaveChangesAsync();
+        return cliente;
+    }
+
+    private async Task<int> SembrarEmpresaAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var empresa = new Empresa { IdTenant = idTenant, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+        return empresa.Id;
+    }
+
+    private async Task<int> IdListaDefaultAsync(int idTenant)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return await db.ListasPrecio.Where(l => l.EsDefault).Select(l => l.Id).FirstAsync();
+    }
+
+    [Fact]
+    public async Task LaVersion2TraeElPrecioEnCadaListaYLosClientesVisiblesConTodosSusCampos()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2TraeElPrecioEnCadaListaYLosClientesVisiblesConTodosSusCampos));
+        var idListaDefault = await IdListaDefaultAsync(idTenant);
+        var idListaMayorista = await SembrarListaAsync(idTenant, "Mayorista");
+        var idArticulo = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "multilista", 250m, "7791112223334");
+        await SembrarPrecioAsync(idTenant, idArticulo, idListaMayorista, 210m);
+        var idSoloMayorista = await SembrarArticuloSinPrecioAsync(idTenant, "solo-mayorista");
+        await SembrarPrecioAsync(idTenant, idSoloMayorista, idListaMayorista, 99m);
+
+        var otraEmpresa = await SembrarEmpresaAsync(idTenant, $"Otra-{Guid.NewGuid():N}");
+        var mayorista = await SembrarClienteAsync(idTenant, "Mayorista", idListaMayorista, saldo: 1_234.5m);
+        var inactivo = await SembrarClienteAsync(idTenant, "Inactivo", idListaMayorista, activo: false);
+        var deOtraEmpresa = await SembrarClienteAsync(idTenant, "OtraEmpresa", idListaMayorista, idEmpresa: otraEmpresa);
+
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "v2");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        var articulo = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idArticulo);
+        Assert.Equal(["7791112223334"], articulo.CodigosBarra);
+        Assert.Equal([idListaDefault, idListaMayorista], articulo.PreciosPorLista.Select(p => p.IdListaPrecio).Order());
+        Assert.Equal(250m, articulo.PreciosPorLista.Single(p => p.IdListaPrecio == idListaDefault).PrecioFinal);
+        var enMayorista = articulo.PreciosPorLista.Single(p => p.IdListaPrecio == idListaMayorista);
+        Assert.Equal(210m, enMayorista.PrecioOriginal);
+        Assert.Equal(210m, enMayorista.PrecioFinal);
+        Assert.Equal(0m, enMayorista.DescuentoUnitario);
+
+        var soloMayorista = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idSoloMayorista);
+        Assert.Equal(idListaMayorista, Assert.Single(soloMayorista.PreciosPorLista).IdListaPrecio);
+
+        var consumidorFinal = Assert.Single(instantanea.Clientes, c => c.EsConsumidorFinal);
+        Assert.Equal(1, consumidorFinal.Numero);
+        Assert.Equal(idListaDefault, consumidorFinal.IdListaPrecio);
+
+        var cliente = Assert.Single(instantanea.Clientes, c => c.IdCliente == mayorista.Id);
+        Assert.Equal(mayorista.Numero, cliente.Numero);
+        Assert.Equal("Mayorista", cliente.Nombre);
+        Assert.Equal("Ap-Mayorista", cliente.Apellido);
+        Assert.Equal("RS-Mayorista", cliente.RazonSocial);
+        Assert.Equal(TipoDocumento.Cuit, cliente.TipoDocumento);
+        Assert.Equal("20-30405060-7", cliente.NumeroDocumento);
+        Assert.Equal(mayorista.IdCondicionFiscal, cliente.IdCondicionFiscal);
+        Assert.Null(cliente.IdEmpresa);
+        Assert.Equal(idListaMayorista, cliente.IdListaPrecio);
+        Assert.False(cliente.EsConsumidorFinal);
+        Assert.Equal(1_234.5m, cliente.Saldo);
+        Assert.Equal(7_500m, cliente.LimiteCredito);
+        Assert.False(cliente.CreditoIlimitado);
+
+        Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == inactivo.Id);
+        Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == deOtraEmpresa.Id);
+    }
+
+    /// <summary>dangling-fk-read-models: la lista del cliente se da de baja estampando
+    /// <c>DeletedAt</c> sobre la fila real (la baja por API la rechazaría por estar en uso). La FK
+    /// sigue apuntando ahí, pero se proyecta <c>null</c> y ningún artículo trae precio en esa
+    /// lista aunque la fila de <c>precios</c> exista.</summary>
+    [Fact]
+    public async Task UnaListaDadaDeBajaSeProyectaComoNulaEnElClienteYNoTraePrecios()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnaListaDadaDeBajaSeProyectaComoNulaEnElClienteYNoTraePrecios));
+        var idListaBaja = await SembrarListaAsync(idTenant, "Baja");
+        var idArticulo = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "baja", 100m);
+        await SembrarPrecioAsync(idTenant, idArticulo, idListaBaja, 80m);
+        var cliente = await SembrarClienteAsync(idTenant, "ConListaBaja", idListaBaja);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
+        {
+            var lista = await db.ListasPrecio.FirstAsync(l => l.Id == idListaBaja);
+            lista.DeletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "baja");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Null(Assert.Single(instantanea.Clientes, c => c.IdCliente == cliente.Id).IdListaPrecio);
+        var articulo = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idArticulo);
+        Assert.DoesNotContain(articulo.PreciosPorLista, p => p.IdListaPrecio == idListaBaja);
+    }
+
+    [Fact]
+    public async Task LaVersion2DevuelveETagY304ConElMismoContenidoY200CuandoCambia()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2DevuelveETagY304ConElMismoContenidoY200CuandoCambia));
+        await SembrarArticuloConPrecioYBarrasAsync(idTenant, "etag", 100m);
+        var cliente = await SembrarClienteAsync(idTenant, "ConSaldo", await IdListaDefaultAsync(idTenant), saldo: 10m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "etag");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var primera = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, primera.StatusCode);
+        var etiqueta = primera.Headers.ETag;
+        Assert.NotNull(etiqueta);
+        Assert.False(etiqueta.IsWeak);
+
+        using (var condicional = new HttpRequestMessage(HttpMethod.Get, RutaV2))
+        {
+            condicional.Headers.IfNoneMatch.Add(etiqueta);
+            var sinCambios = await cajero.SendAsync(condicional);
+            Assert.Equal(HttpStatusCode.NotModified, sinCambios.StatusCode);
+            Assert.Equal(etiqueta, sinCambios.Headers.ETag);
+            Assert.Empty(await sinCambios.Content.ReadAsByteArrayAsync());
+        }
+
+        // El saldo se escribe por SQL directo, sin tocar updated_at — el mismo camino que
+        // EscriturasDeCuentaCorriente. La etiqueta igual tiene que cambiar.
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE clientes SET saldo = 25 WHERE id_cliente = {cliente.Id}");
+        }
+
+        using var vieja = new HttpRequestMessage(HttpMethod.Get, RutaV2);
+        vieja.Headers.IfNoneMatch.Add(etiqueta);
+        var conCambios = await cajero.SendAsync(vieja);
+        Assert.Equal(HttpStatusCode.OK, conCambios.StatusCode);
+        Assert.NotEqual(etiqueta, conCambios.Headers.ETag);
+        var instantanea = (await conCambios.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        Assert.Equal(25m, instantanea.Clientes.Single(c => c.IdCliente == cliente.Id).Saldo);
+    }
+
+    [Fact]
+    public async Task LaInstantaneaDeUnTenantNoTraeArticulosClientesNiListasDeOtro()
+    {
+        var (adminA, idTenantA, idPuntoVentaA) = await AprovisionarComoAdminAsync("InstantaneaAisladaA");
+        var (adminB, idTenantB, _) = await AprovisionarComoAdminAsync("InstantaneaAisladaB");
+        adminB.Dispose();
+        var idArticuloA = await SembrarArticuloConPrecioYBarrasAsync(idTenantA, "aislado-a", 100m);
+        var idArticuloB = await SembrarArticuloConPrecioYBarrasAsync(idTenantB, "aislado-b", 200m);
+        var idListaB = await SembrarListaAsync(idTenantB, "ListaB");
+        var clienteB = await SembrarClienteAsync(idTenantB, "ClienteB", idListaB);
+
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(adminA, idTenantA, idPuntoVentaA, "aislado");
+        using var _cajero = cajero;
+        adminA.Dispose();
+
+        var instantanea = (await (await cajero.GetAsync(RutaV2)).Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+
+        Assert.Contains(instantanea.Articulos, a => a.IdArticulo == idArticuloA);
+        Assert.DoesNotContain(instantanea.Articulos, a => a.IdArticulo == idArticuloB);
+        Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == clienteB.Id);
+        Assert.DoesNotContain(instantanea.Articulos.SelectMany(a => a.PreciosPorLista), p => p.IdListaPrecio == idListaB);
+        Assert.Single(instantanea.Clientes, c => c.EsConsumidorFinal);
+    }
+
+    [Fact]
+    public async Task UnaVersionDesconocidaEsRechazada()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(nameof(UnaVersionDesconocidaEsRechazada));
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "version");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync("/api/pos/instantanea?version=3");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("version_no_soportada", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task LaInstantaneaSeComprimeYOtraRutaNo()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(nameof(LaInstantaneaSeComprimeYOtraRutaNo));
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "gzip");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        using var instantanea = new HttpRequestMessage(HttpMethod.Get, RutaV2);
+        instantanea.Headers.AcceptEncoding.ParseAdd("gzip");
+        var comprimida = await cajero.SendAsync(instantanea);
+        Assert.Equal(HttpStatusCode.OK, comprimida.StatusCode);
+        Assert.Contains("gzip", comprimida.Content.Headers.ContentEncoding);
+
+        using var otra = new HttpRequestMessage(HttpMethod.Get, $"/api/caja/turnos/abierto?idPuntoVenta={idPuntoVenta}");
+        otra.Headers.AcceptEncoding.ParseAdd("gzip");
+        var sinComprimir = await cajero.SendAsync(otra);
+        Assert.True(sinComprimir.IsSuccessStatusCode, $"inesperado: {sinComprimir.StatusCode}");
+        Assert.Empty(sinComprimir.Content.Headers.ContentEncoding);
     }
 }
