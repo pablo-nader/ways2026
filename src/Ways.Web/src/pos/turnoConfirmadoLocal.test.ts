@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, olvidarTurnoConfirmadoLocal } from './turnoConfirmadoLocal'
+import {
+  guardarTurnoConfirmadoLocal,
+  leerTurnoConfirmadoLocal,
+  olvidarTurnoConfirmadoLocal,
+  VIGENCIA_DEL_TURNO_CONFIRMADO_MS,
+} from './turnoConfirmadoLocal'
 import type { TurnoResumen } from '../api/tipos'
 
 function turnoFixture(sobrescribir: Partial<TurnoResumen> = {}): TurnoResumen {
@@ -45,11 +50,21 @@ describe('turnoConfirmadoLocal', () => {
     expect(leerTurnoConfirmadoLocal(7)).toBeNull()
   })
 
+  // Cláusula: `edad <= VIGENCIA_DEL_TURNO_CONFIRMADO_MS`, con una lectura en el borde exacto.
+  it('la confirmación vale hasta la vigencia inclusive y vence un instante después', () => {
+    const confirmado = new Date('2026-10-01T12:00:00.000Z')
+    guardarTurnoConfirmadoLocal(7, turnoFixture(), confirmado)
+
+    expect(leerTurnoConfirmadoLocal(7, new Date(confirmado.getTime() + VIGENCIA_DEL_TURNO_CONFIRMADO_MS))).toEqual(turnoFixture())
+    expect(leerTurnoConfirmadoLocal(7, new Date(confirmado.getTime() + VIGENCIA_DEL_TURNO_CONFIRMADO_MS + 1))).toBeNull()
+  })
+
   it.each([
     ['JSON roto', '{no es json'],
-    ['de otro punto de venta', JSON.stringify(turnoFixture({ idPuntoVenta: 8 }))],
-    ['cerrado', JSON.stringify(turnoFixture({ estado: 'Cerrado' }))],
-    ['sin id', JSON.stringify({ ...turnoFixture(), id: undefined })],
+    ['con el formato anterior (el turno suelto, sin hora de confirmación)', JSON.stringify(turnoFixture())],
+    ['de otro punto de venta', JSON.stringify({ turno: turnoFixture({ idPuntoVenta: 8 }), confirmadoEn: new Date().toISOString() })],
+    ['cerrado', JSON.stringify({ turno: turnoFixture({ estado: 'Cerrado' }), confirmadoEn: new Date().toISOString() })],
+    ['con una hora inválida', JSON.stringify({ turno: turnoFixture(), confirmadoEn: 'ayer' })],
   ])('lo guardado %s se lee como ninguno', (_titulo, crudo) => {
     localStorage.setItem('ways.pos.turnoConfirmado.7', crudo)
     expect(leerTurnoConfirmadoLocal(7)).toBeNull()

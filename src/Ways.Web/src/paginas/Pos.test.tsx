@@ -34,6 +34,7 @@ import { AuthContext } from '../auth/AuthContext'
 import { crearAlmacenIndexedDb, type AlmacenClaveValor } from '../pos/almacenPos'
 import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
+import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
@@ -5835,7 +5836,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     it('arranque sin red: Consumidor Final, medios, tolerancia y turno salen de la copia local y se puede vender', () =>
       comoPosDeEscritorio(async () => {
-        localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture()))
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
         await prepararCopiaLocal()
         apiGetMock.mockImplementation(sinRed)
         apiPostMock.mockImplementation(sinRed)
@@ -5872,12 +5873,25 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull()
       }))
 
+    it('arranque sin red con una confirmación de turno de hace más de 24 h: no la usa', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture(), new Date(Date.now() - 25 * 60 * 60_000))
+        await prepararCopiaLocal()
+        apiGetMock.mockImplementation(sinRed)
+        apiPostMock.mockImplementation(sinRed)
+
+        renderPos()
+
+        expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
+        expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+      }))
+
     it('el turno que confirma el servidor queda guardado, y se borra cuando el servidor dice que no hay', () =>
       comoPosDeEscritorio(async () => {
         await prepararCopiaLocal()
         const { unmount } = renderPos()
         await screen.findByText('Caja abierta')
-        await waitFor(() => expect(JSON.parse(localStorage.getItem(CLAVE_TURNO_LOCAL) ?? 'null')).toEqual(turnoAbiertoFixture()))
+        await waitFor(() => expect(leerTurnoConfirmadoLocal(7)).toEqual(turnoAbiertoFixture()))
         unmount()
 
         mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
@@ -5887,7 +5901,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       }))
 
     it('en la app web nunca se guarda el turno ni se usa la copia local', async () => {
-      localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture()))
+      guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
       await prepararCopiaLocal()
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? sinRed() : undefined))
 
@@ -5899,7 +5913,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     it('con la red lenta usa los medios locales enseguida, el turno local recién al vencer el tope, y la respuesta del servidor los reemplaza', () =>
       comoPosDeEscritorio(async () => {
-        localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture({ id: 900 })))
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture({ id: 900 }))
         await prepararCopiaLocal()
         let resolverMedios: (m: MedioPagoListado[]) => void = () => {}
         let resolverTurno: (t: TurnoResumen | null) => void = () => {}
@@ -5970,7 +5984,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       ['el turno abierto', '/caja/turnos/abierto'],
     ])('un rechazo real del servidor al pedir %s no queda tapado por la copia local', (_titulo, prefijo) =>
       comoPosDeEscritorio(async () => {
-        localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture()))
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
         await prepararCopiaLocal()
         mockearApiGet((ruta) => (ruta.startsWith(prefijo) ? Promise.reject(new ErrorApi(500, 'error', 'El servidor falló.')) : undefined))
 
@@ -5981,7 +5995,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     it('cuando vuelve la red, vuelve a pedir lo que había quedado con la copia local', () =>
       comoPosDeEscritorio(async () => {
-        localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture()))
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
         await prepararCopiaLocal()
         let conRed = false
         mockearApiGet((ruta) => {

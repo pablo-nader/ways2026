@@ -7,8 +7,9 @@ import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { agregarAOutbox, agregarARechazada } from '../pos/outboxOffline'
+import { guardarTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { ROL } from '../api/tipos'
-import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos, UsuarioAutenticado } from '../api/tipos'
+import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
 
 /** `usuarioActual` es mutable a propósito (reset en `beforeEach`) — los tests del override de
  * rendición lo sobrescriben para probar la copia de rol sin remockear el módulo entero (mismo
@@ -188,8 +189,8 @@ describe('CierreDeCaja — flujo feliz', () => {
   })
 
   it('cerrar el turno olvida el turno guardado para vender sin red en ese punto de venta', async () => {
-    const turnoGuardado = { ...turnoConArqueosFixture(), estado: 'Abierto', idEmpleadoCierre: null, fechaCierre: null, arqueos: undefined }
-    localStorage.setItem('ways.pos.turnoConfirmado.7', JSON.stringify(turnoGuardado))
+    const turnoGuardado: TurnoResumen = { ...turnoConArqueosFixture(), estado: 'Abierto', idEmpleadoCierre: null, fechaCierre: null }
+    guardarTurnoConfirmadoLocal(7, turnoGuardado)
     mockearRutasBase()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
