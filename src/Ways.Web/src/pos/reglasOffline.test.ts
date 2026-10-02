@@ -1,49 +1,82 @@
 import { describe, expect, it } from 'vitest'
 import { clienteAdmitidoOffline, medioAdmitidoOffline, pagosAdmitidosOffline } from './reglasOffline'
-import type { ComportamientoMedioPago } from '../api/tipos'
+import type { ClienteDeInstantanea, ComportamientoMedioPago } from '../api/tipos'
 
-describe('medioAdmitidoOffline — efectivo y electrónico sí, cuenta corriente no', () => {
+describe('medioAdmitidoOffline — efectivo y electrónico siempre, cuenta corriente solo para un cliente identificado', () => {
   it.each([
-    ['Efectivo', true],
-    ['Electronico', true],
-    ['CuentaCorriente', false],
-  ] as [ComportamientoMedioPago, boolean][])('%s → %s', (comportamiento, esperado) => {
-    expect(medioAdmitidoOffline(comportamiento)).toBe(esperado)
+    ['Efectivo', true, true],
+    ['Electronico', true, true],
+    ['CuentaCorriente', true, false],
+    ['Efectivo', false, true],
+    ['Electronico', false, true],
+    ['CuentaCorriente', false, true],
+  ] as [ComportamientoMedioPago, boolean, boolean][])('%s con esConsumidorFinal=%s → %s', (comportamiento, esConsumidorFinal, esperado) => {
+    expect(medioAdmitidoOffline(comportamiento, esConsumidorFinal)).toBe(esperado)
   })
 })
 
 describe('pagosAdmitidosOffline', () => {
   it('true con un solo pago en efectivo', () => {
-    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }])).toBe(true)
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }], true)).toBe(true)
   })
 
   it('false con la lista vacía (nunca "todos" vacuamente true)', () => {
-    expect(pagosAdmitidosOffline([])).toBe(false)
+    expect(pagosAdmitidosOffline([], false)).toBe(false)
   })
 
   it('true con un pago dividido entre efectivo y electrónico', () => {
-    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'Electronico' }])).toBe(true)
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'Electronico' }], true)).toBe(true)
   })
 
-  it('false si CUALQUIER pago es de cuenta corriente, aunque los otros estén admitidos', () => {
-    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'CuentaCorriente' }])).toBe(false)
+  it('false si el Consumidor Final mezcla cuenta corriente con un medio admitido', () => {
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'CuentaCorriente' }], true)).toBe(false)
   })
 
-  it('false con un único pago de cuenta corriente', () => {
-    expect(pagosAdmitidosOffline([{ comportamiento: 'CuentaCorriente' }])).toBe(false)
+  it('true si un cliente identificado mezcla cuenta corriente con efectivo', () => {
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'CuentaCorriente' }], false)).toBe(true)
   })
 })
 
-describe('clienteAdmitidoOffline — regla dura "offline solo cotiza al Consumidor Final"', () => {
-  it('true para el Consumidor Final', () => {
-    expect(clienteAdmitidoOffline({ esConsumidorFinal: true })).toBe(true)
+describe('clienteAdmitidoOffline — el Consumidor Final siempre, otro cliente solo si está en la instantánea', () => {
+  const enInstantanea: ClienteDeInstantanea = {
+    idCliente: 42,
+    numero: 42,
+    nombre: 'Cliente con cuenta',
+    apellido: null,
+    razonSocial: null,
+    tipoDocumento: null,
+    numeroDocumento: null,
+    idCondicionFiscal: 1,
+    idEmpresa: null,
+    idListaPrecio: 3,
+    esConsumidorFinal: false,
+    saldo: 0,
+    limiteCredito: 1000,
+    creditoIlimitado: false,
+  }
+  const instantanea = { clientes: [enInstantanea] }
+
+  it('true para el Consumidor Final, aun sin instantánea', () => {
+    expect(clienteAdmitidoOffline({ id: 1, esConsumidorFinal: true }, null)).toBe(true)
   })
 
-  it('false para cualquier otro cliente', () => {
-    expect(clienteAdmitidoOffline({ esConsumidorFinal: false })).toBe(false)
+  it('true para un cliente identificado presente en la instantánea', () => {
+    expect(clienteAdmitidoOffline({ id: 42, esConsumidorFinal: false }, instantanea)).toBe(true)
+  })
+
+  it('false para un cliente identificado que no está en la instantánea', () => {
+    expect(clienteAdmitidoOffline({ id: 43, esConsumidorFinal: false }, instantanea)).toBe(false)
+  })
+
+  it('false para un cliente identificado sin instantánea', () => {
+    expect(clienteAdmitidoOffline({ id: 42, esConsumidorFinal: false }, null)).toBe(false)
+  })
+
+  it('false para un cliente identificado sin id', () => {
+    expect(clienteAdmitidoOffline({ esConsumidorFinal: false }, instantanea)).toBe(false)
   })
 
   it('false sin cliente seleccionado (null)', () => {
-    expect(clienteAdmitidoOffline(null)).toBe(false)
+    expect(clienteAdmitidoOffline(null, instantanea)).toBe(false)
   })
 })

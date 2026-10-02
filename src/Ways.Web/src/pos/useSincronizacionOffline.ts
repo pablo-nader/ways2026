@@ -48,6 +48,8 @@ import { INTERVALO_POR_DEFECTO_MINUTOS, minutosAMilisegundos } from './intervalo
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
+import { clienteDeClientes } from '../api/clientes'
+import { consumoCuentaCorriente, superaLimiteDeCredito } from '../api/pagos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
 
@@ -67,7 +69,7 @@ export const LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS = 3_000
 export const INTERVALO_DE_RENDICION_MS = 2 * 60_000
 
 /** Tamaño de bloque a reponer: el tope del servidor (`CantidadMaxima` = 500). Con la venta local
- * cada cobro del Consumidor Final consume un número del bloque, y cada reposición descarta lo que le
+ * cada cobro local consume un número del bloque, y cada reposición descarta lo que le
  * quedaba al anterior (menos de `UMBRAL_DE_REPOSICION` = 20, ver `reponerBloque`): con 500 ese
  * hueco queda por debajo del 4% de los números reservados. El costo es el hueco de un dispositivo
  * que deja de sincronizar para siempre (hasta 500 números), aceptado igual que el resto de los
@@ -92,7 +94,15 @@ const TIEMPO_LIMITE_DE_RESERVA_MS = 15_000
  * (`ServicioDeRendicionDeCola`). */
 const CODIGOS_DE_BLOQUE_YA_NO_VIVO = new Set(['rendicion_sin_bloque_vivo', 'rendicion_de_bloque_reemplazado'])
 
-export type EncoladoOffline = { ok: true; numeroVisible: string; numero: number } | { ok: false; motivo: MotivoRechazoOffline }
+/** Tope de la consulta del límite de crédito antes de encolar una venta con cuenta corriente: el
+ * cajero la espera con el cliente adelante, así que es más corto que el de las requests de fondo. */
+export const TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS = 3_000
+
+/** `limiteDeCreditoNoValidado` es `true` solo para una venta con cuenta corriente que se encoló sin
+ * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
+export type EncoladoOffline =
+  | { ok: true; numeroVisible: string; numero: number; limiteDeCreditoNoValidado: boolean }
+  | { ok: false; motivo: MotivoRechazoOffline }
 
 export type ParametrosDeSincronizacionOffline = {
   /** `null` sin punto de venta de sesión — el hook queda inerte (sin timers, sin fetches). */
@@ -123,8 +133,8 @@ export type ResultadoDeSincronizacionOffline = {
    * montó el hook: cada incremento prueba que hay red. Cargar la copia local no lo mueve. */
   verificacionesConElServidor: number
   outboxCount: number
-  /** Señal proactiva para la UI (deshabilitar cuenta corriente, avisar que sin conexión solo se
-   * vende al Consumidor Final, buscar clientes solo en la copia local) ANTES de un intento, no solo
+  /** Señal proactiva para la UI (avisar que se vende con la copia local, buscar clientes solo en
+   * esa copia) ANTES de un intento, no solo
    * después de que falle — arranca en `navigator.onLine` (optimista:
    * un `false` de entrada bloquearía la primera venta del día sin necesidad) y se corrige con el
    * resultado real del primer ciclo. Nunca es la fuente de verdad del fallback de escaneo/precio/
@@ -155,12 +165,16 @@ export type ResultadoDeSincronizacionOffline = {
   /** Drena el outbox, repone el bloque si está bajo (`reponerBloque`, solo con la cola vacía) y rinde la cola — sin
    * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
   drenarAhora: () => Promise<EstadoDeColaLocal>
+  /** Con cuenta corriente, antes de tomar un número consulta el cliente al servidor (tope
+   * `TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS`): si el pago supera el límite, o el servidor
+   * rechaza la consulta, no encola nada ni consume número; sin respuesta (red o tope vencido),
+   * encola igual con `limiteDeCreditoNoValidado: true`. Nunca manda la venta online sin número. */
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
     /** Lista del cliente de la venta: cada línea se cobra con su precio en esta lista. */
     idListaPrecio: number
-    pagos: readonly { comportamiento: ComportamientoMedioPago }[]
+    pagos: readonly { comportamiento: ComportamientoMedioPago; importe: number }[]
     /** judgment-day ronda 1 (WARNING): la instantánea a usar para resolver precio/descuento de
      * cada línea — inyectable a propósito para que `Pos.tsx` pueda pasar la MISMA instantánea que
      * ya se usó para la vista previa que el cajero tiene en pantalla (congelada contra el refresco
@@ -675,11 +689,24 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activo, idPuntoVenta, intervaloMs])
 
+  /** Consulta el cliente al servidor para juzgar el límite con su saldo real. `'no_validado'` es
+   * la falta de respuesta (red caída, tope vencido o un 5xx): la venta se registra igual. Un 4xx es
+   * una respuesta del servidor y bloquea. */
+  async function verificarLimiteDeCredito(idCliente: number, consumoCc: number): Promise<'validado' | 'no_validado' | MotivoRechazoOffline> {
+    try {
+      const cliente = await conTiempoLimite(() => clienteDeClientes.obtener(idCliente), TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS)
+      return superaLimiteDeCredito(cliente, consumoCc) ? 'limite_credito_excedido' : 'validado'
+    } catch (e) {
+      if (e instanceof ErrorApi && e.estado < 500) return 'cuenta_corriente_no_verificada'
+      return 'no_validado'
+    }
+  }
+
   async function encolarVentaOffline(paramsVenta: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
     idListaPrecio: number
-    pagos: readonly { comportamiento: ComportamientoMedioPago }[]
+    pagos: readonly { comportamiento: ComportamientoMedioPago; importe: number }[]
     instantaneaCongelada?: InstantaneaDePos | null
   }): Promise<EncoladoOffline> {
     // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
@@ -695,15 +722,25 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual, paramsVenta.idListaPrecio) : null
     const admisibilidad = (hayNumeroDisponible: boolean) =>
       admisibilidadDeVentaOffline({
-        esConsumidorFinal: paramsVenta.esConsumidorFinal,
+        cliente: { id: paramsVenta.solicitudBase.idCliente, esConsumidorFinal: paramsVenta.esConsumidorFinal },
+        instantanea: instantaneaActual,
         pagos: paramsVenta.pagos,
-        hayInstantanea: instantaneaActual !== null,
         todasLasLineasConPrecio: todasConPrecio,
         hayNumeroDisponible,
       })
 
-    // Único caso en que el encolado espera a la red: el bloque agotado en una venta que,
-    // salvo por eso, se admitiría. Espera como máximo `TIEMPO_LIMITE_DE_RED_MS` (la reserva sigue
+    // La consulta del límite corre antes de tomar un número: un rechazo no consume ninguno.
+    const consumoCc = consumoCuentaCorriente([...paramsVenta.pagos])
+    let limiteDeCreditoNoValidado = false
+    if (consumoCc > 0 && admisibilidad(true) === null) {
+      const idCliente = paramsVenta.solicitudBase.idCliente
+      const verificacion = idCliente === undefined ? 'cuenta_corriente_no_verificada' : await verificarLimiteDeCredito(idCliente, consumoCc)
+      if (verificacion !== 'validado' && verificacion !== 'no_validado') return { ok: false, motivo: verificacion }
+      limiteDeCreditoNoValidado = verificacion === 'no_validado'
+    }
+
+    // Además de la consulta del límite de arriba, el encolado espera a la red con el bloque
+    // agotado en una venta que, salvo por eso, se admitiría. Espera como máximo `TIEMPO_LIMITE_DE_RED_MS` (la reserva sigue
     // en segundo plano); si no llega, la venta se rechaza con `sin_numeracion` y `Pos.tsx` cobra
     // por el camino online.
     // Defensa ante cualquier carrera (una reposición pedida para otro punto de venta que aterriza
@@ -732,6 +769,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         ...paramsVenta.solicitudBase,
         lineas: lineasEnriquecidas ?? lineasBase,
         numeroPreasignado: tomado.numero,
+        ...(consumoCc > 0 ? { limiteDeCreditoNoValidado } : {}),
       }
 
       // judgment-day ronda 1 (BLOCKER): NUNCA se asume que la venta quedó guardada solo porque
@@ -755,7 +793,12 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       }
       setOutboxCount(nuevoOutbox.length)
 
-      return { ok: true, numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, tomado.numero), numero: tomado.numero }
+      return {
+        ok: true,
+        numeroVisible: construirNumeroVisible(paramsVenta.solicitudBase.idPuntoVenta, tomado.numero),
+        numero: tomado.numero,
+        limiteDeCreditoNoValidado,
+      }
     })
   }
 

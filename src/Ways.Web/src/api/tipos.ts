@@ -1398,6 +1398,10 @@ export type SolicitudDeVenta = {
   observaciones: string | null
   idPresupuestoOrigen?: number | null
   numeroPreasignado?: number
+  /** Solo en una venta local con cuenta corriente: `true` si el dispositivo no pudo consultar el
+   * límite de crédito al servidor y la registró igual; `false` si el servidor confirmó que cabía.
+   * El servidor lo rechaza sin `numeroPreasignado`. */
+  limiteDeCreditoNoValidado?: boolean
 }
 
 // --- POS: reserva de numeración offline (stage-pos-reserva-de-numeracion) ---

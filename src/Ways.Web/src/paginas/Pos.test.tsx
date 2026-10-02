@@ -5211,8 +5211,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     /** Otro cliente con la lista 2: el artículo vale 100 en la lista 1 (Consumidor Final) y 70 en la
      * 2. El mock de /ofertas/resolver devuelve 100, así que $ 70 solo podría salir de una vista previa
-     * local con la lista del cliente. */
-    async function elegirOtroClienteConLista(idListaPrecio: number) {
+     * local con la lista del cliente. `enInstantanea` decide si Juan Pérez viaja en la copia local. */
+    async function elegirOtroClienteConLista(idListaPrecio: number, enInstantanea = false) {
       const articulo: ArticuloDeInstantanea = {
         ...articuloDeInstantaneaFixture(),
         preciosPorLista: [
@@ -5220,7 +5220,13 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
           { idListaPrecio: 2, precioOriginal: 70, precioFinal: 70, descuentoUnitario: 0, aplicadas: [] },
         ],
       }
-      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articulo] }) })
+      const clientes = [
+        clienteDeInstantaneaFixture(),
+        ...(enInstantanea
+          ? [clienteDeInstantaneaFixture({ idCliente: otroCliente.id, numero: otroCliente.numero, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false, idListaPrecio })]
+          : []),
+      ]
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articulo], clientes }) })
       mockearApiGet((ruta) =>
         ruta.startsWith('/clientes?busqueda=')
           ? Promise.resolve<PaginaDe<ClienteListado>>({ items: [{ ...otroCliente, idListaPrecio }], total: 1, pagina: 1, tamanio: 25 })
@@ -5236,15 +5242,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Coca Cola 1L')
     }
 
-    // Su cobro va online y el servidor vuelve a resolver el precio: una vista previa local podría
-    // mostrar un total distinto del cobrado.
-    it('para otro cliente la vista previa va online aunque la línea esté en la instantánea', async () => {
+    // Un cliente que no está en la copia local cobra online y el servidor vuelve a resolver el
+    // precio: una vista previa local podría mostrar un total distinto del cobrado.
+    it('para un cliente que no está en la instantánea la vista previa va online aunque la línea sí esté', async () => {
       await elegirOtroClienteConLista(2)
 
       await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
       expect(llamadasPost('/ofertas/resolver')[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 2 })] })
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
       expect(screen.queryByText('$ 70,00', { selector: 'strong' })).not.toBeInTheDocument()
+    })
+
+    it('para un cliente que está en la instantánea la vista previa sale de su lista, sin llamar a /ofertas/resolver', async () => {
+      await elegirOtroClienteConLista(2, true)
+
+      await waitFor(() => expect(screen.getByText('$ 70,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(llamadasPost('/ofertas/resolver')).toEqual([])
     })
 
     it('una instantánea de OTRO punto de venta nunca se usa: escaneo y vista previa van online', async () => {
@@ -5285,7 +5298,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Sin conexión: solo se puede vender al Consumidor Final.')
+      await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
     }
 
     it('el buscador de clientes sigue disponible y busca en la copia local, sin acentos ni mayúsculas', async () => {
@@ -5353,7 +5366,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
     })
 
-    it('el selector de medio de pago ofrece Efectivo y Tarjeta — nunca Cuenta corriente', async () => {
+    it('con el Consumidor Final, el selector de medio de pago ofrece Efectivo y Tarjeta — nunca Cuenta corriente', async () => {
       await llegarConEnLineaFalse()
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -5361,6 +5374,25 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
       expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre, medioTarjeta.nombre])
+    })
+
+    it('con un cliente identificado de la copia local, el selector también ofrece Cuenta corriente', async () => {
+      await llegarConEnLineaFalse(
+        instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, limiteCredito: 1000, creditoIlimitado: false }),
+          ],
+        }),
+      )
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gomez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: '#30 — José Gómez' }))
+
+      // La opción de cuenta corriente es la señal de que el cliente elegido ya llegó al filtro.
+      await within(screen.getByLabelText('Medio de pago')).findByRole('option', { name: medioCuentaCorriente.nombre })
+      const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
+      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre, medioTarjeta.nombre, medioCuentaCorriente.nombre])
     })
 
     it('muestra el aviso de sin conexión con la vejez de la última verificación', async () => {
@@ -5438,7 +5470,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
     })
 
-    it('rechaza el checkout offline de un cliente que no es Consumidor Final, sin encolar nada', async () => {
+    it('rechaza el checkout offline de un cliente que no está en la copia local, sin encolar nada', async () => {
       await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
       mockearApiGet()
 
@@ -5466,8 +5498,134 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-      expect(await screen.findByText(/Sin conexión solo se puede vender al Consumidor Final/)).toBeInTheDocument()
+      expect(
+        await screen.findByText('Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.'),
+      ).toBeInTheDocument()
       expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
+    })
+  })
+
+  /**
+   * Venta local a un cliente identificado (José Gómez, #30, lista 2) con cuenta corriente. El
+   * artículo vale 100 en la lista 1 y 80 en la 2, y `/ofertas/resolver` devuelve 100: $ 80 solo
+   * sale de la vista previa local con la lista del cliente. `/clientes/30` contesta dos veces: al
+   * elegir el cliente (dato fresco, con `saldoAlElegir`) y en la consulta del límite antes de
+   * encolar, que resuelve `consulta`.
+   */
+  describe('checkout local de un cliente identificado con cuenta corriente', () => {
+    const joseGomez = clienteFixture({
+      id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false,
+      idListaPrecio: 2, limiteCredito: 1000, creditoIlimitado: false, saldo: 0,
+    })
+
+    async function armarVentaEnCuentaCorriente(params: { saldoEnInstantanea: number; saldoAlElegir?: number; consulta: () => Promise<unknown> }) {
+      const articulo: ArticuloDeInstantanea = {
+        ...articuloDeInstantaneaFixture(),
+        preciosPorLista: [
+          { idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+          { idListaPrecio: 2, precioOriginal: 80, precioFinal: 80, descuentoUnitario: 0, aplicadas: [] },
+        ],
+      }
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          articulos: [articulo],
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({
+              idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false,
+              idListaPrecio: 2, limiteCredito: 1000, creditoIlimitado: false, saldo: params.saldoEnInstantanea,
+            }),
+          ],
+        }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+      let consultasDelCliente = 0
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
+        if (ruta === '/clientes/30') {
+          consultasDelCliente += 1
+          return consultasDelCliente === 1 ? Promise.resolve({ ...joseGomez, saldo: params.saldoAlElegir ?? 0 }) : params.consulta()
+        }
+        return undefined
+      })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gomez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: '#30 — José Gómez' }))
+      await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 80,00', { selector: 'strong' })).toBeInTheDocument())
+
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioCuentaCorriente.nombre)
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioCuentaCorriente.nombre} (fila 1)`), '80')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    }
+
+    it('con el servidor confirmando que cabe, encola con los precios de su lista y limiteDeCreditoNoValidado en false', async () => {
+      await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: () => Promise.resolve({ ...joseGomez, saldo: 100 }) })
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(screen.queryByText(/No se pudo validar el límite de crédito/)).not.toBeInTheDocument()
+      const [venta] = await leerOutbox(crearAlmacenIndexedDb())
+      expect(venta.solicitud).toMatchObject({ idCliente: 30, numeroPreasignado: 500, limiteDeCreditoNoValidado: false })
+      expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 80 })
+      expect(llamadasGet('/clientes/30')).toHaveLength(2)
+      expect(llamadasPost('/ofertas/resolver')).toEqual([])
+    })
+
+    it('con el servidor diciendo que supera el límite, informa el rechazo y no encola ni cobra online', async () => {
+      await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: () => Promise.resolve({ ...joseGomez, saldo: 950 }) })
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('El pago supera el límite de crédito del cliente.')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument()
+      await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
+      expect(llamadasPost('/ventas')).toEqual([])
+    })
+
+    it('sin respuesta del servidor, la registra igual y avisa que el límite no se validó, con la pista de la copia local', async () => {
+      // Tanto la copia local como el dato que trajo la pantalla al elegir el cliente dicen que el
+      // pago supera el límite: con la vista previa local ninguno de los dos bloquea "Cobrar"
+      // (`armarVentaEnCuentaCorriente` espera a que quede habilitado).
+      await armarVentaEnCuentaCorriente({
+        saldoEnInstantanea: 950,
+        saldoAlElegir: 950,
+        consulta: () => Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))),
+      })
+      expect(screen.getByText(/este pago supera el límite de crédito del cliente\. Se consulta al servidor al cobrar\./)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(
+        screen.getByText(/^No se pudo validar el límite de crédito con el servidor: la venta se registró igual\. Según los datos de hace .+, el cliente supera su límite\.$/),
+      ).toBeInTheDocument()
+      const [venta] = await leerOutbox(crearAlmacenIndexedDb())
+      expect(venta.solicitud.limiteDeCreditoNoValidado).toBe(true)
+    })
+
+    it('sin respuesta del servidor y con la copia local dentro del límite, avisa sin la pista', async () => {
+      await armarVentaEnCuentaCorriente({
+        saldoEnInstantanea: 0,
+        consulta: () => Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))),
+      })
+      expect(screen.queryByText(/Se consulta al servidor al cobrar/)).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(
+        await screen.findByText('No se pudo validar el límite de crédito con el servidor: la venta se registró igual.'),
+      ).toBeInTheDocument()
     })
   })
 

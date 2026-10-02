@@ -15,12 +15,14 @@ import {
   numerosDisponibles,
   quitarDeOutbox,
   quitarDeRechazada,
+  rechazoOfflineEsDefinitivo,
   tomarProximoNumero,
   UMBRAL_DE_REPOSICION,
   type BloqueDeNumeracionLocal,
   type VentaEnCola,
 } from './outboxOffline'
 import type { AlmacenClaveValor } from './almacenPos'
+import type { InstantaneaDePos } from '../api/tipos'
 
 /** Fake en memoria del almacén — mismo contrato que el real (`AlmacenClaveValor`), sin
  * IndexedDB: permite testear la lógica de negocio pura de este módulo sin acoplarla a
@@ -108,32 +110,72 @@ describe('construirNumeroVisible — espejo de NumeroDeComprobante.Formatear', (
 })
 
 describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden estable', () => {
+  const instantanea: InstantaneaDePos = {
+    momento: '2026-09-20T10:00:00.000Z',
+    idPuntoVenta: 7,
+    articulos: [],
+    clientes: [
+      {
+        idCliente: 42,
+        numero: 42,
+        nombre: 'Cliente con cuenta',
+        apellido: null,
+        razonSocial: null,
+        tipoDocumento: null,
+        numeroDocumento: null,
+        idCondicionFiscal: 1,
+        idListaPrecio: 3,
+        limiteCredito: 1000,
+        creditoIlimitado: false,
+        saldo: 0,
+        idEmpresa: null,
+        esConsumidorFinal: false,
+      },
+    ],
+    mediosDePago: [],
+    toleranciaPago: 0,
+  }
   const admitida = {
-    esConsumidorFinal: true,
+    cliente: { id: 1, esConsumidorFinal: true },
+    instantanea,
     pagos: [{ comportamiento: 'Efectivo' as const }],
-    hayInstantanea: true,
     todasLasLineasConPrecio: true,
     hayNumeroDisponible: true,
   }
+  const clienteIdentificado = { id: 42, esConsumidorFinal: false }
 
   it('null (admitida) cuando las cinco condiciones se cumplen', () => {
     expect(admisibilidadDeVentaOffline(admitida)).toBeNull()
   })
 
-  it('cliente_no_admitido cuando el cliente no es CF, aunque el resto esté OK', () => {
-    expect(admisibilidadDeVentaOffline({ ...admitida, esConsumidorFinal: false })).toBe('cliente_no_admitido')
+  it('un cliente identificado presente en la instantánea queda admitido', () => {
+    expect(admisibilidadDeVentaOffline({ ...admitida, cliente: clienteIdentificado })).toBeNull()
   })
 
-  it('medio_no_admitido cuando algún pago es de cuenta corriente', () => {
+  it('cliente_no_admitido para un cliente identificado que no está en la instantánea, aunque el resto esté OK', () => {
+    expect(admisibilidadDeVentaOffline({ ...admitida, cliente: { id: 43, esConsumidorFinal: false } })).toBe('cliente_no_admitido')
+  })
+
+  it('cliente_no_admitido para un cliente identificado sin instantánea (nunca sin_instantanea primero)', () => {
+    expect(admisibilidadDeVentaOffline({ ...admitida, cliente: clienteIdentificado, instantanea: null })).toBe('cliente_no_admitido')
+  })
+
+  it('medio_no_admitido cuando el Consumidor Final paga con cuenta corriente', () => {
     expect(admisibilidadDeVentaOffline({ ...admitida, pagos: [{ comportamiento: 'CuentaCorriente' }] })).toBe('medio_no_admitido')
+  })
+
+  it('la cuenta corriente de un cliente identificado queda admitida (el límite lo consulta el encolado)', () => {
+    expect(
+      admisibilidadDeVentaOffline({ ...admitida, cliente: clienteIdentificado, pagos: [{ comportamiento: 'Efectivo' }, { comportamiento: 'CuentaCorriente' }] }),
+    ).toBeNull()
   })
 
   it('un pago electrónico (tarjeta, transferencia) queda admitido', () => {
     expect(admisibilidadDeVentaOffline({ ...admitida, pagos: [{ comportamiento: 'Electronico' }] })).toBeNull()
   })
 
-  it('sin_instantanea sin instantánea local', () => {
-    expect(admisibilidadDeVentaOffline({ ...admitida, hayInstantanea: false })).toBe('sin_instantanea')
+  it('sin_instantanea sin instantánea local (Consumidor Final)', () => {
+    expect(admisibilidadDeVentaOffline({ ...admitida, instantanea: null })).toBe('sin_instantanea')
   })
 
   it('linea_sin_precio con alguna línea sin precio en la instantánea', () => {
@@ -144,9 +186,9 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
     expect(admisibilidadDeVentaOffline({ ...admitida, hayNumeroDisponible: false })).toBe('sin_numeracion')
   })
 
-  it('orden estable: cliente_no_admitido gana sobre medio_no_admitido cuando ambos fallan (regla D2/E1, mismo criterio que validarPagosLocal)', () => {
+  it('orden estable: cliente_no_admitido gana sobre medio_no_admitido cuando ambos fallan', () => {
     expect(
-      admisibilidadDeVentaOffline({ ...admitida, esConsumidorFinal: false, pagos: [{ comportamiento: 'CuentaCorriente' }] }),
+      admisibilidadDeVentaOffline({ ...admitida, cliente: { id: 43, esConsumidorFinal: false }, pagos: [] }),
     ).toBe('cliente_no_admitido')
   })
 
@@ -158,9 +200,19 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
       'linea_sin_precio',
       'sin_numeracion',
       'error_al_guardar',
+      'limite_credito_excedido',
+      'cuenta_corriente_no_verificada',
     ] as const
     for (const motivo of motivos) {
       expect(mensajeDeRechazoOffline(motivo).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('rechazoOfflineEsDefinitivo solo para los rechazos que el servidor ya contestó', () => {
+    expect(rechazoOfflineEsDefinitivo('limite_credito_excedido')).toBe(true)
+    expect(rechazoOfflineEsDefinitivo('cuenta_corriente_no_verificada')).toBe(true)
+    for (const motivo of ['cliente_no_admitido', 'medio_no_admitido', 'sin_instantanea', 'linea_sin_precio', 'sin_numeracion', 'error_al_guardar'] as const) {
+      expect(rechazoOfflineEsDefinitivo(motivo)).toBe(false)
     }
   })
 })

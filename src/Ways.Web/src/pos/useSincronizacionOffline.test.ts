@@ -4,6 +4,7 @@ import {
   INTERVALO_DE_RENDICION_MS,
   LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS,
   LIMITE_DE_SINCRONIZACION_INICIAL_MS,
+  TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS,
   useSincronizacionOffline,
 } from './useSincronizacionOffline'
 import {
@@ -21,12 +22,17 @@ import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, 
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { previaDeLinea } from '../api/ventas'
-import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
+import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
 
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
 const obtenerInstantaneaMock = vi.fn()
 const rendirColaMock = vi.fn()
+const obtenerClienteMock = vi.fn()
+
+vi.mock('../api/clientes', () => ({
+  clienteDeClientes: { obtener: (...args: unknown[]) => obtenerClienteMock(...args) },
+}))
 
 // Solo `clienteDeVentas` (el único HTTP que este hook toca) se reemplaza; el resto del módulo
 // queda REAL para que el test de acuerdo vista-previa/payload pueda usar la `previaDeLinea` de
@@ -158,6 +164,7 @@ beforeEach(() => {
   reservarNumeracionMock.mockReset()
   obtenerInstantaneaMock.mockReset()
   rendirColaMock.mockReset()
+  obtenerClienteMock.mockReset()
   // default: la rendición llega bien (204) — cada test que necesite el fallo la sobrescribe.
   rendirColaMock.mockResolvedValue(undefined)
   // default: sin servidor (ErrorDeRed) — cada test que necesite señal la sobrescribe.
@@ -596,7 +603,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
       esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-      pagos: [{ comportamiento: 'Efectivo' }],
+      pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'sin_instantanea' })
   })
@@ -615,7 +622,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 2, cantidad: 1, codigoBarra: null, idLote: null }] }),
       esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-      pagos: [{ comportamiento: 'Efectivo' }],
+      pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'linea_sin_precio' })
   })
@@ -640,7 +647,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
         instantaneaCongelada: instantaneaVieja,
       })
     })
@@ -651,7 +658,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 100 })
   })
 
-  it('rechaza cliente no-CF, aunque haya instantánea y números disponibles', async () => {
+  it('rechaza un cliente identificado que no está en la instantánea, aunque haya números disponibles', async () => {
     const almacen = almacenFake()
     await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())
@@ -661,12 +668,12 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
       esConsumidorFinal: false, idListaPrecio: LISTA_CF,
-      pagos: [{ comportamiento: 'Efectivo' }],
+      pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
   })
 
-  it('rechaza un pago de cuenta corriente, aunque haya instantánea y números disponibles', async () => {
+  it('rechaza la cuenta corriente del Consumidor Final, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
     await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())
@@ -676,9 +683,10 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
       esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-      pagos: [{ comportamiento: 'CuentaCorriente' }],
+      pagos: [{ comportamiento: 'CuentaCorriente', importe: 100 }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'medio_no_admitido' })
+    expect(obtenerClienteMock).not.toHaveBeenCalled()
     // Rechazada: no debe haber tocado el bloque ni el outbox.
     await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture())
     await expect(leerOutbox(almacen)).resolves.toEqual([])
@@ -693,7 +701,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
       esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-      pagos: [{ comportamiento: 'Efectivo' }],
+      pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'sin_numeracion' })
   })
@@ -710,11 +718,11 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150' })
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture({ proximo: 151, hasta: 200 }))
     const outbox = await leerOutbox(almacen)
     expect(outbox).toHaveLength(1)
@@ -745,8 +753,8 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     let enOtraLista
     let sinPrecio
     await act(async () => {
-      enOtraLista = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 8, pagos: [{ comportamiento: 'Efectivo' }] })
-      sinPrecio = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 99, pagos: [{ comportamiento: 'Efectivo' }] })
+      enOtraLista = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 8, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
+      sinPrecio = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 99, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
     })
 
     expect(enOtraLista).toMatchObject({ ok: true })
@@ -772,7 +780,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 3, codigoBarra: '7790001234567', idLote: null }] }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -809,7 +817,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
           ],
         }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -837,7 +845,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 6, codigoBarra: '7790001234567', idLote: null }] }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -859,7 +867,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }] }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -888,7 +896,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad, codigoBarra: '7790001234567', idLote: null }] }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -915,7 +923,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
@@ -934,10 +942,10 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     let primero
     let segundo
     await act(async () => {
-      primero = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
+      primero = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
     })
     await act(async () => {
-      segundo = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
+      segundo = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
     })
 
     expect(primero).toMatchObject({ ok: true, numero: 150 })
@@ -1274,11 +1282,11 @@ describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de u
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
       })
     })
 
-    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150' })
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
     expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([149, 150])
   })
 
@@ -1352,7 +1360,7 @@ const BLOQUE_BAJO = bloqueFixture({ desde: 100, proximo: 195, hasta: 200 })
 async function encolarUna(result: { current: ReturnType<typeof useSincronizacionOffline> }) {
   let resultado: Awaited<ReturnType<ReturnType<typeof useSincronizacionOffline>['encolarVentaOffline']>> | undefined
   await act(async () => {
-    resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
+    resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
   })
   return resultado
 }
@@ -1381,7 +1389,7 @@ describe('useSincronizacionOffline — reposición del bloque en segundo plano',
     expect(reservarNumeracionMock).toHaveBeenCalledTimes(1)
     await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
     const r = await encolarUna(result)
-    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300' })
+    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
   })
 
   it('rinde el bloque vivo con pendientes = 0 ANTES de reservar (su rendición queda congelada al abandonarlo)', async () => {
@@ -1456,7 +1464,7 @@ describe('useSincronizacionOffline — reposición del bloque en segundo plano',
     await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
 
     const r = await encolarUna(result)
-    expect(r).toEqual({ ok: true, numero: 195, numeroVisible: '0007-00000195' })
+    expect(r).toEqual({ ok: true, numero: 195, numeroVisible: '0007-00000195', limiteDeCreditoNoValidado: false })
   })
 })
 
@@ -1495,7 +1503,7 @@ describe('useSincronizacionOffline — topes de red', () => {
     reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
     const r = await encolarUna(result)
 
-    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300' })
+    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300', limiteDeCreditoNoValidado: false })
   })
 
   it('con los dos bloques agotados y la reserva colgada, el encolado espera solo hasta el tope y rechaza sin_numeracion', async () => {
@@ -1508,7 +1516,7 @@ describe('useSincronizacionOffline — topes de red', () => {
       reservarNumeracionMock.mockReturnValue(new Promise(() => {}))
       let resultado: unknown
       const encolado = result.current
-        .encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
+        .encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
         .then((r) => {
           resultado = r
         })
@@ -1535,7 +1543,7 @@ describe('useSincronizacionOffline — topes de red', () => {
 
     let resultado
     await act(async () => {
-      resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: false, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
+      resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: false, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo', importe: 100 }] })
     })
 
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
@@ -1689,7 +1697,7 @@ describe('useSincronizacionOffline — revisión: nunca numerar con un bloque de
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ idPuntoVenta: 8 }),
         esConsumidorFinal: true, idListaPrecio: LISTA_CF,
-        pagos: [{ comportamiento: 'Efectivo' }],
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
         instantaneaCongelada: instantaneaFixture(),
       })
     })
@@ -1745,5 +1753,178 @@ describe('useSincronizacionOffline — sesión terminada con una sincronización
     })
 
     await expect(leerInstantaneaLocal(almacen)).resolves.toBeNull()
+  })
+})
+
+describe('useSincronizacionOffline — venta local a un cliente identificado', () => {
+  const ID_CLIENTE = 42
+  const LISTA_CLIENTE = 3
+
+  function clienteDeInstantanea(sobrescribir: Partial<ClienteDeInstantanea> = {}): ClienteDeInstantanea {
+    return {
+      idCliente: ID_CLIENTE,
+      numero: 42,
+      nombre: 'Cliente con cuenta',
+      apellido: null,
+      razonSocial: null,
+      tipoDocumento: null,
+      numeroDocumento: null,
+      idCondicionFiscal: 1,
+      idEmpresa: null,
+      idListaPrecio: LISTA_CLIENTE,
+      esConsumidorFinal: false,
+      saldo: 0,
+      limiteCredito: 1000,
+      creditoIlimitado: false,
+      ...sobrescribir,
+    }
+  }
+
+  /** Un artículo con precio distinto en la lista del Consumidor Final y en la del cliente: el
+   * payload delata cuál de las dos se usó. */
+  const articuloEnDosListas: ArticuloDeInstantanea = {
+    ...articuloFixture(),
+    preciosPorLista: [
+      { idListaPrecio: LISTA_CF, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+      { idListaPrecio: LISTA_CLIENTE, precioOriginal: 250, precioFinal: 230, descuentoUnitario: 20, aplicadas: [] },
+    ],
+  }
+
+  async function montar(cliente: ClienteDeInstantanea = clienteDeInstantanea()) {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloEnDosListas], clientes: [cliente] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+    return { almacen, result }
+  }
+
+  function encolar(
+    result: { current: ReturnType<typeof useSincronizacionOffline> },
+    pagos: { comportamiento: 'Efectivo' | 'Electronico' | 'CuentaCorriente'; importe: number }[],
+  ) {
+    return result.current.encolarVentaOffline({
+      solicitudBase: solicitudFixture({ idCliente: ID_CLIENTE }),
+      esConsumidorFinal: false,
+      idListaPrecio: LISTA_CLIENTE,
+      pagos,
+    })
+  }
+
+  it('encola con los precios de la lista del cliente, sin consultar el límite si no paga con cuenta corriente', async () => {
+    const { almacen, result } = await montar()
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'Efectivo', importe: 230 }])
+    })
+
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    const [venta] = await leerOutbox(almacen)
+    expect(venta.solicitud.idCliente).toBe(ID_CLIENTE)
+    expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 250, descuentoUnitario: 20 })
+    expect(venta.solicitud).not.toHaveProperty('limiteDeCreditoNoValidado')
+    expect(obtenerClienteMock).not.toHaveBeenCalled()
+    expect(emitirMock).not.toHaveBeenCalled()
+  })
+
+  it('con cuenta corriente y el servidor diciendo que supera el límite, no encola nada ni consume número', async () => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockResolvedValue({ saldo: 900, limiteCredito: 1000, creditoIlimitado: false })
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toEqual({ ok: false, motivo: 'limite_credito_excedido' })
+    expect(obtenerClienteMock).toHaveBeenCalledWith(ID_CLIENTE)
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+    await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture({ proximo: 150, hasta: 200 }))
+    expect(emitirMock).not.toHaveBeenCalled()
+  })
+
+  it('con cuenta corriente y el servidor confirmando que cabe, encola con limiteDeCreditoNoValidado en false aunque la instantánea diga que supera', async () => {
+    // La instantánea dice saldo 5000 (supera); el servidor, saldo 100 (cabe): manda el servidor.
+    const { almacen, result } = await montar(clienteDeInstantanea({ saldo: 5000 }))
+    obtenerClienteMock.mockResolvedValue({ saldo: 100, limiteCredito: 1000, creditoIlimitado: false })
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: false })
+    const [venta] = await leerOutbox(almacen)
+    expect(venta.solicitud.limiteDeCreditoNoValidado).toBe(false)
+    expect(venta.solicitud.numeroPreasignado).toBe(150)
+  })
+
+  it('con cuenta corriente y sin red para consultar, encola igual con limiteDeCreditoNoValidado en true', async () => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150', limiteDeCreditoNoValidado: true })
+    const [venta] = await leerOutbox(almacen)
+    expect(venta.solicitud.limiteDeCreditoNoValidado).toBe(true)
+    expect(emitirMock).not.toHaveBeenCalled()
+  })
+
+  it('con cuenta corriente y un 5xx del servidor, encola igual con limiteDeCreditoNoValidado en true', async () => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockRejectedValue(new ErrorApi(503, 'servicio_no_disponible', 'No disponible'))
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: true })
+    expect((await leerOutbox(almacen))[0].solicitud.limiteDeCreditoNoValidado).toBe(true)
+  })
+
+  it('con cuenta corriente y un 4xx del servidor, no encola nada (el servidor contestó)', async () => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el cliente'))
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toEqual({ ok: false, motivo: 'cuenta_corriente_no_verificada' })
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+    await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture({ proximo: 150, hasta: 200 }))
+  })
+
+  it('con cuenta corriente y un servidor que no contesta, encola con limiteDeCreditoNoValidado en true al vencer el tope, nunca antes', async () => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockReturnValue(new Promise(() => {}))
+
+    vi.useFakeTimers()
+    try {
+      let resultado: unknown = 'pendiente'
+      let promesa!: Promise<unknown>
+      await act(async () => {
+        promesa = encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }]).then((r) => (resultado = r))
+        await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS - 1)
+      })
+      expect(resultado).toBe('pendiente')
+      expect(await leerOutbox(almacen)).toEqual([])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+        await promesa
+      })
+      expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: true })
+      expect((await leerOutbox(almacen))[0].solicitud.limiteDeCreditoNoValidado).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
