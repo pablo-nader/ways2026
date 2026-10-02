@@ -36,8 +36,10 @@ public class ValidadorDePagosTests
         bool esConsumidorFinal = false,
         decimal saldo = 0m,
         decimal limiteCredito = 0m,
-        bool creditoIlimitado = false) =>
-        ValidadorDePagos.Validar(total, pagos, tolerancia, esConsumidorFinal, saldo, limiteCredito, creditoIlimitado);
+        bool creditoIlimitado = false,
+        bool exigirLimiteDeCredito = true) =>
+        ValidadorDePagos.Validar(
+            total, pagos, tolerancia, esConsumidorFinal, saldo, limiteCredito, creditoIlimitado, exigirLimiteDeCredito);
 
     // ---- 0: pago_importe_negativo -----------------------------------------------------------
 
@@ -347,6 +349,34 @@ public class ValidadorDePagosTests
     {
         // saldo = 5000, limite = 1000, credito_ilimitado = true, consumo = 2000.
         Validar(2000m, [CuentaCorriente(2000m)], saldo: 5000m, limiteCredito: 1000m, creditoIlimitado: true);
+    }
+
+    // ---- 6 salteada: venta offline registrada sin validar el límite ---------------------------
+
+    /// <summary>La cláusula: <c>exigirLimiteDeCredito &amp;&amp;</c> en la regla 6. Mismo pago que
+    /// <see cref="LimiteCreditoExcedidoSeRechaza"/>, que con el límite exigido se rechaza.</summary>
+    [Fact]
+    public void SinExigirLimiteUnConsumoQueLoSuperaSeAcepta()
+    {
+        Validar(300m, [CuentaCorriente(300m)], saldo: 800m, limiteCredito: 1000m, exigirLimiteDeCredito: false);
+    }
+
+    [Fact]
+    public void SinExigirLimiteElConsumidorFinalSigueSinPoderPagarPorCuentaCorriente()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(300m, [CuentaCorriente(300m)], esConsumidorFinal: true, saldo: 800m, limiteCredito: 1000m,
+                exigirLimiteDeCredito: false));
+        Assert.Equal("cuenta_corriente_no_permitida", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void SinExigirLimiteLasReglasPosterioresSiguenEvaluandose()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(300m, [CuentaCorriente(200m), Tarjeta(100m, requiereReferencia: true, referencia: null)],
+                saldo: 800m, limiteCredito: 1000m, exigirLimiteDeCredito: false));
+        Assert.Equal("referencia_de_pago_requerida", excepcion.Codigo);
     }
 
     // ---- 7: referencia_de_pago_requerida ---------------------------------------------------
