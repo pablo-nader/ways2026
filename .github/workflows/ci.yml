@@ -1,0 +1,151 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  backend-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Compilar los proyectos de test
+        run: |
+          dotnet build tests/Ways.Domain.Tests -c Release
+          dotnet build tests/Ways.Application.Tests -c Release
+
+      - name: Tests de Domain
+        run: dotnet test tests/Ways.Domain.Tests -c Release --no-build
+
+      - name: Tests de Application
+        run: dotnet test tests/Ways.Application.Tests -c Release --no-build
+
+  # Una sola suite de integración por daemon de Docker: dos en paralelo compiten
+  # por el mismo contenedor y generan falsos rojos. Testcontainers levanta su
+  # propio PostgreSQL (postgres:17-alpine) y el fixture crea el rol ways_app.
+  backend-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+
+      - name: Compilar la solución
+        run: dotnet build Ways.slnx -c Release
+
+      - name: Tests de integración
+        run: dotnet test tests/Ways.IntegrationTests -c Release --no-build
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/Ways.Web
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: src/Ways.Web/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Lint
+        run: npx oxlint --quiet
+
+      - name: Tests
+        run: npx vitest run
+
+      - name: Build
+        run: npx vite build
+
+  cambios-desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      desktop: ${{ steps.filtro.outputs.desktop }}
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detectar cambios en el desktop
+        id: filtro
+        env:
+          EVENTO: ${{ github.event_name }}
+          BASE_PR: ${{ github.event.pull_request.base.sha }}
+          BASE_PUSH: ${{ github.event.before }}
+        run: |
+          base="$BASE_PR"
+          [ "$EVENTO" = "push" ] && base="$BASE_PUSH"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "No se pudo resolver la base del diff: se corre el job del desktop."
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" HEAD | grep -q '^src/Ways\.Desktop/'; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  desktop:
+    needs: cambios-desktop
+    if: needs.cambios-desktop.outputs.desktop == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cachear el build de Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/Ways.Desktop/src-tauri
+
+      - name: Tests de Rust
+        run: cargo test --locked
+        working-directory: src/Ways.Desktop/src-tauri
