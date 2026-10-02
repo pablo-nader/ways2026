@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
@@ -843,5 +843,123 @@ describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola F
       ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
     )
     expect(await screen.findByText('No se pudo imprimir la reimpresión del ticket 0007-00000001: sin papel')).toBeInTheDocument()
+  })
+})
+
+describe('ShellPos — aviso de actualización del escritorio', () => {
+  type GlobalConTauri = typeof globalThis & {
+    __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> }; event: { listen: ReturnType<typeof vi.fn> } }
+  }
+
+  beforeEach(() => {
+    const invoke = vi.fn((comando: string) =>
+      Promise.resolve(comando === 'estado_actualizacion' ? { version: '0.4.0', notas: null } : undefined),
+    )
+    const listen = vi.fn(() => Promise.resolve(() => {}))
+    ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke }, event: { listen } }
+  })
+
+  afterEach(() => {
+    delete (globalThis as GlobalConTauri).__TAURI__
+  })
+
+  it('"Instalar y reiniciar" se deshabilita mientras el carrito de "Vender" tiene ítems', async () => {
+    renderShell()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const boton = await screen.findByRole('button', { name: 'Instalar y reiniciar' })
+    expect(boton).toBeEnabled()
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    expect(boton).toBeDisabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    await waitFor(() => expect(boton).toBeEnabled())
+  })
+
+  function mockearGastosDelTurno() {
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      if (ruta === '/proveedores/opciones') return Promise.resolve([])
+      if (ruta === '/caja/turnos/501/detalle') {
+        return Promise.resolve({
+          resumen: {
+            idTurnoCaja: 501,
+            idMedioAncla: 1,
+            medios: [],
+            cantidadTickets: 0,
+            primerTicket: null,
+            ultimoTicket: null,
+            ingresosPorArea: [],
+            egresos: { porCategoria: [], porArea: [], retiros: 0 },
+          },
+          tickets: [],
+          gastos: [],
+        })
+      }
+      return undefined
+    })
+  }
+
+  it('salir de "Vender" con ítems en el carrito mantiene bloqueada la instalación: el borrador sigue vivo', async () => {
+    mockearGastosDelTurno()
+    renderShell()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.click(screen.getByRole('link', { name: 'Gastos' }))
+    await screen.findByText('Gastos del turno')
+
+    expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeDisabled()
+  })
+
+  it('salir de "Vender" con el modal "Venta finalizada" abierto (estado transitorio) libera la instalación', async () => {
+    mockearGastosDelTurno()
+    mockearVentaExitosa()
+    renderShell()
+    await completarVenta()
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalled())
+
+    await userEvent.click(screen.getByRole('link', { name: 'Gastos' }))
+    await screen.findByText('Gastos del turno')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeEnabled())
+  })
+
+  it('con un trabajo de impresión en vuelo la instalación queda bloqueada hasta que termina', async () => {
+    mockearGastosDelTurno()
+    mockearVentaExitosa()
+    let terminarImpresion: (resultado: { ok: true }) => void = () => {}
+    imprimirMock.mockImplementation(() => new Promise((resolver) => (terminarImpresion = resolver)))
+    renderShell()
+    await completarVenta()
+    await userEvent.click(screen.getByRole('link', { name: 'Gastos' }))
+    await screen.findByText('Gastos del turno')
+
+    expect(screen.getByText(/Esperá a que termine la impresión/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeDisabled()
+
+    await act(async () => terminarImpresion({ ok: true }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Instalar y reiniciar' })).toBeEnabled())
+  })
+
+  it('al instalar, el header y la pantalla quedan inertes', async () => {
+    renderShell()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const invoke = (globalThis as GlobalConTauri).__TAURI__!.core.invoke
+    invoke.mockImplementation((comando: string) =>
+      comando === 'instalar_actualizacion'
+        ? new Promise(() => {})
+        : Promise.resolve(comando === 'estado_actualizacion' ? { version: '0.4.0', notas: null } : undefined),
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Instalar y reiniciar' }))
+
+    expect(await screen.findByText(/Instalando la actualización 0\.4\.0/)).toBeInTheDocument()
+    expect(screen.getByRole('main')).toHaveAttribute('inert')
+    expect(document.querySelector('header')).toHaveAttribute('inert')
   })
 })

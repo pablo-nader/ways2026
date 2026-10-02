@@ -1,6 +1,6 @@
 [package]
 name = "ways-desktop"
-version = "0.3.0"
+version = "0.4.0"
 description = "Ways POS - aplicacion de escritorio para cajas"
 authors = ["Ways"]
 edition = "2021"
@@ -26,6 +26,7 @@ windows = { version = "0.58", features = [
   "Win32_Graphics_Gdi",
   "Win32_Security",
 ] }
+tauri-plugin-updater = "2"
 
 [features]
 default = []

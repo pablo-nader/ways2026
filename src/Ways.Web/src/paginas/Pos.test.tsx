@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import type { ComponentProps } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
@@ -51,11 +52,11 @@ function PlaceholderDeCierreDeCaja() {
   return <div>Cierre de turno {searchParams.get('idTurno')}</div>
 }
 
-function arbolDePos(ruta = '/pos') {
+function arbolDePos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
   return (
     <MemoryRouter initialEntries={[ruta]}>
       <Routes>
-        <Route path="/pos" element={<Pos />} />
+        <Route path="/pos" element={<Pos {...props} />} />
         <Route path="/presupuestos" element={<div>Presupuestos</div>} />
         <Route path="/caja/cierre" element={<PlaceholderDeCierreDeCaja />} />
       </Routes>
@@ -63,8 +64,8 @@ function arbolDePos(ruta = '/pos') {
   )
 }
 
-function renderPos(ruta = '/pos') {
-  return render(arbolDePos(ruta))
+function renderPos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
+  return render(arbolDePos(ruta, props))
 }
 
 const apiGetMock = vi.fn()
@@ -523,8 +524,8 @@ beforeEach(async () => {
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
  * medio Efectivo elegido, importe = total. Punto de partida de los tests de checkout. */
-async function armarVentaLista() {
-  renderPos()
+async function armarVentaLista(props: ComponentProps<typeof Pos> = {}) {
+  renderPos('/pos', props)
   await screen.findByRole('option', { name: /Consumidor Final/ })
 
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -1152,6 +1153,36 @@ describe('Pos — panel de pagos: referencia solo para el medio que la requiere'
       expect(screen.getByText('Este medio de pago requiere una referencia.')).toBeInTheDocument(),
     )
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+})
+
+describe('Pos — venta en curso (bloquea la actualización del escritorio)', () => {
+  it('informa venta en curso con ítems en el carrito y deja de hacerlo al quitarlos', async () => {
+    const alCambiarVentaEnCurso = vi.fn()
+    renderPos('/pos', { alCambiarVentaEnCurso })
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(false)
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(true)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    await waitFor(() => expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(false))
+  })
+
+  it('el modal "Venta finalizada" sigue contando como venta en curso hasta que el cajero lo cierra', async () => {
+    const alCambiarVentaEnCurso = vi.fn()
+    await armarVentaLista({ alCambiarVentaEnCurso })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+    expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(true)
+
+    await userEvent.click(modal.getByRole('button', { name: 'Aceptar' }))
+    expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(false)
   })
 })
 

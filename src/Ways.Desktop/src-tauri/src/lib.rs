@@ -1,3 +1,4 @@
+mod actualizacion;
 mod comandos;
 mod config;
 mod credencial;
@@ -21,6 +22,7 @@ struct UrlServidorCargadaEnPos(Mutex<Option<String>>);
 pub fn ejecutar() {
     tauri::Builder::default()
         .manage(UrlServidorCargadaEnPos::default())
+        .manage(actualizacion::EstadoDeActualizacion::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             enfocar_ventana_activa(app);
         }))
@@ -35,6 +37,7 @@ pub fn ejecutar() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             comandos::listar_impresoras,
             comandos::listar_impresoras_con_detalle,
@@ -51,6 +54,8 @@ pub fn ejecutar() {
             comandos::leer_credencial_de_dispositivo,
             comandos::guardar_sesion_de_cajero,
             comandos::leer_sesion_de_cajero,
+            comandos::estado_actualizacion,
+            comandos::instalar_actualizacion,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -60,6 +65,7 @@ pub fn ejecutar() {
             } else {
                 mostrar_ventana_configuracion(&handle)?;
             }
+            actualizacion::iniciar_busqueda_periodica(handle);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -509,6 +515,8 @@ mod tests {
             "allow-leer-credencial-de-dispositivo",
             "allow-guardar-sesion-de-cajero",
             "allow-leer-sesion-de-cajero",
+            "allow-estado-actualizacion",
+            "allow-instalar-actualizacion",
         ];
         for permiso in exclusivos_de_pos {
             assert!(
@@ -518,6 +526,13 @@ mod tests {
             assert!(
                 permisos_pos.contains(&permiso.to_string()),
                 "la capacidad del pos deberia tener '{permiso}'"
+            );
+        }
+
+        for permiso in permisos_configuracion.iter().chain(permisos_pos.iter()) {
+            assert!(
+                !permiso.starts_with("updater:"),
+                "ninguna pagina deberia recibir el permiso crudo '{permiso}' del plugin updater"
             );
         }
 

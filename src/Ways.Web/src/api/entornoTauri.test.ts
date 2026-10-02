@@ -3,7 +3,10 @@ import {
   _resetearEspejosDeSesionOfflineParaTests,
   calcularExpiracionPersistida,
   corriendoEnTauri,
+  escucharActualizacionDescargada,
   establecerTokenDeSesionBearer,
+  instalarActualizacion,
+  leerActualizacionDisponible,
   guardarCredencialDeDispositivo,
   guardarSesionDeCajeroPersistida,
   inicializarUrlServidor,
@@ -592,5 +595,63 @@ describe('refrescarVentanaDeSesionPersistida (judgment-day ronda 1, FIX 2b; rond
     establecerTokenDeSesionBearer('token-vigente')
 
     await expect(refrescarVentanaDeSesionPersistida(SNAPSHOT_FIXTURE)).resolves.toBeUndefined()
+  })
+})
+
+describe('actualización del escritorio', () => {
+  it('fuera de Tauri: sin actualización, escuchar no hace nada e instalar no invoca nada', async () => {
+    const manejador = vi.fn()
+
+    expect(await leerActualizacionDisponible()).toBeNull()
+    escucharActualizacionDescargada(manejador)()
+    await instalarActualizacion()
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(manejador).not.toHaveBeenCalled()
+  })
+
+  it('leerActualizacionDisponible devuelve la versión descargada y degrada a null ante un fallo de IPC o un payload inválido', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockResolvedValueOnce({ version: '0.4.0', notas: 'Notas' })
+    expect(await leerActualizacionDisponible()).toEqual({ version: '0.4.0', notas: 'Notas' })
+
+    invokeMock.mockRejectedValueOnce(new Error('ipc'))
+    expect(await leerActualizacionDisponible()).toBeNull()
+
+    invokeMock.mockResolvedValueOnce({ version: '' })
+    expect(await leerActualizacionDisponible()).toBeNull()
+  })
+
+  it('desuscribirse antes de que listen resuelva igual libera la suscripción y no entrega eventos tardíos', async () => {
+    const desuscribir = vi.fn()
+    let manejadorInterno: ((evento: { payload: unknown }) => void) | null = null
+    let resolverListen: (fn: () => void) => void = () => {}
+    ;(globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: invokeMock },
+      event: {
+        listen: (_evento: string, manejador: (evento: { payload: unknown }) => void) => {
+          manejadorInterno = manejador
+          return new Promise<() => void>((resolver) => (resolverListen = resolver))
+        },
+      },
+    }
+    const manejador = vi.fn()
+
+    const cancelar = escucharActualizacionDescargada(manejador)
+    cancelar()
+    resolverListen(desuscribir)
+    await Promise.resolve()
+    manejadorInterno!({ payload: { version: '0.4.0', notas: null } })
+
+    expect(desuscribir).toHaveBeenCalled()
+    expect(manejador).not.toHaveBeenCalled()
+  })
+
+  it('instalarActualizacion propaga el error de Rust', async () => {
+    instalarPuenteTauri()
+    invokeMock.mockRejectedValueOnce('No hay ninguna actualizacion descargada.')
+
+    await expect(instalarActualizacion()).rejects.toBe('No hay ninguna actualizacion descargada.')
+    expect(invokeMock).toHaveBeenCalledWith('instalar_actualizacion')
   })
 })
