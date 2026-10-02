@@ -93,7 +93,7 @@ jobs:
           bundle_dir="src-tauri/target/release/bundle/nsis"
           # Filtrado por versión: un instalador viejo que quede en el directorio (cache) no puede
           # publicarse con el nombre y la firma de esta versión.
-          installer=$(ls "$bundle_dir"/*_"${version}"_*-setup.exe 2>/dev/null | head -n 1)
+          installer=$(ls "$bundle_dir"/*_"${version}"_*-setup.exe 2>/dev/null | head -n 1 || true)
           if [ -z "$installer" ]; then
             echo "::error::No se encontró el instalador NSIS en $bundle_dir"
             exit 1
@@ -123,17 +123,18 @@ jobs:
               "dist-release/WaysPOS-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe.sig" \
-              "dist-release/latest.json" \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$TAG" \
               "dist-release/WaysPOS-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe.sig" \
-              "dist-release/latest.json" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Ways POS ${version}" \
-              --notes "$notas" \
-              --latest
+              --notes "$notas"
           fi
+          # latest.json va último: recién ahí las cajas pueden enterarse de la versión, con el
+          # instalador que referencia ya subido.
+          gh release upload "$TAG" "dist-release/latest.json" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest
         working-directory: src/Ways.Desktop
