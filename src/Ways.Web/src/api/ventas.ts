@@ -23,8 +23,10 @@ import type {
 
 export const clienteDeVentas = {
   /** `POST /api/ventas` (design: API Surface): checkout — 201 + body = comprobante emitido, sin
-   * ningún campo de dinero re-derivable en el cliente (el servidor vuelve a resolver todo). */
-  emitir: (solicitud: SolicitudDeVenta) => api.post<ComprobanteEmitido>('/ventas', solicitud),
+   * ningún campo de dinero re-derivable en el cliente (el servidor vuelve a resolver todo).
+   * `senal` (opcional) corta la request — la usa el envío en segundo plano del outbox. */
+  emitir: (solicitud: SolicitudDeVenta, senal?: AbortSignal) =>
+    senal ? api.post<ComprobanteEmitido>('/ventas', solicitud, undefined, senal) : api.post<ComprobanteEmitido>('/ventas', solicitud),
   /** `GET /api/ventas/{id}` (stage-17-presupuestos-y-remitos, Slice 8, OD10): reimpresión/lectura
    * de un comprobante ya emitido — `Remito.tsx` lo usa para mostrar el link a la factura de un
    * remito `facturado` (un `TXR`, cuyo detalle sale de `items_remito` del lado del servidor). */
@@ -37,8 +39,10 @@ export const clienteDeVentas = {
   anular: (id: number) => api.post<ComprobanteEmitido>(`/ventas/${id}/anulacion`),
   /** `POST /api/ventas/reservas-numeracion` (stage-pos-reserva-de-numeracion): un dispositivo pide
    * un bloque de números para repartir localmente mientras vende sin red. */
-  reservarNumeracion: (solicitud: SolicitudDeReservaDeNumeracion) =>
-    api.post<BloqueDeNumeracionReservado>('/ventas/reservas-numeracion', solicitud),
+  reservarNumeracion: (solicitud: SolicitudDeReservaDeNumeracion, senal?: AbortSignal) =>
+    senal
+      ? api.post<BloqueDeNumeracionReservado>('/ventas/reservas-numeracion', solicitud, undefined, senal)
+      : api.post<BloqueDeNumeracionReservado>('/ventas/reservas-numeracion', solicitud),
 }
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:

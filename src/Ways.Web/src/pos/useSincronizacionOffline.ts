@@ -36,21 +36,42 @@ import {
   type VentaRechazada,
 } from './outboxOffline'
 import { INTERVALO_POR_DEFECTO_MINUTOS, minutosAMilisegundos } from './intervaloDeSincronizacion'
+import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
-import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeVenta } from '../api/tipos'
+import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeRendicionDeCola, SolicitudDeVenta } from '../api/tipos'
 
 /** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
  * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
 export const LIMITE_DE_SINCRONIZACION_INICIAL_MS = 15_000
 
-/** Tamaño de bloque a reponer — bien por debajo del tope del servidor (`CantidadMaxima` = 500),
- * suficiente para una jornada de venta minorista sin inflar el hueco de numeración si el
- * dispositivo nunca vuelve a sincronizar (mismo criterio documentado en el backend). */
-const CANTIDAD_A_RESERVAR = 100
+/** La guarda de cierre de turno del servidor rechaza un reporte de rendición de más de 5 minutos
+ * (`ReglaDeRendicionDeCola.VentanaDeFrescura`) sobre el bloque vivo. El intervalo de sincronización
+ * lo configura el cajero hasta 60 minutos, así que la rendición tiene su propio período, fijo y
+ * por debajo de esa ventana: sin esto, un cierre desde otra máquina quedaría bloqueado por un
+ * reporte vencido de este dispositivo. Es un POST chico, y sin bloque local no sale nada. */
+export const INTERVALO_DE_RENDICION_MS = 2 * 60_000
+
+/** Tamaño de bloque a reponer: el tope del servidor (`CantidadMaxima` = 500). Con la venta local
+ * cada cobro del Consumidor Final consume un número del bloque, y cada reposición descarta lo que le
+ * quedaba al anterior (menos de `UMBRAL_DE_REPOSICION` = 20, ver `reponerBloque`): con 500 ese
+ * hueco queda por debajo del 4% de los números reservados. El costo es el hueco de un dispositivo
+ * que deja de sincronizar para siempre (hasta 500 números), aceptado igual que el resto de los
+ * huecos de numeración del sistema (doc 10 §4). */
+const CANTIDAD_A_RESERVAR = 500
 
 const CODIGO_TIPO_COMPROBANTE_OFFLINE = 'TX'
+
+/** Tope de la reserva de numeración. Más largo que el de las demás requests a propósito: corre en
+ * segundo plano (el cajero no la espera mientras el bloque en uso tenga números) y una reserva que
+ * el servidor comprometió pero cuya respuesta se descartó deja un bloque vivo que este dispositivo
+ * nunca conoce ni rinde — que después bloquea el cierre de turno hasta un forzado supervisado. */
+const TIEMPO_LIMITE_DE_RESERVA_MS = 15_000
+
+/** Rechazos de la rendición que dicen que el bloque local ya no es el vivo del servidor
+ * (`ServicioDeRendicionDeCola`). */
+const CODIGOS_DE_BLOQUE_YA_NO_VIVO = new Set(['rendicion_sin_bloque_vivo', 'rendicion_de_bloque_reemplazado'])
 
 export type EncoladoOffline = { ok: true; numeroVisible: string; numero: number } | { ok: false; motivo: MotivoRechazoOffline }
 
@@ -99,7 +120,7 @@ export type ResultadoDeSincronizacionOffline = {
   /** Ciclo completo a pedido (drenar + refrescar la instantánea + reponer + rendir). Un pedido
    * mientras otro ciclo corre devuelve ese mismo ciclo: nunca corren dos a la vez. */
   sincronizarAhora: () => Promise<void>
-  /** Drena el outbox, repone el bloque si el drenado confirmó señal y rinde la cola — sin
+  /** Drena el outbox, repone el bloque si está bajo (`reponerBloque`, solo con la cola vacía) y rinde la cola — sin
    * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
   drenarAhora: () => Promise<EstadoDeColaLocal>
   encolarVentaOffline: (params: {
@@ -196,7 +217,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       if (!primera) return
 
       try {
-        await clienteDeVentas.emitir(primera.solicitud)
+        await conTiempoLimite((senal) => clienteDeVentas.emitir(primera.solicitud, senal))
       } catch (e) {
         const archivada = await encolarOperacion(() => archivarRechazoSiEsPermanente(primera, e))
         if (!archivada) return
@@ -254,7 +275,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // camino de recuperación seguro (`ServicioDeVentas.BuscarPorNumeroComprometidoAsync` +
     // `ExigirMismoContenido` dedupean por eso). Mismo criterio que `ErrorDeRed`: sigue sin señal
     // clara, se reintenta TODO en el próximo ciclo, nunca se descarta ni se saca nada del outbox.
-    if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado >= 500)) {
+    // Un tope vencido (`ErrorDeTiempoAgotado`) es el mismo caso: la venta pudo haber llegado.
+    if (e instanceof ErrorDeRed || e instanceof ErrorDeTiempoAgotado || (e instanceof ErrorApi && e.estado >= 500)) {
       return false
     }
     // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo — un 4xx real (ej.
@@ -305,46 +327,13 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
   }
 
-  async function reponerBloqueSiNecesario(idPv: number): Promise<void> {
-    if (!necesitaReponerBloque(bloqueRef.current)) return
-    try {
-      const reservado = await clienteDeVentas.reservarNumeracion({
-        idPuntoVenta: idPv,
-        codigoTipoComprobante: CODIGO_TIPO_COMPROBANTE_OFFLINE,
-        cantidad: CANTIDAD_A_RESERVAR,
-      })
-      const bloqueNuevo: BloqueDeNumeracionLocal = {
-        idPuntoVenta: reservado.idPuntoVenta,
-        codigoTipoComprobante: reservado.codigoTipoComprobante,
-        desde: reservado.desde,
-        hasta: reservado.hasta,
-        proximo: reservado.desde,
-      }
-      bloqueRef.current = bloqueNuevo
-      // Persistido de inmediato — mismo criterio que `encolarVentaOffline`: si la app se
-      // reinicia entre reponer el bloque y usarlo, el rango reservado tiene que sobrevivir
-      // (goal C, "reponer mientras todavía hay señal"), no perderse en un `ref` en memoria.
-      await guardarBloque(almacenRef.current, bloqueNuevo)
-    } catch {
-      // Sin señal (o el servidor rechazó) — se reintenta en el próximo ciclo; el bloque anterior
-      // (si queda algo) sigue disponible tal cual estaba.
-    }
-  }
-
-  /**
-   * Rinde la cola local al servidor (`POST /api/pos/rendicion-de-cola`) para que el cierre de
-   * turno pueda verificarla contra `comprobantes_venta` en vez de creerle al almacén local de UNA
-   * máquina (`ReglaDeRendicionDeCola`): `entregadoHasta` es el número más alto que este
-   * dispositivo ya le imprimió a un cliente y `pendientes` cuántas de esas ventas todavía no
-   * llegaron (outbox + rechazadas — una venta rechazada también tiene su ticket entregado).
-   */
-  async function rendirColaLocal(): Promise<void> {
-    // Los conteos salen del almacén y no del estado de React: este ciclo vive en un closure del
-    // efecto del intervalo, que leería el snapshot del render en que se creó.
-    const declaracion = await encolarOperacion(async () => {
+  /** Lo que la rendición declararía AHORA sobre el bloque vivo del servidor, leído del almacén
+   * bajo el candado (este código vive en closures de efectos, que leerían un estado de React
+   * viejo). `null` sin bloque: un dispositivo que perdió su almacén no puede dar fe de su cola, y el
+   * servidor bloquea el cierre por sí mismo ante un reporte ausente. */
+  function leerDeclaracionDeRendicion(): Promise<SolicitudDeRendicionDeCola | null> {
+    return encolarOperacion(async () => {
       const bloque = bloqueRef.current
-      // Sin bloque local no hay nada que rendir: un dispositivo que perdió su almacén no puede dar
-      // fe de su cola, y el servidor bloquea el cierre por sí mismo ante un reporte ausente.
       if (bloque === null) return null
       const [outbox, rechazadas] = await Promise.all([leerOutbox(almacenRef.current), leerRechazadas(almacenRef.current)])
       return {
@@ -353,14 +342,97 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         pendientes: outbox.length + rechazadas.length,
       }
     })
+  }
 
+  /**
+   * Repone el bloque en segundo plano apenas baja del umbral — mucho antes de agotarse — y FUERA
+   * del candado: una reserva lenta nunca demora el encolado de una venta mientras el bloque en uso
+   * tenga números.
+   *
+   * El bloque nuevo reemplaza al que está en uso y los números que le quedaban (menos de
+   * `UMBRAL_DE_REPOSICION`) quedan como hueco: el servidor admite un solo bloque vivo por
+   * dispositivo (`ux_reservas_numeracion_dispositivo_activo`), reservar abandona el anterior, y doc
+   * 10 fija que `abandonada_at` gobierna de qué bloque el dispositivo puede sacar números NUEVOS —
+   * la guarda de cierre deja de exigirle frescura a un bloque abandonado porque supone que ya no
+   * reparte. Los números que ya salieron de él se siguen aceptando al drenar.
+   *
+   * Reservar congela la última rendición del bloque abandonado (`ReglaDeRendicionDeCola`, parámetro
+   * `bloqueVivo`): si declaraba ventas pendientes, bloquea todo cierre de turno hasta un forzado
+   * supervisado. Por eso la reserva solo sigue después de rendir el bloque vivo con
+   * `pendientes = 0`; con ventas en cola se reintenta en el próximo drenado.
+   *
+   * Única: un pedido con otra reposición en curso devuelve esa misma.
+   */
+  const reposicionEnCursoRef = useRef<Promise<void> | null>(null)
+  function reponerBloque(idPv: number): Promise<void> {
+    if (reposicionEnCursoRef.current) return reposicionEnCursoRef.current
+    const reposicion = (async () => {
+      try {
+        if (!necesitaReponerBloque(bloqueRef.current)) return
+
+        const declaracion = await leerDeclaracionDeRendicion()
+        if (declaracion !== null) {
+          if (declaracion.pendientes > 0) return
+          try {
+            await conTiempoLimite((senal) => clienteDePos.rendirCola(declaracion, senal))
+          } catch (e) {
+            // El servidor ya no tiene vivo el bloque local (una reserva anterior se comprometió
+            // pero su respuesta nunca llegó): no hay nada que rendir sobre él y no reservar
+            // dejaría al dispositivo sin números para siempre.
+            if (!(e instanceof ErrorApi && CODIGOS_DE_BLOQUE_YA_NO_VIVO.has(e.codigo))) throw e
+          }
+        }
+
+        const reservado = await conTiempoLimite(
+          (senal) =>
+            clienteDeVentas.reservarNumeracion(
+              { idPuntoVenta: idPv, codigoTipoComprobante: CODIGO_TIPO_COMPROBANTE_OFFLINE, cantidad: CANTIDAD_A_RESERVAR },
+              senal,
+            ),
+          TIEMPO_LIMITE_DE_RESERVA_MS,
+        )
+        const bloqueNuevo: BloqueDeNumeracionLocal = {
+          idPuntoVenta: reservado.idPuntoVenta,
+          codigoTipoComprobante: reservado.codigoTipoComprobante,
+          desde: reservado.desde,
+          hasta: reservado.hasta,
+          proximo: reservado.desde,
+        }
+        // Persistido de inmediato y bajo el candado (serializado con el encolado, que mueve el mismo
+        // bloque): si la app se reinicia antes de usarlo, el rango reservado sobrevive.
+        await encolarOperacion(async () => {
+          bloqueRef.current = bloqueNuevo
+          await guardarBloque(almacenRef.current, bloqueNuevo)
+        })
+      } catch {
+        // Sin señal, tope vencido o el servidor rechazó — se reintenta en el próximo drenado o
+        // ciclo; el bloque en uso sigue disponible tal cual estaba.
+      } finally {
+        reposicionEnCursoRef.current = null
+      }
+    })()
+    reposicionEnCursoRef.current = reposicion
+    return reposicion
+  }
+
+  /**
+   * Rinde la cola local al servidor (`POST /api/pos/rendicion-de-cola`) para que el cierre de
+   * turno pueda verificarla contra `comprobantes_venta` en vez de creerle al almacén local de UNA
+   * máquina (`ReglaDeRendicionDeCola`): `entregadoHasta` es el número más alto que este
+   * dispositivo ya le imprimió a un cliente del bloque vivo y `pendientes` cuántas ventas todavía
+   * no llegaron (outbox + rechazadas, de cualquier bloque — una venta rechazada también tiene su
+   * ticket entregado).
+   */
+  async function rendirColaLocal(): Promise<void> {
+    const declaracion = await leerDeclaracionDeRendicion()
     if (declaracion === null) return
 
     try {
-      await clienteDePos.rendirCola(declaracion)
+      await conTiempoLimite((senal) => clienteDePos.rendirCola(declaracion, senal))
     } catch {
-      // Sin señal (o el servidor rechazó) — se reintenta en el próximo ciclo. Un reporte que no
-      // llega deja al cierre bloqueado del lado del servidor, que es el desenlace correcto.
+      // Sin señal, tope vencido o el servidor rechazó — se reintenta en el próximo ciclo. Un
+      // reporte que no llega deja al cierre bloqueado del lado del servidor, que es el desenlace
+      // correcto.
     }
   }
 
@@ -378,11 +450,10 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         await drenarOutbox()
         const conSenal = await refrescarInstantaneaSiHaySenal()
         if (conSenal) {
-          await encolarOperacion(() => reponerBloqueSiNecesario(idPv))
+          await reponerBloque(idPv)
         }
         // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el
-        // bloque YA repuesto (el servidor rinde contra el bloque vivo, y reponer abandona el
-        // anterior).
+        // bloque vivo YA rotado (el servidor rinde contra el bloque vivo).
         await rendirColaLocal()
       } finally {
         cicloEnCursoRef.current = null
@@ -411,11 +482,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     if (!activo || idPuntoVenta === null) return leerEstadoDeColaLocal()
     await drenarOutbox()
     const despuesDelDrenado = await leerEstadoDeColaLocal()
-    // Un outbox que quedó vacío después de drenar ventas confirma señal: es el momento de reponer
-    // el bloque si está bajo, en vez de esperar al próximo ciclo con la venta local consumiendo un
-    // número por cada cobro.
-    if (despuesDelDrenado.pendientes === 0) {
-      await encolarOperacion(() => reponerBloqueSiNecesario(idPuntoVenta))
+    // Recién drenado es cuando el outbox está vacío y la reposición puede rotar el bloque sin
+    // congelar ventas pendientes en el que abandona (ver `reponerBloque`).
+    // Sin ningún bloque local (un dispositivo nuevo, o la app web) la primera reserva es del ciclo.
+    if (bloqueRef.current !== null) {
+      await reponerBloque(idPuntoVenta)
     }
     await rendirColaLocal()
     return despuesDelDrenado
@@ -498,11 +569,15 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
 
     const idIntervalo = setInterval(ejecutar, intervaloMs)
+    const idRendicion = setInterval(() => {
+      if (!cancelado) void rendirColaLocal()
+    }, INTERVALO_DE_RENDICION_MS)
     window.addEventListener('online', ejecutar)
 
     return () => {
       cancelado = true
       clearInterval(idIntervalo)
+      clearInterval(idRendicion)
       window.removeEventListener('online', ejecutar)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -514,28 +589,38 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     pagos: readonly { comportamiento: ComportamientoMedioPago }[]
     instantaneaCongelada?: InstantaneaDePos | null
   }): Promise<EncoladoOffline> {
-    return encolarOperacion(async () => {
-      // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
-      // misma que ya resolvió la vista previa en pantalla) cuando la pasa — nunca el estado
-      // `instantanea` de este hook, que puede haberse refrescado en segundo plano DESPUÉS de esa
-      // vista previa. Sin congelada explícita (p. ej. los tests de este hook, sin `Pos.tsx` de
-      // por medio), cae al estado interno de siempre.
-      const instantaneaActual = paramsVenta.instantaneaCongelada !== undefined ? paramsVenta.instantaneaCongelada : instantanea
-      const lineasBase = paramsVenta.solicitudBase.lineas ?? []
-      // judgment-day ronda 1 (SUGGESTION): único gate de la precondición "todas las líneas tienen
-      // precio" — antes reimplementado inline acá abajo (`lineasEnriquecidas !== null && ...`),
-      // ahora delegado a `todasLasLineasTienenPrecioOffline` para que no puedan divergir.
-      const todasConPrecio = instantaneaActual !== null && todasLasLineasTienenPrecioOffline(lineasBase, instantaneaActual)
-      const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual) : null
-
-      const motivo = admisibilidadDeVentaOffline({
+    // judgment-day ronda 1 (WARNING): usa la instantánea CONGELADA que el llamador pasa (la
+    // misma que ya resolvió la vista previa en pantalla) cuando la pasa — nunca el estado
+    // `instantanea` de este hook, que puede haberse refrescado en segundo plano DESPUÉS de esa
+    // vista previa. Sin congelada explícita (p. ej. los tests de este hook, sin `Pos.tsx` de
+    // por medio), cae al estado interno de siempre.
+    const instantaneaActual = paramsVenta.instantaneaCongelada !== undefined ? paramsVenta.instantaneaCongelada : instantanea
+    const lineasBase = paramsVenta.solicitudBase.lineas ?? []
+    // judgment-day ronda 1 (SUGGESTION): único gate de la precondición "todas las líneas tienen
+    // precio" — delegado a `todasLasLineasTienenPrecioOffline` para que no puedan divergir.
+    const todasConPrecio = instantaneaActual !== null && todasLasLineasTienenPrecioOffline(lineasBase, instantaneaActual)
+    const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual) : null
+    const admisibilidad = (hayNumeroDisponible: boolean) =>
+      admisibilidadDeVentaOffline({
         esConsumidorFinal: paramsVenta.esConsumidorFinal,
         pagos: paramsVenta.pagos,
         hayInstantanea: instantaneaActual !== null,
         todasLasLineasConPrecio: todasConPrecio,
-        hayNumeroDisponible: numerosDisponibles(bloqueRef.current) > 0,
+        hayNumeroDisponible,
       })
 
+    // Único caso en que el encolado espera a la red: el bloque agotado en una venta que,
+    // salvo por eso, se admitiría. Espera como máximo `TIEMPO_LIMITE_DE_RED_MS` (la reserva sigue
+    // en segundo plano); si no llega, la venta se rechaza con `sin_numeracion` y `Pos.tsx` cobra
+    // por el camino online.
+    const sinNumeros = numerosDisponibles(bloqueRef.current) === 0
+    if (sinNumeros && idPuntoVenta !== null && admisibilidad(true) === null) {
+      const idPv = idPuntoVenta
+      await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
+    }
+
+    return encolarOperacion(async () => {
+      const motivo = admisibilidad(numerosDisponibles(bloqueRef.current) > 0)
       if (motivo) return { ok: false, motivo }
 
       // Ya validado arriba: lineasEnriquecidas y el bloque no son null/vacíos.

@@ -11,5 +11,6 @@ export const clienteDePos = {
   obtenerInstantanea: () => api.get<InstantaneaDePos>('/pos/instantanea'),
   /** `POST /api/pos/rendicion-de-cola` — 204 sin cuerpo: el dispositivo declara el estado de su
    * cola local para que el cierre de turno pueda verificarlo (`ReglaDeRendicionDeCola`). */
-  rendirCola: (solicitud: SolicitudDeRendicionDeCola) => api.post<void>('/pos/rendicion-de-cola', solicitud),
+  rendirCola: (solicitud: SolicitudDeRendicionDeCola, senal?: AbortSignal) =>
+    senal ? api.post<void>('/pos/rendicion-de-cola', solicitud, undefined, senal) : api.post<void>('/pos/rendicion-de-cola', solicitud),
 }

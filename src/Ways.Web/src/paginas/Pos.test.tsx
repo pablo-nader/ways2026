@@ -5604,6 +5604,30 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   })
 
   describe('"Cerrar caja" intenta drenar el outbox antes de bloquear', () => {
+    it('con el outbox vacío igual rinde la cola antes de consultar el turno (la guarda del servidor exige un reporte fresco)', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarBloque(almacen, { idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 500, hasta: 599, proximo: 510 })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/pos/rendicion-de-cola' ? Promise.resolve(undefined) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: 'Sincronizar ahora' })
+      const rendicionesAntes = llamadasPost('/pos/rendicion-de-cola').length
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+      const indiceRendicion = apiPostMock.mock.calls.findLastIndex((c) => c[0] === '/pos/rendicion-de-cola')
+      expect(llamadasPost('/pos/rendicion-de-cola').length).toBeGreaterThan(rendicionesAntes)
+      expect(apiPostMock.mock.calls[indiceRendicion][1]).toEqual({ codigoTipoComprobante: 'TX', entregadoHasta: 509, pendientes: 0 })
+      const ordenRendicion = apiPostMock.mock.invocationCallOrder[indiceRendicion]
+      const indiceTurno = apiGetMock.mock.calls.findLastIndex((c) => (c[0] as string).startsWith('/caja/turnos/abierto'))
+      expect(ordenRendicion).toBeLessThan(apiGetMock.mock.invocationCallOrder[indiceTurno])
+    })
+
     it('si el drenado vacía el outbox, el cierre sigue sin bloquear al cajero', async () => {
       const almacen = crearAlmacenIndexedDb()
       await guardarInstantaneaLocal(almacen, instantaneaFixture())

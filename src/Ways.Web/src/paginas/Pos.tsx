@@ -1499,27 +1499,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return true
     }
 
-    // Con ventas en cola, primero se intenta drenarlas: con la venta local, casi siempre hay
-    // alguna recién cobrada esperando su envío, y bloquear sin intentarlo frenaría al cajero sin
-    // necesidad. Una venta que necesita atención no se resuelve drenando, así que sola bloquea
-    // de inmediato, sin tocar la red.
+    // Antes de consultar el turno se drena y se rinde la cola: con la venta local casi siempre hay
+    // alguna venta recién cobrada esperando su envío, y la guarda de cierre del servidor exige un
+    // reporte de rendición de menos de 5 minutos (`ReglaDeRendicionDeCola.VentanaDeFrescura`),
+    // que con un intervalo de sincronización largo podría estar vencido. Una venta que necesita
+    // atención no se resuelve drenando, así que sola bloquea de inmediato, sin tocar la red.
     if (sincronizacionOffline.outboxCount === 0 && bloquearPorColaLocal(0, sincronizacionOffline.ventasConError.length)) return
 
     verificandoCierreRef.current = true
     setVerificandoCierre(true)
     setAvisoCerrarCaja('')
 
-    if (sincronizacionOffline.outboxCount > 0) {
-      const cola = await sincronizacionOffline.drenarAhora()
-      if (!montadoRef.current) {
-        verificandoCierreRef.current = false
-        return
-      }
-      if (bloquearPorColaLocal(cola.pendientes, cola.conError)) {
-        verificandoCierreRef.current = false
-        setVerificandoCierre(false)
-        return
-      }
+    const cola = await sincronizacionOffline.drenarAhora()
+    if (!montadoRef.current) {
+      verificandoCierreRef.current = false
+      return
+    }
+    if (bloquearPorColaLocal(cola.pendientes, cola.conError)) {
+      verificandoCierreRef.current = false
+      setVerificandoCierre(false)
+      return
     }
 
     const miGeneracion = (generacionTurnoRef.current += 1)
