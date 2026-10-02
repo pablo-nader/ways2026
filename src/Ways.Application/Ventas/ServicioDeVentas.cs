@@ -72,6 +72,14 @@ public class ServicioDeVentas(
                 400);
         }
 
+        if (solicitud.LimiteDeCreditoNoValidado && solicitud.NumeroPreasignado is null)
+        {
+            throw new ErrorDominio(
+                "limite_no_validado_no_admitido",
+                "Solo una venta offline con número pre-asignado puede registrarse sin validar el límite de crédito.",
+                400);
+        }
+
         // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59"): con
         // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
         // dto-contract-honesty regla 1) — el valor REAL (los items del presupuesto) se resuelve
@@ -348,9 +356,19 @@ public class ServicioDeVentas(
             })
             .ToList();
 
+        // El reenvío de una venta offline que ya se emitió no vuelve a juzgarse contra el límite: el
+        // saldo actual ya incluye su propio consumo, y la regla 6 rechazaría a la misma venta que el
+        // servidor ya aceptó. La guarda de idempotencia de abajo la devuelve tal cual, o la rechaza
+        // si el contenido difiere; un comprobante nunca se borra, así que no hay inserción nueva
+        // posible por este camino.
+        var reenvioDeVentaYaEmitida = solicitud.NumeroPreasignado is { } numeroDelReenvio
+            && await db.ComprobantesVenta.AnyAsync(
+                c => c.IdPuntoVenta == puntoVenta.Id && c.IdTipoComprobante == tipo.Id && c.Numero == numeroDelReenvio, ct);
+
         ValidadorDePagos.Validar(
             totales.Total, pagosAValidar, toleranciaPago,
-            cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
+            cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado,
+            exigirLimiteDeCredito: !solicitud.LimiteDeCreditoNoValidado && !reenvioDeVentaYaEmitida);
 
         var pagosDelPlan = pagos
             .Select(p => new PagoDelPlan(
@@ -362,7 +380,7 @@ public class ServicioDeVentas(
             solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones),
-            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta);
+            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado);
 
         // Corrección de esta slice al decisión 2 original (ver el doc-comment de
         // VentasAtomicidadYConcurrenciaTests): la numeración se reserva y COMITEA en su PROPIA
@@ -522,6 +540,12 @@ public class ServicioDeVentas(
         // venta" — comparar texto libre por igualdad exacta reproduciría el mismo modo de falla
         // que ya se descartó para el total: rechazar la MISMA venta por una diferencia que no hace
         // a su sustancia.
+        //
+        // LimiteDeCreditoNoValidado tampoco entra, y no puede: no se persiste en el comprobante. No
+        // describe qué se vendió sino si el dispositivo pudo consultar el límite antes de encolar,
+        // y el outbox reenvía siempre la misma solicitud guardada, así que un reenvío legítimo trae
+        // el mismo valor. El reenvío tampoco depende del límite: EmitirAsync saltea la regla 6 para
+        // un número que ya tiene comprobante.
         if (existente.IdCliente != plan.IdCliente
             || existente.IdComprobanteAsociado != plan.IdComprobanteAsociado
             || !lineasExistentes.SequenceEqual(lineasSolicitadas)
@@ -1380,6 +1404,8 @@ public class ServicioDeVentas(
         // 6. Cuenta corriente — un pago por vez, en el orden pedido (raw ADO: un
         // `cliente.Saldo += x` trackeado por EF duplicaría el incremento en un reintento, ver
         // el Retry contract de design).
+        decimal? saldoAntesDeLaVenta = null;
+        decimal? saldoDespuesDeLaVenta = null;
         for (var i = 0; i < plan.Pagos.Count; i++)
         {
             var pago = plan.Pagos[i];
@@ -1391,7 +1417,12 @@ public class ServicioDeVentas(
             var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
                 conexion, transaccionCruda, plan.IdTenant, plan.IdCliente, pago.Importe, ct);
 
-            if (!plan.ClienteCreditoIlimitado && nuevoSaldo > plan.ClienteLimiteCredito)
+            // Los saldos del rastro salen del propio UPDATE ... RETURNING bajo su lock de fila,
+            // nunca del cliente leído antes de la transacción.
+            saldoAntesDeLaVenta ??= nuevoSaldo - pago.Importe;
+            saldoDespuesDeLaVenta = nuevoSaldo;
+
+            if (!plan.LimiteDeCreditoNoValidado && !plan.ClienteCreditoIlimitado && nuevoSaldo > plan.ClienteLimiteCredito)
             {
                 // Backstop de concurrencia (spec: Credit-Limit Evaluation) — el pre-chequeo de
                 // ValidadorDePagos ya corrió AFUERA de esta transacción contra el saldo de ese
@@ -1404,6 +1435,33 @@ public class ServicioDeVentas(
                 conexion, transaccionCruda, plan.IdTenant, plan.IdCliente, plan.Momento, plan.IdPuntoVenta,
                 plan.IdEmpleado, TipoMovimientoCc.Consumo, comprobante.Id, pagosEntidad[i].Id, pago.Importe, nuevoSaldo,
                 detalle: null, ct);
+        }
+
+        // Venta offline registrada sin validar el límite: nunca se rechaza, pero si el saldo
+        // resultante lo supera queda el rastro para la administración. Se escribe en esta misma
+        // transacción, así que un intento revertido no deja fila y el reintento la vuelve a armar
+        // de cero desde el plan.
+        if (plan.LimiteDeCreditoNoValidado
+            && !plan.ClienteCreditoIlimitado
+            && saldoDespuesDeLaVenta is { } saldoFinal
+            && saldoFinal > plan.ClienteLimiteCredito)
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["numero_comprobante"] = comprobante.Numero,
+                ["numero_visible"] = NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
+                ["id_cliente"] = plan.IdCliente,
+                ["saldo_anterior"] = saldoAntesDeLaVenta,
+                ["saldo_nuevo"] = saldoFinal,
+                ["limite_credito"] = plan.ClienteLimiteCredito
+            };
+
+            await servicioDeAuditoria.RegistrarAsync(
+                conexion, transaccionCruda,
+                new RegistroDeAuditoria(
+                    plan.IdTenant, plan.IdPuntoVenta, AccionAuditada.VentaExcedioLimiteSinValidar, comprobante.Id,
+                    valorAnterior: null, valorNuevo: payload),
+                ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -2166,5 +2224,6 @@ public class ServicioDeVentas(
         // HoyDelPuntoVenta viaja YA resuelto (design decisión 10) — pineado una vez en la fase
         // decide, nunca vuelto a calcular dentro de la transacción reintentable.
         int? IdPresupuestoOrigen = null,
-        DateOnly? HoyDelPuntoVenta = null);
+        DateOnly? HoyDelPuntoVenta = null,
+        bool LimiteDeCreditoNoValidado = false);
 }
