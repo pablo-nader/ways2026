@@ -116,6 +116,10 @@ function formatearMoneda(valor: number): string {
 /** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
  * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
  * atención" es agramatical). */
+/** Un cobro online que se quedó sin respuesta: el servidor pudo haberlo registrado. */
+const MENSAJE_DE_COBRO_INCIERTO =
+  'No se pudo confirmar si la venta se registró: el servidor no respondió. Revisá las ventas del turno antes de volver a cobrar.'
+
 function fraseVentasNecesitanAtencion(cantidad: number): string {
   return cantidad === 1 ? '1 venta necesita atención' : `${cantidad} ventas necesitan atención`
 }
@@ -970,10 +974,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // judgment-day ronda 1 (WARNING): la instantánea EXACTA que resolvió la vista previa offline
   // actualmente en pantalla (`precios`) — nunca la más fresca que `sincronizacionOffline.instantanea`
   // pueda tener en el momento del click. El efecto de abajo la fija cuando la vista previa sale de
-  // la instantánea (venta local primero, o el fallback sin red); `null` con una vista previa
-  // online o sin vista previa todavía. "El precio que se mostró es el que se cobra": `cobrar()`
-  // encola con esta referencia; solo el fallback sin red, cuando no hubo vista previa local, cae a
-  // la instantánea vigente del hook.
+  // la instantánea (venta local primero, o el fallback sin red de la vista previa); `null` con una
+  // vista previa online o sin vista previa todavía. "El precio que se mostró es el que se cobra":
+  // `cobrar()` encola solo con esta referencia; sin ella, cobra online.
   const instantaneaDeLaVistaPreviaRef = useRef<InstantaneaDePos | null>(null)
   // Espejo renderizable de `instantaneaDeLaVistaPreviaRef !== null`: con una vista previa local,
   // `cobrar()` intenta el cobro local, y ahí el límite de crédito lo juzga la consulta al servidor
@@ -2999,22 +3002,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         } catch (e) {
           if (generacionCobroRef.current !== miGeneracion) return null
 
-          // stage-pos-venta-offline-web (Parte B/C): el fallback solo corre cuando `fetch` mismo
-          // no encontró servidor (`ErrorDeRed`) y la venta no es una conversión de presupuesto
-          // (esa nunca pudo cargar sin red en primer lugar, no hay nada que encolar). Cualquier
-          // otro caso se relanza tal cual, al catch de siempre.
-          if (modoPresupuesto || !(e instanceof ErrorDeRed)) throw e
-
-          // judgment-day ronda 1 (WARNING): la MISMA instantánea que ya resolvió la vista previa
-          // en pantalla, si la hubo — sin vista previa local cae a la instantánea actual del hook.
-          const instantaneaParaOffline = instantaneaDeLaVistaPreviaRef.current ?? sincronizacionOffline.instantanea
-          if (instantaneaParaOffline === null) {
-            setErrorCobro(mensajeDeRechazoOffline('sin_instantanea'))
+          // Sin respuesta, el pedido online pudo haberse registrado igual (respuesta perdida):
+          // encolarlo ahora con otro número pre-asignado duplicaría la venta. Se informa como
+          // resultado incierto, igual que un 503 `resultado_incierto`.
+          if (e instanceof ErrorDeRed) {
+            setErrorCobro(MENSAJE_DE_COBRO_INCIERTO)
             return null
           }
-          const local = await encolarLocal(instantaneaParaOffline)
-          if (generacionCobroRef.current !== miGeneracion) return null
-          return resolverEncolado(local)
+          throw e
         }
       }
 

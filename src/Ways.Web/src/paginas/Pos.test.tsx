@@ -5084,6 +5084,9 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
   })
 })
 
+const TEXTO_DE_COBRO_INCIERTO =
+  'No se pudo confirmar si la venta se registró: el servidor no respondió. Revisá las ventas del turno antes de volver a cobrar.'
+
 describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   /** Cash-only por defecto en todos estos tests: alcanza para no chocar con el filtro de
    * cuenta-corriente preexistente (`medioDisponibleParaCliente`) y con la regla nueva
@@ -5470,7 +5473,10 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
     })
 
-    it('rechaza el checkout offline de un cliente que no está en la copia local, sin encolar nada', async () => {
+    /** La cláusula: el `catch` del cobro online ya no re-encola con un número nuevo. Sin
+     * respuesta, el servidor pudo haber registrado el pedido online, así que se informa como
+     * resultado incierto y no queda nada en el outbox. */
+    it('un cliente fuera de la copia local cobra online, y si el servidor no responde informa resultado incierto sin encolar', async () => {
       await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
       mockearApiGet()
 
@@ -5498,10 +5504,31 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-      expect(
-        await screen.findByText('Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.'),
-      ).toBeInTheDocument()
+      expect(await screen.findByText(TEXTO_DE_COBRO_INCIERTO)).toBeInTheDocument()
       expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
+      expect(llamadasPost('/ventas')).toHaveLength(1)
+      await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
+      // El carrito queda intacto para que el cajero decida después de revisar.
+      expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
+    })
+
+    it('con la venta local rechazada por falta de números y el cobro online sin respuesta, no encola con otro número', async () => {
+      await prepararAlmacenOffline()
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await cobrarConEfectivo('100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText(TEXTO_DE_COBRO_INCIERTO)).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument()
+      await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
     })
   })
 
