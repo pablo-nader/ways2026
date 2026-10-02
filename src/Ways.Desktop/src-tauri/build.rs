@@ -15,6 +15,8 @@ fn main() {
         "leer_credencial_de_dispositivo",
         "guardar_sesion_de_cajero",
         "leer_sesion_de_cajero",
+        "estado_actualizacion",
+        "instalar_actualizacion",
     ]);
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

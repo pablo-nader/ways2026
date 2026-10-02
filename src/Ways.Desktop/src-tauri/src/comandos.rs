@@ -179,3 +179,19 @@ pub fn guardar_sesion_de_cajero(
 pub fn leer_sesion_de_cajero(app: AppHandle) -> Option<sesion::SesionDeCajero> {
     sesion::leer(&app)
 }
+
+/// Version descargada y lista para instalar, si hay una. La pagina del POS la consulta al montar,
+/// porque el evento `actualizacion-descargada` pudo haberse emitido antes de que escuchara.
+#[tauri::command]
+pub fn estado_actualizacion(
+    estado: tauri::State<'_, crate::actualizacion::EstadoDeActualizacion>,
+) -> Option<crate::actualizacion::ActualizacionDisponible> {
+    estado.lock().unwrap().disponible()
+}
+
+/// Instala la version descargada: cierra la app y el instalador la vuelve a abrir. Solo devuelve
+/// el control si la instalacion fallo.
+#[tauri::command]
+pub async fn instalar_actualizacion(app: AppHandle) -> Result<(), String> {
+    crate::actualizacion::instalar(&app).await
+}
