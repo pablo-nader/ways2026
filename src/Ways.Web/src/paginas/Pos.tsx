@@ -15,6 +15,7 @@ import {
   aPagosDeVenta,
   calcularExcedente,
   calcularFaltante,
+  consumoCuentaCorriente,
   filaPagoInicial,
   filaPagoVacia,
   filasAPagosConVuelto,
@@ -24,6 +25,7 @@ import {
   medioDisponibleParaCliente,
   sumarImportes,
   sumarVueltos,
+  superaLimiteDeCredito,
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
@@ -82,7 +84,7 @@ import {
   minutosAMilisegundos,
   normalizarIntervaloEnMinutos,
 } from '../pos/intervaloDeSincronizacion'
-import { construirNumeroVisible, mensajeDeRechazoOffline, type MotivoRechazoOffline } from '../pos/outboxOffline'
+import { construirNumeroVisible, mensajeDeRechazoOffline, rechazoOfflineEsDefinitivo, type MotivoRechazoOffline } from '../pos/outboxOffline'
 import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
@@ -114,6 +116,10 @@ function formatearMoneda(valor: number): string {
 /** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
  * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
  * atención" es agramatical). */
+/** Un cobro online que se quedó sin respuesta: el servidor pudo haberlo registrado. */
+const MENSAJE_DE_COBRO_INCIERTO =
+  'No se pudo confirmar si la venta se registró: el servidor no respondió. Revisá las ventas del turno antes de volver a cobrar.'
+
 function fraseVentasNecesitanAtencion(cantidad: number): string {
   return cantidad === 1 ? '1 venta necesita atención' : `${cantidad} ventas necesitan atención`
 }
@@ -387,6 +393,10 @@ type ResumenVentaFinalizada = {
    * SINTÉTICO del outbox offline, nunca de una respuesta real del servidor — el modal lo muestra
    * para que el cajero nunca confunda "ya sincronizado" con "guardado localmente, en cola". */
   pendienteDeSincronizar: boolean
+  /** Venta local con cuenta corriente encolada sin respuesta del servidor sobre el límite de
+   * crédito: aviso que no bloquea nada (la venta ya quedó registrada). `null` en cualquier otro
+   * caso. */
+  avisoLimiteDeCredito: string | null
 }
 
 type PropsVentaFinalizada = ResumenVentaFinalizada & {
@@ -437,6 +447,7 @@ function VentaFinalizada({
   vuelto,
   itemsVencidos,
   pendienteDeSincronizar,
+  avisoLimiteDeCredito,
   modoPresupuesto,
   onCerrar,
   onEscanearCodigo,
@@ -520,6 +531,11 @@ function VentaFinalizada({
               {pendienteDeSincronizar && (
                 <div className="alert alert-secondary rounded-0 text-start small py-2 mb-3">
                   <strong>Guardada en este dispositivo</strong> — se envía al servidor en segundo plano.
+                </div>
+              )}
+              {avisoLimiteDeCredito && (
+                <div className="alert alert-warning rounded-0 text-start small py-2 mb-3" role="status">
+                  {avisoLimiteDeCredito}
                 </div>
               )}
               {/* design decisión 12 ("Expired Lot Sale Warns, Never Blocks"): nunca bloquea la
@@ -958,11 +974,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // judgment-day ronda 1 (WARNING): la instantánea EXACTA que resolvió la vista previa offline
   // actualmente en pantalla (`precios`) — nunca la más fresca que `sincronizacionOffline.instantanea`
   // pueda tener en el momento del click. El efecto de abajo la fija cuando la vista previa sale de
-  // la instantánea (venta local primero, o el fallback sin red); `null` con una vista previa
-  // online o sin vista previa todavía. "El precio que se mostró es el que se cobra": `cobrar()`
-  // encola con esta referencia; solo el fallback sin red, cuando no hubo vista previa local, cae a
-  // la instantánea vigente del hook.
+  // la instantánea (venta local primero, o el fallback sin red de la vista previa); `null` con una
+  // vista previa online o sin vista previa todavía. "El precio que se mostró es el que se cobra":
+  // `cobrar()` encola solo con esta referencia; sin ella, cobra online.
   const instantaneaDeLaVistaPreviaRef = useRef<InstantaneaDePos | null>(null)
+  // Espejo renderizable de `instantaneaDeLaVistaPreviaRef !== null`: con una vista previa local,
+  // `cobrar()` intenta el cobro local, y ahí el límite de crédito lo juzga la consulta al servidor
+  // al encolar, no los datos del cliente que tiene la pantalla.
+  const [previaLocal, setPreviaLocal] = useState(false)
+  function congelarInstantaneaDeLaPrevia(instantanea: InstantaneaDePos | null) {
+    instantaneaDeLaVistaPreviaRef.current = instantanea
+    setPreviaLocal(instantanea !== null)
+  }
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
@@ -1220,8 +1243,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo se resuelve contra
   // la instantánea sin esperar la red (decisión del dueño: un precio algo viejo es aceptable, una
-  // caja lenta no). La vista previa y el cobro locales son solo del Consumidor Final; cualquier
-  // otro cliente cotiza y cobra por el camino online.
+  // caja lenta no). La vista previa y el cobro locales son del Consumidor Final y de los clientes
+  // que trae la instantánea; cualquier otro cliente cotiza y cobra por el camino online.
   const instantaneaDelPuntoVenta =
     !modoPresupuesto &&
     sincronizacionOffline.instantanea !== null &&
@@ -2080,7 +2103,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setPrecios({})
       setAvisoPrecios('')
       setResolviendo(false)
-      instantaneaDeLaVistaPreviaRef.current = null
+      congelarInstantaneaDeLaPrevia(null)
       return
     }
 
@@ -2101,28 +2124,29 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // generación ya no coincide). Sin este reset explícito, esta corrida temprana (ej. vaciar
       // el carrito, o que quede vacío tras cobrar) deja `resolviendo` en `true` para siempre.
       setResolviendo(false)
-      instantaneaDeLaVistaPreviaRef.current = null
+      congelarInstantaneaDeLaPrevia(null)
       return
     }
 
-    // Venta local primero: si el cliente es el Consumidor Final y la instantánea de este punto de
-    // venta tiene precio para TODAS las líneas en su lista, la vista previa sale de ahí, sin red ni
-    // debounce. La instantánea queda congelada en `instantaneaDeLaVistaPreviaRef`: es la que
-    // `cobrar()` usa para encolar, así se cobra exactamente lo que el cajero vio. Otro cliente
-    // cobra por el camino online, donde el servidor vuelve a resolver el precio: su vista previa
-    // también va online, para que lo mostrado sea lo que se cobra.
+    // Venta local primero: si el cliente es el Consumidor Final o está en la instantánea de este
+    // punto de venta, y esa instantánea tiene precio para TODAS las líneas en la lista del cliente,
+    // la vista previa sale de ahí, sin red ni debounce. La instantánea queda congelada en
+    // `instantaneaDeLaVistaPreviaRef`: es la que `cobrar()` usa para encolar, así se cobra
+    // exactamente lo que el cajero vio. Un cliente que no está en la instantánea cobra por el
+    // camino online, donde el servidor vuelve a resolver el precio: su vista previa también va
+    // online, para que lo mostrado sea lo que se cobra.
     const instantaneaLocal = sincronizacionOffline.instantanea
     if (
       !modoPresupuesto &&
       instantaneaLocal !== null &&
       instantaneaLocal.idPuntoVenta === puntoVentaSeleccionada.id &&
-      clienteAdmitidoOffline(clienteSeleccionado) &&
+      clienteAdmitidoOffline(clienteSeleccionado, instantaneaLocal) &&
       todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
     ) {
       setPrecios(resolverPreciosOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio))
       setAvisoPrecios('')
       setResolviendo(false)
-      instantaneaDeLaVistaPreviaRef.current = instantaneaLocal
+      congelarInstantaneaDeLaPrevia(instantaneaLocal)
       return
     }
 
@@ -2138,7 +2162,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           setPrecios(indexarResolucionPorArticulo(resultados))
           // Vista previa ONLINE: ninguna instantánea queda congelada, así que `cobrar()` va por
           // el camino online.
-          instantaneaDeLaVistaPreviaRef.current = null
+          congelarInstantaneaDeLaPrevia(null)
         })
         .catch((e) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
@@ -2146,8 +2170,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // stage-pos-venta-offline-web (Parte B): la vista previa llegó acá por el camino online
           // (otro cliente, o alguna línea fuera de la instantánea) y no hubo servidor — se
           // resuelve contra la instantánea lo que se pueda. `idListaPrecio` es el que ya trae el
-          // cliente elegido; el cobro local igual rechaza a un cliente que no sea el Consumidor
-          // Final (`admisibilidadDeVentaOffline`).
+          // cliente elegido; el cobro local igual rechaza a un cliente que no esté en la
+          // instantánea (`admisibilidadDeVentaOffline`).
           if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea && clienteSeleccionado) {
             setPrecios(resolverPreciosOffline(lineas, sincronizacionOffline.instantanea, clienteSeleccionado.idListaPrecio))
             setAvisoPrecios('')
@@ -2158,7 +2182,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             // `useSincronizacionOffline` no dispara este efecto a propósito, ver el comentario
             // de más abajo — así que sin este freeze, cobrar podía leer una instantánea distinta
             // de la que el cajero tiene en pantalla).
-            instantaneaDeLaVistaPreviaRef.current = sincronizacionOffline.instantanea
+            congelarInstantaneaDeLaPrevia(sincronizacionOffline.instantanea)
             return
           }
 
@@ -2168,7 +2192,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // un subtotal a medias es peor que ninguno (judgment-day R3, falso negativo de Judge B).
           setPrecios({})
           setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
-          instantaneaDeLaVistaPreviaRef.current = null
+          congelarInstantaneaDeLaPrevia(null)
         })
         .finally(() => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
@@ -2572,7 +2596,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           saldoCliente: clienteSeleccionado.saldo,
           limiteCredito: clienteSeleccionado.limiteCredito,
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
+          exigirLimiteDeCredito: !previaLocal,
         })
+
+  // Aviso, nunca bloqueo: con la vista previa local el límite lo decide el servidor al cobrar (o,
+  // sin respuesta, la venta se registra igual). Los datos de la instantánea solo anticipan lo que
+  // probablemente conteste.
+  const clienteEnInstantanea =
+    previaLocal && clienteSeleccionado !== null && !clienteSeleccionado.esConsumidorFinal
+      ? (instantaneaDelPuntoVenta?.clientes.find((c) => c.idCliente === clienteSeleccionado.id) ?? null)
+      : null
+  const avisoLimiteSegunInstantanea =
+    clienteEnInstantanea !== null && instantaneaDelPuntoVenta !== null && superaLimiteDeCredito(clienteEnInstantanea, consumoCuentaCorriente(pagosConVuelto))
+      ? `Según los datos de ${formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? instantaneaDelPuntoVenta.momento, new Date())}, este pago supera el límite de crédito del cliente. Se consulta al servidor al cobrar.`
+      : ''
 
   // react-async-state regla 7: si medios de pago o parámetros no cargaron, "Cobrar" queda
   // efectivamente deshabilitado — no solo un aviso decorativo. Bajo `?idPresupuesto=` la
@@ -2869,6 +2906,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               observaciones: null,
             })
 
+      /** Texto del aviso de una venta con cuenta corriente encolada sin respuesta del servidor
+       * sobre el límite. Los datos de la instantánea solo agregan una pista, nunca bloquean. */
+      const avisoDeLimiteNoValidado = (instantanea: InstantaneaDePos): string => {
+        const base = 'No se pudo validar el límite de crédito con el servidor: la venta se registró igual.'
+        const local = instantanea.clientes.find((c) => c.idCliente === clienteSeleccionado.id)
+        if (!local || !superaLimiteDeCredito(local, consumoCuentaCorriente(pagosConVuelto))) return base
+        const vejez = formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? instantanea.momento, new Date())
+        return `${base} Según los datos de ${vejez}, el cliente supera su límite.`
+      }
+
       /** Encola la venta en el outbox con los precios de `instantanea` y arma el comprobante
        * sintético con esa MISMA instantánea — el ticket tiene que coincidir con lo encolado, y
        * ambos con lo que el cajero vio. Con `encolada` o `sinComprobante` la venta ya quedó
@@ -2877,8 +2924,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       const encolarLocal = async (
         instantanea: InstantaneaDePos,
       ): Promise<
-        | { tipo: 'encolada'; comprobante: ComprobanteEmitido }
-        | { tipo: 'sinComprobante'; numeroVisible: string }
+        | { tipo: 'encolada'; comprobante: ComprobanteEmitido; avisoLimiteDeCredito: string | null }
+        | { tipo: 'sinComprobante'; numeroVisible: string; avisoLimiteDeCredito: string | null }
         | { tipo: 'rechazada'; motivo: MotivoRechazoOffline }
       > => {
         const resultado = await sincronizacionOffline.encolarVentaOffline({
@@ -2889,6 +2936,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           instantaneaCongelada: instantanea,
         })
         if (!resultado.ok) return { tipo: 'rechazada', motivo: resultado.motivo }
+        const avisoLimiteDeCredito = resultado.limiteDeCreditoNoValidado ? avisoDeLimiteNoValidado(instantanea) : null
         const comprobante = construirComprobanteOfflineSintetico({
           numero: resultado.numero,
           numeroVisible: resultado.numeroVisible,
@@ -2902,13 +2950,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         })
         // Defensa en profundidad: `ok: true` ya exigió que todas las líneas tengan precio en esta
         // misma instantánea, que es lo único que puede dejar al comprobante sin armar.
-        if (!comprobante) return { tipo: 'sinComprobante', numeroVisible: resultado.numeroVisible }
-        return { tipo: 'encolada', comprobante }
+        if (!comprobante) return { tipo: 'sinComprobante', numeroVisible: resultado.numeroVisible, avisoLimiteDeCredito }
+        return { tipo: 'encolada', comprobante, avisoLimiteDeCredito }
       }
 
       /** Comprobante a mostrar (del servidor o sintético) o `null` si ya se informó por qué no
        * hay venta (o la respuesta quedó vieja). */
-      const emitirOEncolar = async (): Promise<{ emitido: ComprobanteEmitido; pendienteDeSincronizar: boolean } | null> => {
+      const emitirOEncolar = async (): Promise<{
+        emitido: ComprobanteEmitido
+        pendienteDeSincronizar: boolean
+        avisoLimiteDeCredito: string | null
+      } | null> => {
         // Una venta encolada (con o sin comprobante para mostrar) dispara el envío en segundo
         // plano — el cajero nunca lo espera.
         const resolverEncolado = (local: Awaited<ReturnType<typeof encolarLocal>>) => {
@@ -2920,51 +2972,50 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           if (local.tipo === 'sinComprobante') {
             // react-async-state regla 6: la venta ya se guardó, nunca se reporta como un fallo.
             setErrorCobro(
-              `La venta ${local.numeroVisible} se guardó en este dispositivo, pero no se pudo armar el comprobante para mostrar/imprimir — va a aparecer cuando sincronice.`,
+              [
+                `La venta ${local.numeroVisible} se guardó en este dispositivo, pero no se pudo armar el comprobante para mostrar/imprimir — va a aparecer cuando sincronice.`,
+                local.avisoLimiteDeCredito,
+              ]
+                .filter(Boolean)
+                .join(' '),
             )
             return null
           }
-          return { emitido: local.comprobante, pendienteDeSincronizar: true }
+          return { emitido: local.comprobante, pendienteDeSincronizar: true, avisoLimiteDeCredito: local.avisoLimiteDeCredito }
         }
 
         // Venta local primero: si la vista previa salió de la instantánea (congelada en
         // `instantaneaDeLaVistaPreviaRef`), se intenta encolar sin esperar al servidor. El único
-        // gate es `admisibilidadDeVentaOffline` (Consumidor Final, medios admitidos, todas las
-        // líneas con precio, números reservados): si rechaza, sigue el camino online de siempre.
+        // gate es `admisibilidadDeVentaOffline` (cliente de la instantánea, medios admitidos, todas
+        // las líneas con precio, números reservados): si rechaza, sigue el camino online de
+        // siempre. Salvo un rechazo que el servidor ya contestó (límite superado o consulta
+        // rechazada): ese se informa y la venta no se manda online sin número.
         const instantaneaDeLaPrevia = instantaneaDeLaVistaPreviaRef.current
         if (instantaneaDeLaPrevia !== null) {
           const local = await encolarLocal(instantaneaDeLaPrevia)
           if (generacionCobroRef.current !== miGeneracion) return null
-          if (local.tipo !== 'rechazada') return resolverEncolado(local)
+          if (local.tipo !== 'rechazada' || rechazoOfflineEsDefinitivo(local.motivo)) return resolverEncolado(local)
         }
 
         try {
-          return { emitido: await clienteDeVentas.emitir(solicitud), pendienteDeSincronizar: false }
+          return { emitido: await clienteDeVentas.emitir(solicitud), pendienteDeSincronizar: false, avisoLimiteDeCredito: null }
         } catch (e) {
           if (generacionCobroRef.current !== miGeneracion) return null
 
-          // stage-pos-venta-offline-web (Parte B/C): el fallback solo corre cuando `fetch` mismo
-          // no encontró servidor (`ErrorDeRed`) y la venta no es una conversión de presupuesto
-          // (esa nunca pudo cargar sin red en primer lugar, no hay nada que encolar). Cualquier
-          // otro caso se relanza tal cual, al catch de siempre.
-          if (modoPresupuesto || !(e instanceof ErrorDeRed)) throw e
-
-          // judgment-day ronda 1 (WARNING): la MISMA instantánea que ya resolvió la vista previa
-          // en pantalla, si la hubo — sin vista previa local cae a la instantánea actual del hook.
-          const instantaneaParaOffline = instantaneaDeLaVistaPreviaRef.current ?? sincronizacionOffline.instantanea
-          if (instantaneaParaOffline === null) {
-            setErrorCobro(mensajeDeRechazoOffline('sin_instantanea'))
+          // Sin respuesta, el pedido online pudo haberse registrado igual (respuesta perdida):
+          // encolarlo ahora con otro número pre-asignado duplicaría la venta. Se informa como
+          // resultado incierto, igual que un 503 `resultado_incierto`.
+          if (e instanceof ErrorDeRed) {
+            setErrorCobro(MENSAJE_DE_COBRO_INCIERTO)
             return null
           }
-          const local = await encolarLocal(instantaneaParaOffline)
-          if (generacionCobroRef.current !== miGeneracion) return null
-          return resolverEncolado(local)
+          throw e
         }
       }
 
       const resultado = await emitirOEncolar()
       if (resultado === null) return
-      const { emitido, pendienteDeSincronizar } = resultado
+      const { emitido, pendienteDeSincronizar, avisoLimiteDeCredito } = resultado
 
       // Éxito compartido — servidor o comprobante sintético de la venta encolada: el modal "Venta
       // finalizada" solo necesita lo que muestra, número/total/medios/vuelto (nunca recalculado de
@@ -2981,6 +3032,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           .filter((item) => item.loteVencido)
           .map((item) => ({ descripcion: item.descripcion, codigoLote: item.codigoLote })),
         pendienteDeSincronizar,
+        avisoLimiteDeCredito,
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
@@ -3515,8 +3567,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
               >
                 {/* Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
-                    sale de su propia lista. El cobro local sigue siendo solo del Consumidor Final
-                    (`admisibilidadDeVentaOffline`), y el aviso de abajo lo dice. */}
+                    y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`). */}
                 {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
                     <option key={c.id} value={c.id}>
                       {etiquetaDeCliente(c)}
@@ -3524,7 +3575,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   ))}
               </select>
               {!sincronizacionOffline.enLinea && !modoPresupuesto && (
-                <div className="form-text">Sin conexión: solo se puede vender al Consumidor Final.</div>
+                <div className="form-text">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
               )}
             </div>
 
@@ -3582,6 +3633,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {errorMedios && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorMedios}</div>}
             {errorParametros && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorParametros}</div>}
             {errorCobro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCobro}</div>}
+            {avisoLimiteSegunInstantanea && !modoPresupuesto && (
+              <div className="alert alert-warning rounded-0 py-1 px-2 small">{avisoLimiteSegunInstantanea}</div>
+            )}
 
             <h6>Pagos</h6>
             {filasPago.map((fila) => {
@@ -3602,11 +3656,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         .filter((m) => medioDisponibleParaCliente(m, clienteSeleccionado?.esConsumidorFinal ?? false))
                         // stage-pos-venta-offline-web (Parte D): proactivo — sin señal solo se
                         // ofrecen los medios que la venta local admite (`medioAdmitidoOffline`:
-                        // efectivo y electrónico, nunca cuenta corriente). Solo gatea qué
-                        // opciones se OFRECEN; el rechazo real vive en `admisibilidadDeVentaOffline`
-                        // (mensajeDeRechazoOffline), que corre igual aunque esta pantalla
-                        // pensara (erróneamente) que hay señal.
-                        .filter((m) => sincronizacionOffline.enLinea || medioAdmitidoOffline(m.comportamiento))
+                        // efectivo y electrónico, y cuenta corriente solo para un cliente
+                        // identificado). Solo gatea qué opciones se OFRECEN; el rechazo real vive
+                        // en `admisibilidadDeVentaOffline` (mensajeDeRechazoOffline), que corre
+                        // igual aunque esta pantalla pensara (erróneamente) que hay señal.
+                        .filter(
+                          (m) => sincronizacionOffline.enLinea || medioAdmitidoOffline(m.comportamiento, clienteSeleccionado?.esConsumidorFinal ?? true),
+                        )
                         .map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.nombre}
@@ -3725,6 +3781,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           vuelto={ventaFinalizada.vuelto}
           itemsVencidos={ventaFinalizada.itemsVencidos}
           pendienteDeSincronizar={ventaFinalizada.pendienteDeSincronizar}
+          avisoLimiteDeCredito={ventaFinalizada.avisoLimiteDeCredito}
           modoPresupuesto={modoPresupuesto}
           onCerrar={cerrarVentaFinalizada}
           onEscanearCodigo={(codigo) => void escanear(codigo)}

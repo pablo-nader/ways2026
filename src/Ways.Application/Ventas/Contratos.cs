@@ -38,7 +38,15 @@ namespace Ways.Application.Ventas;
 /// <c>precio_offline_no_admitido</c>/<c>precio_offline_incompleto</c> en cualquier otro caso). El
 /// servidor sigue recomputando lo que HUBIERA cobrado (<c>ServicioDeOfertas.ResolverAsync</c>) y
 /// deja un rastro auditable (<c>AccionAuditada.VentaDiscrepanciaDePrecio</c>) si difiere — nunca
-/// bloquea, nunca pisa el precio recibido.</summary>
+/// bloquea, nunca pisa el precio recibido.
+///
+/// <see cref="LimiteDeCreditoNoValidado"/> (decisión del dueño, venta local a clientes
+/// identificados): el dispositivo cobró con cuenta corriente sin poder consultar el límite de
+/// crédito al servidor (sin conexión o sin respuesta a tiempo) y registró la venta igual. Solo se
+/// admite junto a <see cref="NumeroPreasignado"/> (400 <c>limite_no_validado_no_admitido</c> en
+/// cualquier otro caso). Cuando se honra, el servidor no rechaza la venta por el límite pero sí
+/// actualiza el saldo, y si el saldo resultante lo supera deja el rastro
+/// <c>AccionAuditada.VentaExcedioLimiteSinValidar</c>.</summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
     int? IdCliente,
@@ -49,7 +57,8 @@ public sealed record SolicitudDeVenta(
     string? DireccionEntrega,
     string? Observaciones,
     int? IdPresupuestoOrigen = null,
-    long? NumeroPreasignado = null);
+    long? NumeroPreasignado = null,
+    bool LimiteDeCreditoNoValidado = false);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>

@@ -11,7 +11,7 @@
  */
 import type { AlmacenClaveValor } from './almacenPos'
 import { clienteAdmitidoOffline, pagosAdmitidosOffline } from './reglasOffline'
-import type { ComportamientoMedioPago, SolicitudDeVenta } from '../api/tipos'
+import type { ComportamientoMedioPago, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
 
 const CLAVE_OUTBOX = 'outbox'
 const CLAVE_BLOQUE = 'bloqueNumeracion'
@@ -26,6 +26,9 @@ export type VentaEnCola = {
   idPuntoVenta: number
   creadoEn: string
   solicitud: SolicitudDeVenta
+  /** Lo que esta venta carga a la cuenta corriente de su cliente, si carga algo. La consulta del
+   * límite de la próxima venta lo suma al saldo del servidor mientras la venta siga en la cola. */
+  consumoCuentaCorriente?: number
 }
 
 /** Bloque de numeración reservado, con `proximo` como puntero local de reparto — nunca se vuelve
@@ -188,10 +191,12 @@ export type MotivoRechazoOffline =
   | 'linea_sin_precio'
   | 'sin_numeracion'
   | 'error_al_guardar'
+  | 'limite_credito_excedido'
+  | 'cuenta_corriente_no_verificada'
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
-  cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final — la instantánea no tiene los precios de otro cliente.',
-  medio_no_admitido: 'Sin conexión solo se admiten efectivo y medios electrónicos — la cuenta corriente necesita validarse contra el servidor.',
+  cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final o a un cliente de la copia local de este dispositivo.',
+  medio_no_admitido: 'El Consumidor Final no puede pagar con cuenta corriente.',
   sin_instantanea: 'No hay una instantánea local para vender sin conexión — recuperá la señal para descargarla.',
   linea_sin_precio: 'Un artículo del carrito no tiene precio en la última instantánea — no se puede vender sin conexión.',
   sin_numeracion: 'No quedan números reservados para vender sin conexión — recuperá la señal para reponer el bloque.',
@@ -199,6 +204,15 @@ const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   // cliente con este motivo (a diferencia de los demás, que rechazan ANTES de intentar nada).
   error_al_guardar:
     'No se pudo guardar la venta de forma segura en este dispositivo — no quedó encolada, no le entregues el comprobante al cliente. Probá de nuevo; si persiste, puede ser que el almacenamiento del dispositivo esté lleno o bloqueado.',
+  limite_credito_excedido: 'El pago supera el límite de crédito del cliente.',
+  cuenta_corriente_no_verificada:
+    'El servidor no aceptó la consulta de la cuenta corriente del cliente — la venta no se registró. Cobrá con otro medio o revisá el cliente.',
+}
+
+/** Rechazos que el servidor ya contestó: la venta no se registra, ni local ni por el camino online
+ * (`Pos.tsx` no la reintenta sin número — un envío online sin número arriesga un duplicado). */
+export function rechazoOfflineEsDefinitivo(motivo: MotivoRechazoOffline): boolean {
+  return motivo === 'limite_credito_excedido' || motivo === 'cuenta_corriente_no_verificada'
 }
 
 export function mensajeDeRechazoOffline(motivo: MotivoRechazoOffline): string {
@@ -211,15 +225,15 @@ export function mensajeDeRechazoOffline(motivo: MotivoRechazoOffline): string {
  * reordena ni acumula — mismo criterio que `validarPagosLocal` (corta en el primer rechazo).
  */
 export function admisibilidadDeVentaOffline(params: {
-  esConsumidorFinal: boolean
+  cliente: { id?: number; esConsumidorFinal: boolean }
+  instantanea: InstantaneaDePos | null
   pagos: readonly { comportamiento: ComportamientoMedioPago }[]
-  hayInstantanea: boolean
   todasLasLineasConPrecio: boolean
   hayNumeroDisponible: boolean
 }): MotivoRechazoOffline | null {
-  if (!clienteAdmitidoOffline({ esConsumidorFinal: params.esConsumidorFinal })) return 'cliente_no_admitido'
-  if (!pagosAdmitidosOffline(params.pagos)) return 'medio_no_admitido'
-  if (!params.hayInstantanea) return 'sin_instantanea'
+  if (!clienteAdmitidoOffline(params.cliente, params.instantanea)) return 'cliente_no_admitido'
+  if (!pagosAdmitidosOffline(params.pagos, params.cliente.esConsumidorFinal)) return 'medio_no_admitido'
+  if (!params.instantanea) return 'sin_instantanea'
   if (!params.todasLasLineasConPrecio) return 'linea_sin_precio'
   if (!params.hayNumeroDisponible) return 'sin_numeracion'
   return null

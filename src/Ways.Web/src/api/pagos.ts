@@ -94,6 +94,16 @@ export function consumoCuentaCorriente(pagos: { comportamiento: ComportamientoMe
   )
 }
 
+/** Regla 6 de `ValidadorDePagos`: `saldo + consumo > límite`, salvo crédito ilimitado. Única
+ * fuente de la comparación en el front — la usan `validarPagosLocal`, la consulta al servidor
+ * antes de encolar una venta local y el aviso con los datos de la instantánea. */
+export function superaLimiteDeCredito(
+  cliente: { saldo: number; limiteCredito: number; creditoIlimitado: boolean },
+  consumoCc: number,
+): boolean {
+  return consumoCc > 0 && !cliente.creditoIlimitado && redondear(cliente.saldo + consumoCc) > cliente.limiteCredito
+}
+
 /** `Σ importe` de los pagos cuyo `comportamiento` es `Efectivo` (billetes físicos reales) — es
  * el monto que `esVueltoJustificado` intenta formar con billetes. A propósito NO filtra por
  * `admiteVuelto`: ese flag es configurable por medio (catálogo, ABM) y no está atado a
@@ -264,8 +274,11 @@ export function validarPagosLocal(params: {
   saldoCliente: number
   limiteCredito: number
   creditoIlimitado: boolean
+  /** `false` en una venta local: el límite lo juzga la consulta al servidor antes de encolar, y los
+   * datos del cliente que tiene la pantalla pueden ser viejos. Default `true`. */
+  exigirLimiteDeCredito?: boolean
 }): RechazoDePago | null {
-  const { total, pagos, toleranciaPago, esConsumidorFinal, saldoCliente, limiteCredito, creditoIlimitado } = params
+  const { total, pagos, toleranciaPago, esConsumidorFinal, saldoCliente, limiteCredito, creditoIlimitado, exigirLimiteDeCredito = true } = params
 
   for (const pago of pagos) {
     if (pago.importe < 0) {
@@ -312,7 +325,7 @@ export function validarPagosLocal(params: {
     return { codigo: 'cuenta_corriente_no_permitida', mensaje: 'El Consumidor Final no puede pagar con cuenta corriente.' }
   }
 
-  if (consumoCc > 0 && !creditoIlimitado && saldoCliente + consumoCc > limiteCredito) {
+  if (exigirLimiteDeCredito && superaLimiteDeCredito({ saldo: saldoCliente, limiteCredito, creditoIlimitado }, consumoCc)) {
     return { codigo: 'limite_credito_excedido', mensaje: 'El pago supera el límite de crédito del cliente.' }
   }
 

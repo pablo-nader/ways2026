@@ -48,6 +48,10 @@ public static class ValidadorDePagos
     /// <param name="limiteCredito"><c>Cliente.LimiteCredito</c>.</param>
     /// <param name="creditoIlimitado"><c>Cliente.CreditoIlimitado</c> — si es <c>true</c>, la
     /// regla 6 nunca se evalúa.</param>
+    /// <param name="exigirLimiteDeCredito"><c>false</c> saltea SOLO la regla 6: una venta offline
+    /// cuyo dispositivo no pudo validar el límite contra el servidor y la registró igual
+    /// (<c>SolicitudDeVenta.LimiteDeCreditoNoValidado</c>), o el reenvío de una venta offline que
+    /// ya se emitió. La regla 5 se sigue evaluando.</param>
     public static void Validar(
         decimal total,
         IReadOnlyList<PagoAValidar> pagos,
@@ -55,7 +59,8 @@ public static class ValidadorDePagos
         bool esConsumidorFinal,
         decimal saldoCliente,
         decimal limiteCredito,
-        bool creditoIlimitado)
+        bool creditoIlimitado,
+        bool exigirLimiteDeCredito = true)
     {
         // 0 (nuevo, sin numeración legacy — corta ANTES que cualquier otra regla): un
         // Importe negativo permite manipular Σ importe sin que ninguna regla de abajo lo note
@@ -152,7 +157,7 @@ public static class ValidadorDePagos
         }
 
         // 6: saldo + consumo > limite_credito, salvo credito_ilimitado.
-        if (consumoCuentaCorriente > 0m && !creditoIlimitado
+        if (exigirLimiteDeCredito && consumoCuentaCorriente > 0m && !creditoIlimitado
             && saldoCliente + consumoCuentaCorriente > limiteCredito)
         {
             throw new ErrorDominio("limite_credito_excedido", "El pago supera el límite de crédito del cliente.", 400);
