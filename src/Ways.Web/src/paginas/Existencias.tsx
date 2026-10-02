@@ -10,6 +10,7 @@ import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const CANTIDAD_DE_COLUMNAS = 8
 
@@ -82,7 +83,7 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
     <div className="position-relative" style={{ maxWidth: 320 }}>
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo para agregar…"
         aria-label="Buscar artículo para agregar"
         value={termino}
@@ -340,14 +341,14 @@ export function Existencias() {
     <div className="container-fluid py-4">
       <Box titulo="Existencias" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
 
         {puntosVenta === null ? (
           <Cargando />
@@ -364,7 +365,7 @@ export function Existencias() {
                 </label>
                 <select
                   id="existencias-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   disabled={guardando !== null}
                   onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
@@ -387,7 +388,7 @@ export function Existencias() {
               </div>
             </div>
 
-            {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !existencias && <Cargando />}
 
@@ -426,7 +427,7 @@ export function Existencias() {
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  className="form-control form-control-sm rounded-0 text-end"
+                                  className="form-control form-control-sm text-end"
                                   aria-label={`Mínimo de ${fila.nombre}`}
                                   value={minimoTexto}
                                   disabled={guardando !== null}
@@ -441,7 +442,7 @@ export function Existencias() {
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  className="form-control form-control-sm rounded-0 text-end"
+                                  className="form-control form-control-sm text-end"
                                   aria-label={`Reposición de ${fila.nombre}`}
                                   value={reposicionTexto}
                                   disabled={guardando !== null}
@@ -463,7 +464,7 @@ export function Existencias() {
                                   <>
                                     <button
                                       type="button"
-                                      className="btn btn-primary btn-sm rounded-0 me-1"
+                                      className="btn btn-primary btn-sm me-1"
                                       disabled={!puedeGuardar || guardandoEstaFila}
                                       onClick={() => guardarFila(fila)}
                                     >
@@ -471,7 +472,7 @@ export function Existencias() {
                                     </button>
                                     <button
                                       type="button"
-                                      className="btn btn-outline-secondary btn-sm rounded-0"
+                                      className="btn btn-outline-secondary btn-sm"
                                       disabled={guardando !== null}
                                       onClick={cancelarEdicion}
                                     >
@@ -479,14 +480,11 @@ export function Existencias() {
                                     </button>
                                   </>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline-secondary btn-sm rounded-0"
+                                  <BotonIcono
+                                    icono="editar"
                                     disabled={guardando !== null}
                                     onClick={() => abrirFila(fila)}
-                                  >
-                                    Editar
-                                  </button>
+                                  />
                                 ))}
                             </td>
                           </tr>

@@ -119,21 +119,21 @@ function ModalDetalleDeVenta({
           {puedeReimprimirAca && (
             <button
               type="button"
-              className="btn btn-outline-secondary rounded-0"
+              className="btn btn-outline-secondary"
               disabled={cargando || reimprimiendo}
               onClick={onReimprimir}
             >
               {reimprimiendo ? 'Reimprimiendo…' : 'Reimprimir'}
             </button>
           )}
-          <button type="button" className="btn btn-secondary rounded-0" onClick={onCerrar}>
+          <button type="button" className="btn btn-secondary" onClick={onCerrar}>
             Cerrar
           </button>
         </>
       }
     >
       {cargando && <Cargando texto="Cargando detalle…" />}
-      {!cargando && error && <div className="alert alert-danger rounded-0">{error}</div>}
+      {!cargando && error && <div className="alert alert-danger">{error}</div>}
 
       {!cargando && !error && comprobante && (
         <>
@@ -144,7 +144,7 @@ function ModalDetalleDeVenta({
             <dd className="col-9">{nombreCliente ?? '—'}</dd>
             <dt className="col-3">Estado</dt>
             <dd className="col-9">
-              <span className={`badge rounded-0 ${claseDeBadgeDeEstadoVenta(comprobante.estado)}`}>
+              <span className={`badge ${claseDeBadgeDeEstadoVenta(comprobante.estado)}`}>
                 {etiquetaDeEstadoVenta(comprobante.estado)}
               </span>
             </dd>
@@ -207,7 +207,7 @@ function ModalDetalleDeVenta({
             <strong>Total: {formatearMoneda(comprobante.total)}</strong>
           </div>
 
-          {errorReimprimir && <div className="alert alert-danger rounded-0 mt-3 mb-0 py-1 px-2 small">{errorReimprimir}</div>}
+          {errorReimprimir && <div className="alert alert-danger mt-3 mb-0 py-1 px-2 small">{errorReimprimir}</div>}
         </>
       )}
     </Modal>
@@ -475,7 +475,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   const herramientas = (
     <button
       type="button"
-      className="btn btn-sm btn-outline-light rounded-0"
+      className="btn btn-sm btn-outline-secondary"
       disabled={bloqueado}
       onClick={() => void cargarTurnoYVentas()}
     >
@@ -486,28 +486,28 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Ventas del turno" variante="inverse" herramientas={herramientas}>
-        {!puntoVenta && <div className="alert alert-warning rounded-0 mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
+        {!puntoVenta && <div className="alert alert-warning mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
 
-        {puntoVenta && errorTurno && <div className="alert alert-danger rounded-0">{errorTurno}</div>}
+        {puntoVenta && errorTurno && <div className="alert alert-danger">{errorTurno}</div>}
 
         {puntoVenta && !errorTurno && buscandoTurno && !turno && <Cargando />}
 
         {puntoVenta && !errorTurno && !buscandoTurno && !turno && (
-          <div className="alert alert-warning rounded-0 mb-0">No hay un turno abierto en este punto de venta.</div>
+          <div className="alert alert-warning mb-0">No hay un turno abierto en este punto de venta.</div>
         )}
 
         {turno && (
           <>
-            {errorVentas && <div className="alert alert-danger rounded-0">{errorVentas}</div>}
-            {errorMedios && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorMedios}</div>}
-            {errorAnular && !filaAAnular && <div className="alert alert-danger rounded-0">{errorAnular}</div>}
+            {errorVentas && <div className="alert alert-danger">{errorVentas}</div>}
+            {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
+            {errorAnular && !filaAAnular && <div className="alert alert-danger">{errorAnular}</div>}
 
             {cargandoVentas && ventas.length === 0 && <Cargando />}
 
             <div className="d-flex flex-wrap gap-3 align-items-center mb-3">
               {totalesPorMedio.length === 0 && <span className="small text-muted">Sin cobros para totalizar.</span>}
               {totalesPorMedio.map((t) => (
-                <span key={t.idMedioPago} className="badge bg-secondary rounded-0 fs-6">
+                <span key={t.idMedioPago} className="badge bg-secondary fs-6">
                   {t.nombre}: {formatearMoneda(t.total)}
                 </span>
               ))}
@@ -533,7 +533,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     <th>
                       <input
                         type="text"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         aria-label="Filtrar por número"
                         value={filtros.numero}
                         onChange={(e) => setFiltros((prev) => ({ ...prev, numero: e.target.value }))}
@@ -542,7 +542,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     <th>
                       <input
                         type="text"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         aria-label="Filtrar por fecha"
                         value={filtros.fecha}
                         onChange={(e) => setFiltros((prev) => ({ ...prev, fecha: e.target.value }))}
@@ -551,7 +551,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     <th>
                       <input
                         type="text"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         aria-label="Filtrar por cliente"
                         value={filtros.cliente}
                         onChange={(e) => setFiltros((prev) => ({ ...prev, cliente: e.target.value }))}
@@ -560,14 +560,14 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     <th>
                       <div className="d-flex gap-1">
                         <CampoImporte
-                          className="form-control form-control-sm rounded-0"
+                          className="form-control form-control-sm"
                           aria-label="Total mínimo"
                           placeholder="Mín."
                           valor={filtros.totalMinimo}
                           onChange={(valor) => setFiltros((prev) => ({ ...prev, totalMinimo: valor }))}
                         />
                         <CampoImporte
-                          className="form-control form-control-sm rounded-0"
+                          className="form-control form-control-sm"
                           aria-label="Total máximo"
                           placeholder="Máx."
                           valor={filtros.totalMaximo}
@@ -577,7 +577,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     </th>
                     <th>
                       <select
-                        className="form-select form-select-sm rounded-0"
+                        className="form-select form-select-sm"
                         aria-label="Filtrar por medio de pago"
                         value={filtros.idMedioPago ?? ''}
                         onChange={(e) =>
@@ -594,7 +594,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     </th>
                     <th>
                       <select
-                        className="form-select form-select-sm rounded-0"
+                        className="form-select form-select-sm"
                         aria-label="Filtrar por estado"
                         value={filtros.estado}
                         onChange={(e) => setFiltros((prev) => ({ ...prev, estado: e.target.value as EstadoFiltro }))}
@@ -607,7 +607,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     <th>
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-secondary rounded-0"
+                        className="btn btn-sm btn-outline-secondary"
                         disabled={!hayFiltrosActivos(filtros)}
                         onClick={() => setFiltros(FILTROS_VACIOS)}
                       >
@@ -625,7 +625,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                       <td className="text-end">{formatearMoneda(v.total)}</td>
                       <td>{v.mediosDePago.map((m) => m.nombre).join(', ') || '—'}</td>
                       <td>
-                        <span className={`badge rounded-0 ${claseDeBadgeDeEstadoVenta(v.estado)}`}>
+                        <span className={`badge ${claseDeBadgeDeEstadoVenta(v.estado)}`}>
                           {etiquetaDeEstadoVenta(v.estado)}
                         </span>
                       </td>
@@ -633,7 +633,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                         <div className="d-flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-secondary rounded-0"
+                            className="btn btn-sm btn-outline-secondary"
                             disabled={bloqueado}
                             onClick={(e) => abrirDetalle(v, e.currentTarget)}
                           >
@@ -642,7 +642,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                           {puedeAnular(v, rolId) && (
                             <button
                               type="button"
-                              className="btn btn-sm btn-outline-danger rounded-0"
+                              className="btn btn-sm btn-outline-danger"
                               disabled={bloqueado}
                               onClick={(e) => pedirAnular(v, e.currentTarget)}
                             >
@@ -652,7 +652,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                           {alReimprimir && puedeReimprimir(v) && (
                             <button
                               type="button"
-                              className="btn btn-sm btn-outline-secondary rounded-0"
+                              className="btn btn-sm btn-outline-secondary"
                               disabled={bloqueado || idsReimprimiendo.has(v.id)}
                               onClick={() => void reimprimirVenta(v.id)}
                             >
@@ -695,7 +695,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                   onConfirmar={() => void confirmarAnular()}
                   onCancelar={cancelarAnular}
                 />
-                {errorAnular && <div className="alert alert-danger rounded-0 mt-2 mb-0">{errorAnular}</div>}
+                {errorAnular && <div className="alert alert-danger mt-2 mb-0">{errorAnular}</div>}
               </div>
             )}
 

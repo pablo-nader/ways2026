@@ -57,7 +57,7 @@ describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje',
     apiGetMock.mockResolvedValue([listaFixture({ id: 1, nombre: 'Fija A' })])
     render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(screen.queryByLabelText('Lista base')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Porcentaje sobre la base (%)')).not.toBeInTheDocument()
@@ -67,7 +67,7 @@ describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje',
     apiGetMock.mockResolvedValue([listaFixture({ id: 1, nombre: 'Fija A' })])
     render(<PaginaCatalogo definicion={descriptorListasPrecio} />)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.selectOptions(screen.getByLabelText('Modo'), 'Derivada')
 
     expect(screen.getByLabelText('Lista base')).toBeInTheDocument()
@@ -182,7 +182,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
 
     await screen.findByText('Nike')
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
 
     expect(apiDeleteMock).not.toHaveBeenCalled()
     expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toHaveTextContent(
@@ -200,7 +200,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
 
     await screen.findByText('Nike')
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -214,7 +214,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
 
     await screen.findByText('Nike')
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Baja' }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Eliminar' }))
     const confirmar = screen.getByRole('button', { name: 'Confirmar baja' })
     await act(async () => {
       confirmar.click()
@@ -250,16 +250,16 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
     await screen.findByText('Nike')
 
-    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Baja' }))
+    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByLabelText('Incluir inactivos')).toBeDisabled()
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
     ]) {
       expect(boton).toBeDisabled()
     }
@@ -296,7 +296,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
     await screen.findByText('Nike')
 
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText(
@@ -317,7 +317,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
 
     await screen.findByText('Nike')
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText(/porque tiene artículos/)
@@ -335,7 +335,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     render(<PaginaCatalogo definicion={descriptorMarcas} />)
 
     await screen.findByText('Nike')
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
     await screen.findByText(/porque tiene artículos/)
 
@@ -365,7 +365,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     // Editar Nike y, sin cerrarlo, abrir la puerta de baja de Adidas: `bloqueado` sigue en false
     // hasta que se abre la puerta, así que las dos conviven montadas.
     await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Editar' }))
-    await usuario.click(within(screen.getByRole('row', { name: /Adidas/ })).getByRole('button', { name: 'Baja' }))
+    await usuario.click(within(screen.getByRole('row', { name: /Adidas/ })).getByRole('button', { name: 'Eliminar' }))
 
     const form = container.querySelector('form')
     if (!form) throw new Error('no hay formulario de edición abierto')
@@ -392,7 +392,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
     expect(screen.getByText('Editando marca 1')).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText('Se dio de baja "Nike".')

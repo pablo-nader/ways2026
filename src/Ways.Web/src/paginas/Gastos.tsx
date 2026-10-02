@@ -320,7 +320,7 @@ export function Gastos() {
     <nav className="p-2 d-flex gap-2">
       <button
         type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        className="btn btn-sm btn-success text-nowrap"
         onClick={() => setMostrarFormulario((prev) => !prev)}
       >
         {mostrarFormulario ? 'Cancelar' : 'Nuevo gasto'}
@@ -331,14 +331,14 @@ export function Gastos() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Gastos" variante="inverse" herramientas={herramientas}>
-        {errorCatalogos && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorCatalogos}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {mostrarFormulario && (
-          <fieldset disabled={guardando} className="row g-2 align-items-end border p-3 mb-3 bg-white m-0">
+          <fieldset disabled={guardando} className="row g-2 align-items-end border p-3 mb-3 bg-body m-0">
             {errorGuardar && (
               <div className="col-12">
-                <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorGuardar}</div>
+                <div className="alert alert-danger py-1 px-2 small mb-2">{errorGuardar}</div>
               </div>
             )}
 
@@ -349,7 +349,7 @@ export function Gastos() {
               <input
                 id="gasto-admin-fecha"
                 type="date"
-                className="form-control rounded-0"
+                className="form-control"
                 max={fechaDeHoy()}
                 value={formulario.fecha}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, fecha: e.target.value }))}
@@ -362,7 +362,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-empresa"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.idEmpresa}
                 onChange={(e) =>
                   setFormulario((prev) => ({
@@ -387,7 +387,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-pv"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.idPuntoVenta}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
               >
@@ -406,7 +406,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-categoria"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.categoria}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, categoria: e.target.value as CategoriaGasto }))}
               >
@@ -424,7 +424,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-proveedor"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.idProveedor}
                 onChange={(e) => alCambiarProveedorDelFormulario(e.target.value)}
               >
@@ -443,7 +443,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-area"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.idArea}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, idArea: e.target.value === '' ? '' : Number(e.target.value) }))}
               >
@@ -463,7 +463,7 @@ export function Gastos() {
               <input
                 id="gasto-admin-concepto"
                 type="text"
-                className="form-control rounded-0"
+                className="form-control"
                 value={formulario.concepto}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, concepto: e.target.value }))}
               />
@@ -476,7 +476,7 @@ export function Gastos() {
               <input
                 id="gasto-admin-detalle"
                 type="text"
-                className="form-control rounded-0"
+                className="form-control"
                 value={formulario.detalle}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, detalle: e.target.value }))}
               />
@@ -488,7 +488,7 @@ export function Gastos() {
               </label>
               <select
                 id="gasto-admin-medio-pago"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formulario.idMedioPago}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, idMedioPago: e.target.value === '' ? '' : Number(e.target.value) }))}
               >
@@ -508,7 +508,7 @@ export function Gastos() {
               <input
                 id="gasto-admin-factura"
                 type="text"
-                className="form-control rounded-0"
+                className="form-control"
                 value={formulario.numeroFactura}
                 onChange={(e) => setFormulario((prev) => ({ ...prev, numeroFactura: e.target.value }))}
               />
@@ -520,14 +520,14 @@ export function Gastos() {
               </label>
               <CampoImporte
                 id="gasto-admin-importe"
-                className="form-control rounded-0"
+                className="form-control"
                 valor={formulario.importe}
                 onChange={(v) => setFormulario((prev) => ({ ...prev, importe: v }))}
               />
             </div>
 
             <div className="col-md-2">
-              <button type="button" className="btn btn-primary rounded-0 w-100" onClick={() => void registrarGasto()}>
+              <button type="button" className="btn btn-primary w-100" onClick={() => void registrarGasto()}>
                 {guardando ? 'Guardando…' : 'Registrar'}
               </button>
             </div>
@@ -541,7 +541,7 @@ export function Gastos() {
             </label>
             <select
               id="gastos-admin-filtro-empresa"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idEmpresa ?? ''}
               onChange={(e) => cambiarFiltro({ idEmpresa: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -560,7 +560,7 @@ export function Gastos() {
             </label>
             <select
               id="gastos-admin-filtro-pv"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -579,7 +579,7 @@ export function Gastos() {
             </label>
             <select
               id="gastos-admin-filtro-categoria"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.categoria ?? ''}
               onChange={(e) => cambiarFiltro({ categoria: e.target.value === '' ? null : (e.target.value as CategoriaGasto) })}
             >
@@ -598,7 +598,7 @@ export function Gastos() {
             </label>
             <select
               id="gastos-admin-filtro-origen"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.origenFondos ?? ''}
               onChange={(e) => cambiarFiltro({ origenFondos: e.target.value === '' ? null : (e.target.value as OrigenFondosGasto) })}
             >
@@ -618,7 +618,7 @@ export function Gastos() {
             <input
               id="gastos-admin-filtro-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -630,14 +630,14 @@ export function Gastos() {
             <input
               id="gastos-admin-filtro-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
           </div>
         </div>
 
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {cargando && !pagina && <Cargando />}
 
         {pagina && (
@@ -671,7 +671,7 @@ export function Gastos() {
                       <td>{g.concepto}</td>
                       <td>{g.nombreMedioPago ?? '(no disponible)'}</td>
                       <td>
-                        <span className={`badge rounded-0 ${g.origenFondos === 'Tesoreria' ? 'text-bg-secondary' : 'text-bg-light text-dark border'}`}>
+                        <span className={`badge ${g.origenFondos === 'Tesoreria' ? 'text-bg-secondary' : 'bg-body-secondary text-body border'}`}>
                           {ORIGENES_DE_FONDOS_GASTO.find((o) => o.valor === g.origenFondos)?.etiqueta ?? g.origenFondos}
                         </span>
                       </td>
@@ -685,14 +685,14 @@ export function Gastos() {
                           <div className="d-flex gap-1">
                             <button
                               type="button"
-                              className="btn btn-sm btn-outline-primary rounded-0"
+                              className="btn btn-sm btn-outline-primary"
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
                             </button>
                             <button
                               type="button"
-                              className="btn btn-sm btn-outline-secondary rounded-0"
+                              className="btn btn-sm btn-outline-secondary"
                               onClick={() => navigate(`/compras/nueva?desdeGasto=${g.id}`)}
                             >
                               Crear compra
@@ -720,7 +720,7 @@ export function Gastos() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -728,7 +728,7 @@ export function Gastos() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >
@@ -744,15 +744,15 @@ export function Gastos() {
             className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
             style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
           >
-            <div className="bg-white p-3 border" style={{ minWidth: 420, maxWidth: 600 }}>
+            <div className="bg-body p-3 border" style={{ minWidth: 420, maxWidth: 600 }}>
               <div className="d-flex justify-content-between align-items-center mb-2">
                 <h5 className="m-0">Vincular a compra</h5>
-                <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={cerrarPicker} disabled={vinculando}>
+                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={cerrarPicker} disabled={vinculando}>
                   Cerrar
                 </button>
               </div>
 
-              {pickerError && <div className="alert alert-danger rounded-0 py-1 px-2 small">{pickerError}</div>}
+              {pickerError && <div className="alert alert-danger py-1 px-2 small">{pickerError}</div>}
 
               {pickerCompras === null && <Cargando />}
 
@@ -778,7 +778,7 @@ export function Gastos() {
                           <td>{c.fechaRecepcion ? formatearFecha(c.fechaRecepcion) : '—'}</td>
                           <td className="text-end">{formatearMoneda(c.total)}</td>
                           <td>
-                            <button type="button" className="btn btn-sm btn-primary rounded-0" onClick={() => void vincularACompra(c.id)}>
+                            <button type="button" className="btn btn-sm btn-primary" onClick={() => void vincularACompra(c.id)}>
                               {vinculando ? 'Vinculando…' : 'Elegir'}
                             </button>
                           </td>

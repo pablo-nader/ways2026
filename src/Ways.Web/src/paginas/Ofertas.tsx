@@ -19,6 +19,7 @@ import type { ArticuloListado, CategoriaListado, EmpresaListado, GrupoListado, L
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const clienteGrupos = { listar: () => api.get<GrupoListado[]>('/catalogos/grupos') }
 
@@ -252,19 +253,17 @@ export function Ofertas() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" disabled={ocupado} onClick={abrirNuevo}>
-        Nuevo
-      </button>
+      <BotonIcono icono="agregar" className="text-nowrap" disabled={ocupado} onClick={abrirNuevo} />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Ofertas" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && (
-          <div className="alert alert-warning rounded-0">{avisosCatalogos.join(' ')}</div>
+          <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>
         )}
 
         {formulario && (
@@ -308,27 +307,22 @@ export function Ofertas() {
                     <td>{o.prioridad}</td>
                     <td>{o.acumulable ? 'Sí' : 'No'}</td>
                     <td>
-                      <span className={`badge rounded-0 ${o.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                      <span className={`badge ${o.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {o.activo ? 'Activa' : 'Inactiva'}
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                      <BotonIcono
+                        icono="editar"
+                        className="me-1"
                         disabled={ocupado}
                         onClick={() => abrirEdicion(o)}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                      />
+                      <BotonIcono
+                        icono="eliminar"
                         disabled={ocupado}
                         onClick={() => eliminar(o)}
-                      >
-                        Baja
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -385,7 +379,7 @@ function FormularioOfertaCampos({
   }
 
   return (
-    <div className="border p-3 mb-4 bg-white">
+    <div className="border p-3 mb-4 bg-body">
       <form
         autoComplete="off"
         onSubmit={(e) => {
@@ -411,7 +405,7 @@ function FormularioOfertaCampos({
             </label>
             <input
               id="of-nombre"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={150}
               value={valor.nombre}
               onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
@@ -427,7 +421,7 @@ function FormularioOfertaCampos({
               id="of-prioridad"
               type="number"
               step="1"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.prioridad}
               onChange={(e) => onCambio({ ...valor, prioridad: e.target.value })}
             />
@@ -438,7 +432,7 @@ function FormularioOfertaCampos({
               <input
                 id="of-acumulable"
                 type="checkbox"
-                className="form-check-input rounded-0"
+                className="form-check-input"
                 checked={valor.acumulable}
                 onChange={(e) => onCambio({ ...valor, acumulable: e.target.checked })}
               />
@@ -454,7 +448,7 @@ function FormularioOfertaCampos({
             </label>
             <select
               id="of-empresa"
-              className="form-select rounded-0"
+              className="form-select"
               value={valor.idEmpresa}
               onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value === '' ? '' : Number(e.target.value) })}
             >
@@ -479,7 +473,7 @@ function FormularioOfertaCampos({
                   id={`of-alcance-${opcion}`}
                   type="radio"
                   name="of-alcance"
-                  className="form-check-input rounded-0"
+                  className="form-check-input"
                   checked={valor.alcance === opcion}
                   onChange={() => onCambio({ ...valor, alcance: opcion })}
                 />
@@ -508,7 +502,7 @@ function FormularioOfertaCampos({
               </label>
               <select
                 id="of-grupo"
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idGrupo}
                 onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
               >
@@ -531,7 +525,7 @@ function FormularioOfertaCampos({
               </label>
               <select
                 id="of-categoria"
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idCategoria}
                 onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
               >
@@ -558,7 +552,7 @@ function FormularioOfertaCampos({
             <input
               id="of-fecha-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.fechaDesde}
               onChange={(e) => onCambio({ ...valor, fechaDesde: e.target.value })}
             />
@@ -570,7 +564,7 @@ function FormularioOfertaCampos({
             <input
               id="of-fecha-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.fechaHasta}
               onChange={(e) => onCambio({ ...valor, fechaHasta: e.target.value })}
             />
@@ -582,7 +576,7 @@ function FormularioOfertaCampos({
             <input
               id="of-hora-desde"
               type="time"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.horaDesde}
               onChange={(e) => onCambio({ ...valor, horaDesde: e.target.value })}
             />
@@ -594,7 +588,7 @@ function FormularioOfertaCampos({
             <input
               id="of-hora-hasta"
               type="time"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.horaHasta}
               onChange={(e) => onCambio({ ...valor, horaHasta: e.target.value })}
             />
@@ -608,7 +602,7 @@ function FormularioOfertaCampos({
                   <input
                     id={`of-dia-${d.valor}`}
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={valor.diasSemana.includes(d.valor)}
                     onChange={() => alternarDia(d.valor)}
                   />
@@ -629,7 +623,7 @@ function FormularioOfertaCampos({
               type="number"
               step="0.001"
               min="0"
-              className="form-control rounded-0"
+              className="form-control"
               placeholder="Sin mínimo (oferta directa)"
               value={valor.cantidadMinima}
               onChange={(e) => onCambio({ ...valor, cantidadMinima: e.target.value })}
@@ -647,7 +641,7 @@ function FormularioOfertaCampos({
                   id={`of-beneficio-${opcion}`}
                   type="radio"
                   name="of-beneficio"
-                  className="form-check-input rounded-0"
+                  className="form-check-input"
                   checked={valor.beneficio === opcion}
                   onChange={() => onCambio({ ...valor, beneficio: opcion })}
                 />
@@ -669,7 +663,7 @@ function FormularioOfertaCampos({
                 step="0.01"
                 min="0"
                 max="100"
-                className="form-control rounded-0"
+                className="form-control"
                 value={valor.porcentaje}
                 onChange={(e) => onCambio({ ...valor, porcentaje: e.target.value })}
               />
@@ -683,7 +677,7 @@ function FormularioOfertaCampos({
               </label>
               <CampoImporte
                 id="of-importe-fijo"
-                className="form-control rounded-0"
+                className="form-control"
                 valor={valor.importeFijo === '' ? null : Number(valor.importeFijo)}
                 onChange={(n) => onCambio({ ...valor, importeFijo: n === null ? '' : String(n) })}
               />
@@ -697,7 +691,7 @@ function FormularioOfertaCampos({
               </label>
               <CampoImporte
                 id="of-precio-unitario"
-                className="form-control rounded-0"
+                className="form-control"
                 valor={valor.precioUnitario === '' ? null : Number(valor.precioUnitario)}
                 onChange={(n) => onCambio({ ...valor, precioUnitario: n === null ? '' : String(n) })}
               />
@@ -718,7 +712,7 @@ function FormularioOfertaCampos({
                   <input
                     id={`of-lista-${o.valor}`}
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={valor.idsListas.includes(Number(o.valor))}
                     onChange={() => alternarLista(Number(o.valor))}
                   />
@@ -736,7 +730,7 @@ function FormularioOfertaCampos({
               <input
                 id="of-activo"
                 type="checkbox"
-                className="form-check-input rounded-0"
+                className="form-check-input"
                 checked={valor.activo}
                 onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
               />
@@ -747,10 +741,10 @@ function FormularioOfertaCampos({
           </div>
 
           <div className="col-12 d-flex gap-2">
-            <button type="submit" className="btn btn-success rounded-0" disabled={ocupado}>
+            <button type="submit" className="btn btn-success" disabled={ocupado}>
               {guardando ? 'Guardando…' : 'Guardar'}
             </button>
-            <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={ocupado}>
+            <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={ocupado}>
               Cancelar
             </button>
           </div>
@@ -815,21 +809,21 @@ function SelectorDeArticulo({
         <input
           id="of-buscar-articulo"
           type="search"
-          className="form-control rounded-0"
+          className="form-control"
           placeholder="Buscar por nombre o código interno…"
           value={termino}
           disabled={disabled}
           onChange={(e) => setTermino(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
         />
-        <button type="button" className="btn btn-outline-primary rounded-0" disabled={disabled || buscando} onClick={buscar}>
+        <button type="button" className="btn btn-outline-primary" disabled={disabled || buscando} onClick={buscar}>
           {buscando ? 'Buscando…' : 'Buscar'}
         </button>
       </div>
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
       {resultados.length > 0 && (
         <select
-          className="form-select rounded-0"
+          className="form-select"
           size={Math.min(resultados.length, 6)}
           disabled={disabled}
           value=""

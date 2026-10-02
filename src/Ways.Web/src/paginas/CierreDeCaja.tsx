@@ -320,7 +320,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
           <div className="col-12">
             <Box titulo="Cierre de turno" variante="warning">
               <p className="text-muted">No se especificó el turno a cerrar.</p>
-              <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
+              <Link className="btn btn-outline-secondary" to={rutaVolver}>
                 Volver a caja
               </Link>
             </Box>
@@ -385,10 +385,10 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                   the just-closed turno to its Caja Z screen"): mismo gate OperacionDePos que
                   /caja/turnos/:id/z, el cajero recién cerró este turno. */}
               <div className="d-flex gap-2">
-                <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
+                <Link className="btn btn-outline-secondary" to={rutaVolver}>
                   Volver a caja
                 </Link>
-                <Link className="btn btn-primary rounded-0" to={`/caja/turnos/${idTurno}/z`}>
+                <Link className="btn btn-primary" to={`/caja/turnos/${idTurno}/z`}>
                   Ver Caja Z
                 </Link>
               </div>
@@ -404,8 +404,8 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
       <div className="row g-3">
         <div className="col-12">
           <Box titulo={`Cierre de turno #${idTurno}`}>
-            {errorCarga && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorCarga}</div>}
-            {errorCierre && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCierre}</div>}
+            {errorCarga && <div className="alert alert-warning py-1 px-2 small">{errorCarga}</div>}
+            {errorCierre && <div className="alert alert-danger py-1 px-2 small">{errorCierre}</div>}
 
             {cargandoResumen && <p className="text-muted">Cargando el resumen del turno…</p>}
 
@@ -440,7 +440,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                               <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
                               <td>
                                 <CampoImporte
-                                  className="form-control form-control-sm rounded-0"
+                                  className="form-control form-control-sm"
                                   aria-label={`Declarado de ${nombreMedio}`}
                                   valor={valor}
                                   disabled={cerrando}
@@ -472,7 +472,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                   <input
                     id="cierre-observaciones"
                     type="text"
-                    className="form-control rounded-0"
+                    className="form-control"
                     value={observaciones}
                     disabled={cerrando || !resumen}
                     onChange={(e) => setObservaciones(e.target.value)}
@@ -483,7 +483,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                   <input
                     id="cierre-confirmacion"
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={confirmado}
                     disabled={cerrando || !resumen}
                     onChange={(e) => setConfirmado(e.target.checked)}
@@ -503,7 +503,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                       <input
                         id="cierre-forzar-sin-rendicion"
                         type="checkbox"
-                        className="form-check-input rounded-0"
+                        className="form-check-input"
                         checked={forzarSinRendicion}
                         disabled={cerrando || !resumen}
                         onChange={(e) => cambiarForzarSinRendicion(e.target.checked)}
@@ -522,7 +522,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                       <input
                         id="cierre-motivo-sin-rendicion"
                         type="text"
-                        className="form-control rounded-0"
+                        className="form-control"
                         value={motivoSinRendicion}
                         disabled={cerrando || !forzarSinRendicion}
                         onChange={(e) => cambiarMotivoSinRendicion(e.target.value)}
@@ -531,7 +531,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                     </div>
 
                     {!esSupervisorOAdmin && (
-                      <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2 mb-0">
+                      <div className="alert alert-warning py-1 px-2 small mt-2 mb-0">
                         Con tu rol el servidor va a rechazar el cierre forzado: pedile a un supervisor o a un
                         administrador que lo haga.
                       </div>
@@ -542,14 +542,14 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                 <div className="d-flex gap-2">
                   <button
                     type="button"
-                    className="btn btn-danger rounded-0"
+                    className="btn btn-danger"
                     disabled={!puedeFinalizar}
                     onClick={finalizarCierre}
                   >
                     {cerrando ? 'Cerrando…' : 'Finalizar cierre'}
                   </button>
                   {!cerrando && (
-                    <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
+                    <Link className="btn btn-outline-secondary" to={rutaVolver}>
                       Cancelar
                     </Link>
                   )}

@@ -45,7 +45,7 @@ function categoriaFixture(sobrescribir: Partial<CategoriaListado> = {}): Categor
 }
 
 function bajaDe(nombre: string) {
-  return within(screen.getByText(nombre).closest('li') as HTMLElement).getByRole('button', { name: 'Baja' })
+  return within(screen.getByText(nombre).closest('li') as HTMLElement).getByRole('button', { name: 'Eliminar' })
 }
 
 beforeEach(() => {
@@ -152,7 +152,7 @@ describe('Categorias — baja lógica', () => {
     expect(screen.getByLabelText('Incluir inactivas')).toBeDisabled()
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
     ]) {
       expect(boton).toBeDisabled()
     }

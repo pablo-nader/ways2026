@@ -23,7 +23,7 @@ export function RutaCatalogo() {
     default:
       return (
         <div className="container-fluid py-4">
-          <div className="alert alert-warning rounded-0">Catálogo desconocido: «{recurso}».</div>
+          <div className="alert alert-warning">Catálogo desconocido: «{recurso}».</div>
         </div>
       )
   }

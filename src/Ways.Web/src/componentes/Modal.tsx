@@ -223,7 +223,7 @@ export function Modal({
         onClick={alHacerClickEnElFondo}
       >
         <div className={claseDialogo} role="document">
-          <div className="modal-content rounded-0" ref={contenidoRef}>
+          <div className="modal-content" ref={contenidoRef}>
             <div className="modal-header">
               <h5 className="modal-title" id={idTitulo}>
                 {titulo}

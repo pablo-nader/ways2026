@@ -139,7 +139,7 @@ export function Presupuestos() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={() => navigate('/presupuestos/nuevo')}>
+      <button type="button" className="btn btn-sm btn-success text-nowrap" onClick={() => navigate('/presupuestos/nuevo')}>
         Nuevo presupuesto
       </button>
     </nav>
@@ -148,8 +148,8 @@ export function Presupuestos() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Presupuestos" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {errorReferencia && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorReferencia}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {errorReferencia && <div className="alert alert-warning py-1 px-2 small">{errorReferencia}</div>}
 
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-2">
@@ -158,7 +158,7 @@ export function Presupuestos() {
             </label>
             <select
               id="pres-filtro-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarPuntoVenta(e.target.value === '' ? null : Number(e.target.value))}
             >
@@ -176,7 +176,7 @@ export function Presupuestos() {
             </label>
             <select
               id="pres-filtro-cliente"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idCliente ?? ''}
               onChange={(e) => cambiarFiltro({ idCliente: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -194,7 +194,7 @@ export function Presupuestos() {
             </label>
             <select
               id="pres-filtro-estado"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.estado ?? ''}
               onChange={(e) => cambiarFiltro({ estado: e.target.value === '' ? null : (e.target.value as EstadoPresupuesto) })}
             >
@@ -228,7 +228,7 @@ export function Presupuestos() {
             <input
               id="pres-filtro-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -240,7 +240,7 @@ export function Presupuestos() {
             <input
               id="pres-filtro-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
@@ -275,11 +275,11 @@ export function Presupuestos() {
                       <td>{clientePorId[p.idCliente] ? etiquetaDeCliente(clientePorId[p.idCliente]) : `Cliente #${p.idCliente}`}</td>
                       <td>{puntoVentaPorId[p.idPuntoVenta]?.nombre ?? `PV #${p.idPuntoVenta}`}</td>
                       <td>
-                        <span className={`badge rounded-0 ${claseDeBadgeDeEstadoPresupuesto(p.estado)}`}>{etiquetaDeEstadoPresupuesto(p.estado)}</span>
+                        <span className={`badge ${claseDeBadgeDeEstadoPresupuesto(p.estado)}`}>{etiquetaDeEstadoPresupuesto(p.estado)}</span>
                       </td>
                       <td>
                         {p.estado === 'Enviado' ? (
-                          <span className={`badge rounded-0 ${claseDeBadgeDeVencimiento(p.vencimiento, p.vencido)}`}>
+                          <span className={`badge ${claseDeBadgeDeVencimiento(p.vencimiento, p.vencido)}`}>
                             {etiquetaDeVencimiento(p.vencimiento, p.vencido)}
                           </span>
                         ) : (
@@ -308,7 +308,7 @@ export function Presupuestos() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -316,7 +316,7 @@ export function Presupuestos() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

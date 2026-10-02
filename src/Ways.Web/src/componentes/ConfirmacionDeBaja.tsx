@@ -118,7 +118,7 @@ export function ConfirmacionDeBaja({
   return (
     <div
       ref={panelRef}
-      className="alert alert-warning rounded-0"
+      className="alert alert-warning"
       role="alertdialog"
       aria-modal="true"
       aria-label={etiquetaConfirmar}
@@ -140,13 +140,13 @@ export function ConfirmacionDeBaja({
       )}
       {nota && <p className="mb-3">{nota}</p>}
       <div className="d-flex gap-2">
-        <button type="button" className="btn btn-danger rounded-0" onClick={onConfirmar} disabled={ocupado}>
+        <button type="button" className="btn btn-danger" onClick={onConfirmar} disabled={ocupado}>
           {ocupado ? etiquetaEnCurso : etiquetaConfirmar}
         </button>
         <button
           ref={cancelarRef}
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={ocupado}
         >

@@ -89,7 +89,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -147,7 +147,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Cantidad"
           value={linea.cantidad}
           disabled={disabled}
@@ -155,7 +155,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
         />
       </td>
       <td>
-        <button type="button" className="btn btn-outline-danger btn-sm rounded-0" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
+        <button type="button" className="btn btn-outline-danger btn-sm" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
           Quitar
         </button>
       </td>
@@ -393,7 +393,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
       <div className="container-fluid py-4">
         <Box titulo="Presupuesto" variante="danger">
           <p className="text-muted">{errorDetalle}</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/presupuestos">
+          <Link className="btn btn-outline-secondary" to="/presupuestos">
             Volver a presupuestos
           </Link>
         </Box>
@@ -415,27 +415,27 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
         titulo={esNuevo ? 'Nuevo presupuesto' : `Presupuesto ${detalle?.numeroFormateado ?? `#${idPresupuesto}`}`}
         variante="inverse"
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/presupuestos">
+          <Link className="btn btn-sm btn-outline-secondary" to="/presupuestos">
             Volver a presupuestos
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de presupuesto hasta que esto se resuelva.
           </div>
         )}
-        {errorDetalle && detalle && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorDetalle}</div>}
+        {errorDetalle && detalle && <div className="alert alert-warning py-1 px-2 small">{errorDetalle}</div>}
 
         {!esNuevo && detalle && (
           <div className="mb-3">
-            <span className={`badge rounded-0 me-2 ${claseDeBadgeDeEstadoPresupuesto(detalle.estado)}`}>
+            <span className={`badge me-2 ${claseDeBadgeDeEstadoPresupuesto(detalle.estado)}`}>
               {etiquetaDeEstadoPresupuesto(detalle.estado)}
             </span>
             {detalle.estado === 'Enviado' && (
-              <span className={`badge rounded-0 me-2 ${claseDeBadgeDeVencimiento(detalle.vencimiento, detalle.vencido)}`}>
+              <span className={`badge me-2 ${claseDeBadgeDeVencimiento(detalle.vencimiento, detalle.vencido)}`}>
                 {etiquetaDeVencimiento(detalle.vencimiento, detalle.vencido)}
               </span>
             )}
@@ -451,7 +451,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
             </label>
             <select
               id="pres-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idPuntoVenta}
               disabled={!esBorrador || ocupado || !referenciaOk}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -470,7 +470,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
             </label>
             <select
               id="pres-cliente"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idCliente}
               disabled={!esBorrador || ocupado || !referenciaOk}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idCliente: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -490,7 +490,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
             <input
               id="pres-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.observaciones}
               disabled={!esBorrador || ocupado}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
@@ -524,12 +524,12 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
               </table>
             </div>
 
-            <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
+            <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
               + Agregar línea
             </button>
 
             <div className="d-flex gap-2 align-items-end mb-3 flex-wrap">
-              <button type="button" className="btn btn-primary rounded-0" disabled={!puedeGuardar} onClick={guardarBorrador}>
+              <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={guardarBorrador}>
                 {guardando ? 'Guardando…' : esNuevo ? 'Crear borrador' : 'Guardar borrador'}
               </button>
               {puedeEnviar && (
@@ -541,25 +541,25 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
                     <input
                       id="pres-vencimiento"
                       type="date"
-                      className="form-control form-control-sm rounded-0"
+                      className="form-control form-control-sm"
                       value={vencimientoAEnviar}
                       disabled={ocupado}
                       onChange={(e) => setVencimientoAEnviar(e.target.value)}
                     />
                   </div>
-                  <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={enviar}>
+                  <button type="button" className="btn btn-success" disabled={ocupado} onClick={enviar}>
                     {enviando ? 'Enviando…' : 'Enviar'}
                   </button>
                 </>
               )}
               {puedeAnular && (
-                <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                   {anulando ? 'Anulando…' : 'Anular'}
                 </button>
               )}
             </div>
-            {errorEnviar && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEnviar}</div>}
-            {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+            {errorEnviar && <div className="alert alert-danger py-1 px-2 small">{errorEnviar}</div>}
+            {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
           </>
         ) : (
           detalle && (
@@ -609,17 +609,17 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
 
               <div className="d-flex gap-2 mb-3">
                 {puedeConvertir && (
-                  <button type="button" className="btn btn-primary rounded-0" disabled={ocupado} onClick={convertirEnVenta}>
+                  <button type="button" className="btn btn-primary" disabled={ocupado} onClick={convertirEnVenta}>
                     Convertir en venta
                   </button>
                 )}
                 {puedeAnular && (
-                  <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                  <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                     {anulando ? 'Anulando…' : 'Anular'}
                   </button>
                 )}
               </div>
-              {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+              {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
             </>
           )
         )}
@@ -645,7 +645,7 @@ export function Presupuesto() {
       <div className="container-fluid py-4">
         <Box titulo="Presupuesto" variante="warning">
           <p className="text-muted">No se especificó un presupuesto válido.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/presupuestos">
+          <Link className="btn btn-outline-secondary" to="/presupuestos">
             Volver a presupuestos
           </Link>
         </Box>

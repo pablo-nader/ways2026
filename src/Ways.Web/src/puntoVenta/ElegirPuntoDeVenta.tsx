@@ -10,7 +10,7 @@ type Props = {
 export function ElegirPuntoDeVenta({ puntosVenta, actual = null, alElegir }: Props) {
   return (
     <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-      <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+      <div className="card w-100" style={{ maxWidth: 480 }}>
         <div className="card-body">
           <h1 className="h3 text-center mb-4">Elegí el punto de venta</h1>
 
@@ -22,7 +22,7 @@ export function ElegirPuntoDeVenta({ puntosVenta, actual = null, alElegir }: Pro
                 <li key={puntoVenta.id} className="mb-2">
                   <button
                     type="button"
-                    className="btn btn-outline-dark btn-lg w-100 rounded-0 text-start"
+                    className="btn btn-outline-secondary btn-lg w-100 text-start"
                     aria-current={esActual ? 'true' : undefined}
                     onClick={() => alElegir(puntoVenta.id)}
                   >

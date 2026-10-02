@@ -315,7 +315,7 @@ function renderArticulos(rutaInicial = '/articulos') {
 async function abrirFormularioNuevo() {
   renderArticulos()
   await screen.findByText('Articulo Uno')
-  await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   await screen.findByText('Nuevo artículo')
 }
 
@@ -1113,7 +1113,7 @@ describe('Articulos — alta de un artículo nuevo', () => {
     )
 
     await screen.findByText('Articulo Uno')
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Nuevo artículo')
     await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo Art')
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
@@ -1364,7 +1364,7 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
   })
 })
 
@@ -1388,7 +1388,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     // desaparecer es que la grilla haya vuelto a pedir el listado.
     mockearApiGet({ grilla: paginaGrillaFixture([filaGrillaDos]) })
 
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
 
     expect(await screen.findByText('Artículo "Articulo Uno" dado de baja.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument())
@@ -1410,7 +1410,7 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
 
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
 
     expect(await screen.findByText('El artículo está en uso y no se puede dar de baja.')).toBeInTheDocument()
     expect(screen.queryByText(/dado de baja/)).not.toBeInTheDocument()
@@ -1465,7 +1465,7 @@ describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada'
     renderArticulos()
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Eliminar' }))
 
     await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

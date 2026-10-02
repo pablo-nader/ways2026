@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import 'bootstrap/dist/css/bootstrap.min.css'
+import '../estilos/tema.css'
 import '../estilos/template.css'
 import '../estilos/ways.css'
 import '../estilos/impresion.css'
@@ -10,6 +11,9 @@ import { alPerderLaSesion } from '../api/cliente'
 import { inicializarUrlServidor, restaurarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { alPerderLaSesionDelPos } from './finDeSesionLocal'
 import { AppPos } from './AppPos'
+import { aplicarTema, leerTemaGuardado } from '../tema/tema'
+
+aplicarTema(leerTemaGuardado())
 
 // stage-pos-sesion-offline: un 401 en CUALQUIER request (`cliente.ts`, `exigirRespuestaOk`) ya
 // limpia el bearer EN MEMORIA y dispara este observador — acá se lo usa, además, para limpiar la

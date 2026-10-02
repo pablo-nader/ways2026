@@ -194,7 +194,7 @@ export function Compras() {
 
   const herramientas = puedeEscribir ? (
     <nav className="p-2 d-flex gap-2">
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={crearBorrador}>
+      <button type="button" className="btn btn-sm btn-success text-nowrap" onClick={crearBorrador}>
         Nueva compra
       </button>
     </nav>
@@ -203,8 +203,8 @@ export function Compras() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Compras" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {errorProveedores && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorProveedores}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {errorProveedores && <div className="alert alert-warning py-1 px-2 small">{errorProveedores}</div>}
 
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-3">
@@ -213,7 +213,7 @@ export function Compras() {
             </label>
             <select
               id="compras-filtro-proveedor"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idProveedor ?? ''}
               onChange={(e) => cambiarFiltro({ idProveedor: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -231,7 +231,7 @@ export function Compras() {
             </label>
             <select
               id="compras-filtro-estado"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.estado ?? ''}
               onChange={(e) => cambiarFiltro({ estado: e.target.value === '' ? null : (e.target.value as EstadoCompra) })}
             >
@@ -249,7 +249,7 @@ export function Compras() {
             <input
               id="compras-filtro-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -261,7 +261,7 @@ export function Compras() {
             <input
               id="compras-filtro-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
@@ -269,7 +269,7 @@ export function Compras() {
         </div>
 
         {saldoProveedor && (
-          <div className="border p-3 mb-3 bg-white">
+          <div className="border p-3 mb-3 bg-body">
             {/* stage-15-cc-proveedores-ledger (Slice 6, judgment-day hallazgo CRITICAL): `proveedorPorId`
                 ya trae el listado completo (fetch de montaje) — se lo pasamos a `ResumenSaldoDeProveedor`
                 para que el link real cargue con `location.state.proveedor`. Si el id todavía no está en
@@ -311,7 +311,7 @@ export function Compras() {
                       <td>{proveedorPorId[c.idProveedor]?.razonSocial ?? `Proveedor #${c.idProveedor}`}</td>
                       <td>{tipoPorId[c.idTipoComprobante]?.codigo ?? `#${c.idTipoComprobante}`}</td>
                       <td>
-                        <span className={`badge rounded-0 ${claseDeBadgeDeEstado(c.estado)}`}>{etiquetaDeEstadoCompra(c.estado)}</span>
+                        <span className={`badge ${claseDeBadgeDeEstado(c.estado)}`}>{etiquetaDeEstadoCompra(c.estado)}</span>
                       </td>
                       <td>{estadosPago[c.id] ? etiquetaDeEstadoPago(estadosPago[c.id]) : '—'}</td>
                       <td>{formatearFecha(c.fechaRecepcion)}</td>
@@ -336,7 +336,7 @@ export function Compras() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -344,7 +344,7 @@ export function Compras() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

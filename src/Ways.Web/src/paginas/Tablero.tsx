@@ -94,9 +94,9 @@ function usePanelDeReporte<T>(cargarDatos: () => Promise<T>, mensajeError: strin
 
 function PanelDeError({ error, onReintentar }: { error: string; onReintentar: () => void }) {
   return (
-    <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2 py-1 px-2 small">
+    <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2 py-1 px-2 small">
       <span>{error}</span>
-      <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={onReintentar}>
+      <button type="button" className="btn btn-sm btn-outline-danger" onClick={onReintentar}>
         Reintentar
       </button>
     </div>
@@ -120,7 +120,7 @@ function PanelPorPuntoVenta({ idEmpresa, desde, hasta, puntosVenta }: PropsPanel
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <h6>Ventas por punto de venta</h6>
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
@@ -170,7 +170,7 @@ function PanelPorVendedor({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelP
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <h6>Ventas por vendedor</h6>
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
@@ -230,7 +230,7 @@ function PanelPorMedioPago({ idEmpresa, desde, hasta, idPuntoVenta, mediosPago }
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <h6>Ventas por medio de pago</h6>
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
@@ -278,7 +278,7 @@ function PanelTopArticulos({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <h6>Top artículos</h6>
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
@@ -364,7 +364,7 @@ function PanelDeVencimientos({ idPuntoVenta }: PropsPanelDeVencimientos) {
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <div className="d-flex align-items-center justify-content-between mb-2">
         <h6 className="mb-0">Vencimientos</h6>
         <Link to="/reportes/stock/vencimientos" className="small">
@@ -425,7 +425,7 @@ function PanelDeReposicion({ idPuntoVenta }: PropsPanelDeReposicion) {
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <div className="d-flex align-items-center justify-content-between mb-2">
         <h6 className="mb-0">Reposición</h6>
         <Link to="/reportes/stock/reposicion" className="small">
@@ -490,7 +490,7 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <div className="d-flex justify-content-between align-items-center mb-2">
         <h6 className="mb-0">Rentabilidad</h6>
         <BotonDeDescarga
@@ -512,12 +512,12 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
           Incluir costos estimados
         </label>
       </div>
-      {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+      {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
       {datos && (
         <>
-          <div className="alert alert-info rounded-0 py-1 px-2 small mb-2">{bannerDeCobertura(datos.cobertura)}</div>
+          <div className="alert alert-info py-1 px-2 small mb-2">{bannerDeCobertura(datos.cobertura)}</div>
           <div className="row g-3 text-center">
             <div className="col-6">
               <div className="text-muted small">Margen</div>
@@ -557,7 +557,7 @@ function PanelDeComisiones({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
   )
 
   return (
-    <div className="border p-3 bg-white h-100">
+    <div className="border p-3 bg-body h-100">
       <div className="d-flex justify-content-between align-items-center">
         <h6 className="mb-0">Comisiones</h6>
         <span className="badge bg-warning text-dark">PROVISIONAL</span>
@@ -705,7 +705,7 @@ export function Tablero() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Tablero" variante="inverse">
-        {errorEmpresas && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorEmpresas}</div>}
+        {errorEmpresas && <div className="alert alert-warning py-1 px-2 small">{errorEmpresas}</div>}
 
         {empresas === null ? (
           <Cargando />
@@ -720,7 +720,7 @@ export function Tablero() {
                 </label>
                 <select
                   id="tablero-empresa"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idEmpresa ?? ''}
                   disabled={cargando}
                   onChange={(e) => {
@@ -742,7 +742,7 @@ export function Tablero() {
                 <input
                   id="tablero-desde"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={desde}
                   disabled={cargando}
                   onChange={(e) => setDesde(e.target.value)}
@@ -755,7 +755,7 @@ export function Tablero() {
                 <input
                   id="tablero-hasta"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={hasta}
                   disabled={cargando}
                   onChange={(e) => setHasta(e.target.value)}
@@ -767,7 +767,7 @@ export function Tablero() {
                 </label>
                 <select
                   id="tablero-granularidad"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={granularidad}
                   disabled={cargando}
                   onChange={(e) => setGranularidad(e.target.value as Granularidad)}
@@ -785,7 +785,7 @@ export function Tablero() {
                 </label>
                 <select
                   id="tablero-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta ?? ''}
                   disabled={cargando}
                   onChange={(e) => setIdPuntoVenta(e.target.value === '' ? null : Number(e.target.value))}
@@ -801,9 +801,9 @@ export function Tablero() {
             </div>
 
             {error && (
-              <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+              <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
                 <span>{error}</span>
-                <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+                <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
                   Reintentar
                 </button>
               </div>
@@ -813,7 +813,7 @@ export function Tablero() {
 
             {ventas && gastos && idEmpresa !== null && (
               <>
-                {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorDescarga}</div>}
+                {errorDescarga && <div className="alert alert-danger py-1 px-2 small">{errorDescarga}</div>}
                 <div className="d-flex gap-2 mb-2">
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.ventasResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
@@ -828,25 +828,25 @@ export function Tablero() {
                 </div>
                 <div className="row g-3 mb-4">
                   <div className="col-md-3">
-                    <div className="border p-3 bg-white text-center">
+                    <div className="border p-3 bg-body text-center">
                       <div className="text-muted small">Ventas netas</div>
                       <div className="fs-4">{formatearMoneda(ventas.netoVendido)}</div>
                     </div>
                   </div>
                   <div className="col-md-3">
-                    <div className="border p-3 bg-white text-center">
+                    <div className="border p-3 bg-body text-center">
                       <div className="text-muted small">Gastos</div>
                       <div className="fs-4">{formatearMoneda(gastos.importeTotal)}</div>
                     </div>
                   </div>
                   <div className="col-md-3">
-                    <div className="border p-3 bg-white text-center">
+                    <div className="border p-3 bg-body text-center">
                       <div className="text-muted small">Ticket promedio</div>
                       <div className="fs-4">{ventas.ticketPromedio === null ? '—' : formatearMoneda(ventas.ticketPromedio)}</div>
                     </div>
                   </div>
                   <div className="col-md-3">
-                    <div className="border p-3 bg-white text-center">
+                    <div className="border p-3 bg-body text-center">
                       <div className="text-muted small">Transacciones</div>
                       <div className="fs-4">{ventas.cantidadTx}</div>
                     </div>
@@ -855,13 +855,13 @@ export function Tablero() {
 
                 <div className="row g-3">
                   <div className="col-md-6">
-                    <div className="border p-3 bg-white">
+                    <div className="border p-3 bg-body">
                       <h6>Serie de ventas</h6>
                       <GraficoDeLineas data={aSerieDeGrafico(ventas.serie.map((b) => ({ etiqueta: b.etiqueta, valor: b.neto })))} alto={240} titulo="Serie de ventas netas por período" />
                     </div>
                   </div>
                   <div className="col-md-6">
-                    <div className="border p-3 bg-white">
+                    <div className="border p-3 bg-body">
                       <h6>Serie de gastos</h6>
                       <GraficoDeLineas data={aSerieDeGrafico(gastos.serie.map((b) => ({ etiqueta: b.etiqueta, valor: b.importe })))} alto={240} titulo="Serie de gastos por período" />
                     </div>
