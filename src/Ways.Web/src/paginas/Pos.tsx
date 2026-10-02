@@ -2903,11 +2903,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               observaciones: null,
             })
 
-      /** Encola la venta en el outbox con los precios de `instantanea` y arma el comprobante
-       * sintético con esa MISMA instantánea — el ticket tiene que coincidir con lo encolado, y
-       * ambos con lo que el cajero vio. Con `encolada` o `sinComprobante` la venta ya quedó
-       * guardada de forma durable: `encolarVentaOffline` solo devuelve `ok: true` después de
-       * releer el outbox y confirmar que la venta está adentro. */
       /** Texto del aviso de una venta con cuenta corriente encolada sin respuesta del servidor
        * sobre el límite. Los datos de la instantánea solo agregan una pista, nunca bloquean. */
       const avisoDeLimiteNoValidado = (instantanea: InstantaneaDePos): string => {
@@ -2918,6 +2913,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         return `${base} Según los datos de ${vejez}, el cliente supera su límite.`
       }
 
+      /** Encola la venta en el outbox con los precios de `instantanea` y arma el comprobante
+       * sintético con esa MISMA instantánea — el ticket tiene que coincidir con lo encolado, y
+       * ambos con lo que el cajero vio. Con `encolada` o `sinComprobante` la venta ya quedó
+       * guardada de forma durable: `encolarVentaOffline` solo devuelve `ok: true` después de
+       * releer el outbox y confirmar que la venta está adentro. */
       const encolarLocal = async (
         instantanea: InstantaneaDePos,
       ): Promise<
