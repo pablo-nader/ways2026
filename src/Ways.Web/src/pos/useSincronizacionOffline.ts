@@ -1,7 +1,8 @@
 /**
  * Orquestación de la venta offline del POS de escritorio (stage-pos-venta-offline-web, Parte A/C):
  * carga la instantánea persistida apenas monta (sobrevive un restart, goal A), y corre un ciclo
- * oportunista — al montar, cada `intervaloMs`, y en el evento `online` del navegador — que (1)
+ * — al montar, cada `intervaloMs`, en el evento `online` del navegador y a pedido del cajero
+ * (`sincronizarAhora`) — que (1)
  * drena el outbox EN ORDEN, (2) refresca la instantánea si hay señal, y (3) repone el bloque de
  * numeración si está bajo, y (4) rinde el estado de la cola local al servidor para que el cierre
  * de turno pueda verificarlo, todo en un único lugar para que las tareas nunca corran
@@ -34,16 +35,15 @@ import {
   type VentaEnCola,
   type VentaRechazada,
 } from './outboxOffline'
+import { INTERVALO_POR_DEFECTO_MINUTOS, minutosAMilisegundos } from './intervaloDeSincronizacion'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, SolicitudDeVenta } from '../api/tipos'
 
-/** Ciclo de sincronización oportunista — cada 20s alcanza para reponer el bloque y drenar el
- * outbox con margen frente al umbral de reposición (`UMBRAL_DE_REPOSICION` = 20 números), sin
- * generar tráfico apreciable durante una jornada normal. Exportado para que los tests puedan
- * pasar un valor propio (más chico, con fake timers) en vez de esperar el real. */
-export const INTERVALO_DE_SINCRONIZACION_MS = 20_000
+/** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
+ * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
+export const LIMITE_DE_SINCRONIZACION_INICIAL_MS = 15_000
 
 /** Tamaño de bloque a reponer — bien por debajo del tope del servidor (`CantidadMaxima` = 500),
  * suficiente para una jornada de venta minorista sin inflar el hueco de numeración si el
@@ -62,8 +62,12 @@ export type ParametrosDeSincronizacionOffline = {
   activo: boolean
   /** Inyectable para tests — default `crearAlmacenIndexedDb()` (IndexedDB real). */
   almacen?: AlmacenClaveValor
+  /** Período del ciclo automático — default `INTERVALO_POR_DEFECTO_MINUTOS`; `Pos.tsx` pasa el
+   * configurado por el cajero (`intervaloDeSincronizacion.ts`). */
   intervaloMs?: number
 }
+
+export type EstadoDeColaLocal = { pendientes: number; conError: number }
 
 export type ResultadoDeSincronizacionOffline = {
   instantanea: InstantaneaDePos | null
@@ -85,6 +89,19 @@ export type ResultadoDeSincronizacionOffline = {
    * que `outboxCount` (ver `irACerrarCaja` en `Pos.tsx` y el gate de `CierreDeCaja.tsx`). `[]` sin
    * ninguna pendiente. */
   ventasConError: readonly VentaRechazada[]
+  /** `true` mientras corre un ciclo completo (automático, de arranque o manual). */
+  sincronizando: boolean
+  /** `true` desde que el hook se activa hasta que termina el primer ciclo (o vence
+   * `LIMITE_DE_SINCRONIZACION_INICIAL_MS`) — `Pos.tsx` no habilita "Cobrar" antes, para no vender
+   * con una instantánea vieja cuando hay red para refrescarla. Sin red el ciclo termina enseguida
+   * y la venta se habilita con la instantánea que haya. */
+  sincronizacionInicialPendiente: boolean
+  /** Ciclo completo a pedido (drenar + refrescar la instantánea + reponer + rendir). Un pedido
+   * mientras otro ciclo corre devuelve ese mismo ciclo: nunca corren dos a la vez. */
+  sincronizarAhora: () => Promise<void>
+  /** Drena el outbox, repone el bloque si el drenado confirmó señal y rinde la cola — sin
+   * descargar la instantánea. Devuelve lo que queda pendiente según el almacén. */
+  drenarAhora: () => Promise<EstadoDeColaLocal>
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
@@ -142,7 +159,7 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
 }
 
 export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffline): ResultadoDeSincronizacionOffline {
-  const { idPuntoVenta, activo, intervaloMs = INTERVALO_DE_SINCRONIZACION_MS } = params
+  const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS) } = params
 
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
 
@@ -168,57 +185,107 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return resultado
   }
 
-  async function drenarOutbox(): Promise<void> {
-    let outbox = await leerOutbox(almacenRef.current)
-    while (outbox.length > 0) {
-      const [primera] = outbox
+  /** Una pasada de drenado, EN ORDEN. El `emitir` de cada venta corre FUERA de `encolarOperacion`:
+   * con una red lenta, retener el candado durante la request bloquearía el encolado de las ventas
+   * nuevas del cajero hasta que el servidor responda. Solo la lectura de la cabeza y la salida (o
+   * el archivado) de la venta van bajo el candado; nadie más que esta pasada saca ventas del
+   * outbox (`drenarOutbox` la mantiene única), así que la cabeza leída no cambia mientras tanto. */
+  async function drenarUnaPasada(): Promise<void> {
+    for (;;) {
+      const primera = await encolarOperacion(async () => (await leerOutbox(almacenRef.current))[0] ?? null)
+      if (!primera) return
+
       try {
         await clienteDeVentas.emitir(primera.solicitud)
-        outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
-        setOutboxCount(outbox.length)
       } catch (e) {
-        // judgment-day ronda 2 (CRITICAL — regresión de la ronda 1): un 5xx (`ManejadorDeErrores.
-        // RespuestaDeFalloTransitorio`, típicamente `resultado_incierto`) significa "no se pudo
-        // confirmar si la escritura llegó a pasar", NUNCA un rechazo — la venta puede estar YA
-        // comprometida en el servidor, y reenviar el MISMO `numeroPreasignado` + contenido es el
-        // camino de recuperación seguro (`ServicioDeVentas.BuscarPorNumeroComprometidoAsync` +
-        // `ExigirMismoContenido` dedupean por eso). Tratarlo como rechazo permanente (como hacía
-        // esta rama antes de este fix) sacaba del outbox una venta real y ya ticketeada sin
-        // ninguna vía de recuperación. Mismo criterio que `ErrorDeRed`: sigue sin señal clara, se
-        // reintenta TODO en el próximo ciclo, nunca se descarta ni se saca nada del outbox.
-        if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado >= 500)) {
-          return
-        }
-        // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo — un 4xx real (ej.
-        // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`, una validación) — nunca se
-        // descarta (la venta es real, con ticket ya entregado): se archiva como "necesita
-        // atención" con su error real y se saca del outbox para que el drenado pueda seguir con
-        // el resto de la cola, en vez de quedar rehén de un solo ítem trabado para siempre
-        // (judgment-day ronda 1, CRITICAL).
-        const mensaje =
-          e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.'
-        try {
-          await agregarARechazada(almacenRef.current, { ...primera, mensaje })
-        } catch {
-          // No se pudo archivar de forma durable como rechazada — se deja el ítem en el outbox
-          // (nunca se saca sin confirmar dónde queda) y se corta esta pasada; el próximo ciclo
-          // reintenta desde el mismo punto.
-          return
-        }
-        try {
-          outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
-        } catch {
-          // judgment-day ronda 2 (WARNING): se archivó como rechazada (confirmado arriba), pero
-          // la extracción del outbox no se pudo confirmar — el ítem queda temporalmente en AMBOS
-          // stores. Se corta esta pasada sin tocar el estado de React todavía: `agregarARechazada`
-          // es idempotente por `idLocal` (ver `outboxOffline.ts`), así que el próximo ciclo
-          // reintenta `quitarDeOutbox` sin duplicar el archivo, y converge a un solo store.
-          return
-        }
-        setOutboxCount(outbox.length)
-        setVentasConError(await leerRechazadas(almacenRef.current))
+        const archivada = await encolarOperacion(() => archivarRechazoSiEsPermanente(primera, e))
+        if (!archivada) return
+        continue
       }
+
+      // La venta ya llegó al servidor: si su salida del outbox no se puede confirmar, se corta la
+      // pasada y la próxima la reenvía con el mismo número y contenido, que el servidor reconoce
+      // como la misma venta (`ExigirMismoContenido`) — nunca se archiva como rechazada.
+      const quitada = await encolarOperacion(async () => {
+        try {
+          const outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
+          setOutboxCount(outbox.length)
+          return true
+        } catch {
+          return false
+        }
+      })
+      if (!quitada) return
     }
+  }
+
+  // Drenado único: un pedido que llega con otra pasada en curso no arranca una segunda (enviarían
+  // la misma cabeza dos veces), pero deja marcada otra vuelta para que una venta encolada justo
+  // cuando la pasada en curso terminaba no espere al próximo ciclo.
+  const drenadoEnCursoRef = useRef<Promise<void> | null>(null)
+  const otraVueltaDeDrenadoRef = useRef(false)
+  function drenarOutbox(): Promise<void> {
+    if (drenadoEnCursoRef.current) {
+      otraVueltaDeDrenadoRef.current = true
+      return drenadoEnCursoRef.current
+    }
+    const drenado = (async () => {
+      try {
+        do {
+          otraVueltaDeDrenadoRef.current = false
+          await drenarUnaPasada()
+        } while (otraVueltaDeDrenadoRef.current)
+      } finally {
+        drenadoEnCursoRef.current = null
+      }
+    })()
+    drenadoEnCursoRef.current = drenado
+    return drenado
+  }
+
+  /** `true` si la venta se archivó como rechazada y salió del outbox (la pasada puede seguir con
+   * la próxima); `false` si el error es transitorio o el archivado no se pudo confirmar (la pasada
+   * se corta y el próximo ciclo reintenta desde el mismo punto). */
+  async function archivarRechazoSiEsPermanente(primera: VentaEnCola, e: unknown): Promise<boolean> {
+    // judgment-day ronda 2 (CRITICAL — regresión de la ronda 1): un 5xx (`ManejadorDeErrores.
+    // RespuestaDeFalloTransitorio`, típicamente `resultado_incierto`) significa "no se pudo
+    // confirmar si la escritura llegó a pasar", NUNCA un rechazo — la venta puede estar YA
+    // comprometida en el servidor, y reenviar el MISMO `numeroPreasignado` + contenido es el
+    // camino de recuperación seguro (`ServicioDeVentas.BuscarPorNumeroComprometidoAsync` +
+    // `ExigirMismoContenido` dedupean por eso). Mismo criterio que `ErrorDeRed`: sigue sin señal
+    // clara, se reintenta TODO en el próximo ciclo, nunca se descarta ni se saca nada del outbox.
+    if (e instanceof ErrorDeRed || (e instanceof ErrorApi && e.estado >= 500)) {
+      return false
+    }
+    // Rechazo REAL y PERMANENTE del servidor sobre el ítem más viejo — un 4xx real (ej.
+    // `numero_preasignado_con_otro_contenido`, `turno_no_abierto`, una validación) — nunca se
+    // descarta (la venta es real, con ticket ya entregado): se archiva como "necesita atención"
+    // con su error real y se saca del outbox para que el drenado pueda seguir con el resto de la
+    // cola, en vez de quedar rehén de un solo ítem trabado para siempre (judgment-day ronda 1,
+    // CRITICAL).
+    const mensaje =
+      e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.'
+    try {
+      await agregarARechazada(almacenRef.current, { ...primera, mensaje })
+    } catch {
+      // No se pudo archivar de forma durable como rechazada — se deja el ítem en el outbox (nunca
+      // se saca sin confirmar dónde queda); el próximo ciclo reintenta desde el mismo punto.
+      return false
+    }
+    let outbox: VentaEnCola[]
+    try {
+      outbox = await quitarDeOutbox(almacenRef.current, primera.idLocal)
+    } catch {
+      // judgment-day ronda 2 (WARNING): se archivó como rechazada (confirmado arriba), pero la
+      // extracción del outbox no se pudo confirmar — el ítem queda temporalmente en AMBOS stores.
+      // `agregarARechazada` es idempotente por `idLocal` (ver `outboxOffline.ts`), así que el
+      // próximo ciclo reintenta `quitarDeOutbox` sin duplicar el archivo, y converge a un solo
+      // store.
+      return false
+    }
+    setOutboxCount(outbox.length)
+    setVentasConError(await leerRechazadas(almacenRef.current))
+    return true
   }
 
   async function refrescarInstantaneaSiHaySenal(): Promise<boolean> {
@@ -297,15 +364,61 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
   }
 
-  async function ciclo(idPv: number): Promise<void> {
-    await encolarOperacion(() => drenarOutbox())
-    const conSenal = await refrescarInstantaneaSiHaySenal()
-    if (conSenal) {
-      await encolarOperacion(() => reponerBloqueSiNecesario(idPv))
+  // Ciclo único: el automático, el de arranque, el del evento `online` y el manual comparten esta
+  // misma promesa mientras corre — nunca dos ciclos superpuestos pidiendo la instantánea o
+  // reponiendo el bloque a la vez.
+  const cicloEnCursoRef = useRef<Promise<void> | null>(null)
+  const [sincronizando, setSincronizando] = useState(false)
+
+  function ciclo(idPv: number): Promise<void> {
+    if (cicloEnCursoRef.current) return cicloEnCursoRef.current
+    setSincronizando(true)
+    const enCurso = (async () => {
+      try {
+        await drenarOutbox()
+        const conSenal = await refrescarInstantaneaSiHaySenal()
+        if (conSenal) {
+          await encolarOperacion(() => reponerBloqueSiNecesario(idPv))
+        }
+        // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el
+        // bloque YA repuesto (el servidor rinde contra el bloque vivo, y reponer abandona el
+        // anterior).
+        await rendirColaLocal()
+      } finally {
+        cicloEnCursoRef.current = null
+        setSincronizando(false)
+      }
+    })()
+    cicloEnCursoRef.current = enCurso
+    return enCurso
+  }
+
+  async function sincronizarAhora(): Promise<void> {
+    if (!activo || idPuntoVenta === null) return
+    await ciclo(idPuntoVenta)
+  }
+
+  async function leerEstadoDeColaLocal(): Promise<EstadoDeColaLocal> {
+    return encolarOperacion(async () => {
+      const [outbox, rechazadas] = await Promise.all([leerOutbox(almacenRef.current), leerRechazadas(almacenRef.current)])
+      setOutboxCount(outbox.length)
+      setVentasConError(rechazadas)
+      return { pendientes: outbox.length, conError: rechazadas.length }
+    })
+  }
+
+  async function drenarAhora(): Promise<EstadoDeColaLocal> {
+    if (!activo || idPuntoVenta === null) return leerEstadoDeColaLocal()
+    await drenarOutbox()
+    const despuesDelDrenado = await leerEstadoDeColaLocal()
+    // Un outbox que quedó vacío después de drenar ventas confirma señal: es el momento de reponer
+    // el bloque si está bajo, en vez de esperar al próximo ciclo con la venta local consumiendo un
+    // número por cada cobro.
+    if (despuesDelDrenado.pendientes === 0) {
+      await encolarOperacion(() => reponerBloqueSiNecesario(idPuntoVenta))
     }
-    // Último paso del ciclo: lo que se declara tiene que reflejar el outbox YA drenado y el bloque
-    // YA repuesto (el servidor rinde contra el bloque vivo, y reponer abandona el anterior).
     await rendirColaLocal()
+    return despuesDelDrenado
   }
 
   // Carga inicial: instantánea + outbox + bloque YA persistidos, sin esperar ningún fetch — la
@@ -330,9 +443,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       leerRechazadas(almacenRef.current),
     ]).then(([instantaneaGuardada, outboxGuardado, bloqueGuardado, rechazadasGuardadas]) => {
       if (!vigente) return
-      setInstantanea(instantaneaGuardada)
+      // Si el ciclo de arranque ya trajo una instantánea fresca, la persistida (más vieja) no la
+      // pisa.
+      setInstantanea((actual) => actual ?? instantaneaGuardada)
       setOutboxCount(outboxGuardado.length)
-      bloqueRef.current = bloqueGuardado
+      bloqueRef.current = bloqueRef.current ?? bloqueGuardado
       setVentasConError(rechazadasGuardadas)
     })
 
@@ -341,9 +456,38 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
   }, [activo, idPuntoVenta])
 
-  // Ciclo oportunista: al montar, periódico, y apenas el navegador reporta que volvió la señal
-  // (backstop además del intervalo — el evento `online` no es 100% confiable en todo entorno,
-  // así que nunca es el ÚNICO disparador).
+  // Ciclo de arranque: corre una vez al activarse y, hasta que termina (o vence el tope), la
+  // pantalla no habilita la venta.
+  const [sincronizacionInicialPendiente, setSincronizacionInicialPendiente] = useState(activo && idPuntoVenta !== null)
+  useEffect(() => {
+    if (!activo || idPuntoVenta === null) {
+      setSincronizacionInicialPendiente(false)
+      return
+    }
+
+    let vigente = true
+    setSincronizacionInicialPendiente(true)
+    const liberar = () => {
+      if (vigente) setSincronizacionInicialPendiente(false)
+    }
+    const idTope = setTimeout(liberar, LIMITE_DE_SINCRONIZACION_INICIAL_MS)
+    ciclo(idPuntoVenta)
+      .catch(() => undefined)
+      .finally(() => {
+        clearTimeout(idTope)
+        liberar()
+      })
+
+    return () => {
+      vigente = false
+      clearTimeout(idTope)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activo, idPuntoVenta])
+
+  // Ciclo periódico y apenas el navegador reporta que volvió la señal (backstop además del
+  // intervalo — el evento `online` no es 100% confiable en todo entorno, así que nunca es el
+  // ÚNICO disparador). Cambiar el intervalo solo reprograma el timer, no dispara un ciclo.
   useEffect(() => {
     if (!activo || idPuntoVenta === null) return
 
@@ -353,7 +497,6 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       void ciclo(idPuntoVenta)
     }
 
-    ejecutar()
     const idIntervalo = setInterval(ejecutar, intervaloMs)
     window.addEventListener('online', ejecutar)
 
@@ -490,5 +633,17 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     })
   }
 
-  return { instantanea, outboxCount, ventasConError, enLinea, encolarVentaOffline, reintentarVentaConError, descartarVentaConError }
+  return {
+    instantanea,
+    outboxCount,
+    ventasConError,
+    enLinea,
+    sincronizando,
+    sincronizacionInicialPendiente,
+    sincronizarAhora,
+    drenarAhora,
+    encolarVentaOffline,
+    reintentarVentaConError,
+    descartarVentaConError,
+  }
 }

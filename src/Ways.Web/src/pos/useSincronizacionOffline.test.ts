@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useSincronizacionOffline } from './useSincronizacionOffline'
+import { LIMITE_DE_SINCRONIZACION_INICIAL_MS, useSincronizacionOffline } from './useSincronizacionOffline'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerBloque, leerOutbox, leerRechazadas, type BloqueDeNumeracionLocal, type VentaEnCola } from './outboxOffline'
 import { guardarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
@@ -962,5 +962,232 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
 
     procesoDeNode?.off('unhandledRejection', alRejectionNoManejada)
     expect(rejeccionesNoManejadas).toEqual([])
+  })
+})
+
+/** Promesa controlable desde el test — el ciclo queda en vuelo hasta que se la resuelve. */
+function promesaControlada<T>() {
+  let resolver!: (valor: T) => void
+  const promesa = new Promise<T>((r) => {
+    resolver = r
+  })
+  return { promesa, resolver }
+}
+
+function ventaEnColaFixture(numero: number, idLocal = `v-${numero}`): VentaEnCola {
+  return {
+    idLocal,
+    numeroPreasignado: numero,
+    idPuntoVenta: 7,
+    creadoEn: '2026-09-20T09:00:00.000Z',
+    solicitud: solicitudFixture({ numeroPreasignado: numero }),
+  }
+}
+
+describe('useSincronizacionOffline — ciclo de arranque y sincronización a pedido', () => {
+  it('sincronizacionInicialPendiente queda en true hasta que termina el primer ciclo', async () => {
+    const almacen = almacenFake()
+    const instantaneaPendiente = promesaControlada<InstantaneaDePos>()
+    obtenerInstantaneaMock.mockReturnValue(instantaneaPendiente.promesa)
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1))
+    expect(result.current.sincronizacionInicialPendiente).toBe(true)
+    expect(result.current.sincronizando).toBe(true)
+
+    await act(async () => {
+      instantaneaPendiente.resolver(instantaneaFixture())
+    })
+
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.sincronizando).toBe(false)
+    expect(result.current.instantanea).toEqual(instantaneaFixture())
+  })
+
+  it('sin red, el ciclo de arranque termina enseguida y libera la venta con la instantánea local', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.instantanea).toEqual(instantaneaFixture())
+    expect(result.current.enLinea).toBe(false)
+  })
+
+  it('con una red que cuelga, libera la venta al vencer el tope aunque el ciclo siga en vuelo', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIMITE_DE_SINCRONIZACION_INICIAL_MS - 1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(false)
+      expect(result.current.sincronizando).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sincronizarAhora con un ciclo en curso no arranca otro: dos pedidos seguidos comparten el mismo ciclo', async () => {
+    const almacen = almacenFake()
+    const arranque = promesaControlada<InstantaneaDePos>()
+    obtenerInstantaneaMock.mockReturnValueOnce(arranque.promesa)
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1))
+
+    let primero: Promise<void> = Promise.resolve()
+    let segundo: Promise<void> = Promise.resolve()
+    act(() => {
+      primero = result.current.sincronizarAhora()
+      segundo = result.current.sincronizarAhora()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      arranque.resolver(instantaneaFixture())
+      await primero
+      await segundo
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    // Terminado el ciclo, un pedido nuevo sí corre uno nuevo.
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    await act(async () => {
+      await result.current.sincronizarAhora()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('cambiar el intervalo no dispara un ciclo nuevo, solo reprograma el periódico', async () => {
+    const almacen = almacenFake()
+    const { result, rerender } = renderHook(
+      ({ intervaloMs }) => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs }),
+      { initialProps: { intervaloMs: 60_000 } },
+    )
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    rerender({ intervaloMs: 120_000 })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de una venta nueva', () => {
+  it('con el envío de la venta más vieja colgado en la red, una venta nueva se encola igual', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    await agregarAOutbox(almacen, ventaEnColaFixture(149))
+    emitirMock.mockReturnValue(new Promise(() => {}))
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture(),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150' })
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([149, 150])
+  })
+
+  it('si la salida del outbox de una venta ya enviada no se puede confirmar, NUNCA la archiva como rechazada', async () => {
+    const datos = new Map<string, unknown>()
+    let escriturasDeOutbox = 0
+    const almacen: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+      },
+      async escribir<T>(clave: string, valor: T) {
+        // La primera escritura del outbox es la de este propio fixture; la segunda, la salida
+        // de la venta después de enviarla — esa es la que se pierde.
+        if (clave === 'outbox' && ++escriturasDeOutbox === 2) return true
+        datos.set(clave, valor)
+        return true
+      },
+    }
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    emitirMock.mockResolvedValue({ id: 1 })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    await expect(leerRechazadas(almacen)).resolves.toEqual([])
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([100])
+  })
+})
+
+describe('useSincronizacionOffline — drenarAhora', () => {
+  it('drena el outbox, devuelve lo que queda según el almacén y rinde la cola', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ proximo: 101, hasta: 200 }))
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    await agregarARechazada(almacen, { ...ventaEnColaFixture(99), mensaje: 'rechazada' })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    await waitFor(() => expect(result.current.outboxCount).toBe(1))
+
+    emitirMock.mockResolvedValue({ id: 1 })
+    rendirColaMock.mockClear()
+    let estado
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+
+    expect(estado).toEqual({ pendientes: 0, conError: 1 })
+    expect(result.current.outboxCount).toBe(0)
+    expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 100, pendientes: 1 })
+  })
+
+  it('sin señal deja la venta en el outbox y lo informa', async () => {
+    const almacen = almacenFake()
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+
+    let estado
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+    expect(estado).toEqual({ pendientes: 1, conError: 0 })
+  })
+
+  it('un outbox que quedó vacío confirma señal: repone el bloque si está bajo', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, proximo: 195, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    // El ciclo de arranque corrió sin señal (ErrorDeRed por defecto): nunca intentó reponer.
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+
+    reservarNumeracionMock.mockResolvedValue({ idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 300, hasta: 399 })
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).toHaveBeenCalledTimes(1)
+    await expect(leerBloque(almacen)).resolves.toEqual({ idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 300, hasta: 399, proximo: 300 })
   })
 })
