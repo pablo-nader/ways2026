@@ -12,6 +12,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { leerOutbox, leerRechazadas } from '../pos/outboxOffline'
+import { olvidarTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -243,6 +244,9 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
 
     try {
       const conArqueos = await clienteDeCaja.cerrar(idTurno, solicitud)
+      // El turno ya cerró en el servidor, aunque esta respuesta haya quedado vieja: el POS de
+      // escritorio no debe seguir vendiendo sin red con él.
+      olvidarTurnoConfirmadoLocal(conArqueos.idPuntoVenta, conArqueos.id)
       // regla 4/6: el `finally` que libera `cerrando` está gateado por generación. El POST ya
       // devolvió 2xx con el comprobante Z completo — se usa directo, sin un GET aislado después
       // que podría fallar y dejar el cierre exitoso sin datos que el servidor ya mandó.

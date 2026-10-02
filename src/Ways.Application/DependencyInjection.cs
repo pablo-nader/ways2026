@@ -81,6 +81,7 @@ public static class DependencyInjection
 
         // stage-pos-venta-offline-backend (Parte A): instantánea de venta offline — compone
         // ServicioDeOfertas (precio en lote), registrado junto al resto de Ventas/POS.
+        services.AddMemoryCache();
         services.AddScoped<ServicioDeInstantaneaDePos>();
 
         // Rendición de la cola local del dispositivo (POST /api/pos/rendicion-de-cola) — el insumo

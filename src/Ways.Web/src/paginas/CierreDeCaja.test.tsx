@@ -7,8 +7,9 @@ import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { agregarAOutbox, agregarARechazada } from '../pos/outboxOffline'
+import { guardarTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { ROL } from '../api/tipos'
-import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos, UsuarioAutenticado } from '../api/tipos'
+import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos, TurnoResumen, UsuarioAutenticado } from '../api/tipos'
 
 /** `usuarioActual` es mutable a propósito (reset en `beforeEach`) — los tests del override de
  * rendición lo sobrescriben para probar la copia de rol sin remockear el módulo entero (mismo
@@ -185,6 +186,27 @@ describe('CierreDeCaja — flujo feliz', () => {
 
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/caja/turnos/501/cierre')
     expect(llamada?.[1]).toEqual({ conteos: [{ idMedioPago: 1, importeDeclarado: 635 }], observaciones: null })
+  })
+
+  it('cerrar el turno olvida el turno guardado para vender sin red en ese punto de venta', async () => {
+    const turnoGuardado: TurnoResumen = { ...turnoConArqueosFixture(), estado: 'Abierto', idEmpleadoCierre: null, fechaCierre: null }
+    guardarTurnoConfirmadoLocal(7, turnoGuardado)
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    expect(localStorage.getItem('ways.pos.turnoConfirmado.7')).not.toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    await screen.findByText('Turno #501 cerrado')
+    expect(localStorage.getItem('ways.pos.turnoConfirmado.7')).toBeNull()
   })
 
   it('sin completar todos los conteos, "Finalizar cierre" queda deshabilitado', async () => {

@@ -71,8 +71,11 @@ type ProblemDetails = {
   codigo?: string
 }
 
-/** Se dispara ante cualquier 401 para que el contexto de auth limpie la sesión. */
-type ObservadorDeSesion = () => void
+/** Se dispara ante cualquier 401 para que el contexto de auth limpie la sesión. `conSesionBearer` es
+ * `true` solo si la solicitud rechazada llevaba un token de sesión: un login fallido (sin token)
+ * también da 401, pero no termina ninguna sesión. */
+export type PerdidaDeSesion = { conSesionBearer: boolean }
+type ObservadorDeSesion = (perdida: PerdidaDeSesion) => void
 const observadores = new Set<ObservadorDeSesion>()
 
 export function alPerderLaSesion(observador: ObservadorDeSesion) {
@@ -103,7 +106,7 @@ async function exigirRespuestaOk(respuesta: Response, tokenDeLaSolicitud: string
     // login más nuevo ya lo reemplazó y este 401 es tardío, no hay nada que cerrar.
     if (tokenDeLaSolicitud === tokenDeSesionBearerActual()) {
       establecerTokenDeSesionBearer(null)
-      observadores.forEach((o) => o())
+      observadores.forEach((o) => o({ conSesionBearer: tokenDeLaSolicitud !== null }))
     }
     throw new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.')
   }
@@ -235,10 +238,35 @@ async function descargar(ruta: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+/** Resultado de `api.getCondicional`: `modificada: false` es un `304` (el servidor confirmó que el
+ * contenido identificado por la etiqueta enviada sigue vigente). */
+export type RespuestaCondicional<T> = { modificada: true; cuerpo: T; etag: string | null } | { modificada: false }
+
+/** `GET` con `If-None-Match`. `cache: 'no-store'` evita que la caché HTTP del navegador responda
+ * por su cuenta: el `304` tiene que llegar a este código para renovar la verificación local. */
+async function pedirCondicional<T>(ruta: string, etag: string | null): Promise<RespuestaCondicional<T>> {
+  const tokenDeLaSolicitud = tokenDeSesionBearerActual()
+  const respuesta = await ejecutarFetch(`${urlBaseApi()}/api${ruta}`, {
+    cache: 'no-store',
+    credentials: credencialesDeLaSolicitud(),
+    headers: {
+      Accept: 'application/json',
+      ...(etag ? { 'If-None-Match': etag } : {}),
+      ...headerBearerSiCorresponde(),
+    },
+  })
+
+  if (respuesta.status === 304) return { modificada: false }
+
+  await exigirRespuestaOk(respuesta, tokenDeLaSolicitud)
+  return { modificada: true, cuerpo: (await respuesta.json()) as T, etag: respuesta.headers.get('ETag') }
+}
+
 /** `headers` se aplica DESPUÉS del bearer en `pedir`: un `Authorization` propio (el
  * `Dispositivo <secreto>` de `dispositivos.ts`) reemplaza al de la sesión en esa sola solicitud. */
 export const api = {
   get: <T>(ruta: string, headers?: Record<string, string>) => pedir<T>(ruta, headers ? { headers } : undefined),
+  getCondicional: <T>(ruta: string, etag: string | null) => pedirCondicional<T>(ruta, etag),
   post: <T>(ruta: string, cuerpo?: unknown, headers?: Record<string, string>, senal?: AbortSignal) =>
     pedir<T>(ruta, {
       method: 'POST',

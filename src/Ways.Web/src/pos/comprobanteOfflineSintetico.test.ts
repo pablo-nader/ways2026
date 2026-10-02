@@ -1,26 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { construirComprobanteOfflineSintetico } from './comprobanteOfflineSintetico'
-import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos } from '../api/tipos'
+import { construirComprobanteOfflineSintetico, type ParametrosDeComprobanteOfflineSintetico } from './comprobanteOfflineSintetico'
+import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 
-function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+const LISTA = 5
+
+/** Artículo con UN precio, en `LISTA` salvo que se pida otra: los campos de precio se pasan planos
+ * para que cada caso se lea igual que el ticket que produce. */
+type ArticuloConPrecio = Omit<ArticuloDeInstantanea, 'preciosPorLista'> & Omit<PrecioDeListaDeInstantanea, 'idListaPrecio'> & { idListaPrecio: number }
+
+function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
+  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, idListaPrecio = LISTA, ...resto } = sobrescribir
   return {
     idArticulo: 1,
     codigoInterno: 'A0001',
     nombre: 'Coca Cola 1L',
     codigosBarra: ['7790001234567'],
-    precioOriginal: 100,
-    precioFinal: 100,
-    descuentoUnitario: 0,
-    aplicadas: [],
     idAlicuotaIva: 1,
     porcentajeIva: 21,
-    ...sobrescribir,
+    ...resto,
+    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones }],
   }
 }
 
 function instantaneaFixture(articulos: ArticuloDeInstantanea[]): InstantaneaDePos {
-  return { momento: '2026-09-20T10:00:00.000Z', idPuntoVenta: 7, articulos, mediosDePago: [], toleranciaPago: 0 }
+  return { momento: '2026-09-20T10:00:00.000Z', idPuntoVenta: 7, articulos, clientes: [], mediosDePago: [], toleranciaPago: 0 }
+}
+
+function construir(params: Omit<ParametrosDeComprobanteOfflineSintetico, 'idListaPrecio'> & { idListaPrecio?: number }) {
+  return construirComprobanteOfflineSintetico({ idListaPrecio: LISTA, ...params })
 }
 
 function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
@@ -32,13 +40,13 @@ function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
 const ESCALON_3: EscalonDeCantidad = { cantidadDesde: 3, precioFinal: 90, descuentoUnitario: 10, aplicadas: [{ idOferta: 31, nombre: '3 o más', descuentoUnitario: 10 }] }
 const ESCALON_6: EscalonDeCantidad = { cantidadDesde: 6, precioFinal: 80, descuentoUnitario: 20, aplicadas: [{ idOferta: 61, nombre: '6 o más', descuentoUnitario: 20 }] }
 
-function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
   return articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [], escalones: [ESCALON_3, ESCALON_6], ...sobrescribir })
 }
 
 describe('construirComprobanteOfflineSintetico', () => {
   it('sin descuento: total de línea y del comprobante = cantidad × precio', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 5,
       numeroVisible: '0007-00000005',
       idPuntoVenta: 7,
@@ -55,7 +63,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('con descuento: espeja CalculadorDeTotales.Calcular — bruto = cantidad×original, descuento = descuentoUnitario×cantidad, total = bruto−descuento', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 6,
       numeroVisible: '0007-00000006',
       idPuntoVenta: 7,
@@ -72,7 +80,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('suma correctamente varias líneas con valores discriminantes (nunca confunde una línea con otra)', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 7,
       numeroVisible: '0007-00000007',
       idPuntoVenta: 7,
@@ -93,7 +101,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('null cuando alguna línea no tiene artículo en la instantánea (defensa en profundidad)', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 8,
       numeroVisible: '0007-00000008',
       idPuntoVenta: 7,
@@ -107,7 +115,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('idArea/idListaPrecio quedan en 0 (sentinels) — nunca leídos por ticketDeVenta/VentaFinalizada', async () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 9,
       numeroVisible: '0007-00000009',
       idPuntoVenta: 7,
@@ -122,7 +130,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('idOferta refleja la primera oferta aplicada, o null sin ninguna', () => {
-    const conOferta = construirComprobanteOfflineSintetico({
+    const conOferta = construir({
       numero: 10,
       numeroVisible: '0007-00000010',
       idPuntoVenta: 7,
@@ -134,7 +142,7 @@ describe('construirComprobanteOfflineSintetico', () => {
     })
     expect(conOferta?.items[0].idOferta).toBe(42)
 
-    const sinOferta = construirComprobanteOfflineSintetico({
+    const sinOferta = construir({
       numero: 11,
       numeroVisible: '0007-00000011',
       idPuntoVenta: 7,
@@ -148,7 +156,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('el comprobante nunca marca loteVencido/precioDiscrepante (offline no resuelve lotes)', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 12,
       numeroVisible: '0007-00000012',
       idPuntoVenta: 7,
@@ -167,7 +175,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   // cantidad 1 mientras la pantalla y el payload encolado ya cobran el del tramo. Cantidad 6 cruza
   // los dos umbrales; el descuento del tramo es 20, el plano 0 y el del primer tramo 10.
   it('con una cantidad que cruza un umbral, el ticket usa el descuento y la oferta del TRAMO', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 14,
       numeroVisible: '0007-00000014',
       idPuntoVenta: 7,
@@ -184,7 +192,7 @@ describe('construirComprobanteOfflineSintetico', () => {
   })
 
   it('con la cantidad por debajo del primer umbral el ticket usa el precio plano — nunca el primer tramo', () => {
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 15,
       numeroVisible: '0007-00000015',
       idPuntoVenta: 7,
@@ -201,7 +209,7 @@ describe('construirComprobanteOfflineSintetico', () => {
 
   it('encabezado: numero/numeroVisible/idPuntoVenta/idCliente/estado/fecha/pagos vienen tal cual se pasaron', () => {
     const ahora = new Date('2026-09-20T10:05:00.000Z')
-    const comprobante = construirComprobanteOfflineSintetico({
+    const comprobante = construir({
       numero: 13,
       numeroVisible: '0007-00000013',
       idPuntoVenta: 7,
@@ -222,5 +230,45 @@ describe('construirComprobanteOfflineSintetico', () => {
       idPresupuestoOrigen: null,
     })
     expect(comprobante?.pagos).toEqual([{ idMedioPago: 1, importe: 100, referencia: 'ref-1', vuelto: 5 }])
+  })
+
+  it('cobra con el precio de la lista de la venta, no con el de otra lista del mismo artículo', () => {
+    const articulo: ArticuloDeInstantanea = {
+      ...articuloFixture(),
+      preciosPorLista: [
+        { idListaPrecio: LISTA, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        { idListaPrecio: 8, precioOriginal: 70, precioFinal: 63, descuentoUnitario: 7, aplicadas: [{ idOferta: 4, nombre: 'Mayorista', descuentoUnitario: 7 }] },
+      ],
+    }
+    const comprobante = construir({
+      numero: 14,
+      numeroVisible: '0007-00000014',
+      idPuntoVenta: 7,
+      idCliente: 20,
+      lineas: [lineaFixture({ cantidad: 2 })],
+      instantanea: instantaneaFixture([articulo]),
+      idListaPrecio: 8,
+      pagos: [{ idMedioPago: 1, importe: 126, referencia: null, vuelto: 0 }],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ precioUnitario: 70, descuento: 14, total: 126, idOferta: 4 })
+    expect(comprobante).toMatchObject({ subtotal: 140, descuentoTotal: 14, total: 126 })
+  })
+
+  it('sin precio en la lista de la venta no arma comprobante', () => {
+    const comprobante = construir({
+      numero: 15,
+      numeroVisible: '0007-00000015',
+      idPuntoVenta: 7,
+      idCliente: 20,
+      lineas: [lineaFixture()],
+      instantanea: instantaneaFixture([articuloFixture()]),
+      idListaPrecio: 8,
+      pagos: [],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante).toBeNull()
   })
 })

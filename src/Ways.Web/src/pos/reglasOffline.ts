@@ -21,9 +21,9 @@ export function pagosAdmitidosOffline(pagos: readonly { comportamiento: Comporta
 }
 
 /**
- * La instantánea congela el precio contra la lista del Consumidor Final (spec del backend) — un
- * cliente distinto vería precios de walk-in, no los suyos. Solo el Consumidor Final puede vender
- * offline; cualquier otro cliente exige la resolución de precio online real.
+ * Solo el Consumidor Final se vende sin el servidor. La instantánea ya trae el precio de cada
+ * cliente en su lista (sirve para la vista previa), pero la venta local a otro cliente todavía no
+ * está habilitada: cualquier otro cliente cobra por el camino online.
  */
 export function clienteAdmitidoOffline(cliente: { esConsumidorFinal: boolean } | null): boolean {
   return cliente?.esConsumidorFinal === true

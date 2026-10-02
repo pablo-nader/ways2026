@@ -57,6 +57,11 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+const terminarSesionLocalDelPosMock = vi.fn(() => Promise.resolve())
+vi.mock('./finDeSesionLocal', () => ({
+  terminarSesionLocalDelPos: () => terminarSesionLocalDelPosMock(),
+}))
+
 const abrirConfiguracionMock = vi.fn()
 const imprimirMock = vi.fn()
 let escritorioMock = false
@@ -415,6 +420,19 @@ describe('ShellPos', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
 
     await waitFor(() => expect(tokenDeSesionBearerActual()).toBeNull())
+  })
+
+  it('"Cerrar sesión" termina la sesión local: sesión persistida e instantánea guardada', async () => {
+    terminarSesionLocalDelPosMock.mockClear()
+    render(
+      <MemoryRouter initialEntries={['/vender']}>
+        <ShellPos dispositivo={DISPOSITIVO} usuario={usuarioFixture()} puntoVenta={puntoVentaFixture()} alCerrarSesion={vi.fn()} />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
+
+    await waitFor(() => expect(terminarSesionLocalDelPosMock).toHaveBeenCalledTimes(1))
   })
 })
 

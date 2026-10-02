@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -13,6 +13,7 @@ import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
   ArticuloListado,
+  ClienteDeInstantanea,
   ClienteListado,
   ComprobanteEmitido,
   EstadoDeCuenta,
@@ -20,6 +21,7 @@ import type {
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
   PaginaDe,
+  PrecioDeListaDeInstantanea,
   ParametroResuelto,
   PresupuestoParaVenta,
   PuntoVentaListado,
@@ -29,9 +31,10 @@ import type {
   UsuarioAutenticado,
 } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
-import { crearAlmacenIndexedDb } from '../pos/almacenPos'
+import { crearAlmacenIndexedDb, type AlmacenClaveValor } from '../pos/almacenPos'
 import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
+import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
@@ -70,6 +73,13 @@ const apiPostMock = vi.fn()
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
+    // La instantánea se pide con `getCondicional('/pos/instantanea?version=2', etag)`: se enruta por
+    // `apiGetMock` como `/pos/instantanea` (con la etiqueta como segundo argumento) y una respuesta
+    // plana se adapta a un `200`; un test que necesite un `304` devuelve `{ modificada: false }`.
+    getCondicional: (ruta: string, etag: string | null) =>
+      Promise.resolve(apiGetMock(ruta.replace('?version=2', ''), etag)).then((r: unknown) =>
+        typeof r === 'object' && r !== null && 'modificada' in r ? r : { modificada: true, cuerpo: r, etag: null },
+      ),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: vi.fn(),
     delete: vi.fn(),
@@ -281,18 +291,41 @@ function estadoDeCuentaFixture(sobrescribir: Partial<EstadoDeCuenta> = {}): Esta
   }
 }
 
-function articuloDeInstantaneaFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+/** Artículo con UN precio, en la lista 1 (la del Consumidor Final de `clienteFixture`) salvo que se
+ * pida otra: los campos de precio se pasan planos. */
+type ArticuloConPrecio = Omit<ArticuloDeInstantanea, 'preciosPorLista'> & Omit<PrecioDeListaDeInstantanea, 'idListaPrecio'> & { idListaPrecio: number }
+
+function articuloDeInstantaneaFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
+  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, idListaPrecio = 1, ...resto } = sobrescribir
   return {
     idArticulo: 1,
     codigoInterno: 'A0001',
     nombre: 'Coca Cola 1L',
     codigosBarra: ['7790001234567'],
-    precioOriginal: 100,
-    precioFinal: 100,
-    descuentoUnitario: 0,
-    aplicadas: [],
     idAlicuotaIva: 1,
     porcentajeIva: 21,
+    ...resto,
+    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones }],
+  }
+}
+
+/** Cliente de la instantánea con los mismos datos que `clienteFixture`. */
+function clienteDeInstantaneaFixture(sobrescribir: Partial<ClienteDeInstantanea> = {}): ClienteDeInstantanea {
+  return {
+    idCliente: 1,
+    numero: 1,
+    nombre: 'Consumidor Final',
+    apellido: null,
+    razonSocial: null,
+    tipoDocumento: null,
+    numeroDocumento: null,
+    idCondicionFiscal: 1,
+    idEmpresa: null,
+    idListaPrecio: 1,
+    esConsumidorFinal: true,
+    saldo: 0,
+    limiteCredito: 0,
+    creditoIlimitado: true,
     ...sobrescribir,
   }
 }
@@ -302,17 +335,22 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
     momento: '2026-09-20T09:00:00.000Z',
     idPuntoVenta: 7,
     articulos: [articuloDeInstantaneaFixture()],
+    clientes: [clienteDeInstantaneaFixture()],
     mediosDePago: [],
     toleranciaPago: 0,
     ...sobrescribir,
   }
 }
 
+function guardarLocal(almacen: AlmacenClaveValor, instantanea: InstantaneaDePos, verificadaEn = instantanea.momento) {
+  return guardarInstantaneaLocal(almacen, { instantanea, etag: null, verificadaEn })
+}
+
 /** Deja el almacén offline listo ANTES de montar `Pos` — mismo criterio que goal A ("sobrevive
  * un restart"): el hook lee del almacén al montar, sin esperar ningún fetch. */
 async function prepararAlmacenOffline(params: { instantanea?: InstantaneaDePos; bloque?: { desde: number; hasta: number; proximo: number } } = {}) {
   const almacen = crearAlmacenIndexedDb()
-  await guardarInstantaneaLocal(almacen, params.instantanea ?? instantaneaFixture())
+  await guardarLocal(almacen, params.instantanea ?? instantaneaFixture())
   if (params.bloque) {
     await guardarBloque(almacen, { idPuntoVenta: 7, codigoTipoComprobante: 'TX', ...params.bloque })
   }
@@ -398,6 +436,13 @@ async function comoPosDeEscritorio(prueba: () => Promise<void>) {
     delete (globalThis as GlobalConTauri).__TAURI__
   }
 }
+
+/** El tope de espera del turno se acorta para que los tests de red lenta no esperen 3 s reales;
+ * lo que se prueba es que el turno guardado no rige antes del tope. */
+vi.mock('../pos/turnoConfirmadoLocal', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('../pos/turnoConfirmadoLocal')>()),
+  LIMITE_DE_ESPERA_DEL_TURNO_MS: 300,
+}))
 
 vi.mock('../puntoVenta/usePuntoVenta', () => ({
   usePuntoVenta: () => estadoDePuntoVenta,
@@ -5135,22 +5180,18 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(screen.queryByText('Sin conexión: no se encontró ese código en la última instantánea local.')).not.toBeInTheDocument()
     })
 
-    it('para otro cliente el escaneo sigue yendo online primero; sin red cae a la instantánea', async () => {
+    it('para otro cliente el escaneo también sale primero de la instantánea, sin tocar la red', async () => {
       await prepararAlmacenOffline()
       await montarConInstantanea()
       await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
       await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
       await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: /Juan Pérez/ }))
 
-      mockearApiGet((ruta) => {
-        if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
-        return undefined
-      })
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
       expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
-      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(0)
     })
   })
 
@@ -5168,8 +5209,23 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasPost('/ofertas/resolver')).toEqual([])
     })
 
-    it('para otro cliente la vista previa va online aunque la línea esté en la instantánea', async () => {
-      await prepararAlmacenOffline()
+    /** Otro cliente con la lista 2: el artículo vale 100 en la lista 1 (Consumidor Final) y 70 en la
+     * 2. El mock de /ofertas/resolver devuelve 100, así que $ 70 solo podría salir de una vista previa
+     * local con la lista del cliente. */
+    async function elegirOtroClienteConLista(idListaPrecio: number) {
+      const articulo: ArticuloDeInstantanea = {
+        ...articuloDeInstantaneaFixture(),
+        preciosPorLista: [
+          { idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+          { idListaPrecio: 2, precioOriginal: 70, precioFinal: 70, descuentoUnitario: 0, aplicadas: [] },
+        ],
+      }
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articulo] }) })
+      mockearApiGet((ruta) =>
+        ruta.startsWith('/clientes?busqueda=')
+          ? Promise.resolve<PaginaDe<ClienteListado>>({ items: [{ ...otroCliente, idListaPrecio }], total: 1, pagina: 1, tamanio: 25 })
+          : undefined,
+      )
       await montarConInstantanea()
       await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
       await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
@@ -5178,8 +5234,17 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
+    }
+
+    // Su cobro va online y el servidor vuelve a resolver el precio: una vista previa local podría
+    // mostrar un total distinto del cobrado.
+    it('para otro cliente la vista previa va online aunque la línea esté en la instantánea', async () => {
+      await elegirOtroClienteConLista(2)
 
       await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
+      expect(llamadasPost('/ofertas/resolver')[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 2 })] })
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(screen.queryByText('$ 70,00', { selector: 'strong' })).not.toBeInTheDocument()
     })
 
     it('una instantánea de OTRO punto de venta nunca se usa: escaneo y vista previa van online', async () => {
@@ -5211,8 +5276,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   })
 
   describe('gating proactivo de la UI cuando enLinea pasa a false (Parte D/E)', () => {
-    async function llegarConEnLineaFalse() {
-      await prepararAlmacenOffline()
+    async function llegarConEnLineaFalse(instantanea?: InstantaneaDePos) {
+      await prepararAlmacenOffline({ instantanea })
       mockearApiGet((ruta) => {
         if (ruta === '/pos/instantanea') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
         return undefined
@@ -5223,9 +5288,69 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Sin conexión: solo se puede vender al Consumidor Final.')
     }
 
-    it('oculta el buscador de "otro cliente" (solo se puede vender al Consumidor Final)', async () => {
+    it('el buscador de clientes sigue disponible y busca en la copia local, sin acentos ni mayúsculas', async () => {
+      await llegarConEnLineaFalse(
+        instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, idListaPrecio: 2 }),
+          ],
+        }),
+      )
+
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'GOMEZ')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+
+      expect(await screen.findByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
+      expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
+    })
+
+    it('con red, muestra al instante la coincidencia local, suma la del servidor y al elegir una local trae el cliente fresco', async () => {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, saldo: 10 }),
+          ],
+        }),
+      })
+      let resolverBusqueda: (p: PaginaDe<ClienteListado>) => void = () => {}
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/clientes?busqueda=')) return new Promise<PaginaDe<ClienteListado>>((r) => (resolverBusqueda = r))
+        if (ruta === '/clientes/30') {
+          return Promise.resolve(clienteFixture({ id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, saldo: 999 }))
+        }
+        return undefined
+      })
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gómez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+
+      // Antes de que conteste el servidor, la coincidencia local ya está.
+      expect(await screen.findByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
+      await waitFor(() => expect(llamadasGet('/clientes?busqueda=')).toHaveLength(1))
+
+      await act(async () => {
+        resolverBusqueda({ items: [otroCliente], total: 1, pagina: 1, tamanio: 25 })
+      })
+      expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
+
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: '#30 — José Gómez' }))
+      await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: /Juan Pérez/ }))
+      expect(llamadasGet('/clientes/2')).toHaveLength(0)
+    })
+
+    it('sin coincidencias en la copia local y sin conexión, lo dice en vez de ir a la red', async () => {
       await llegarConEnLineaFalse()
-      expect(screen.queryByLabelText('Buscar cliente')).not.toBeInTheDocument()
+
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'zzz')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+
+      expect(await screen.findByText('Sin conexión: no se encontró ningún cliente en la copia local.')).toBeInTheDocument()
+      expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
     })
 
     it('el selector de medio de pago ofrece Efectivo y Tarjeta — nunca Cuenta corriente', async () => {
@@ -5238,10 +5363,9 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre, medioTarjeta.nombre])
     })
 
-    it('también muestra la vejez de la instantánea y la limitación de ofertas por cantidad', async () => {
+    it('muestra el aviso de sin conexión con la vejez de la última verificación', async () => {
       await llegarConEnLineaFalse()
-      expect(screen.getByText(/Sin conexión: vendiendo con la instantánea local/)).toBeInTheDocument()
-      expect(screen.getByText(/No refleja ofertas por cantidad mínima mayor a 1\./)).toBeInTheDocument()
+      expect(screen.getByText(/Sin conexión — datos de hace \d+ días?\. Se vende con la copia local/)).toBeInTheDocument()
     })
   })
 
@@ -5350,7 +5474,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   describe('"Cerrar caja" bloqueado con el outbox no vacío (Parte D, regla dura)', () => {
     it('con una venta sin sincronizar, "Cerrar caja" no navega y muestra el motivo', async () => {
       const almacen = crearAlmacenIndexedDb()
-      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarLocal(almacen, instantaneaFixture())
       await agregarAOutbox(almacen, {
         idLocal: 'pendiente-1',
         numeroPreasignado: 500,
@@ -5381,7 +5505,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     // entregado — "Cerrar caja" tiene que seguir bloqueado igual, mostrando el motivo real.
     it('con una venta que necesita atención (outbox ya vacío), "Cerrar caja" no navega y muestra el motivo', async () => {
       const almacen = crearAlmacenIndexedDb()
-      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarLocal(almacen, instantaneaFixture())
       await agregarARechazada(almacen, {
         idLocal: 'rechazada-1',
         numeroPreasignado: 500,
@@ -5413,7 +5537,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   describe('venta que necesita atención — reintentar/descartar (judgment-day ronda 2, WARNING)', () => {
     async function prepararVentaRechazada() {
       const almacen = crearAlmacenIndexedDb()
-      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarLocal(almacen, instantaneaFixture())
       await agregarARechazada(almacen, {
         idLocal: 'rechazada-1',
         numeroPreasignado: 500,
@@ -5656,7 +5780,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     it('con el outbox vacío igual rinde la cola antes de consultar el turno (la guarda del servidor exige un reporte fresco)', async () => {
       const almacen = crearAlmacenIndexedDb()
-      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarLocal(almacen, instantaneaFixture())
       await guardarBloque(almacen, { idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 500, hasta: 599, proximo: 510 })
       apiPostMock.mockImplementation((ruta: string) =>
         ruta === '/pos/rendicion-de-cola' ? Promise.resolve(undefined) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
@@ -5680,7 +5804,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
     it('si el drenado vacía el outbox, el cierre sigue sin bloquear al cajero', async () => {
       const almacen = crearAlmacenIndexedDb()
-      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarLocal(almacen, instantaneaFixture())
       await agregarAOutbox(almacen, {
         idLocal: 'pendiente-1',
         numeroPreasignado: 500,
@@ -5707,5 +5831,250 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(enviosDeVentas).toBe(2)
       await expect(leerOutbox(almacen)).resolves.toEqual([])
     })
+  })
+
+  describe('POS de escritorio: arranque sin red y red lenta (copia local)', () => {
+    const CLAVE_TURNO_LOCAL = 'ways.pos.turnoConfirmado.7'
+    const efectivoDeInstantanea = { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false } as const
+
+    afterEach(() => {
+      localStorage.removeItem(CLAVE_TURNO_LOCAL)
+    })
+
+    const sinRed = () => Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+
+    async function prepararCopiaLocal() {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({ mediosDePago: [efectivoDeInstantanea], toleranciaPago: 10 }),
+        bloque: { desde: 500, hasta: 599, proximo: 500 },
+      })
+    }
+
+    it('arranque sin red: Consumidor Final, medios, tolerancia y turno salen de la copia local y se puede vender', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
+        await prepararCopiaLocal()
+        apiGetMock.mockImplementation(sinRed)
+        apiPostMock.mockImplementation(sinRed)
+
+        renderPos()
+
+        await screen.findByRole('option', { name: /Consumidor Final/ })
+        expect(await screen.findByText(/Sin conexión — datos de hace/)).toBeInTheDocument()
+        expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+        expect(screen.queryByText(/No se pudieron cargar/)).not.toBeInTheDocument()
+        expect(screen.queryByText(/No se pudo consultar el turno/)).not.toBeInTheDocument()
+
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await screen.findByText('Coca Cola 1L')
+        await cobrarConEfectivo('100')
+        await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+        expect((await leerOutbox(crearAlmacenIndexedDb())).map((v) => v.numeroPreasignado)).toEqual([500])
+      }))
+
+    it('arranque sin red y sin un turno confirmado antes: no inventa uno', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararCopiaLocal()
+        apiGetMock.mockImplementation(sinRed)
+        apiPostMock.mockImplementation(sinRed)
+
+        renderPos()
+
+        expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
+        expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+        expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull()
+      }))
+
+    it('arranque sin red con una confirmación de turno de hace más de 24 h: no la usa', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture(), new Date(Date.now() - 25 * 60 * 60_000))
+        await prepararCopiaLocal()
+        apiGetMock.mockImplementation(sinRed)
+        apiPostMock.mockImplementation(sinRed)
+
+        renderPos()
+
+        expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
+        expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+      }))
+
+    it('el turno que confirma el servidor queda guardado, y se borra cuando el servidor dice que no hay', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararCopiaLocal()
+        const { unmount } = renderPos()
+        await screen.findByText('Caja abierta')
+        await waitFor(() => expect(leerTurnoConfirmadoLocal(7)).toEqual(turnoAbiertoFixture()))
+        unmount()
+
+        mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+        renderPos()
+        await screen.findByText('Caja cerrada')
+        await waitFor(() => expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull())
+      }))
+
+    it('en la app web nunca se guarda el turno ni se usa la copia local', async () => {
+      guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
+      await prepararCopiaLocal()
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? sinRed() : undefined))
+
+      renderPos()
+
+      expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
+      expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+    })
+
+    it('con la red lenta usa los medios locales enseguida, el turno local recién al vencer el tope, y la respuesta del servidor los reemplaza', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture({ id: 900 }))
+        await prepararCopiaLocal()
+        let resolverMedios: (m: MedioPagoListado[]) => void = () => {}
+        let resolverTurno: (t: TurnoResumen | null) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta === '/catalogos/medios-pago') return new Promise<MedioPagoListado[]>((r) => (resolverMedios = r))
+          if (ruta.startsWith('/caja/turnos/abierto')) return new Promise<TurnoResumen | null>((r) => (resolverTurno = r))
+          return undefined
+        })
+
+        renderPos()
+
+        // Con red, el turno guardado no rige hasta que vence el tope de espera del servidor.
+        expect(await screen.findByText('Consultando turno…')).toBeInTheDocument()
+        expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+        // Vencido el tope sin respuesta: turno local y medios de la instantánea (solo Efectivo).
+        expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
+        expect(screen.queryByText('Consultando turno…')).not.toBeInTheDocument()
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await screen.findByText('Coca Cola 1L')
+        expect(within(screen.getByLabelText('Medio de pago')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir medio…', 'Efectivo'])
+
+        await act(async () => {
+          resolverMedios([medioEfectivo, medioTarjeta])
+          resolverTurno(null)
+        })
+
+        await waitFor(() =>
+          expect(within(screen.getByLabelText('Medio de pago')).getAllByRole('option').map((o) => o.textContent)).toEqual([
+            'Elegir medio…',
+            medioEfectivo.nombre,
+            medioTarjeta.nombre,
+          ]),
+        )
+        expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+        expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull()
+      }))
+
+    it('la lista de clientes del servidor que llega tarde no pisa al cliente que el cajero eligió de la copia local', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararAlmacenOffline({
+          instantanea: instantaneaFixture({
+            mediosDePago: [efectivoDeInstantanea],
+            clientes: [
+              clienteDeInstantaneaFixture(),
+              clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false }),
+            ],
+          }),
+        })
+        let resolverClientes: (p: PaginaDe<ClienteListado>) => void = () => {}
+        mockearApiGet((ruta) => (ruta === '/clientes' ? new Promise<PaginaDe<ClienteListado>>((r) => (resolverClientes = r)) : undefined))
+
+        renderPos()
+        const selector = screen.getByLabelText('Cliente')
+        await userEvent.selectOptions(selector, await screen.findByRole('option', { name: '#30 — José Gómez' }))
+        expect(selector).toHaveValue('30')
+
+        await act(async () => {
+          resolverClientes({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
+        })
+
+        expect(selector).toHaveValue('30')
+      }))
+
+    it('la recarga de clientes al volver la red no traba una búsqueda en vuelo ni pisa su resultado', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararCopiaLocal()
+        let cargasDeClientes = 0
+        let resolverBusqueda: (p: PaginaDe<ClienteListado>) => void = () => {}
+        let resolverRecarga: (p: PaginaDe<ClienteListado>) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta === '/clientes') {
+            cargasDeClientes += 1
+            return cargasDeClientes < 3 ? sinRed() : new Promise<PaginaDe<ClienteListado>>((r) => (resolverRecarga = r))
+          }
+          if (ruta.startsWith('/clientes?busqueda=')) return new Promise<PaginaDe<ClienteListado>>((r) => (resolverBusqueda = r))
+          if (ruta === '/pos/instantanea') return Promise.resolve(instantaneaFixture({ mediosDePago: [efectivoDeInstantanea] }))
+          return undefined
+        })
+
+        renderPos()
+        const sincronizar = await screen.findByRole('button', { name: 'Sincronizar ahora' })
+        await waitFor(() => expect(cargasDeClientes).toBe(2))
+
+        await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+        await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+        await screen.findByRole('button', { name: 'Buscando…' })
+
+        await userEvent.click(sincronizar)
+        await waitFor(() => expect(cargasDeClientes).toBe(3))
+
+        await act(async () => {
+          resolverBusqueda({ items: [otroCliente], total: 1, pagina: 1, tamanio: 25 })
+        })
+        expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Buscar' })).toBeEnabled()
+
+        await act(async () => {
+          resolverRecarga({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
+        })
+        expect(screen.getByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+      }))
+
+    it.each([
+      ['los medios de pago', '/catalogos/medios-pago'],
+      ['la tolerancia de pago', '/parametros/tolerancia_pago'],
+      ['el turno abierto', '/caja/turnos/abierto'],
+    ])('un rechazo real del servidor al pedir %s no queda tapado por la copia local', (_titulo, prefijo) =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
+        await prepararCopiaLocal()
+        mockearApiGet((ruta) => (ruta.startsWith(prefijo) ? Promise.reject(new ErrorApi(500, 'error', 'El servidor falló.')) : undefined))
+
+        renderPos()
+
+        expect(await screen.findByText('El servidor falló.')).toBeInTheDocument()
+      }))
+
+    it('cuando vuelve la red, vuelve a pedir lo que había quedado con la copia local', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture())
+        await prepararCopiaLocal()
+        let conRed = false
+        mockearApiGet((ruta) => {
+          if (conRed) return ruta === '/pos/instantanea' ? Promise.resolve(instantaneaFixture({ momento: '2026-09-20T12:00:00.000Z' })) : undefined
+          return ruta.startsWith('/pos/instantanea') || ruta.startsWith('/catalogos/medios-pago') || ruta === '/clientes' ||
+            ruta.startsWith('/parametros/tolerancia_pago') || ruta.startsWith('/caja/turnos/abierto')
+            ? sinRed()
+            : undefined
+        })
+        const recargadas = ['/catalogos/medios-pago', '/clientes', '/parametros/tolerancia_pago', '/caja/turnos/abierto']
+
+        renderPos()
+        await screen.findByText(/Sin conexión — datos de hace/)
+        // El ciclo de arranque tiene que haber terminado (sin red) antes de pedir otro.
+        const sincronizar = await screen.findByRole('button', { name: 'Sincronizar ahora' })
+        for (const ruta of recargadas) expect(llamadasGet(ruta).filter((c) => !(c[0] as string).startsWith('/clientes?'))).toHaveLength(1)
+
+        conRed = true
+        await userEvent.click(sincronizar)
+
+        for (const ruta of recargadas) {
+          await waitFor(() => expect(llamadasGet(ruta).filter((c) => !(c[0] as string).startsWith('/clientes?'))).toHaveLength(2))
+        }
+        await waitFor(() => expect(screen.queryByText(/Sin conexión — datos de hace/)).not.toBeInTheDocument())
+      }))
   })
 })

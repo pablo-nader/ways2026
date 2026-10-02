@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
-import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { establecerTokenDeSesionBearer } from '../api/entornoTauri'
+import { terminarSesionLocalDelPos } from './finDeSesionLocal'
 import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
@@ -183,7 +184,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
       // Tiene que limpiarse ACÁ (antes de `alCerrarSesion()`, que desmonta este shell): ningún
       // otro punto del código vuelve a tocar el bearer una vez que se vuelve a `LoginDeDispositivo`.
       establecerTokenDeSesionBearer(null)
-      await limpiarSesionDeCajeroPersistida()
+      await terminarSesionLocalDelPos()
       cerrandoSesionRef.current = false
       setCerrandoSesion(false)
       alCerrarSesion()

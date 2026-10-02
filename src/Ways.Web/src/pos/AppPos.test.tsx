@@ -23,6 +23,12 @@ const limpiarSesionDeCajeroPersistidaMock = vi.fn()
 // judgment-day ronda 2 (FIX CRITICAL): `snapshotDeSesionOfflineVigente` reemplaza a la combinación
 // `tokenDeSesionBearerActual() ? leerSesionDeDispositivoLocal() : null` de la ronda 1 — un solo
 // gate mockeable en vez de dos, mismo criterio "un solo registro" que el fix real.
+const purgarInstantaneaLocalMock = vi.fn()
+vi.mock('./instantaneaOffline', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('./instantaneaOffline')>()),
+  purgarInstantaneaLocal: (...args: unknown[]) => purgarInstantaneaLocalMock(...args),
+}))
+
 vi.mock('../api/entornoTauri', () => ({
   corriendoEnTauri: () => false,
   establecerTokenDeSesionBearer: () => {},
@@ -193,6 +199,8 @@ beforeEach(() => {
   refrescarVentanaDeSesionPersistidaMock.mockResolvedValue(undefined)
   limpiarSesionDeCajeroPersistidaMock.mockReset()
   limpiarSesionDeCajeroPersistidaMock.mockResolvedValue(undefined)
+  purgarInstantaneaLocalMock.mockReset()
+  purgarInstantaneaLocalMock.mockResolvedValue(undefined)
 })
 
 describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-pos)', () => {
@@ -205,6 +213,29 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     render(<AppPos />)
 
     expect(await screen.findByText('Vincular este equipo')).toBeInTheDocument()
+  })
+
+  it('cuando el servidor confirma que el dispositivo no está vinculado, borra la instantánea guardada', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual'
+        ? Promise.reject(new ErrorApi(404, 'dispositivo_no_vinculado', 'El dispositivo no está vinculado.'))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    await screen.findByText('Vincular este equipo')
+    await waitFor(() => expect(purgarInstantaneaLocalMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('un error de red nunca borra la instantánea guardada (la venta sin red depende de ella)', async () => {
+    leerCredencialDeDispositivoMock.mockResolvedValue('secreto-guardado')
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/dispositivos/actual' ? Promise.reject(new Error('fetch falló')) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    render(<AppPos />)
+
+    await screen.findByText(/este equipo ya está vinculado/)
+    expect(purgarInstantaneaLocalMock).not.toHaveBeenCalled()
   })
 
   it('un error de red (no un 404 explícito) SIN credencial local muestra el error genérico', async () => {

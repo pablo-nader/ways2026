@@ -5,6 +5,8 @@ import type { DispositivoActual } from '../api/dispositivos'
 import { alPerderLaSesion, api, ErrorApi } from '../api/cliente'
 import { leerCredencialDeDispositivo, refrescarVentanaDeSesionPersistida, snapshotDeSesionOfflineVigente } from '../api/entornoTauri'
 import type { UsuarioOfflineMinimo } from '../api/entornoTauri'
+import { crearAlmacenIndexedDb } from './almacenPos'
+import { purgarInstantaneaLocal } from './instantaneaOffline'
 import { puedeOperarPos } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
@@ -215,6 +217,12 @@ export function AppPos() {
   useEffect(() => {
     void cargarDispositivo()
   }, [cargarDispositivo])
+
+  // El servidor confirmó que este dispositivo ya no está vinculado: la instantánea guardada (con
+  // clientes y saldos) no le pertenece a nadie en este equipo.
+  useEffect(() => {
+    if (estado.fase === 'sin-vincular') void purgarInstantaneaLocal(crearAlmacenIndexedDb())
+  }, [estado.fase])
 
   // Sesión revocada del lado del servidor mientras se estaba en `con-sesion`: se vuelve a
   // resolver todo desde `GET /dispositivos/actual`, nunca se asume "solo se cerró la sesión" (el
