@@ -69,6 +69,10 @@ jobs:
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Hay tests que asumen el huso del negocio (offset distinto de cero, horas locales);
+    # el runner corre en UTC.
+    env:
+      TZ: America/Argentina/Buenos_Aires
     defaults:
       run:
         working-directory: src/Ways.Web
