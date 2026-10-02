@@ -64,10 +64,14 @@ Desde la 0.4.0 la app se actualiza sola con `tauri-plugin-updater`
    `actualizacion-descargada`.
 3. El POS muestra el banner "Actualizacion X disponible" con "Instalar y
    reiniciar" (`AvisoDeActualizacion.tsx`). El boton queda deshabilitado
-   mientras hay una venta en curso: carrito con items (aunque el cajero este
-   en otra pantalla del shell), cobro en vuelo, confirmacion de cobro, modal
-   "Venta finalizada" abierto o un retiro/cierre de caja en curso. Nunca se
-   instala sin ese click.
+   mientras hay una venta en curso o un trabajo de impresion en la cola (que
+   vive solo en memoria). En "Vender" cuenta como venta en curso: carrito con
+   items, cobro en vuelo, confirmacion de cobro, modal "Venta finalizada"
+   abierto o un retiro/cierre de caja en curso; fuera de "Vender" solo sigue
+   contando un carrito con items, porque su borrador sobrevive a la
+   navegacion. Nunca se instala sin ese click, y despues del click el header
+   y la pantalla quedan inertes bajo un aviso "Instalando…" hasta que el
+   proceso se cierra.
 4. Al instalar, la app lanza el instalador NSIS en modo pasivo
    (`plugins.updater.windows.installMode: "passive"`, barra de progreso sin
    preguntas), se cierra y el instalador la vuelve a abrir. Es una

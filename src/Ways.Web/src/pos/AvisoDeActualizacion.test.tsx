@@ -43,7 +43,7 @@ const botonInstalar = () => screen.getByRole('button', { name: 'Instalar y reini
 
 describe('AvisoDeActualizacion', () => {
   it('en la app web (sin Tauri) no renderiza nada ni intenta ninguna IPC', async () => {
-    const { container } = render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    const { container } = render(<AvisoDeActualizacion motivoDeBloqueo={null} />)
 
     await act(async () => {})
 
@@ -53,7 +53,7 @@ describe('AvisoDeActualizacion', () => {
 
   it('sin actualización descargada no muestra el banner', async () => {
     instalarPuenteTauri(null)
-    const { container } = render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    const { container } = render(<AvisoDeActualizacion motivoDeBloqueo={null} />)
 
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('estado_actualizacion'))
 
@@ -62,7 +62,7 @@ describe('AvisoDeActualizacion', () => {
 
   it('con una actualización ya descargada al montar, muestra la versión y el botón habilitado', async () => {
     instalarPuenteTauri({ version: '0.4.0', notas: null })
-    render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    render(<AvisoDeActualizacion motivoDeBloqueo={null} />)
 
     expect(await screen.findByText(/Actualización 0\.4\.0 disponible/)).toBeInTheDocument()
     expect(botonInstalar()).toBeEnabled()
@@ -70,7 +70,7 @@ describe('AvisoDeActualizacion', () => {
 
   it('el evento de descarga muestra el banner aunque la consulta inicial no haya encontrado nada', async () => {
     instalarPuenteTauri(null)
-    render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    render(<AvisoDeActualizacion motivoDeBloqueo={null} />)
     await waitFor(() => expect(manejadorDeEvento).not.toBeNull())
 
     act(() => manejadorDeEvento!({ payload: { version: '0.5.0', notas: 'Mejoras' } }))
@@ -78,9 +78,9 @@ describe('AvisoDeActualizacion', () => {
     expect(await screen.findByText(/Actualización 0\.5\.0 disponible/)).toBeInTheDocument()
   })
 
-  it('con una venta en curso el botón queda deshabilitado y lo explica', async () => {
+  it('con un motivo de bloqueo el botón queda deshabilitado y lo explica', async () => {
     instalarPuenteTauri({ version: '0.4.0', notas: null })
-    render(<AvisoDeActualizacion ventaEnCurso />)
+    render(<AvisoDeActualizacion motivoDeBloqueo="Terminá la venta en curso para instalarla." />)
 
     await screen.findByText(/Terminá la venta en curso para instalarla/)
     expect(botonInstalar()).toBeDisabled()
@@ -89,9 +89,10 @@ describe('AvisoDeActualizacion', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('instalar_actualizacion')
   })
 
-  it('dos clicks en el mismo tick invocan una sola instalación', async () => {
+  it('dos clicks en el mismo tick invocan una sola instalación y tapan el POS con "Instalando…"', async () => {
     instalarPuenteTauri({ version: '0.4.0', notas: null })
-    render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    const alCambiarInstalando = vi.fn()
+    render(<AvisoDeActualizacion motivoDeBloqueo={null} alCambiarInstalando={alCambiarInstalando} />)
     const boton = await screen.findByRole('button', { name: 'Instalar y reiniciar' })
     invokeMock.mockImplementation(() => new Promise(() => {}))
 
@@ -101,12 +102,15 @@ describe('AvisoDeActualizacion', () => {
     })
 
     expect(invokeMock.mock.calls.filter(([comando]) => comando === 'instalar_actualizacion')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Instalando…' })).toBeDisabled()
+    expect(alCambiarInstalando.mock.calls).toEqual([[true]])
+    expect(screen.getByText(/Instalando la actualización 0\.4\.0/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Instalar y reiniciar' })).not.toBeInTheDocument()
   })
 
-  it('si la instalación falla, muestra el error y permite reintentar', async () => {
+  it('si la instalación falla, muestra el error, libera el POS y permite reintentar', async () => {
     instalarPuenteTauri({ version: '0.4.0', notas: null })
-    render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    const alCambiarInstalando = vi.fn()
+    render(<AvisoDeActualizacion motivoDeBloqueo={null} alCambiarInstalando={alCambiarInstalando} />)
     await screen.findByRole('button', { name: 'Instalar y reiniciar' })
     invokeMock.mockImplementation(() => Promise.reject('No se pudo instalar la actualizacion: acceso denegado'))
 
@@ -114,11 +118,12 @@ describe('AvisoDeActualizacion', () => {
 
     expect(await screen.findByText(/acceso denegado/)).toBeInTheDocument()
     expect(botonInstalar()).toBeEnabled()
+    expect(alCambiarInstalando.mock.calls).toEqual([[true], [false]])
   })
 
   it('al desmontar se desuscribe del evento', async () => {
     instalarPuenteTauri(null)
-    const { unmount } = render(<AvisoDeActualizacion ventaEnCurso={false} />)
+    const { unmount } = render(<AvisoDeActualizacion motivoDeBloqueo={null} />)
     await waitFor(() => expect(listenMock).toHaveBeenCalled())
     await act(async () => {})
 

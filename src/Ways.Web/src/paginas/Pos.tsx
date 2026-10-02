@@ -2071,9 +2071,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   const ventaEnCurso =
     lineas.length > 0 || cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
+  // Al desmontar solo sigue en curso lo que sobrevive a la navegación: un borrador con ítems. Los
+  // estados transitorios (cobro, modales) mueren con esta pantalla.
+  const borradorConItemsPersiste = claveBorrador !== null && almacenBorradores !== null && lineas.length > 0
+  const alCambiarVentaEnCursoRef = useRef(alCambiarVentaEnCurso)
+  const borradorConItemsPersisteRef = useRef(borradorConItemsPersiste)
+  useEffect(() => {
+    alCambiarVentaEnCursoRef.current = alCambiarVentaEnCurso
+    borradorConItemsPersisteRef.current = borradorConItemsPersiste
+  })
   useEffect(() => {
     alCambiarVentaEnCurso?.(ventaEnCurso)
   }, [ventaEnCurso, alCambiarVentaEnCurso])
+  useEffect(() => () => alCambiarVentaEnCursoRef.current?.(borradorConItemsPersisteRef.current), [])
 
   // stage-pos-turno-y-foco: mientras no hay un turno CONFIRMADO abierto, la venta libre queda
   // bloqueada (solo búsqueda/consulta de precio) — `turno === null` cubre tanto "confirmado

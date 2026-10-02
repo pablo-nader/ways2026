@@ -60,6 +60,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   // Si el cajero sale de "Vender" con ítems en el carrito, el último valor informado se mantiene:
   // el borrador sigue vivo y la actualización sigue bloqueada.
   const [ventaEnCurso, setVentaEnCurso] = useState(false)
+  const [instalandoActualizacion, setInstalandoActualizacion] = useState(false)
   const cerrandoSesionRef = useRef(false)
 
   // stage-pos-caja-en-cabecera: nodo del contenedor que reserva en el header para los controles
@@ -82,6 +83,9 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   type AvisoDeImpresion = TrabajoDeImpresion & { mensaje: string; reintentando: boolean }
 
   const [avisosDeImpresion, setAvisosDeImpresion] = useState<AvisoDeImpresion[]>([])
+  // Espejo renderizable de `procesandoColaRef`: la cola vive solo en memoria, así que reiniciar
+  // la app por una actualización con trabajos pendientes los perdería.
+  const [imprimiendo, setImprimiendo] = useState(false)
   const proximoIdTrabajoRef = useRef(1)
   const colaDeImpresionRef = useRef<TrabajoDeImpresion[]>([])
   const procesandoColaRef = useRef(false)
@@ -99,6 +103,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   async function procesarColaDeImpresion() {
     if (procesandoColaRef.current) return
     procesandoColaRef.current = true
+    setImprimiendo(true)
     try {
       let trabajo: TrabajoDeImpresion | undefined
       while ((trabajo = colaDeImpresionRef.current.shift())) {
@@ -113,6 +118,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
       }
     } finally {
       procesandoColaRef.current = false
+      if (montadoRef.current) setImprimiendo(false)
     }
   }
 
@@ -225,7 +231,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
         <ProveedorDeBorradoresDeTicket>
         <div className="d-flex flex-column min-vh-100">
-          <header className="navbar navbar-dark bg-dark px-3 py-2 d-print-none">
+          <header className="navbar navbar-dark bg-dark px-3 py-2 d-print-none" inert={instalandoActualizacion}>
             <div className="d-flex flex-column">
               <strong className="text-light">{dispositivo.empresa.nombre}</strong>
               <small className="text-light-emphasis">
@@ -258,7 +264,16 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </div>
           </header>
 
-          <AvisoDeActualizacion ventaEnCurso={ventaEnCurso} />
+          <AvisoDeActualizacion
+            motivoDeBloqueo={
+              ventaEnCurso
+                ? 'Terminá la venta en curso para instalarla.'
+                : imprimiendo
+                  ? 'Esperá a que termine la impresión para instalarla.'
+                  : null
+            }
+            alCambiarInstalando={setInstalandoActualizacion}
+          />
 
           {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
               propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
@@ -289,7 +304,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </div>
           ))}
 
-          <main className="flex-grow-1">
+          <main className="flex-grow-1" inert={instalandoActualizacion}>
             <Routes>
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
