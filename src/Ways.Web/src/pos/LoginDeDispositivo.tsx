@@ -5,6 +5,7 @@ import type { DispositivoActual } from '../api/dispositivos'
 import { ErrorApi } from '../api/cliente'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { resolverPuntoVentaDelDispositivo } from './puntoVentaDelDispositivo'
+import { BotonDeTema } from '../tema/BotonDeTema'
 
 type Props = {
   dispositivo: DispositivoActual
@@ -59,8 +60,11 @@ export function LoginDeDispositivo({ dispositivo, onSesion, onDispositivoInvalid
   }
 
   return (
-    <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-      <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+    <div className="position-relative d-flex align-items-center justify-content-center min-vh-100 p-3">
+      <div className="position-absolute top-0 end-0 m-3">
+        <BotonDeTema />
+      </div>
+      <div className="card w-100" style={{ maxWidth: 480 }}>
         <div className="card-body">
           <h1 className="h3 text-center ways-brand mb-1">Ways</h1>
           <p className="text-muted text-center mb-1">{dispositivo.empresa.nombre}</p>
@@ -71,7 +75,7 @@ export function LoginDeDispositivo({ dispositivo, onSesion, onDispositivoInvalid
           <form onSubmit={enviar} autoComplete="off" noValidate>
             <input
               type="text"
-              className="form-control mb-3 rounded-0"
+              className="form-control mb-3"
               placeholder="Usuario"
               value={usuario}
               disabled={enviando}
@@ -81,7 +85,7 @@ export function LoginDeDispositivo({ dispositivo, onSesion, onDispositivoInvalid
             />
             <input
               type="password"
-              className="form-control mb-3 rounded-0"
+              className="form-control mb-3"
               placeholder="Contraseña"
               value={password}
               disabled={enviando}
@@ -91,7 +95,7 @@ export function LoginDeDispositivo({ dispositivo, onSesion, onDispositivoInvalid
 
             {error && <div className="text-danger text-center mb-3">{error}</div>}
 
-            <button type="submit" className="btn btn-lg btn-success form-control rounded-0" disabled={enviando}>
+            <button type="submit" className="btn btn-lg btn-success form-control" disabled={enviando}>
               {enviando ? 'Ingresando…' : 'Ingresar'}
             </button>
           </form>

@@ -18,6 +18,7 @@ import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { AvisoDeActualizacion } from './AvisoDeActualizacion'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
+import { BotonDeTema } from '../tema/BotonDeTema'
 
 type Props = {
   dispositivo: DispositivoActual
@@ -231,10 +232,10 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
         <ProveedorDeBorradoresDeTicket>
         <div className="d-flex flex-column min-vh-100">
-          <header className="navbar navbar-dark bg-dark px-3 py-2 d-print-none" inert={instalandoActualizacion}>
+          <header className="navbar bg-body px-3 py-2 ways-navbar d-print-none" inert={instalandoActualizacion}>
             <div className="d-flex flex-column">
-              <strong className="text-light">{dispositivo.empresa.nombre}</strong>
-              <small className="text-light-emphasis">
+              <strong className="text-body">{dispositivo.empresa.nombre}</strong>
+              <small className="text-body-secondary">
                 PV {dispositivo.puntoVenta.numero} — {dispositivo.puntoVenta.nombre} · {usuario.usuario}
               </small>
             </div>
@@ -244,21 +245,22 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                 vacío o no en pantallas sin turno (ej. sin punto de venta). */}
             <div className="d-flex align-items-center gap-2 flex-wrap" ref={setNodoRanuraHeader} />
             <div className="d-flex gap-2">
-              <Link className="btn btn-success rounded-0" to="/vender">
+              <Link className="btn btn-success" to="/vender">
                 Vender
               </Link>
-              <Link className="btn btn-outline-light rounded-0" to="/ventas-del-turno">
+              <Link className="btn btn-outline-secondary" to="/ventas-del-turno">
                 Ventas del turno
               </Link>
-              <Link className="btn btn-outline-light rounded-0" to="/gastos-del-turno">
+              <Link className="btn btn-outline-secondary" to="/gastos-del-turno">
                 Gastos
               </Link>
               {enEscritorio() && (
-                <button type="button" className="btn btn-outline-light rounded-0" onClick={() => void abrirConfiguracion()}>
+                <button type="button" className="btn btn-outline-secondary" onClick={() => void abrirConfiguracion()}>
                   Configuración
                 </button>
               )}
-              <button type="button" className="btn btn-outline-light rounded-0" disabled={cerrandoSesion} onClick={() => void cerrarSesion()}>
+              <BotonDeTema className="btn btn-outline-secondary" />
+              <button type="button" className="btn btn-outline-secondary" disabled={cerrandoSesion} onClick={() => void cerrarSesion()}>
                 {cerrandoSesion ? 'Saliendo…' : 'Cerrar sesión'}
               </button>
             </div>
@@ -283,7 +285,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             <div
               key={aviso.id}
               role="alert"
-              className="alert alert-warning rounded-0 py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
+              className="alert alert-warning py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
             >
               <span>
                 No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
@@ -291,13 +293,13 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-dark rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={aviso.reintentando}
                   onClick={() => reimprimir(aviso)}
                 >
                   {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
                 </button>
-                <button type="button" className="btn btn-sm btn-outline-dark rounded-0" onClick={() => cerrarAviso(aviso.id)}>
+                <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => cerrarAviso(aviso.id)}>
                   Cerrar
                 </button>
               </div>

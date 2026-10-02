@@ -77,7 +77,7 @@ export function AvisoDeActualizacion({ motivoDeBloqueo, alCambiarInstalando }: P
   return (
     <div
       role="status"
-      className="alert alert-info rounded-0 py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
+      className="alert alert-info py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
     >
       <span>
         Actualización {actualizacion.version} disponible.
@@ -86,7 +86,7 @@ export function AvisoDeActualizacion({ motivoDeBloqueo, alCambiarInstalando }: P
       </span>
       <button
         type="button"
-        className="btn btn-sm btn-primary rounded-0"
+        className="btn btn-sm btn-primary"
         disabled={motivoDeBloqueo !== null}
         onClick={() => void instalar()}
       >

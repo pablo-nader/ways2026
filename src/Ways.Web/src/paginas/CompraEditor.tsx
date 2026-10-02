@@ -128,7 +128,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -203,7 +203,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
           <>
             <input
               type="text"
-              className="form-control form-control-sm rounded-0 mb-1"
+              className="form-control form-control-sm mb-1"
               aria-label="Código de lote"
               placeholder="Código de lote (opcional)"
               value={linea.codigoLote}
@@ -212,7 +212,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
             />
             <input
               type="date"
-              className={`form-control form-control-sm rounded-0 ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
+              className={`form-control form-control-sm ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
               aria-label="Fecha de vencimiento"
               value={linea.fechaVencimiento}
               disabled={disabled}
@@ -231,7 +231,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Unidades"
           value={linea.unidades}
           disabled={disabled}
@@ -243,7 +243,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
           type="number"
           step="1"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Bultos"
           value={linea.bultos}
           disabled={disabled}
@@ -255,7 +255,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Unidades por bulto"
           value={linea.unidadesPorBulto}
           disabled={disabled}
@@ -264,7 +264,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
       </td>
       <td style={{ width: 110 }}>
         <CampoImporte
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Costo unitario"
           decimales={4}
           valor={linea.costoUnitario}
@@ -274,7 +274,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
       </td>
       <td style={{ width: 100 }}>
         <CampoImporte
-          className={`form-control form-control-sm rounded-0 ${descuentoInvalido ? 'is-invalid' : ''}`}
+          className={`form-control form-control-sm ${descuentoInvalido ? 'is-invalid' : ''}`}
           aria-label="Descuento"
           valor={linea.descuento}
           disabled={disabled}
@@ -284,7 +284,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
       </td>
       <td style={{ width: 100 }}>
         <select
-          className="form-select form-select-sm rounded-0"
+          className="form-select form-select-sm"
           aria-label="Alícuota de IVA"
           value={linea.idAlicuotaIva}
           disabled={disabled}
@@ -301,7 +301,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
       <td className="text-center" style={{ width: 60 }}>
         <input
           type="checkbox"
-          className="form-check-input rounded-0"
+          className="form-check-input"
           aria-label="Actualiza costo"
           checked={linea.actualizaCosto}
           disabled={disabled}
@@ -312,7 +312,7 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
       <td>
         <button
           type="button"
-          className="btn btn-outline-danger btn-sm rounded-0"
+          className="btn btn-outline-danger btn-sm"
           disabled={disabled}
           onClick={() => onQuitar(linea.clave)}
         >
@@ -426,7 +426,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
   return (
     <div className="border p-3 mt-3">
       <strong>Aplicar precio sugerido</strong>
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small mt-2">{error}</div>}
       <div className="row g-2 align-items-end mt-1">
         <div className="col-md-4">
           <label className="form-label" htmlFor="compra-lista-precio">
@@ -434,7 +434,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
           </label>
           <select
             id="compra-lista-precio"
-            className="form-select rounded-0"
+            className="form-select"
             value={idListaPrecio}
             disabled={disabled || aplicando}
             onChange={(e) => setIdListaPrecio(e.target.value === '' ? '' : Number(e.target.value))}
@@ -452,7 +452,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
             <input
               id="compra-confirmar-reemplazo"
               type="checkbox"
-              className="form-check-input rounded-0"
+              className="form-check-input"
               checked={confirmarReemplazo}
               disabled={disabled || aplicando}
               onChange={(e) => setConfirmarReemplazo(e.target.checked)}
@@ -463,7 +463,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
           </div>
         </div>
         <div className="col-md-3">
-          <button type="button" className="btn btn-primary rounded-0 w-100" disabled={disabled || aplicando} onClick={aplicar}>
+          <button type="button" className="btn btn-primary w-100" disabled={disabled || aplicando} onClick={aplicar}>
             {aplicando ? 'Aplicando…' : 'Aplicar'}
           </button>
         </div>
@@ -904,7 +904,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       <div className="container-fluid py-4">
         <Box titulo="Compra" variante="danger">
           <p className="text-muted">{errorCompra}</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/compras">
+          <Link className="btn btn-outline-secondary" to="/compras">
             Volver a compras
           </Link>
         </Box>
@@ -922,40 +922,40 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
         titulo={esNuevo ? 'Nueva compra' : `Compra ${compra?.numeroExterno ?? `#${idCompra}`}`}
         variante="inverse"
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/compras">
+          <Link className="btn btn-sm btn-outline-secondary" to="/compras">
             Volver a compras
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de compra hasta que esto se resuelva.
           </div>
         )}
-        {errorOrdenParaPrecargar && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
-        {errorGastoOrigen && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorGastoOrigen}</div>}
+        {errorOrdenParaPrecargar && <div className="alert alert-warning py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
+        {errorGastoOrigen && <div className="alert alert-warning py-1 px-2 small">{errorGastoOrigen}</div>}
         {encabezado.idOrdenCompra !== null && (
-          <div className="alert alert-info rounded-0 py-1 px-2 small">
+          <div className="alert alert-info py-1 px-2 small">
             Vinculada a la orden de compra{' '}
             <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
           </div>
         )}
         {idDesdeGasto !== null && !gastoVinculado && (
-          <div className="alert alert-info rounded-0 py-1 px-2 small">
+          <div className="alert alert-info py-1 px-2 small">
             Se vinculará al gasto #{idDesdeGasto} al confirmar.
           </div>
         )}
         {gastoVinculado && (
-          <div className="alert alert-success rounded-0 py-1 px-2 small">Vinculada al gasto #{idDesdeGasto}.</div>
+          <div className="alert alert-success py-1 px-2 small">Vinculada al gasto #{idDesdeGasto}.</div>
         )}
         {errorVincularGasto && (
-          <div className="alert alert-danger rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center">
+          <div className="alert alert-danger py-1 px-2 small d-flex justify-content-between align-items-center">
             <span>{errorVincularGasto}</span>
             <button
               type="button"
-              className="btn btn-sm btn-outline-danger rounded-0"
+              className="btn btn-sm btn-outline-danger"
               disabled={vinculandoGasto}
               onClick={() => compra && void vincularConGastoDeOrigen(compra.id)}
             >
@@ -966,7 +966,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
         {!esNuevo && compra && (
           <div className="mb-3">
-            <span className={`badge rounded-0 me-2 ${esBorrador ? 'text-bg-secondary' : esConfirmada ? 'text-bg-success' : 'text-bg-danger'}`}>
+            <span className={`badge me-2 ${esBorrador ? 'text-bg-secondary' : esConfirmada ? 'text-bg-success' : 'text-bg-danger'}`}>
               {etiquetaDeEstadoCompra(compra.estado)}
             </span>
             {compra.fechaRecepcion && <span className="small text-muted">Recibida: {formatearFechaHora(compra.fechaRecepcion)}</span>}
@@ -980,7 +980,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             </label>
             <select
               id="compra-proveedor"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idProveedor}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idProveedor: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -999,7 +999,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             </label>
             <select
               id="compra-tipo"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idTipoComprobante}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) =>
@@ -1020,7 +1020,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             </label>
             <select
               id="compra-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idPuntoVenta}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -1040,7 +1040,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             <input
               id="compra-numero-externo"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.numeroExterno}
               disabled={!esBorrador || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, numeroExterno: e.target.value }))}
@@ -1053,7 +1053,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             <input
               id="compra-fecha-comprobante"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.fechaComprobante}
               disabled={!esBorrador || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, fechaComprobante: e.target.value }))}
@@ -1066,7 +1066,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             <input
               id="compra-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.observaciones}
               disabled={!esBorrador || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
@@ -1120,7 +1120,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             {puedeEscribir && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+                className="btn btn-outline-secondary btn-sm mb-3"
                 disabled={ocupado || !referenciaOk}
                 onClick={agregarLinea}
               >
@@ -1148,21 +1148,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             </div>
 
             {lineasIncompletas > 0 && (
-              <div className="alert alert-warning rounded-0 py-1 px-2 small mb-3">
+              <div className="alert alert-warning py-1 px-2 small mb-3">
                 {lineasIncompletas} línea(s) incompleta(s) — no se van a guardar.
               </div>
             )}
 
             <div className="d-flex gap-2 mb-3">
               {puedeEscribir && (
-                <button type="button" className="btn btn-primary rounded-0" disabled={!puedeGuardar} onClick={guardarBorrador}>
+                <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={guardarBorrador}>
                   {guardando ? 'Guardando…' : esNuevo ? 'Crear borrador' : 'Guardar borrador'}
                 </button>
               )}
               {!esNuevo && puedeEscribir && (
                 <button
                   type="button"
-                  className="btn btn-success rounded-0"
+                  className="btn btn-success"
                   disabled={ocupado || !referenciaOk}
                   onClick={() => setPanelConfirmarAbierto(true)}
                 >
@@ -1174,12 +1174,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             {panelConfirmarAbierto && (
               <div className="border p-3 mb-3">
                 <strong>Confirmar compra</strong>
-                {errorConfirmar && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{errorConfirmar}</div>}
+                {errorConfirmar && <div className="alert alert-danger py-1 px-2 small mt-2">{errorConfirmar}</div>}
                 <div className="form-check my-2">
                   <input
                     id="compra-confirmacion-confirmar"
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={confirmadoParaConfirmar}
                     disabled={confirmando}
                     onChange={(e) => setConfirmadoParaConfirmar(e.target.checked)}
@@ -1192,7 +1192,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 <div className="d-flex gap-2">
                   <button
                     type="button"
-                    className="btn btn-outline-secondary rounded-0"
+                    className="btn btn-outline-secondary"
                     disabled={confirmando}
                     onClick={() => {
                       setPanelConfirmarAbierto(false)
@@ -1201,7 +1201,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   >
                     Cancelar
                   </button>
-                  <button type="button" className="btn btn-success rounded-0" disabled={!confirmadoParaConfirmar || confirmando} onClick={confirmar}>
+                  <button type="button" className="btn btn-success" disabled={!confirmadoParaConfirmar || confirmando} onClick={confirmar}>
                     {confirmando ? 'Confirmando…' : 'Confirmar'}
                   </button>
                 </div>
@@ -1233,7 +1233,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               </div>
 
               {resultadoAnulacion && (
-                <div className="alert alert-warning rounded-0">
+                <div className="alert alert-warning">
                   Compra anulada. {resultadoAnulacion.gastosLigados > 0
                     ? `Quedan ${resultadoAnulacion.gastosLigados} gasto(s) ligado(s) a esta compra sin desvincular — la anulación no los revierte, quedan como historial de un pago ya realizado.`
                     : 'No había ningún gasto ligado a esta compra.'}
@@ -1245,7 +1245,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   <div className="d-flex gap-2 mb-3">
                     <button
                       type="button"
-                      className="btn btn-danger rounded-0"
+                      className="btn btn-danger"
                       disabled={ocupado}
                       onClick={() => setPanelAnularAbierto(true)}
                     >
@@ -1256,12 +1256,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   {panelAnularAbierto && (
                     <div className="border p-3 mb-3">
                       <strong>Anular compra</strong>
-                      {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{errorAnular}</div>}
+                      {errorAnular && <div className="alert alert-danger py-1 px-2 small mt-2">{errorAnular}</div>}
                       <div className="form-check my-2">
                         <input
                           id="compra-confirmacion-anular"
                           type="checkbox"
-                          className="form-check-input rounded-0"
+                          className="form-check-input"
                           checked={confirmadoParaAnular}
                           disabled={anulando}
                           onChange={(e) => setConfirmadoParaAnular(e.target.checked)}
@@ -1274,7 +1274,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                       <div className="d-flex gap-2">
                         <button
                           type="button"
-                          className="btn btn-outline-secondary rounded-0"
+                          className="btn btn-outline-secondary"
                           disabled={anulando}
                           onClick={() => {
                             setPanelAnularAbierto(false)
@@ -1285,7 +1285,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                         </button>
                         <button
                           type="button"
-                          className="btn btn-danger rounded-0"
+                          className="btn btn-danger"
                           disabled={!confirmadoParaAnular || ocupado}
                           onClick={anular}
                         >
@@ -1356,7 +1356,7 @@ export function CompraEditor() {
       <div className="container-fluid py-4">
         <Box titulo="Compra" variante="warning">
           <p className="text-muted">No se especificó una compra válida.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/compras">
+          <Link className="btn btn-outline-secondary" to="/compras">
             Volver a compras
           </Link>
         </Box>

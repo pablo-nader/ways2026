@@ -92,7 +92,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -149,7 +149,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Cantidad pedida"
           value={linea.cantidadPedida}
           disabled={disabled}
@@ -161,7 +161,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
           type="number"
           step="0.0001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Costo estimado"
           value={linea.costoUnitarioEstimado}
           disabled={disabled}
@@ -169,7 +169,7 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
         />
       </td>
       <td>
-        <button type="button" className="btn btn-outline-danger btn-sm rounded-0" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
+        <button type="button" className="btn btn-outline-danger btn-sm" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
           Quitar
         </button>
       </td>
@@ -492,7 +492,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
       <div className="container-fluid py-4">
         <Box titulo="Orden de compra" variante="danger">
           <p className="text-muted">{errorDetalle}</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/ordenes-compra">
+          <Link className="btn btn-outline-secondary" to="/ordenes-compra">
             Volver a órdenes de compra
           </Link>
         </Box>
@@ -512,26 +512,26 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
         titulo={esNuevo ? 'Nueva orden de compra' : `Orden de compra ${detalle?.numero ?? `#${idOrden}`}`}
         variante="inverse"
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/ordenes-compra">
+          <Link className="btn btn-sm btn-outline-secondary" to="/ordenes-compra">
             Volver a órdenes de compra
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de orden de compra hasta que esto se resuelva.
           </div>
         )}
         {/* regla 6: un refetch fallido posterior a una escritura ya exitosa nunca se disfraza de
             error de la escritura — se muestra chico, sin ocultar el `aviso` de arriba ni el resto
             de la pantalla (que sigue mostrando el último `detalle` conocido). */}
-        {errorDetalle && detalle && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorDetalle}</div>}
+        {errorDetalle && detalle && <div className="alert alert-warning py-1 px-2 small">{errorDetalle}</div>}
 
         {!esNuevo && detalle && (
           <div className="mb-3">
-            <span className={`badge rounded-0 me-2 ${claseDeBadgeDeEstadoOrdenCompra(detalle.estado)}`}>
+            <span className={`badge me-2 ${claseDeBadgeDeEstadoOrdenCompra(detalle.estado)}`}>
               {etiquetaDeEstadoOrdenCompra(detalle.estado)}
             </span>
             {detalle.fechaEnvio && <span className="small text-muted me-2">Enviada: {formatearFechaHora(detalle.fechaEnvio)}</span>}
@@ -546,7 +546,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             </label>
             <select
               id="oc-proveedor"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idProveedor}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idProveedor: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -565,7 +565,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             </label>
             <select
               id="oc-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idPuntoVenta}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -585,7 +585,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             <input
               id="oc-fecha-esperada"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.fechaEsperada}
               disabled={!esBorrador || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, fechaEsperada: e.target.value }))}
@@ -598,7 +598,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             <input
               id="oc-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.observaciones}
               disabled={!esBorrador || ocupado || !puedeEscribir}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
@@ -642,7 +642,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             {puedeEscribir && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+                className="btn btn-outline-secondary btn-sm mb-3"
                 disabled={ocupado || !referenciaOk}
                 onClick={agregarLinea}
               >
@@ -652,23 +652,23 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
 
             <div className="d-flex gap-2 mb-3">
               {puedeEscribir && (
-                <button type="button" className="btn btn-primary rounded-0" disabled={!puedeGuardar} onClick={guardarBorrador}>
+                <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={guardarBorrador}>
                   {guardando ? 'Guardando…' : esNuevo ? 'Crear borrador' : 'Guardar borrador'}
                 </button>
               )}
               {puedeEnviar && (
-                <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={enviar}>
+                <button type="button" className="btn btn-success" disabled={ocupado} onClick={enviar}>
                   {enviando ? 'Enviando…' : 'Enviar'}
                 </button>
               )}
               {puedeAnular && (
-                <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                   {anulando ? 'Anulando…' : 'Anular'}
                 </button>
               )}
             </div>
-            {errorEnviar && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEnviar}</div>}
-            {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+            {errorEnviar && <div className="alert alert-danger py-1 px-2 small">{errorEnviar}</div>}
+            {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
           </>
         ) : (
           detalle && (
@@ -718,7 +718,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
                   <div className="small text-muted">Comprobantes de compra ligados</div>
                   <div className="d-flex gap-2 flex-wrap">
                     {detalle.comprobantesLigados.map((idComprobante) => (
-                      <Link key={idComprobante} className="btn btn-sm btn-outline-secondary rounded-0" to={`/compras/${idComprobante}`}>
+                      <Link key={idComprobante} className="btn btn-sm btn-outline-secondary" to={`/compras/${idComprobante}`}>
                         #{idComprobante}
                       </Link>
                     ))}
@@ -730,25 +730,25 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
                 {puedeRecepcionar && (
                   <button
                     type="button"
-                    className="btn btn-primary rounded-0"
+                    className="btn btn-primary"
                     onClick={() => navigate(`/compras/nueva?idOrdenCompra=${detalle.id}`)}
                   >
                     Registrar recepción
                   </button>
                 )}
                 {puedeCerrar && (
-                  <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={cerrar}>
+                  <button type="button" className="btn btn-success" disabled={ocupado} onClick={cerrar}>
                     {cerrando ? 'Cerrando…' : 'Cerrar'}
                   </button>
                 )}
                 {puedeAnular && (
-                  <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                  <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                     {anulando ? 'Anulando…' : 'Anular'}
                   </button>
                 )}
               </div>
-              {errorCerrar && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCerrar}</div>}
-              {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+              {errorCerrar && <div className="alert alert-danger py-1 px-2 small">{errorCerrar}</div>}
+              {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
             </>
           )
         )}
@@ -779,7 +779,7 @@ export function OrdenDeCompra() {
       <div className="container-fluid py-4">
         <Box titulo="Orden de compra" variante="warning">
           <p className="text-muted">No se especificó una orden de compra válida.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/ordenes-compra">
+          <Link className="btn btn-outline-secondary" to="/ordenes-compra">
             Volver a órdenes de compra
           </Link>
         </Box>

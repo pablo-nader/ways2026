@@ -53,14 +53,14 @@ export function AltaRapidaGrupo({ onCreado, onCancelar }: Props) {
   return (
     <Modal titulo="Nuevo grupo" ocupado={guardando} onCerrar={onCancelar}>
       <form onSubmit={guardar}>
-        {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+        {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
         <div className="mb-3">
           <label className="form-label" htmlFor="alta-rapida-grupo-nombre">
             Nombre
           </label>
           <input
             id="alta-rapida-grupo-nombre"
-            className="form-control rounded-0"
+            className="form-control"
             maxLength={150}
             value={nombre}
             disabled={guardando}
@@ -78,19 +78,19 @@ export function AltaRapidaGrupo({ onCreado, onCancelar }: Props) {
             type="number"
             step="0.01"
             min="0"
-            className="form-control rounded-0"
+            className="form-control"
             value={margen}
             disabled={guardando}
             onChange={(e) => setMargen(e.target.value)}
           />
         </div>
         <div className="d-flex gap-2">
-          <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+          <button type="submit" className="btn btn-success" disabled={guardando}>
             {guardando ? 'Creando…' : 'Crear'}
           </button>
           <button
             type="button"
-            className="btn btn-outline-secondary rounded-0"
+            className="btn btn-outline-secondary"
             onClick={onCancelar}
             disabled={guardando}
           >

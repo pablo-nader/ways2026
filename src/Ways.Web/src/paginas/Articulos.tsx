@@ -28,6 +28,7 @@ import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ord
 import { desplazamientoHaciaLaAnterior, HISTORIAL_SIN_OBSERVAR, registrarEntrada } from './articulos/historialObservado'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteCategorias = clienteDeCatalogo<CategoriaListado, CategoriaAlta>('categorias')
@@ -506,30 +507,28 @@ export function Articulos() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <button
+      <BotonIcono
+        icono="agregar"
         ref={refBotonNuevo}
-        type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        className="text-nowrap"
         disabled={ocupado}
         onClick={irACrear}
-      >
-        Nuevo
-      </button>
+      />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Artículos" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
         {erroresCatalogosRequeridos.length > 0 && (
-          <div className="alert alert-warning rounded-0">
+          <div className="alert alert-warning">
             {erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
             hasta que se puedan cargar — recargá la página para reintentar.
           </div>
         )}
-        {avisoListasPrecio && <div className="alert alert-warning rounded-0">{avisoListasPrecio}</div>}
+        {avisoListasPrecio && <div className="alert alert-warning">{avisoListasPrecio}</div>}
 
         <GrillaDeArticulos proveedores={proveedores} ocupado={ocupado} pedidoDeRefresco={pedidoDeRefresco} onEliminar={eliminar} />
       </Box>

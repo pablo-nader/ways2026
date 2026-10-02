@@ -1,0 +1,255 @@
+/*
+ * Tema de Ways: tokens de marca (naranja, gris del chevrón, casi negro) sobre los modos de
+ * color nativos de Bootstrap 5.3 (`data-bs-theme` en <html>). El oscuro es el modo por defecto.
+ *
+ * `--bs-body-bg` es la superficie (tarjetas, tablas, inputs); el fondo de la página es
+ * `--ways-fondo`. Las franjas por punto de venta (`.color_x`, ways.css) no se tocan.
+ */
+
+:root {
+  --ways-naranja: #f7941d;
+  --ways-gris: #c4c4ca;
+  --ways-negro: #0b0b0c;
+  --ways-fuente: 'Inter', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+
+  --bs-font-sans-serif: var(--ways-fuente);
+  --bs-primary: #f7941d;
+  --bs-primary-rgb: 247, 148, 29;
+  --bs-border-radius-sm: 0.375rem;
+  --bs-border-radius: 0.5rem;
+  --bs-border-radius-lg: 0.75rem;
+  --bs-focus-ring-color: rgba(247, 148, 29, 0.35);
+}
+
+[data-bs-theme='light'] {
+  color-scheme: light;
+  --ways-fondo: #f6f6f8;
+  --ways-barra: #ffffff;
+  --ways-sombra: 0 1px 3px rgba(16, 16, 24, 0.08), 0 1px 2px rgba(16, 16, 24, 0.04);
+
+  --bs-body-color: #1d1d1f;
+  --bs-body-color-rgb: 29, 29, 31;
+  --bs-body-bg: #ffffff;
+  --bs-body-bg-rgb: 255, 255, 255;
+  --bs-secondary-bg: #eeeef1;
+  --bs-secondary-bg-rgb: 238, 238, 241;
+  --bs-tertiary-bg: #f6f6f8;
+  --bs-tertiary-bg-rgb: 246, 246, 248;
+  --bs-border-color: #e6e6ea;
+  --bs-border-color-translucent: rgba(29, 29, 31, 0.1);
+
+  --bs-link-color: #c46a00;
+  --bs-link-color-rgb: 196, 106, 0;
+  --bs-link-hover-color: #9a5200;
+  --bs-link-hover-color-rgb: 154, 82, 0;
+
+  --bs-primary-text-emphasis: #7a4300;
+  --bs-primary-bg-subtle: #feebd0;
+  --bs-primary-border-subtle: #fcd29c;
+}
+
+[data-bs-theme='dark'] {
+  color-scheme: dark;
+  --ways-fondo: #121214;
+  --ways-barra: #1a1a1d;
+  --ways-sombra: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  --bs-body-color: #e8e8ea;
+  --bs-body-color-rgb: 232, 232, 234;
+  --bs-body-bg: #1a1a1d;
+  --bs-body-bg-rgb: 26, 26, 29;
+  --bs-secondary-bg: #222226;
+  --bs-secondary-bg-rgb: 34, 34, 38;
+  --bs-tertiary-bg: #1e1e21;
+  --bs-tertiary-bg-rgb: 30, 30, 33;
+  --bs-border-color: #2e2e33;
+  --bs-border-color-translucent: rgba(232, 232, 234, 0.12);
+
+  --bs-link-color: #f9ab4a;
+  --bs-link-color-rgb: 249, 171, 74;
+  --bs-link-hover-color: #fbc078;
+  --bs-link-hover-color-rgb: 251, 192, 120;
+
+  --bs-primary-text-emphasis: #fbc078;
+  --bs-primary-bg-subtle: #3a2606;
+  --bs-primary-border-subtle: #6e4509;
+}
+
+/* La salida impresa es siempre negro sobre blanco, sea cual sea el tema elegido. */
+@media print {
+  :root,
+  [data-bs-theme] {
+    color-scheme: light;
+    --ways-fondo: #ffffff;
+    --ways-barra: #ffffff;
+    --ways-sombra: none;
+    --bs-body-color: #000000;
+    --bs-body-color-rgb: 0, 0, 0;
+    --bs-body-bg: #ffffff;
+    --bs-body-bg-rgb: 255, 255, 255;
+    --bs-emphasis-color: #000000;
+    --bs-emphasis-color-rgb: 0, 0, 0;
+    --bs-heading-color: inherit;
+    --bs-secondary-color: rgba(0, 0, 0, 0.75);
+    --bs-secondary-bg: #ffffff;
+    --bs-secondary-bg-rgb: 255, 255, 255;
+    --bs-tertiary-color: rgba(0, 0, 0, 0.5);
+    --bs-tertiary-bg: #ffffff;
+    --bs-tertiary-bg-rgb: 255, 255, 255;
+    --bs-border-color: #dee2e6;
+    --bs-link-color: #000000;
+    --bs-link-color-rgb: 0, 0, 0;
+    --bs-link-hover-color: #000000;
+    --bs-link-hover-color-rgb: 0, 0, 0;
+  }
+
+  html,
+  body,
+  #wrap,
+  .inner {
+    background: #ffffff !important;
+    color: #000000;
+  }
+}
+
+body {
+  font-family: var(--ways-fuente);
+  background-color: var(--ways-fondo);
+}
+
+/* ----- Botones y formularios ----- */
+
+.btn-primary {
+  --bs-btn-color: #1d1d1f;
+  --bs-btn-bg: #f7941d;
+  --bs-btn-border-color: #f7941d;
+  --bs-btn-hover-color: #1d1d1f;
+  --bs-btn-hover-bg: #ffa83a;
+  --bs-btn-hover-border-color: #ffa83a;
+  --bs-btn-focus-shadow-rgb: 247, 148, 29;
+  --bs-btn-active-color: #1d1d1f;
+  --bs-btn-active-bg: #e0830f;
+  --bs-btn-active-border-color: #e0830f;
+  --bs-btn-disabled-color: #1d1d1f;
+  --bs-btn-disabled-bg: #f7941d;
+  --bs-btn-disabled-border-color: #f7941d;
+}
+
+.btn-outline-primary {
+  --bs-btn-color: var(--bs-link-color);
+  --bs-btn-border-color: #f7941d;
+  --bs-btn-hover-color: #1d1d1f;
+  --bs-btn-hover-bg: #f7941d;
+  --bs-btn-hover-border-color: #f7941d;
+  --bs-btn-focus-shadow-rgb: 247, 148, 29;
+  --bs-btn-active-color: #1d1d1f;
+  --bs-btn-active-bg: #e0830f;
+  --bs-btn-active-border-color: #e0830f;
+  --bs-btn-disabled-color: var(--bs-link-color);
+  --bs-btn-disabled-border-color: #f7941d;
+}
+
+.form-check-input:checked {
+  background-color: var(--ways-naranja);
+  border-color: var(--ways-naranja);
+}
+
+.form-check-input:focus {
+  border-color: var(--ways-naranja);
+  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
+}
+
+.dropdown-menu {
+  --bs-dropdown-link-active-bg: var(--ways-naranja);
+  --bs-dropdown-link-active-color: #1d1d1f;
+}
+
+.pagination {
+  --bs-pagination-active-bg: var(--ways-naranja);
+  --bs-pagination-active-border-color: var(--ways-naranja);
+  --bs-pagination-active-color: #1d1d1f;
+}
+
+.nav-pills {
+  --bs-nav-pills-link-active-bg: var(--ways-naranja);
+  --bs-nav-pills-link-active-color: #1d1d1f;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--ways-naranja);
+  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
+}
+
+.form-check-input:focus {
+  border-color: var(--ways-naranja);
+  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
+}
+
+.form-check-input:checked {
+  background-color: var(--ways-naranja);
+  border-color: var(--ways-naranja);
+}
+
+/* ----- Barra de navegación ----- */
+
+.navbar.ways-navbar.bg-body {
+  background-color: var(--ways-barra) !important;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.ways-navbar .navbar-nav {
+  --bs-nav-link-color: var(--bs-body-color);
+  --bs-nav-link-hover-color: var(--ways-naranja);
+  --bs-navbar-active-color: var(--ways-naranja);
+}
+
+.ways-navbar .nav-link {
+  border-radius: 999px;
+  padding-inline: 0.85rem;
+}
+
+.ways-navbar .nav-link.active,
+.ways-navbar .nav-link.show {
+  background-color: rgba(247, 148, 29, 0.15);
+  color: var(--bs-link-color);
+}
+
+.ways-navbar .navbar-brand.ways-brand::after {
+  content: '\203A\203A\203A';
+  margin-left: 0.35em;
+  font-size: 0.7em;
+  letter-spacing: -0.1em;
+  font-family: var(--ways-fuente);
+  color: var(--ways-gris);
+}
+
+/* ----- Tablas ----- */
+
+[data-bs-theme='dark'] .table-hover > tbody > tr:hover > * {
+  --bs-table-hover-bg: rgba(255, 255, 255, 0.05);
+}
+
+/* Botones de acción que muestran solo un ícono (BotonIcono / EnlaceIcono). */
+.btn-icono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--bs-border-radius);
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.btn-icono svg {
+  flex: none;
+}
+
+/* Chips con forma de píldora. */
+.badge {
+  --bs-badge-border-radius: var(--bs-border-radius-pill);
+  --bs-badge-padding-x: 0.75em;
+}

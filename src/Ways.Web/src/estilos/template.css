@@ -1,7 +1,7 @@
 /*
- * Extracto del template actual de Ways: Bootstrap-Admin-Template 2.4.2 (metisAdmin).
+ * Extracto modernizado del template original de Ways: Bootstrap-Admin-Template 2.4.2 (metisAdmin).
  * Del main.css original (66 KB, escrito para Bootstrap 3) se conservan solo las clases
- * que el sistema usa de verdad, adaptadas a Bootstrap 5.
+ * que el sistema usa de verdad, adaptadas a Bootstrap 5 y a los modos de color (tema.css).
  */
 
 html {
@@ -10,14 +10,14 @@ html {
 }
 
 body {
-  font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--ways-fuente);
 }
 
 #wrap {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--ways-fondo);
 }
 
 #content {
@@ -40,17 +40,27 @@ body {
   margin: 10px auto;
   display: block;
   position: relative;
-  border: 1px solid #efefef;
-  background: #fff;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.75rem;
+  background: var(--bs-body-bg);
+  box-shadow: var(--ways-sombra);
+  overflow: hidden;
 }
 
 .box > header {
-  background-image: linear-gradient(to bottom, #fff 0%, #f2f2f2 100%);
-  background-repeat: repeat-x;
-  border-bottom: 1px solid #d4d4d4;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.065);
+  background: transparent;
+  border-bottom: 1px solid var(--bs-border-color);
   display: flex;
   align-items: center;
+}
+
+.box > header::before {
+  content: '';
+  align-self: stretch;
+  width: 4px;
+  margin: 10px 0 10px 12px;
+  border-radius: 2px;
+  background: var(--ways-naranja);
 }
 
 .box > header .icons,
@@ -65,8 +75,6 @@ body {
 .box > header .icons {
   text-align: center;
   padding: 10px 15px;
-  border-right: 1px solid #ddd;
-  box-shadow: 1px 0 0 #fff;
 }
 
 .box > header h5 {
@@ -82,45 +90,45 @@ body {
 }
 
 .box.inverse > header {
-  background-image: linear-gradient(to bottom, #333 0%, #222 100%);
-  border-bottom: 1px solid #4d4d4d;
-  color: #f5f5f5;
-}
-
-.box.inverse > header .icons {
-  border-right: 1px solid #222;
-  box-shadow: 1px 0 0 #3c3c3c;
+  background: var(--bs-tertiary-bg);
 }
 
 .box.primary > header {
-  background-image: linear-gradient(to bottom, #337ab7 0%, #286090 100%);
-  border-bottom: 1px solid #337ab7;
-  color: #fff;
+  background: var(--bs-primary);
+  border-bottom-color: var(--bs-primary);
+  color: #1d1d1f;
 }
 
 .box.success > header {
-  background-image: linear-gradient(to bottom, #5cb85c 0%, #449d44 100%);
-  border-bottom: 1px solid #5cb85c;
+  background: var(--bs-success);
+  border-bottom-color: var(--bs-success);
   color: #fff;
 }
 
 .box.warning > header {
-  background-image: linear-gradient(to bottom, #f0ad4e 0%, #ec971f 100%);
-  border-bottom: 1px solid #f0ad4e;
-  color: #fff;
+  background: var(--bs-warning);
+  border-bottom-color: var(--bs-warning);
+  color: #1d1d1f;
 }
 
 .box.danger > header {
-  background-image: linear-gradient(to bottom, #d9534f 0%, #c9302c 100%);
-  border-bottom: 1px solid #d9534f;
+  background: var(--bs-danger);
+  border-bottom-color: var(--bs-danger);
   color: #fff;
+}
+
+.box.primary > header::before,
+.box.success > header::before,
+.box.warning > header::before,
+.box.danger > header::before {
+  display: none;
 }
 
 /* ----- Login ----- */
 
 body.login,
 .login {
-  background: #f5f5f5;
+  background: var(--bs-tertiary-bg);
 }
 
 .login .form-signin {
@@ -128,15 +136,17 @@ body.login,
   max-width: 330px;
   padding: 20px;
   margin: 0 auto;
-  background-color: #fff;
-  border: 1px solid #e3e3e3;
+  background-color: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.75rem;
+  box-shadow: var(--ways-sombra);
 }
 
 /* ----- Footer ----- */
 
 .Footer {
   padding: 10px 20px;
-  color: #999;
+  color: var(--bs-secondary-color);
 }
 
 .Footer p {

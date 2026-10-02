@@ -25,6 +25,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 type Formulario = {
   id: number | null
@@ -416,7 +417,7 @@ export function Usuarios() {
     <nav className="p-2 d-flex gap-2">
       <input
         type="search"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar usuario o mail…"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
@@ -425,15 +426,15 @@ export function Usuarios() {
       />
       <button
         type="button"
-        className="btn btn-sm btn-outline-light rounded-0"
+        className="btn btn-sm btn-outline-secondary"
         onClick={() => buscar(busqueda)}
         disabled={bloqueado}
       >
         Buscar
       </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+      <BotonIcono
+        icono="agregar"
+        className="text-nowrap"
         onClick={() => {
           setFormulario({ ...FORMULARIO_VACIO })
           setAviso('')
@@ -448,25 +449,23 @@ export function Usuarios() {
           }
         }}
         disabled={bloqueado}
-      >
-        Nuevo
-      </button>
+      />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {/* Gateado en `esPlataforma` como todo lo demás que depende del universo de tenants: para
             un admin de tenant ese `GET` ni se dispara, así que la bandera no puede prender — el
             gate es paridad con sus elementos hermanos, no una rama viva. */}
         {esPlataforma && tenantsDePlataformaFallo && (
-          <div className="alert alert-danger rounded-0">{ERROR_TENANTS}</div>
+          <div className="alert alert-danger">{ERROR_TENANTS}</div>
         )}
-        {errorAlta && <div className="alert alert-danger rounded-0">{errorAlta}</div>}
-        {errorPassword && <div className="alert alert-danger rounded-0">{errorPassword}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {errorAlta && <div className="alert alert-danger">{errorAlta}</div>}
+        {errorPassword && <div className="alert alert-danger">{errorPassword}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -515,7 +514,7 @@ export function Usuarios() {
                   </label>
                   <select
                     id="u-filtro-tenant"
-                    className="form-select rounded-0"
+                    className="form-select"
                     value={tenantVigente}
                     onChange={(e) => setFiltroTenant(e.target.value)}
                     disabled={bloqueado}
@@ -563,9 +562,9 @@ export function Usuarios() {
                       </td>
                       <td className="text-end text-nowrap">
                         {puedeEditar(u) && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                          <BotonIcono
+                            icono="editar"
+                            className="me-1"
                             onClick={() => {
                               setFormulario({
                                 id: u.id,
@@ -582,14 +581,12 @@ export function Usuarios() {
                               setErrorAlta('')
                             }}
                             disabled={bloqueado}
-                          >
-                            Editar
-                          </button>
+                          />
                         )}
                         {u.estado === 'Bloqueado' && (
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-warning rounded-0 me-1"
+                            className="btn btn-sm btn-outline-warning me-1"
                             onClick={() =>
                               accion(
                                 () => api.post(`/usuarios/${u.id}/desbloquear`),
@@ -602,14 +599,11 @@ export function Usuarios() {
                           </button>
                         )}
                         {puedeEditar(u) && u.rolId !== ROL.Root && u.id !== actual?.id && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger rounded-0"
+                          <BotonIcono
+                            icono="eliminar"
                             onClick={(evento) => pedirBaja(u, evento.currentTarget)}
                             disabled={bloqueado}
-                          >
-                            Baja
-                          </button>
+                          />
                         )}
                       </td>
                     </tr>
@@ -639,7 +633,7 @@ function EtiquetaEstado({ estado }: { estado: EstadoUsuario }) {
         ? 'text-bg-danger'
         : 'text-bg-secondary'
 
-  return <span className={`badge rounded-0 ${clase}`}>{estado}</span>
+  return <span className={`badge ${clase}`}>{estado}</span>
 }
 
 /**
@@ -690,7 +684,7 @@ function FormularioUsuario({
 
   return (
     <form
-      className="row g-3 border p-3 mb-4 bg-white"
+      className="row g-3 border p-3 mb-4 bg-body"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault()
@@ -707,7 +701,7 @@ function FormularioUsuario({
         </label>
         <input
           id="f-usuario"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={40}
           value={valor.usuario}
           onChange={(e) => onCambio({ ...valor, usuario: e.target.value })}
@@ -723,7 +717,7 @@ function FormularioUsuario({
         <input
           id="f-mail"
           type="email"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={255}
           value={valor.mail}
           onChange={(e) => onCambio({ ...valor, mail: e.target.value })}
@@ -738,7 +732,7 @@ function FormularioUsuario({
         </label>
         <select
           id="f-rol"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.rolId}
           onChange={(e) => {
             // El tenant se limpia en el ESTADO, no solo al pintarlo: el alta manda `idTenant` tal
@@ -763,7 +757,7 @@ function FormularioUsuario({
           </label>
           <select
             id="f-tenant"
-            className="form-select rounded-0"
+            className="form-select"
             value={valor.idTenant === null ? '' : String(valor.idTenant)}
             onChange={(e) =>
               onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
@@ -795,7 +789,7 @@ function FormularioUsuario({
         </label>
         <select
           id="f-estado"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.estado}
           onChange={(e) => onCambio({ ...valor, estado: e.target.value as EstadoUsuario })}
           disabled={bloqueado}
@@ -815,7 +809,7 @@ function FormularioUsuario({
         <input
           id="f-password"
           type="password"
-          className="form-control rounded-0"
+          className="form-control"
           placeholder={esNuevo ? 'Mínimo 8 caracteres' : 'Dejar vacío para no cambiar'}
           value={valor.password}
           onChange={(e) => onCambio({ ...valor, password: e.target.value })}
@@ -827,14 +821,14 @@ function FormularioUsuario({
       <div className="col-12 d-flex gap-2">
         <button
           type="submit"
-          className="btn btn-success rounded-0"
+          className="btn btn-success"
           disabled={bloqueado || sinTenantAsignable}
         >
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={bloqueado}
         >

@@ -102,8 +102,8 @@ export function ModalDeArticulo({
     <Modal titulo={titulo} tamano="xl" desplazable ocupado={ocupado} focoDeReserva={focoDeReserva} onCerrar={onCerrar}>
       {errorDetalle ? (
         <>
-          <div className="alert alert-danger rounded-0">{errorDetalle}</div>
-          <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCerrar}>
+          <div className="alert alert-danger">{errorDetalle}</div>
+          <button type="button" className="btn btn-outline-secondary" onClick={onCerrar}>
             Volver al listado
           </button>
         </>
@@ -112,14 +112,14 @@ export function ModalDeArticulo({
       ) : (
         <>
           {erroresCatalogosRequeridos.length > 0 && (
-            <div className="alert alert-warning rounded-0">
+            <div className="alert alert-warning">
               {erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
               hasta que se puedan cargar — recargá la página para reintentar.
             </div>
           )}
-          {avisoListasPrecio && <div className="alert alert-warning rounded-0">{avisoListasPrecio}</div>}
-          {avisoGuardado && <div className="alert alert-success rounded-0">{avisoGuardado}</div>}
-          {errorGuardado && <div className="alert alert-danger rounded-0">{errorGuardado}</div>}
+          {avisoListasPrecio && <div className="alert alert-warning">{avisoListasPrecio}</div>}
+          {avisoGuardado && <div className="alert alert-success">{avisoGuardado}</div>}
+          {errorGuardado && <div className="alert alert-danger">{errorGuardado}</div>}
           <FormularioArticulo
             // Clave por artículo (id, o 'nuevo' para el alta): switching entre dos artículos
             // distintos (back/forward entre dos URLs de edición) resetea el subárbol y su

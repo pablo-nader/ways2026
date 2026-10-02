@@ -20,6 +20,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { ROL } from '../api/tipos'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 type Formulario = {
   id: number
@@ -288,8 +289,8 @@ export function PuntosVenta() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Puntos de venta" variante="inverse">
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -303,7 +304,7 @@ export function PuntosVenta() {
 
         {formulario && (
           <form
-            className="row g-3 border p-3 mb-4 bg-white"
+            className="row g-3 border p-3 mb-4 bg-body"
             onSubmit={(e) => {
               e.preventDefault()
               guardar()
@@ -318,7 +319,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-nombre"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={formulario.nombre}
                 onChange={(e) => setFormulario({ ...formulario, nombre: e.target.value })}
@@ -332,7 +333,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-domicilio"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={255}
                 value={formulario.domicilio}
                 onChange={(e) => setFormulario({ ...formulario, domicilio: e.target.value })}
@@ -345,7 +346,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-horario"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={255}
                 value={formulario.horario}
                 onChange={(e) => setFormulario({ ...formulario, horario: e.target.value })}
@@ -358,7 +359,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-whatsapp"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={30}
                 value={formulario.whatsapp}
                 onChange={(e) => setFormulario({ ...formulario, whatsapp: e.target.value })}
@@ -371,7 +372,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-instagram"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={formulario.instagram}
                 onChange={(e) => setFormulario({ ...formulario, instagram: e.target.value })}
@@ -384,7 +385,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-facebook"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={formulario.facebook}
                 onChange={(e) => setFormulario({ ...formulario, facebook: e.target.value })}
@@ -397,7 +398,7 @@ export function PuntosVenta() {
               </label>
               <input
                 id="pv-web"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={255}
                 value={formulario.web}
                 onChange={(e) => setFormulario({ ...formulario, web: e.target.value })}
@@ -405,12 +406,12 @@ export function PuntosVenta() {
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+              <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 onClick={() => setFormulario(null)}
                 disabled={bloqueado}
               >
@@ -422,7 +423,7 @@ export function PuntosVenta() {
 
         {formularioModo && (
           <form
-            className="row g-3 border p-3 mb-4 bg-white"
+            className="row g-3 border p-3 mb-4 bg-body"
             onSubmit={(e) => {
               e.preventDefault()
               guardarModo()
@@ -442,7 +443,7 @@ export function PuntosVenta() {
               </label>
               <select
                 id="pv-modo"
-                className="form-select rounded-0"
+                className="form-select"
                 value={formularioModo.modo}
                 onChange={(e) => setFormularioModo({ ...formularioModo, modo: e.target.value as ModoPuntoVenta })}
                 disabled={bloqueado}
@@ -455,12 +456,12 @@ export function PuntosVenta() {
               </select>
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+              <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 onClick={() => setFormularioModo(null)}
                 disabled={bloqueado}
               >
@@ -485,7 +486,7 @@ export function PuntosVenta() {
                   </label>
                   <select
                     id="pv-filtro-tenant"
-                    className="form-select rounded-0"
+                    className="form-select"
                     value={tenantVigente}
                     onChange={(e) => cambiarFiltroDeTenant(e.target.value)}
                     disabled={bloqueado}
@@ -505,7 +506,7 @@ export function PuntosVenta() {
                 </label>
                 <select
                   id="pv-filtro-empresa"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={empresaVigente}
                   onChange={(e) => setFiltroEmpresa(e.target.value)}
                   disabled={bloqueado}
@@ -545,15 +546,15 @@ export function PuntosVenta() {
                       <td className="text-end text-nowrap">
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                          className="btn btn-sm btn-outline-secondary me-1"
                           onClick={() => setFormularioModo({ id: p.id, nombre: p.nombre, modo: p.modo })}
                           disabled={bloqueado}
                         >
                           Modo
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        <BotonIcono
+                          icono="editar"
+                          className="me-1"
                           onClick={() =>
                             setFormulario({
                               id: p.id,
@@ -567,17 +568,12 @@ export function PuntosVenta() {
                             })
                           }
                           disabled={bloqueado}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-danger rounded-0"
+                        />
+                        <BotonIcono
+                          icono="eliminar"
                           onClick={(evento) => pedirBaja(p, evento.currentTarget)}
                           disabled={bloqueado}
-                        >
-                          Baja
-                        </button>
+                        />
                       </td>
                     </tr>
                   ))}

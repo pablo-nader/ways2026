@@ -177,14 +177,14 @@ export function Tesoreria() {
     <div className="container-fluid py-4">
       <Box titulo="Tesorería" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
-        {errorCatalogos && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorCatalogos}</div>}
+        {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
 
         {empresas === null || puntosVenta === null ? (
           <Cargando />
@@ -199,7 +199,7 @@ export function Tesoreria() {
                 </label>
                 <select
                   id="tesoreria-empresa"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={filtros?.idEmpresa ?? ''}
                   onChange={(e) => cambiarEmpresa(e.target.value)}
                 >
@@ -217,7 +217,7 @@ export function Tesoreria() {
                 </label>
                 <select
                   id="tesoreria-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={filtros?.idPuntoVenta ?? ''}
                   disabled={filtros === null}
                   onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
@@ -237,7 +237,7 @@ export function Tesoreria() {
                 <input
                   id="tesoreria-desde"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   disabled={filtros === null}
                   value={filtros?.desde ?? ''}
                   onChange={(e) => cambiarFiltro({ desde: e.target.value })}
@@ -250,7 +250,7 @@ export function Tesoreria() {
                 <input
                   id="tesoreria-hasta"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   disabled={filtros === null}
                   value={filtros?.hasta ?? ''}
                   onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
@@ -268,14 +268,14 @@ export function Tesoreria() {
               )}
             </div>
 
-            {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {filtros === null ? (
               <p className="text-muted text-center py-4">Elegí una empresa para ver su libro de tesorería.</p>
             ) : (
               <>
                 {filtros.idPuntoVenta !== null && (
-                  <div className="alert alert-info rounded-0 py-1 px-2 small mb-2">
+                  <div className="alert alert-info py-1 px-2 small mb-2">
                     Los saldos (inicio/final) pertenecen a la cadena completa de la empresa: este filtro muestra solo
                     las filas originadas en este punto de venta, un subconjunto que no se encadena entre sí.
                   </div>
@@ -332,7 +332,7 @@ export function Tesoreria() {
                       <div className="d-flex gap-2">
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          className="btn btn-sm btn-outline-secondary"
                           disabled={pagina.pagina <= 1 || cargando}
                           onClick={() => cambiarPagina(-1)}
                         >
@@ -340,7 +340,7 @@ export function Tesoreria() {
                         </button>
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          className="btn btn-sm btn-outline-secondary"
                           disabled={pagina.pagina >= totalPaginas || cargando}
                           onClick={() => cambiarPagina(1)}
                         >

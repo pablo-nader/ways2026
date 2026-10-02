@@ -67,7 +67,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -334,20 +334,20 @@ export function ConteoDeInventario() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Conteo de inventario" variante="inverse">
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorPuntosVenta && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorPuntosVenta} No se pueden registrar conteos hasta que esto se resuelva.
           </div>
         )}
 
         {resultado && (
-          <div className={`alert rounded-0 ${resultado.movimientoRegistrado ? 'alert-success' : 'alert-secondary'}`}>
+          <div className={`alert ${resultado.movimientoRegistrado ? 'alert-success' : 'alert-secondary'}`}>
             {!resultado.movimientoRegistrado
               ? 'Sin diferencia — no se registró ningún movimiento.'
               : `Diferencia registrada: ${resultado.delta > 0 ? '+' : ''}${resultado.delta} (antes ${resultado.cantidadAnterior} → ahora ${resultado.cantidad}).`}
             {resultado.lotes && resultado.lotes.length > 0 && (
-              <table className="table table-sm table-bordered mt-2 mb-0 bg-white">
+              <table className="table table-sm table-bordered mt-2 mb-0 bg-body">
                 <thead>
                   <tr>
                     <th>Lote</th>
@@ -380,7 +380,7 @@ export function ConteoDeInventario() {
             </label>
             <select
               id="conteo-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={idPuntoVenta}
               disabled={contando || !referenciaOk}
               onChange={(e) => setIdPuntoVenta(e.target.value === '' ? '' : Number(e.target.value))}
@@ -422,7 +422,7 @@ export function ConteoDeInventario() {
                 type="number"
                 step="0.001"
                 min="0"
-                className="form-control rounded-0"
+                className="form-control"
                 value={contada}
                 disabled={contando || !referenciaOk}
                 onChange={(e) => setContada(e.target.value)}
@@ -436,7 +436,7 @@ export function ConteoDeInventario() {
             <input
               id="conteo-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={observaciones}
               disabled={contando || !referenciaOk}
               onChange={(e) => setObservaciones(e.target.value)}
@@ -447,7 +447,7 @@ export function ConteoDeInventario() {
         {esLoteEfectivo && (
           <div className="mb-3">
             <strong className="text-muted small text-uppercase">Conteo por lote</strong>
-            {errorLotes && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{errorLotes}</div>}
+            {errorLotes && <div className="alert alert-danger py-1 px-2 small mt-2">{errorLotes}</div>}
             {cargandoLotes && lineasDeLote.length === 0 ? (
               <p className="text-muted small mt-2">Cargando lotes…</p>
             ) : lineasDeLote.length === 0 && !errorLotes ? (
@@ -470,7 +470,7 @@ export function ConteoDeInventario() {
                             type="number"
                             step="0.001"
                             min="0"
-                            className="form-control form-control-sm rounded-0"
+                            className="form-control form-control-sm"
                             aria-label={`Contada del lote ${l.codigo}`}
                             value={l.contada}
                             disabled={contando || !referenciaOk}
@@ -484,14 +484,14 @@ export function ConteoDeInventario() {
               </div>
             )}
             {lineasDeLote.length > 0 && lineasDeLoteIncompletas > 0 && (
-              <div className="alert alert-warning rounded-0 py-1 px-2 small mb-0">
+              <div className="alert alert-warning py-1 px-2 small mb-0">
                 {lineasDeLoteIncompletas} lote(s) sin contar — no se van a incluir en el conteo.
               </div>
             )}
           </div>
         )}
 
-        <button type="button" className="btn btn-primary rounded-0" disabled={!puedeContar} onClick={contar}>
+        <button type="button" className="btn btn-primary" disabled={!puedeContar} onClick={contar}>
           {contando ? 'Contando…' : 'Contar'}
         </button>
       </Box>

@@ -87,7 +87,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -146,7 +146,7 @@ function FilaDeItem({ linea, idPuntoVenta, disabled, onCambio, onQuitar }: Props
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Cantidad"
           value={linea.cantidad}
           disabled={disabled}
@@ -168,7 +168,7 @@ function FilaDeItem({ linea, idPuntoVenta, disabled, onCambio, onQuitar }: Props
         )}
       </td>
       <td>
-        <button type="button" className="btn btn-outline-danger btn-sm rounded-0" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
+        <button type="button" className="btn btn-outline-danger btn-sm" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
           Quitar
         </button>
       </td>
@@ -433,7 +433,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
       <div className="container-fluid py-4">
         <Box titulo="Remito" variante="danger">
           <p className="text-muted">{errorDetalle}</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/remitos">
+          <Link className="btn btn-outline-secondary" to="/remitos">
             Volver a remitos
           </Link>
         </Box>
@@ -452,23 +452,23 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
         titulo={esNuevo ? 'Nuevo remito' : `Remito ${detalle?.numeroFormateado ?? `#${idRemito}`}`}
         variante="inverse"
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/remitos">
+          <Link className="btn btn-sm btn-outline-secondary" to="/remitos">
             Volver a remitos
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de remito hasta que esto se resuelva.
           </div>
         )}
-        {errorDetalle && detalle && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorDetalle}</div>}
+        {errorDetalle && detalle && <div className="alert alert-warning py-1 px-2 small">{errorDetalle}</div>}
 
         {!esNuevo && detalle && (
           <div className="mb-3">
-            <span className={`badge rounded-0 me-2 ${claseDeBadgeDeEstadoRemito(detalle.estado)}`}>{etiquetaDeEstadoRemito(detalle.estado)}</span>
+            <span className={`badge me-2 ${claseDeBadgeDeEstadoRemito(detalle.estado)}`}>{etiquetaDeEstadoRemito(detalle.estado)}</span>
             {detalle.fechaSalida && <span className="small text-muted me-2">Salió: {formatearFechaHora(detalle.fechaSalida)}</span>}
           </div>
         )}
@@ -476,7 +476,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
         {/* facturado: link a la factura (OD10, GET /api/ventas/{id}) + CERO acciones — el design
             lo pide explícito ("facturado renders its invoice link and no actions"). */}
         {esFacturado && (
-          <div className="mb-3 p-2 border rounded-0 bg-light-subtle">
+          <div className="mb-3 p-2 border bg-light-subtle">
             {cargandoFactura && <span className="small text-muted">Cargando factura…</span>}
             {errorFactura && <span className="small text-danger">{errorFactura}</span>}
             {factura && (
@@ -499,7 +499,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
             </label>
             <select
               id="rem-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idPuntoVenta}
               disabled={!esBorrador || ocupado || !referenciaOk}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -518,7 +518,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
             </label>
             <select
               id="rem-cliente"
-              className="form-select rounded-0"
+              className="form-select"
               value={encabezado.idCliente}
               disabled={!esBorrador || ocupado || !referenciaOk}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, idCliente: e.target.value === '' ? '' : Number(e.target.value) }))}
@@ -538,7 +538,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
             <input
               id="rem-direccion-entrega"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.direccionEntrega}
               disabled={!esBorrador || ocupado}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, direccionEntrega: e.target.value }))}
@@ -551,7 +551,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
             <input
               id="rem-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={encabezado.observaciones}
               disabled={!esBorrador || ocupado}
               onChange={(e) => setEncabezado((prev) => ({ ...prev, observaciones: e.target.value }))}
@@ -593,27 +593,27 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
               </table>
             </div>
 
-            <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
+            <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
               + Agregar línea
             </button>
 
             <div className="d-flex gap-2 align-items-end mb-3 flex-wrap">
-              <button type="button" className="btn btn-primary rounded-0" disabled={!puedeGuardar} onClick={guardarBorrador}>
+              <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={guardarBorrador}>
                 {guardando ? 'Guardando…' : esNuevo ? 'Crear borrador' : 'Guardar borrador'}
               </button>
               {puedeEmitir && (
-                <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={emitir}>
+                <button type="button" className="btn btn-success" disabled={ocupado} onClick={emitir}>
                   {emitiendo ? 'Emitiendo…' : 'Emitir'}
                 </button>
               )}
               {puedeAnular && (
-                <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                   {anulando ? 'Anulando…' : 'Anular'}
                 </button>
               )}
             </div>
-            {errorEmitir && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEmitir}</div>}
-            {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+            {errorEmitir && <div className="alert alert-danger py-1 px-2 small">{errorEmitir}</div>}
+            {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
           </>
         ) : (
           detalle && (
@@ -667,12 +667,12 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
                 <>
                   <div className="d-flex gap-2 mb-3">
                     {puedeAnular && (
-                      <button type="button" className="btn btn-danger rounded-0" disabled={ocupado} onClick={anular}>
+                      <button type="button" className="btn btn-danger" disabled={ocupado} onClick={anular}>
                         {anulando ? 'Anulando…' : 'Anular'}
                       </button>
                     )}
                   </div>
-                  {errorAnular && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAnular}</div>}
+                  {errorAnular && <div className="alert alert-danger py-1 px-2 small">{errorAnular}</div>}
                 </>
               )}
             </>
@@ -701,7 +701,7 @@ export function Remito() {
       <div className="container-fluid py-4">
         <Box titulo="Remito" variante="warning">
           <p className="text-muted">No se especificó un remito válido.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/remitos">
+          <Link className="btn btn-outline-secondary" to="/remitos">
             Volver a remitos
           </Link>
         </Box>

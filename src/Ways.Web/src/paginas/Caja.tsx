@@ -100,7 +100,7 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
   return (
     <div>
       <p className="text-muted">No hay un turno abierto en este punto de venta.</p>
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
       <div className="row g-2 align-items-end" style={{ maxWidth: 640 }}>
         <div className="col-md-4">
@@ -109,7 +109,7 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
           </label>
           <CampoImporte
             id="caja-fondo-inicial"
-            className="form-control rounded-0"
+            className="form-control"
             valor={fondoInicial}
             disabled={bloqueado}
             onChange={setFondoInicial}
@@ -122,14 +122,14 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
           <input
             id="caja-observaciones-apertura"
             type="text"
-            className="form-control rounded-0"
+            className="form-control"
             value={observaciones}
             disabled={bloqueado}
             onChange={(e) => setObservaciones(e.target.value)}
           />
         </div>
         <div className="col-md-3">
-          <button type="button" className="btn btn-primary rounded-0 w-100" disabled={bloqueado} onClick={abrir}>
+          <button type="button" className="btn btn-primary w-100" disabled={bloqueado} onClick={abrir}>
             {abriendo ? 'Abriendo…' : 'Abrir turno'}
           </button>
         </div>
@@ -268,7 +268,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
           {/* stage-6-turnos-caja (Slice 7, design: Web Composition): entrada a la pantalla de
               cierre — el turno lo identifica la URL, nunca un selector propio de esa pantalla. */}
           <Link
-            className={`btn btn-outline-danger btn-sm rounded-0${registrando ? ' disabled' : ''}`}
+            className={`btn btn-outline-danger btn-sm${registrando ? ' disabled' : ''}`}
             aria-disabled={registrando}
             to={`/caja/cierre?idTurno=${turno.id}`}
             onClick={(e) => {
@@ -285,7 +285,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
       <div className="row g-3">
         <div className="col-lg-6">
           <h6>Movimiento de caja</h6>
-          {errorMovimiento && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorMovimiento}</div>}
+          {errorMovimiento && <div className="alert alert-danger py-1 px-2 small">{errorMovimiento}</div>}
 
           <div className="mb-2">
             <label className="form-label" htmlFor="caja-tipo-movimiento">
@@ -293,7 +293,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
             </label>
             <select
               id="caja-tipo-movimiento"
-              className="form-select rounded-0"
+              className="form-select"
               value={tipoMovimiento}
               disabled={registrando}
               onChange={(e) => {
@@ -315,7 +315,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
             </label>
             <CampoImporte
               id="caja-importe-movimiento"
-              className="form-control rounded-0"
+              className="form-control"
               valor={tipoMovimiento === 'AperturaCajon' ? 0 : importeMovimiento}
               disabled={registrando || tipoMovimiento === 'AperturaCajon'}
               onChange={setImporteMovimiento}
@@ -329,7 +329,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
             <input
               id="caja-motivo-movimiento"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={motivoMovimiento}
               disabled={registrando}
               onChange={(e) => setMotivoMovimiento(e.target.value)}
@@ -339,7 +339,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
 
           <button
             type="button"
-            className="btn btn-primary rounded-0"
+            className="btn btn-primary"
             disabled={registrando}
             onClick={registrarMovimiento}
           >
@@ -349,8 +349,8 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
 
         <div className="col-lg-6">
           <h6>Resumen parcial</h6>
-          {errorMedios && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorMedios}</div>}
-          {errorResumen && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorResumen}</div>}
+          {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
+          {errorResumen && <div className="alert alert-danger py-1 px-2 small">{errorResumen}</div>}
           {cargandoResumen && <p className="text-muted">Calculando…</p>}
 
           {!cargandoResumen && resumen && (
@@ -616,11 +616,11 @@ function PantallaCaja() {
                   <span className="text-muted small">Punto de venta:</span> <strong>{puntoVenta.nombre}</strong>
                 </>
               ) : (
-                <div className="alert alert-warning rounded-0 py-1 px-2 small">Sin puntos de venta disponibles</div>
+                <div className="alert alert-warning py-1 px-2 small">Sin puntos de venta disponibles</div>
               )}
             </div>
 
-            {errorTurno && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorTurno}</div>}
+            {errorTurno && <div className="alert alert-danger py-1 px-2 small">{errorTurno}</div>}
 
             {idPuntoVenta !== '' && (
               // regla 8: la clave por turno (o "sin-turno" mientras no hay ninguno) remonta todo

@@ -10,6 +10,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -54,12 +55,12 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
   }, [proveedor.id])
 
   return (
-    <div className="border p-3 mb-4 bg-white">
+    <div className="border p-3 mb-4 bg-body">
       <div className="d-flex justify-content-between align-items-start mb-2">
         <strong>Saldo de {proveedor.razonSocial}</strong>
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary rounded-0"
+          className="btn btn-sm btn-outline-secondary"
           onClick={onCerrar}
           disabled={bloqueado}
         >
@@ -68,7 +69,7 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
       </div>
 
       {cargando && <Cargando />}
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
       {saldo && (
         <>
@@ -97,7 +98,7 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
                     <td className="text-end">{formatearMoneda(c.total)}</td>
                     <td className="text-end">{formatearMoneda(c.pagado)}</td>
                     <td>
-                      <span className={`badge rounded-0 ${claseDeBadgeDeEstadoPago(c.estadoPago)}`}>
+                      <span className={`badge ${claseDeBadgeDeEstadoPago(c.estadoPago)}`}>
                         {etiquetaDeEstadoPago(c.estadoPago)}
                       </span>
                     </td>
@@ -364,7 +365,7 @@ export function Proveedores() {
     <nav className="p-2 d-flex gap-2">
       <input
         type="search"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar por razón social, nombre de fantasía o CUIT…"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
@@ -373,32 +374,30 @@ export function Proveedores() {
       />
       <button
         type="button"
-        className="btn btn-sm btn-outline-light rounded-0"
+        className="btn btn-sm btn-outline-secondary"
         onClick={() => cargar(++generacion.current, busqueda)}
         disabled={bloqueado}
       >
         Buscar
       </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+      <BotonIcono
+        icono="agregar"
+        className="text-nowrap"
         onClick={() => {
           setFormulario(formularioVacio())
           setAviso('')
           setError('')
         }}
         disabled={bloqueado}
-      >
-        Nuevo
-      </button>
+      />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Proveedores" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -459,39 +458,34 @@ export function Proveedores() {
                     <td>{p.email ?? '—'}</td>
                     <td>{p.margen === null ? '—' : `${p.margen}%`}</td>
                     <td>
-                      <span className={`badge rounded-0 ${p.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                      <span className={`badge ${p.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {p.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                        className="btn btn-sm btn-outline-secondary me-1"
                         onClick={() => setProveedorSaldo(p)}
                         disabled={bloqueado}
                       >
                         Ver saldo
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                      <BotonIcono
+                        icono="editar"
+                        className="me-1"
                         onClick={() => {
                           setFormulario(aFormulario(p))
                           setAviso('')
                           setError('')
                         }}
                         disabled={bloqueado}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                      />
+                      <BotonIcono
+                        icono="eliminar"
                         onClick={(evento) => pedirBaja(p, evento.currentTarget)}
                         disabled={bloqueado}
-                      >
-                        Baja
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -532,7 +526,7 @@ function FormularioProveedor({
 
   return (
     <form
-      className="row g-3 border p-3 mb-4 bg-white"
+      className="row g-3 border p-3 mb-4 bg-body"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault()
@@ -553,7 +547,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-razon-social"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.razonSocial}
           onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
@@ -568,7 +562,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-nombre-fantasia"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.nombreFantasia}
           onChange={(e) => onCambio({ ...valor, nombreFantasia: e.target.value })}
@@ -582,7 +576,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-cuit"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={13}
           value={valor.cuit}
           onChange={(e) => onCambio({ ...valor, cuit: e.target.value })}
@@ -596,7 +590,7 @@ function FormularioProveedor({
         </label>
         <select
           id="p-condicion-fiscal"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.idCondicionFiscal}
           onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
           disabled={bloqueado}
@@ -623,7 +617,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-domicilio"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={255}
           value={valor.domicilio}
           onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
@@ -637,7 +631,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-telefono"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           value={valor.telefono}
           onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
@@ -652,7 +646,7 @@ function FormularioProveedor({
         <input
           id="p-email"
           type="email"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={255}
           value={valor.email}
           onChange={(e) => onCambio({ ...valor, email: e.target.value })}
@@ -669,7 +663,7 @@ function FormularioProveedor({
           type="number"
           step="0.01"
           min="0"
-          className="form-control rounded-0"
+          className="form-control"
           value={valor.margen}
           onChange={(e) => onCambio({ ...valor, margen: e.target.value })}
           disabled={bloqueado}
@@ -682,7 +676,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-vendedor"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.vendedor}
           onChange={(e) => onCambio({ ...valor, vendedor: e.target.value })}
@@ -696,7 +690,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-celular-vendedor"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           value={valor.celularVendedor}
           onChange={(e) => onCambio({ ...valor, celularVendedor: e.target.value })}
@@ -710,7 +704,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-supervisor"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.supervisor}
           onChange={(e) => onCambio({ ...valor, supervisor: e.target.value })}
@@ -724,7 +718,7 @@ function FormularioProveedor({
         </label>
         <input
           id="p-celular-supervisor"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           value={valor.celularSupervisor}
           onChange={(e) => onCambio({ ...valor, celularSupervisor: e.target.value })}
@@ -738,7 +732,7 @@ function FormularioProveedor({
         </label>
         <textarea
           id="p-observaciones"
-          className="form-control rounded-0"
+          className="form-control"
           rows={2}
           value={valor.observaciones}
           onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
@@ -751,7 +745,7 @@ function FormularioProveedor({
           <input
             id="p-activo"
             type="checkbox"
-            className="form-check-input rounded-0"
+            className="form-check-input"
             checked={valor.activo}
             onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
             disabled={bloqueado}
@@ -763,12 +757,12 @@ function FormularioProveedor({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+        <button type="submit" className="btn btn-success" disabled={bloqueado}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={bloqueado}
         >

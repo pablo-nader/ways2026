@@ -209,12 +209,12 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
     <>
       <div className="modal d-block" tabIndex={-1} role="dialog">
         <div className="modal-dialog" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Ajuste manual de cuenta corriente</h5>
             </div>
             <div className="modal-body">
-              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+              {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
               <div className="mb-3" style={{ maxWidth: 320 }}>
                 <label className="form-label" htmlFor="cc-ajuste-punto-venta">
@@ -222,7 +222,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                 </label>
                 <select
                   id="cc-ajuste-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   disabled={registrando}
                   onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
@@ -241,7 +241,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                 </label>
                 <CampoImporte
                   id="cc-ajuste-importe"
-                  className="form-control rounded-0"
+                  className="form-control"
                   valor={importe}
                   disabled={registrando}
                   admiteNegativos
@@ -259,7 +259,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                 <input
                   id="cc-ajuste-detalle"
                   type="text"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={detalle}
                   disabled={registrando}
                   onChange={(e) => setDetalle(e.target.value)}
@@ -273,7 +273,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                 <input
                   id="cc-ajuste-confirmacion"
                   type="checkbox"
-                  className="form-check-input rounded-0"
+                  className="form-check-input"
                   checked={confirmado}
                   disabled={registrando}
                   onChange={(e) => setConfirmado(e.target.checked)}
@@ -284,10 +284,10 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
               </div>
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrando} onClick={onCerrar}>
+              <button type="button" className="btn btn-outline-secondary" disabled={registrando} onClick={onCerrar}>
                 Cancelar
               </button>
-              <button type="button" className="btn btn-primary rounded-0" disabled={!puedeRegistrar} onClick={registrarAjuste}>
+              <button type="button" className="btn btn-primary" disabled={!puedeRegistrar} onClick={registrarAjuste}>
                 {registrando ? 'Registrando…' : 'Registrar ajuste'}
               </button>
             </div>
@@ -399,13 +399,13 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
     <>
       <div className="modal d-block" tabIndex={-1} role="dialog">
         <div className="modal-dialog" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Actualizar precios (reliquidación)</h5>
             </div>
             <div className="modal-body">
-              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
-              {errorPreview && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPreview}</div>}
+              {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
+              {errorPreview && <div className="alert alert-warning py-1 px-2 small">{errorPreview}</div>}
 
               {cargandoPreview && <Cargando />}
 
@@ -428,7 +428,7 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
                     </div>
                   </div>
                   {preview.hayMas && (
-                    <div className="alert alert-warning rounded-0 py-1 px-2 small">
+                    <div className="alert alert-warning py-1 px-2 small">
                       Quedan más consumos pendientes — esta corrida no los cubre, va a hacer falta correr la
                       reliquidación de nuevo después.
                     </div>
@@ -442,7 +442,7 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
                     </label>
                     <select
                       id="cc-reliq-punto-venta"
-                      className="form-select rounded-0"
+                      className="form-select"
                       value={idPuntoVenta}
                       disabled={ejecutando}
                       onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
@@ -459,7 +459,7 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
                     <input
                       id="cc-reliq-confirmacion"
                       type="checkbox"
-                      className="form-check-input rounded-0"
+                      className="form-check-input"
                       checked={confirmado}
                       disabled={ejecutando}
                       onChange={(e) => setConfirmado(e.target.checked)}
@@ -473,11 +473,11 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
               )}
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={ejecutando} onClick={onCerrar}>
+              <button type="button" className="btn btn-outline-secondary" disabled={ejecutando} onClick={onCerrar}>
                 {previewEsNoOp ? 'Cerrar' : 'Cancelar'}
               </button>
               {!previewEsNoOp && (
-                <button type="button" className="btn btn-danger rounded-0" disabled={!puedeEjecutar} onClick={ejecutar}>
+                <button type="button" className="btn btn-danger" disabled={!puedeEjecutar} onClick={ejecutar}>
                   {ejecutando ? 'Ejecutando…' : 'Ejecutar reliquidación'}
                 </button>
               )}
@@ -625,12 +625,12 @@ function PantallaCuentaCorriente({
           <div className="d-flex gap-2">
             <button
               type="button"
-              className="btn btn-sm btn-outline-light rounded-0 d-print-none"
+              className="btn btn-sm btn-outline-secondary d-print-none"
               onClick={() => window.print()}
             >
               Imprimir
             </button>
-            <Link className="btn btn-sm btn-outline-light rounded-0 d-print-none" to="/clientes">
+            <Link className="btn btn-sm btn-outline-secondary d-print-none" to="/clientes">
               Volver a clientes
             </Link>
           </div>
@@ -648,10 +648,10 @@ function PantallaCuentaCorriente({
           </div>
         </div>
 
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {errorEstado && <div className="alert alert-danger rounded-0">{errorEstado}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {errorEstado && <div className="alert alert-danger">{errorEstado}</div>}
         {(errorCliente || errorMedios || errorPuntosVenta) && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorCliente || errorMedios || errorPuntosVenta} No se pueden registrar operaciones de cuenta corriente
             hasta que esto se resuelva.
           </div>
@@ -680,7 +680,7 @@ function PantallaCuentaCorriente({
                     <>
                       <button
                         type="button"
-                        className="btn btn-outline-secondary rounded-0"
+                        className="btn btn-outline-secondary"
                         disabled={!puedeSupervisarCC}
                         title={motivoBloqueoSupervision}
                         onClick={() => {
@@ -692,7 +692,7 @@ function PantallaCuentaCorriente({
                       </button>
                       <button
                         type="button"
-                        className="btn btn-outline-danger rounded-0"
+                        className="btn btn-outline-danger"
                         disabled={!puedeSupervisarCC}
                         title={motivoBloqueoSupervision}
                         onClick={() => {
@@ -706,7 +706,7 @@ function PantallaCuentaCorriente({
                   )}
                   <button
                     type="button"
-                    className="btn btn-primary rounded-0"
+                    className="btn btn-primary"
                     disabled={!puedeIngresarPago}
                     title={motivoBloqueoPago}
                     onClick={() => {
@@ -728,7 +728,7 @@ function PantallaCuentaCorriente({
                 <input
                   id="cc-filtro-desde"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={desde}
                   disabled={historico}
                   onChange={(e) => setDesde(e.target.value)}
@@ -741,7 +741,7 @@ function PantallaCuentaCorriente({
                 <input
                   id="cc-filtro-hasta"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={hasta}
                   disabled={historico}
                   onChange={(e) => setHasta(e.target.value)}
@@ -752,7 +752,7 @@ function PantallaCuentaCorriente({
                   <input
                     id="cc-filtro-historico"
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={historico}
                     onChange={(e) => {
                       const marcado = e.target.checked
@@ -991,7 +991,7 @@ export function CuentaCorriente() {
       <div className="container-fluid py-4">
         <Box titulo="Estado de cuenta" variante="warning">
           <p className="text-muted">No se especificó el cliente.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/clientes">
+          <Link className="btn btn-outline-secondary" to="/clientes">
             Volver a clientes
           </Link>
         </Box>

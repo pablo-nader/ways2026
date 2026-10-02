@@ -42,7 +42,7 @@ export function CatalogosFiscales() {
 
   return (
     <div className="container-fluid py-4 d-flex flex-column gap-4">
-      {error && <div className="alert alert-danger rounded-0">{error}</div>}
+      {error && <div className="alert alert-danger">{error}</div>}
 
       {cargando && !error ? (
         <Cargando />
@@ -147,7 +147,7 @@ export function CatalogosFiscales() {
 
 function EtiquetaActivo({ activo }: { activo: boolean }) {
   return (
-    <span className={`badge rounded-0 ${activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+    <span className={`badge ${activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
       {activo ? 'Activo' : 'Inactivo'}
     </span>
   )

@@ -251,7 +251,7 @@ export function GastosDelTurno() {
   const herramientas = (
     <button
       type="button"
-      className="btn btn-sm btn-outline-light rounded-0"
+      className="btn btn-sm btn-outline-secondary"
       disabled={guardando}
       onClick={() => void cargarTurnoYDetalle()}
     >
@@ -262,29 +262,29 @@ export function GastosDelTurno() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Gastos del turno" variante="inverse" herramientas={herramientas}>
-        {!puntoVenta && <div className="alert alert-warning rounded-0 mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
+        {!puntoVenta && <div className="alert alert-warning mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
 
-        {puntoVenta && errorTurno && <div className="alert alert-danger rounded-0">{errorTurno}</div>}
+        {puntoVenta && errorTurno && <div className="alert alert-danger">{errorTurno}</div>}
 
         {puntoVenta && !errorTurno && buscandoTurno && !turno && <Cargando />}
 
         {puntoVenta && !errorTurno && !buscandoTurno && !turno && (
-          <div className="alert alert-warning rounded-0 mb-0">No hay un turno abierto en este punto de venta.</div>
+          <div className="alert alert-warning mb-0">No hay un turno abierto en este punto de venta.</div>
         )}
 
         {turno && (
           <>
-            {errorMedios && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorMedios}</div>}
-            {errorProveedores && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorProveedores}</div>}
-            {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-            {errorGuardar && <div className="alert alert-danger rounded-0">{errorGuardar}</div>}
+            {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
+            {errorProveedores && <div className="alert alert-warning py-1 px-2 small">{errorProveedores}</div>}
+            {aviso && <div className="alert alert-success">{aviso}</div>}
+            {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
             <fieldset disabled={guardando} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">
               <div className="col-md-2">
                 <label className="form-label" htmlFor="gasto-importe">
                   Importe
                 </label>
-                <CampoImporte id="gasto-importe" className="form-control rounded-0" valor={importe} onChange={setImporte} />
+                <CampoImporte id="gasto-importe" className="form-control" valor={importe} onChange={setImporte} />
               </div>
 
               <div className="col-md-2">
@@ -293,7 +293,7 @@ export function GastosDelTurno() {
                 </label>
                 <select
                   id="gasto-medio-pago"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idMedioPago}
                   onChange={(e) => setIdMedioPago(e.target.value === '' ? '' : Number(e.target.value))}
                 >
@@ -312,7 +312,7 @@ export function GastosDelTurno() {
                 </label>
                 <select
                   id="gasto-categoria"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={categoria}
                   onChange={(e) => setCategoria(e.target.value as CategoriaGasto)}
                 >
@@ -330,7 +330,7 @@ export function GastosDelTurno() {
                 </label>
                 <select
                   id="gasto-proveedor"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idProveedor}
                   onChange={(e) => alCambiarProveedor(e.target.value)}
                 >
@@ -349,7 +349,7 @@ export function GastosDelTurno() {
                 </label>
                 <select
                   id="gasto-origen-fondos"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={origenFondos}
                   onChange={(e) => setOrigenFondos(e.target.value as OrigenFondosGasto)}
                 >
@@ -362,7 +362,7 @@ export function GastosDelTurno() {
               </div>
 
               <div className="col-md-2">
-                <button type="button" className="btn btn-primary rounded-0 w-100" onClick={() => void registrarGasto()}>
+                <button type="button" className="btn btn-primary w-100" onClick={() => void registrarGasto()}>
                   {guardando ? 'Guardando…' : 'Registrar'}
                 </button>
               </div>
@@ -373,7 +373,7 @@ export function GastosDelTurno() {
                 </label>
                 <textarea
                   id="gasto-observaciones"
-                  className="form-control rounded-0"
+                  className="form-control"
                   rows={1}
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
@@ -381,7 +381,7 @@ export function GastosDelTurno() {
               </div>
             </fieldset>
 
-            {errorDetalle && <div className="alert alert-danger rounded-0">{errorDetalle}</div>}
+            {errorDetalle && <div className="alert alert-danger">{errorDetalle}</div>}
 
             {cargandoDetalle && gastos.length === 0 && <Cargando />}
 
@@ -402,7 +402,7 @@ export function GastosDelTurno() {
                       <td>
                         {etiquetaDeCategoriaGasto(g.categoria)}
                         {g.origenFondos === 'Tesoreria' && (
-                          <span className="badge bg-secondary rounded-0 ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>
+                          <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>
                         )}
                       </td>
                       <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>

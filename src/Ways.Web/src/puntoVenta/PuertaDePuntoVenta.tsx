@@ -217,12 +217,12 @@ type PropsDeError = {
 function PantallaDeError({ mensaje, ocupado, alReintentar, alSalir }: PropsDeError) {
   return (
     <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-      <div role="alert" className="alert alert-danger rounded-0 text-center w-100" style={{ maxWidth: 480 }}>
+      <div role="alert" className="alert alert-danger text-center w-100" style={{ maxWidth: 480 }}>
         <p>{mensaje}</p>
-        <button type="button" className="btn btn-outline-dark rounded-0 me-2" disabled={ocupado} onClick={alReintentar}>
+        <button type="button" className="btn btn-outline-secondary me-2" disabled={ocupado} onClick={alReintentar}>
           Reintentar
         </button>
-        <button type="button" className="btn btn-outline-secondary rounded-0" disabled={ocupado} onClick={alSalir}>
+        <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={alSalir}>
           Salir
         </button>
       </div>

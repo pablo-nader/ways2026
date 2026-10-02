@@ -128,10 +128,10 @@ export function Remitos() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <button type="button" className="btn btn-sm btn-outline-light rounded-0 text-nowrap" onClick={() => navigate('/remitos/facturacion')}>
+      <button type="button" className="btn btn-sm btn-outline-secondary text-nowrap" onClick={() => navigate('/remitos/facturacion')}>
         Facturar remitos
       </button>
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={() => navigate('/remitos/nuevo')}>
+      <button type="button" className="btn btn-sm btn-success text-nowrap" onClick={() => navigate('/remitos/nuevo')}>
         Nuevo remito
       </button>
     </nav>
@@ -140,8 +140,8 @@ export function Remitos() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Remitos" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {errorReferencia && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorReferencia}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {errorReferencia && <div className="alert alert-warning py-1 px-2 small">{errorReferencia}</div>}
 
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-2">
@@ -150,7 +150,7 @@ export function Remitos() {
             </label>
             <select
               id="rem-filtro-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -168,7 +168,7 @@ export function Remitos() {
             </label>
             <select
               id="rem-filtro-cliente"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idCliente ?? ''}
               onChange={(e) => cambiarFiltro({ idCliente: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -186,7 +186,7 @@ export function Remitos() {
             </label>
             <select
               id="rem-filtro-estado"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.estado ?? ''}
               onChange={(e) => cambiarFiltro({ estado: e.target.value === '' ? null : (e.target.value as EstadoRemito) })}
             >
@@ -204,7 +204,7 @@ export function Remitos() {
             <input
               id="rem-filtro-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -216,7 +216,7 @@ export function Remitos() {
             <input
               id="rem-filtro-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
@@ -250,7 +250,7 @@ export function Remitos() {
                       <td>{clientePorId[r.idCliente] ? etiquetaDeCliente(clientePorId[r.idCliente]) : `Cliente #${r.idCliente}`}</td>
                       <td>{puntoVentaPorId[r.idPuntoVenta]?.nombre ?? `PV #${r.idPuntoVenta}`}</td>
                       <td>
-                        <span className={`badge rounded-0 ${claseDeBadgeDeEstadoRemito(r.estado)}`}>{etiquetaDeEstadoRemito(r.estado)}</span>
+                        <span className={`badge ${claseDeBadgeDeEstadoRemito(r.estado)}`}>{etiquetaDeEstadoRemito(r.estado)}</span>
                       </td>
                       <td>{formatearFecha(r.fechaEmision)}</td>
                       <td className="text-end">{formatearImporte(r.total, { simbolo: true })}</td>
@@ -274,7 +274,7 @@ export function Remitos() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -282,7 +282,7 @@ export function Remitos() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

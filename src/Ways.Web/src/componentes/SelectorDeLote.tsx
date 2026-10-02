@@ -69,7 +69,7 @@ export function SelectorDeLote({ idPuntoVenta, idArticulo, nombreArticulo, idLot
   if (lotes === null) {
     return (
       <div>
-        <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" disabled={disabled || cargando} onClick={cargar}>
+        <button type="button" className="btn btn-sm btn-outline-secondary" disabled={disabled || cargando} onClick={cargar}>
           {cargando ? 'Cargando…' : 'Elegir lote'}
         </button>
         {error && <div className="small text-danger">{error}</div>}
@@ -86,7 +86,7 @@ export function SelectorDeLote({ idPuntoVenta, idArticulo, nombreArticulo, idLot
 
   return (
     <select
-      className="form-select form-select-sm rounded-0"
+      className="form-select form-select-sm"
       aria-label={`Lote de ${nombreArticulo}`}
       value={valorActual}
       disabled={disabled}

@@ -36,7 +36,7 @@ export function CambiarPuntoDeVenta() {
             <p className="text-muted mb-0">Este es el único punto de venta disponible.</p>
           </>
         ) : (
-          <div className="alert alert-warning rounded-0 mb-0">Sin puntos de venta disponibles</div>
+          <div className="alert alert-warning mb-0">Sin puntos de venta disponibles</div>
         )}
       </Box>
     </div>

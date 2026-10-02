@@ -5,6 +5,7 @@ import type { CategoriaAlta, CategoriaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const PROFUNDIDAD_MAXIMA = 3
 
@@ -274,13 +275,13 @@ export function Categorias() {
           onChange={(e) => setIncluirInactivos(e.target.checked)}
           disabled={bloqueado}
         />
-        <label className="form-check-label text-light small" htmlFor="incluir-inactivas">
+        <label className="form-check-label text-body-secondary small" htmlFor="incluir-inactivas">
           Incluir inactivas
         </label>
       </div>
       <button
         type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        className="btn btn-sm btn-success text-nowrap"
         onClick={() => abrirNueva(null)}
         disabled={bloqueado}
       >
@@ -297,8 +298,8 @@ export function Categorias() {
           rechaza cualquier alta o movimiento que supere ese límite o que forme un ciclo.
         </p>
 
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -364,37 +365,31 @@ function NodoCategoria({
         className="d-flex align-items-center gap-2 border-bottom py-2"
         style={{ paddingLeft: `${(nodo.nivel - 1) * 1.5}rem` }}
       >
-        <span className="badge rounded-0 text-bg-secondary">Nivel {nodo.nivel}</span>
+        <span className="badge text-bg-secondary">Nivel {nodo.nivel}</span>
         <span className={nodo.activo ? '' : 'text-muted text-decoration-line-through'}>{nodo.nombre}</span>
-        {!nodo.activo && <span className="badge rounded-0 text-bg-secondary">Inactiva</span>}
+        {!nodo.activo && <span className="badge text-bg-secondary">Inactiva</span>}
         <span className="ms-auto d-flex gap-1">
           {nodo.nivel < PROFUNDIDAD_MAXIMA && (
             <button
               type="button"
-              className="btn btn-sm btn-outline-success rounded-0"
+              className="btn btn-sm btn-outline-success"
               onClick={() => onNueva(nodo.id)}
               disabled={bloqueado}
             >
               + Subcategoría
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-primary rounded-0"
+          <BotonIcono
+            icono="editar"
             onClick={() => onEditar(nodo)}
             disabled={bloqueado}
-          >
-            Editar
-          </button>
+          />
           {nodo.activo && (
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-danger rounded-0"
+            <BotonIcono
+              icono="eliminar"
               onClick={(evento) => onEliminar(nodo, evento.currentTarget)}
               disabled={bloqueado}
-            >
-              Baja
-            </button>
+            />
           )}
         </span>
       </div>
@@ -442,7 +437,7 @@ function FormularioCategoria({
 
   return (
     <form
-      className="row g-3 border p-3 mb-4 bg-white"
+      className="row g-3 border p-3 mb-4 bg-body"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault()
@@ -459,7 +454,7 @@ function FormularioCategoria({
         </label>
         <input
           id="fc-nombre"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.nombre}
           onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
@@ -474,7 +469,7 @@ function FormularioCategoria({
         </label>
         <select
           id="fc-padre"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.idCategoriaPadre ?? ''}
           onChange={(e) =>
             onCambio({ ...valor, idCategoriaPadre: e.target.value === '' ? null : Number(e.target.value) })
@@ -497,7 +492,7 @@ function FormularioCategoria({
         <input
           id="fc-orden"
           type="number"
-          className="form-control rounded-0"
+          className="form-control"
           value={valor.orden}
           onChange={(e) => onCambio({ ...valor, orden: e.target.value })}
           disabled={bloqueado}
@@ -511,7 +506,7 @@ function FormularioCategoria({
         </label>
         <select
           id="fc-activo"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.activo ? 'activo' : 'inactivo'}
           onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
           disabled={bloqueado}
@@ -522,12 +517,12 @@ function FormularioCategoria({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+        <button type="submit" className="btn btn-success" disabled={bloqueado}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={bloqueado}
         >
