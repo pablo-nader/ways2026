@@ -98,6 +98,8 @@ const CODIGOS_DE_BLOQUE_YA_NO_VIVO = new Set(['rendicion_sin_bloque_vivo', 'rend
  * cajero la espera con el cliente adelante, así que es más corto que el de las requests de fondo. */
 export const TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS = 3_000
 
+const ESTADOS_QUE_RECHAZAN_LA_CONSULTA_DE_CREDITO = new Set([400, 403, 404])
+
 /** `limiteDeCreditoNoValidado` es `true` solo para una venta con cuenta corriente que se encoló sin
  * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
 export type EncoladoOffline =
@@ -689,15 +691,16 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activo, idPuntoVenta, intervaloMs])
 
-  /** Consulta el cliente al servidor para juzgar el límite con su saldo real. `'no_validado'` es
-   * la falta de respuesta (red caída, tope vencido o un 5xx): la venta se registra igual. Un 4xx es
-   * una respuesta del servidor y bloquea. */
+  /** Consulta el cliente al servidor para juzgar el límite con su saldo real. Solo un 400, 403 o
+   * 404 es una respuesta definitiva sobre este cliente y bloquea. Cualquier otro fallo (red caída,
+   * tope vencido, 5xx, 401, 408, 429…) cuenta como falta de respuesta: `'no_validado'`, la venta
+   * se registra igual. */
   async function verificarLimiteDeCredito(idCliente: number, consumoCc: number): Promise<'validado' | 'no_validado' | MotivoRechazoOffline> {
     try {
       const cliente = await conTiempoLimite(() => clienteDeClientes.obtener(idCliente), TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS)
       return superaLimiteDeCredito(cliente, consumoCc) ? 'limite_credito_excedido' : 'validado'
     } catch (e) {
-      if (e instanceof ErrorApi && e.estado < 500) return 'cuenta_corriente_no_verificada'
+      if (e instanceof ErrorApi && ESTADOS_QUE_RECHAZAN_LA_CONSULTA_DE_CREDITO.has(e.estado)) return 'cuenta_corriente_no_verificada'
       return 'no_validado'
     }
   }

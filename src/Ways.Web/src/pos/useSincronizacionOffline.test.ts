@@ -1888,9 +1888,9 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     expect((await leerOutbox(almacen))[0].solicitud.limiteDeCreditoNoValidado).toBe(true)
   })
 
-  it('con cuenta corriente y un 4xx del servidor, no encola nada (el servidor contestó)', async () => {
+  it.each([400, 403, 404])('con cuenta corriente y un %i del servidor, no encola nada (el servidor contestó sobre el cliente)', async (estado) => {
     const { almacen, result } = await montar()
-    obtenerClienteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el cliente'))
+    obtenerClienteMock.mockRejectedValue(new ErrorApi(estado, 'rechazo', 'Rechazo del servidor'))
 
     let resultado
     await act(async () => {
@@ -1900,6 +1900,19 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     expect(resultado).toEqual({ ok: false, motivo: 'cuenta_corriente_no_verificada' })
     await expect(leerOutbox(almacen)).resolves.toEqual([])
     await expect(leerBloque(almacen)).resolves.toEqual(bloqueFixture({ proximo: 150, hasta: 200 }))
+  })
+
+  it.each([401, 408, 429])('con cuenta corriente y un %i (transitorio o de infraestructura), encola igual con limiteDeCreditoNoValidado en true', async (estado) => {
+    const { almacen, result } = await montar()
+    obtenerClienteMock.mockRejectedValue(new ErrorApi(estado, 'transitorio', 'Fallo transitorio'))
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: true })
+    expect((await leerOutbox(almacen))[0].solicitud.limiteDeCreditoNoValidado).toBe(true)
   })
 
   it('con cuenta corriente y un servidor que no contesta, encola con limiteDeCreditoNoValidado en true al vencer el tope, nunca antes', async () => {
