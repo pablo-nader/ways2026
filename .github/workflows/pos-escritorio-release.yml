@@ -57,6 +57,21 @@ jobs:
           echo "version=$version_conf" >> "$GITHUB_ENV"
         working-directory: src/Ways.Desktop
 
+      # Sin la clave privada no hay latest.json: las apps instaladas no verían este release.
+      - name: Verificar los secretos de firma del updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Falta el secreto TAURI_SIGNING_PRIVATE_KEY (contenido del archivo de clave privada del updater). Sin él no se puede firmar la actualización; no se publica nada."
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "::error::Falta el secreto TAURI_SIGNING_PRIVATE_KEY_PASSWORD (contraseña de la clave privada del updater). No se publica nada."
+            exit 1
+          fi
+
       - name: Instalar dependencias
         run: npm ci
         working-directory: src/Ways.Desktop
@@ -67,20 +82,35 @@ jobs:
         working-directory: src/Ways.Web
 
       - name: Compilar la app (Tauri build)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build
         working-directory: src/Ways.Desktop
 
       - name: Preparar los assets del release
         run: |
           bundle_dir="src-tauri/target/release/bundle/nsis"
-          installer=$(ls "$bundle_dir"/*-setup.exe | head -n 1)
+          # Filtrado por versión: un instalador viejo que quede en el directorio (cache) no puede
+          # publicarse con el nombre y la firma de esta versión.
+          installer=$(ls "$bundle_dir"/*_"${version}"_*-setup.exe 2>/dev/null | head -n 1)
           if [ -z "$installer" ]; then
             echo "::error::No se encontró el instalador NSIS en $bundle_dir"
             exit 1
           fi
+          if [ ! -s "$installer.sig" ]; then
+            echo "::error::No se encontró la firma del updater ($installer.sig): revisá createUpdaterArtifacts y los secretos de firma."
+            exit 1
+          fi
+          versionado="WaysPOS-${version}-setup.exe"
           mkdir -p dist-release
           cp "$installer" "dist-release/WaysPOS-setup.exe"
-          cp "$installer" "dist-release/WaysPOS-${version}-setup.exe"
+          cp "$installer" "dist-release/$versionado"
+          cp "$installer.sig" "dist-release/$versionado.sig"
+          # La firma es sobre los bytes del instalador: la copia renombrada tiene que ser idéntica.
+          cmp "$installer" "dist-release/$versionado"
+          node scripts/generar-latest-json.mjs "$version" "dist-release/$versionado" "dist-release/$versionado.sig" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$versionado" dist-release/latest.json
         working-directory: src/Ways.Desktop
 
       - name: Publicar el GitHub Release
@@ -92,11 +122,15 @@ jobs:
             gh release upload "$TAG" \
               "dist-release/WaysPOS-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe" \
+              "dist-release/WaysPOS-${version}-setup.exe.sig" \
+              "dist-release/latest.json" \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$TAG" \
               "dist-release/WaysPOS-setup.exe" \
               "dist-release/WaysPOS-${version}-setup.exe" \
+              "dist-release/WaysPOS-${version}-setup.exe.sig" \
+              "dist-release/latest.json" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Ways POS ${version}" \
               --notes "$notas" \
