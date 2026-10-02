@@ -230,8 +230,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
             nameof(BusquedaSinAcentos.Coincide), [typeof(string), typeof(string)])!;
 
         // lower(public.sin_acentos(x)) LIKE lower(public.sin_acentos(patrón)) ESCAPE '\'.
-        // sin_acentos es IMMUTABLE (migración SinAcentosBusqueda); lower() la deja insensible
-        // a mayúsculas sin depender del locale de la base.
+        // sin_acentos es IMMUTABLE (migración SinAcentosBusqueda). lower() usa el LC_CTYPE de la
+        // base; como unaccent deja ASCII las letras latinas, alcanza para el texto que se busca.
         static SqlExpression Normalizar(SqlExpression texto) =>
             new SqlFunctionExpression(
                 "lower",

@@ -34,7 +34,7 @@ public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixtur
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private async Task<(int IdArticulo, HttpClient Admin, HttpClient Vendedor)> PrepararAsync(string nombre)
+    private async Task<(int IdArticulo, HttpClient Admin, HttpClient Vendedor)> PrepararAsync(string nombre, RolConocido rolNoAdmin)
     {
         using var root = fixture.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
@@ -78,7 +78,7 @@ public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixtur
                 IdTenant = resultado.IdTenant,
                 NombreUsuario = "vendedor",
                 Mail = mailVendedor,
-                RolId = (int)RolConocido.Vendedor,
+                RolId = (int)rolNoAdmin,
                 PasswordHash = hasheador.Hashear(PasswordVendedor),
                 PasswordAlgoritmo = hasheador.Algoritmo,
                 PasswordActualizadoEl = ahora,
@@ -104,7 +104,7 @@ public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixtur
     [Fact]
     public async Task ElAdminVeLosCostosEnListadoDetalleYGrilla()
     {
-        var (idArticulo, admin, _) = await PrepararAsync(nameof(ElAdminVeLosCostosEnListadoDetalleYGrilla));
+        var (idArticulo, admin, _) = await PrepararAsync(nameof(ElAdminVeLosCostosEnListadoDetalleYGrilla), RolConocido.Vendedor);
 
         var listado = await admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);
@@ -117,10 +117,12 @@ public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(61.5m, Assert.Single(grilla!.Items).CostoNominal);
     }
 
-    [Fact]
-    public async Task ElVendedorRecibeLosCostosEnNullEnListadoDetalleYGrilla()
+    [Theory]
+    [InlineData(RolConocido.Vendedor)]
+    [InlineData(RolConocido.Supervisor)]
+    public async Task UnRolDePosQueNoEsAdminRecibeLosCostosEnNullEnListadoDetalleYGrilla(RolConocido rol)
     {
-        var (idArticulo, _, vendedor) = await PrepararAsync(nameof(ElVendedorRecibeLosCostosEnNullEnListadoDetalleYGrilla));
+        var (idArticulo, _, vendedor) = await PrepararAsync($"CostoNull{rol}", rol);
 
         var listado = await vendedor.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);

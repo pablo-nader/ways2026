@@ -8,6 +8,10 @@ describe('normalizarParaBuscar', () => {
     ['Ñandú', 'nandu'],
     ['ÁCIDO', 'acido'],
     ['Pingüino', 'pinguino'],
+    ['Straße', 'strasse'],
+    ['Æsir', 'aesir'],
+    ['Søren', 'soren'],
+    ['Œuvre', 'oeuvre'],
     ['sin cambios 123', 'sin cambios 123'],
     ['', ''],
   ])('%s pasa a %s', (entrada, esperado) => {
