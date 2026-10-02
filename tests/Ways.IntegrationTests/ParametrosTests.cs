@@ -206,9 +206,11 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
         // ganador puede terminar su SELECT + INSERT + commit antes de que el segundo arranque
         // su propia SELECT, que entonces ve la fila ya confirmada y hace un UPDATE legítimo
         // (200), sin pasar nunca por el 23505. Por eso este test arma un rendezvous real con
-        // <see cref="InterceptorDeRendezVous"/>: intercepta las dos primeras SELECT de
-        // <c>parametros</c> (la "existente" de cada PUT) y las retiene hasta que ambas
-        // llegaron, así las dos ven "no existe" y las dos intentan el INSERT — recién ahí el
+        // <see cref="InterceptorDeRendezVous"/>: retiene las dos primeras SELECT de
+        // <c>parametros</c> (la "existente" de cada PUT) DESPUÉS de que Postgres las ejecutó y
+        // hasta que ambas volvieron, así las dos ven "no existe" y las dos intentan el INSERT. Si
+        // se retuvieran antes de ejecutarse, al liberarlas una podía hacer SELECT + INSERT +
+        // commit antes de que la otra llegara a la base (pasó en CI: [OK, OK]). Recién ahí el
         // 23505 de <c>ux_parametros_empresa</c> aparece en el <c>SaveChangesAsync</c> de la
         // que pierde la carrera, sin importar qué tan caliente esté el pool.
         var (idEmpresa, _, _, mail) = await SembrarTenantConAdminAsync(
@@ -242,9 +244,9 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
 
     /// <summary>Retiene las dos primeras consultas que leen <c>parametros</c> (la "existente"
     /// de <see cref="Ways.Application.Parametros.ServicioDeParametros.EstablecerAsync"/> de
-    /// cada request) hasta que ambas llegaron — un rendezvous de dos participantes que fuerza
-    /// la carrera genuina en el INSERT, en vez de depender del timing real del pool de
-    /// conexiones. Cualquier consulta posterior a <c>parametros</c> (p.ej. el listado final de
+    /// cada request), ya ejecutadas en Postgres, hasta que ambas volvieron — un rendezvous de
+    /// dos participantes que fuerza la carrera genuina en el INSERT, en vez de depender del
+    /// timing real del pool de conexiones. Cualquier consulta posterior a <c>parametros</c> (p.ej. el listado final de
     /// otro test) pasa de largo sin tocar el gate, ya usado.</summary>
     private sealed class InterceptorDeRendezVous(CountdownEvent gate) : DbCommandInterceptor
     {
@@ -252,19 +254,19 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
 
         public int Participantes => _participantes;
 
-        public override InterceptionResult<DbDataReader> ReaderExecuting(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        public override DbDataReader ReaderExecuted(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
         {
             EsperarSiCorresponde(command);
-            return base.ReaderExecuting(command, eventData, result);
+            return base.ReaderExecuted(command, eventData, result);
         }
 
-        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
             CancellationToken cancellationToken = default)
         {
             EsperarSiCorresponde(command);
-            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+            return await base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
         }
 
         private void EsperarSiCorresponde(DbCommand command)
