@@ -1698,3 +1698,21 @@ describe('useSincronizacionOffline — revisión: nunca numerar con un bloque de
     await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
   })
 })
+
+describe('useSincronizacionOffline — fin de sesión', () => {
+  it('una instantánea que llega después de desmontar no se vuelve a guardar', async () => {
+    const almacen = almacenFake()
+    let resolver: (i: InstantaneaDePos) => void = () => {}
+    obtenerInstantaneaMock.mockReturnValue(new Promise<InstantaneaDePos>((r) => (resolver = r)))
+
+    const { unmount } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalled())
+    unmount()
+
+    await act(async () => {
+      resolver(instantaneaFixture())
+    })
+
+    await expect(leerInstantaneaLocal(almacen)).resolves.toBeNull()
+  })
+})

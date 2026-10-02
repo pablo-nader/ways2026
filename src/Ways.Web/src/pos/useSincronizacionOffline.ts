@@ -215,6 +215,13 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS), sincronizarAntesDeVender = true } = params
 
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
+  const montadoRef = useRef(true)
+  useEffect(() => {
+    montadoRef.current = true
+    return () => {
+      montadoRef.current = false
+    }
+  }, [])
 
   const [instantanea, setInstantanea] = useState<InstantaneaDePos | null>(null)
   const [verificadaEn, setVerificadaEn] = useState<string | null>(null)
@@ -349,6 +356,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   /** Adopta una instantánea local como la vigente (estado + etiqueta + persistencia). */
   async function adoptarInstantaneaLocal(local: Omit<InstantaneaLocal, 'version'>): Promise<void> {
+    // Una respuesta que llega después de desmontar (cierre de sesión, que además borra la
+    // instantánea guardada) no vuelve a escribirla.
+    if (!montadoRef.current) return
     instantaneaLocalRef.current = { version: 2, ...local }
     setInstantanea(local.instantanea)
     setVerificadaEn(local.verificadaEn)

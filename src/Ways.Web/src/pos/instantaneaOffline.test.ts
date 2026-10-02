@@ -12,6 +12,7 @@ import {
   leerInstantaneaLocal,
   parsearEntradaDeEscaneoOffline,
   precioEnLista,
+  purgarInstantaneaLocal,
   preciosVigentesOffline,
   resolverPreciosOffline,
   TOPE_DE_RESULTADOS_DE_CLIENTES,
@@ -489,5 +490,18 @@ describe('formatearVejezDeInstantanea', () => {
     ['hace 2 días', '2026-09-20T10:00:00.000Z', '2026-09-22T10:00:00.000Z'],
   ])('%s', (esperado, momento, ahoraIso) => {
     expect(formatearVejezDeInstantanea(momento, new Date(ahoraIso))).toBe(esperado)
+  })
+})
+
+describe('purgarInstantaneaLocal', () => {
+  it('borra la instantánea guardada y la de la forma anterior', async () => {
+    const borradas: string[] = []
+    await purgarInstantaneaLocal({
+      async eliminar(clave: string) {
+        borradas.push(clave)
+        return true
+      },
+    })
+    expect(borradas.sort()).toEqual(['instantanea', 'instantanea.v2'])
   })
 })

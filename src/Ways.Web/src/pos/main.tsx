@@ -7,7 +7,8 @@ import '../estilos/ways.css'
 import '../estilos/impresion.css'
 
 import { alPerderLaSesion } from '../api/cliente'
-import { inicializarUrlServidor, limpiarSesionDeCajeroPersistida, restaurarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { inicializarUrlServidor, restaurarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { terminarSesionLocalDelPos } from './finDeSesionLocal'
 import { AppPos } from './AppPos'
 
 // stage-pos-sesion-offline: un 401 en CUALQUIER request (`cliente.ts`, `exigirRespuestaOk`) ya
@@ -17,7 +18,7 @@ import { AppPos } from './AppPos'
 // punto de entrada de `pos.html`, nunca se desmonta) — `entornoTauri.ts` no puede suscribirse a
 // esto por su cuenta sin crear un import circular (`cliente.ts` ya importa de `entornoTauri.ts`).
 alPerderLaSesion(() => {
-  void limpiarSesionDeCajeroPersistida()
+  void terminarSesionLocalDelPos()
 })
 
 // stage-desktop-pos, slice 3: hay que esperar la URL del servidor (bajo Tauri, ver

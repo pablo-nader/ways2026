@@ -5,7 +5,7 @@
  * dispositivo nunca vuelve a evaluar ofertas offline") — nunca reimplementa el motor de reglas,
  * solo lee el precio ya congelado que trajo la instantánea para la lista del cliente.
  */
-import type { AlmacenClaveValor } from './almacenPos'
+import type { AlmacenClaveValor, AlmacenDeClavesMultiples } from './almacenPos'
 import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
@@ -24,6 +24,7 @@ import type { LineaCarrito } from '../api/carrito'
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
  * `'instantanea'` con otra forma y nunca se lee — se vuelve a descargar entera. */
 const CLAVE_INSTANTANEA = 'instantanea.v2'
+const CLAVE_INSTANTANEA_ANTERIOR = 'instantanea'
 
 /**
  * Lo que se persiste: la instantánea, la etiqueta con la que pedir el refresco condicional y la
@@ -388,3 +389,8 @@ export function formatearVejezDeInstantanea(momento: string, ahora: Date): strin
 // Reexportado para que otros módulos (`outboxOffline.ts`) tipen sin importar desde `tipos.ts`
 // directamente donde no haga falta.
 export type { ArticuloDeInstantanea, EscalonDeCantidad, OfertaAplicada, PrecioDeListaDeInstantanea }
+
+/** Borra la instantánea guardada (y la de la forma anterior, que nadie más lee). Nunca rechaza. */
+export async function purgarInstantaneaLocal(almacen: Pick<AlmacenDeClavesMultiples, 'eliminar'>): Promise<void> {
+  await Promise.all([almacen.eliminar(CLAVE_INSTANTANEA), almacen.eliminar(CLAVE_INSTANTANEA_ANTERIOR)])
+}

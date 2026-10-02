@@ -8,7 +8,8 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
-import { corriendoEnTauri, establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
+import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -1926,7 +1927,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // `consultarTurno`), así que limpiar el bearer acá no bota al cajero de la pantalla bloqueada
     // de "turno cerrado" — recién hace efecto en la PRÓXIMA request real.
     establecerTokenDeSesionBearer(null)
-    void limpiarSesionDeCajeroPersistida()
+    void terminarSesionLocalDelPos()
   }
 
   // El servidor rechaza `forzarSinRendicion` sin motivo (`400 motivo_requerido`), así que el motivo
