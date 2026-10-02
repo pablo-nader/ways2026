@@ -76,7 +76,7 @@ public class ServicioDeInstantaneaDePos(
         // baja.
         var listasVisibles = await db.ListasPrecio.AsNoTracking()
             .OrderBy(l => l.Id)
-            .Select(l => new ArmadorDeInstantanea.ListaVisible(l.Id, l.IdEmpresa, l.Activo, l.Modo, l.IdListaBase))
+            .Select(l => new ArmadorDeInstantanea.ListaVisible(l.Id, l.IdEmpresa, l.Activo, l.Modo, l.IdListaBase, l.Porcentaje))
             .ToListAsync(ct);
         var idsListaVisibles = listasVisibles.Select(l => l.Id).ToHashSet();
 

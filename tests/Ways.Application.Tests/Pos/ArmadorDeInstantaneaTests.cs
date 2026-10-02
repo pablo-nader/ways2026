@@ -17,10 +17,10 @@ public class ArmadorDeInstantaneaTests
     private const int IdEmpresa = 10;
 
     private static ListaVisible Fija(int id, int? idEmpresa = null, bool activo = true) =>
-        new(id, idEmpresa, activo, ModoLista.Fija, null);
+        new(id, idEmpresa, activo, ModoLista.Fija, null, null);
 
-    private static ListaVisible Derivada(int id, int? idBase) =>
-        new(id, null, true, ModoLista.Derivada, idBase);
+    private static ListaVisible Derivada(int id, int? idBase, decimal? porcentaje = 10m) =>
+        new(id, null, true, ModoLista.Derivada, idBase, porcentaje);
 
     [Fact]
     public void ListasAResolverTomaLasActivasDeLaEmpresaYLasQueReferencianLosClientes()
@@ -41,7 +41,7 @@ public class ArmadorDeInstantaneaTests
     }
 
     [Fact]
-    public void ListasAResolverDescartaLaDerivadaSinUnaBaseFijaVisible()
+    public void ListasAResolverDescartaLaDerivadaSinPorcentajeOSinUnaBaseFijaVisible()
     {
         var visibles = new[]
         {
@@ -50,6 +50,7 @@ public class ArmadorDeInstantaneaTests
             Derivada(3, idBase: 404), // base dada de baja (no visible)
             Derivada(4, idBase: 2),   // base derivada
             Derivada(5, idBase: null),
+            Derivada(6, idBase: 1, porcentaje: null), // sin porcentaje
         };
 
         var listas = ListasAResolver(visibles, IdEmpresa, []);

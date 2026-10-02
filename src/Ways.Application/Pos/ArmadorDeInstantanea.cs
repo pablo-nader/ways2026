@@ -11,7 +11,7 @@ namespace Ways.Application.Pos;
 public static class ArmadorDeInstantanea
 {
     /// <summary>Una lista de precios visible (no dada de baja) del tenant.</summary>
-    public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase);
+    public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase, decimal? Porcentaje);
 
     /// <summary>Un artículo activo, antes de resolverle precios.</summary>
     public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva);
@@ -21,8 +21,8 @@ public static class ArmadorDeInstantanea
     /// venta, más cualquier lista visible a la que apunte un cliente de la instantánea (así el
     /// Consumidor Final y un cliente con una lista inactiva siguen cotizando como online).
     ///
-    /// Se descarta la derivada cuya base no es una lista fija visible: el lote de precios
-    /// (<c>ServicioDePrecios.PreciosVigentesEnLoteAsync</c>) rechaza ese caso con 400, y una sola
+    /// Se descarta la derivada sin porcentaje o cuya base no es una lista fija visible: el lote de
+    /// precios (<c>ServicioDePrecios.PreciosVigentesEnLoteAsync</c>) rechaza esos casos, y una sola
     /// lista mal configurada no puede dejar sin instantánea al punto de venta entero. Los clientes
     /// de esa lista quedan sin precio local y cotizan online.
     /// </summary>
@@ -35,7 +35,7 @@ public static class ArmadorDeInstantanea
         return visibles
             .Where(l => (l.Activo && (l.IdEmpresa is null || l.IdEmpresa == idEmpresa)) || referenciadas.Contains(l.Id))
             .Where(l => l.Modo != ModoLista.Derivada
-                || (l.IdListaBase is { } idBase && porId.TryGetValue(idBase, out var b) && b.Modo == ModoLista.Fija))
+                || (l.Porcentaje is not null && l.IdListaBase is { } idBase && porId.TryGetValue(idBase, out var b) && b.Modo == ModoLista.Fija))
             .Select(l => l.Id)
             .Order()
             .ToList();
