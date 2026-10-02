@@ -63,7 +63,16 @@ pub fn ejecutar() {
             if config::leer(&handle).is_some() {
                 mostrar_ventana_pos(&handle)?;
             } else {
-                mostrar_ventana_configuracion(&handle)?;
+                // La ventana `main` de tauri.conf.json todavia esta navegando a index.html:
+                // recargarla aca aborta esa navegacion y la deja en about:blank.
+                let mostrada =
+                    con_ventana(&handle, ETIQUETA_VENTANA_CONFIGURACION, |configuracion| {
+                        configuracion.show()
+                    });
+                match mostrada {
+                    Some(resultado) => resultado?,
+                    None => mostrar_ventana_configuracion(&handle)?,
+                }
             }
             actualizacion::iniciar_busqueda_periodica(handle);
             Ok(())
