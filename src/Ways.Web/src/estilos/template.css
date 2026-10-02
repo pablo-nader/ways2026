@@ -9,10 +9,6 @@ html {
   min-height: 100%;
 }
 
-body {
-  font-family: var(--ways-fuente);
-}
-
 #wrap {
   min-height: 100vh;
   display: flex;
@@ -44,10 +40,11 @@ body {
   border-radius: 0.75rem;
   background: var(--bs-body-bg);
   box-shadow: var(--ways-sombra);
-  overflow: hidden;
 }
 
+/* Sin overflow: hidden en la caja, que recortaría las listas de sugerencias absolutas. */
 .box > header {
+  border-radius: calc(0.75rem - 1px) calc(0.75rem - 1px) 0 0;
   background: transparent;
   border-bottom: 1px solid var(--bs-border-color);
   display: flex;

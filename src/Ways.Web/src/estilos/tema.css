@@ -181,14 +181,8 @@ body {
   box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
 }
 
-.form-check-input:focus {
-  border-color: var(--ways-naranja);
-  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
-}
-
-.form-check-input:checked {
-  background-color: var(--ways-naranja);
-  border-color: var(--ways-naranja);
+.text-bg-primary {
+  color: #1d1d1f !important;
 }
 
 /* ----- Barra de navegación ----- */
