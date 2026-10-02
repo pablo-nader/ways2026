@@ -7,11 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: deploy-produccion
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -23,7 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # EasyPanel construye la punta actual de main, no un commit puntual: si main avanzó
+      # desde el commit que validó este ci, se omite y despliega el ci del commit nuevo.
+      - name: Verificar que el commit validado sigue siendo la punta de main
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA_VALIDADO: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          punta=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
+          if [ "$punta" != "$SHA_VALIDADO" ]; then
+            echo "main avanzó a $punta; este ci validó $SHA_VALIDADO. Se omite el deploy."
+            echo "OMITIR=1" >> "$GITHUB_ENV"
+          fi
+
       - name: Disparar el deploy en EasyPanel
+        if: env.OMITIR != '1'
         env:
           URL_DE_DEPLOY: ${{ secrets.EASYPANEL_DEPLOY_URL }}
         run: |
