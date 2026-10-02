@@ -64,11 +64,15 @@ import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresio
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
 import {
+  aClienteListado,
+  aMedioPagoListado,
   buscarArticuloOffline,
+  buscarClientesOffline,
   formatearVejezDeInstantanea,
   resolverPreciosOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
+import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import {
   guardarIntervaloDeSincronizacion,
   INTERVALO_MAXIMO_MINUTOS,
@@ -78,7 +82,7 @@ import {
   normalizarIntervaloEnMinutos,
 } from '../pos/intervaloDeSincronizacion'
 import { construirNumeroVisible, mensajeDeRechazoOffline, type MotivoRechazoOffline } from '../pos/outboxOffline'
-import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
+import { medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
@@ -904,13 +908,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const clienteRestauradoDelBorradorRef = useRef(borradorInicial?.clienteSeleccionado != null)
   const [terminoCliente, setTerminoCliente] = useState('')
   const [buscandoClientes, setBuscandoClientes] = useState(false)
+  // Error de la búsqueda de clientes; la carga inicial tiene su propio slot (`errorCargaClientes`),
+  // que la copia local del escritorio puede volver innecesario sin tocar el de la búsqueda.
   const [errorClientes, setErrorClientes] = useState('')
+  const [errorCargaClientes, setErrorCargaClientes] = useState('')
+  const [errorCargaClientesEsDeRed, setErrorCargaClientesEsDeRed] = useState(false)
   const generacionClientesRef = useRef(0)
   // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
   // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
+  // `true` cuando `opcionesClientes` salió de la instantánea local (búsqueda local o arranque sin
+  // respuesta del servidor), no de `GET /clientes`.
+  const opcionesDesdeInstantaneaRef = useRef(false)
 
   // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
   // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
@@ -966,16 +977,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // checkout en vuelo, ni con el gate de turno o el ticket ya emitido en pantalla).
   const [buscadorAbierto, setBuscadorAbierto] = useState(false)
 
-  const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
-  const [errorMedios, setErrorMedios] = useState('')
+  // Lo que respondió el servidor. En el POS de escritorio, mientras no hay respuesta o si falló por
+  // falta de red, la pantalla usa los de la instantánea local (`medios`/`errorMedios`, derivados
+  // más abajo junto a `instantaneaDelPuntoVenta`).
+  const [mediosDelServidor, setMedios] = useState<MedioPagoListado[] | null>(null)
+  const [errorMediosDelServidor, setErrorMedios] = useState('')
+  const [errorMediosEsDeRed, setErrorMediosEsDeRed] = useState(false)
 
   // stage-pos-adjustments: modal de consulta de saldo + pago a cuenta — nunca bajo
   // `?idPresupuesto=` (esa venta congelada no tiene ningún cliente que el cajero pueda cambiar
   // acá adentro).
   const [modalCuentaCorrienteAbierto, setModalCuentaCorrienteAbierto] = useState(false)
 
-  const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
-  const [errorParametros, setErrorParametros] = useState('')
+  // Mismo criterio que `mediosDelServidor`: `parametros`/`errorParametros` se derivan más abajo.
+  const [parametrosDelServidor, setParametros] = useState<{ toleranciaPago: number } | null>(null)
+  const [errorParametrosDelServidor, setErrorParametros] = useState('')
+  const [errorParametrosEsDeRed, setErrorParametrosEsDeRed] = useState(false)
+  // Se incrementa para volver a pedir la tolerancia cuando vuelve la red (ver el efecto de
+  // recarga de datos locales, más abajo).
+  const [recargaDeParametros, setRecargaDeParametros] = useState(0)
   const generacionParametrosRef = useRef(0)
 
   const proximaFilaPagoIdRef = useRef(borradorInicial?.proximoIdFilaPago ?? 1)
@@ -1013,9 +1033,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // (cargando o la consulta falló) — nunca se habilita vender sin una confirmación positiva de
   // turno abierto (fail-closed), mismo criterio que el resto de las precondiciones de "Cobrar".
   // Nunca corre bajo `?idPresupuesto=` (esa venta ya viene congelada, sin escaneo/carrito propio).
-  const [turno, setTurno] = useState<TurnoResumen | null>(null)
-  const [cargandoTurno, setCargandoTurno] = useState(false)
-  const [errorTurno, setErrorTurno] = useState('')
+  //
+  // En el POS de escritorio, mientras la consulta no respondió o si falló por falta de red, rige el
+  // último turno abierto que el servidor confirmó para este punto de venta (`turnoLocal`,
+  // persistido en el dispositivo); `turno`/`cargandoTurno`/`errorTurno` se derivan más abajo. Ese
+  // turno local nunca se inventa: solo existe si el servidor alguna vez lo confirmó.
+  const [turnoDelServidor, setTurno] = useState<TurnoResumen | null>(null)
+  const [cargandoTurnoDelServidor, setCargandoTurno] = useState(false)
+  const [errorTurnoDelServidor, setErrorTurno] = useState('')
+  const [errorTurnoEsDeRed, setErrorTurnoEsDeRed] = useState(false)
   const generacionTurnoRef = useRef(0)
 
   // judgment-day ronda 1 (T2): "Cerrar caja" vuelve a consultar el turno abierto ANTES de navegar
@@ -1163,12 +1189,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     ? (puntosVenta.find((p) => p.id === idPuntoVentaDelPresupuesto) ?? null)
     : puntoVentaDeSesion
 
-  const medioPorId = useMemo(() => {
-    const indice: Record<number, MedioPagoListado> = {}
-    for (const m of medios ?? []) indice[m.id] = m
-    return indice
-  }, [medios])
-
   // Intervalo del ciclo automático, configurable por el cajero y persistido por dispositivo.
   const [minutosDeSincronizacion, setMinutosDeSincronizacion] = useState(leerIntervaloDeSincronizacion)
   const [textoMinutosDeSincronizacion, setTextoMinutosDeSincronizacion] = useState(() => String(minutosDeSincronizacion))
@@ -1192,17 +1212,77 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
-  // Venta local primero: con una instantánea de ESTE punto de venta y el Consumidor Final como
-  // cliente, el escaneo, la vista previa y el cobro se resuelven contra la instantánea sin esperar
-  // la red (decisión del dueño: un precio algo viejo es aceptable, una caja lenta no). Cualquier
-  // otro caso (otro cliente, sin instantánea, `?idPresupuesto=`) sigue el camino online.
+  // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo y la vista previa
+  // se resuelven contra la instantánea, en la lista del cliente elegido, sin esperar la red
+  // (decisión del dueño: un precio algo viejo es aceptable, una caja lenta no). El cobro local
+  // sigue siendo solo del Consumidor Final (`admisibilidadDeVentaOffline`); cualquier otro cliente
+  // cobra por el camino online.
   const instantaneaDelPuntoVenta =
     !modoPresupuesto &&
     sincronizacionOffline.instantanea !== null &&
     sincronizacionOffline.instantanea.idPuntoVenta === puntoVentaSeleccionada?.id
       ? sincronizacionOffline.instantanea
       : null
-  const ventaLocalPrimero = instantaneaDelPuntoVenta !== null && clienteAdmitidoOffline(clienteSeleccionado)
+
+  // Datos locales para el POS de escritorio (decisiones 6 y 7 del dueño): medios de pago y
+  // tolerancia salen de la instantánea mientras el servidor no respondió o si falló por falta de
+  // red — nunca ante un rechazo real del servidor, que se sigue mostrando como hoy. Apenas llega la
+  // respuesta del servidor, reemplaza a la copia local.
+  const datosLocalesDisponibles = corriendoEnTauri() && instantaneaDelPuntoVenta !== null
+  const mediosLocales = useMemo(
+    () => (datosLocalesDisponibles && instantaneaDelPuntoVenta ? instantaneaDelPuntoVenta.mediosDePago.map(aMedioPagoListado) : null),
+    [datosLocalesDisponibles, instantaneaDelPuntoVenta],
+  )
+  // Un rechazo real deja `mediosDelServidor` en `[]` (ver `cargarMediosDePago`): solo la espera y la
+  // falta de red lo dejan en `null`.
+  const usarMediosLocales = mediosDelServidor === null && mediosLocales !== null
+  const medios = usarMediosLocales ? mediosLocales : mediosDelServidor
+  const errorMedios = usarMediosLocales ? '' : errorMediosDelServidor
+
+  const usarParametrosLocales =
+    parametrosDelServidor === null &&
+    datosLocalesDisponibles &&
+    (errorParametrosDelServidor === '' || errorParametrosEsDeRed)
+  const parametros =
+    usarParametrosLocales && instantaneaDelPuntoVenta ? { toleranciaPago: instantaneaDelPuntoVenta.toleranciaPago } : parametrosDelServidor
+  const errorParametros = usarParametrosLocales ? '' : errorParametrosDelServidor
+
+  // Último turno abierto confirmado por el servidor para este punto de venta (solo escritorio).
+  const [turnoLocal, setTurnoLocal] = useState(() =>
+    corriendoEnTauri() && !modoPresupuesto && puntoVentaDeSesion ? leerTurnoConfirmadoLocal(puntoVentaDeSesion.id) : null,
+  )
+  const turnoLocalDelPuntoVenta = turnoLocal !== null && turnoLocal.idPuntoVenta === puntoVentaSeleccionada?.id ? turnoLocal : null
+  const usarTurnoLocal =
+    !modoPresupuesto &&
+    turnoDelServidor === null &&
+    turnoLocalDelPuntoVenta !== null &&
+    (cargandoTurnoDelServidor || errorTurnoEsDeRed)
+  const turno = usarTurnoLocal ? turnoLocalDelPuntoVenta : turnoDelServidor
+  const cargandoTurno = usarTurnoLocal ? false : cargandoTurnoDelServidor
+  const errorTurno = usarTurnoLocal ? '' : errorTurnoDelServidor
+
+  /** Lo que el servidor confirmó sobre el turno abierto: se aplica y, en el escritorio, queda como
+   * la copia local (o la borra, si no hay turno abierto). Nunca se llama con el resultado de un
+   * error: un fallo no confirma nada. */
+  function aplicarTurnoConfirmado(confirmado: TurnoResumen | null) {
+    setTurno(confirmado)
+    if (!corriendoEnTauri() || modoPresupuesto || !puntoVentaSeleccionada) return
+    guardarTurnoConfirmadoLocal(puntoVentaSeleccionada.id, confirmado)
+    setTurnoLocal(confirmado)
+  }
+
+  // Algún dato de la pantalla viene de la copia local porque el servidor no se pudo alcanzar.
+  const datosLocalesPorFaltaDeRed =
+    (usarMediosLocales && errorMediosEsDeRed) ||
+    (usarParametrosLocales && errorParametrosEsDeRed) ||
+    (usarTurnoLocal && errorTurnoEsDeRed) ||
+    (datosLocalesDisponibles && errorCargaClientesEsDeRed)
+
+  const medioPorId = useMemo(() => {
+    const indice: Record<number, MedioPagoListado> = {}
+    for (const m of medios ?? []) indice[m.id] = m
+    return indice
+  }, [medios])
 
   // judgment-day ronda 2 (WARNING): salida real para una venta que "necesita atención" —
   // reintentar (seguro, idempotente por número preasignado + contenido) o descartar (con
@@ -1246,17 +1326,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   // Carga inicial: clientes (para encontrar el Consumidor Final por defecto, spec: "Omitted
   // idCliente defaults to Consumidor Final") y medios de pago (panel de pagos, Slice 7). Cada uno
-  // con su propio try/catch: que uno falle no bloquea al otro.
-  useEffect(() => {
-    let vigente = true
-
+  // con su propio try/catch y su propia generación: que uno falle no bloquea al otro, y una
+  // respuesta tardía de una carga anterior (la del arranque, cuando ya se reintentó al volver la
+  // red) nunca pisa a la más nueva.
+  function cargarClientesIniciales() {
     const generacionClientes = (generacionClientesRef.current += 1)
 
     clienteDeClientes
       .listar('', false)
       .then((pagina) => {
-        if (!vigente || generacionClientesRef.current !== generacionClientes) return
+        if (!montadoRef.current || generacionClientesRef.current !== generacionClientes) return
+        opcionesDesdeInstantaneaRef.current = false
         setOpcionesClientes(pagina.items)
+        setErrorCargaClientes('')
+        setErrorCargaClientesEsDeRed(false)
         // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
         // presupuesto (efecto dedicado más abajo, hidrata el registro completo por id) — el
         // default de Consumidor Final NUNCA escribe acá bajo este modo, mismo criterio que el
@@ -1266,36 +1349,69 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           consumidorFinalRef.current = consumidorFinal
           // stage-pos-adjustments: un cliente restaurado desde el borrador (ver más arriba) ya
           // dejó al cajero exactamente donde estaba antes de navegar afuera — el default de
-          // Consumidor Final nunca lo pisa.
+          // Consumidor Final nunca lo pisa. Tampoco pisa a un cliente que el cajero eligió
+          // mientras esta carga estaba en vuelo (con la copia local ya pudo elegir uno).
           if (!clienteRestauradoDelBorradorRef.current) {
-            setClienteSeleccionado(consumidorFinal)
+            setClienteSeleccionado((prev) => (prev === null || prev.esConsumidorFinal ? consumidorFinal : prev))
           }
         }
       })
       .catch((e) => {
-        if (!vigente || generacionClientesRef.current !== generacionClientes) return
-        setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
+        if (!montadoRef.current || generacionClientesRef.current !== generacionClientes) return
+        setErrorCargaClientes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
+        setErrorCargaClientesEsDeRed(e instanceof ErrorDeRed)
       })
+  }
+
+  const generacionMediosRef = useRef(0)
+  function cargarMediosDePago() {
+    const generacion = (generacionMediosRef.current += 1)
 
     clienteMediosPago
       .listar(false)
       .then((lista) => {
-        if (!vigente) return
+        if (!montadoRef.current || generacionMediosRef.current !== generacion) return
         setMedios(lista)
+        setErrorMedios('')
+        setErrorMediosEsDeRed(false)
       })
       .catch((e) => {
-        if (!vigente) return
-        setMedios([])
+        if (!montadoRef.current || generacionMediosRef.current !== generacion) return
+        // Sin red no se fija una lista vacía: con la copia local del escritorio la pantalla sigue
+        // con los medios de la instantánea (`medios`, derivado), y sin copia local el aviso de
+        // abajo ya bloquea el cobro.
+        if (!(e instanceof ErrorDeRed)) setMedios([])
         setErrorMedios(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los medios de pago. No se puede cobrar.')
+        setErrorMediosEsDeRed(e instanceof ErrorDeRed)
       })
+  }
 
-    return () => {
-      vigente = false
+  useEffect(() => {
+    cargarClientesIniciales()
+    cargarMediosDePago()
+    // Corre una sola vez por instancia: `PantallaPos` se remonta entera por `key` ante cualquier
+    // cambio de punto de venta/presupuesto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Consumidor Final y primera página de clientes desde la instantánea local (solo escritorio),
+  // mientras el servidor no los trajo: con un arranque sin red (o una red lenta) el cajero vende
+  // igual. Corre cuando aparece la instantánea; si la carga del servidor ya fijó el Consumidor
+  // Final, no hace nada.
+  useEffect(() => {
+    if (!datosLocalesDisponibles || !instantaneaDelPuntoVenta || consumidorFinalRef.current !== null) return
+    const consumidorFinalLocal = instantaneaDelPuntoVenta.clientes.find((c) => c.esConsumidorFinal)
+    if (!consumidorFinalLocal) return
+    const consumidorFinal = aClienteListado(consumidorFinalLocal)
+    consumidorFinalRef.current = consumidorFinal
+    if (opcionesClientes.length === 0) opcionesDesdeInstantaneaRef.current = true
+    setOpcionesClientes((prev) => (prev.length === 0 ? buscarClientesOffline(instantaneaDelPuntoVenta, '').map(aClienteListado) : prev))
+    if (!clienteRestauradoDelBorradorRef.current) {
+      setClienteSeleccionado((prev) => prev ?? consumidorFinal)
     }
-    // `modoPresupuesto` es estable durante toda la vida de esta instancia (deriva de la prop
-    // `idPresupuesto`, y `PantallaPos` se remonta entera por `key` cuando cambia) — se declara
-    // igual para dejar el efecto exhaustivo, nunca dispara una segunda corrida.
-  }, [modoPresupuesto])
+    // `opcionesClientes` se lee solo para marcar el origen de la lista; no debe re-disparar la siembra.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datosLocalesDisponibles, instantaneaDelPuntoVenta])
 
   // stage-pos-adjustments (JD-2): un cliente restaurado desde el borrador (navegación afuera y
   // vuelta) trae el `ClienteListado` cacheado en el momento en que se guardó el borrador — su
@@ -1363,6 +1479,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (!vigente || generacionParametrosRef.current !== generacion) return
         setParametros({ toleranciaPago: Number(tolerancia.valor) })
         setErrorParametros('')
+        setErrorParametrosEsDeRed(false)
       })
       .catch((e) => {
         if (!vigente || generacionParametrosRef.current !== generacion) return
@@ -1370,12 +1487,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setErrorParametros(
           e instanceof ErrorApi ? e.message : 'No se pudieron cargar los parámetros de pago. No se puede cobrar.',
         )
+        setErrorParametrosEsDeRed(e instanceof ErrorDeRed)
       })
 
     return () => {
       vigente = false
     }
-  }, [puntoVentaSeleccionada])
+  }, [puntoVentaSeleccionada, recargaDeParametros])
 
   /**
    * Consulta el turno abierto del punto de venta — mismo endpoint y criterio de generación que
@@ -1398,7 +1516,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .obtenerAbierto(idPuntoVenta)
       .then((t) => {
         if (generacionTurnoRef.current !== miGeneracion) return
-        setTurno(t)
+        aplicarTurnoConfirmado(t)
+        setErrorTurnoEsDeRed(false)
         // Re-judgment (WARNING, ambos jueces): un `avisoCerrarCaja` viejo ("El turno ya fue
         // cerrado.") no debe sobrevivir a una consulta exitosa posterior — mount o "Reintentar" —
         // que confirma el turno abierto de nuevo; ese aviso es del click anterior, no de este.
@@ -1410,6 +1529,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setErrorTurno(
           e instanceof ErrorApi ? e.message : 'No se pudo consultar el turno abierto de este punto de venta.',
         )
+        setErrorTurnoEsDeRed(e instanceof ErrorDeRed)
       })
       .finally(() => {
         if (generacionTurnoRef.current !== miGeneracion) return
@@ -1434,6 +1554,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modoPresupuesto, puntoVentaSeleccionada])
 
+  // Cuando la red vuelve (o cada vez que la sincronización vuelve a verificar la instantánea contra
+  // el servidor), se piden de nuevo los datos que quedaron con la copia local por falta de red: lo
+  // que responda el servidor reemplaza a la copia local. Un pedido que vuelve a fallar deja todo
+  // como estaba y no se reintenta hasta la próxima verificación.
+  useEffect(() => {
+    if (!sincronizacionOffline.enLinea) return
+    if (errorCargaClientesEsDeRed) cargarClientesIniciales()
+    if (errorMediosEsDeRed) cargarMediosDePago()
+    if (errorParametrosEsDeRed) setRecargaDeParametros((n) => n + 1)
+    if (errorTurnoEsDeRed && !modoPresupuesto && puntoVentaSeleccionada) consultarTurno(puntoVentaSeleccionada.id)
+    // Solo lo disparan la vuelta de la red y una verificación nueva; los indicadores de error se
+    // leen al momento de correr.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizacionOffline.enLinea, sincronizacionOffline.verificacionesConElServidor])
+
   /** "Reintentar" del aviso de error de turno — vuelve a consultar con el mismo camino que el
    * mount (mismo guard de generación: una respuesta vieja en vuelo desde antes nunca pisa la de
    * este reintento). El botón queda `disabled` mientras `cargandoTurno` es `true`, pero eso solo
@@ -1457,8 +1592,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   function turnoConfirmadoAbierto(nuevoTurno: TurnoResumen) {
     generacionTurnoRef.current += 1
     setErrorTurno('')
+    setErrorTurnoEsDeRed(false)
     setCargandoTurno(false)
-    setTurno(nuevoTurno)
+    aplicarTurnoConfirmado(nuevoTurno)
     // Re-judgment (WARNING, ambos jueces): mismo criterio que en `consultarTurno` — "Abrir turno"
     // (gate propio o safety-net del 409) confirma un turno abierto nuevo, así que cualquier aviso
     // de "El turno ya fue cerrado." de un click anterior de "Cerrar caja" queda obsoleto.
@@ -1530,7 +1666,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       if (generacionTurnoRef.current !== miGeneracion) return
 
       if (!turnoReal) {
-        setTurno(null)
+        aplicarTurnoConfirmado(null)
         setAvisoCerrarCaja('El turno ya fue cerrado.')
         return
       }
@@ -1742,7 +1878,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     generacionTurnoRef.current += 1
     setErrorTurno('')
     setCargandoTurno(false)
-    setTurno(null)
+    aplicarTurnoConfirmado(null)
     setAvisoCerrarCaja('')
   }
 
@@ -1953,16 +2089,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return
     }
 
-    // Venta local primero: si la instantánea de este punto de venta cubre TODAS las líneas y el
-    // cliente es el Consumidor Final, la vista previa sale de ahí, sin red ni debounce. La
+    // Venta local primero: si la instantánea de este punto de venta tiene precio para TODAS las
+    // líneas en la lista del cliente elegido, la vista previa sale de ahí, sin red ni debounce. La
     // instantánea queda congelada en `instantaneaDeLaVistaPreviaRef`: es la que `cobrar()` usa
-    // para encolar, así se cobra exactamente lo que el cajero vio.
+    // para encolar (solo el Consumidor Final se encola; otro cliente cobra online igual), así se
+    // cobra exactamente lo que el cajero vio.
     const instantaneaLocal = sincronizacionOffline.instantanea
     if (
+      !modoPresupuesto &&
       instantaneaLocal !== null &&
       instantaneaLocal.idPuntoVenta === puntoVentaSeleccionada.id &&
-      clienteAdmitidoOffline(clienteSeleccionado) &&
-      todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal)
+      todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
     ) {
       setPrecios(resolverPreciosOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio))
       setAvisoPrecios('')
@@ -2153,7 +2290,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
     // un código que no está (un artículo nuevo que todavía no sincronizó) va a buscarse online.
-    if (ventaLocalPrimero && instantaneaDelPuntoVenta) {
+    if (instantaneaDelPuntoVenta) {
       const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
       if (desdeInstantanea) {
         const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(desdeInstantanea)
@@ -2202,14 +2339,29 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
+  /** Busca primero en la instantánea local, al instante y también sin red. Solo va al servidor si
+   * no hay instantánea o si la copia local no encontró a nadie y hay señal (un cliente dado de alta
+   * después de la última sincronización). */
   async function buscarClientes() {
     if (buscandoClientes || cobrandoRef.current) return
     const generacion = (generacionClientesRef.current += 1)
-    setBuscandoClientes(true)
     setErrorClientes('')
+
+    if (instantaneaDelPuntoVenta) {
+      const locales = buscarClientesOffline(instantaneaDelPuntoVenta, terminoCliente)
+      if (locales.length > 0 || !sincronizacionOffline.enLinea) {
+        opcionesDesdeInstantaneaRef.current = true
+        setOpcionesClientes(locales.map(aClienteListado))
+        if (locales.length === 0) setErrorClientes('Sin conexión: no se encontró ningún cliente en la copia local.')
+        return
+      }
+    }
+
+    setBuscandoClientes(true)
     try {
       const pagina = await clienteDeClientes.listar(terminoCliente, false)
       if (generacionClientesRef.current !== generacion) return
+      opcionesDesdeInstantaneaRef.current = false
       setOpcionesClientes(pagina.items)
     } catch (e) {
       if (generacionClientesRef.current === generacion) {
@@ -2238,6 +2390,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (cobrandoRef.current) return
     const encontrado = fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).find((c) => c.id === id)
     setClienteSeleccionado(encontrado ?? null)
+    // Un cliente de la copia local trae el saldo de la última sincronización: con señal se trae
+    // el registro del servidor en segundo plano (la vista previa ya arrancó con el local).
+    if (encontrado && opcionesDesdeInstantaneaRef.current && sincronizacionOffline.enLinea) {
+      refrescarClienteSeleccionado(encontrado.id)
+    }
   }
 
   function agregarFilaPago() {
@@ -2491,7 +2648,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               >
                 {sincronizacionOffline.sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
               </button>
-              <span className="text-muted">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.instantanea.momento, new Date())}</span>
+              <span className="text-muted">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? sincronizacionOffline.instantanea.momento, new Date())}</span>
               <label className="d-flex align-items-center gap-1 text-muted mb-0">
                 cada
                 <input
@@ -2706,6 +2863,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         const resultado = await sincronizacionOffline.encolarVentaOffline({
           solicitudBase: solicitud,
           esConsumidorFinal: clienteSeleccionado.esConsumidorFinal,
+          idListaPrecio: clienteSeleccionado.idListaPrecio,
           pagos: pagosConVuelto,
           instantaneaCongelada: instantanea,
         })
@@ -2717,6 +2875,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           idCliente: clienteSeleccionado.id,
           lineas,
           instantanea,
+          idListaPrecio: clienteSeleccionado.idListaPrecio,
           pagos: aPagosDeVenta(pagosConVuelto),
           ahora: new Date(),
         })
@@ -2842,7 +3001,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         // …/abierto` en vuelo desde antes (ej. un "Cerrar caja" concurrente) que pudiera pisar
         // este reset con un "abierto" stale.
         generacionTurnoRef.current += 1
-        setTurno(null)
+        aplicarTurnoConfirmado(null)
         setGateTurno(true)
       } else {
         setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
@@ -3138,15 +3297,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {bloqueadoPorTurno && !cargandoTurno && errorTurno === '' && (
               <div className="alert alert-warning rounded-0 py-1 px-2 small">Caja cerrada: abrí la caja para vender.</div>
             )}
-            {/* stage-pos-venta-offline-web (Parte A/E, "mostrar la vejez de la instantánea" +
-                "las ofertas por cantidad mínima > 1 no se reflejan offline, avisarlo donde
-                importa"): solo mientras la venta ESTÁ apoyándose en la instantánea (sin
-                conexión) — online la vejez del catálogo local es irrelevante, el precio siempre
-                sale fresco de `POST /api/ofertas/resolver`. */}
-            {!modoPresupuesto && !sincronizacionOffline.enLinea && sincronizacionOffline.instantanea && (
+            {/* Solo mientras la pantalla se apoya en la copia local por falta de red: la
+                sincronización no alcanza al servidor, o alguna carga del arranque (clientes,
+                medios, tolerancia, turno) falló sin red. La vejez es la de la última verificación
+                de la instantánea contra el servidor. */}
+            {!modoPresupuesto && instantaneaDelPuntoVenta && (!sincronizacionOffline.enLinea || datosLocalesPorFaltaDeRed) && (
               <div className="alert alert-secondary rounded-0 py-1 px-2 small">
-                Sin conexión: vendiendo con la instantánea local ({formatearVejezDeInstantanea(sincronizacionOffline.instantanea.momento, new Date())}).
-                No refleja ofertas por cantidad mínima mayor a 1.
+                Sin conexión — datos de{' '}
+                {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? instantaneaDelPuntoVenta.momento, new Date())}. Se vende con la
+                copia local de este dispositivo.
               </div>
             )}
             {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
@@ -3318,6 +3477,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
         <div className="col-lg-4">
           <Box titulo="Datos de la venta">
+            {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
+              <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCargaClientes}</div>
+            )}
             {errorClientes && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorClientes}</div>}
 
             <div className="mb-2">
@@ -3331,15 +3493,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
               >
-                {/* stage-pos-venta-offline-web (Parte E, "la instantánea solo cotiza al
-                    Consumidor Final"): proactivo, mismo criterio que el filtro de medios de
-                    pago — el rechazo real vive en `admisibilidadDeVentaOffline`. El cliente YA
-                    elegido nunca desaparece de la lista aunque no sea CF (`fusionarOpcionesCliente`
-                    lo mantiene) — perderlo de la vista sin que el cajero lo haya tocado sería más
-                    confuso que dejarlo, la venta offline lo va a rechazar igual si no cambia. */}
-                {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado)
-                  .filter((c) => sincronizacionOffline.enLinea || c.esConsumidorFinal || c.id === clienteSeleccionado?.id)
-                  .map((c) => (
+                {/* Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
+                    sale de su propia lista. El cobro local sigue siendo solo del Consumidor Final
+                    (`admisibilidadDeVentaOffline`), y el aviso de abajo lo dice. */}
+                {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
                     <option key={c.id} value={c.id}>
                       {etiquetaDeCliente(c)}
                     </option>
@@ -3350,7 +3507,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               )}
             </div>
 
-            {!modoPresupuesto && sincronizacionOffline.enLinea && (
+            {!modoPresupuesto && (sincronizacionOffline.enLinea || instantaneaDelPuntoVenta !== null) && (
               <div className="input-group input-group-sm mb-3">
                 <input
                   type="search"

@@ -13,7 +13,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AlmacenClaveValor } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
-import { guardarInstantaneaLocal, leerInstantaneaLocal, preciosVigentesOffline, todasLasLineasTienenPrecioOffline } from './instantaneaOffline'
+import {
+  esInstantaneaValida,
+  guardarInstantaneaLocal,
+  leerInstantaneaLocal,
+  precioEnLista,
+  preciosVigentesOffline,
+  todasLasLineasTienenPrecioOffline,
+  type InstantaneaLocal,
+} from './instantaneaOffline'
 import {
   admisibilidadDeVentaOffline,
   agregarAOutbox,
@@ -45,6 +53,10 @@ import type { ComportamientoMedioPago, InstantaneaDePos, LineaDeVenta, Solicitud
 /** Tope de espera del ciclo de arranque antes de habilitar la venta: con una red que cuelga, la
  * venta se habilita igual con la instantánea que haya y el ciclo sigue en segundo plano. */
 export const LIMITE_DE_SINCRONIZACION_INICIAL_MS = 15_000
+
+/** Con una instantánea local utilizable, el arranque no retiene la venta más que esto: con una red
+ * lenta se vende con la copia local y el ciclo sigue en segundo plano. */
+export const LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS = 3_000
 
 /** La guarda de cierre de turno del servidor rechaza un reporte de rendición de más de 5 minutos
  * (`ReglaDeRendicionDeCola.VentanaDeFrescura`) sobre el bloque vivo. El intervalo de sincronización
@@ -103,9 +115,16 @@ export type EstadoDeColaLocal = { pendientes: number; conError: number }
 
 export type ResultadoDeSincronizacionOffline = {
   instantanea: InstantaneaDePos | null
+  /** Hora local de la última verificación exitosa de `instantanea` contra el servidor (un `200` o un
+   * `304`) — la que corresponde mostrar como vejez de los datos locales. `null` sin instantánea. */
+  verificadaEn: string | null
+  /** Cuántas veces el servidor respondió el pedido de la instantánea (un `200` o un `304`) desde que
+   * montó el hook: cada incremento prueba que hay red. Cargar la copia local no lo mueve. */
+  verificacionesConElServidor: number
   outboxCount: number
-  /** Señal proactiva para la UI (deshabilitar cuenta corriente / clientes no-CF ANTES de un
-   * intento de venta, no solo después de que falle) — arranca en `navigator.onLine` (optimista:
+  /** Señal proactiva para la UI (deshabilitar cuenta corriente, avisar que sin conexión solo se
+   * vende al Consumidor Final, buscar clientes solo en la copia local) ANTES de un intento, no solo
+   * después de que falle — arranca en `navigator.onLine` (optimista:
    * un `false` de entrada bloquearía la primera venta del día sin necesidad) y se corrige con el
    * resultado real del primer ciclo. Nunca es la fuente de verdad del fallback de escaneo/precio/
    * checkout (esa sigue siendo el `ErrorDeRed` real de cada intento) — solo gatea qué opciones
@@ -124,9 +143,10 @@ export type ResultadoDeSincronizacionOffline = {
   /** `true` mientras corre un ciclo completo (automático, de arranque o manual). */
   sincronizando: boolean
   /** `true` desde que el hook se activa hasta que termina el primer ciclo (o vence
-   * `LIMITE_DE_SINCRONIZACION_INICIAL_MS`) — `Pos.tsx` no habilita "Cobrar" antes, para no vender
-   * con una instantánea vieja cuando hay red para refrescarla. Sin red el ciclo termina enseguida
-   * y la venta se habilita con la instantánea que haya. */
+   * `LIMITE_DE_SINCRONIZACION_INICIAL_MS`, o `LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS`
+   * desde que aparece una instantánea local de este punto de venta) — `Pos.tsx` no habilita
+   * "Cobrar" antes, para no vender con una instantánea vieja cuando hay red para refrescarla. Sin
+   * red el ciclo termina enseguida y la venta se habilita con la instantánea que haya. */
   sincronizacionInicialPendiente: boolean
   /** Ciclo completo a pedido (drenar + refrescar la instantánea + reponer + rendir). Un pedido
    * mientras otro ciclo corre devuelve ese mismo ciclo: nunca corren dos a la vez. */
@@ -137,6 +157,8 @@ export type ResultadoDeSincronizacionOffline = {
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
+    /** Lista del cliente de la venta: cada línea se cobra con su precio en esta lista. */
+    idListaPrecio: number
     pagos: readonly { comportamiento: ComportamientoMedioPago }[]
     /** judgment-day ronda 1 (WARNING): la instantánea a usar para resolver precio/descuento de
      * cada línea — inyectable a propósito para que `Pos.tsx` pueda pasar la MISMA instantánea que
@@ -164,21 +186,20 @@ export type ResultadoDeSincronizacionOffline = {
   descartarVentaConError: (idLocal: string) => Promise<boolean>
 }
 
-/** Enriquece cada línea con el precio congelado de la instantánea, en el tramo que corresponde a
- * SU cantidad (`preciosVigentesOffline` — la misma función que resuelve la vista previa en
- * pantalla, para que lo mostrado y lo cobrado no puedan diferir: este payload es el que el
- * servidor cobra literal). `null` si CUALQUIER línea no tiene artículo en la instantánea. Defensa
+/** Enriquece cada línea con el precio congelado de la instantánea en la lista de la venta, en el
+ * tramo que corresponde a SU cantidad (`preciosVigentesOffline` — la misma función que resuelve la
+ * vista previa en pantalla, para que lo mostrado y lo cobrado no puedan diferir: este payload es el
+ * que el servidor cobra literal). `null` si CUALQUIER línea no tiene precio en esa lista. Defensa
  * en profundidad únicamente: el gate real (todas o ninguna) es
- * `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar esto
- * (judgment-day ronda 1, SUGGESTION) — este `if (!articulo) return null` nunca debería disparar en
- * la práctica, mismo criterio que `comprobanteOfflineSintetico.ts`. */
-function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos): LineaDeVenta[] | null {
+ * `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar esto. */
+function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos, idListaPrecio: number): LineaDeVenta[] | null {
   const porId = new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
   const enriquecidas: LineaDeVenta[] = []
   for (const linea of lineas) {
     const articulo = porId.get(linea.idArticulo)
-    if (!articulo) return null
-    const precios = preciosVigentesOffline(articulo, linea.cantidad)
+    const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
+    if (!precio) return null
+    const precios = preciosVigentesOffline(precio, linea.cantidad)
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`
@@ -196,6 +217,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
 
   const [instantanea, setInstantanea] = useState<InstantaneaDePos | null>(null)
+  const [verificadaEn, setVerificadaEn] = useState<string | null>(null)
+  const [verificacionesConElServidor, setVerificacionesConElServidor] = useState(0)
+  // Última instantánea local conocida (persistida o recién descargada): de acá sale la etiqueta del
+  // refresco condicional y lo que se vuelve a persistir con la hora nueva tras un `304`.
+  const instantaneaLocalRef = useRef<InstantaneaLocal | null>(null)
   const [outboxCount, setOutboxCount] = useState(0)
   const [ventasConError, setVentasConError] = useState<VentaRechazada[]>([])
   const [enLinea, setEnLinea] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
@@ -321,12 +347,31 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return true
   }
 
+  /** Adopta una instantánea local como la vigente (estado + etiqueta + persistencia). */
+  async function adoptarInstantaneaLocal(local: Omit<InstantaneaLocal, 'version'>): Promise<void> {
+    instantaneaLocalRef.current = { version: 2, ...local }
+    setInstantanea(local.instantanea)
+    setVerificadaEn(local.verificadaEn)
+    await guardarInstantaneaLocal(almacenRef.current, local)
+  }
+
+  /** `true` si el servidor respondió (hay señal), haya o no contenido nuevo. Con la etiqueta de la
+   * copia local, un contenido sin cambios vuelve como `304` y solo renueva `verificadaEn`. */
   async function refrescarInstantaneaSiHaySenal(): Promise<boolean> {
     try {
-      const fresca = await conTiempoLimite(() => clienteDePos.obtenerInstantanea(), TIEMPO_LIMITE_DE_INSTANTANEA_MS)
-      await guardarInstantaneaLocal(almacenRef.current, fresca)
-      setInstantanea(fresca)
+      const local = instantaneaLocalRef.current
+      const respuesta = await conTiempoLimite(() => clienteDePos.obtenerInstantanea(local?.etag ?? null), TIEMPO_LIMITE_DE_INSTANTANEA_MS)
+      const ahora = new Date().toISOString()
       setEnLinea(true)
+      setVerificacionesConElServidor((n) => n + 1)
+      if (!respuesta.modificada) {
+        if (local !== null) await adoptarInstantaneaLocal({ instantanea: local.instantanea, etag: local.etag, verificadaEn: ahora })
+        return true
+      }
+      // Un servidor anterior a los precios por lista ignora `?version=2` y responde la forma vieja:
+      // se conserva la copia local en vez de cotizar con algo que no se puede leer.
+      if (!esInstantaneaValida(respuesta.cuerpo)) return true
+      await adoptarInstantaneaLocal({ instantanea: respuesta.cuerpo, etag: respuesta.etag, verificadaEn: ahora })
       return true
     } catch (e) {
       // Sin conexión, o el servidor rechazó — la instantánea local (potencialmente vieja) se
@@ -503,12 +548,18 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     return despuesDelDrenado
   }
 
+  // Lo instala el efecto del ciclo de arranque (más abajo) y lo llama la carga inicial al encontrar
+  // una instantánea local de este punto de venta.
+  const liberarArranqueConCopiaLocalRef = useRef<(() => void) | null>(null)
+
   // Carga inicial: instantánea + outbox + bloque YA persistidos, sin esperar ningún fetch — la
   // pantalla tiene que mostrar datos utilizables inmediatamente después de un restart (goal A),
   // incluso si el primer ciclo de red todavía no corrió (o nunca llega a tener señal).
   useEffect(() => {
     if (!activo || idPuntoVenta === null) {
       setInstantanea(null)
+      setVerificadaEn(null)
+      instantaneaLocalRef.current = null
       setOutboxCount(0)
       setVentasConError([])
       setEnLinea(typeof navigator === 'undefined' || navigator.onLine)
@@ -530,7 +581,12 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       if (!vigente) return
       // Si el ciclo de arranque ya trajo una instantánea fresca, la persistida (más vieja) no la
       // pisa.
-      setInstantanea((actual) => actual ?? instantaneaGuardada)
+      if (instantaneaGuardada !== null && instantaneaLocalRef.current === null) {
+        instantaneaLocalRef.current = instantaneaGuardada
+        setInstantanea(instantaneaGuardada.instantanea)
+        setVerificadaEn(instantaneaGuardada.verificadaEn)
+      }
+      if (instantaneaGuardada?.instantanea.idPuntoVenta === idPuntoVenta) liberarArranqueConCopiaLocalRef.current?.()
       setOutboxCount(outboxGuardado.length)
       bloqueRef.current = bloqueRef.current ?? (bloqueGuardado?.idPuntoVenta === idPuntoVenta ? bloqueGuardado : null)
       setVentasConError(rechazadasGuardadas)
@@ -542,7 +598,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   }, [activo, idPuntoVenta])
 
   // Ciclo de arranque: corre una vez al activarse y, hasta que termina (o vence el tope), la
-  // pantalla no habilita la venta.
+  // pantalla no habilita la venta. Si aparece una instantánea local de este punto de venta, el
+  // tope baja a `LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS` contado desde ese momento.
   const [sincronizacionInicialPendiente, setSincronizacionInicialPendiente] = useState(
     activo && idPuntoVenta !== null && sincronizarAntesDeVender,
   )
@@ -558,16 +615,23 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       if (vigente) setSincronizacionInicialPendiente(false)
     }
     const idTope = setTimeout(liberar, LIMITE_DE_SINCRONIZACION_INICIAL_MS)
+    let idTopeConCopiaLocal: ReturnType<typeof setTimeout> | undefined
+    liberarArranqueConCopiaLocalRef.current = () => {
+      if (idTopeConCopiaLocal === undefined) idTopeConCopiaLocal = setTimeout(liberar, LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS)
+    }
     ciclo(idPuntoVenta)
       .catch(() => undefined)
       .finally(() => {
         clearTimeout(idTope)
+        clearTimeout(idTopeConCopiaLocal)
         liberar()
       })
 
     return () => {
       vigente = false
       clearTimeout(idTope)
+      clearTimeout(idTopeConCopiaLocal)
+      liberarArranqueConCopiaLocalRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activo, idPuntoVenta])
@@ -602,6 +666,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   async function encolarVentaOffline(paramsVenta: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
+    idListaPrecio: number
     pagos: readonly { comportamiento: ComportamientoMedioPago }[]
     instantaneaCongelada?: InstantaneaDePos | null
   }): Promise<EncoladoOffline> {
@@ -614,8 +679,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     const lineasBase = paramsVenta.solicitudBase.lineas ?? []
     // judgment-day ronda 1 (SUGGESTION): único gate de la precondición "todas las líneas tienen
     // precio" — delegado a `todasLasLineasTienenPrecioOffline` para que no puedan divergir.
-    const todasConPrecio = instantaneaActual !== null && todasLasLineasTienenPrecioOffline(lineasBase, instantaneaActual)
-    const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual) : null
+    const todasConPrecio = instantaneaActual !== null && todasLasLineasTienenPrecioOffline(lineasBase, instantaneaActual, paramsVenta.idListaPrecio)
+    const lineasEnriquecidas = todasConPrecio && instantaneaActual ? enriquecerLineasConPrecioOffline(lineasBase, instantaneaActual, paramsVenta.idListaPrecio) : null
     const admisibilidad = (hayNumeroDisponible: boolean) =>
       admisibilidadDeVentaOffline({
         esConsumidorFinal: paramsVenta.esConsumidorFinal,
@@ -741,6 +806,8 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   return {
     instantanea,
+    verificadaEn,
+    verificacionesConElServidor,
     outboxCount,
     ventasConError,
     enLinea,

@@ -4,11 +4,16 @@
  * venta ni dispositivo: los deriva el servidor del dispositivo autenticado
  * (`ServicioDeInstantaneaDePos`/`ServicioDeRendicionDeCola`), nunca este cliente.
  */
-import { api } from './cliente'
+import { api, type RespuestaCondicional } from './cliente'
 import type { InstantaneaDePos, SolicitudDeRendicionDeCola } from './tipos'
 
+export const RUTA_INSTANTANEA = '/pos/instantanea?version=2'
+
 export const clienteDePos = {
-  obtenerInstantanea: () => api.get<InstantaneaDePos>('/pos/instantanea'),
+  /** Con la etiqueta de la instantánea que ya se tiene, el servidor responde `304` si el contenido
+   * no cambió (`modificada: false`). */
+  obtenerInstantanea: (etag: string | null): Promise<RespuestaCondicional<InstantaneaDePos>> =>
+    api.getCondicional<InstantaneaDePos>(RUTA_INSTANTANEA, etag),
   /** `POST /api/pos/rendicion-de-cola` — 204 sin cuerpo: el dispositivo declara el estado de su
    * cola local para que el cierre de turno pueda verificarlo (`ReglaDeRendicionDeCola`). */
   rendirCola: (solicitud: SolicitudDeRendicionDeCola, senal?: AbortSignal) =>

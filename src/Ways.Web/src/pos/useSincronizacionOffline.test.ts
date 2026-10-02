@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { INTERVALO_DE_RENDICION_MS, LIMITE_DE_SINCRONIZACION_INICIAL_MS, useSincronizacionOffline } from './useSincronizacionOffline'
+import {
+  INTERVALO_DE_RENDICION_MS,
+  LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS,
+  LIMITE_DE_SINCRONIZACION_INICIAL_MS,
+  useSincronizacionOffline,
+} from './useSincronizacionOffline'
 import {
   agregarAOutbox,
   agregarARechazada,
@@ -12,11 +17,11 @@ import {
   type VentaEnCola,
 } from './outboxOffline'
 import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
-import { guardarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
+import { guardarInstantaneaLocal, leerInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { previaDeLinea } from '../api/ventas'
-import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, SolicitudDeVenta } from '../api/tipos'
+import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
 
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
@@ -34,12 +39,22 @@ vi.mock('../api/ventas', async (importarOriginal) => ({
   },
 }))
 
+/** `obtenerInstantaneaMock` puede devolver directamente una instantánea (se adapta acá a un `200`
+ * con etiqueta `"etag-<momento>"`) o una `RespuestaCondicional` ya armada, como el `304` de
+ * `SIN_CAMBIOS`. Un rechazo pasa tal cual. */
 vi.mock('../api/pos', () => ({
   clienteDePos: {
-    obtenerInstantanea: (...args: unknown[]) => obtenerInstantaneaMock(...args),
+    obtenerInstantanea: (...args: unknown[]) =>
+      Promise.resolve(obtenerInstantaneaMock(...args)).then((r: unknown) =>
+        typeof r === 'object' && r !== null && 'modificada' in r
+          ? r
+          : { modificada: true, cuerpo: r, etag: `"etag-${(r as InstantaneaDePos).momento}"` },
+      ),
     rendirCola: (...args: unknown[]) => rendirColaMock(...args),
   },
 }))
+
+const SIN_CAMBIOS = { modificada: false } as const
 
 /** Mismo fake en memoria que `outboxOffline.test.ts` — evita acoplar este test a IndexedDB real. */
 function almacenFake(): AlmacenClaveValor {
@@ -73,20 +88,30 @@ function almacenFakeConOutboxRoto(): AlmacenClaveValor {
   }
 }
 
-function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+/** Lista del Consumidor Final en estos tests: la venta local se cobra con el precio de esa lista. */
+const LISTA_CF = 1
+
+/** Artículo con UN precio, en `LISTA_CF` salvo que se pida otra: los campos de precio se pasan
+ * planos para que cada caso se lea igual que el payload que produce. */
+type ArticuloConPrecio = Omit<ArticuloDeInstantanea, 'preciosPorLista'> & Omit<PrecioDeListaDeInstantanea, 'idListaPrecio'> & { idListaPrecio: number }
+
+function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
+  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, idListaPrecio = LISTA_CF, ...resto } = sobrescribir
   return {
     idArticulo: 1,
     codigoInterno: 'A0001',
     nombre: 'Coca Cola 1L',
     codigosBarra: ['7790001234567'],
-    precioOriginal: 100,
-    precioFinal: 100,
-    descuentoUnitario: 0,
-    aplicadas: [],
     idAlicuotaIva: 1,
     porcentajeIva: 21,
-    ...sobrescribir,
+    ...resto,
+    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones }],
   }
+}
+
+/** Persiste una instantánea como lo hace el hook, verificada en su propio `momento`. */
+function guardarLocal(almacen: AlmacenClaveValor, instantanea: InstantaneaDePos, etag: string | null = null) {
+  return guardarInstantaneaLocal(almacen, { instantanea, etag, verificadaEn: instantanea.momento })
 }
 
 /** Tramos con valores todos distintos entre sí y del precio plano — ver el mismo criterio en
@@ -94,7 +119,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): Art
 const ESCALON_3: EscalonDeCantidad = { cantidadDesde: 3, precioFinal: 90, descuentoUnitario: 10, aplicadas: [{ idOferta: 31, nombre: '3 o más', descuentoUnitario: 10 }] }
 const ESCALON_6: EscalonDeCantidad = { cantidadDesde: 6, precioFinal: 80, descuentoUnitario: 20, aplicadas: [{ idOferta: 61, nombre: '6 o más', descuentoUnitario: 20 }] }
 
-function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): ArticuloDeInstantanea {
+function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
   return articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [], escalones: [ESCALON_3, ESCALON_6], ...sobrescribir })
 }
 
@@ -103,6 +128,7 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
     momento: '2026-09-20T10:00:00.000Z',
     idPuntoVenta: 7,
     articulos: [articuloFixture()],
+    clientes: [],
     mediosDePago: [],
     toleranciaPago: 0,
     ...sobrescribir,
@@ -143,7 +169,7 @@ beforeEach(() => {
 describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un restart)', () => {
   it('hidrata instantánea/outbox ya persistidos, sin esperar ningún fetch', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await agregarAOutbox(almacen, {
       idLocal: 'a',
       numeroPreasignado: 100,
@@ -179,13 +205,75 @@ describe('useSincronizacionOffline — refresco oportunista de la instantánea',
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
     await waitFor(() => expect(result.current.instantanea?.momento).toBe('2026-09-20T11:00:00.000Z'))
-    await expect(almacen.leer('instantanea')).resolves.toEqual(fresca)
+    await waitFor(async () => expect((await leerInstantaneaLocal(almacen))?.instantanea).toEqual(fresca))
+    expect((await leerInstantaneaLocal(almacen))?.etag).toBe('"etag-2026-09-20T11:00:00.000Z"')
+    expect(result.current.enLinea).toBe(true)
+  })
+
+  it('pide el refresco con la etiqueta de la copia local y, con un 304, conserva el contenido y renueva solo la verificación', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      vi.setSystemTime(new Date('2026-09-20T15:00:00.000Z'))
+      const almacen = almacenFake()
+      const local = instantaneaFixture({ momento: '2026-09-20T10:00:00.000Z' })
+      await guardarLocal(almacen, local, '"etiqueta-local"')
+      obtenerInstantaneaMock.mockResolvedValue(SIN_CAMBIOS)
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+      await waitFor(() => expect(result.current.verificadaEn).toBe('2026-09-20T15:00:00.000Z'))
+      expect(obtenerInstantaneaMock).toHaveBeenCalledWith('"etiqueta-local"')
+      expect(result.current.instantanea).toEqual(local)
+      expect(result.current.enLinea).toBe(true)
+      // Persistida con la hora nueva: un reinicio muestra la vejez de la verificación, no la del contenido.
+      await waitFor(async () => expect((await leerInstantaneaLocal(almacen))?.verificadaEn).toBe('2026-09-20T15:00:00.000Z'))
+      expect((await leerInstantaneaLocal(almacen))?.instantanea).toEqual(local)
+      expect((await leerInstantaneaLocal(almacen))?.etag).toBe('"etiqueta-local"')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sin copia local pide la instantánea sin etiqueta', async () => {
+    const almacen = almacenFake()
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+    expect(obtenerInstantaneaMock).toHaveBeenCalledWith(null)
+  })
+
+  it('sin red la vejez sigue siendo la de la última verificación persistida', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, { instantanea: instantaneaFixture({ momento: '2026-09-20T10:00:00.000Z' }), etag: null, verificadaEn: '2026-09-20T14:30:00.000Z' })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.verificadaEn).toBe('2026-09-20T14:30:00.000Z'))
+    await waitFor(() => expect(result.current.enLinea).toBe(false))
+    expect(result.current.verificadaEn).toBe('2026-09-20T14:30:00.000Z')
+  })
+
+  // Un servidor anterior a los precios por lista ignora `?version=2` y responde la forma vieja.
+  it('una respuesta con la forma anterior no reemplaza la copia local ni se persiste', async () => {
+    const almacen = almacenFake()
+    const local = instantaneaFixture()
+    await guardarLocal(almacen, local)
+    const formaVieja = { momento: '2026-09-20T12:00:00.000Z', idPuntoVenta: 7, articulos: [{ idArticulo: 1, precioOriginal: 1 }], mediosDePago: [], toleranciaPago: 0 }
+    obtenerInstantaneaMock.mockResolvedValue({ modificada: true, cuerpo: formaVieja, etag: null })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.instantanea).toEqual(local)
+    expect((await leerInstantaneaLocal(almacen))?.instantanea).toEqual(local)
     expect(result.current.enLinea).toBe(true)
   })
 
   it('sin señal (ErrorDeRed), conserva la instantánea local previa en vez de borrarla', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     obtenerInstantaneaMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
 
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
@@ -507,7 +595,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
-      esConsumidorFinal: true,
+      esConsumidorFinal: true, idListaPrecio: LISTA_CF,
       pagos: [{ comportamiento: 'Efectivo' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'sin_instantanea' })
@@ -519,14 +607,14 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // `linea_sin_precio` a este nivel).
   it('rechaza con una línea cuyo artículo no está en la instantánea (linea_sin_precio)', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ idArticulo: 1 })] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ idArticulo: 1 })] }))
     await guardarBloque(almacen, bloqueFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
 
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 2, cantidad: 1, codigoBarra: null, idLote: null }] }),
-      esConsumidorFinal: true,
+      esConsumidorFinal: true, idListaPrecio: LISTA_CF,
       pagos: [{ comportamiento: 'Efectivo' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'linea_sin_precio' })
@@ -537,10 +625,10 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // estado ya se haya refrescado en segundo plano — "el precio que se mostró es el que se cobra".
   it('con instantaneaCongelada, usa ESA instantánea para el precio — nunca la más fresca del hook', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 200, precioFinal: 200, descuentoUnitario: 0 })] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 200, precioFinal: 200, descuentoUnitario: 0 })] }))
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
-    await waitFor(() => expect(result.current.instantanea?.articulos[0].precioOriginal).toBe(200))
+    await waitFor(() => expect(result.current.instantanea?.articulos[0].preciosPorLista[0].precioOriginal).toBe(200))
 
     // La instantánea "congelada" (la vieja, la que el cajero vio en pantalla) trae un precio
     // DISTINTO al que el hook tiene ahora — simula un refresco en segundo plano entre la vista
@@ -551,7 +639,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
         instantaneaCongelada: instantaneaVieja,
       })
@@ -565,14 +653,14 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
   it('rechaza cliente no-CF, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
 
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
-      esConsumidorFinal: false,
+      esConsumidorFinal: false, idListaPrecio: LISTA_CF,
       pagos: [{ comportamiento: 'Efectivo' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
@@ -580,14 +668,14 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
   it('rechaza un pago de cuenta corriente, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
 
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
-      esConsumidorFinal: true,
+      esConsumidorFinal: true, idListaPrecio: LISTA_CF,
       pagos: [{ comportamiento: 'CuentaCorriente' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'medio_no_admitido' })
@@ -598,13 +686,13 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
   it('rechaza sin números disponibles', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
 
     const resultado = await result.current.encolarVentaOffline({
       solicitudBase: solicitudFixture(),
-      esConsumidorFinal: true,
+      esConsumidorFinal: true, idListaPrecio: LISTA_CF,
       pagos: [{ comportamiento: 'Efectivo' }],
     })
     expect(resultado).toEqual({ ok: false, motivo: 'sin_numeracion' })
@@ -612,7 +700,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
   it('éxito: toma el próximo número, persiste el bloque decrementado y encola la venta con precio/número', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 120, precioFinal: 100, descuentoUnitario: 20 })] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 120, precioFinal: 100, descuentoUnitario: 20 })] }))
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -621,7 +709,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -640,6 +728,33 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await waitFor(() => expect(result.current.outboxCount).toBe(1))
   })
 
+  it('encola con el precio de la lista pedida, y rechaza si el artículo no tiene precio en esa lista', async () => {
+    const almacen = almacenFake()
+    const articulo: ArticuloDeInstantanea = {
+      ...articuloFixture(),
+      preciosPorLista: [
+        { idListaPrecio: LISTA_CF, precioOriginal: 120, precioFinal: 100, descuentoUnitario: 20, aplicadas: [] },
+        { idListaPrecio: 8, precioOriginal: 90, precioFinal: 81, descuentoUnitario: 9, aplicadas: [] },
+      ],
+    }
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articulo] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let enOtraLista
+    let sinPrecio
+    await act(async () => {
+      enOtraLista = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 8, pagos: [{ comportamiento: 'Efectivo' }] })
+      sinPrecio = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: 99, pagos: [{ comportamiento: 'Efectivo' }] })
+    })
+
+    expect(enOtraLista).toMatchObject({ ok: true })
+    expect((await leerOutbox(almacen))[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 90, descuentoUnitario: 9 })
+    expect(sinPrecio).toEqual({ ok: false, motivo: 'linea_sin_precio' })
+    expect(await leerOutbox(almacen)).toHaveLength(1)
+  })
+
   // judgment-day ronda 2 (SUGGESTION): la cobertura previa de `encolarVentaOffline` con precio
   // offline solo ejercitaba un carrito de UNA línea — acá con cantidad > 1, `cantidad` viaja tal
   // cual (la multiplicación cantidad×descuento es responsabilidad del servidor,
@@ -647,7 +762,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // instantánea, exactamente igual que con cantidad 1.
   it('con cantidad > 1, encola la línea con esa misma cantidad y el precio/descuento bruto de la instantánea (la multiplicación es del servidor)', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 50, precioFinal: 40, descuentoUnitario: 10 })] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 50, precioFinal: 40, descuentoUnitario: 10 })] }))
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -656,7 +771,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 3, codigoBarra: '7790001234567', idLote: null }] }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -671,7 +786,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // tiene que traer el precio/descuento de SU PROPIO artículo, nunca el de la otra.
   it('con un carrito de dos líneas y descuentos mixtos, cada línea encola el precio/descuento de SU PROPIO artículo', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(
+    await guardarLocal(
       almacen,
       instantaneaFixture({
         articulos: [
@@ -693,7 +808,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
             { idArticulo: 2, cantidad: 2, codigoBarra: '7790009999999', idLote: null },
           ],
         }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -713,7 +828,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // distintos, así que elegir mal cualquiera de ellos rompe la aserción.
   it('con una cantidad que cruza un umbral, encola el descuentoUnitario del TRAMO y sigue mandando el precioOriginal bruto como precioUnitario', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -721,7 +836,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 6, codigoBarra: '7790001234567', idLote: null }] }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -735,7 +850,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // muere acá.
   it('con la cantidad por debajo del primer umbral, encola el descuento plano — nunca el del primer tramo', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloConEscalonesFixture()] }))
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -743,7 +858,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }] }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -764,7 +879,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   ])('la vista previa y el payload encolado cobran el mismo importe con cantidad %s', async (_titulo, cantidad) => {
     const almacen = almacenFake()
     const instantanea = instantaneaFixture({ articulos: [articuloConEscalonesFixture()] })
-    await guardarInstantaneaLocal(almacen, instantanea)
+    await guardarLocal(almacen, instantanea)
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -772,13 +887,13 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad, codigoBarra: '7790001234567', idLote: null }] }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
 
     const lineaCarrito = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad }
-    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, 5)[1])
+    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)[1])
 
     const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
     const cobrado = cantidad * ((encolada?.precioUnitario ?? 0) - (encolada?.descuentoUnitario ?? 0))
@@ -790,7 +905,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
   // "Guardada sin conexión", el ticket se imprimía, y no había nada guardado.
   it('si el almacén no puede persistir la venta de forma durable, NUNCA devuelve ok — nada que imprimir ni entregar', async () => {
     const almacen = almacenFakeConOutboxRoto()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -799,7 +914,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -811,7 +926,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
 
   it('no admite dos ventas consecutivas con el MISMO número (avanza el puntero cada vez)', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
     await waitFor(() => expect(result.current.instantanea).not.toBeNull())
@@ -819,10 +934,10 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     let primero
     let segundo
     await act(async () => {
-      primero = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+      primero = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
     })
     await act(async () => {
-      segundo = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+      segundo = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
     })
 
     expect(primero).toMatchObject({ ok: true, numero: 150 })
@@ -1017,7 +1132,7 @@ describe('useSincronizacionOffline — ciclo de arranque y sincronización a ped
 
   it('sin red, el ciclo de arranque termina enseguida y libera la venta con la instantánea local', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
 
     const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
@@ -1043,6 +1158,52 @@ describe('useSincronizacionOffline — ciclo de arranque y sincronización a ped
       })
       expect(result.current.sincronizacionInicialPendiente).toBe(false)
       expect(result.current.sincronizando).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Cláusula: con una instantánea local de ESTE punto de venta, el tope baja a
+  // LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS.
+  it('con una red que cuelga y una copia local, libera la venta al vencer el tope corto', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      await guardarLocal(almacen, instantaneaFixture())
+      obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(result.current.instantanea).not.toBeNull()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS - 1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(false)
+      expect(result.current.sincronizando).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una copia local de OTRO punto de venta no acorta el tope del arranque', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      await guardarLocal(almacen, instantaneaFixture({ idPuntoVenta: 99 }))
+      obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS + 1_000)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(true)
     } finally {
       vi.useRealTimers()
     }
@@ -1099,7 +1260,7 @@ describe('useSincronizacionOffline — ciclo de arranque y sincronización a ped
 describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de una venta nueva', () => {
   it('con el envío de la venta más vieja colgado en la red, una venta nueva se encola igual', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
     await agregarAOutbox(almacen, ventaEnColaFixture(149))
     emitirMock.mockReturnValue(new Promise(() => {}))
@@ -1112,7 +1273,7 @@ describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de u
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture(),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
       })
     })
@@ -1191,13 +1352,13 @@ const BLOQUE_BAJO = bloqueFixture({ desde: 100, proximo: 195, hasta: 200 })
 async function encolarUna(result: { current: ReturnType<typeof useSincronizacionOffline> }) {
   let resultado: Awaited<ReturnType<ReturnType<typeof useSincronizacionOffline>['encolarVentaOffline']>> | undefined
   await act(async () => {
-    resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+    resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
   })
   return resultado
 }
 
 async function montarListo(almacen: AlmacenClaveValor) {
-  await guardarInstantaneaLocal(almacen, instantaneaFixture())
+  await guardarLocal(almacen, instantaneaFixture())
   const hook = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
   await waitFor(() => expect(hook.result.current.sincronizacionInicialPendiente).toBe(false))
   await waitFor(() => expect(hook.result.current.instantanea).not.toBeNull())
@@ -1347,7 +1508,7 @@ describe('useSincronizacionOffline — topes de red', () => {
       reservarNumeracionMock.mockReturnValue(new Promise(() => {}))
       let resultado: unknown
       const encolado = result.current
-        .encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+        .encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
         .then((r) => {
           resultado = r
         })
@@ -1374,7 +1535,7 @@ describe('useSincronizacionOffline — topes de red', () => {
 
     let resultado
     await act(async () => {
-      resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: false, pagos: [{ comportamiento: 'Efectivo' }] })
+      resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: false, idListaPrecio: LISTA_CF, pagos: [{ comportamiento: 'Efectivo' }] })
     })
 
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
@@ -1501,7 +1662,7 @@ describe('useSincronizacionOffline — revisión: nunca numerar con un bloque de
 
   it('una reposición del punto de venta anterior que aterriza después del cambio nunca numera ventas del nuevo', async () => {
     const almacen = almacenFake()
-    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, BLOQUE_BAJO)
     const reserva = promesaControlada<typeof BLOQUE_RESERVADO>()
     reservarNumeracionMock.mockReturnValue(reserva.promesa)
@@ -1527,7 +1688,7 @@ describe('useSincronizacionOffline — revisión: nunca numerar con un bloque de
     await act(async () => {
       resultado = await result.current.encolarVentaOffline({
         solicitudBase: solicitudFixture({ idPuntoVenta: 8 }),
-        esConsumidorFinal: true,
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
         pagos: [{ comportamiento: 'Efectivo' }],
         instantaneaCongelada: instantaneaFixture(),
       })

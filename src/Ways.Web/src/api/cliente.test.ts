@@ -511,3 +511,57 @@ describe('api.descargar', () => {
     expect(crearUrlMock).not.toHaveBeenCalled()
   })
 })
+
+describe('api.getCondicional (refresco condicional de la instantánea)', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('manda If-None-Match con la etiqueta y pide sin la caché HTTP del navegador', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 304, ok: false }))
+
+    await api.getCondicional('/pos/instantanea?version=2', '"abc"')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/pos/instantanea?version=2')
+    expect((init.headers as Record<string, string>)['If-None-Match']).toBe('"abc"')
+    expect(init.cache).toBe('no-store')
+  })
+
+  it('sin etiqueta no manda If-None-Match', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({}) }))
+
+    await api.getCondicional('/pos/instantanea?version=2', null)
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['If-None-Match']).toBeUndefined()
+  })
+
+  it('un 304 resuelve como no modificada, sin leer cuerpo', async () => {
+    const json = vi.fn()
+    fetchMock.mockResolvedValue(respuestaMock({ status: 304, ok: false, json }))
+
+    await expect(api.getCondicional('/pos/instantanea?version=2', '"abc"')).resolves.toEqual({ modificada: false })
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it('un 200 trae el cuerpo y la etiqueta nueva', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, headers: { ETag: '"nueva"' }, json: () => Promise.resolve({ momento: 'x' }) }))
+
+    await expect(api.getCondicional('/pos/instantanea?version=2', '"abc"')).resolves.toEqual({
+      modificada: true,
+      cuerpo: { momento: 'x' },
+      etag: '"nueva"',
+    })
+  })
+
+  it('un error del servidor sigue siendo ErrorApi, y sin red ErrorDeRed', async () => {
+    fetchMock.mockResolvedValueOnce(respuestaMock({ status: 403, ok: false, json: () => Promise.resolve({ codigo: 'prohibido', title: 'No.' }) }))
+    await expect(api.getCondicional('/pos/instantanea?version=2', null)).rejects.toBeInstanceOf(ErrorApi)
+
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(api.getCondicional('/pos/instantanea?version=2', null)).rejects.toBeInstanceOf(ErrorDeRed)
+  })
+})

@@ -12,8 +12,8 @@
  * cantidad, total de línea = bruto − descuento (neto). `subtotal`/`descuentoTotal`/`total` del
  * comprobante son la suma de esas mismas columnas — nunca un cálculo alternativo.
  *
- * El descuento por unidad y la oferta salen de `preciosVigentesOffline` (no de los campos planos
- * del artículo): este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
+ * El descuento por unidad y la oferta salen de `preciosVigentesOffline` sobre el precio de la lista
+ * de la venta (no del precio plano): este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
  * resolvió la vista previa, así que sin ese lookup el ticket impreso quedaría con el descuento de
  * cantidad 1 mientras la pantalla y el payload encolado cobran el del tramo.
  *
@@ -23,7 +23,7 @@
  * y NINGÚN consumidor de este comprobante sintético (`VentaFinalizada`, `ticketDeVenta`) lee esos
  * dos campos — verificado contra ambos archivos antes de fijar este contrato.
  */
-import { preciosVigentesOffline } from './instantaneaOffline'
+import { precioEnLista, preciosVigentesOffline } from './instantaneaOffline'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
 
@@ -38,12 +38,14 @@ export type ParametrosDeComprobanteOfflineSintetico = {
   idCliente: number
   lineas: LineaCarrito[]
   instantanea: InstantaneaDePos
+  /** Lista del cliente de la venta: la misma con la que se resolvió la vista previa y se encoló. */
+  idListaPrecio: number
   pagos: PagoDeVenta[]
   ahora: Date
 }
 
 /**
- * `null` si alguna línea no tiene artículo en la instantánea — el llamador (`Pos.tsx`) ya validó
+ * `null` si alguna línea no tiene precio en la lista de la venta dentro de la instantánea — el llamador (`Pos.tsx`) ya validó
  * esto antes de encolar (`admisibilidadDeVentaOffline`), así que en la práctica nunca debería
  * pasar; devolver `null` en vez de tirar es la misma defensa en profundidad que el resto del
  * módulo offline (nunca confiar ciegamente en que un chequeo anterior corrió).
@@ -58,9 +60,10 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
   for (let indice = 0; indice < params.lineas.length; indice++) {
     const linea = params.lineas[indice]
     const articulo = porId.get(linea.idArticulo)
-    if (!articulo) return null
+    const precio = articulo ? precioEnLista(articulo, params.idListaPrecio) : null
+    if (!articulo || !precio) return null
 
-    const precios = preciosVigentesOffline(articulo, linea.cantidad)
+    const precios = preciosVigentesOffline(precio, linea.cantidad)
     const bruto = redondear(linea.cantidad * precios.precioOriginal)
     const descuento = redondear(precios.descuentoUnitario * linea.cantidad)
     subtotal += bruto

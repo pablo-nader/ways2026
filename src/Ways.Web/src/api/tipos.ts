@@ -788,10 +788,11 @@ export type ResultadoDeResolucion = {
 }
 
 // --- POS: instantánea offline (stage-pos-venta-offline-web) ---
-// Espejo de `Ways.Application.Pos.Contratos` — catálogo con precio ya resuelto y congelado que el
-// POS de escritorio persiste localmente para vender sin red. `precioOriginal`/`precioFinal` NUNCA
-// son `null` acá (a diferencia de `ResultadoDeResolucion`): el servicio ya omite del todo cualquier
-// artículo sin precio vigente, así que la instantánea nunca ofrece algo que no podría cobrar.
+// Espejo de `Ways.Application.Pos.Contratos` — catálogo con precio ya resuelto y congelado en cada
+// lista, más los clientes, que el POS de escritorio persiste localmente para cotizar y vender sin
+// red. `precioOriginal`/`precioFinal` NUNCA son `null` acá (a diferencia de
+// `ResultadoDeResolucion`): una lista sin precio vigente para el artículo directamente no tiene
+// entrada en `preciosPorLista`.
 
 /**
  * Un tramo de precio por cantidad de un artículo de la instantánea — espejo de
@@ -810,32 +811,49 @@ export type EscalonDeCantidad = {
   aplicadas: OfertaAplicada[]
 }
 
-/** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Sin `idArea`: ese
- * campo lo resuelve el servidor del artículo FRESCO al sincronizar, nunca la instantánea local
- * (mismo motivo que el propio contrato del backend documenta). */
+/** Precio de un artículo en UNA lista — espejo de `PrecioDeListaDeInstantanea`. */
+export type PrecioDeListaDeInstantanea = {
+  idListaPrecio: number
+  precioOriginal: number
+  precioFinal: number
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+  /** Tramos de precio por cantidad, ascendentes por `cantidadDesde` y todos con
+   * `cantidadDesde > 1` — nunca incluyen la entrada de cantidad 1, que es el precio plano de
+   * arriba. Ausente/`null` significa que el precio plano rige a toda cantidad. */
+  escalones?: EscalonDeCantidad[] | null
+}
+
+/** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Un artículo sin
+ * precio en una lista no tiene entrada para esa lista en `preciosPorLista`. Sin `idArea`: ese
+ * campo lo resuelve el servidor del artículo FRESCO al sincronizar. */
 export type ArticuloDeInstantanea = {
   idArticulo: number
   codigoInterno: string
   nombre: string
   codigosBarra: string[]
-  precioOriginal: number
-  precioFinal: number
-  descuentoUnitario: number
-  aplicadas: OfertaAplicada[]
   idAlicuotaIva: number
   porcentajeIva: number
-  /**
-   * Tramos de precio por cantidad, ascendentes por `cantidadDesde` y todos con `cantidadDesde > 1`
-   * — NUNCA incluyen la entrada de cantidad 1: esa es el precio plano de arriba.
-   *
-   * OPCIONAL a propósito, y eso es carga estructural: la instantánea persistida en IndexedDB no
-   * tiene versión de esquema ni validación (`almacenPos.ts` castea lo que haya), así que un
-   * dispositivo que atraviese el deploy sin conexión va a leer una instantánea VIEJA sin esta
-   * clave. Ausente/`null`/vacío significa "este artículo no tiene tramos" y el precio plano rige a
-   * TODA cantidad — exactamente el comportamiento de hoy, nunca un error ni un `undefined`
-   * propagado a un importe.
-   */
-  escalones?: EscalonDeCantidad[] | null
+  preciosPorLista: PrecioDeListaDeInstantanea[]
+}
+
+/** Un cliente visible para el punto de venta — espejo de `ClienteDeInstantanea`. `idListaPrecio`
+ * es `null` cuando la lista del cliente está dada de baja. */
+export type ClienteDeInstantanea = {
+  idCliente: number
+  numero: number
+  nombre: string
+  apellido: string | null
+  razonSocial: string | null
+  tipoDocumento: TipoDocumento | null
+  numeroDocumento: string | null
+  idCondicionFiscal: number
+  idEmpresa: number | null
+  idListaPrecio: number | null
+  esConsumidorFinal: boolean
+  saldo: number
+  limiteCredito: number
+  creditoIlimitado: boolean
 }
 
 /** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */
@@ -847,13 +865,14 @@ export type MedioPagoDeInstantanea = {
   requiereReferencia: boolean
 }
 
-/** Respuesta de `GET /api/pos/instantanea` — espejo de `InstantaneaDePos`. `momento` es la única
- * marca de vejez real: se muestra al cajero (`formatearVejezDeInstantanea`) para acotar el riesgo
- * de vender con un precio congelado desde hace rato. */
+/** Respuesta de `GET /api/pos/instantanea?version=2` — espejo de `InstantaneaDePos`. `momento` es
+ * el instante en que el servidor resolvió los precios; la vejez que ve el cajero es la de la última
+ * verificación (`InstantaneaLocal.verificadaEn`), que un `304` renueva sin cambiar el contenido. */
 export type InstantaneaDePos = {
   momento: string
   idPuntoVenta: number
   articulos: ArticuloDeInstantanea[]
+  clientes: ClienteDeInstantanea[]
   mediosDePago: MedioPagoDeInstantanea[]
   toleranciaPago: number
 }
