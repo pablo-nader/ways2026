@@ -124,8 +124,12 @@ describe('admisibilidadDeVentaOffline — corta en el primer rechazo, orden esta
     expect(admisibilidadDeVentaOffline({ ...admitida, esConsumidorFinal: false })).toBe('cliente_no_admitido')
   })
 
-  it('medio_no_admitido cuando algún pago no es efectivo', () => {
+  it('medio_no_admitido cuando algún pago es de cuenta corriente', () => {
     expect(admisibilidadDeVentaOffline({ ...admitida, pagos: [{ comportamiento: 'CuentaCorriente' }] })).toBe('medio_no_admitido')
+  })
+
+  it('un pago electrónico (tarjeta, transferencia) queda admitido', () => {
+    expect(admisibilidadDeVentaOffline({ ...admitida, pagos: [{ comportamiento: 'Electronico' }] })).toBeNull()
   })
 
   it('sin_instantanea sin instantánea local', () => {

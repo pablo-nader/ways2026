@@ -5129,14 +5129,14 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(screen.queryByLabelText('Buscar cliente')).not.toBeInTheDocument()
     })
 
-    it('el selector de medio de pago solo ofrece Efectivo — nunca Tarjeta ni Cuenta corriente', async () => {
+    it('el selector de medio de pago ofrece Efectivo y Tarjeta — nunca Cuenta corriente', async () => {
       await llegarConEnLineaFalse()
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
 
       const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
-      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre])
+      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre, medioTarjeta.nombre])
     })
 
     it('también muestra la vejez de la instantánea y la limitación de ofertas por cantidad', async () => {

@@ -568,7 +568,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
   })
 
-  it('rechaza un pago no-efectivo (cuenta corriente), aunque haya instantánea y números disponibles', async () => {
+  it('rechaza un pago de cuenta corriente, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
     await guardarInstantaneaLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())

@@ -7,13 +7,13 @@
 import type { ComportamientoMedioPago } from '../api/tipos'
 
 /**
- * "Offline es solo efectivo" (decisión del dueño) — la instantánea no puede validar el límite de
- * crédito de cuenta corriente contra el servidor, y ningún otro medio no-efectivo (`Electronico`:
- * tarjeta, transferencia) tiene una razón para operar sin conexión tampoco; la regla es deliberada
- * y simple, no "cuenta corriente en particular". Un medio Efectivo es el único admitido.
+ * Medios que la venta local admite sin validar nada contra el servidor (decisión del dueño):
+ * `Efectivo` y `Electronico` (tarjeta, transferencia — se cobran en una terminal externa, así que
+ * registrar el pago no necesita ninguna validación del servidor). `CuentaCorriente` queda afuera:
+ * la instantánea no puede validar el límite de crédito del cliente.
  */
 export function medioAdmitidoOffline(comportamiento: ComportamientoMedioPago): boolean {
-  return comportamiento === 'Efectivo'
+  return comportamiento === 'Efectivo' || comportamiento === 'Electronico'
 }
 
 export function pagosAdmitidosOffline(pagos: readonly { comportamiento: ComportamientoMedioPago }[]): boolean {

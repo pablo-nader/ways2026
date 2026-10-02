@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { clienteAdmitidoOffline, medioAdmitidoOffline, pagosAdmitidosOffline } from './reglasOffline'
 import type { ComportamientoMedioPago } from '../api/tipos'
 
-describe('medioAdmitidoOffline — regla dura "offline es solo efectivo"', () => {
+describe('medioAdmitidoOffline — efectivo y electrónico sí, cuenta corriente no', () => {
   it.each([
     ['Efectivo', true],
-    ['Electronico', false],
+    ['Electronico', true],
     ['CuentaCorriente', false],
   ] as [ComportamientoMedioPago, boolean][])('%s → %s', (comportamiento, esperado) => {
     expect(medioAdmitidoOffline(comportamiento)).toBe(esperado)
@@ -21,8 +21,12 @@ describe('pagosAdmitidosOffline', () => {
     expect(pagosAdmitidosOffline([])).toBe(false)
   })
 
-  it('false si CUALQUIER pago no es efectivo, aunque haya otros que sí lo son', () => {
-    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'Electronico' }])).toBe(false)
+  it('true con un pago dividido entre efectivo y electrónico', () => {
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'Electronico' }])).toBe(true)
+  })
+
+  it('false si CUALQUIER pago es de cuenta corriente, aunque los otros estén admitidos', () => {
+    expect(pagosAdmitidosOffline([{ comportamiento: 'Efectivo' }, { comportamiento: 'CuentaCorriente' }])).toBe(false)
   })
 
   it('false con un único pago de cuenta corriente', () => {

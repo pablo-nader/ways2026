@@ -3282,9 +3282,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                       <option value="">Elegir medio…</option>
                       {(medios ?? [])
                         .filter((m) => medioDisponibleParaCliente(m, clienteSeleccionado?.esConsumidorFinal ?? false))
-                        // stage-pos-venta-offline-web (Parte D, "offline es solo efectivo"):
-                        // proactivo — la instantánea no puede validar cuenta corriente ni
-                        // ningún otro medio no-efectivo contra el servidor. Solo gatea qué
+                        // stage-pos-venta-offline-web (Parte D): proactivo — sin señal solo se
+                        // ofrecen los medios que la venta local admite (`medioAdmitidoOffline`:
+                        // efectivo y electrónico, nunca cuenta corriente). Solo gatea qué
                         // opciones se OFRECEN; el rechazo real vive en `admisibilidadDeVentaOffline`
                         // (mensajeDeRechazoOffline), que corre igual aunque esta pantalla
                         // pensara (erróneamente) que hay señal.
