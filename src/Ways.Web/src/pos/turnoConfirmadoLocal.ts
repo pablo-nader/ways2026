@@ -45,3 +45,9 @@ export function guardarTurnoConfirmadoLocal(idPuntoVenta: number, turno: TurnoRe
     // fuente de verdad.
   }
 }
+
+/** Olvida el turno guardado si es el que se acaba de cerrar (cualquier pantalla que cierre un
+ * turno lo llama: un turno cerrado nunca vuelve a habilitar la venta sin red). */
+export function olvidarTurnoConfirmadoLocal(idPuntoVenta: number, idTurnoCerrado: number): void {
+  if (leerTurnoConfirmadoLocal(idPuntoVenta)?.id === idTurnoCerrado) guardarTurnoConfirmadoLocal(idPuntoVenta, null)
+}

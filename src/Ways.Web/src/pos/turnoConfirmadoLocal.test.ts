@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from './turnoConfirmadoLocal'
+import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, olvidarTurnoConfirmadoLocal } from './turnoConfirmadoLocal'
 import type { TurnoResumen } from '../api/tipos'
 
 function turnoFixture(sobrescribir: Partial<TurnoResumen> = {}): TurnoResumen {
@@ -52,6 +52,18 @@ describe('turnoConfirmadoLocal', () => {
     ['sin id', JSON.stringify({ ...turnoFixture(), id: undefined })],
   ])('lo guardado %s se lee como ninguno', (_titulo, crudo) => {
     localStorage.setItem('ways.pos.turnoConfirmado.7', crudo)
+    expect(leerTurnoConfirmadoLocal(7)).toBeNull()
+  })
+})
+
+describe('olvidarTurnoConfirmadoLocal', () => {
+  it('borra el guardado solo si es el turno que se cerró', () => {
+    guardarTurnoConfirmadoLocal(7, turnoFixture({ id: 900 }))
+
+    olvidarTurnoConfirmadoLocal(7, 901)
+    expect(leerTurnoConfirmadoLocal(7)?.id).toBe(900)
+
+    olvidarTurnoConfirmadoLocal(7, 900)
     expect(leerTurnoConfirmadoLocal(7)).toBeNull()
   })
 })

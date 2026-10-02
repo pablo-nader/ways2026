@@ -187,6 +187,27 @@ describe('CierreDeCaja — flujo feliz', () => {
     expect(llamada?.[1]).toEqual({ conteos: [{ idMedioPago: 1, importeDeclarado: 635 }], observaciones: null })
   })
 
+  it('cerrar el turno olvida el turno guardado para vender sin red en ese punto de venta', async () => {
+    const turnoGuardado = { ...turnoConArqueosFixture(), estado: 'Abierto', idEmpleadoCierre: null, fechaCierre: null, arqueos: undefined }
+    localStorage.setItem('ways.pos.turnoConfirmado.7', JSON.stringify(turnoGuardado))
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    expect(localStorage.getItem('ways.pos.turnoConfirmado.7')).not.toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    await screen.findByText('Turno #501 cerrado')
+    expect(localStorage.getItem('ways.pos.turnoConfirmado.7')).toBeNull()
+  })
+
   it('sin completar todos los conteos, "Finalizar cierre" queda deshabilitado', async () => {
     mockearRutasBase()
     renderCierre()
