@@ -7,6 +7,7 @@
 import { ROL } from '../api/tipos'
 import type { EstadoComprobante, MedioPagoListado, VentaDeTurnoListado } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
+import { contieneSinAcentos } from '../formato/texto'
 
 export function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -107,30 +108,14 @@ export const FILTROS_VACIOS: FiltrosDeVentasDelTurno = {
   estado: 'Todas',
 }
 
-/** Quita diacríticos (acentos) vía descomposición Unicode — "Pérez" y "Perez" deben matchear
- * igual (spec: "case- y accent-insensitive"). */
-function normalizarTexto(texto: string): string {
-  return texto
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLocaleLowerCase('es-AR')
-}
-
-/** `true` si `buscado` está vacío (sin filtro) o aparece como substring de `contenedor`,
- * ignorando mayúsculas/minúsculas y acentos de ambos lados. */
-function contieneTexto(contenedor: string, buscado: string): boolean {
-  if (buscado.trim() === '') return true
-  return normalizarTexto(contenedor).includes(normalizarTexto(buscado))
-}
-
 /** Filtro puro — cada clausula es independiente y todas deben cumplirse (AND), spec: filtros en
  * cada columna de la tabla. mutation-proof-tests: cada `if` de acá es la clausula bajo prueba de
  * su propio test, nombrada por columna. */
 export function filtrarVentas(ventas: VentaDeTurnoListado[], filtros: FiltrosDeVentasDelTurno): VentaDeTurnoListado[] {
   return ventas.filter((venta) => {
-    if (!contieneTexto(venta.numeroVisible, filtros.numero)) return false
-    if (!contieneTexto(formatearFechaHora(venta.fecha), filtros.fecha)) return false
-    if (!contieneTexto(venta.nombreCliente, filtros.cliente)) return false
+    if (!contieneSinAcentos(venta.numeroVisible, filtros.numero)) return false
+    if (!contieneSinAcentos(formatearFechaHora(venta.fecha), filtros.fecha)) return false
+    if (!contieneSinAcentos(venta.nombreCliente, filtros.cliente)) return false
     if (filtros.totalMinimo !== null && venta.total < filtros.totalMinimo) return false
     if (filtros.totalMaximo !== null && venta.total > filtros.totalMaximo) return false
     if (filtros.idMedioPago !== null && !venta.mediosDePago.some((m) => m.idMedioPago === filtros.idMedioPago)) return false
