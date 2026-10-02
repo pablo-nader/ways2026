@@ -11,12 +11,15 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: deploy-produccion
   cancel-in-progress: true
 
 jobs:
   deploy:
+    if: github.repository == 'pablo-nader/ways2026'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -28,4 +31,4 @@ jobs:
             echo "::error::Falta el secret EASYPANEL_DEPLOY_URL (EasyPanel > servicio aipos > Deployments > Deployment Trigger URL)."
             exit 1
           fi
-          curl -fsS --retry 3 --retry-delay 5 --max-time 30 -X POST "$URL_DE_DEPLOY" -o /dev/null
+          curl -fsS --max-time 30 -X POST "$URL_DE_DEPLOY" -o /dev/null
