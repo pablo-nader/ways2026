@@ -375,6 +375,30 @@ function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
 
 let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 
+/** Mock PARCIAL de `outboxOffline`: todo real salvo `leerOutbox`, que un test puede hacer fallar
+ * (`controlDeOutbox.fallarLectura`) para simular un almacén caído a mitad de un drenado — el
+ * almacén real (`almacenPos.ts`) nunca rechaza, así que no hay otra forma de llegar a ese camino. */
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false }))
+vi.mock('../pos/outboxOffline', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
+  return {
+    ...real,
+    leerOutbox: (almacen: Parameters<typeof real.leerOutbox>[0]) =>
+      controlDeOutbox.fallarLectura ? Promise.reject(new Error('almacén caído')) : real.leerOutbox(almacen),
+  }
+})
+
+/** Simula el POS de escritorio (`corriendoEnTauri()`) para un test puntual. */
+type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
+async function comoPosDeEscritorio(prueba: () => Promise<void>) {
+  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: vi.fn(() => Promise.resolve(undefined)) } }
+  try {
+    await prueba()
+  } finally {
+    delete (globalThis as GlobalConTauri).__TAURI__
+  }
+}
+
 vi.mock('../puntoVenta/usePuntoVenta', () => ({
   usePuntoVenta: () => estadoDePuntoVenta,
 }))
@@ -449,6 +473,7 @@ beforeEach(async () => {
   })
   await borrarAlmacenOffline()
   establecerTokenDeSesionBearer(null)
+  controlDeOutbox.fallarLectura = false
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -5521,32 +5546,41 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   })
 
   describe('sincronización: arranque, "Sincronizar ahora" e intervalo', () => {
-    it('"Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', async () => {
-      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
-      let resolverInstantanea: (valor: InstantaneaDePos) => void = () => {}
-      mockearApiGet((ruta) => {
-        if (ruta === '/pos/instantanea') {
-          return new Promise<InstantaneaDePos>((r) => {
-            resolverInstantanea = r
-          })
-        }
-        return undefined
-      })
-      await montarConInstantanea()
+    it('POS de escritorio: "Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+        let resolverInstantanea: (valor: InstantaneaDePos) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta === '/pos/instantanea') {
+            return new Promise<InstantaneaDePos>((r) => {
+              resolverInstantanea = r
+            })
+          }
+          return undefined
+        })
+        await montarConInstantanea()
 
-      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
-      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-      await screen.findByText('Coca Cola 1L')
-      await cobrarConEfectivo('100')
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await screen.findByText('Coca Cola 1L')
+        await cobrarConEfectivo('100')
 
-      expect(screen.getByText('Sincronizando con el servidor antes de cobrar…')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+        expect(screen.getByText('Sincronizando con el servidor antes de cobrar…')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
 
-      await act(async () => {
-        resolverInstantanea(instantaneaFixture())
-      })
+        await act(async () => {
+          resolverInstantanea(instantaneaFixture())
+        })
 
-      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+        await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+        expect(screen.queryByText('Sincronizando con el servidor antes de cobrar…')).not.toBeInTheDocument()
+    }))
+
+    it('app web: la venta nunca espera la sincronización de arranque (la instantánea es solo de dispositivo)', async () => {
+      mockearApiGet((ruta) => (ruta === '/pos/instantanea' ? new Promise<InstantaneaDePos>(() => {}) : undefined))
+      await armarVentaLista()
+
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled()
       expect(screen.queryByText('Sincronizando con el servidor antes de cobrar…')).not.toBeInTheDocument()
     })
 
@@ -5604,6 +5638,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   })
 
   describe('"Cerrar caja" intenta drenar el outbox antes de bloquear', () => {
+    it('si el drenado previo al cierre falla, "Cerrar caja" vuelve a quedar operable y un segundo intento cierra', async () => {
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Sin sincronizar: 0')
+
+      controlDeOutbox.fallarLectura = true
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText('No se pudo verificar el turno abierto.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeEnabled()
+
+      controlDeOutbox.fallarLectura = false
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+    })
+
     it('con el outbox vacío igual rinde la cola antes de consultar el turno (la guarda del servidor exige un reporte fresco)', async () => {
       const almacen = crearAlmacenIndexedDb()
       await guardarInstantaneaLocal(almacen, instantaneaFixture())

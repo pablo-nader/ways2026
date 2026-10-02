@@ -52,11 +52,12 @@ public enum MotivoDeRendicionPendiente
 /// </summary>
 public static class ReglaDeRendicionDeCola
 {
-    /// <summary>Cuánto vale un reporte antes de dejar de probar algo. El ciclo de sincronización
-    /// del cliente es de 20 s (<c>INTERVALO_DE_SINCRONIZACION_MS</c>, <c>useSincronizacionOffline.ts</c>),
-    /// así que 5 minutos son 15 ciclos perdidos seguidos: bastante para no molestar a un
-    /// dispositivo sano con una red que hipa, y poco para que un dispositivo que se quedó sin
-    /// señal no pase por limpio.</summary>
+    /// <summary>Cuánto vale un reporte antes de dejar de probar algo. El cliente rinde cada 2
+    /// minutos con un período propio, independiente del intervalo de sincronización que configura
+    /// el cajero (<c>INTERVALO_DE_RENDICION_MS</c>, <c>useSincronizacionOffline.ts</c>), y además
+    /// después de cada drenado y antes de cerrar la caja: 5 minutos alcanzan para perder un
+    /// reporte periódico por una red que hipa sin molestar a un dispositivo sano, y son pocos para
+    /// que un dispositivo que se quedó sin señal no pase por limpio.</summary>
     public static readonly TimeSpan VentanaDeFrescura = TimeSpan.FromMinutes(5);
 
     /// <summary>

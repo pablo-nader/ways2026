@@ -8,7 +8,7 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeCuentaCorriente, disponibilidadPrevia, etiquetaDeMovimiento, rangoUltimoMes } from '../api/cuentaCorriente'
-import { establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
+import { corriendoEnTauri, establecerTokenDeSesionBearer, limpiarSesionDeCajeroPersistida } from '../api/entornoTauri'
 import { clienteDeOfertas } from '../api/ofertas'
 import {
   aPagosDeVenta,
@@ -1187,6 +1187,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     idPuntoVenta: puntoVentaSeleccionada?.id ?? null,
     activo: !modoPresupuesto,
     intervaloMs: minutosAMilisegundos(minutosDeSincronizacion),
+    // La instantánea es solo del POS de escritorio: en la app web la venta nunca espera el ciclo
+    // de arranque.
+    sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
   // Venta local primero: con una instantánea de ESTE punto de venta y el Consumidor Final como
@@ -1510,20 +1513,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setVerificandoCierre(true)
     setAvisoCerrarCaja('')
 
-    const cola = await sincronizacionOffline.drenarAhora()
-    if (!montadoRef.current) {
-      verificandoCierreRef.current = false
-      return
-    }
-    if (bloquearPorColaLocal(cola.pendientes, cola.conError)) {
-      verificandoCierreRef.current = false
-      setVerificandoCierre(false)
-      return
-    }
-
     const miGeneracion = (generacionTurnoRef.current += 1)
 
+    // Todo lo que espera vive dentro del `try`: el `finally` libera la guarda de reentrancia y el
+    // `disabled` de "Cerrar caja"/"Retirar" pase lo que pase (regla 11).
     try {
+      const cola = await sincronizacionOffline.drenarAhora()
+      if (!montadoRef.current) return
+      if (bloquearPorColaLocal(cola.pendientes, cola.conError)) return
+
       const turnoReal = await clienteDeCaja.obtenerAbierto(puntoVentaSeleccionada.id)
       // Re-judgment (WARNING, juez A): si la pantalla ya se desmontó mientras el `await` estaba en
       // vuelo, ni un `setState` ni, sobre todo, la navegación posterior deben dispararse — se

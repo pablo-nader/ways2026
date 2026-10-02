@@ -63,6 +63,12 @@ const CANTIDAD_A_RESERVAR = 500
 
 const CODIGO_TIPO_COMPROBANTE_OFFLINE = 'TX'
 
+/** Tope de la descarga de la instantánea: el catálogo completo, sin paginar, pesa cientos de KB
+ * (`ServicioDeInstantaneaDePos`). Sin tope, una descarga colgada retiene el ciclo único para
+ * siempre — sin drenado periódico ni "Sincronizar ahora". La request no se aborta: solo se deja de
+ * esperarla. */
+const TIEMPO_LIMITE_DE_INSTANTANEA_MS = 30_000
+
 /** Tope de la reserva de numeración. Más largo que el de las demás requests a propósito: corre en
  * segundo plano (el cajero no la espera mientras el bloque en uso tenga números) y una reserva que
  * el servidor comprometió pero cuya respuesta se descartó deja un bloque vivo que este dispositivo
@@ -86,6 +92,11 @@ export type ParametrosDeSincronizacionOffline = {
   /** Período del ciclo automático — default `INTERVALO_POR_DEFECTO_MINUTOS`; `Pos.tsx` pasa el
    * configurado por el cajero (`intervaloDeSincronizacion.ts`). */
   intervaloMs?: number
+  /** `true` (default) bloquea la venta hasta que termina el ciclo de arranque
+   * (`sincronizacionInicialPendiente`). `Pos.tsx` lo apaga fuera del POS de escritorio: la
+   * instantánea es solo de dispositivo (`GET /api/pos/instantanea` exige `RequiereDispositivo`), así
+   * que en la app web esperar ese ciclo no traería nada. El ciclo corre igual. */
+  sincronizarAntesDeVender?: boolean
 }
 
 export type EstadoDeColaLocal = { pendientes: number; conError: number }
@@ -180,7 +191,7 @@ function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: I
 }
 
 export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffline): ResultadoDeSincronizacionOffline {
-  const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS) } = params
+  const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS), sincronizarAntesDeVender = true } = params
 
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
 
@@ -312,7 +323,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   async function refrescarInstantaneaSiHaySenal(): Promise<boolean> {
     try {
-      const fresca = await clienteDePos.obtenerInstantanea()
+      const fresca = await conTiempoLimite(() => clienteDePos.obtenerInstantanea(), TIEMPO_LIMITE_DE_INSTANTANEA_MS)
       await guardarInstantaneaLocal(almacenRef.current, fresca)
       setInstantanea(fresca)
       setEnLinea(true)
@@ -506,6 +517,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
 
     let vigente = true
+    // El almacén guarda un solo bloque por dispositivo: el de otro punto de venta (un cambio de
+    // punto de venta) nunca se usa para numerar acá — queda descartado hasta reponer uno propio.
+    bloqueRef.current = null
 
     Promise.all([
       leerInstantaneaLocal(almacenRef.current),
@@ -518,7 +532,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       // pisa.
       setInstantanea((actual) => actual ?? instantaneaGuardada)
       setOutboxCount(outboxGuardado.length)
-      bloqueRef.current = bloqueRef.current ?? bloqueGuardado
+      bloqueRef.current = bloqueRef.current ?? (bloqueGuardado?.idPuntoVenta === idPuntoVenta ? bloqueGuardado : null)
       setVentasConError(rechazadasGuardadas)
     })
 
@@ -529,7 +543,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
 
   // Ciclo de arranque: corre una vez al activarse y, hasta que termina (o vence el tope), la
   // pantalla no habilita la venta.
-  const [sincronizacionInicialPendiente, setSincronizacionInicialPendiente] = useState(activo && idPuntoVenta !== null)
+  const [sincronizacionInicialPendiente, setSincronizacionInicialPendiente] = useState(
+    activo && idPuntoVenta !== null && sincronizarAntesDeVender,
+  )
   useEffect(() => {
     if (!activo || idPuntoVenta === null) {
       setSincronizacionInicialPendiente(false)
@@ -537,7 +553,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     }
 
     let vigente = true
-    setSincronizacionInicialPendiente(true)
+    setSincronizacionInicialPendiente(sincronizarAntesDeVender)
     const liberar = () => {
       if (vigente) setSincronizacionInicialPendiente(false)
     }
@@ -613,18 +629,23 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // salvo por eso, se admitiría. Espera como máximo `TIEMPO_LIMITE_DE_RED_MS` (la reserva sigue
     // en segundo plano); si no llega, la venta se rechaza con `sin_numeracion` y `Pos.tsx` cobra
     // por el camino online.
-    const sinNumeros = numerosDisponibles(bloqueRef.current) === 0
+    // Defensa ante cualquier carrera (una reposición pedida para otro punto de venta que aterriza
+    // después del cambio): un número de un bloque de otro punto de venta se rechaza al drenar, con
+    // el ticket ya entregado.
+    const bloqueDeLaVenta = () =>
+      bloqueRef.current?.idPuntoVenta === paramsVenta.solicitudBase.idPuntoVenta ? bloqueRef.current : null
+    const sinNumeros = numerosDisponibles(bloqueDeLaVenta()) === 0
     if (sinNumeros && idPuntoVenta !== null && admisibilidad(true) === null) {
       const idPv = idPuntoVenta
       await conTiempoLimite(() => reponerBloque(idPv)).catch(() => undefined)
     }
 
     return encolarOperacion(async () => {
-      const motivo = admisibilidad(numerosDisponibles(bloqueRef.current) > 0)
+      const motivo = admisibilidad(numerosDisponibles(bloqueDeLaVenta()) > 0)
       if (motivo) return { ok: false, motivo }
 
       // Ya validado arriba: lineasEnriquecidas y el bloque no son null/vacíos.
-      const tomado = tomarProximoNumero(bloqueRef.current)
+      const tomado = tomarProximoNumero(bloqueDeLaVenta())
       if (!tomado) return { ok: false, motivo: 'sin_numeracion' }
 
       bloqueRef.current = tomado.bloqueRestante
