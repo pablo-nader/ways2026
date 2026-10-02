@@ -1,0 +1,34 @@
+name: deploy-produccion
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "src/Ways.Desktop/**"
+      - "docs/**"
+      - "legacy/**"
+      - "alsina/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.repository == 'pablo-nader/ways2026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Disparar el deploy en EasyPanel
+        env:
+          URL_DE_DEPLOY: ${{ secrets.EASYPANEL_DEPLOY_URL }}
+        run: |
+          if [ -z "$URL_DE_DEPLOY" ]; then
+            echo "::error::Falta el secret EASYPANEL_DEPLOY_URL (EasyPanel > servicio aipos > Deployments > Deployment Trigger URL)."
+            exit 1
+          fi
+          curl -fsS --max-time 30 -X POST "$URL_DE_DEPLOY" -o /dev/null
