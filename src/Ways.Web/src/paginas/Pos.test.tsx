@@ -5202,8 +5202,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
 
     /** Otro cliente con la lista 2: el artículo vale 100 en la lista 1 (Consumidor Final) y 70 en la
-     * 2. El mock de /ofertas/resolver devuelve 100, así que $ 70 solo puede salir de la lista del
-     * cliente dentro de la instantánea. */
+     * 2. El mock de /ofertas/resolver devuelve 100, así que $ 70 solo podría salir de una vista previa
+     * local con la lista del cliente. */
     async function elegirOtroClienteConLista(idListaPrecio: number) {
       const articulo: ArticuloDeInstantanea = {
         ...articuloDeInstantaneaFixture(),
@@ -5228,18 +5228,15 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await screen.findByText('Coca Cola 1L')
     }
 
-    it('para otro cliente la vista previa sale de SU lista en la instantánea, sin /ofertas/resolver', async () => {
+    // Su cobro va online y el servidor vuelve a resolver el precio: una vista previa local podría
+    // mostrar un total distinto del cobrado.
+    it('para otro cliente la vista previa va online aunque la línea esté en la instantánea', async () => {
       await elegirOtroClienteConLista(2)
 
-      await waitFor(() => expect(screen.getByText('$ 70,00', { selector: 'strong' })).toBeInTheDocument())
-      expect(llamadasPost('/ofertas/resolver')).toEqual([])
-    })
-
-    it('para otro cliente cuya lista no tiene precio en la instantánea, la vista previa va online', async () => {
-      await elegirOtroClienteConLista(3)
-
       await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
-      expect(llamadasPost('/ofertas/resolver')[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 3 })] })
+      expect(llamadasPost('/ofertas/resolver')[0][1]).toMatchObject({ lineas: [expect.objectContaining({ idListaPrecio: 2 })] })
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(screen.queryByText('$ 70,00', { selector: 'strong' })).not.toBeInTheDocument()
     })
 
     it('una instantánea de OTRO punto de venta nunca se usa: escaneo y vista previa van online', async () => {

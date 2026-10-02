@@ -82,7 +82,7 @@ import {
   normalizarIntervaloEnMinutos,
 } from '../pos/intervaloDeSincronizacion'
 import { construirNumeroVisible, mensajeDeRechazoOffline, type MotivoRechazoOffline } from '../pos/outboxOffline'
-import { medioAdmitidoOffline } from '../pos/reglasOffline'
+import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
@@ -1212,11 +1212,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
-  // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo y la vista previa
-  // se resuelven contra la instantánea, en la lista del cliente elegido, sin esperar la red
-  // (decisión del dueño: un precio algo viejo es aceptable, una caja lenta no). El cobro local
-  // sigue siendo solo del Consumidor Final (`admisibilidadDeVentaOffline`); cualquier otro cliente
-  // cobra por el camino online.
+  // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo se resuelve contra
+  // la instantánea sin esperar la red (decisión del dueño: un precio algo viejo es aceptable, una
+  // caja lenta no). La vista previa y el cobro locales son solo del Consumidor Final; cualquier
+  // otro cliente cotiza y cobra por el camino online.
   const instantaneaDelPuntoVenta =
     !modoPresupuesto &&
     sincronizacionOffline.instantanea !== null &&
@@ -2089,16 +2088,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return
     }
 
-    // Venta local primero: si la instantánea de este punto de venta tiene precio para TODAS las
-    // líneas en la lista del cliente elegido, la vista previa sale de ahí, sin red ni debounce. La
-    // instantánea queda congelada en `instantaneaDeLaVistaPreviaRef`: es la que `cobrar()` usa
-    // para encolar (solo el Consumidor Final se encola; otro cliente cobra online igual), así se
-    // cobra exactamente lo que el cajero vio.
+    // Venta local primero: si el cliente es el Consumidor Final y la instantánea de este punto de
+    // venta tiene precio para TODAS las líneas en su lista, la vista previa sale de ahí, sin red ni
+    // debounce. La instantánea queda congelada en `instantaneaDeLaVistaPreviaRef`: es la que
+    // `cobrar()` usa para encolar, así se cobra exactamente lo que el cajero vio. Otro cliente
+    // cobra por el camino online, donde el servidor vuelve a resolver el precio: su vista previa
+    // también va online, para que lo mostrado sea lo que se cobra.
     const instantaneaLocal = sincronizacionOffline.instantanea
     if (
       !modoPresupuesto &&
       instantaneaLocal !== null &&
       instantaneaLocal.idPuntoVenta === puntoVentaSeleccionada.id &&
+      clienteAdmitidoOffline(clienteSeleccionado) &&
       todasLasLineasTienenPrecioOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio)
     ) {
       setPrecios(resolverPreciosOffline(lineas, instantaneaLocal, clienteSeleccionado.idListaPrecio))
