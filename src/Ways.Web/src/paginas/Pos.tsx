@@ -922,9 +922,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
-  // `true` cuando `opcionesClientes` salió de la instantánea local (búsqueda local o arranque sin
-  // respuesta del servidor), no de `GET /clientes`.
-  const opcionesDesdeInstantaneaRef = useRef(false)
+  // Ids de `opcionesClientes` que salieron de la instantánea local (búsqueda local o arranque sin
+  // respuesta del servidor) y no de `GET /clientes`: al elegir uno con red se trae el registro fresco.
+  const idsDeOpcionesLocalesRef = useRef<ReadonlySet<number>>(new Set())
 
   // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
   // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
@@ -1342,7 +1342,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
         // La primera página es la lista de antes de buscar: si el cajero ya buscó, su resultado manda.
         if (generacionClientesRef.current === 0) {
-          opcionesDesdeInstantaneaRef.current = false
+          idsDeOpcionesLocalesRef.current = new Set()
           setOpcionesClientes(pagina.items)
         }
         setErrorCargaClientes('')
@@ -1411,8 +1411,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (!consumidorFinalLocal) return
     const consumidorFinal = aClienteListado(consumidorFinalLocal)
     consumidorFinalRef.current = consumidorFinal
-    if (opcionesClientes.length === 0) opcionesDesdeInstantaneaRef.current = true
-    setOpcionesClientes((prev) => (prev.length === 0 ? buscarClientesOffline(instantaneaDelPuntoVenta, '').map(aClienteListado) : prev))
+    const opcionesLocales = buscarClientesOffline(instantaneaDelPuntoVenta, '').map(aClienteListado)
+    if (opcionesClientes.length === 0) idsDeOpcionesLocalesRef.current = new Set(opcionesLocales.map((c) => c.id))
+    setOpcionesClientes((prev) => (prev.length === 0 ? opcionesLocales : prev))
     if (!clienteRestauradoDelBorradorRef.current) {
       setClienteSeleccionado((prev) => prev ?? consumidorFinal)
     }
@@ -2355,19 +2356,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Busca primero en la instantánea local, al instante y también sin red. Solo va al servidor si
-   * no hay instantánea o si la copia local no encontró a nadie y hay señal (un cliente dado de alta
-   * después de la última sincronización). */
+  /** Muestra al instante lo que encuentra la instantánea local (también sin red). Con señal además
+   * consulta al servidor y suma lo que la copia local no tiene (un cliente dado de alta después de
+   * la última sincronización); para un mismo cliente gana el registro del servidor. */
   async function buscarClientes() {
     if (buscandoClientes || cobrandoRef.current) return
     const generacion = (generacionClientesRef.current += 1)
     setErrorClientes('')
 
-    if (instantaneaDelPuntoVenta) {
-      const locales = buscarClientesOffline(instantaneaDelPuntoVenta, terminoCliente)
-      if (locales.length > 0 || !sincronizacionOffline.enLinea) {
-        opcionesDesdeInstantaneaRef.current = true
-        setOpcionesClientes(locales.map(aClienteListado))
+    const locales = instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, terminoCliente).map(aClienteListado) : null
+    if (locales !== null) {
+      idsDeOpcionesLocalesRef.current = new Set(locales.map((c) => c.id))
+      setOpcionesClientes(locales)
+      if (!sincronizacionOffline.enLinea) {
         if (locales.length === 0) setErrorClientes('Sin conexión: no se encontró ningún cliente en la copia local.')
         return
       }
@@ -2377,10 +2378,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     try {
       const pagina = await clienteDeClientes.listar(terminoCliente, false)
       if (generacionClientesRef.current !== generacion) return
-      opcionesDesdeInstantaneaRef.current = false
-      setOpcionesClientes(pagina.items)
+      const idsDelServidor = new Set(pagina.items.map((c) => c.id))
+      const soloLocales = (locales ?? []).filter((c) => !idsDelServidor.has(c.id))
+      idsDeOpcionesLocalesRef.current = new Set(soloLocales.map((c) => c.id))
+      setOpcionesClientes([...pagina.items, ...soloLocales])
     } catch (e) {
-      if (generacionClientesRef.current === generacion) {
+      // Con resultados locales en pantalla, una consulta al servidor que falla no los tapa.
+      if (generacionClientesRef.current === generacion && (locales === null || locales.length === 0)) {
         setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
       }
     } finally {
@@ -2408,7 +2412,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setClienteSeleccionado(encontrado ?? null)
     // Un cliente de la copia local trae el saldo de la última sincronización: con señal se trae
     // el registro del servidor en segundo plano (la vista previa ya arrancó con el local).
-    if (encontrado && opcionesDesdeInstantaneaRef.current && sincronizacionOffline.enLinea) {
+    if (encontrado && idsDeOpcionesLocalesRef.current.has(encontrado.id) && sincronizacionOffline.enLinea) {
       refrescarClienteSeleccionado(encontrado.id)
     }
   }

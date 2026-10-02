@@ -5305,7 +5305,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
     })
 
-    it('con red, una coincidencia local se muestra sin ir al servidor y al elegirla se trae el cliente fresco', async () => {
+    it('con red, muestra al instante la coincidencia local, suma la del servidor y al elegir una local trae el cliente fresco', async () => {
       await prepararAlmacenOffline({
         instantanea: instantaneaFixture({
           clientes: [
@@ -5314,17 +5314,33 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
           ],
         }),
       })
-      mockearApiGet((ruta) =>
-        ruta === '/clientes/30' ? Promise.resolve(clienteFixture({ id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, saldo: 999 })) : undefined,
-      )
+      let resolverBusqueda: (p: PaginaDe<ClienteListado>) => void = () => {}
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/clientes?busqueda=')) return new Promise<PaginaDe<ClienteListado>>((r) => (resolverBusqueda = r))
+        if (ruta === '/clientes/30') {
+          return Promise.resolve(clienteFixture({ id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, saldo: 999 }))
+        }
+        return undefined
+      })
       await montarConInstantanea()
 
       await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gómez')
       await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: '#30 — José Gómez' }))
 
-      expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
+      // Antes de que conteste el servidor, la coincidencia local ya está.
+      expect(await screen.findByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
+      await waitFor(() => expect(llamadasGet('/clientes?busqueda=')).toHaveLength(1))
+
+      await act(async () => {
+        resolverBusqueda({ items: [otroCliente], total: 1, pagina: 1, tamanio: 25 })
+      })
+      expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
+
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: '#30 — José Gómez' }))
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: /Juan Pérez/ }))
+      expect(llamadasGet('/clientes/2')).toHaveLength(0)
     })
 
     it('sin coincidencias en la copia local y sin conexión, lo dice en vez de ir a la red', async () => {
