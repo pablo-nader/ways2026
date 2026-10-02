@@ -51,3 +51,7 @@ export function guardarTurnoConfirmadoLocal(idPuntoVenta: number, turno: TurnoRe
 export function olvidarTurnoConfirmadoLocal(idPuntoVenta: number, idTurnoCerrado: number): void {
   if (leerTurnoConfirmadoLocal(idPuntoVenta)?.id === idTurnoCerrado) guardarTurnoConfirmadoLocal(idPuntoVenta, null)
 }
+
+/** Cuánto espera el POS de escritorio la respuesta del servidor sobre el turno antes de seguir con
+ * el turno guardado (con red lenta). */
+export const LIMITE_DE_ESPERA_DEL_TURNO_MS = 3_000

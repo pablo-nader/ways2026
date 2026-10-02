@@ -72,7 +72,7 @@ import {
   resolverPreciosOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
-import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
+import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
 import {
   guardarIntervaloDeSincronizacion,
   INTERVALO_MAXIMO_MINUTOS,
@@ -1034,7 +1034,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // turno abierto (fail-closed), mismo criterio que el resto de las precondiciones de "Cobrar".
   // Nunca corre bajo `?idPresupuesto=` (esa venta ya viene congelada, sin escaneo/carrito propio).
   //
-  // En el POS de escritorio, mientras la consulta no respondió o si falló por falta de red, rige el
+  // En el POS de escritorio, si la consulta falló por falta de red o no respondió dentro de
+  // `LIMITE_DE_ESPERA_DEL_TURNO_MS`, rige el
   // último turno abierto que el servidor confirmó para este punto de venta (`turnoLocal`,
   // persistido en el dispositivo); `turno`/`cargandoTurno`/`errorTurno` se derivan más abajo. Ese
   // turno local nunca se inventa: solo existe si el servidor alguna vez lo confirmó.
@@ -1042,6 +1043,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [cargandoTurnoDelServidor, setCargandoTurno] = useState(false)
   const [errorTurnoDelServidor, setErrorTurno] = useState('')
   const [errorTurnoEsDeRed, setErrorTurnoEsDeRed] = useState(false)
+  const [esperaDelTurnoVencida, setEsperaDelTurnoVencida] = useState(false)
   const generacionTurnoRef = useRef(0)
 
   // judgment-day ronda 1 (T2): "Cerrar caja" vuelve a consultar el turno abierto ANTES de navegar
@@ -1255,7 +1257,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     !modoPresupuesto &&
     turnoDelServidor === null &&
     turnoLocalDelPuntoVenta !== null &&
-    (cargandoTurnoDelServidor || errorTurnoEsDeRed)
+    ((cargandoTurnoDelServidor && esperaDelTurnoVencida) || errorTurnoEsDeRed)
   const turno = usarTurnoLocal ? turnoLocalDelPuntoVenta : turnoDelServidor
   const cargandoTurno = usarTurnoLocal ? false : cargandoTurnoDelServidor
   const errorTurno = usarTurnoLocal ? '' : errorTurnoDelServidor
@@ -1508,6 +1510,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     const miGeneracion = (generacionTurnoRef.current += 1)
     setCargandoTurno(true)
     setErrorTurno('')
+    // Con red, el turno guardado en el dispositivo recién rige si el servidor no contestó dentro
+    // del tope: mientras tanto se espera la respuesta, que es la que puede decir que ya se cerró.
+    setEsperaDelTurnoVencida(false)
+    const idTopeDeEspera = setTimeout(() => {
+      if (montadoRef.current && generacionTurnoRef.current === miGeneracion) setEsperaDelTurnoVencida(true)
+    }, LIMITE_DE_ESPERA_DEL_TURNO_MS)
 
     // Se retorna la promesa (en vez de tratarla como fire-and-forget) para que `reintentarTurno`
     // pueda liberar su guarda de reentrancia recién cuando esta corrida específica termina.
@@ -1531,6 +1539,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setErrorTurnoEsDeRed(e instanceof ErrorDeRed)
       })
       .finally(() => {
+        clearTimeout(idTopeDeEspera)
         if (generacionTurnoRef.current !== miGeneracion) return
         setCargandoTurno(false)
       })

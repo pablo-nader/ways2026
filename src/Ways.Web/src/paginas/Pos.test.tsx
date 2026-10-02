@@ -436,6 +436,13 @@ async function comoPosDeEscritorio(prueba: () => Promise<void>) {
   }
 }
 
+/** El tope de espera del turno se acorta para que los tests de red lenta no esperen 3 s reales;
+ * lo que se prueba es que el turno guardado no rige antes del tope. */
+vi.mock('../pos/turnoConfirmadoLocal', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('../pos/turnoConfirmadoLocal')>()),
+  LIMITE_DE_ESPERA_DEL_TURNO_MS: 300,
+}))
+
 vi.mock('../puntoVenta/usePuntoVenta', () => ({
   usePuntoVenta: () => estadoDePuntoVenta,
 }))
@@ -5890,7 +5897,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
     })
 
-    it('con la red lenta usa la copia local enseguida y la respuesta del servidor la reemplaza al llegar', () =>
+    it('con la red lenta usa los medios locales enseguida, el turno local recién al vencer el tope, y la respuesta del servidor los reemplaza', () =>
       comoPosDeEscritorio(async () => {
         localStorage.setItem(CLAVE_TURNO_LOCAL, JSON.stringify(turnoAbiertoFixture({ id: 900 })))
         await prepararCopiaLocal()
@@ -5904,7 +5911,10 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
         renderPos()
 
-        // Sin esperar al servidor: turno local y medios de la instantánea (solo Efectivo).
+        // Con red, el turno guardado no rige hasta que vence el tope de espera del servidor.
+        expect(await screen.findByText('Consultando turno…')).toBeInTheDocument()
+        expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+        // Vencido el tope sin respuesta: turno local y medios de la instantánea (solo Efectivo).
         expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
         expect(screen.queryByText('Consultando turno…')).not.toBeInTheDocument()
         await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
