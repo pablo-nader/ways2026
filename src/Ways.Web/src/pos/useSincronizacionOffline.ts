@@ -100,6 +100,11 @@ export const TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS = 3_000
 
 const ESTADOS_QUE_RECHAZAN_LA_CONSULTA_DE_CREDITO = new Set([400, 403, 404])
 
+/** Qué hacer con una venta en cuenta corriente que el servidor rechazó por límite al drenar: el
+ * ticket ya se entregó, así que hay que hacerle lugar en la cuenta y volver a enviarla. */
+export const INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR =
+  'Registrá un pago a cuenta del cliente o pedí a un supervisor que amplíe su límite de crédito, y después tocá "Reintentar".'
+
 /** `limiteDeCreditoNoValidado` es `true` solo para una venta con cuenta corriente que se encoló sin
  * respuesta del servidor sobre el límite; `false` en cualquier otro caso. */
 export type EncoladoOffline =
@@ -169,8 +174,9 @@ export type ResultadoDeSincronizacionOffline = {
   drenarAhora: () => Promise<EstadoDeColaLocal>
   /** Con cuenta corriente, antes de tomar un número consulta el cliente al servidor (tope
    * `TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS`): si el pago supera el límite, o el servidor
-   * rechaza la consulta, no encola nada ni consume número; sin respuesta (red o tope vencido),
-   * encola igual con `limiteDeCreditoNoValidado: true`. Nunca manda la venta online sin número. */
+   * rechaza la consulta, no encola nada ni consume número; sin respuesta, encola igual con
+   * `limiteDeCreditoNoValidado: true`. El saldo que se compara suma la cuenta corriente de las
+   * ventas de este cliente que siguen en el outbox. Nunca manda la venta online sin número. */
   encolarVentaOffline: (params: {
     solicitudBase: SolicitudDeVenta
     esConsumidorFinal: boolean
@@ -347,7 +353,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // cola, en vez de quedar rehén de un solo ítem trabado para siempre (judgment-day ronda 1,
     // CRITICAL).
     const mensaje =
-      e instanceof Error ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}` : 'Una venta encolada no se pudo sincronizar.'
+      e instanceof ErrorApi && e.codigo === 'limite_credito_excedido'
+        ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: el cliente no tiene crédito disponible para esta venta. ${INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR}`
+        : e instanceof Error
+          ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: ${e.message}`
+          : 'Una venta encolada no se pudo sincronizar.'
     try {
       await agregarARechazada(almacenRef.current, { ...primera, mensaje })
     } catch {
@@ -698,11 +708,22 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   async function verificarLimiteDeCredito(idCliente: number, consumoCc: number): Promise<'validado' | 'no_validado' | MotivoRechazoOffline> {
     try {
       const cliente = await conTiempoLimite(() => clienteDeClientes.obtener(idCliente), TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS)
-      return superaLimiteDeCredito(cliente, consumoCc) ? 'limite_credito_excedido' : 'validado'
+      const pendiente = await consumoPendienteDeCuentaCorriente(idCliente)
+      return superaLimiteDeCredito({ ...cliente, saldo: cliente.saldo + pendiente }, consumoCc) ? 'limite_credito_excedido' : 'validado'
     } catch (e) {
       if (e instanceof ErrorApi && ESTADOS_QUE_RECHAZAN_LA_CONSULTA_DE_CREDITO.has(e.estado)) return 'cuenta_corriente_no_verificada'
       return 'no_validado'
     }
+  }
+
+  /** Cuenta corriente de las ventas de este cliente que todavía están en el outbox, incluida la que
+   * se está enviando: el servidor todavía no la sumó a su saldo. Si el envío ya se confirmó y la
+   * venta aún no salió de la cola, se cuenta dos veces por un instante (bloquea de más, nunca de
+   * menos). Residual: otra caja que le vende al mismo cliente a la vez no ve esta cola, y ese
+   * exceso lo rechaza el servidor al drenar. */
+  async function consumoPendienteDeCuentaCorriente(idCliente: number): Promise<number> {
+    const outbox = await encolarOperacion(() => leerOutbox(almacenRef.current))
+    return outbox.filter((v) => v.solicitud.idCliente === idCliente).reduce((total, v) => total + (v.consumoCuentaCorriente ?? 0), 0)
   }
 
   async function encolarVentaOffline(paramsVenta: {
@@ -789,6 +810,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           idPuntoVenta: paramsVenta.solicitudBase.idPuntoVenta,
           creadoEn: new Date().toISOString(),
           solicitud: solicitudFinal,
+          ...(consumoCc > 0 ? { consumoCuentaCorriente: consumoCc } : {}),
         })
       } catch (e) {
         if (!(e instanceof ErrorDePersistenciaOffline)) throw e
@@ -823,6 +845,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           idPuntoVenta: rechazada.idPuntoVenta,
           creadoEn: rechazada.creadoEn,
           solicitud: rechazada.solicitud,
+          ...(rechazada.consumoCuentaCorriente !== undefined ? { consumoCuentaCorriente: rechazada.consumoCuentaCorriente } : {}),
         }
         try {
           await agregarAOutbox(almacenRef.current, ventaEnCola)

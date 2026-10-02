@@ -4,6 +4,7 @@ import {
   INTERVALO_DE_RENDICION_MS,
   LIMITE_DE_SINCRONIZACION_INICIAL_CON_COPIA_LOCAL_MS,
   LIMITE_DE_SINCRONIZACION_INICIAL_MS,
+  INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR,
   TIEMPO_LIMITE_DE_VERIFICACION_DE_CREDITO_MS,
   useSincronizacionOffline,
 } from './useSincronizacionOffline'
@@ -1939,5 +1940,82 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('suma la cuenta corriente de las ventas del mismo cliente que siguen en la cola: dos ventas que caben solas pero no juntas, la segunda se bloquea', async () => {
+    const { almacen, result } = await montar()
+    // El servidor sigue viendo saldo 0: la primera venta no se drenó (sin red para `/ventas`).
+    obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })
+
+    let primera
+    let segunda
+    await act(async () => {
+      primera = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 600 }])
+      segunda = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 500 }])
+    })
+
+    expect(primera).toMatchObject({ ok: true, limiteDeCreditoNoValidado: false })
+    expect(segunda).toEqual({ ok: false, motivo: 'limite_credito_excedido' })
+    const outbox = await leerOutbox(almacen)
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0].consumoCuentaCorriente).toBe(600)
+  })
+
+  it('la cuenta corriente pendiente de OTRO cliente no cuenta', async () => {
+    const { almacen, result } = await montar()
+    await agregarAOutbox(almacen, {
+      idLocal: 'de-otro-cliente',
+      numeroPreasignado: 120,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: solicitudFixture({ idCliente: 99 }),
+      consumoCuentaCorriente: 900,
+    })
+    obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+
+    expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: false })
+  })
+
+  it('una venta rechazada que se reintenta vuelve a la cola con su cuenta corriente, y vuelve a contar', async () => {
+    const { result } = await montar()
+    obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })
+    emitirMock.mockRejectedValueOnce(new ErrorApi(400, 'limite_credito_excedido', 'El pago supera el límite de crédito del cliente.'))
+
+    await act(async () => {
+      await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 900 }])
+      await result.current.drenarAhora()
+    })
+    await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
+
+    await act(async () => {
+      await result.current.reintentarVentaConError(result.current.ventasConError[0].idLocal)
+    })
+
+    let resultado
+    await act(async () => {
+      resultado = await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+    })
+    expect(resultado).toEqual({ ok: false, motivo: 'limite_credito_excedido' })
+  })
+
+  it('al drenar, un rechazo por límite le dice al cajero qué hacer para poder reintentarla', async () => {
+    const { result } = await montar()
+    obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })
+    emitirMock.mockRejectedValue(new ErrorApi(400, 'limite_credito_excedido', 'El pago supera el límite de crédito del cliente.'))
+
+    await act(async () => {
+      await encolar(result, [{ comportamiento: 'CuentaCorriente', importe: 230 }])
+      await result.current.drenarAhora()
+    })
+
+    await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
+    expect(result.current.ventasConError[0].mensaje).toBe(
+      `La venta 150 no se pudo sincronizar: el cliente no tiene crédito disponible para esta venta. ${INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR}`,
+    )
   })
 })

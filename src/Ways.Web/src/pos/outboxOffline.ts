@@ -26,6 +26,9 @@ export type VentaEnCola = {
   idPuntoVenta: number
   creadoEn: string
   solicitud: SolicitudDeVenta
+  /** Lo que esta venta carga a la cuenta corriente de su cliente, si carga algo. La consulta del
+   * límite de la próxima venta lo suma al saldo del servidor mientras la venta siga en la cola. */
+  consumoCuentaCorriente?: number
 }
 
 /** Bloque de numeración reservado, con `proximo` como puntero local de reparto — nunca se vuelve
