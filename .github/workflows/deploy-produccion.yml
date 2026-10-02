@@ -1,14 +1,10 @@
 name: deploy-produccion
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - "src/Ways.Desktop/**"
-      - "docs/**"
-      - "legacy/**"
-      - "alsina/**"
-      - "**/*.md"
   workflow_dispatch:
 
 permissions: {}
@@ -19,7 +15,11 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.repository == 'pablo-nader/ways2026'
+    if: >-
+      github.repository == 'pablo-nader/ways2026' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
