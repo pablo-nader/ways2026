@@ -28,11 +28,13 @@ public static class PosEndpoints
                 throw new ErrorDominio("version_no_soportada", $"La versión {version} de la instantánea no existe.", 400);
             }
 
-            var instantanea = await servicio.ObtenerAsync(ct);
             if (version is null)
             {
-                return Results.Ok(ArmadorDeInstantanea.ProyectarLegada(instantanea));
+                return Results.Ok(ArmadorDeInstantanea.ProyectarLegada(
+                    await servicio.ObtenerAsync(soloListaDelConsumidorFinal: true, ct)));
             }
+
+            var instantanea = await servicio.ObtenerAsync(ct: ct);
 
             var etiqueta = EtiquetaDeInstantanea.Calcular(instantanea);
             http.Response.Headers.ETag = etiqueta;

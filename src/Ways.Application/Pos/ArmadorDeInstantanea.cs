@@ -46,6 +46,16 @@ public static class ArmadorDeInstantanea
     public static int? ListaEfectiva(int idListaPrecio, IReadOnlySet<int> idsListaVisibles) =>
         idsListaVisibles.Contains(idListaPrecio) ? idListaPrecio : null;
 
+
+    /// <summary>De las listas a resolver, solo la lista efectiva del Consumidor Final (vacío si no tiene
+    /// una visible): el formato original no muestra ninguna otra.</summary>
+    public static IReadOnlyList<int> SoloListaDelConsumidorFinal(
+        IReadOnlyList<int> idsLista, IReadOnlyList<ClienteDeInstantanea> clientes)
+    {
+        var idListaConsumidorFinal = clientes.FirstOrDefault(c => c.EsConsumidorFinal)?.IdListaPrecio;
+        return idsLista.Where(id => id == idListaConsumidorFinal).ToList();
+    }
+
     /// <summary>
     /// Líneas de resolución en el orden que <see cref="ArmarArticulos"/> espera: artículo por
     /// artículo y, dentro de cada uno, lista por lista. Todas a cantidad 1 contra la empresa del

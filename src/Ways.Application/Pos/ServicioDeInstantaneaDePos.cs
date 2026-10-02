@@ -40,7 +40,9 @@ namespace Ways.Application.Pos;
 public class ServicioDeInstantaneaDePos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas)
 {
-    public async Task<InstantaneaDePos> ObtenerAsync(CancellationToken ct = default)
+    /// <param name="soloListaDelConsumidorFinal">Resuelve solo la lista del Consumidor Final: lo único que
+    /// necesita el formato original (<see cref="ArmadorDeInstantanea.ProyectarLegada"/>).</param>
+    public async Task<InstantaneaDePos> ObtenerAsync(bool soloListaDelConsumidorFinal = false, CancellationToken ct = default)
     {
         // La policy del endpoint (RequiereDispositivo) ya exige la claim — defensa en
         // profundidad, mismo criterio que ServicioDeReservasDeNumeracion.ReservarAsync.
@@ -106,6 +108,10 @@ public class ServicioDeInstantaneaDePos(
             .ToList();
 
         var idsLista = ArmadorDeInstantanea.ListasAResolver(listasVisibles, idEmpresa, clientes.Select(c => c.IdListaPrecio));
+        if (soloListaDelConsumidorFinal)
+        {
+            idsLista = ArmadorDeInstantanea.SoloListaDelConsumidorFinal(idsLista, clientes);
+        }
 
         // Mismo scope que ServicioDeEscaneo (solo Activo, sin filtro de disponibilidad por
         // empresa): un artículo que el dispositivo puede escanear y vender ONLINE tiene que poder

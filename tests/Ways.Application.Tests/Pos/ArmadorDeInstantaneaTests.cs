@@ -178,6 +178,17 @@ public class ArmadorDeInstantaneaTests
             [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false)],
             10m);
 
+
+    [Fact]
+    public void ParaElFormatoOriginalSoloQuedaLaListaDelConsumidorFinal()
+    {
+        IReadOnlyList<int> idsLista = [3, 5, 8];
+
+        Assert.Equal([5], SoloListaDelConsumidorFinal(idsLista, [Cliente(2, 2, idLista: 3), Cliente(1, 1, idLista: 5)]));
+        Assert.Empty(SoloListaDelConsumidorFinal(idsLista, [Cliente(1, 1, idLista: null)]));
+        Assert.Empty(SoloListaDelConsumidorFinal(idsLista, [Cliente(1, 1, idLista: 99)]));
+    }
+
     [Fact]
     public void ElFormatoOriginalTomaLaListaDelConsumidorFinalYOmiteLoQueNoTienePrecioAhi()
     {
