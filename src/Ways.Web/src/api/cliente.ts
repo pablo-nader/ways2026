@@ -239,8 +239,13 @@ async function descargar(ruta: string): Promise<void> {
  * `Dispositivo <secreto>` de `dispositivos.ts`) reemplaza al de la sesión en esa sola solicitud. */
 export const api = {
   get: <T>(ruta: string, headers?: Record<string, string>) => pedir<T>(ruta, headers ? { headers } : undefined),
-  post: <T>(ruta: string, cuerpo?: unknown, headers?: Record<string, string>) =>
-    pedir<T>(ruta, { method: 'POST', body: cuerpo ? JSON.stringify(cuerpo) : undefined, ...(headers ? { headers } : {}) }),
+  post: <T>(ruta: string, cuerpo?: unknown, headers?: Record<string, string>, senal?: AbortSignal) =>
+    pedir<T>(ruta, {
+      method: 'POST',
+      body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+      ...(headers ? { headers } : {}),
+      ...(senal ? { signal: senal } : {}),
+    }),
   put: <T>(ruta: string, cuerpo: unknown) =>
     pedir<T>(ruta, { method: 'PUT', body: JSON.stringify(cuerpo) }),
   delete: <T>(ruta: string) => pedir<T>(ruta, { method: 'DELETE' }),

@@ -1,7 +1,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useSincronizacionOffline } from './useSincronizacionOffline'
-import { agregarAOutbox, agregarARechazada, guardarBloque, leerBloque, leerOutbox, leerRechazadas, type BloqueDeNumeracionLocal, type VentaEnCola } from './outboxOffline'
+import { INTERVALO_DE_RENDICION_MS, LIMITE_DE_SINCRONIZACION_INICIAL_MS, useSincronizacionOffline } from './useSincronizacionOffline'
+import {
+  agregarAOutbox,
+  agregarARechazada,
+  guardarBloque,
+  leerBloque,
+  leerOutbox,
+  leerRechazadas,
+  type BloqueDeNumeracionLocal,
+  type VentaEnCola,
+} from './outboxOffline'
+import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 import { guardarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -207,7 +217,7 @@ describe('useSincronizacionOffline — reposición del bloque de numeración', (
 
     renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
-    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledWith({ idPuntoVenta: 7, codigoTipoComprobante: 'TX', cantidad: 100 }))
+    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledWith({ idPuntoVenta: 7, codigoTipoComprobante: 'TX', cantidad: 500 }, expect.any(AbortSignal)))
   })
 
   it('repone el bloque Y LO PERSISTE de inmediato (goal C: sobrevive un restart, no solo vive en memoria)', async () => {
@@ -568,7 +578,7 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
   })
 
-  it('rechaza un pago no-efectivo (cuenta corriente), aunque haya instantánea y números disponibles', async () => {
+  it('rechaza un pago de cuenta corriente, aunque haya instantánea y números disponibles', async () => {
     const almacen = almacenFake()
     await guardarInstantaneaLocal(almacen, instantaneaFixture())
     await guardarBloque(almacen, bloqueFixture())
@@ -865,7 +875,7 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
     renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
 
     await waitFor(() =>
-      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 104, pendientes: 3 }),
+      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 104, pendientes: 3 }, expect.any(AbortSignal)),
     )
   })
 
@@ -894,7 +904,7 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
    * La afirmación negativa necesita un control POSITIVO en el mismo test: el paso de rendición no
    * emite ninguna señal observable cuando saltea, así que esperar "un ciclo" dejaría el assert verde
    * incluso con el `await rendirColaLocal()` borrado entero de `ciclo`. La segunda fase es ese
-   * control: apenas hay señal, el ciclo repone el bloque (`reponerBloqueSiNecesario`) y ese mismo
+   * control: apenas hay señal, el ciclo repone el bloque (`reponerBloque`) y ese mismo
    * paso SÍ rinde — recién ahí queda probado que el paso corre, y por lo tanto que en la primera
    * fase corrió y eligió no rendir.
    */
@@ -902,7 +912,7 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
     const almacen = almacenFake()
     await agregarAOutbox(almacen, ventaEnCola('a', 100))
     emitirMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
-    // Sin señal (default del `beforeEach`): `reponerBloqueSiNecesario` ni se intenta, así que el
+    // Sin señal (default del `beforeEach`): `reponerBloque` ni se intenta, así que el
     // bloque sigue ausente durante toda la primera fase.
 
     renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
@@ -921,7 +931,7 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
     })
 
     await waitFor(() =>
-      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 99, pendientes: 1 }),
+      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 99, pendientes: 1 }, expect.any(AbortSignal)),
     )
   })
 
@@ -962,5 +972,568 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
 
     procesoDeNode?.off('unhandledRejection', alRejectionNoManejada)
     expect(rejeccionesNoManejadas).toEqual([])
+  })
+})
+
+/** Promesa controlable desde el test — el ciclo queda en vuelo hasta que se la resuelve. */
+function promesaControlada<T>() {
+  let resolver!: (valor: T) => void
+  const promesa = new Promise<T>((r) => {
+    resolver = r
+  })
+  return { promesa, resolver }
+}
+
+function ventaEnColaFixture(numero: number, idLocal = `v-${numero}`): VentaEnCola {
+  return {
+    idLocal,
+    numeroPreasignado: numero,
+    idPuntoVenta: 7,
+    creadoEn: '2026-09-20T09:00:00.000Z',
+    solicitud: solicitudFixture({ numeroPreasignado: numero }),
+  }
+}
+
+describe('useSincronizacionOffline — ciclo de arranque y sincronización a pedido', () => {
+  it('sincronizacionInicialPendiente queda en true hasta que termina el primer ciclo', async () => {
+    const almacen = almacenFake()
+    const instantaneaPendiente = promesaControlada<InstantaneaDePos>()
+    obtenerInstantaneaMock.mockReturnValue(instantaneaPendiente.promesa)
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1))
+    expect(result.current.sincronizacionInicialPendiente).toBe(true)
+    expect(result.current.sincronizando).toBe(true)
+
+    await act(async () => {
+      instantaneaPendiente.resolver(instantaneaFixture())
+    })
+
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.sincronizando).toBe(false)
+    expect(result.current.instantanea).toEqual(instantaneaFixture())
+  })
+
+  it('sin red, el ciclo de arranque termina enseguida y libera la venta con la instantánea local', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.instantanea).toEqual(instantaneaFixture())
+    expect(result.current.enLinea).toBe(false)
+  })
+
+  it('con una red que cuelga, libera la venta al vencer el tope aunque el ciclo siga en vuelo', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LIMITE_DE_SINCRONIZACION_INICIAL_MS - 1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(false)
+      expect(result.current.sincronizando).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sincronizarAhora con un ciclo en curso no arranca otro: dos pedidos seguidos comparten el mismo ciclo', async () => {
+    const almacen = almacenFake()
+    const arranque = promesaControlada<InstantaneaDePos>()
+    obtenerInstantaneaMock.mockReturnValueOnce(arranque.promesa)
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1))
+
+    let primero: Promise<void> = Promise.resolve()
+    let segundo: Promise<void> = Promise.resolve()
+    act(() => {
+      primero = result.current.sincronizarAhora()
+      segundo = result.current.sincronizarAhora()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      arranque.resolver(instantaneaFixture())
+      await primero
+      await segundo
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    // Terminado el ciclo, un pedido nuevo sí corre uno nuevo.
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    await act(async () => {
+      await result.current.sincronizarAhora()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('cambiar el intervalo no dispara un ciclo nuevo, solo reprograma el periódico', async () => {
+    const almacen = almacenFake()
+    const { result, rerender } = renderHook(
+      ({ intervaloMs }) => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs }),
+      { initialProps: { intervaloMs: 60_000 } },
+    )
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+
+    rerender({ intervaloMs: 120_000 })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useSincronizacionOffline — el drenado nunca bloquea el encolado de una venta nueva', () => {
+  it('con el envío de la venta más vieja colgado en la red, una venta nueva se encola igual', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    await agregarAOutbox(almacen, ventaEnColaFixture(149))
+    emitirMock.mockReturnValue(new Promise(() => {}))
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture(),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+      })
+    })
+
+    expect(resultado).toEqual({ ok: true, numero: 150, numeroVisible: '0007-00000150' })
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([149, 150])
+  })
+
+  it('si la salida del outbox de una venta ya enviada no se puede confirmar, NUNCA la archiva como rechazada', async () => {
+    const datos = new Map<string, unknown>()
+    let escriturasDeOutbox = 0
+    const almacen: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+      },
+      async escribir<T>(clave: string, valor: T) {
+        // La primera escritura del outbox es la de este propio fixture; la segunda, la salida
+        // de la venta después de enviarla — esa es la que se pierde.
+        if (clave === 'outbox' && ++escriturasDeOutbox === 2) return true
+        datos.set(clave, valor)
+        return true
+      },
+    }
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    emitirMock.mockResolvedValue({ id: 1 })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    await expect(leerRechazadas(almacen)).resolves.toEqual([])
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([100])
+  })
+})
+
+describe('useSincronizacionOffline — drenarAhora', () => {
+  it('drena el outbox, devuelve lo que queda según el almacén y rinde la cola', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ proximo: 101, hasta: 200 }))
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    await agregarARechazada(almacen, { ...ventaEnColaFixture(99), mensaje: 'rechazada' })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    await waitFor(() => expect(result.current.outboxCount).toBe(1))
+
+    emitirMock.mockResolvedValue({ id: 1 })
+    rendirColaMock.mockClear()
+    let estado
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+
+    expect(estado).toEqual({ pendientes: 0, conError: 1 })
+    expect(result.current.outboxCount).toBe(0)
+    expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 100, pendientes: 1 }, expect.any(AbortSignal))
+  })
+
+  it('sin señal deja la venta en el outbox y lo informa', async () => {
+    const almacen = almacenFake()
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+
+    let estado
+    await act(async () => {
+      estado = await result.current.drenarAhora()
+    })
+    expect(estado).toEqual({ pendientes: 1, conError: 0 })
+  })
+})
+
+const BLOQUE_RESERVADO = { idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 300, hasta: 399 }
+const BLOQUE_BAJO = bloqueFixture({ desde: 100, proximo: 195, hasta: 200 })
+
+async function encolarUna(result: { current: ReturnType<typeof useSincronizacionOffline> }) {
+  let resultado: Awaited<ReturnType<ReturnType<typeof useSincronizacionOffline>['encolarVentaOffline']>> | undefined
+  await act(async () => {
+    resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+  })
+  return resultado
+}
+
+async function montarListo(almacen: AlmacenClaveValor) {
+  await guardarInstantaneaLocal(almacen, instantaneaFixture())
+  const hook = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+  await waitFor(() => expect(hook.result.current.sincronizacionInicialPendiente).toBe(false))
+  await waitFor(() => expect(hook.result.current.instantanea).not.toBeNull())
+  return hook
+}
+
+describe('useSincronizacionOffline — reposición del bloque en segundo plano', () => {
+  it('bajo el umbral, repone apenas drena y el bloque nuevo reemplaza al que estaba en uso', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const { result } = await montarListo(almacen)
+    // El ciclo de arranque corrió sin señal (ErrorDeRed por defecto): nunca intentó reservar.
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).toHaveBeenCalledTimes(1)
+    await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
+    const r = await encolarUna(result)
+    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300' })
+  })
+
+  it('rinde el bloque vivo con pendientes = 0 ANTES de reservar (su rendición queda congelada al abandonarlo)', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const { result } = await montarListo(almacen)
+    rendirColaMock.mockClear()
+
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(rendirColaMock.mock.calls[0][0]).toEqual({ codigoTipoComprobante: 'TX', entregadoHasta: 194, pendientes: 0 })
+    expect(rendirColaMock.mock.invocationCallOrder[0]).toBeLessThan(reservarNumeracionMock.mock.invocationCallOrder[0])
+    // Después de rotar, la rendición del ciclo es sobre el bloque vivo NUEVO, todavía sin usar.
+    expect(rendirColaMock.mock.calls.at(-1)?.[0]).toEqual({ codigoTipoComprobante: 'TX', entregadoHasta: 299, pendientes: 0 })
+  })
+
+  it('con ventas pendientes en la cola local no rota el bloque: congelaría pendientes > 0 en el abandonado', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    await agregarAOutbox(almacen, ventaEnColaFixture(194))
+    const { result } = await montarListo(almacen)
+
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+    await expect(leerBloque(almacen)).resolves.toEqual(BLOQUE_BAJO)
+  })
+
+  it('si el servidor ya no tiene vivo el bloque local (reserva anterior perdida), reserva igual', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const { result } = await montarListo(almacen)
+
+    rendirColaMock.mockRejectedValueOnce(new ErrorApi(409, 'rendicion_de_bloque_reemplazado', 'El bloque fue reemplazado.'))
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('si la rendición previa falla por red, no reserva (el bloque abandonado quedaría con un reporte viejo)', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const { result } = await montarListo(almacen)
+
+    rendirColaMock.mockRejectedValue(new ErrorDeRed(new TypeError('Failed to fetch')))
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+  })
+
+  it('una reserva colgada en la red nunca demora el encolado mientras el bloque en uso tenga números', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const { result } = await montarListo(almacen)
+
+    reservarNumeracionMock.mockReturnValue(new Promise(() => {}))
+    act(() => {
+      void result.current.drenarAhora()
+    })
+    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
+
+    const r = await encolarUna(result)
+    expect(r).toEqual({ ok: true, numero: 195, numeroVisible: '0007-00000195' })
+  })
+})
+
+describe('useSincronizacionOffline — topes de red', () => {
+  it('un envío colgado vence en el tope y se trata como incierto: la venta queda en el outbox, nunca rechazada', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      await agregarAOutbox(almacen, ventaEnColaFixture(100))
+      emitirMock.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_RED_MS - 1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(result.current.sincronizacionInicialPendiente).toBe(false)
+      expect(emitirMock).toHaveBeenCalledTimes(1)
+      expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([100])
+      await expect(leerRechazadas(almacen)).resolves.toEqual([])
+      expect(result.current.ventasConError).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('con los dos bloques agotados, el encolado espera la reserva y la usa', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, proximo: 201, hasta: 200 }))
+    const { result } = await montarListo(almacen)
+
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    const r = await encolarUna(result)
+
+    expect(r).toEqual({ ok: true, numero: 300, numeroVisible: '0007-00000300' })
+  })
+
+  it('con los dos bloques agotados y la reserva colgada, el encolado espera solo hasta el tope y rechaza sin_numeracion', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, proximo: 201, hasta: 200 }))
+    const { result } = await montarListo(almacen)
+
+    vi.useFakeTimers()
+    try {
+      reservarNumeracionMock.mockReturnValue(new Promise(() => {}))
+      let resultado: unknown
+      const encolado = result.current
+        .encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: true, pagos: [{ comportamiento: 'Efectivo' }] })
+        .then((r) => {
+          resultado = r
+        })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_RED_MS - 1)
+      })
+      expect(resultado).toBeUndefined()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+        await encolado
+      })
+      expect(resultado).toEqual({ ok: false, motivo: 'sin_numeracion' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una venta que no se admitiría igual (otro cliente) nunca espera una reserva', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ desde: 100, proximo: 201, hasta: 200 }))
+    const { result } = await montarListo(almacen)
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({ solicitudBase: solicitudFixture(), esConsumidorFinal: false, pagos: [{ comportamiento: 'Efectivo' }] })
+    })
+
+    expect(resultado).toEqual({ ok: false, motivo: 'cliente_no_admitido' })
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('useSincronizacionOffline — rendición periódica, independiente del intervalo de sincronización', () => {
+  it('con un intervalo de 60 minutos, rinde igual cada 2 minutos sin correr el ciclo completo', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      await guardarBloque(almacen, bloqueFixture({ proximo: 150 }))
+      renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60 * 60_000 }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      const instantaneasDelArranque = obtenerInstantaneaMock.mock.calls.length
+      rendirColaMock.mockClear()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INTERVALO_DE_RENDICION_MS)
+      })
+
+      expect(rendirColaMock).toHaveBeenCalledWith({ codigoTipoComprobante: 'TX', entregadoHasta: 149, pendientes: 0 }, expect.any(AbortSignal))
+      expect(obtenerInstantaneaMock.mock.calls.length).toBe(instantaneasDelArranque)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drenarAhora sin ningún bloque local no intenta reservar (la primera reserva es del ciclo)', async () => {
+    const almacen = almacenFake()
+    const { result } = await montarListo(almacen)
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    expect(reservarNumeracionMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('useSincronizacionOffline — revisión: el ciclo nunca queda retenido', () => {
+  it('una descarga de instantánea colgada vence a los 30 s y libera el ciclo único', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = almacenFake()
+      obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+      const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60 * 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_999)
+      })
+      expect(result.current.sincronizando).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(result.current.sincronizando).toBe(false)
+
+      obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+      await act(async () => {
+        await result.current.sincronizarAhora()
+      })
+      expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('un paso del ciclo que tira no deja el ciclo retenido: el próximo pedido corre uno nuevo', async () => {
+    const datos = new Map<string, unknown>()
+    // La primera lectura del outbox es la carga inicial; la segunda, la del drenado del ciclo de
+    // arranque — esa es la que falla.
+    let lecturasDeOutbox = 0
+    const almacen: AlmacenClaveValor = {
+      async leer<T>(clave: string) {
+        if (clave === 'outbox' && ++lecturasDeOutbox === 2) throw new Error('almacén caído')
+        return (datos.has(clave) ? (datos.get(clave) as T) : null) ?? null
+      },
+      async escribir<T>(clave: string, valor: T) {
+        datos.set(clave, valor)
+        return true
+      },
+    }
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60 * 60_000 }))
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    expect(result.current.sincronizando).toBe(false)
+    expect(obtenerInstantaneaMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await result.current.sincronizarAhora()
+    })
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('con sincronizarAntesDeVender = false la venta no espera el ciclo de arranque, que corre igual', async () => {
+    const almacen = almacenFake()
+    obtenerInstantaneaMock.mockReturnValue(new Promise(() => {}))
+    const { result } = renderHook(() =>
+      useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000, sincronizarAntesDeVender: false }),
+    )
+
+    expect(result.current.sincronizacionInicialPendiente).toBe(false)
+    await waitFor(() => expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(1))
+    expect(result.current.sincronizacionInicialPendiente).toBe(false)
+  })
+})
+
+describe('useSincronizacionOffline — revisión: nunca numerar con un bloque de otro punto de venta', () => {
+  it('un bloque persistido de otro punto de venta se descarta al cargar: se repone uno propio', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ idPuntoVenta: 99, proximo: 100, hasta: 200 }))
+    obtenerInstantaneaMock.mockResolvedValue(instantaneaFixture())
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+
+    renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
+    expect((reservarNumeracionMock.mock.calls[0][0] as { idPuntoVenta: number }).idPuntoVenta).toBe(7)
+  })
+
+  it('una reposición del punto de venta anterior que aterriza después del cambio nunca numera ventas del nuevo', async () => {
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, instantaneaFixture())
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const reserva = promesaControlada<typeof BLOQUE_RESERVADO>()
+    reservarNumeracionMock.mockReturnValue(reserva.promesa)
+
+    const { result, rerender } = renderHook(
+      ({ idPuntoVenta }) => useSincronizacionOffline({ idPuntoVenta, activo: true, almacen, intervaloMs: 60_000 }),
+      { initialProps: { idPuntoVenta: 7 } },
+    )
+    await waitFor(() => expect(result.current.sincronizacionInicialPendiente).toBe(false))
+    act(() => {
+      void result.current.drenarAhora()
+    })
+    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
+
+    rerender({ idPuntoVenta: 8 })
+    await act(async () => {
+      reserva.resolver(BLOQUE_RESERVADO)
+      await Promise.resolve()
+    })
+    await waitFor(async () => expect(await leerBloque(almacen)).toEqual({ ...BLOQUE_RESERVADO, proximo: 300 }))
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ idPuntoVenta: 8 }),
+        esConsumidorFinal: true,
+        pagos: [{ comportamiento: 'Efectivo' }],
+        instantaneaCongelada: instantaneaFixture(),
+      })
+    })
+
+    expect(resultado).toEqual({ ok: false, motivo: 'sin_numeracion' })
+    await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
   })
 })

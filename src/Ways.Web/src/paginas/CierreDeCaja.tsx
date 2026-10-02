@@ -12,9 +12,13 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { leerOutbox, leerRechazadas } from '../pos/outboxOffline'
-import { INTERVALO_DE_SINCRONIZACION_MS } from '../pos/useSincronizacionOffline'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+/** Relectura del outbox/rechazadas locales — independiente del intervalo de sincronización con
+ * el servidor (configurable en minutos): leer el almacén local es barato y esta pantalla no debe
+ * tardar minutos en reflejar una venta que drenó o se encoló mientras está abierta. */
+const INTERVALO_DE_RELECTURA_DE_COLA_MS = 20_000
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -114,8 +118,8 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
   // pantalla desactualizada en cualquiera de los dos sentidos durante toda su vida — una venta
   // encolada por OTRA pestaña (u otro drenado del mismo `useSincronizacionOffline`) DESPUÉS de
   // montar quedaba invisible (el bloqueo debería prenderse y nunca lo hacía), y una que drenó
-  // mientras esta pantalla seguía abierta quedaba bloqueando de más. Re-lee periódicamente (mismo
-  // intervalo que el propio ciclo de sincronización, `INTERVALO_DE_SINCRONIZACION_MS`) y también
+  // mientras esta pantalla seguía abierta quedaba bloqueando de más. Re-lee el almacén local
+  // periódicamente (`INTERVALO_DE_RELECTURA_DE_COLA_MS`, una lectura local sin red) y también
   // apenas la pestaña recupera el foco (backstop inmediato, mismo criterio que el evento `online`
   // de `useSincronizacionOffline` — un cajero que vuelve a esta pantalla no debería esperar el
   // intervalo completo para ver el estado real).
@@ -130,7 +134,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
       })
     }
     releer()
-    const idIntervalo = setInterval(releer, INTERVALO_DE_SINCRONIZACION_MS)
+    const idIntervalo = setInterval(releer, INTERVALO_DE_RELECTURA_DE_COLA_MS)
     window.addEventListener('focus', releer)
     return () => {
       vigente = false

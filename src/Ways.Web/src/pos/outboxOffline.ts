@@ -191,7 +191,7 @@ export type MotivoRechazoOffline =
 
 const MENSAJE_POR_MOTIVO: Record<MotivoRechazoOffline, string> = {
   cliente_no_admitido: 'Sin conexión solo se puede vender al Consumidor Final — la instantánea no tiene los precios de otro cliente.',
-  medio_no_admitido: 'Sin conexión solo se admite efectivo — cuenta corriente y otros medios necesitan validarse contra el servidor.',
+  medio_no_admitido: 'Sin conexión solo se admiten efectivo y medios electrónicos — la cuenta corriente necesita validarse contra el servidor.',
   sin_instantanea: 'No hay una instantánea local para vender sin conexión — recuperá la señal para descargarla.',
   linea_sin_precio: 'Un artículo del carrito no tiene precio en la última instantánea — no se puede vender sin conexión.',
   sin_numeracion: 'No quedan números reservados para vender sin conexión — recuperá la señal para reponer el bloque.',

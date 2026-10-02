@@ -375,6 +375,30 @@ function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
 
 let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 
+/** Mock PARCIAL de `outboxOffline`: todo real salvo `leerOutbox`, que un test puede hacer fallar
+ * (`controlDeOutbox.fallarLectura`) para simular un almacén caído a mitad de un drenado — el
+ * almacén real (`almacenPos.ts`) nunca rechaza, así que no hay otra forma de llegar a ese camino. */
+const controlDeOutbox = vi.hoisted(() => ({ fallarLectura: false }))
+vi.mock('../pos/outboxOffline', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('../pos/outboxOffline')>()
+  return {
+    ...real,
+    leerOutbox: (almacen: Parameters<typeof real.leerOutbox>[0]) =>
+      controlDeOutbox.fallarLectura ? Promise.reject(new Error('almacén caído')) : real.leerOutbox(almacen),
+  }
+})
+
+/** Simula el POS de escritorio (`corriendoEnTauri()`) para un test puntual. */
+type GlobalConTauri = typeof globalThis & { __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> } } }
+async function comoPosDeEscritorio(prueba: () => Promise<void>) {
+  ;(globalThis as GlobalConTauri).__TAURI__ = { core: { invoke: vi.fn(() => Promise.resolve(undefined)) } }
+  try {
+    await prueba()
+  } finally {
+    delete (globalThis as GlobalConTauri).__TAURI__
+  }
+}
+
 vi.mock('../puntoVenta/usePuntoVenta', () => ({
   usePuntoVenta: () => estadoDePuntoVenta,
 }))
@@ -449,6 +473,7 @@ beforeEach(async () => {
   })
   await borrarAlmacenOffline()
   establecerTokenDeSesionBearer(null)
+  controlDeOutbox.fallarLectura = false
 })
 
 /** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
@@ -5032,32 +5057,59 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  describe('escaneo offline (Parte B): el camino online no cambia, el fallback solo corre ante ErrorDeRed', () => {
-    it('con una instantánea local y el escaneo online caído por red, agrega la línea desde la instantánea', async () => {
-      await prepararAlmacenOffline()
-      mockearApiGet((ruta) => {
-        if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
-        return undefined
-      })
+  /** Monta `Pos` con la instantánea local ya cargada en el hook. El botón "Sincronizar ahora"
+   * solo existe con una instantánea en memoria, así que es la señal de que el DATO llegó (no solo
+   * la pantalla) — y el Consumidor Final ya quedó elegido. */
+  async function montarConInstantanea() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+  }
 
-      renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+  function llamadasGet(prefijo: string) {
+    return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith(prefijo))
+  }
+
+  function llamadasPost(ruta: string) {
+    return apiPostMock.mock.calls.filter((c) => c[0] === ruta)
+  }
+
+  describe('escaneo local primero (Consumidor Final con instantánea)', () => {
+    it('un código que está en la instantánea se agrega sin llamar al escaneo online', async () => {
+      await prepararAlmacenOffline()
+      await montarConInstantanea()
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
       expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
     })
 
-    it('un código que no está ni online ni en la instantánea local sigue mostrando un error, nunca agrega nada', async () => {
+    it('un código que NO está en la instantánea (artículo nuevo, sin sincronizar) se busca online', async () => {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) {
+          return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 2, codigoInterno: 'A0002', nombre: 'Sprite 1L', codigoBarra: '7790009999999' }))
+        }
+        return undefined
+      })
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790009999999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      expect(await screen.findByText('Sprite 1L')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
+    })
+
+    it('fuera de la instantánea y sin red, muestra el error y no agrega nada', async () => {
       await prepararAlmacenOffline()
       mockearApiGet((ruta) => {
         if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
         return undefined
       })
-
-      renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await montarConInstantanea()
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '9999999999999')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -5066,48 +5118,95 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
     })
 
-    it('un ErrorApi real (ej. 404 del servidor) NUNCA dispara el fallback offline — sigue siendo un error normal', async () => {
+    it('fuera de la instantánea, un ErrorApi real (404) se muestra tal cual — nunca como "sin conexión"', async () => {
       await prepararAlmacenOffline()
       mockearApiGet((ruta) => {
         if (ruta.startsWith('/articulos/escaneo')) {
-          return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 7790001234567.'))
+          return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 9999999999999.'))
         }
         return undefined
       })
+      await montarConInstantanea()
 
-      renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '9999999999999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
+      expect(await screen.findByText('No se encontró un artículo activo para el código 9999999999999.')).toBeInTheDocument()
+      expect(screen.queryByText('Sin conexión: no se encontró ese código en la última instantánea local.')).not.toBeInTheDocument()
+    })
+
+    it('para otro cliente el escaneo sigue yendo online primero; sin red cae a la instantánea', async () => {
+      await prepararAlmacenOffline()
+      await montarConInstantanea()
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: /Juan Pérez/ }))
+
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+        return undefined
+      })
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
 
-      // Mismo código que SÍ está en la instantánea (fixture) — si el fallback disparara acá, la
-      // línea se agregaría igual. No se agrega: prueba que el catch distingue ErrorApi de ErrorDeRed.
-      expect(await screen.findByText('No se encontró un artículo activo para el código 7790001234567.')).toBeInTheDocument()
-      expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+      expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
     })
   })
 
-  describe('vista previa de precio offline (Parte B)', () => {
-    it('con la resolución online caída por red, muestra el precio de la instantánea en vez de "no se pudo calcular"', async () => {
-      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture({ precioOriginal: 120, precioFinal: 100, descuentoUnitario: 20 })] }) })
+  describe('vista previa local primero', () => {
+    it('con todas las líneas en la instantánea, el precio sale de ahí sin llamar a /ofertas/resolver', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: [articuloDeInstantaneaFixture({ precioOriginal: 120, precioFinal: 90, descuentoUnitario: 30 })] }) })
+      await montarConInstantanea()
 
-      renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
 
-      apiPostMock.mockImplementation((ruta: string) => {
-        if (ruta === '/ofertas/resolver') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
-        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-      })
-      // Dispara una nueva resolución sin depender del debounce de edición.
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
-      await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+      // $ 90 solo puede salir de la instantánea: el mock de /ofertas/resolver devuelve $ 100.
+      await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(llamadasPost('/ofertas/resolver')).toEqual([])
+    })
 
-      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
-      expect(screen.queryByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')).not.toBeInTheDocument()
+    it('para otro cliente la vista previa va online aunque la línea esté en la instantánea', async () => {
+      await prepararAlmacenOffline()
+      await montarConInstantanea()
+      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: /Juan Pérez/ }))
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
+    })
+
+    it('una instantánea de OTRO punto de venta nunca se usa: escaneo y vista previa van online', async () => {
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ idPuntoVenta: 99 }) })
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
+      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
+    })
+
+    it('con una línea fuera de la instantánea, la vista previa va online', async () => {
+      await prepararAlmacenOffline()
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo')) return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 2, nombre: 'Sprite 1L' }))
+        return undefined
+      })
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790009999999')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Sprite 1L')
+
+      await waitFor(() => expect(llamadasPost('/ofertas/resolver')).toHaveLength(1))
     })
   })
 
@@ -5129,14 +5228,14 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(screen.queryByLabelText('Buscar cliente')).not.toBeInTheDocument()
     })
 
-    it('el selector de medio de pago solo ofrece Efectivo — nunca Tarjeta ni Cuenta corriente', async () => {
+    it('el selector de medio de pago ofrece Efectivo y Tarjeta — nunca Cuenta corriente', async () => {
       await llegarConEnLineaFalse()
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
 
       const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
-      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre])
+      expect(opciones.map((o) => o.textContent)).toEqual(['Elegir medio…', medioEfectivo.nombre, medioTarjeta.nombre])
     })
 
     it('también muestra la vejez de la instantánea y la limitación de ofertas por cantidad', async () => {
@@ -5146,31 +5245,73 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  describe('checkout offline (Parte B/C): encola en el outbox, muestra "guardada sin conexión", el badge sube', () => {
-    it('con el checkout online caído por red, encola la venta y el modal avisa que está pendiente de sincronizar', async () => {
+  describe('checkout: Consumidor Final se encola localmente; el resto sigue online', () => {
+    it('Consumidor Final: encola en el outbox y muestra el modal sin esperar al servidor', async () => {
       await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
-      mockearApiGet()
+      // El envío en segundo plano queda colgado para siempre: si el cobro lo esperara, el modal
+      // nunca aparecería.
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montarConInstantanea()
 
-      renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
       await cobrarConEfectivo('100')
-
-      apiPostMock.mockImplementation((ruta: string) => {
-        if (ruta === '/ventas') return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
-        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-      })
-
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-      expect(await screen.findByText('Guardada sin conexión')).toBeInTheDocument()
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
       expect(screen.getByText(/0007-00000500/)).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox.map((v) => v.numeroPreasignado)).toEqual([500])
+      // El envío en segundo plano arrancó solo, después de encolar.
+      await waitFor(() => expect(llamadasPost('/ventas')).toHaveLength(1))
+      expect((llamadasPost('/ventas')[0][1] as { numeroPreasignado: number }).numeroPreasignado).toBe(500)
+
       await userEvent.click(screen.getByRole('button', { name: /Aceptar/ }))
       expect(await screen.findByText('Sin sincronizar: 1')).toBeInTheDocument()
+    })
+
+    it('un pago con tarjeta (electrónico) también se encola localmente, con su referencia', async () => {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
+      await userEvent.type(await screen.findByLabelText(`Referencia de ${medioTarjeta.nombre} (fila 1)`), 'auth-999')
+      await userEvent.type(await screen.findByLabelText(`Importe de ${medioTarjeta.nombre} (fila 1)`), '100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.pagos).toEqual([{ idMedioPago: medioTarjeta.id, importe: 100, referencia: 'auth-999', vuelto: 0 }])
+    })
+
+    it('sin números reservados la venta local no puede servirla: cobra por el camino online', async () => {
+      await prepararAlmacenOffline()
+      await montarConInstantanea()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await cobrarConEfectivo('100')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+      expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
+      expect(llamadasPost('/ventas')).toHaveLength(1)
+      await expect(leerOutbox(crearAlmacenIndexedDb())).resolves.toEqual([])
     })
 
     it('rechaza el checkout offline de un cliente que no es Consumidor Final, sin encolar nada', async () => {
@@ -5202,7 +5343,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
       expect(await screen.findByText(/Sin conexión solo se puede vender al Consumidor Final/)).toBeInTheDocument()
-      expect(screen.queryByText('Guardada sin conexión')).not.toBeInTheDocument()
+      expect(screen.queryByText('Guardada en este dispositivo')).not.toBeInTheDocument()
     })
   })
 
@@ -5390,7 +5531,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-      expect(await screen.findByText('Guardada sin conexión')).toBeInTheDocument()
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
       // El modal "Venta finalizada" (el ticket) muestra el TOTAL VIEJO — el que el cajero vio y cobró.
       expect(screen.getByText(new RegExp(`Total: \\$ ${precioViejo},00`))).toBeInTheDocument()
       expect(screen.queryByText(new RegExp(`Total: \\$ ${precioNuevo},00`))).not.toBeInTheDocument()
@@ -5401,6 +5542,170 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       const outbox = await leerOutbox(almacen)
       expect(outbox).toHaveLength(1)
       expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({ precioUnitario: precioViejo })
+    })
+  })
+
+  describe('sincronización: arranque, "Sincronizar ahora" e intervalo', () => {
+    it('POS de escritorio: "Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', () =>
+      comoPosDeEscritorio(async () => {
+        await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+        let resolverInstantanea: (valor: InstantaneaDePos) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta === '/pos/instantanea') {
+            return new Promise<InstantaneaDePos>((r) => {
+              resolverInstantanea = r
+            })
+          }
+          return undefined
+        })
+        await montarConInstantanea()
+
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await screen.findByText('Coca Cola 1L')
+        await cobrarConEfectivo('100')
+
+        expect(screen.getByText('Sincronizando con el servidor antes de cobrar…')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+        await act(async () => {
+          resolverInstantanea(instantaneaFixture())
+        })
+
+        await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+        expect(screen.queryByText('Sincronizando con el servidor antes de cobrar…')).not.toBeInTheDocument()
+    }))
+
+    it('app web: la venta nunca espera la sincronización de arranque (la instantánea es solo de dispositivo)', async () => {
+      mockearApiGet((ruta) => (ruta === '/pos/instantanea' ? new Promise<InstantaneaDePos>(() => {}) : undefined))
+      await armarVentaLista()
+
+      expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled()
+      expect(screen.queryByText('Sincronizando con el servidor antes de cobrar…')).not.toBeInTheDocument()
+    })
+
+    it('"Sincronizar ahora" corre un solo ciclo aunque se lo active dos veces en el mismo tick', async () => {
+      await prepararAlmacenOffline()
+      let resolverInstantanea: (valor: InstantaneaDePos) => void = () => {}
+      mockearApiGet((ruta) => {
+        if (ruta === '/pos/instantanea') {
+          return new Promise<InstantaneaDePos>((r) => {
+            resolverInstantanea = r
+          })
+        }
+        return undefined
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await waitFor(() => expect(llamadasGet('/pos/instantanea')).toHaveLength(1))
+      // El ciclo de arranque está en vuelo: el botón ya lo refleja.
+      expect(await screen.findByRole('button', { name: 'Sincronizando…' })).toBeDisabled()
+      await act(async () => {
+        resolverInstantanea(instantaneaFixture())
+      })
+      const boton = await screen.findByRole('button', { name: 'Sincronizar ahora' })
+
+      act(() => {
+        boton.click()
+        boton.click()
+      })
+
+      await waitFor(() => expect(llamadasGet('/pos/instantanea')).toHaveLength(2))
+      expect(screen.getByRole('button', { name: 'Sincronizando…' })).toBeDisabled()
+      await act(async () => {
+        resolverInstantanea(instantaneaFixture())
+      })
+      expect(await screen.findByRole('button', { name: 'Sincronizar ahora' })).toBeEnabled()
+      expect(llamadasGet('/pos/instantanea')).toHaveLength(2)
+    })
+
+    it('el intervalo arranca en 5 minutos, se recorta al rango 1-60 y queda guardado en el dispositivo', async () => {
+      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+      await prepararAlmacenOffline()
+      await montarConInstantanea()
+
+      const campo = screen.getByLabelText('Minutos entre sincronizaciones')
+      expect(campo).toHaveValue(5)
+
+      await userEvent.clear(campo)
+      await userEvent.type(campo, '90')
+      await userEvent.tab()
+
+      expect(campo).toHaveValue(60)
+      expect(localStorage.getItem('ways.pos.intervaloDeSincronizacionMinutos')).toBe('60')
+      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+    })
+  })
+
+  describe('"Cerrar caja" intenta drenar el outbox antes de bloquear', () => {
+    it('si el drenado previo al cierre falla, "Cerrar caja" vuelve a quedar operable y un segundo intento cierra', async () => {
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Sin sincronizar: 0')
+
+      controlDeOutbox.fallarLectura = true
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText('No se pudo verificar el turno abierto.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeEnabled()
+
+      controlDeOutbox.fallarLectura = false
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+    })
+
+    it('con el outbox vacío igual rinde la cola antes de consultar el turno (la guarda del servidor exige un reporte fresco)', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await guardarBloque(almacen, { idPuntoVenta: 7, codigoTipoComprobante: 'TX', desde: 500, hasta: 599, proximo: 510 })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/pos/rendicion-de-cola' ? Promise.resolve(undefined) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: 'Sincronizar ahora' })
+      const rendicionesAntes = llamadasPost('/pos/rendicion-de-cola').length
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+      const indiceRendicion = apiPostMock.mock.calls.findLastIndex((c) => c[0] === '/pos/rendicion-de-cola')
+      expect(llamadasPost('/pos/rendicion-de-cola').length).toBeGreaterThan(rendicionesAntes)
+      expect(apiPostMock.mock.calls[indiceRendicion][1]).toEqual({ codigoTipoComprobante: 'TX', entregadoHasta: 509, pendientes: 0 })
+      const ordenRendicion = apiPostMock.mock.invocationCallOrder[indiceRendicion]
+      const indiceTurno = apiGetMock.mock.calls.findLastIndex((c) => (c[0] as string).startsWith('/caja/turnos/abierto'))
+      expect(ordenRendicion).toBeLessThan(apiGetMock.mock.invocationCallOrder[indiceTurno])
+    })
+
+    it('si el drenado vacía el outbox, el cierre sigue sin bloquear al cajero', async () => {
+      const almacen = crearAlmacenIndexedDb()
+      await guardarInstantaneaLocal(almacen, instantaneaFixture())
+      await agregarAOutbox(almacen, {
+        idLocal: 'pendiente-1',
+        numeroPreasignado: 500,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: { idPuntoVenta: 7, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      })
+      // El ciclo de arranque no tiene señal; recién el drenado de "Cerrar caja" llega al servidor.
+      let enviosDeVentas = 0
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta !== '/ventas') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+        enviosDeVentas += 1
+        return enviosDeVentas === 1 ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch'))) : Promise.resolve(comprobanteEmitidoFixture())
+      })
+
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Sin sincronizar: 1')
+      await waitFor(() => expect(enviosDeVentas).toBe(1))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+      expect(enviosDeVentas).toBe(2)
+      await expect(leerOutbox(almacen)).resolves.toEqual([])
     })
   })
 })
