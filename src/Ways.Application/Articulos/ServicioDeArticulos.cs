@@ -10,6 +10,7 @@ using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
+using Ways.Domain.Usuarios;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Articulos;
@@ -146,6 +147,11 @@ public class ServicioDeArticulos(
                 Array.Empty<int>(), a.Activo, a.ControlaLote))
             .ToListAsync(ct);
 
+        if (!PuedeVerCostos)
+        {
+            items = items.ConvertAll(SinCostos);
+        }
+
         return new PaginaDe<ArticuloListado>(items, total, pagina, tamanio);
     }
 
@@ -162,8 +168,16 @@ public class ServicioDeArticulos(
                 .Select(ae => ae.IdEmpresa)
                 .ToListAsync(ct);
 
-        return Proyectar(articulo, idsEmpresas);
+        var detalle = Proyectar(articulo, idsEmpresas);
+        return PuedeVerCostos ? detalle : SinCostos(detalle);
     }
+
+    /// <summary>Los costos son del back-office (<c>GestionDeCatalogo</c>, solo admin): el POS
+    /// (vendedor, supervisor) lee este mismo endpoint y nunca los recibe.</summary>
+    private bool PuedeVerCostos => contexto.Rol == RolConocido.Admin;
+
+    private static ArticuloListado SinCostos(ArticuloListado a) =>
+        a with { CostoLista = null, DescuentoProveedor = null, CostoNominal = null };
 
     /// <summary>Asigna <c>codigo_interno</c> de forma atómica (design decision 6) cuando se
     /// omite, dentro de la misma transacción que el INSERT — igual criterio que
