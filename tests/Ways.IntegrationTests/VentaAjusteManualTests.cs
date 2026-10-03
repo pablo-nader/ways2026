@@ -712,8 +712,8 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
     /// <summary>Una línea offline con OFERTA del servidor (10 % sobre un artículo de 100) y un −10 %
     /// manual, con el precio y el descuento del dispositivo iguales a los del servidor, no es una
     /// discrepancia. 2 x 100 = 200, oferta 20, neto 180, ajuste −18 sobre el neto (no −20 sobre el
-    /// bruto), total 162: si el esperado aplicara el porcentaje sobre el bruto (160) la línea se
-    /// marcaría sin diferencia de precio alguna.</summary>
+    /// bruto), total 162. La comparación es contra el neto previo al ajuste (162 − (−18) = 180): si
+    /// ignorara el ajuste o la oferta, la línea se marcaría sin diferencia de precio alguna.</summary>
     [Fact]
     public async Task UnaLineaOfflineConOfertaDelServidorYAjusteManualConPrecioYDescuentoIgualesNoMarcaDiscrepancia()
     {
