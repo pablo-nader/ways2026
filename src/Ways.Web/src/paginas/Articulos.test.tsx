@@ -131,6 +131,9 @@ function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): Proveed
     observaciones: null,
     activo: true,
     idEmpresa: null,
+    percibeIibb: false,
+    percibeIva: false,
+    preciosIncluyenIva: false,
     ...sobrescribir,
   }
 }
@@ -147,6 +150,8 @@ function empresaFixture(sobrescribir: Partial<EmpresaListado> = {}): EmpresaList
     nombreFantasia: null,
     cuit: null,
     nombreTenant: null,
+    alicuotaPercepcionIibb: null,
+    alicuotaPercepcionIva: null,
     ...sobrescribir,
   }
 }
@@ -995,6 +1000,9 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
       observaciones: null,
       idEmpresa: null,
       activo: true,
+      percibeIibb: false,
+      percibeIva: false,
+      preciosIncluyenIva: false,
     })
 
     expect(within(selectProveedor).getAllByRole('option').map((o) => o.textContent)).toEqual([

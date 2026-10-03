@@ -65,6 +65,7 @@ public static class EtiquetasDeTablas
             ["ordenes_compra"] = "órdenes de compra",
             ["pagos_comprobante"] = "pagos",
             ["parametros"] = "parámetros",
+            ["percepciones_comprobante_compra"] = "compras",
             ["precios"] = "precios",
             ["presupuestos"] = "presupuestos",
             ["proveedores"] = "proveedores",

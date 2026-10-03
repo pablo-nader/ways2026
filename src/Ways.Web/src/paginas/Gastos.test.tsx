@@ -53,6 +53,8 @@ function empresaFixture(sobrescribir: Partial<EmpresaListado> = {}): EmpresaList
     idTenant: 1,
     razonSocial: 'Empresa Demo SA',
     nombreTenant: 'Tenant Demo',
+    alicuotaPercepcionIibb: null,
+    alicuotaPercepcionIva: null,
     ...sobrescribir,
   } as EmpresaListado
 }

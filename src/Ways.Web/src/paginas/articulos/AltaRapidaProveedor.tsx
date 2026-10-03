@@ -84,6 +84,9 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
         observaciones: null,
         idEmpresa: null,
         activo: true,
+        percibeIibb: false,
+        percibeIva: false,
+        preciosIncluyenIva: false,
       })
       onCreado(creado)
     } catch (e) {

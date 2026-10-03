@@ -53,6 +53,12 @@ public class ComprobanteCompra : EntidadTenant
     /// comprobante no fiscal. Es la fuente del cálculo y del costo efectivo, nunca el tipo.</summary>
     public bool DiscriminaIva { get; set; }
 
+    /// <summary>Snapshot por comprobante (pre-cargado desde el proveedor, editable): el costo
+    /// unitario tipeado ya trae el IVA y <c>CalculadorDeCompra</c> lo extrae por alícuota en vez de
+    /// sumarlo. Solo existe si <see cref="DiscriminaIva"/>: un comprobante que no discrimina ya es
+    /// un precio final.</summary>
+    public bool PreciosIncluyenIva { get; set; }
+
     /// <summary><c>NULL</c> cuando <see cref="DiscriminaIva"/> es <c>false</c> (design: Compra
     /// Arithmetic) — misma postura que <c>ComprobanteVenta.IvaTotal</c>.</summary>
     public decimal? IvaTotal { get; set; }

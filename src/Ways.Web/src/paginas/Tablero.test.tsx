@@ -95,6 +95,8 @@ const empresaUno: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Tenant Demo',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 function ventasFixture(sobrescribir: Partial<ResumenDeVentas> = {}): ResumenDeVentas {

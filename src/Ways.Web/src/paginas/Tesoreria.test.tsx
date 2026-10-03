@@ -55,6 +55,8 @@ const empresaUnica: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Tenant Demo',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 const empresaOtra: EmpresaListado = {
@@ -64,6 +66,8 @@ const empresaOtra: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Tenant Demo',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 const puntoVentaCentro: PuntoVentaListado = {

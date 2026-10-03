@@ -40,6 +40,17 @@ public class Proveedor : EntidadTenant
 
     public bool Activo { get; set; } = true;
 
+    /// <summary>El proveedor es agente de percepción de IIBB: sus facturas a la empresa suelen
+    /// traerla. Solo pre-carga la percepción en la compra; el importe lo manda la factura.</summary>
+    public bool PercibeIibb { get; set; }
+
+    /// <summary>El proveedor es agente de percepción de IVA.</summary>
+    public bool PercibeIva { get; set; }
+
+    /// <summary>Los precios que el proveedor entrega ya traen el IVA incluido: pre-carga el modo
+    /// "precio final" de la compra (<see cref="Compras.ComprobanteCompra.PreciosIncluyenIva"/>).</summary>
+    public bool PreciosIncluyenIva { get; set; }
+
     /// <summary>stage-15-cc-proveedores-ledger (gate §C): cache mantenida por
     /// <c>EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync</c> — el libro es
     /// <c>movimientos_cuenta_corriente_proveedor</c>. Nunca escrito por un

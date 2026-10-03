@@ -116,6 +116,7 @@ Tenant | ofertas_listas | id_tenant | sinmarca
 Tenant | ordenes_compra | id_tenant | marcado
 Tenant | pagos_comprobante | id_tenant | marcado
 Tenant | parametros | id_tenant | marcado
+Tenant | percepciones_comprobante_compra | id_tenant | marcado
 Tenant | precios | id_tenant | marcado
 Tenant | presupuestos | id_tenant | marcado
 Tenant | proveedores | id_tenant | marcado

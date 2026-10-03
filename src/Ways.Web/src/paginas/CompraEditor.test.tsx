@@ -80,6 +80,9 @@ function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): Proveed
     observaciones: null,
     activo: true,
     idEmpresa: null,
+    percibeIibb: false,
+    percibeIva: false,
+    preciosIncluyenIva: false,
     ...sobrescribir,
   }
 }
@@ -206,6 +209,8 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     idOrdenCompra: null,
     discriminaIva: true,
     alicuotas: [{ idAlicuotaIva: 3, porcentaje: 21, neto: 950, iva: 199.5 }],
+    preciosIncluyenIva: false,
+    percepciones: [],
     ...sobrescribir,
   }
 }

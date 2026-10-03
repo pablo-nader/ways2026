@@ -100,6 +100,10 @@ public class ProveedorConfiguration : IEntityTypeConfiguration<Proveedor>
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(p => p.PercibeIibb).HasColumnName("percibe_iibb").HasDefaultValue(false).IsRequired();
+        builder.Property(p => p.PercibeIva).HasColumnName("percibe_iva").HasDefaultValue(false).IsRequired();
+        builder.Property(p => p.PreciosIncluyenIva).HasColumnName("precios_incluyen_iva").HasDefaultValue(false).IsRequired();
+
         // stage-15-cc-proveedores-ledger, Slice 1 (gate §C): cache mantenida por
         // EscriturasDeCuentaCorrienteProveedor — el libro es movimientos_cuenta_corriente_proveedor
         // (mismo criterio que Cliente.Saldo, doc-10:169-170). Sin CHECK: un saldo negativo es un

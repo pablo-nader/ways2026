@@ -16,8 +16,13 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { ROL } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
-
-type Formulario = { id: number; razonSocial: string; nombreFantasia: string; cuit: string }
+import {
+  aEdicionDeEmpresa,
+  aFormularioDeEmpresa,
+  alicuotasDePercepcionValidas,
+  MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA,
+  type FormularioDeEmpresa,
+} from './empresaFormulario'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -47,7 +52,7 @@ export function Empresas() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [formulario, setFormulario] = useState<FormularioDeEmpresa | null>(null)
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
@@ -105,6 +110,11 @@ export function Empresas() {
   async function guardar() {
     if (!formulario || ocupadoRef.current) return
 
+    if (!alicuotasDePercepcionValidas(formulario)) {
+      setError(MENSAJE_ALICUOTA_DE_PERCEPCION_INVALIDA)
+      return
+    }
+
     const datos = formulario
     const token = ++generacion.current
     ocupadoRef.current = true
@@ -113,11 +123,7 @@ export function Empresas() {
     setAviso('')
     try {
       try {
-        await clienteDeOrganizacion.editarEmpresa(datos.id, {
-          razonSocial: datos.razonSocial,
-          nombreFantasia: datos.nombreFantasia || null,
-          cuit: datos.cuit || null,
-        })
+        await clienteDeOrganizacion.editarEmpresa(datos.id, aEdicionDeEmpresa(datos))
       } catch (e) {
         if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
@@ -273,6 +279,41 @@ export function Empresas() {
                 disabled={bloqueado}
               />
             </div>
+            <div className="col-12">
+              <strong>Percepciones que le aplican los proveedores</strong>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="e-percepcion-iibb">
+                Alícuota de percepción de IIBB (%)
+              </label>
+              <input
+                id="e-percepcion-iibb"
+                type="number"
+                step="0.001"
+                min="0"
+                max="100"
+                className="form-control"
+                value={formulario.alicuotaPercepcionIibb}
+                onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIibb: e.target.value })}
+                disabled={bloqueado}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="e-percepcion-iva">
+                Alícuota de percepción de IVA (%)
+              </label>
+              <input
+                id="e-percepcion-iva"
+                type="number"
+                step="0.001"
+                min="0"
+                max="100"
+                className="form-control"
+                value={formulario.alicuotaPercepcionIva}
+                onChange={(e) => setFormulario({ ...formulario, alicuotaPercepcionIva: e.target.value })}
+                disabled={bloqueado}
+              />
+            </div>
             <div className="col-12 d-flex gap-2">
               <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
@@ -344,14 +385,7 @@ export function Empresas() {
                         <BotonIcono
                           icono="editar"
                           className="me-1"
-                          onClick={() =>
-                            setFormulario({
-                              id: e.id,
-                              razonSocial: e.razonSocial,
-                              nombreFantasia: e.nombreFantasia ?? '',
-                              cuit: e.cuit ?? '',
-                            })
-                          }
+                          onClick={() => setFormulario(aFormularioDeEmpresa(e))}
                           disabled={bloqueado}
                         />
                         <BotonIcono

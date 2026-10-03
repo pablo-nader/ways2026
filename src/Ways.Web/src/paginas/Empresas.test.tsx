@@ -57,6 +57,8 @@ const empresaSur: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Comercio Sur',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 const empresaAnexo: EmpresaListado = {
@@ -66,6 +68,8 @@ const empresaAnexo: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Comercio Sur',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 const empresaEste: EmpresaListado = {
@@ -75,6 +79,8 @@ const empresaEste: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Almacén Este',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 function montar(items: EmpresaListado[] = [empresaSur, empresaAnexo, empresaEste]) {
@@ -564,5 +570,71 @@ describe('Empresas (slice 5, ronda 1 — la puerta es modal y el token se acuña
     ])
     expect(puerta).toHaveTextContent('También se dan de baja:')
     expect(puerta).not.toHaveTextContent(/junto con él/)
+  })
+})
+
+describe('Empresas — alícuotas de percepción', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    usuarioActual = usuarioFixture()
+    apiPutMock.mockResolvedValue(undefined)
+  })
+
+  async function abrirEdicionDeSur(usuario: ReturnType<typeof userEvent.setup>, empresa: EmpresaListado = empresaSur) {
+    montar([empresa])
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+  }
+
+  it('el formulario trae las dos alícuotas guardadas y vacías las que no se informaron', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario, { ...empresaSur, alicuotaPercepcionIibb: 3.5, alicuotaPercepcionIva: null })
+
+    expect(screen.getByLabelText('Alícuota de percepción de IIBB (%)')).toHaveValue(3.5)
+    expect(screen.getByLabelText('Alícuota de percepción de IVA (%)')).toHaveValue(null)
+  })
+
+  it('guardar manda las alícuotas tipeadas como números y las vacías como null', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario)
+
+    await usuario.type(screen.getByLabelText('Alícuota de percepción de IIBB (%)'), '3.5')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock).toHaveBeenCalledWith('/empresas/10', {
+      razonSocial: 'Sur SRL',
+      nombreFantasia: null,
+      cuit: null,
+      alicuotaPercepcionIibb: 3.5,
+      alicuotaPercepcionIva: null,
+    })
+  })
+
+  it('cero es una alícuota válida y se manda como 0, no como ausencia', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario)
+
+    await usuario.type(screen.getByLabelText('Alícuota de percepción de IVA (%)'), '0')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0][1] as { alicuotaPercepcionIva: number | null }).alicuotaPercepcionIva).toBe(0)
+  })
+
+  it('una alícuota fuera de 0 a 100 avisa y no llama a la API', async () => {
+    const usuario = userEvent.setup()
+    await abrirEdicionDeSur(usuario)
+
+    await usuario.type(screen.getByLabelText('Alícuota de percepción de IIBB (%)'), '101')
+    // El navegador ya frena un valor fuera de min/max al enviar; se envía el formulario directo
+    // para probar la guarda propia, que no depende de esa validación nativa.
+    fireEvent.submit(screen.getByLabelText('Razón social').closest('form') as HTMLFormElement)
+
+    expect(
+      await screen.findByText('Las alícuotas de percepción tienen que estar entre 0 y 100, con hasta 3 decimales.'),
+    ).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
   })
 })

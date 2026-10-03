@@ -22,7 +22,7 @@ public class BajasEstructuralesTests
 {
     /// <summary>
     /// Los únicos <c>RemoveRange</c> que el repositorio tiene derecho a tener hoy, congelados por
-    /// receptor. Los siete son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
+    /// receptor. Los ocho son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
     /// de junction), no bajas de entidades: ninguno toca <c>tenants</c>, <c>empresas</c>,
     /// <c>puntos_venta</c> ni <c>usuarios</c>. La lista está congelada a propósito — un borrado
     /// físico nuevo, sea donde sea, pone esta prueba en rojo y obliga a justificarlo.
@@ -36,6 +36,7 @@ public class BajasEstructuralesTests
         "ItemsPresupuesto",
         "ItemsRemito",
         "OfertasListas",
+        "PercepcionesComprobanteCompra",
     ];
 
     /// <summary>Los cuatro DbSet de organización: nada de lo que esta etapa toca puede aparecer

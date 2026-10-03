@@ -227,7 +227,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             join c in db.ComprobantesCompra.AsNoTracking() on ic.IdComprobanteCompra equals c.Id
             where c.IdOrdenCompra == idOrdenCompra && c.Estado == EstadoCompra.Confirmada
                   && c.DeletedAt == null && ic.DeletedAt == null && ic.IdArticulo != null
-            select new { IdArticulo = ic.IdArticulo!.Value, ic.Cantidad, ic.Total, ic.PorcentajeIva, c.DiscriminaIva })
+            select new { IdArticulo = ic.IdArticulo!.Value, ic.Cantidad, ic.Total, ic.PorcentajeIva, c.DiscriminaIva, c.PreciosIncluyenIva })
             .ToListAsync(ct);
 
         var pedidaPorArticulo = itemsPedido
@@ -253,7 +253,8 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             {
                 var cantidad = g.Sum(x => x.Cantidad);
                 var totalEfectivo = g.Sum(x =>
-                    CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(x.Total, x.Cantidad, x.PorcentajeIva, x.DiscriminaIva) * x.Cantidad);
+                    CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
+                        x.Total, x.Cantidad, x.PorcentajeIva, x.DiscriminaIva, x.PreciosIncluyenIva) * x.Cantidad);
                 return (Cantidad: cantidad, CostoReal: cantidad > 0m ? (decimal?)(totalEfectivo / cantidad) : null);
             });
 

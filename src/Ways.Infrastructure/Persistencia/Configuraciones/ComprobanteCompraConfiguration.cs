@@ -63,6 +63,13 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DiscriminaIva).HasColumnName("discrimina_iva").IsRequired();
+
+        // DEFAULT false de base: el valor lo escribe siempre el servicio, pero una escritura cruda
+        // que no lo nombre (y los datos previos) quedan en el modo de precios netos de siempre.
+        builder.Property(c => c.PreciosIncluyenIva)
+            .HasColumnName("precios_incluyen_iva")
+            .HasDefaultValue(false)
+            .IsRequired();
         builder.Property(c => c.IvaTotal).HasColumnName("iva_total").HasColumnType("numeric(14,2)");
 
         builder.Property(c => c.Observaciones).HasColumnName("observaciones").HasColumnType("text");

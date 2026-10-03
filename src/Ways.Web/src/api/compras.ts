@@ -16,12 +16,14 @@ import type {
   ItemDeOrden,
   LineaDeCompraSolicitada,
   PaginaDeCompras,
+  PercepcionSolicitada,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
   SaldoDeProveedor,
   SolicitudDeAplicarPrecios,
   SolicitudDeCompra,
   TipoComprobanteListado,
+  TipoDePercepcion,
 } from './tipos'
 
 function redondear(valor: number, decimales: number): number {
@@ -301,6 +303,18 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
   }
 }
 
+/** Una percepción del formulario. Mientras `automatica` es `true` su base (el neto gravado del
+ * comprobante) y su importe (`base × alícuota / 100`) se derivan en cada render y el estado los deja
+ * en `null`; el primer cambio manual la congela con los valores que el operador estaba viendo. El
+ * importe que se envía es siempre el de la factura, nunca uno recalculado por el servidor. */
+export type PercepcionFormulario = {
+  tipo: TipoDePercepcion
+  baseImponible: number | null
+  alicuota: number | null
+  importe: number | null
+  automatica: boolean
+}
+
 export type EncabezadoDeCompraFormulario = {
   idProveedor: number | ''
   idTipoComprobante: number | ''
@@ -319,6 +333,13 @@ export type EncabezadoDeCompraFormulario = {
   /** IVA impreso por el proveedor, por id de alícuota, cuando difiere del calculado por
    * redondeo. Solo se editan las alícuotas que el comprobante tiene; `null` = sin override. */
   ivaImpreso: Record<number, number | null>
+  /** El costo unitario tipeado ya trae el IVA. Se pre-carga del proveedor y solo se envía si el
+   * comprobante discrimina IVA. */
+  preciosIncluyenIva: boolean
+  percepciones: PercepcionFormulario[]
+  /** Tipos que el operador quitó a mano: la sugerencia automática no los vuelve a agregar hasta que
+   * cambie el proveedor. */
+  percepcionesDescartadas: TipoDePercepcion[]
 }
 
 /** Si el comprobante discrimina IVA: lo fija el tipo en una factura y lo elige quien carga un
@@ -329,12 +350,17 @@ export function discriminaIvaEfectivo(tipo: TipoComprobanteListado | null, elecc
 }
 
 /** Un comprobante persistido → overrides de IVA impreso: solo las alícuotas cuyo IVA guardado difiere
- * del que sale de su neto (las demás se recalculan al guardar de nuevo, sin override). */
+ * del que el servidor calcularía en la modalidad del comprobante (las demás se recalculan al guardar
+ * de nuevo, sin override). Con precios finales el neto guardado es `final − iva`, así que el IVA
+ * calculado sale de `neto + iva` (el final de la alícuota), no del neto solo. */
 export function ivaImpresoDesdeDetalle(compra: CompraDetalle): Record<number, number | null> {
   const overrides: Record<number, number | null> = {}
   for (const a of compra.alicuotas) {
     if (a.neto === null || a.iva === null) continue
-    if (redondear((a.neto * a.porcentaje) / 100, 2) !== a.iva) overrides[a.idAlicuotaIva] = a.iva
+    const calculado = compra.preciosIncluyenIva
+      ? redondear(((a.neto + a.iva) * a.porcentaje) / (100 + a.porcentaje), 2)
+      : redondear((a.neto * a.porcentaje) / 100, 2)
+    if (calculado !== a.iva) overrides[a.idAlicuotaIva] = a.iva
   }
   return overrides
 }
@@ -346,6 +372,7 @@ export function aSolicitudDeCompra(
   encabezado: EncabezadoDeCompraFormulario,
   lineas: LineaDeCompraFormulario[],
   discriminaEfectivo = false,
+  registraLibroIva = false,
 ): SolicitudDeCompra {
   const completas = lineas.filter(lineaCompletaParaEnvio)
   const idsPresentes = new Set(completas.map((l) => Number(l.idAlicuotaIva)))
@@ -366,7 +393,39 @@ export function aSolicitudDeCompra(
     idOrdenCompra: encabezado.idOrdenCompra,
     discriminaIva: encabezado.discriminaIva,
     ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
+    preciosIncluyenIva: discriminaEfectivo && encabezado.preciosIncluyenIva,
+    percepciones: aPercepcionesSolicitadas(encabezado.percepciones, registraLibroIva, discriminaEfectivo),
   }
+}
+
+/** Percepciones con importe que corresponden al comprobante: solo un tipo que registra libro IVA las
+ * admite y la de IVA además exige que discrimine IVA (espejo de `ReglaDePercepciones`). Las filas
+ * ocultas por el tipo no se envían, pero tampoco suman al total que muestra el editor. */
+export function percepcionesAplicables(
+  percepciones: PercepcionFormulario[],
+  registraLibroIva: boolean,
+  discriminaIva: boolean,
+): PercepcionFormulario[] {
+  if (!registraLibroIva) return []
+  return percepciones.filter((p) => p.tipo !== 'iva' || discriminaIva)
+}
+
+function aPercepcionesSolicitadas(
+  percepciones: PercepcionFormulario[],
+  registraLibroIva: boolean,
+  discriminaIva: boolean,
+): PercepcionSolicitada[] | null {
+  // Una automática en cero (base o alícuota cero) no es una percepción de la factura: no se
+  // persiste. Una fila que el operador tocó o agregó viaja aunque sea cero.
+  const enviables = percepcionesAplicables(percepciones, registraLibroIva, discriminaIva)
+    .filter((p) => p.importe !== null && !(p.automatica && p.importe === 0))
+    .map((p) => ({
+      tipo: p.tipo,
+      baseImponible: p.baseImponible ?? 0,
+      alicuota: p.alicuota ?? 0,
+      importe: p.importe as number,
+    }))
+  return enviables.length === 0 ? null : enviables
 }
 
 // ---- Mirror no autoritativo de CalculadorDeCompra (design: "Compra Arithmetic") --------------
@@ -401,6 +460,8 @@ export type TotalesDeCompra = {
   ivaTotal: number | null
   total: number
   alicuotas: AlicuotaDelDesglose[]
+  /** Suma de los importes de percepción, que ya están dentro de `total`. */
+  percepcionesTotal: number
 }
 
 /** Diferencia máxima, en pesos, entre el IVA calculado y el impreso (espejo de
@@ -424,14 +485,14 @@ export function lineaFormularioACalculo(
   }
 }
 
-function calcularItem(l: LineaDeCalculo, discriminaIva: boolean): ItemCalculado {
+function calcularItem(l: LineaDeCalculo, discriminaIva: boolean, preciosIncluyenIva: boolean): ItemCalculado {
   const cantidad = redondear(l.unidades + l.bultos * l.unidadesPorBulto, 3)
   const bruto = redondear(cantidad * l.costoUnitario, 2)
   const total = redondear(bruto - l.descuento, 2)
   const costoEfectivo =
     cantidad <= 0
       ? null
-      : discriminaIva
+      : discriminaIva && !preciosIncluyenIva
         ? redondear((total * (1 + l.porcentajeIva / 100)) / cantidad, 2)
         : redondear(total / cantidad, 2)
   return { cantidad, bruto, total, costoEfectivo }
@@ -439,13 +500,20 @@ function calcularItem(l: LineaDeCalculo, discriminaIva: boolean): ItemCalculado 
 
 /** Espejo de `CalculadorDeCompra.Calcular` (design: "Compra Arithmetic") — puramente informativo,
  * el servidor recalcula todo desde cero al guardar (`dto-contract-honesty`). `ivaImpreso` es el
- * override por alícuota del IVA que imprimió el proveedor: `null` o ausente = el calculado. */
+ * override por alícuota del IVA que imprimió el proveedor: `null` o ausente = el calculado.
+ * Con `preciosIncluyenIva` (solo si discrimina) el costo tipeado ya trae el IVA: el total de cada
+ * línea es el precio final, el IVA se extrae del final de cada alícuota y el neto es el resto.
+ * `percepciones` (ya filtradas con `percepcionesAplicables`) suman a `total` con el importe de la
+ * factura. */
 export function calcularTotalesDeCompra(
   lineas: LineaDeCalculo[],
   discriminaIva: boolean,
   ivaImpreso: Record<number, number | null> = {},
+  preciosIncluyenIva = false,
+  percepciones: { importe: number | null }[] = [],
 ): TotalesDeCompra {
-  const items = lineas.map((l) => calcularItem(l, discriminaIva))
+  const precioFinal = discriminaIva && preciosIncluyenIva
+  const items = lineas.map((l) => calcularItem(l, discriminaIva, precioFinal))
   const subtotal = redondear(
     items.reduce((acumulado, i) => acumulado + i.bruto, 0),
     2,
@@ -455,24 +523,50 @@ export function calcularTotalesDeCompra(
     2,
   )
 
+  const percepcionesTotal = redondear(
+    percepciones.reduce((acumulado, p) => acumulado + (p.importe ?? 0), 0),
+    2,
+  )
+
   if (!discriminaIva) {
-    return { items, subtotal, descuentoTotal, ivaTotal: null, total: redondear(subtotal - descuentoTotal, 2), alicuotas: [] }
+    return {
+      items,
+      subtotal,
+      descuentoTotal,
+      ivaTotal: null,
+      total: redondear(subtotal - descuentoTotal + percepcionesTotal, 2),
+      alicuotas: [],
+      percepcionesTotal,
+    }
   }
 
-  const alicuotas = desglosarIva(lineas, items, ivaImpreso)
+  const alicuotas = desglosarIva(lineas, items, ivaImpreso, precioFinal)
   const ivaTotal = redondear(
     alicuotas.reduce((acumulado, a) => acumulado + a.iva, 0),
     2,
   )
-  return { items, subtotal, descuentoTotal, ivaTotal, total: redondear(subtotal - descuentoTotal + ivaTotal, 2), alicuotas }
+  // Con precios finales el IVA ya está dentro de subtotal − descuento: sumarlo lo contaría dos veces.
+  const sinPercepciones = precioFinal ? subtotal - descuentoTotal : subtotal - descuentoTotal + ivaTotal
+  return {
+    items,
+    subtotal,
+    descuentoTotal,
+    ivaTotal,
+    total: redondear(sinPercepciones + percepcionesTotal, 2),
+    alicuotas,
+    percepcionesTotal,
+  }
 }
 
 /** Neto por alícuota (suma de totales de línea) e IVA redondeado una sola vez sobre ese neto — la
- * convención de una factura, igual que el servidor —, ordenado por id de alícuota. */
+ * convención de una factura, igual que el servidor —, ordenado por id de alícuota. Con precio final
+ * la suma de líneas es el final de la alícuota: el IVA sale de ahí (`final × p / (100 + p)`) y el
+ * neto es el resto, así que neto + IVA suma exactamente lo tipeado aun con un IVA impreso. */
 function desglosarIva(
   lineas: LineaDeCalculo[],
   items: ItemCalculado[],
   ivaImpreso: Record<number, number | null>,
+  precioFinal: boolean,
 ): AlicuotaDelDesglose[] {
   const porAlicuota = new Map<number, { porcentaje: number; neto: number }>()
   lineas.forEach((l, indice) => {
@@ -485,12 +579,17 @@ function desglosarIva(
 
   return [...porAlicuota.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([idAlicuotaIva, { porcentaje, neto }]) => {
-      const ivaCalculado = redondear((neto * porcentaje) / 100, 2)
+    .map(([idAlicuotaIva, { porcentaje, neto: monto }]) => {
+      const ivaCalculado = precioFinal
+        ? redondear((monto * porcentaje) / (100 + porcentaje), 2)
+        : redondear((monto * porcentaje) / 100, 2)
       const impreso = ivaImpreso[idAlicuotaIva] ?? null
+      const iva = impreso ?? ivaCalculado
+      const neto = precioFinal ? redondear(monto - iva, 2) : monto
       const fueraDeTolerancia =
-        impreso !== null && (impreso < 0 || redondear(Math.abs(impreso - ivaCalculado), 2) > TOLERANCIA_DE_IVA_IMPRESO)
-      return { idAlicuotaIva, porcentaje, neto, ivaCalculado, iva: impreso ?? ivaCalculado, fueraDeTolerancia }
+        impreso !== null &&
+        (impreso < 0 || neto < 0 || redondear(Math.abs(impreso - ivaCalculado), 2) > TOLERANCIA_DE_IVA_IMPRESO)
+      return { idAlicuotaIva, porcentaje, neto, ivaCalculado, iva, fueraDeTolerancia }
     })
 }
 

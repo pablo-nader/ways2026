@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -51,6 +51,9 @@ function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): Proveed
     observaciones: null,
     activo: true,
     idEmpresa: null,
+    percibeIibb: false,
+    percibeIva: false,
+    preciosIncluyenIva: false,
     ...sobrescribir,
   }
 }
@@ -371,5 +374,66 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
 
     await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
     expect(screen.queryByText('Saldo de Proveedor Uno SA')).not.toBeInTheDocument()
+  })
+})
+
+describe('Proveedores — impuestos de la compra', () => {
+  it('el alta manda los tres flags apagados por defecto', async () => {
+    mockearRutasBase((ruta) =>
+      ruta === '/catalogos-fiscales/condiciones-fiscales'
+        ? Promise.resolve([{ id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }])
+        : undefined,
+    )
+    apiPostMock.mockResolvedValue(proveedorFixture({ id: 2 }))
+    const usuario = userEvent.setup()
+
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({
+      percibeIibb: false,
+      percibeIva: false,
+      preciosIncluyenIva: false,
+    })
+  })
+
+  it('editar trae los flags del proveedor y manda los que se cambiaron', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') {
+        return Promise.resolve(paginaFixture([proveedorFixture({ percibeIibb: true, preciosIncluyenIva: true })]))
+      }
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') {
+        return Promise.resolve([{ id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }])
+      }
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(proveedorFixture())
+    const usuario = userEvent.setup()
+
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await screen.findByRole('option', { name: 'Responsable Inscripto' })
+
+    expect(screen.getByLabelText('Percibe IIBB')).toBeChecked()
+    expect(screen.getByLabelText('Percibe IVA')).not.toBeChecked()
+    expect(screen.getByLabelText('Sus precios incluyen IVA')).toBeChecked()
+
+    await usuario.click(screen.getByLabelText('Percibe IIBB'))
+    await usuario.click(screen.getByLabelText('Percibe IVA'))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({
+      percibeIibb: false,
+      percibeIva: true,
+      preciosIncluyenIva: true,
+    })
   })
 })

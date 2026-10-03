@@ -24,17 +24,23 @@ public sealed record ItemCalculado(
     int Orden, int? IdArticulo, decimal Cantidad, decimal Total,
     decimal CostoEfectivo, decimal? PrecioSugerido);
 
-/// <summary>El desglose de una alícuota: <see cref="Neto"/> es la suma de los totales de línea con
-/// esa alícuota e <see cref="Iva"/> el importe que se guarda (el calculado, o el impreso por el
-/// proveedor cuando se lo informó). Exento y no gravado salen con IVA cero.</summary>
+/// <summary>El desglose de una alícuota: <see cref="Neto"/> es el neto gravado de esa alícuota e
+/// <see cref="Iva"/> el importe que se guarda (el calculado, o el impreso por el proveedor cuando se
+/// lo informó). Con precios netos el neto es la suma de los totales de línea; con precios finales
+/// es esa suma menos el IVA, de modo que neto + IVA siempre iguala lo tipeado. Exento y no gravado
+/// salen con IVA cero.</summary>
 public sealed record AlicuotaCalculada(int IdAlicuotaIva, decimal Porcentaje, decimal Neto, decimal Iva);
 
 /// <summary>Resultado completo de <see cref="CalculadorDeCompra.Calcular"/>. <see cref="Alicuotas"/>
 /// queda vacío cuando el comprobante no discrimina IVA; <see cref="IvaTotal"/> es entonces
-/// <c>null</c> y, si no, la suma de <see cref="AlicuotaCalculada.Iva"/>.</summary>
+/// <c>null</c> y, si no, la suma de <see cref="AlicuotaCalculada.Iva"/>. <see cref="Total"/> incluye
+/// las <see cref="Percepciones"/> tal como las informó el proveedor. Con precios finales,
+/// <see cref="Subtotal"/> y <see cref="DescuentoTotal"/> ya traen el IVA y <see cref="Total"/> es
+/// <c>subtotal − descuento + percepciones</c>.</summary>
 public sealed record CompraCalculada(
     decimal Subtotal, decimal DescuentoTotal, decimal? IvaTotal, decimal Total,
-    IReadOnlyList<ItemCalculado> Items, IReadOnlyList<AlicuotaCalculada> Alicuotas);
+    IReadOnlyList<ItemCalculado> Items, IReadOnlyList<AlicuotaCalculada> Alicuotas,
+    IReadOnlyList<PercepcionDeCompra> Percepciones);
 
 /// <summary>
 /// Aritmética de una compra (design: Compra Arithmetic) — pura, sin acceso a base de datos, el
@@ -58,11 +64,22 @@ public static class CalculadorDeCompra
     /// hasta <see cref="ToleranciaDeIvaImpreso"/> y se rechaza con 400 si el comprobante no
     /// discrimina IVA, si nombra una alícuota que no está en las líneas o si se pasa de la
     /// tolerancia — nunca se acepta y se descarta.
+    ///
+    /// Con <paramref name="preciosIncluyenIva"/> el costo tipeado ya trae el IVA: el total de cada
+    /// línea es el precio final, el IVA de cada alícuota se extrae del final de esa alícuota
+    /// (<c>round(final × p / (100 + p), 2)</c>, una sola vez por alícuota, igual que con precios
+    /// netos) y el neto es el resto, así que neto + IVA suma exactamente lo tipeado. Un IVA impreso
+    /// mueve el neto en sentido contrario: el total del comprobante es el que se tipeó. Solo existe
+    /// en un comprobante que discrimina IVA (uno que no discrimina ya es un precio final).
+    /// <paramref name="percepciones"/> ya viene validada por <see cref="ReglaDePercepciones"/> y se
+    /// suma al total tal como la imprimió el proveedor.
     /// </summary>
     public static CompraCalculada Calcular(
         IReadOnlyList<LineaDeCompra> lineas, bool discriminaIva,
         IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes,
-        IReadOnlyDictionary<int, decimal>? ivaImpreso = null)
+        IReadOnlyDictionary<int, decimal>? ivaImpreso = null,
+        bool preciosIncluyenIva = false,
+        IReadOnlyList<PercepcionDeCompra>? percepciones = null)
     {
         if (!discriminaIva && ivaImpreso is { Count: > 0 })
         {
@@ -72,10 +89,22 @@ public static class CalculadorDeCompra
                 400);
         }
 
+        if (preciosIncluyenIva && !discriminaIva)
+        {
+            throw new ErrorDominio(
+                "precios_incluyen_iva_sin_discriminar",
+                "Los precios con IVA incluido solo se informan en un comprobante que discrimina IVA.",
+                400);
+        }
+
         var items = new List<ItemCalculado>(lineas.Count);
         var subtotal = 0m;
         var descuentoTotal = 0m;
-        var netoPorAlicuota = new SortedDictionary<int, (decimal Porcentaje, decimal Neto)>();
+
+        // Neto por alícuota con precios netos; precio final por alícuota con IVA incluido. El
+        // segundo componente se llama Monto porque su significado depende de la modalidad
+        // (ver ArmarAlicuotas).
+        var montoPorAlicuota = new SortedDictionary<int, (decimal Porcentaje, decimal Monto)>();
 
         foreach (var linea in lineas)
         {
@@ -114,18 +143,14 @@ public static class CalculadorDeCompra
 
             var total = bruto - linea.Descuento;
 
-            decimal costoEfectivo;
             if (discriminaIva)
             {
-                netoPorAlicuota[linea.IdAlicuotaIva] = netoPorAlicuota.TryGetValue(linea.IdAlicuotaIva, out var acumulado)
-                    ? (acumulado.Porcentaje, acumulado.Neto + total)
+                montoPorAlicuota[linea.IdAlicuotaIva] = montoPorAlicuota.TryGetValue(linea.IdAlicuotaIva, out var acumulado)
+                    ? (acumulado.Porcentaje, acumulado.Monto + total)
                     : (linea.PorcentajeIva, total);
-                costoEfectivo = Redondear(total * (1 + linea.PorcentajeIva / 100m) / cantidad, 2);
             }
-            else
-            {
-                costoEfectivo = Redondear(total / cantidad, 2);
-            }
+
+            var costoEfectivo = CalcularCostoEfectivo(total, cantidad, linea.PorcentajeIva, discriminaIva, preciosIncluyenIva);
 
             decimal? precioSugerido = null;
             if (linea.IdArticulo is { } idArticulo)
@@ -142,22 +167,32 @@ public static class CalculadorDeCompra
             descuentoTotal += linea.Descuento;
         }
 
-        var alicuotas = ArmarAlicuotas(netoPorAlicuota, ivaImpreso);
+        var alicuotas = ArmarAlicuotas(montoPorAlicuota, ivaImpreso, preciosIncluyenIva);
         var ivaTotal = discriminaIva ? alicuotas.Sum(a => a.Iva) : (decimal?)null;
-        var totalComprobante = subtotal - descuentoTotal + (ivaTotal ?? 0m);
+        var percepcionesDelComprobante = percepciones ?? [];
 
-        return new CompraCalculada(subtotal, descuentoTotal, ivaTotal, totalComprobante, items, alicuotas);
+        // Con precios finales el IVA ya está dentro de subtotal − descuento: sumarlo de nuevo lo
+        // contaría dos veces.
+        var montoSinPercepciones = preciosIncluyenIva
+            ? subtotal - descuentoTotal
+            : subtotal - descuentoTotal + (ivaTotal ?? 0m);
+        var totalComprobante = montoSinPercepciones + percepcionesDelComprobante.Sum(p => p.Importe);
+
+        return new CompraCalculada(
+            subtotal, descuentoTotal, ivaTotal, totalComprobante, items, alicuotas, percepcionesDelComprobante);
     }
 
-    /// <summary>IVA por alícuota sobre el neto de cada una, redondeado una sola vez — la convención
-    /// de una factura —, y después el override del impreso con su tolerancia.</summary>
+    /// <summary>IVA por alícuota redondeado una sola vez — la convención de una factura —, y después
+    /// el override del impreso con su tolerancia. Con precios netos se calcula sobre el neto; con
+    /// precios finales se extrae del final de la alícuota y el neto es el resto.</summary>
     private static List<AlicuotaCalculada> ArmarAlicuotas(
-        SortedDictionary<int, (decimal Porcentaje, decimal Neto)> netoPorAlicuota,
-        IReadOnlyDictionary<int, decimal>? ivaImpreso)
+        SortedDictionary<int, (decimal Porcentaje, decimal Monto)> montoPorAlicuota,
+        IReadOnlyDictionary<int, decimal>? ivaImpreso,
+        bool preciosIncluyenIva)
     {
         foreach (var idImpreso in ivaImpreso?.Keys ?? Enumerable.Empty<int>())
         {
-            if (!netoPorAlicuota.ContainsKey(idImpreso))
+            if (!montoPorAlicuota.ContainsKey(idImpreso))
             {
                 throw new ErrorDominio(
                     "iva_impreso_alicuota_desconocida",
@@ -166,11 +201,13 @@ public static class CalculadorDeCompra
             }
         }
 
-        var alicuotas = new List<AlicuotaCalculada>(netoPorAlicuota.Count);
+        var alicuotas = new List<AlicuotaCalculada>(montoPorAlicuota.Count);
 
-        foreach (var (idAlicuota, (porcentaje, neto)) in netoPorAlicuota)
+        foreach (var (idAlicuota, (porcentaje, monto)) in montoPorAlicuota)
         {
-            var calculado = Redondear(neto * porcentaje / 100m, 2);
+            var calculado = preciosIncluyenIva
+                ? Redondear(monto * porcentaje / (100m + porcentaje), 2)
+                : Redondear(monto * porcentaje / 100m, 2);
             var iva = calculado;
 
             if (ivaImpreso is not null && ivaImpreso.TryGetValue(idAlicuota, out var impreso))
@@ -193,6 +230,16 @@ public static class CalculadorDeCompra
                 }
 
                 iva = Redondear(impreso, 2);
+            }
+
+            var neto = preciosIncluyenIva ? monto - iva : monto;
+
+            if (neto < 0m)
+            {
+                throw new ErrorDominio(
+                    "iva_impreso_fuera_de_tolerancia",
+                    $"El IVA impreso ({iva:0.00}) deja un neto negativo en la alícuota {idAlicuota}.",
+                    400);
             }
 
             alicuotas.Add(new AlicuotaCalculada(idAlicuota, porcentaje, neto, iva));
@@ -230,9 +277,15 @@ public static class CalculadorDeCompra
     /// <c>ServicioDeCompras.ConfirmarAsync</c>, que no vuelve a pasar por <see cref="Calcular"/>
     /// (evita re-derivar <c>cantidad</c> desde <c>unidades</c>/<c>bultos</c> una segunda vez).
     /// Misma fórmula que <see cref="Calcular"/> (design: Compra Arithmetic), aplicada al dato ya
-    /// congelado en la fila.</summary>
-    public static decimal CalcularCostoEfectivoDesdeItem(decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva) =>
-        discriminaIva
+    /// congelado en la fila. <paramref name="preciosIncluyenIva"/> es el del comprobante: con
+    /// precios finales el <c>total</c> de la fila ya trae el IVA.</summary>
+    public static decimal CalcularCostoEfectivoDesdeItem(
+        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva = false) =>
+        CalcularCostoEfectivo(total, cantidad, porcentajeIva, discriminaIva, preciosIncluyenIva);
+
+    private static decimal CalcularCostoEfectivo(
+        decimal total, decimal cantidad, decimal porcentajeIva, bool discriminaIva, bool preciosIncluyenIva) =>
+        discriminaIva && !preciosIncluyenIva
             ? Redondear(total * (1 + porcentajeIva / 100m) / cantidad, 2)
             : Redondear(total / cantidad, 2);
 

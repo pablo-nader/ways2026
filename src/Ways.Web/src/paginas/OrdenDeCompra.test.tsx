@@ -65,6 +65,9 @@ function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): Proveed
     observaciones: null,
     activo: true,
     idEmpresa: null,
+    percibeIibb: false,
+    percibeIva: false,
+    preciosIncluyenIva: false,
     ...sobrescribir,
   }
 }
