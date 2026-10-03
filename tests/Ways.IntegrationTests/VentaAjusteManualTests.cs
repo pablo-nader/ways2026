@@ -10,6 +10,7 @@ using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Usuarios;
@@ -637,6 +638,121 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(90m, auditado.GetProperty("total_cobrado").GetDecimal());
         Assert.Equal(-10m, auditado.GetProperty("ajuste_manual_porcentaje").GetDecimal());
         Assert.Equal(-10m, auditado.GetProperty("ajuste_manual").GetDecimal());
+    }
+
+    private async Task<JsonElement> LeerItemAuditadoDeLaDiscrepanciaAsync(int idTenant)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await db.Auditoria.SingleAsync(a => a.IdTenant == idTenant && a.Accion == "venta.discrepancia");
+        using var payload = JsonDocument.Parse(fila.ValorNuevo);
+        return payload.RootElement.GetProperty("items")[0].Clone();
+    }
+
+    /// <summary>Cláusula bajo prueba: la comparación de <c>MaterializarItems</c> es sobre el neto
+    /// ANTERIOR al ajuste. Con −100 % el total cobrado es 0 y el esperado por el servidor también
+    /// sería 0 si se comparara ya ajustado, así que un precio de dispositivo distinto (80 contra los
+    /// 100 de lista) no se vería: tiene que marcar y dejar la fila de auditoría.</summary>
+    [Fact]
+    public async Task UnaDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCienPorCientoDeAjuste()
+    {
+        var ctx = await PrepararOfflineAsync(
+            nameof(UnaDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCienPorCientoDeAjuste));
+        var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(
+                ctx, 0m, numero: 1,
+                new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 80m, AjusteManualPorcentaje: -100m)));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.True(item.PrecioDiscrepante);
+        Assert.Equal(80m, item.PrecioUnitario);
+        Assert.Equal(-80m, item.AjusteManual);
+        Assert.Equal(0m, item.Total);
+        Assert.Equal(1, await ContarDiscrepanciasAsync(ctx.IdTenant));
+
+        var auditado = await LeerItemAuditadoDeLaDiscrepanciaAsync(ctx.IdTenant);
+        Assert.Equal(80m, auditado.GetProperty("precio_cobrado").GetDecimal());
+        Assert.Equal(100m, auditado.GetProperty("precio_esperado").GetDecimal());
+        Assert.Equal(0m, auditado.GetProperty("total_cobrado").GetDecimal());
+        Assert.Equal(-100m, auditado.GetProperty("ajuste_manual_porcentaje").GetDecimal());
+        Assert.Equal(-80m, auditado.GetProperty("ajuste_manual").GetDecimal());
+    }
+
+    /// <summary>Misma cláusula con −50 %: el dispositivo cobró 10.01 y el servidor resuelve 10.00. El
+    /// ajuste de 10.01 es −5.005 que redondea a −5.01 (total 5.00) y el de 10.00 es −5.00 (total
+    /// 5.00): comparando totales ajustados los dos dan 5.00 y el centavo desaparece. Sobre el neto
+    /// anterior al ajuste (10.01 contra 10.00) se ve.</summary>
+    [Fact]
+    public async Task UnCentavoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste()
+    {
+        var ctx = await PrepararOfflineAsync(
+            nameof(UnCentavoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste));
+        var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(
+                ctx, 5m, numero: 1,
+                new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 10.01m, AjusteManualPorcentaje: -50m)));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.True(item.PrecioDiscrepante);
+        Assert.Equal(-5.01m, item.AjusteManual);
+        Assert.Equal(5m, item.Total);
+        Assert.Equal(1, await ContarDiscrepanciasAsync(ctx.IdTenant));
+
+        var auditado = await LeerItemAuditadoDeLaDiscrepanciaAsync(ctx.IdTenant);
+        Assert.Equal(10.01m, auditado.GetProperty("precio_cobrado").GetDecimal());
+        Assert.Equal(10m, auditado.GetProperty("precio_esperado").GetDecimal());
+        Assert.Equal(-50m, auditado.GetProperty("ajuste_manual_porcentaje").GetDecimal());
+    }
+
+    /// <summary>Una línea offline con OFERTA del servidor (10 % sobre un artículo de 100) y un −10 %
+    /// manual, con el precio y el descuento del dispositivo iguales a los del servidor, no es una
+    /// discrepancia. 2 x 100 = 200, oferta 20, neto 180, ajuste −18 sobre el neto (no −20 sobre el
+    /// bruto), total 162: si el esperado aplicara el porcentaje sobre el bruto (160) la línea se
+    /// marcaría sin diferencia de precio alguna.</summary>
+    [Fact]
+    public async Task UnaLineaOfflineConOfertaDelServidorYAjusteManualConPrecioYDescuentoIgualesNoMarcaDiscrepancia()
+    {
+        var ctx = await PrepararOfflineAsync(
+            nameof(UnaLineaOfflineConOfertaDelServidorYAjusteManualConPrecioYDescuentoIgualesNoMarcaDiscrepancia));
+        var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
+        await SembrarOfertaPorcentualAsync(ctx.IdTenant, idArticulo, 10m);
+
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOffline(
+                ctx, 162m, numero: 1,
+                new LineaDeVenta(
+                    idArticulo, 2m, null, PrecioUnitario: 100m, DescuentoUnitario: 10m, AjusteManualPorcentaje: -10m)));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.False(item.PrecioDiscrepante);
+        Assert.NotNull(item.IdOferta);
+        Assert.Equal(20m, item.Descuento);
+        Assert.Equal(-18m, item.AjusteManual);
+        Assert.Equal(162m, item.Total);
+        Assert.Equal(0, await ContarDiscrepanciasAsync(ctx.IdTenant));
+    }
+
+    private async Task SembrarOfertaPorcentualAsync(int idTenant, int idArticulo, decimal porcentaje)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        db.Ofertas.Add(new Oferta
+        {
+            IdTenant = idTenant,
+            Nombre = $"Descuento {porcentaje}%",
+            IdArticulo = idArticulo,
+            Porcentaje = porcentaje,
+            Activo = true,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
     }
 
     /// <summary>El pago offline también se valida contra el total ajustado: el dispositivo cobró 1000

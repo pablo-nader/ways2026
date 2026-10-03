@@ -1992,11 +1992,15 @@ bloqueo" que `ItemComprobanteVenta.LoteVencido`):
 **El ajuste manual de precio no es una discrepancia.** Una línea offline también puede traer
 `ajusteManualPorcentaje` (§4, descuento o recargo que el cajero aplicó a mano sobre el neto de la
 línea). El servidor lo valida (`400 ajuste_manual_invalido`), calcula el monto con
-`CalculadorDeTotales` —nunca toma un importe del dispositivo— y aplica el MISMO porcentaje al
-total esperado de `NetoDeLinea`: un ajuste manual por sí solo no marca `PrecioDiscrepante` ni
-escribe la fila de auditoría, y una diferencia real de precio sigue marcándose aunque haya ajuste.
-Cuando la fila de auditoría existe, lleva el porcentaje y el monto del ajuste junto al total
-cobrado.
+`CalculadorDeTotales` —nunca toma un importe del dispositivo— y la discrepancia se decide sobre el
+neto ANTERIOR al ajuste, en las dos partes: `NetoDeLinea` (bruto − descuento con el precio y la
+oferta que el servidor resuelve hoy) contra el total cobrado menos el monto del ajuste (bruto −
+descuento con los valores del dispositivo). El porcentaje es el mismo dato de request de los dos
+lados, así que no participa de la comparación: un ajuste manual por sí solo no marca
+`PrecioDiscrepante` ni escribe la fila de auditoría, y una diferencia real de precio sigue
+marcándose aunque haya ajuste, incluso con −100 % (total cobrado 0) o con un centavo de diferencia
+que el redondeo del ajuste absorbería en el total. Cuando la fila de auditoría existe, lleva el
+porcentaje y el monto del ajuste junto al total cobrado.
 
 Se descartó agregar `precio_unitario_esperado`/`descuento_esperado`/un `precio_discrepante
 GENERATED` a `items_comprobante_venta` (el patrón de `ArqueoTurno.Diferencia`, que hubiera sido la

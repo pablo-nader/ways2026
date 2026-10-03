@@ -1890,15 +1890,16 @@ public class ServicioDeVentas(
             // expectativa que comparar: PrecioDiscrepante queda false, nunca un falso positivo
             // contra un "esperado" inventado. NetoDeLinea reusa el MISMO redondeo/orden de
             // CalculadorDeTotales — nunca una segunda autoridad de dinero, esta cuenta no
-            // alimenta totales/ValidadorDePagos/persistencia. El esperado aplica el MISMO
-            // porcentaje de ajuste manual que el cobrado: el ajuste lo eligió el operador, no es
-            // una diferencia de precio, así que por sí solo nunca marca una discrepancia.
+            // alimenta totales/ValidadorDePagos/persistencia. Se compara el neto ANTERIOR al ajuste
+            // manual de las dos partes (bruto − descuento): el porcentaje es el mismo dato del
+            // request de los dos lados, así que no es una diferencia de precio y no participa de
+            // la comparación. Comparar totales ya ajustados la enmascaraba: con −100 % los dos
+            // lados dan 0 y con −50 % un centavo de diferencia puede redondear a lo mismo.
             var esLineaOffline = linea.PrecioUnitario is not null;
             var discrepante = esLineaOffline
                 && resultado.PrecioOriginal is not null
-                && NetoDeLinea(
-                    calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
-                    linea.AjusteManualPorcentaje) != calculado.Total;
+                && NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario)
+                    != calculado.Total - calculado.AjusteManual;
 
             items.Add(new LineaDelPlan(
                 articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, idListaPrecio, idOferta,
@@ -1918,17 +1919,13 @@ public class ServicioDeVentas(
     /// <summary>Mismo redondeo/orden que <see cref="CalculadorDeTotales.Calcular"/> (design:
     /// Checkout Contract) — a propósito NUNCA una segunda autoridad de dinero: esta función solo
     /// alimenta el diagnóstico de discrepancia de precio offline de <see cref="MaterializarItems"/>,
-    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste. Devuelve el total de
-    /// línea ESPERADO: neto de oferta más el ajuste manual de <paramref name="ajusteManualPorcentaje"/>
-    /// (calculado por <see cref="CalculadorDeTotales.AjusteManualSobre"/>, la única fórmula), para que
-    /// compare igual contra el total cobrado que lleva ese mismo ajuste.</summary>
-    private static decimal NetoDeLinea(
-        decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario, decimal? ajusteManualPorcentaje)
+    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste. Devuelve el neto de
+    /// línea ESPERADO (bruto − descuento de oferta), anterior a cualquier ajuste manual.</summary>
+    private static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario)
     {
         var bruto = Math.Round(cantidadConSigno * precioUnitario, 2, MidpointRounding.AwayFromZero);
         var descuento = Math.Round(descuentoUnitario * cantidadConSigno, 2, MidpointRounding.AwayFromZero);
-        var neto = bruto - descuento;
-        return neto + CalculadorDeTotales.AjusteManualSobre(neto, ajusteManualPorcentaje);
+        return bruto - descuento;
     }
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que

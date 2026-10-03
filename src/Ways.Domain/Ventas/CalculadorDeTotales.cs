@@ -81,9 +81,9 @@ public static class CalculadorDeTotales
     }
 
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con
-    /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula de la clase:
-    /// el diagnóstico de discrepancia de precio offline de <c>ServicioDeVentas</c> la reusa para que
-    /// el esperado y el cobrado ajusten igual.</summary>
+    /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula del ajuste: la
+    /// reusa también la reliquidación de cuenta corriente para reaplicar el porcentaje de cada
+    /// item sobre el neto nuevo.</summary>
     public static decimal AjusteManualSobre(decimal netoDeLinea, decimal? porcentaje) =>
         porcentaje is { } p ? Math.Round(netoDeLinea * p / 100m, 2, MidpointRounding.AwayFromZero) : 0m;
 }
