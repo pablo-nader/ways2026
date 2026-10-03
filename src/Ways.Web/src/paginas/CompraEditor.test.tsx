@@ -1003,3 +1003,131 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
     expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
   })
 })
+
+describe('CompraEditor — líneas por concepto', () => {
+  async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>) {
+    renderEditor('nueva')
+    // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await screen.findByRole('option', { name: /C-FA/ })
+    await screen.findByRole('option', { name: 'Casa Central' })
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cargar por total' })).toBeEnabled())
+  }
+
+  it('Cargar por total agrega UNA línea por concepto de cantidad 1 con el importe tipeado y la manda sin artículo', async () => {
+    mockearReferencia()
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
+    expect(screen.getByText(/cargá el importe neto, el IVA se suma/)).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Importe total'), '1234,56')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
+
+    expect(screen.getByText('Concepto')).toBeInTheDocument()
+    expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Total del comprobante')
+    expect(screen.getByLabelText('Unidades')).toHaveValue(1)
+    expect(screen.getByLabelText('Costo unitario')).toHaveValue('1.234,5600')
+    expect(screen.queryByLabelText('Bultos')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Actualiza costo')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Buscar artículo…')).not.toBeInTheDocument()
+    // el panel se cierra al agregar y el mirror suma el concepto: 1234,56 + 21% de IVA
+    expect(screen.queryByText('Cargar por total', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.getByText('$ 1.493,82')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.items).toEqual([
+      {
+        idArticulo: null,
+        descripcion: 'Total del comprobante',
+        unidades: 1,
+        bultos: null,
+        unidadesPorBulto: null,
+        costoUnitario: 1234.56,
+        descuento: 0,
+        idAlicuotaIva: 3,
+        actualizaCosto: false,
+        codigoLote: null,
+        fechaVencimiento: null,
+      },
+    ])
+  })
+
+  it('Cargar por total no agrega nada mientras el importe sea cero o esté vacío', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
+    const agregar = screen.getByRole('button', { name: 'Agregar como concepto' })
+    expect(agregar).toBeDisabled()
+
+    await usuario.type(screen.getByLabelText('Importe total'), '0')
+    expect(agregar).toBeDisabled()
+    expect(screen.queryByLabelText('Descripción del concepto')).not.toBeInTheDocument()
+  })
+
+  it('+ Agregar concepto arma una línea por concepto vacía que no se guarda hasta tener descripción, costo y alícuota', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar concepto' }))
+    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Descripción del concepto'), 'Flete')
+    await usuario.type(screen.getByLabelText('Costo unitario'), '500')
+    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+
+    await usuario.selectOptions(screen.getByLabelText('Alícuota de IVA'), '3')
+    await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
+  })
+
+  it('un borrador con una línea por concepto la reabre como concepto y el PUT la devuelve sin artículo', async () => {
+    const concepto = itemFixture({
+      orden: 2, idArticulo: null, descripcion: 'Flete', cantidad: 1, costoUnitario: 500, descuento: 0, total: 500,
+      actualizaCosto: false, precioSugerido: null,
+    })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ items: [itemFixture(), concepto] })) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture())
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+
+    expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Flete')
+    // solo la línea de artículo ofrece bultos y actualiza costo
+    expect(screen.getAllByLabelText('Bultos')).toHaveLength(1)
+    expect(screen.getAllByLabelText('Actualiza costo')).toHaveLength(1)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(cuerpo.items.map((i) => i.idArticulo)).toEqual([10, null])
+    expect(cuerpo.items[1]).toMatchObject({ descripcion: 'Flete', unidades: 1, costoUnitario: 500, actualizaCosto: false })
+  })
+
+  it('una compra confirmada muestra el concepto con su etiqueta, sin precio sugerido', async () => {
+    const concepto = itemFixture({
+      orden: 2, idArticulo: null, descripcion: 'Flete', cantidad: 1, costoUnitario: 500, descuento: 0, total: 500,
+      actualizaCosto: false, precioSugerido: null,
+    })
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada', items: [concepto] })) : undefined,
+    )
+    renderEditor()
+
+    const celda = (await screen.findByText('Flete')).closest('td') as HTMLElement
+    expect(within(celda).getByText('Concepto')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
+  })
+})

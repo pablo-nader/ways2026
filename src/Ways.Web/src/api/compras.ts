@@ -131,10 +131,14 @@ export function claseDeBadgeDeEstadoPago(estado: EstadoPago): string {
 
 // ---- Formulario del editor: una línea por fila de la grilla ---------------------------------
 
+export type TipoDeLineaDeCompra = 'articulo' | 'concepto'
+
 export type LineaDeCompraFormulario = {
   /** Clave solo de React — el `PUT` es un replace-set completo (design decisión 2), ningún id de
    * línea persistido viaja en el request ni sobrevive entre saves. */
   clave: number
+  /** `concepto` = importe libre con descripción, sin artículo: no mueve stock, costo ni lote. */
+  tipo: TipoDeLineaDeCompra
   idArticulo: number | ''
   descripcion: string
   unidades: string
@@ -160,6 +164,7 @@ export type LineaDeCompraFormulario = {
 export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
   return {
     clave,
+    tipo: 'articulo',
     idArticulo: '',
     descripcion: '',
     unidades: '',
@@ -175,11 +180,29 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
   }
 }
 
+/** Línea por concepto: cantidad 1 por defecto y `actualizaCosto` siempre apagado — un concepto no
+ * tiene artículo cuyo costo actualizar. */
+export function lineaDeConceptoVacia(clave: number): LineaDeCompraFormulario {
+  return { ...lineaDeCompraVacia(clave), tipo: 'concepto', unidades: '1', actualizaCosto: false }
+}
+
+/** "Cargar por total": una sola línea por concepto de cantidad 1 cuyo costo es el importe
+ * tipeado del comprobante, para no cargar artículo por artículo una factura de ferretería. */
+export function lineaDesdeTotal(
+  clave: number,
+  descripcion: string,
+  importe: number,
+  idAlicuotaIva: number | '',
+): LineaDeCompraFormulario {
+  return { ...lineaDeConceptoVacia(clave), descripcion, costoUnitario: importe, idAlicuotaIva }
+}
+
 /** Un item ya persistido → fila de formulario, para reabrir un borrador existente. */
 export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompraFormulario {
   return {
     clave,
-    idArticulo: item.idArticulo,
+    tipo: item.idArticulo === null ? 'concepto' : 'articulo',
+    idArticulo: item.idArticulo ?? '',
     descripcion: item.descripcion,
     unidades:
       item.bultos !== null && item.unidadesPorBulto !== null
@@ -230,6 +253,10 @@ function numeroONulo(valor: string): number | null {
  * artículo lote-efectivo: `fechaVencimiento` es obligatoria, `codigoLote` no (se deriva del
  * vencimiento si se omite — `ReglaDeLotes.DerivarCodigo`, design decisión 4). */
 export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
+  if (l.tipo === 'concepto') {
+    return l.descripcion.trim() !== '' && l.idAlicuotaIva !== '' && l.unidades.trim() !== '' && l.costoUnitario !== null
+  }
+
   return (
     l.idArticulo !== '' &&
     l.idAlicuotaIva !== '' &&
@@ -242,6 +269,22 @@ export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
 /** Fila de formulario → `LineaDeCompraSolicitada` — solo se envían las filas completas
  * (`lineaCompletaParaEnvio`), una fila a medio llenar nunca viaja al servidor. */
 export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolicitada {
+  if (l.tipo === 'concepto') {
+    return {
+      idArticulo: null,
+      descripcion: l.descripcion.trim(),
+      unidades: numero(l.unidades),
+      bultos: null,
+      unidadesPorBulto: null,
+      costoUnitario: l.costoUnitario ?? 0,
+      descuento: l.descuento ?? 0,
+      idAlicuotaIva: Number(l.idAlicuotaIva),
+      actualizaCosto: false,
+      codigoLote: null,
+      fechaVencimiento: null,
+    }
+  }
+
   return {
     idArticulo: Number(l.idArticulo),
     descripcion: l.descripcion.trim(),

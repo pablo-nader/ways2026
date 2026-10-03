@@ -8,7 +8,9 @@ import {
   itemAFormulario,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
+  lineaDeConceptoVacia,
   lineaDesdeCoberturaDeOrden,
+  lineaDesdeTotal,
   lineaFormularioACalculo,
   lineaConDescuentoInvalido,
   type EncabezadoDeCompraFormulario,
@@ -175,31 +177,49 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
   const item = calcularTotalesDeCompra([calculo], discriminaIva).items[0]
   const descuentoInvalido = lineaConDescuentoInvalido(calculo)
   const incompleta = !lineaCompletaParaEnvio(linea)
+  const esConcepto = linea.tipo === 'concepto'
 
   return (
     <tr className={incompleta ? 'table-warning text-muted' : undefined}>
       <td style={{ minWidth: 220 }}>
-        <SelectorDeArticulo
-          descripcion={linea.descripcion}
-          disabled={disabled}
-          onElegir={(a) => {
-            // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
-            // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
-            // viajan en el payload — la validación del servidor es incondicional y los persiste
-            // (judgment-day, slice 14, MAJOR juez A).
-            const cambioDeArticulo = linea.idArticulo !== a.id
-            onCambio(linea.clave, {
-              idArticulo: a.id,
-              descripcion: a.nombre,
-              controlaLote: a.controlaLote,
-              ...(cambioDeArticulo ? { codigoLote: '', fechaVencimiento: '' } : {}),
-            })
-          }}
-        />
+        {esConcepto ? (
+          <>
+            <span className="badge text-bg-info mb-1">Concepto</span>
+            <input
+              type="text"
+              className="form-control form-control-sm"
+              aria-label="Descripción del concepto"
+              placeholder="Descripción (ej. Flete)"
+              value={linea.descripcion}
+              disabled={disabled}
+              onChange={(e) => onCambio(linea.clave, { descripcion: e.target.value })}
+            />
+          </>
+        ) : (
+          <SelectorDeArticulo
+            descripcion={linea.descripcion}
+            disabled={disabled}
+            onElegir={(a) => {
+              // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
+              // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
+              // viajan en el payload — la validación del servidor es incondicional y los persiste
+              // (judgment-day, slice 14, MAJOR juez A).
+              const cambioDeArticulo = linea.idArticulo !== a.id
+              onCambio(linea.clave, {
+                idArticulo: a.id,
+                descripcion: a.nombre,
+                controlaLote: a.controlaLote,
+                ...(cambioDeArticulo ? { codigoLote: '', fechaVencimiento: '' } : {}),
+              })
+            }}
+          />
+        )}
         {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
       </td>
       <td style={{ minWidth: 180 }}>
-        {linea.controlaLote ? (
+        {esConcepto ? (
+          <span className="text-muted small">—</span>
+        ) : linea.controlaLote ? (
           <>
             <input
               type="text"
@@ -239,28 +259,36 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         />
       </td>
       <td style={{ width: 80 }}>
-        <input
-          type="number"
-          step="1"
-          min="0"
-          className="form-control form-control-sm"
-          aria-label="Bultos"
-          value={linea.bultos}
-          disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { bultos: e.target.value })}
-        />
+        {esConcepto ? (
+          <span className="text-muted small">—</span>
+        ) : (
+          <input
+            type="number"
+            step="1"
+            min="0"
+            className="form-control form-control-sm"
+            aria-label="Bultos"
+            value={linea.bultos}
+            disabled={disabled}
+            onChange={(e) => onCambio(linea.clave, { bultos: e.target.value })}
+          />
+        )}
       </td>
       <td style={{ width: 100 }}>
-        <input
-          type="number"
-          step="0.001"
-          min="0"
-          className="form-control form-control-sm"
-          aria-label="Unidades por bulto"
-          value={linea.unidadesPorBulto}
-          disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { unidadesPorBulto: e.target.value })}
-        />
+        {esConcepto ? (
+          <span className="text-muted small">—</span>
+        ) : (
+          <input
+            type="number"
+            step="0.001"
+            min="0"
+            className="form-control form-control-sm"
+            aria-label="Unidades por bulto"
+            value={linea.unidadesPorBulto}
+            disabled={disabled}
+            onChange={(e) => onCambio(linea.clave, { unidadesPorBulto: e.target.value })}
+          />
+        )}
       </td>
       <td style={{ width: 110 }}>
         <CampoImporte
@@ -299,14 +327,18 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         </select>
       </td>
       <td className="text-center" style={{ width: 60 }}>
-        <input
-          type="checkbox"
-          className="form-check-input"
-          aria-label="Actualiza costo"
-          checked={linea.actualizaCosto}
-          disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { actualizaCosto: e.target.checked })}
-        />
+        {esConcepto ? (
+          <span className="text-muted small">—</span>
+        ) : (
+          <input
+            type="checkbox"
+            className="form-check-input"
+            aria-label="Actualiza costo"
+            checked={linea.actualizaCosto}
+            disabled={disabled}
+            onChange={(e) => onCambio(linea.clave, { actualizaCosto: e.target.checked })}
+          />
+        )}
       </td>
       <td className="text-end">{formatearMoneda(item.total)}</td>
       <td>
@@ -331,7 +363,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
       <table className="table table-sm table-striped table-bordered align-middle">
         <thead>
           <tr>
-            <th>Artículo</th>
+            <th>Artículo / concepto</th>
             <th>Lote</th>
             <th>Vencimiento</th>
             <th className="text-end">Cantidad</th>
@@ -346,7 +378,10 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
         <tbody>
           {compra.items.map((item) => (
             <tr key={item.orden}>
-              <td>{item.descripcion}</td>
+              <td>
+                {item.idArticulo === null && <span className="badge text-bg-info me-1">Concepto</span>}
+                {item.descripcion}
+              </td>
               <td>{item.codigoLote ?? '—'}</td>
               <td>{item.fechaVencimiento ?? '—'}</td>
               <td className="text-end">{item.cantidad}</td>
@@ -716,6 +751,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   )
   const totales = useMemo(() => calcularTotalesDeCompra(calculo, discriminaIva), [calculo, discriminaIva])
 
+  const [panelTotalAbierto, setPanelTotalAbierto] = useState(false)
+  const [totalImporte, setTotalImporte] = useState<number | null>(null)
+  const [totalDescripcion, setTotalDescripcion] = useState('')
+  const [totalIdAlicuota, setTotalIdAlicuota] = useState<number | ''>('')
+
   const [guardando, setGuardando] = useState(false)
   const guardandoRef = useRef(false)
   const [error, setError] = useState('')
@@ -775,6 +815,29 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   function agregarLinea() {
     if (ocupado) return
     setLineas((prev) => [...prev, lineaDeCompraVacia(proximaClaveRef.current++)])
+  }
+
+  function agregarConcepto() {
+    if (ocupado) return
+    setLineas((prev) => [...prev, lineaDeConceptoVacia(proximaClaveRef.current++)])
+  }
+
+  function abrirCargaPorTotal() {
+    if (ocupado) return
+    const alicuotaHabitual = (alicuotas ?? []).find((a) => a.porcentaje === 21) ?? (alicuotas ?? [])[0]
+    setTotalIdAlicuota(alicuotaHabitual?.id ?? '')
+    setTotalImporte(null)
+    setTotalDescripcion('Total del comprobante')
+    setPanelTotalAbierto(true)
+  }
+
+  function cargarPorTotal() {
+    if (ocupado || totalImporte === null || totalImporte <= 0 || totalDescripcion.trim() === '') return
+    setLineas((prev) => [
+      ...prev,
+      lineaDesdeTotal(proximaClaveRef.current++, totalDescripcion.trim(), totalImporte, totalIdAlicuota),
+    ])
+    setPanelTotalAbierto(false)
   }
 
   function quitarLinea(clave: number) {
@@ -1083,7 +1146,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               <table className="table table-sm table-bordered align-middle">
                 <thead>
                   <tr>
-                    <th>Artículo</th>
+                    <th>Artículo / concepto</th>
                     <th>Lote</th>
                     <th>Unidades</th>
                     <th>Bultos</th>
@@ -1121,14 +1184,113 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             </div>
 
             {puedeEscribir && (
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm mb-3"
-                disabled={ocupado || !referenciaOk}
-                onClick={agregarLinea}
-              >
-                + Agregar línea
-              </button>
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  disabled={ocupado || !referenciaOk}
+                  onClick={agregarLinea}
+                >
+                  + Agregar línea
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  disabled={ocupado || !referenciaOk}
+                  onClick={agregarConcepto}
+                >
+                  + Agregar concepto
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  disabled={ocupado || !referenciaOk}
+                  onClick={abrirCargaPorTotal}
+                >
+                  Cargar por total
+                </button>
+              </div>
+            )}
+
+            {puedeEscribir && panelTotalAbierto && (
+              <div className="border p-3 mb-3">
+                <strong>Cargar por total</strong>
+                <div className="small text-muted mb-2">
+                  {discriminaIva
+                    ? 'Este tipo de comprobante discrimina IVA: cargá el importe neto, el IVA se suma.'
+                    : 'Cargá el total del comprobante.'}{' '}
+                  Se agrega una sola línea por concepto: no mueve stock ni actualiza costos.
+                </div>
+                <div className="row g-2 align-items-end">
+                  <div className="col-md-4">
+                    <label className="form-label" htmlFor="compra-total-descripcion">
+                      Descripción
+                    </label>
+                    <input
+                      id="compra-total-descripcion"
+                      type="text"
+                      className="form-control form-control-sm"
+                      value={totalDescripcion}
+                      disabled={ocupado}
+                      onChange={(e) => setTotalDescripcion(e.target.value)}
+                    />
+                  </div>
+                  <div className="col-md-3">
+                    <label className="form-label" htmlFor="compra-total-importe">
+                      Importe total
+                    </label>
+                    <CampoImporte
+                      id="compra-total-importe"
+                      className="form-control form-control-sm"
+                      valor={totalImporte}
+                      disabled={ocupado}
+                      onChange={setTotalImporte}
+                    />
+                  </div>
+                  <div className="col-md-2">
+                    <label className="form-label" htmlFor="compra-total-alicuota">
+                      IVA del total
+                    </label>
+                    <select
+                      id="compra-total-alicuota"
+                      className="form-select form-select-sm"
+                      value={totalIdAlicuota}
+                      disabled={ocupado}
+                      onChange={(e) => setTotalIdAlicuota(e.target.value === '' ? '' : Number(e.target.value))}
+                    >
+                      <option value="">Elegir…</option>
+                      {(alicuotas ?? []).map((al) => (
+                        <option key={al.id} value={al.id}>
+                          {al.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-md-3 d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={
+                        ocupado ||
+                        totalImporte === null ||
+                        totalImporte <= 0 ||
+                        totalDescripcion.trim() === '' ||
+                        totalIdAlicuota === ''
+                      }
+                      onClick={cargarPorTotal}
+                    >
+                      Agregar como concepto
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => setPanelTotalAbierto(false)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             <div className="row g-3 mb-3">

@@ -10,6 +10,8 @@ import {
   lineaCompletaParaEnvio,
   lineaConDescuentoInvalido,
   lineaDeCompraVacia,
+  lineaDeConceptoVacia,
+  lineaDesdeTotal,
   lineaFormularioACalculo,
   type LineaDeCalculo,
   type LineaDeCompraFormulario,
@@ -19,6 +21,7 @@ import type { ItemDeCompra } from './tipos'
 function lineaFixture(sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario {
   return {
     clave: 1,
+    tipo: 'articulo',
     idArticulo: 10,
     descripcion: 'Fideos 500g',
     unidades: '10',
@@ -70,6 +73,7 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
     const linea = lineaDeCompraVacia(7)
     expect(linea).toEqual({
       clave: 7,
+      tipo: 'articulo',
       idArticulo: '',
       descripcion: '',
       unidades: '',
@@ -110,6 +114,91 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
     expect(sinLote.controlaLote).toBe(false)
     expect(sinLote.codigoLote).toBe('')
     expect(sinLote.fechaVencimiento).toBe('')
+  })
+})
+
+describe('líneas por concepto', () => {
+  it('lineaDeConceptoVacia arranca como concepto de cantidad 1, sin artículo y sin actualizar costo', () => {
+    const linea = lineaDeConceptoVacia(4)
+    expect(linea).toMatchObject({
+      clave: 4,
+      tipo: 'concepto',
+      idArticulo: '',
+      descripcion: '',
+      unidades: '1',
+      costoUnitario: null,
+      actualizaCosto: false,
+      controlaLote: false,
+    })
+  })
+
+  it('lineaDesdeTotal arma una línea por concepto de cantidad 1 cuyo costo es el importe tipeado', () => {
+    const linea = lineaDesdeTotal(9, 'Factura ferretería', 1234.56, 3)
+    expect(linea).toMatchObject({
+      clave: 9,
+      tipo: 'concepto',
+      descripcion: 'Factura ferretería',
+      unidades: '1',
+      costoUnitario: 1234.56,
+      idAlicuotaIva: 3,
+      actualizaCosto: false,
+    })
+  })
+
+  it('itemAFormulario de un item sin artículo reabre la línea como concepto', () => {
+    const linea = itemAFormulario(1, itemFixture({ idArticulo: null, descripcion: 'Flete', actualizaCosto: false }))
+    expect(linea.tipo).toBe('concepto')
+    expect(linea.idArticulo).toBe('')
+    expect(linea.descripcion).toBe('Flete')
+  })
+
+  it('itemAFormulario de un item con artículo es de tipo artículo', () => {
+    expect(itemAFormulario(1, itemFixture()).tipo).toBe('articulo')
+  })
+
+  it('un concepto está completo con descripción, alícuota, unidades y costo — sin artículo', () => {
+    expect(lineaCompletaParaEnvio(lineaDesdeTotal(1, 'Flete', 500, 3))).toBe(true)
+  })
+
+  it.each([
+    ['sin descripción', { descripcion: '   ' }],
+    ['sin alícuota', { idAlicuotaIva: '' as const }],
+    ['sin unidades', { unidades: '' }],
+    ['sin costo', { costoUnitario: null }],
+  ])('un concepto %s no está completo', (_nombre, cambios) => {
+    expect(lineaCompletaParaEnvio({ ...lineaDesdeTotal(1, 'Flete', 500, 3), ...cambios })).toBe(false)
+  })
+
+  it('aLineaSolicitada de un concepto viaja con idArticulo null y sin lote, bultos ni actualizaCosto', () => {
+    const solicitada = aLineaSolicitada({
+      ...lineaDesdeTotal(1, '  Flete  ', 500, 3),
+      bultos: '2',
+      unidadesPorBulto: '6',
+      codigoLote: 'L-1',
+      fechaVencimiento: '2026-12-01',
+      actualizaCosto: true,
+    })
+    expect(solicitada).toEqual({
+      idArticulo: null,
+      descripcion: 'Flete',
+      unidades: 1,
+      bultos: null,
+      unidadesPorBulto: null,
+      costoUnitario: 500,
+      descuento: 0,
+      idAlicuotaIva: 3,
+      actualizaCosto: false,
+      codigoLote: null,
+      fechaVencimiento: null,
+    })
+  })
+
+  it('el mirror de totales suma un concepto como cualquier otra línea', () => {
+    const concepto = lineaFormularioACalculo(lineaDesdeTotal(1, 'Flete', 1000, 3), { 3: 21 })
+    const totales = calcularTotalesDeCompra([concepto], true)
+    expect(totales.subtotal).toBe(1000)
+    expect(totales.ivaTotal).toBe(210)
+    expect(totales.total).toBe(1210)
   })
 })
 
