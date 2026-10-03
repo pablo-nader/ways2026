@@ -1,4 +1,5 @@
 using Ways.Domain.Common;
+using Ways.Domain.Fiscal;
 
 namespace Ways.Domain.Ventas;
 
@@ -52,6 +53,27 @@ public static class ReglaDeComprobantes
         }
 
         throw new ErrorDominio("transicion_de_estado_invalida", "Esa transición de estado no es válida.", 400);
+    }
+
+    /// <summary>Un comprobante con CAE aprobado sigue vigente ante ARCA aunque se anule
+    /// localmente: la única reversa fiscal es una nota de crédito. Uno con CAE pendiente puede
+    /// quedar aprobado después, así que tampoco se anula hasta resolver la autorización. Sin
+    /// resultado fiscal (no fiscal) o rechazado, la anulación sigue permitida.</summary>
+    public static void ValidarAnulacionFiscal(ResultadoFiscal? resultadoFiscal)
+    {
+        switch (resultadoFiscal)
+        {
+            case ResultadoFiscal.Aprobado or ResultadoFiscal.AprobadoConObservaciones:
+                throw new ErrorDominio(
+                    "comprobante_fiscal_requiere_nota_de_credito",
+                    "El comprobante tiene CAE aprobado por ARCA y no se puede anular: para revertirlo hay que emitir una nota de crédito.",
+                    409);
+            case ResultadoFiscal.Pendiente:
+                throw new ErrorDominio(
+                    "comprobante_fiscal_cae_pendiente",
+                    "El comprobante tiene la autorización de ARCA pendiente: hay que resolverla antes de poder anularlo.",
+                    409);
+        }
     }
 
     /// <summary><c>id_comprobante_asociado</c> (spec: Devoluciones As NCX Comprobantes) —
