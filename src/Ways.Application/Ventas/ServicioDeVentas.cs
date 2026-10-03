@@ -377,7 +377,8 @@ public class ServicioDeVentas(
 
         var plan = new PlanDeVenta(
             idTenant, idEmpleado, tipo.Id, tipo.Codigo, momento, puntoVenta.Id, turno.Id, cliente.Id,
-            solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal, totales.Total,
+            solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal,
+            totales.DescuentoManualTotal, totales.RecargoManualTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones),
             presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta, solicitud.LimiteDeCreditoNoValidado);
@@ -480,24 +481,28 @@ public class ServicioDeVentas(
     /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
     /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
     /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
-    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero: el conjunto (idArticulo,
-    /// cantidad) de líneas, idCliente, idComprobanteAsociado y la composición de pagos
-    /// (idMedioPago, importe, referencia) — nunca el total ni el precio de ningún item (ver el comentario
-    /// dentro del método), y tampoco <c>Observaciones</c> (idem, ver el comentario dentro del
-    /// método: es metadata, no identidad). Sin columna nueva: compara contra los propios
+    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero derivado: el conjunto
+    /// (idArticulo, cantidad, ajusteManualPorcentaje) de líneas, idCliente, idComprobanteAsociado y
+    /// la composición de pagos (idMedioPago, importe, referencia) — nunca el total ni el precio de
+    /// ningún item (ver el comentario dentro del método), y tampoco <c>Observaciones</c> (idem, ver
+    /// el comentario dentro del método: es metadata, no identidad). El porcentaje de ajuste manual
+    /// SÍ entra: lo tipeó el operador, no lo deriva el servidor, y dos envíos con porcentajes
+    /// distintos son dos ventas distintas. Sin columna nueva: compara contra los propios
     /// items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
     {
         var lineasExistentes = existente.Items
-            .Select(i => (i.IdArticulo, i.Cantidad))
+            .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
             .OrderBy(l => l.IdArticulo)
             .ThenBy(l => l.Cantidad)
+            .ThenBy(l => l.AjusteManualPorcentaje)
             .ToList();
 
         var lineasSolicitadas = plan.Items
-            .Select(i => ((int?)i.IdArticulo, i.Cantidad))
+            .Select(i => ((int?)i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
             .OrderBy(l => l.Item1)
             .ThenBy(l => l.Item2)
+            .ThenBy(l => l.Item3)
             .ToList();
 
         // La referencia entra en la identidad y observaciones no, aunque las dos sean texto:
@@ -525,7 +530,10 @@ public class ServicioDeVentas(
         // sincroniza horas después, ya con otro precio vigente) en un 409 espurio sobre TODA su
         // cola. Lo que distingue una venta ajena de un reenvío del mismo pedido es su identidad,
         // no lo que costó: mismas líneas, mismo cliente, mismo comprobante asociado y misma
-        // composición de pagos.
+        // composición de pagos. El porcentaje de ajuste manual de cada línea es la excepción y SÍ
+        // entra en la comparación de líneas: a diferencia del total y del precio no se deriva en el
+        // servidor, es una decisión que tipeó el operador, y reenviar el mismo número con otro
+        // porcentaje cobra otra cosa — no es un reenvío del mismo pedido.
         // TODO(offline-sale/outbox, no implementado acá): sacar el total de esta guarda no cierra
         // un gap distinto y más profundo — el servidor re-precia al momento del sync, así que una
         // venta offline sincronizada después queda registrada al precio ACTUAL en vez del
@@ -680,7 +688,7 @@ public class ServicioDeVentas(
             resultado.Add(new ItemEmitido(
                 indice + 1, item.IdArticulo, item.Descripcion, CodigoBarra: null, idArea, item.IdListaPrecio,
                 item.IdOferta, item.IdAlicuotaIva, item.PorcentajeIva, item.Cantidad, item.PrecioUnitario,
-                item.Descuento, item.Total, item.IdLote));
+                item.Descuento, AjusteManualPorcentaje: null, AjusteManual: 0m, item.Total, item.IdLote));
         }
 
         return resultado;
@@ -707,7 +715,11 @@ public class ServicioDeVentas(
             .OrderByDescending(c => c.Fecha)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .Select(c => new
+            {
+                c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total,
+                c.DescuentoManualTotal, c.RecargoManualTotal
+            })
             .ToListAsync(ct);
 
         // NumeroDeComprobante.Formatear no traduce a SQL: se arma en memoria, después de traer
@@ -715,7 +727,7 @@ public class ServicioDeVentas(
         var items = crudos
             .Select(c => new ComprobanteListado(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
-                c.IdPuntoVenta, c.IdCliente, c.Total))
+                c.IdPuntoVenta, c.IdCliente, c.Total, c.DescuentoManualTotal, c.RecargoManualTotal))
             .ToList();
 
         return new PaginaDeVentas(items, total, pagina, tamanio);
@@ -748,7 +760,11 @@ public class ServicioDeVentas(
         var crudos = await query
             .OrderByDescending(c => c.Fecha)
             .Take(topeDeFilas + 1)
-            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .Select(c => new
+            {
+                c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total,
+                c.DescuentoManualTotal, c.RecargoManualTotal
+            })
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(crudos.Count, topeDeFilas);
@@ -756,7 +772,7 @@ public class ServicioDeVentas(
         return crudos
             .Select(c => new ComprobanteListado(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
-                c.IdPuntoVenta, c.IdCliente, c.Total))
+                c.IdPuntoVenta, c.IdCliente, c.Total, c.DescuentoManualTotal, c.RecargoManualTotal))
             .ToList();
     }
 
@@ -809,7 +825,11 @@ public class ServicioDeVentas(
         var crudos = await db.ComprobantesVenta
             .Where(c => c.IdTurnoCaja == idTurno)
             .OrderByDescending(c => c.Fecha).ThenByDescending(c => c.Id)
-            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .Select(c => new
+            {
+                c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total,
+                c.DescuentoManualTotal, c.RecargoManualTotal
+            })
             .ToListAsync(ct);
 
         if (crudos.Count == 0)
@@ -856,6 +876,7 @@ public class ServicioDeVentas(
             .Select(c => new VentaDeTurnoListado(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
                 c.IdCliente, nombrePorCliente.GetValueOrDefault(c.IdCliente, "-"), c.Total,
+                c.DescuentoManualTotal, c.RecargoManualTotal,
                 mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<MedioDeVentaNeto>)[])))
             .ToList();
     }
@@ -1278,6 +1299,8 @@ public class ServicioDeVentas(
             IdPresupuestoOrigen = plan.IdPresupuestoOrigen,
             Subtotal = plan.Subtotal,
             DescuentoTotal = plan.DescuentoTotal,
+            DescuentoManualTotal = plan.DescuentoManualTotal,
+            RecargoManualTotal = plan.RecargoManualTotal,
             Total = plan.Total,
             DireccionEntrega = plan.DireccionEntrega,
             Observaciones = plan.Observaciones,
@@ -1308,6 +1331,8 @@ public class ServicioDeVentas(
                 Cantidad = i.Cantidad,
                 PrecioUnitario = i.PrecioUnitario,
                 Descuento = i.Descuento,
+                AjusteManualPorcentaje = i.AjusteManualPorcentaje,
+                AjusteManual = i.AjusteManual,
                 Total = i.Total,
                 CostoUnitario = i.CostoUnitario,
                 // Etapa 12, slice 8, task 8.2 (design: "Item snapshot"): congelado desde el plan
@@ -1360,6 +1385,8 @@ public class ServicioDeVentas(
                         ["cantidad"] = i.Cantidad,
                         ["precio_cobrado"] = i.PrecioUnitario,
                         ["descuento_cobrado"] = i.Descuento,
+                        ["ajuste_manual_porcentaje"] = i.AjusteManualPorcentaje,
+                        ["ajuste_manual"] = i.AjusteManual,
                         ["total_cobrado"] = i.Total,
                         ["precio_esperado"] = i.PrecioEsperado,
                         ["descuento_esperado"] = i.DescuentoEsperado
@@ -1815,7 +1842,8 @@ public class ServicioDeVentas(
             // el contrato). Sin precio offline, sigue siendo el único camino de siempre.
             if (linea.PrecioUnitario is { } precioOffline)
             {
-                lineasParaCalcular.Add(new LineaParaCalcular(cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m));
+                lineasParaCalcular.Add(new LineaParaCalcular(
+                    cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje));
                 continue;
             }
 
@@ -1828,7 +1856,8 @@ public class ServicioDeVentas(
             }
 
             lineasParaCalcular.Add(new LineaParaCalcular(
-                cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario));
+                cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
+                linea.AjusteManualPorcentaje));
         }
 
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
@@ -1861,11 +1890,16 @@ public class ServicioDeVentas(
             // expectativa que comparar: PrecioDiscrepante queda false, nunca un falso positivo
             // contra un "esperado" inventado. NetoDeLinea reusa el MISMO redondeo/orden de
             // CalculadorDeTotales — nunca una segunda autoridad de dinero, esta cuenta no
-            // alimenta totales/ValidadorDePagos/persistencia.
+            // alimenta totales/ValidadorDePagos/persistencia. Se compara el neto ANTERIOR al ajuste
+            // manual de las dos partes (bruto − descuento): el porcentaje es el mismo dato del
+            // request de los dos lados, así que no es una diferencia de precio y no participa de
+            // la comparación. Comparar totales ya ajustados la enmascaraba: con −100 % los dos
+            // lados dan 0 y con −50 % un centavo de diferencia puede redondear a lo mismo.
             var esLineaOffline = linea.PrecioUnitario is not null;
             var discrepante = esLineaOffline
                 && resultado.PrecioOriginal is not null
-                && NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario) != calculado.Total;
+                && NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario)
+                    != calculado.Total - calculado.AjusteManual;
 
             items.Add(new LineaDelPlan(
                 articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, idListaPrecio, idOferta,
@@ -1874,7 +1908,9 @@ public class ServicioDeVentas(
                 articulo.EsProducto, articulo.CostoNominal,
                 PrecioDiscrepante: discrepante,
                 PrecioEsperado: discrepante ? resultado.PrecioOriginal : null,
-                DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null));
+                DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null,
+                AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
+                AjusteManual: calculado.AjusteManual));
         }
 
         return (items, totales);
@@ -1883,7 +1919,8 @@ public class ServicioDeVentas(
     /// <summary>Mismo redondeo/orden que <see cref="CalculadorDeTotales.Calcular"/> (design:
     /// Checkout Contract) — a propósito NUNCA una segunda autoridad de dinero: esta función solo
     /// alimenta el diagnóstico de discrepancia de precio offline de <see cref="MaterializarItems"/>,
-    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste.</summary>
+    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste. Devuelve el neto de
+    /// línea ESPERADO (bruto − descuento de oferta), anterior a cualquier ajuste manual.</summary>
     private static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario)
     {
         var bruto = Math.Round(cantidadConSigno * precioUnitario, 2, MidpointRounding.AwayFromZero);
@@ -2031,6 +2068,8 @@ public class ServicioDeVentas(
                 throw new ErrorDominio(
                     "codigo_barra_invalido", $"El código de barra no puede superar los {LongitudMaximaCodigoBarra} caracteres.", 400);
             }
+
+            ReglaDeAjusteManual.Validar(linea.AjusteManualPorcentaje);
         }
 
         return lineas;
@@ -2155,7 +2194,8 @@ public class ServicioDeVentas(
                 var planItem = planItems?[i.Orden - 1];
                 return new ItemEmitido(
                     i.Orden, i.IdArticulo, i.Descripcion, i.CodigoBarra, i.IdArea, i.IdListaPrecio, i.IdOferta,
-                    i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
+                    i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento,
+                    i.AjusteManualPorcentaje, i.AjusteManual, i.Total,
                     planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false,
                     planItem?.PrecioDiscrepante ?? false);
             })
@@ -2180,7 +2220,8 @@ public class ServicioDeVentas(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,
-        comprobante.IdComprobanteAsociado, comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.Total,
+        comprobante.IdComprobanteAsociado, comprobante.Subtotal, comprobante.DescuentoTotal,
+        comprobante.DescuentoManualTotal, comprobante.RecargoManualTotal, comprobante.Total,
         comprobante.DireccionEntrega, comprobante.Observaciones,
         items,
         pagos
@@ -2201,7 +2242,8 @@ public class ServicioDeVentas(
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
-        bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null);
+        bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
+        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
@@ -2219,6 +2261,8 @@ public class ServicioDeVentas(
         IReadOnlyList<LineaDelPlan> Items,
         decimal Subtotal,
         decimal DescuentoTotal,
+        decimal DescuentoManualTotal,
+        decimal RecargoManualTotal,
         decimal Total,
         IReadOnlyList<PagoDelPlan> Pagos,
         decimal ClienteLimiteCredito,

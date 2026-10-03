@@ -23,7 +23,11 @@ public class LectorDeLineasDelTurno(IWaysDbContext db)
         var crudos = await db.ComprobantesVenta
             .Where(c => c.IdTurnoCaja == idTurnoCaja && c.Estado == EstadoComprobante.Emitido)
             .OrderBy(c => c.Fecha).ThenBy(c => c.Id)
-            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .Select(c => new
+            {
+                c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total,
+                c.DescuentoManualTotal, c.RecargoManualTotal
+            })
             .ToListAsync(ct);
 
         // NumeroDeComprobante.Formatear no traduce a SQL (mismo criterio que
@@ -31,7 +35,7 @@ public class LectorDeLineasDelTurno(IWaysDbContext db)
         return crudos
             .Select(c => new ComprobanteListado(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
-                c.IdPuntoVenta, c.IdCliente, c.Total))
+                c.IdPuntoVenta, c.IdCliente, c.Total, c.DescuentoManualTotal, c.RecargoManualTotal))
             .ToList();
     }
 

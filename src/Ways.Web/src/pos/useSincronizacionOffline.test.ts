@@ -22,6 +22,7 @@ import { TIEMPO_LIMITE_DE_RED_MS } from './tiempoLimite'
 import { guardarInstantaneaLocal, leerInstantaneaLocal, purgarInstantaneaLocal, resolverPreciosOffline } from './instantaneaOffline'
 import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
+import { calcularTotalesDeLinea } from '../api/ajusteManual'
 import { previaDeLinea } from '../api/ventas'
 import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
 
@@ -907,6 +908,117 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
     const cobrado = cantidad * ((encolada?.precioUnitario ?? 0) - (encolada?.descuentoUnitario ?? 0))
     expect(cobrado).toBe(previa.total)
+  })
+
+  // El ajuste manual llega en la `solicitudBase` (lo arma `aSolicitudDeVenta`) y el enriquecido de
+  // precios no lo pisa: cada línea conserva SU porcentaje junto al precio/descuento de SU artículo,
+  // y una línea sin ajuste sigue sin el campo.
+  it('el ajuste manual de cada línea se encola tal cual junto al precio y descuento de su artículo; la línea sin ajuste no lleva el campo', async () => {
+    const almacen = almacenFake()
+    await guardarLocal(
+      almacen,
+      instantaneaFixture({
+        articulos: [
+          articuloFixture({ idArticulo: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 }),
+          articuloFixture({ idArticulo: 2, codigosBarra: ['7790009999999'], precioOriginal: 80, precioFinal: 70, descuentoUnitario: 10 }),
+          articuloFixture({ idArticulo: 3, codigosBarra: ['7790008888888'], precioOriginal: 20, precioFinal: 20, descuentoUnitario: 0 }),
+        ],
+      }),
+    )
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    let resultado
+    await act(async () => {
+      resultado = await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({
+          lineas: [
+            { idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567', idLote: null, ajusteManualPorcentaje: 15 },
+            { idArticulo: 2, cantidad: 2, codigoBarra: '7790009999999', idLote: null, ajusteManualPorcentaje: -10 },
+            { idArticulo: 3, cantidad: 1, codigoBarra: '7790008888888', idLote: null },
+          ],
+        }),
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+
+    expect(resultado).toMatchObject({ ok: true })
+    const lineas = (await leerOutbox(almacen))[0].solicitud.lineas ?? []
+    expect(lineas.find((l) => l.idArticulo === 1)).toMatchObject({ precioUnitario: 100, descuentoUnitario: 0, ajusteManualPorcentaje: 15 })
+    expect(lineas.find((l) => l.idArticulo === 2)).toMatchObject({ precioUnitario: 80, descuentoUnitario: 10, ajusteManualPorcentaje: -10 })
+    expect(lineas.find((l) => l.idArticulo === 3)).not.toHaveProperty('ajusteManualPorcentaje')
+  })
+
+  it('al drenar, el servidor recibe la solicitud encolada con el ajuste manual intacto (reenvío idéntico por el número preasignado)', async () => {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 })] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null, ajusteManualPorcentaje: -12.5 }] }),
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+    const encolada = (await leerOutbox(almacen))[0].solicitud
+
+    emitirMock.mockResolvedValue({ id: 1 })
+    await act(async () => {
+      await result.current.drenarAhora()
+    })
+
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+    const enviada = emitirMock.mock.calls[0][0] as SolicitudDeVenta
+    expect(enviada).toEqual(encolada)
+    expect(enviada.lineas?.[0]).toMatchObject({ cantidad: 2, ajusteManualPorcentaje: -12.5 })
+    expect(enviada.numeroPreasignado).toBe(150)
+  })
+
+  // Mismo acuerdo que el de arriba pero con ajuste: lo que el cajero VE (`previaDeLinea` real, con el
+  // porcentaje de la línea) y lo que el payload encolado le permite cobrar al servidor
+  // (`calcularTotalesDeLinea` sobre `precioUnitario`/`descuentoUnitario`/`ajusteManualPorcentaje`
+  // tal como quedaron en el outbox) tienen que dar el mismo importe.
+  it.each([
+    ['descuento', -10],
+    ['recargo', 15],
+    ['descuento con decimales', -33.33],
+  ])('la vista previa y el payload encolado cobran el mismo importe con %s manual', async (_titulo, porcentaje) => {
+    const almacen = almacenFake()
+    const instantanea = instantaneaFixture({ articulos: [articuloConEscalonesFixture()] })
+    await guardarLocal(almacen, instantanea)
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    const cantidad = 4
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({
+          lineas: [{ idArticulo: 1, cantidad, codigoBarra: '7790001234567', idLote: null, ajusteManualPorcentaje: porcentaje }],
+        }),
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+
+    const lineaCarrito = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad, ajusteManualPorcentaje: porcentaje }
+    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)[1])
+
+    const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
+    const cobrado = calcularTotalesDeLinea({
+      cantidad,
+      precioOriginal: encolada?.precioUnitario ?? 0,
+      descuentoUnitario: encolada?.descuentoUnitario ?? 0,
+      porcentaje: encolada?.ajusteManualPorcentaje,
+    })
+    expect(cobrado.total).toBe(previa.total)
+    expect(cobrado.ajuste).toBe(previa.ajusteManual)
+    expect(previa.ajusteManual).not.toBe(0)
   })
 
   // judgment-day ronda 1 (BLOCKER): antes de este fix, `agregarAOutbox` tragaba CUALQUIER falla
@@ -2016,6 +2128,23 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
     expect(result.current.ventasConError[0].mensaje).toBe(
       `La venta 150 no se pudo sincronizar: el cliente no tiene crédito disponible para esta venta. ${INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR}`,
+    )
+  })
+
+  it('al drenar, un rechazo por ajuste manual inválido queda archivado con el mensaje propio de la cola: venta ya cobrada, sin consejo sobre el carrito', async () => {
+    const { result } = await montar()
+    emitirMock.mockRejectedValue(new ErrorApi(400, 'ajuste_manual_invalido', 'detalle técnico del servidor'))
+
+    await act(async () => {
+      await encolar(result, [{ comportamiento: 'Efectivo', importe: 100 }])
+      await result.current.drenarAhora()
+    })
+
+    await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
+    // La venta ya se cobró y su carrito ya no existe: el mensaje solo informa, sin mandar a
+    // "revisar los ajustes del carrito" (eso es del rechazo al cobrar, `mensajeDeRechazoDeAjusteManual`).
+    expect(result.current.ventasConError[0].mensaje).toBe(
+      'La venta 150 no se pudo sincronizar: el servidor rechazó el ajuste manual de alguna línea de esta venta, que ya estaba cobrada: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales.',
     )
   })
 })

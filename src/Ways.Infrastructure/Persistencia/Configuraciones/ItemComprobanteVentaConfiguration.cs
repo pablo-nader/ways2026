@@ -29,6 +29,18 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             t.HasCheckConstraint(
                 "ck_items_comprobante_venta_estimado_con_costo",
                 "NOT costo_es_estimado OR costo_unitario IS NOT NULL");
+
+            // El porcentaje de ajuste manual es NULL (sin ajuste) o un valor real: nunca cero, que
+            // no ajusta nada, ni fuera de ±100 %.
+            t.HasCheckConstraint(
+                "ck_items_comprobante_venta_ajuste_manual_porcentaje_valido",
+                "ajuste_manual_porcentaje IS NULL OR " +
+                "(ajuste_manual_porcentaje <> 0 AND ajuste_manual_porcentaje BETWEEN -100 AND 100)");
+
+            // Un monto de ajuste sin porcentaje que lo origine es irrepresentable.
+            t.HasCheckConstraint(
+                "ck_items_comprobante_venta_ajuste_manual_con_porcentaje",
+                "ajuste_manual_porcentaje IS NOT NULL OR ajuste_manual = 0");
         });
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_venta");
@@ -63,6 +75,18 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
 
         builder.Property(i => i.Descuento)
             .HasColumnName("descuento")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
+        // NULL = sin ajuste manual; el monto (con signo) vale 0 en ese caso y en todas las filas
+        // anteriores a la columna, sin backfill.
+        builder.Property(i => i.AjusteManualPorcentaje)
+            .HasColumnName("ajuste_manual_porcentaje")
+            .HasColumnType("numeric(5,2)");
+
+        builder.Property(i => i.AjusteManual)
+            .HasColumnName("ajuste_manual")
             .HasColumnType("numeric(14,2)")
             .HasDefaultValue(0m)
             .IsRequired();

@@ -9,6 +9,7 @@ import type { BorradorDeTicket } from './BorradorDeTicketContext'
 import type { AlmacenDeClavesMultiples, EntradaDeAlmacen } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
 import { AuthContext } from '../auth/AuthContext'
+import type { LineaCarrito } from '../api/carrito'
 import type { UsuarioAutenticado } from '../api/tipos'
 
 const borradorDeEjemplo: BorradorDeTicket = {
@@ -467,6 +468,94 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  /** Expone `lineas` del borrador como JSON y permite guardar uno con líneas dadas — para probar
+   * el ajuste manual de cada línea sin montar `Pos.tsx`. */
+  function ConsumidorDeLineas({ lineas }: { lineas: LineaCarrito[] }) {
+    const contexto = useContext(BorradorDeTicketContext)
+    const [, forzarRerender] = useState(0)
+    const encontrado = contexto?.obtener(CLAVE)
+    return (
+      <div>
+        <span data-testid="lineas">{encontrado ? JSON.stringify(encontrado.lineas) : 'vacio'}</span>
+        <button
+          type="button"
+          onClick={() => {
+            contexto?.guardar(CLAVE, { ...borradorDeEjemplo, lineas })
+            forzarRerender((n) => n + 1)
+          }}
+        >
+          guardar con líneas
+        </button>
+      </div>
+    )
+  }
+
+  function lineasDeEjemplo(): LineaCarrito[] {
+    return [
+      { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Cigarrillos', codigoBarra: null, cantidad: 2, ajusteManualPorcentaje: 15 },
+      { idArticulo: 2, codigoInterno: 'A0002', nombre: 'Maple de huevos', codigoBarra: '7790002222222', cantidad: 1, ajusteManualPorcentaje: -10 },
+      { idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, cantidad: 3 },
+    ]
+  }
+
+  it('el ajuste manual de cada línea se persiste con el borrador y se restaura tal cual tras un restart, sin subir la versión del payload', async () => {
+    vi.useFakeTimers()
+    try {
+      const almacen = crearAlmacenEnMemoria()
+      const usuario = usuarioFixture()
+      const claveDb = claveIndexedDbDeBorrador(usuario, CLAVE)
+      const lineas = lineasDeEjemplo()
+
+      const { unmount } = render(
+        <ConAuth usuario={usuario}>
+          <ProveedorDeBorradoresDeTicket almacen={almacen}>
+            <ConsumidorDeLineas lineas={lineas} />
+          </ProveedorDeBorradoresDeTicket>
+        </ConAuth>,
+      )
+      await vi.waitFor(() => expect(screen.getByTestId('lineas')).toHaveTextContent('vacio'))
+      screen.getByRole('button', { name: 'guardar con líneas' }).click()
+      await vi.advanceTimersByTimeAsync(400)
+
+      const persistido = almacen.datos.get(claveDb) as { version: number; borrador: BorradorDeTicket }
+      expect(persistido.version).toBe(1)
+      expect(persistido.borrador.lineas).toEqual(lineas)
+      unmount()
+
+      render(
+        <ConAuth usuario={usuario}>
+          <ProveedorDeBorradoresDeTicket almacen={almacen}>
+            <ConsumidorDeLineas lineas={[]} />
+          </ProveedorDeBorradoresDeTicket>
+        </ConAuth>,
+      )
+      await vi.waitFor(() => expect(JSON.parse(screen.getByTestId('lineas').textContent ?? '')).toEqual(lineas))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('un borrador guardado antes de existir el ajuste manual (líneas sin el campo) sigue restaurando, sin ajuste', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    const usuario = usuarioFixture()
+    const lineasViejas = [{ idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, cantidad: 3 }]
+    await almacen.escribir(claveIndexedDbDeBorrador(usuario, CLAVE), {
+      version: 1,
+      borrador: { ...borradorDeEjemplo, lineas: lineasViejas },
+    })
+
+    render(
+      <ConAuth usuario={usuario}>
+        <ProveedorDeBorradoresDeTicket almacen={almacen}>
+          <ConsumidorDeLineas lineas={[]} />
+        </ProveedorDeBorradoresDeTicket>
+      </ConAuth>,
+    )
+
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('lineas').textContent ?? '')).toEqual(lineasViejas))
+    expect(screen.getByTestId('lineas').textContent).not.toContain('ajusteManualPorcentaje')
   })
 
   it('desmontar el Provider con una escritura pendiente la vuelca igual (flush en el cleanup)', async () => {

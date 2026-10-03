@@ -3,8 +3,9 @@
  * reciben los datos ya resueltos por la pantalla y devuelven los bytes listos para `impresora.imprimir`.
  */
 import { COLUMNAS_FUENTE_A, ConstructorDeTicket } from './escpos'
+import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
-import { formatearImporte } from '../formato/importes'
+import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 
 /** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
  * vuelven a pedir acá. */
@@ -48,6 +49,13 @@ export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
  * resuelve el `comportamiento` de cada pago (para el rótulo, no para el cajón — eso lo decide
  * `algunPagoEnEfectivo` aparte).
  *
+ * Ajuste manual de precio: un comprobante con descuento o recargo manual lo dice en el encabezado
+ * (`*** CON DESCUENTO MANUAL ***` / `*** CON RECARGO MANUAL ***`, en mayúsculas y sin tilde como el
+ * resto de los avisos) para que un precio cambiado a mano nunca pase inadvertido en un ticket
+ * impreso; cada línea ajustada lleva su porcentaje y monto con signo, y el bloque de totales suma
+ * las filas "Desc. manual" y "Recargo". Un comprobante sin ajustes imprime exactamente lo de antes.
+ * Los campos son nuevos: un servidor anterior no los manda, y ahí no se imprime nada de esto.
+ *
  * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
  * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
  * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
@@ -72,10 +80,14 @@ export function ticketDeVenta(
     ticket.alinear('centro').negrita(true).linea('*** REIMPRESION ***').negrita(false)
   }
 
+  const descuentoManual = comprobante.descuentoManualTotal ?? 0
+  const recargoManual = comprobante.recargoManualTotal ?? 0
+
+  ticket.alinear('centro').negrita(true).linea('COMPROBANTE NO VALIDO COMO FACTURA')
+  if (descuentoManual !== 0) ticket.linea('*** CON DESCUENTO MANUAL ***')
+  if (recargoManual !== 0) ticket.linea('*** CON RECARGO MANUAL ***')
+
   ticket
-    .alinear('centro')
-    .negrita(true)
-    .linea('COMPROBANTE NO VALIDO COMO FACTURA')
     .negrita(false)
     .alinear('izquierda')
     .linea(`Comprobante: ${comprobante.numeroVisible}`)
@@ -88,12 +100,24 @@ export function ticketDeVenta(
     if (item.descuento > 0) {
       ticket.lineaDeColumnas('  Descuento', `-${formatearMoneda(item.descuento)}`)
     }
+    if (item.ajusteManualPorcentaje != null) {
+      ticket.lineaDeColumnas(
+        `  ${rotuloDeAjusteManual(item.ajusteManualPorcentaje)} ${formatearPorcentajeDeAjuste(item.ajusteManualPorcentaje)}%`,
+        formatearImporteConSigno(item.ajusteManual, { simbolo: true }),
+      )
+    }
   }
 
   ticket.lineaDeGuiones()
   ticket.lineaDeColumnas('Subtotal', formatearMoneda(comprobante.subtotal))
   if (comprobante.descuentoTotal > 0) {
     ticket.lineaDeColumnas('Descuento', `-${formatearMoneda(comprobante.descuentoTotal)}`)
+  }
+  if (descuentoManual !== 0) {
+    ticket.lineaDeColumnas('Desc. manual', formatearImporteConSigno(-descuentoManual, { simbolo: true }))
+  }
+  if (recargoManual !== 0) {
+    ticket.lineaDeColumnas('Recargo', formatearImporteConSigno(recargoManual, { simbolo: true }))
   }
   ticket.tamanioDoble(true).negrita(true)
   ticket.lineaDeColumnas('TOTAL', formatearMoneda(comprobante.total))

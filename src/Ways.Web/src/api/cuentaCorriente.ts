@@ -351,6 +351,15 @@ function leerCampo<T>(objeto: Record<string, unknown>, ...claves: string[]): T {
   throw new Error(`campo ausente: ${claves.join('/')}`)
 }
 
+/** Campo que el servidor omite cuando no tiene valor: la clave ausente (en ambos casos) es `null`,
+ * nunca un error. */
+function leerCampoOpcional<T>(objeto: Record<string, unknown>, ...claves: string[]): T | null {
+  for (const clave of claves) {
+    if (clave in objeto) return objeto[clave] as T | null
+  }
+  return null
+}
+
 function normalizarDetalleDeLinea(crudo: unknown): DetalleDeLinea {
   if (typeof crudo !== 'object' || crudo === null) throw new Error('línea de reliquidación inválida')
   const o = crudo as Record<string, unknown>
@@ -363,6 +372,7 @@ function normalizarDetalleDeLinea(crudo: unknown): DetalleDeLinea {
     totalDelDia: leerCampo<number | null>(o, 'totalDelDia', 'TotalDelDia') ?? null,
     delta: leerCampo<number>(o, 'delta', 'Delta'),
     motivo: leerCampo<string | null>(o, 'motivo', 'Motivo') ?? null,
+    ajusteManualPorcentaje: leerCampoOpcional<number>(o, 'ajusteManualPorcentaje', 'AjusteManualPorcentaje'),
   }
 }
 

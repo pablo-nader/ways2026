@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import {
   admisibilidadDeVentaOffline,
@@ -22,11 +23,13 @@ import {
   type VentaEnCola,
 } from './outboxOffline'
 import type { AlmacenClaveValor } from './almacenPos'
+import { crearAlmacenIndexedDb } from './almacenPos'
 import type { InstantaneaDePos } from '../api/tipos'
 
 /** Fake en memoria del almacén — mismo contrato que el real (`AlmacenClaveValor`), sin
  * IndexedDB: permite testear la lógica de negocio pura de este módulo sin acoplarla a
- * `fake-indexeddb` (ese acoplamiento vive, aparte, en `almacenPos.test.ts`). */
+ * `fake-indexeddb` (ese acoplamiento vive, aparte, en `almacenPos.test.ts`; el único test de este
+ * archivo que usa el almacén real es el último, el round-trip del ajuste manual). */
 function almacenFake(): AlmacenClaveValor {
   const datos = new Map<string, unknown>()
   return {
@@ -425,5 +428,30 @@ describe('secuencia archivar+quitar — converge a un solo store aunque se inter
     // Converge a UNA sola entrada, en UN solo store.
     await expect(leerOutbox(almacen)).resolves.toEqual([])
     await expect(leerRechazadas(almacen)).resolves.toHaveLength(1)
+  })
+})
+
+describe('outbox — el ajuste manual de las líneas sobrevive a la persistencia real (fake-indexeddb)', () => {
+  it('agregarAOutbox conserva el porcentaje de cada línea: el reenvío al drenar lleva lo mismo que se cobró', async () => {
+    const almacen = crearAlmacenIndexedDb()
+    const solicitud = {
+      ...ventaFixture().solicitud,
+      idCliente: 1,
+      lineas: [
+        { idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null, precioUnitario: 100, descuentoUnitario: 0, ajusteManualPorcentaje: -10 },
+        { idArticulo: 2, cantidad: 1, codigoBarra: null, idLote: null, precioUnitario: 40, descuentoUnitario: 0, ajusteManualPorcentaje: 15.5 },
+        { idArticulo: 3, cantidad: 1, codigoBarra: null, idLote: null, precioUnitario: 20, descuentoUnitario: 0 },
+      ],
+    }
+
+    await agregarAOutbox(almacen, ventaFixture({ idLocal: 'con-ajuste', solicitud }))
+    const relectura = await leerOutbox(almacen)
+
+    expect(relectura[0].solicitud).toEqual(solicitud)
+    expect(relectura[0].solicitud.lineas?.[0].ajusteManualPorcentaje).toBe(-10)
+    expect(relectura[0].solicitud.lineas?.[1].ajusteManualPorcentaje).toBe(15.5)
+    expect(relectura[0].solicitud.lineas?.[2]).not.toHaveProperty('ajusteManualPorcentaje')
+
+    await quitarDeOutbox(almacen, 'con-ajuste')
   })
 })

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Ventas;
 
 namespace Ways.Domain.Tests.CuentaCorriente;
 
@@ -334,5 +336,189 @@ public class ReliquidadorDeConsumosTests
 
         Assert.Equal(45m, resultado.Delta);
         Assert.Equal(2, resultado.IdsMovimientosCubiertos.Count);
+    }
+
+    // ---- ajuste manual: el porcentaje del cajero sobrevive a la reliquidación -----------------
+
+    [Fact]
+    public void UnDescuentoManualDelDiezPorCientoSeConservaAlReprecificar()
+    {
+        // Vendida a 100 con -10% manual (total histórico 90); el precio actual es 120. El total del
+        // día conserva el -10% sobre el neto nuevo: 120 - 12 = 108, delta 18. Sin conservarlo el
+        // delta sería 30 (120 - 90): el cliente pagaría de más por perder un descuento que el
+        // cajero le dio a propósito.
+        var linea = new LineaAReliquidar(
+            1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 90m, AjusteManualPorcentaje: -10m);
+        var consumo = UnConsumo(1, linea);
+
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 120m });
+
+        var detalleLinea = Assert.Single(Assert.Single(resultado.Detalle).Lineas);
+        Assert.Equal(108m, detalleLinea.TotalDelDia);
+        Assert.Equal(18m, detalleLinea.Delta);
+        Assert.Equal(18m, resultado.Delta);
+        Assert.NotEqual(30m, resultado.Delta);
+    }
+
+    [Fact]
+    public void UnRecargoManualNoAcreditaCuandoElPrecioNoCambio()
+    {
+        // Vendida a 100 con +20% manual (total histórico 120) y el precio sigue en 100: el recargo
+        // se conserva (100 + 20 = 120), delta 0. Sin conservarlo el delta sería -20 (100 - 120):
+        // un crédito falso por un recargo que el cliente aceptó.
+        var linea = new LineaAReliquidar(
+            1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 120m, AjusteManualPorcentaje: 20m);
+        var consumo = UnConsumo(1, linea);
+
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 100m });
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Equal(120m, Assert.Single(Assert.Single(resultado.Detalle).Lineas).TotalDelDia);
+    }
+
+    [Fact]
+    public void UnRecargoManualSeReaplicaSobreElNetoNuevoCuandoElPrecioSube()
+    {
+        // 150 + 20% = 180 contra 120 histórico ⇒ delta 60 (el recargo también crece con el precio).
+        var linea = new LineaAReliquidar(
+            1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 120m, AjusteManualPorcentaje: 20m);
+        var consumo = UnConsumo(1, linea);
+
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 150m });
+
+        Assert.Equal(60m, resultado.Delta);
+    }
+
+    [Fact]
+    public void ElDescuentoDeOfertaSigueAnuladoYSoloElPorcentajeManualSobrevive()
+    {
+        // 100 con 10 de oferta (neto 90) y -10% manual (-9) ⇒ total histórico 81. Precio actual 120
+        // sin oferta ⇒ neto 120, manual -12 ⇒ 108; delta 27 = 18 de re-pricing + 9 de oferta
+        // anulada, los dos ya con el -10% manual aplicado.
+        var linea = new LineaAReliquidar(
+            1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 10m, TotalHistorico: 81m, AjusteManualPorcentaje: -10m);
+        var consumo = UnConsumo(1, linea);
+
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 120m });
+
+        Assert.Equal(27m, resultado.Delta);
+    }
+
+    [Fact]
+    public void SinPorcentajeManualElTotalDelDiaEsElNetoSinAjusteAlguno()
+    {
+        // Compatibilidad: null (y la omisión del parámetro) dan exactamente el neto de siempre.
+        var conNulo = new LineaAReliquidar(
+            1, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m, AjusteManualPorcentaje: null);
+        var omitido = new LineaAReliquidar(1, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m);
+        var precios = new Dictionary<int, decimal?> { [1] = 33.335m };
+
+        var resultadoNulo = ReliquidadorDeConsumos.Calcular([UnConsumo(1, conNulo)], precios);
+        var resultadoOmitido = ReliquidadorDeConsumos.Calcular([UnConsumo(1, omitido)], precios);
+
+        Assert.Equal(100.01m, Assert.Single(Assert.Single(resultadoNulo.Detalle).Lineas).TotalDelDia);
+        Assert.Equal(resultadoOmitido.Delta, resultadoNulo.Delta);
+        Assert.Equal(1.01m, resultadoNulo.Delta);
+    }
+
+    // ---- detalle auditable: el porcentaje viaja para poder reconstruir el total del día -------
+
+    private static List<DetalleDeLinea> DetalleDeTresLineas()
+    {
+        // Tres líneas con porcentaje distinto cada una (-10, +20, ninguno) y precios distintos, para
+        // que un porcentaje asignado a otra línea no pase desapercibido.
+        var lineaA = new LineaAReliquidar(
+            1, Cantidad: 2m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 180m, AjusteManualPorcentaje: -10m);
+        var lineaB = new LineaAReliquidar(
+            2, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 120m, AjusteManualPorcentaje: 20m);
+        var lineaC = new LineaAReliquidar(
+            3, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m);
+        var precios = new Dictionary<int, decimal?> { [1] = 120m, [2] = 150m, [3] = 33.335m };
+
+        var resultado = ReliquidadorDeConsumos.Calcular([UnConsumo(1, lineaA, lineaB, lineaC)], precios);
+
+        return [.. Assert.Single(resultado.Detalle).Lineas];
+    }
+
+    [Fact]
+    public void ElDetalleDeCadaLineaLlevaElPorcentajeManualDeSuItemYReconstruyeElTotalDelDia()
+    {
+        var detalle = DetalleDeTresLineas();
+
+        Assert.Equal(
+            new (int?, decimal?, decimal?)[] { (1, -10m, 216m), (2, 20m, 180m), (3, null, 100.01m) },
+            detalle.Select(d => (d.IdArticulo, d.AjusteManualPorcentaje, d.TotalDelDia)).ToArray());
+
+        // El detalle se basta a sí mismo: neto = round(cantidad x precio actual) y total del día =
+        // neto + ajuste manual del porcentaje del propio detalle.
+        foreach (var linea in detalle)
+        {
+            var neto = Math.Round(linea.Cantidad * linea.PrecioActual!.Value, 2, MidpointRounding.AwayFromZero);
+            Assert.Equal(
+                neto + CalculadorDeTotales.AjusteManualSobre(neto, linea.AjusteManualPorcentaje), linea.TotalDelDia);
+        }
+    }
+
+    [Fact]
+    public void UnaLineaOmitidaNoLlevaPorcentajeManualEnElDetalleAunqueSuItemLoTuviera()
+    {
+        var sinPrecio = new LineaAReliquidar(
+            2, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 90m, AjusteManualPorcentaje: -10m);
+        var libre = new LineaAReliquidar(
+            null, Cantidad: 1m, PrecioUnitario: 50m, Descuento: 0m, TotalHistorico: 55m, AjusteManualPorcentaje: 10m);
+
+        var resultado = ReliquidadorDeConsumos.Calcular(
+            [UnConsumo(1, sinPrecio, libre)], new Dictionary<int, decimal?> { [2] = null });
+
+        var lineas = Assert.Single(resultado.Detalle).Lineas;
+        Assert.Equal(2, lineas.Count);
+        Assert.All(lineas, l =>
+        {
+            Assert.NotNull(l.Motivo);
+            Assert.Null(l.AjusteManualPorcentaje);
+        });
+    }
+
+    [Fact]
+    public void ElDetalleSerializadoOmiteLaClaveDelPorcentajeSinAjusteYLaEscribeConAjuste()
+    {
+        var detalle = DetalleDeTresLineas();
+
+        var claves = detalle
+            .Select(d => JsonDocument.Parse(JsonSerializer.Serialize(d)).RootElement)
+            .Select(raiz => raiz.EnumerateObject().Select(p => p.Name).ToArray())
+            .ToList();
+
+        var clavesDeSiempre = new[]
+        {
+            "IdArticulo", "Cantidad", "PrecioHistorico", "PrecioActual", "TotalHistorico", "TotalDelDia", "Delta", "Motivo"
+        };
+        Assert.Equal([.. clavesDeSiempre, "AjusteManualPorcentaje"], claves[0]);
+        Assert.Equal([.. clavesDeSiempre, "AjusteManualPorcentaje"], claves[1]);
+        Assert.Equal(clavesDeSiempre, claves[2]);
+
+        // Sin ajuste, el JSON es byte a byte el de antes de que existiera el campo.
+        Assert.Equal(
+            "{\"IdArticulo\":3,\"Cantidad\":3,\"PrecioHistorico\":33,\"PrecioActual\":33.335,\"TotalHistorico\":99," +
+            "\"TotalDelDia\":100.01,\"Delta\":1.01,\"Motivo\":null}",
+            JsonSerializer.Serialize(detalle[2]));
+        Assert.Contains("\"AjusteManualPorcentaje\":-10", JsonSerializer.Serialize(detalle[0]));
+        Assert.Contains("\"AjusteManualPorcentaje\":20", JsonSerializer.Serialize(detalle[1]));
+    }
+
+    [Theory]
+    [InlineData(10, 11006)]
+    [InlineData(-10, 9004)]
+    public void ElRedondeoDelAjusteManualEsElDelCheckoutAwayFromZero(int porcentaje, int totalEsperadoEnCentavos)
+    {
+        // Neto 100.05; el ajuste es ±10.005, justo en el punto medio: AwayFromZero lo lleva a ±10.01
+        // (el redondeo bancario daría ±10.00) — el mismo resultado que CalculadorDeTotales.
+        var linea = new LineaAReliquidar(
+            1, Cantidad: 1m, PrecioUnitario: 100.05m, Descuento: 0m, TotalHistorico: 100.05m,
+            AjusteManualPorcentaje: porcentaje);
+
+        var resultado = ReliquidadorDeConsumos.Calcular([UnConsumo(1, linea)], new Dictionary<int, decimal?> { [1] = 100.05m });
+
+        Assert.Equal(totalEsperadoEnCentavos / 100m, Assert.Single(Assert.Single(resultado.Detalle).Lineas).TotalDelDia);
     }
 }

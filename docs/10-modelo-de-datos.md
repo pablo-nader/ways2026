@@ -407,7 +407,10 @@ comprobantes_venta (          -- [operativa]
     id_empleado, id_cliente,
     id_comprobante_asociado integer NULL,    -- NC/ND → el comprobante que corrigen
     -- totales (redundantes con items, verificados por dominio)
-    subtotal, descuento_total, total,
+    subtotal, descuento_total,
+    descuento_manual_total numeric(14,2) NOT NULL DEFAULT 0,  -- Σ de los descuentos manuales de línea
+    recargo_manual_total   numeric(14,2) NOT NULL DEFAULT 0,  -- Σ de los recargos manuales de línea
+    total,                                   -- subtotal − descuento_total − descuento_manual_total + recargo_manual_total
     neto_gravado NULL, iva_total NULL,       -- solo si discrimina_iva
     -- entrega
     direccion_entrega text NULL, observaciones text NULL,
@@ -431,8 +434,10 @@ items_comprobante_venta (
     id_lista_precio integer,                 -- con qué lista se vendió
     id_oferta       integer NULL,            -- si una oferta tocó esta línea
     descuento       numeric(14,2) NOT NULL DEFAULT 0,   -- importe descontado en la línea
+    ajuste_manual_porcentaje numeric(5,2) NULL,         -- con signo: negativo = descuento, positivo = recargo
+    ajuste_manual   numeric(14,2) NOT NULL DEFAULT 0,   -- monto con signo del ajuste, sobre el neto de la línea
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),  -- snapshot
-    total           numeric(14,2)            -- cantidad × precio − descuento
+    total           numeric(14,2)            -- cantidad × precio − descuento + ajuste_manual
 );
 
 pagos_comprobante (
@@ -449,6 +454,7 @@ Cambios de fondo respecto del legacy:
 |---|---|
 | `ventas.articulos` string serializado | `items_comprobante_venta` |
 | Descuento como línea fantasma `OF...` | `descuento` + `id_oferta` **en el item** |
+| Precio cambiado a mano en caja, sin rastro | `ajuste_manual_porcentaje` + `ajuste_manual` **en el item** |
 | Columnas `efectivo/tarjetas/c_corriente/vuelto` | N filas en `pagos_comprobante` |
 | `tipo` 1/2 (venta/devolución) | `tipos_comprobante` con `signo` (ticket X / NC X) |
 | `tipo` 3/4/5 metidos en `ventas` | `movimientos_cuenta_corriente` (§8) |
@@ -508,6 +514,27 @@ movimientos, y los movimientos no se editan.
 > cifrado). El camino de escritura fiscal es `ServicioDeFacturacionFiscal` (slice 5) — el único
 > escritor de estas cuatro columnas, vía la guarded `UPDATE` U2 (`WHERE … AND resultado_fiscal =
 > 'pendiente'`).
+>
+> **Estado (ajuste manual de precio en ventas): implementada**, migración `AjusteManualEnVentas`
+> (solo DDL, sin backfill: los valores por defecto cubren las filas existentes).
+> `items_comprobante_venta` gana `ajuste_manual_porcentaje numeric(5,2) NULL` — porcentaje con
+> signo que el operador aplica a mano sobre el **neto de la línea** (bruto menos `descuento` de
+> oferta): negativo = descuento, positivo = recargo, `NULL` = sin ajuste — y `ajuste_manual
+> numeric(14,2) NOT NULL DEFAULT 0`, el monto resultante con el signo del porcentaje. Dos CHECKs:
+> `ck_items_comprobante_venta_ajuste_manual_porcentaje_valido` (`NULL`, o distinto de cero y
+> entre −100 y 100) y `ck_items_comprobante_venta_ajuste_manual_con_porcentaje` (sin porcentaje
+> el monto es 0). El total de línea pasa a ser `round(cantidad × precio) − descuento +
+> ajuste_manual`. `comprobantes_venta` gana `descuento_manual_total` y `recargo_manual_total`
+> (ambos `numeric(14,2) NOT NULL DEFAULT 0`): la suma de los ajustes de las líneas de
+> porcentaje negativo y positivo respectivamente, separados a propósito para que un recargo en
+> una línea no pueda ocultar un descuento en otra; el total del encabezado es `subtotal −
+> descuento_total − descuento_manual_total + recargo_manual_total`. La clasificación depende del
+> signo del **porcentaje**, no del monto, de modo que una línea de NCX (cantidad negativa) sigue
+> la misma convención de signo que `descuento_total`. El cliente envía únicamente el porcentaje
+> (`ajusteManualPorcentaje`, `400 ajuste_manual_invalido` si es 0, está fuera de ±100 o trae más
+> de dos decimales); todo importe lo calcula `CalculadorDeTotales`, en el camino online y en el
+> offline. Sin tablas nuevas: ambas columnas viven en tablas operativas que ya tienen
+> `id_tenant` y RLS.
 
 ### Fiscal ARCA (Etapa 19a)
 
@@ -1345,6 +1372,16 @@ que hoy, pero auditable.
 > colapsa exacto a la del legacy; el dueño del negocio confirmó la semántica de financiamiento
 > parcial como aceptable para esta etapa.
 >
+> **Ajuste manual de precio (sin cambio de esquema):** la reliquidación conserva el
+> `ajuste_manual_porcentaje` de cada item. El total del día de una línea es `neto nuevo +
+> ajuste` con `ajuste = round(neto nuevo × porcentaje / 100)`, la misma fórmula y el mismo
+> redondeo que el checkout (`CalculadorDeTotales.AjusteManualSobre`), en vez del neto solo: un
+> −10% manual sobre una línea de 100 que hoy cuesta 120 se re-precifica a 108 (delta 18, no 30)
+> y un +20% con el precio sin cambios da delta 0 (no un crédito de 20). El descuento de oferta
+> sigue anulándose como antes; solo el porcentaje manual sobrevive, y las líneas sin porcentaje
+> dan exactamente el mismo resultado de siempre. El movimiento de diferencia se compara contra
+> `items.total` (que ya incluye el ajuste original).
+>
 > **Irreversibilidad:** ningún endpoint revierte ni edita un movimiento `actualizacion_precios`
 > — la única corrección posible es un `Ajuste` manual nuevo, distinto y auditable por su propio
 > `detalle`. La reliquidación tampoco tiene turno de caja: no mueve plata física, así que no
@@ -1821,13 +1858,16 @@ antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenenci
   payload distinto bajo el mismo número en este camino: el lookup encuentra la fila existente y
   devuelve antes de llegar a ningún INSERT, así que ese índice nunca se ejercita acá. Lo que
   blinda un reenvío con contenido distinto es una comparación explícita de IDENTIDAD
-  (`ServicioDeVentas.ExigirMismoContenido`: el conjunto (idArticulo, cantidad) de líneas,
-  idCliente, idComprobanteAsociado y la composición de pagos) contra el comprobante ya guardado
+  (`ServicioDeVentas.ExigirMismoContenido`: el conjunto (idArticulo, cantidad,
+  ajusteManualPorcentaje) de líneas, idCliente, idComprobanteAsociado y la composición de pagos)
+  contra el comprobante ya guardado
   — sin coincidencia, `409 numero_preasignado_con_otro_contenido` en vez de devolver la venta
   ajena en silencio. A propósito NO compara el total ni el precio de ningún item (judgment-day,
   ronda 2): son server-derived y pueden cambiar legítimamente entre dos intentos del mismo pedido
   (p.ej. un dispositivo offline que sincroniza horas después, con otro precio vigente) — comparar
-  dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. Tampoco compara
+  dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. El porcentaje de
+  ajuste manual (§4) es la excepción y sí entra: lo tipeó el operador, no lo deriva el servidor, y
+  el mismo número con otro porcentaje cobra otra cosa. Tampoco compara
   `observaciones` (judgment-day, ronda 2): es una nota de texto libre, metadata incidental sobre
   el pedido, no un rasgo que distinga una venta de otra — un reenvío manual puede traerla
   retipeada sin que eso signifique otra venta. La `referencia` de un pago SI entra, aunque tambien
@@ -1948,6 +1988,19 @@ bloqueo" que `ItemComprobanteVenta.LoteVencido`):
    discrepante, artículo/cantidad/precio y descuento cobrados vs. esperados — durable, consultable
    vía `GET /api/auditoria`. Se escribe UNA fila por comprobante (no una por línea), solo cuando
    hay al menos una línea discrepante.
+
+**El ajuste manual de precio no es una discrepancia.** Una línea offline también puede traer
+`ajusteManualPorcentaje` (§4, descuento o recargo que el cajero aplicó a mano sobre el neto de la
+línea). El servidor lo valida (`400 ajuste_manual_invalido`), calcula el monto con
+`CalculadorDeTotales` —nunca toma un importe del dispositivo— y la discrepancia se decide sobre el
+neto ANTERIOR al ajuste, en las dos partes: `NetoDeLinea` (bruto − descuento con el precio y la
+oferta que el servidor resuelve hoy) contra el total cobrado menos el monto del ajuste (bruto −
+descuento con los valores del dispositivo). El porcentaje es el mismo dato de request de los dos
+lados, así que no participa de la comparación: un ajuste manual por sí solo no marca
+`PrecioDiscrepante` ni escribe la fila de auditoría, y una diferencia real de precio sigue
+marcándose aunque haya ajuste, incluso con −100 % (total cobrado 0) o con un centavo de diferencia
+que el redondeo del ajuste absorbería en el total. Cuando la fila de auditoría existe, lleva el
+porcentaje y el monto del ajuste junto al total cobrado.
 
 Se descartó agregar `precio_unitario_esperado`/`descuento_esperado`/un `precio_discrepante
 GENERATED` a `items_comprobante_venta` (el patrón de `ArqueoTurno.Diferencia`, que hubiera sido la

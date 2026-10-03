@@ -1008,6 +1008,41 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(16, consultasConPocasLineas);
     }
 
+    /// <summary>El ajuste manual no suma ninguna consulta: se calcula en memoria sobre lo que ya se
+    /// leyó. Mismo techo (16) que el checkout sin ajuste, con pocas y con muchas líneas — el valor
+    /// pineado de <c>ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas</c>
+    /// no se toca. Además de contar, verifica que el camino con ajuste corrió de verdad: cada línea
+    /// emitida lleva su porcentaje y su monto, y el total y los totales manuales del comprobante los
+    /// suman (un conteo de 16 también saldría si el porcentaje se descartara antes de calcular).</summary>
+    [Fact]
+    public async Task ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas));
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Presupuesto Ajuste", limiteCredito: 1_000_000m);
+
+        var (consultasConPocasLineas, conDescuento) =
+            await EmitirYContarConsultasConResultadoAsync(ctx, idCliente, 2, ajusteManualPorcentaje: -10m);
+        var (consultasConMuchasLineas, conRecargo) =
+            await EmitirYContarConsultasConResultadoAsync(ctx, idCliente, 20, ajusteManualPorcentaje: 25m);
+
+        Assert.Equal(16, consultasConPocasLineas);
+        Assert.Equal(16, consultasConMuchasLineas);
+
+        // 2 líneas de 10 con -10 %: cada una -1 ⇒ 9; subtotal 20, descuento manual 2, total 18.
+        Assert.Equal(2, conDescuento.Items.Count);
+        Assert.All(conDescuento.Items, i => Assert.Equal((-10m, -1m, 9m), (i.AjusteManualPorcentaje, i.AjusteManual, i.Total)));
+        Assert.Equal(
+            (20m, 2m, 0m, 18m),
+            (conDescuento.Subtotal, conDescuento.DescuentoManualTotal, conDescuento.RecargoManualTotal, conDescuento.Total));
+
+        // 20 líneas de 10 con +25 %: cada una +2.5 ⇒ 12.5; subtotal 200, recargo manual 50, total 250.
+        Assert.Equal(20, conRecargo.Items.Count);
+        Assert.All(conRecargo.Items, i => Assert.Equal((25m, 2.5m, 12.5m), (i.AjusteManualPorcentaje, i.AjusteManual, i.Total)));
+        Assert.Equal(
+            (200m, 0m, 50m, 250m),
+            (conRecargo.Subtotal, conRecargo.DescuentoManualTotal, conRecargo.RecargoManualTotal, conRecargo.Total));
+    }
+
     // ---- stage-12 slice 2 (design decisión 2 / tasks 2.5-2.6): parametro read batcheado -------
 
     [Fact]
@@ -1177,7 +1212,12 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
     }
 
-    private async Task<int> EmitirYContarConsultasAsync(Contexto ctx, int idCliente, int cantidadDeLineas)
+    private async Task<int> EmitirYContarConsultasAsync(
+        Contexto ctx, int idCliente, int cantidadDeLineas, decimal? ajusteManualPorcentaje = null) =>
+        (await EmitirYContarConsultasConResultadoAsync(ctx, idCliente, cantidadDeLineas, ajusteManualPorcentaje)).Consultas;
+
+    private async Task<(int Consultas, ComprobanteEmitido Emitido)> EmitirYContarConsultasConResultadoAsync(
+        Contexto ctx, int idCliente, int cantidadDeLineas, decimal? ajusteManualPorcentaje = null)
     {
         var lineas = new List<LineaDeVenta>();
         var totalEsperado = 0m;
@@ -1185,8 +1225,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         for (var i = 0; i < cantidadDeLineas; i++)
         {
             var idArticulo = await SembrarArticuloConPrecioAsync(ctx, $"presupuesto-{Guid.NewGuid():N}", 10m);
-            lineas.Add(new LineaDeVenta(idArticulo, 1m, null));
-            totalEsperado += 10m;
+            lineas.Add(new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: ajusteManualPorcentaje));
+            totalEsperado += 10m + (ajusteManualPorcentaje is { } porcentaje ? 10m * porcentaje / 100m : 0m);
         }
 
         var contador = new ContadorDeComandos();
@@ -1234,8 +1274,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             [new PagoDeVenta(ctx.IdMedioEfectivo, totalEsperado, null, 0m)],
             null, null);
 
-        await servicioDeVentas.EmitirAsync(solicitud);
+        var emitido = await servicioDeVentas.EmitirAsync(solicitud);
 
-        return contador.Consultas;
+        return (contador.Consultas, emitido);
     }
 }

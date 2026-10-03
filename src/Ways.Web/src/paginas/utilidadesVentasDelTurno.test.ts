@@ -13,6 +13,8 @@ import {
   nombreDeMedio,
   puedeAnular,
   puedeReimprimir,
+  tieneDescuentoManual,
+  tieneRecargoManual,
   totalesDeVentas,
   totalesPorMedioDeVentas,
 } from './utilidadesVentasDelTurno'
@@ -28,6 +30,8 @@ function ventaFixture(sobrescribir: Partial<VentaDeTurnoListado> = {}): VentaDeT
     idCliente: 1,
     nombreCliente: 'Consumidor Final',
     total: 100,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 100 }],
     ...sobrescribir,
   }
@@ -172,6 +176,40 @@ describe('puedeReimprimir', () => {
 
   it('una venta Anulada nunca puede reimprimirse', () => {
     expect(puedeReimprimir(ventaFixture({ estado: 'Anulado' }))).toBe(false)
+  })
+})
+
+describe('tieneDescuentoManual / tieneRecargoManual', () => {
+  it('una venta sin ajustes no tiene ninguna de las dos marcas', () => {
+    const venta = ventaFixture()
+
+    expect(tieneDescuentoManual(venta)).toBe(false)
+    expect(tieneRecargoManual(venta)).toBe(false)
+  })
+
+  it('cada marca depende de su propio total: un descuento no prende el recargo ni al revés', () => {
+    expect(tieneDescuentoManual(ventaFixture({ descuentoManualTotal: 25 }))).toBe(true)
+    expect(tieneRecargoManual(ventaFixture({ descuentoManualTotal: 25 }))).toBe(false)
+    expect(tieneRecargoManual(ventaFixture({ recargoManualTotal: 15 }))).toBe(true)
+    expect(tieneDescuentoManual(ventaFixture({ recargoManualTotal: 15 }))).toBe(false)
+  })
+
+  it('una venta con descuento y recargo tiene las dos marcas', () => {
+    const venta = ventaFixture({ descuentoManualTotal: 10, recargoManualTotal: 5 })
+
+    expect(tieneDescuentoManual(venta)).toBe(true)
+    expect(tieneRecargoManual(venta)).toBe(true)
+  })
+
+  it('un total negativo (venta de devolución) también cuenta: la marca es "distinto de 0"', () => {
+    expect(tieneDescuentoManual(ventaFixture({ descuentoManualTotal: -10 }))).toBe(true)
+  })
+
+  it('un servidor que todavía no manda los totales no marca nada', () => {
+    const sinCampos = { ...ventaFixture(), descuentoManualTotal: undefined, recargoManualTotal: undefined } as unknown as VentaDeTurnoListado
+
+    expect(tieneDescuentoManual(sinCampos)).toBe(false)
+    expect(tieneRecargoManual(sinCampos)).toBe(false)
   })
 })
 

@@ -536,7 +536,9 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     /// <summary>Línea del seed de <see cref="SembrarPendienteAsync"/>: ya con el <c>Total</c> final
     /// (con IVA incluido cuando <see cref="CodigoAfip"/> no es <c>null</c>) — el mismo shape
     /// congelado que <c>items_comprobante_venta</c> guarda de verdad.</summary>
-    private sealed record LineaDeItemSembrado(int IdAlicuotaIva, decimal PorcentajeIva, decimal Total);
+    private sealed record LineaDeItemSembrado(
+        int IdAlicuotaIva, decimal PorcentajeIva, decimal Total,
+        decimal? PrecioUnitario = null, decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m);
 
     /// <summary>judgment 19a-slice-5 ronda 2 juez A — CRITICAL: desde el fix, <c>ReintentarAsync</c>
     /// relee <c>items_comprobante_venta</c> para recomponer el desglose fiscal — este seed AHORA
@@ -594,8 +596,10 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
                 IdAlicuotaIva = linea.IdAlicuotaIva,
                 PorcentajeIva = linea.PorcentajeIva,
                 Cantidad = 1m,
-                PrecioUnitario = linea.Total,
+                PrecioUnitario = linea.PrecioUnitario ?? linea.Total,
                 Descuento = 0m,
+                AjusteManualPorcentaje = linea.AjusteManualPorcentaje,
+                AjusteManual = linea.AjusteManual,
                 Total = linea.Total,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
@@ -775,6 +779,58 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal("20260331", FechaEnviadaAArca(cuerpo));
         var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
         Assert.Equal(new DateOnly(2026, 3, 31), emitido.Fecha);
+    }
+
+    /// <summary>El ajuste manual de una línea llega al desglose fiscal por el total de línea
+    /// PERSISTIDO: el reintento compone desde <c>items_comprobante_venta.total</c>, que ya incluye el
+    /// ajuste. Línea gravada 21 %: precio 121.00 con -10 % manual (-12.10) = 108.90 persistido, más una
+    /// línea Exento de 50.00 sin ajuste. Recomponer desde precio x cantidad - descuento daría 171.00.</summary>
+    [Fact]
+    public async Task ElReintentoComponeElDesgloseFiscalConElTotalAjustadoDeLaLineaConAjusteManual()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        string? cuerpoCapturado = null;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarNoEncontrado()),
+            Solicitar = req =>
+            {
+                cuerpoCapturado = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return RespuestaXml(FecaeAprobado(71, "70555555555556"));
+            }
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoComponeElDesgloseFiscalConElTotalAjustadoDeLaLineaConAjusteManual),
+            espiaWsaa, espiaWsfe);
+
+        await using var dbSeed = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idAlicuotaExento = await dbSeed.AlicuotasIva.Where(a => a.Nombre == "Exento").Select(a => a.Id).FirstAsync();
+
+        var idComprobante = await SembrarPendienteAsync(ctx, 71,
+        [
+            new LineaDeItemSembrado(
+                ctx.IdAlicuota21, 21.00m, 108.90m, PrecioUnitario: 121.00m, AjusteManualPorcentaje: -10m, AjusteManual: -12.10m),
+            new LineaDeItemSembrado(idAlicuotaExento, 0.00m, 50.00m)
+        ]);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        Assert.NotNull(cuerpoCapturado);
+        var detalle = XDocument.Parse(cuerpoCapturado).Descendants("FECAEDetRequest").Single();
+
+        string Valor(string nombre) => detalle.Element(nombre)!.Value;
+
+        Assert.Equal("158.90", Valor("ImpTotal"));
+        Assert.Equal("90.00", Valor("ImpNeto"));
+        Assert.Equal("18.90", Valor("ImpIVA"));
+        Assert.Equal("50.00", Valor("ImpOpEx"));
+        Assert.Equal("0.00", Valor("ImpTotConc"));
+
+        var alicIva = detalle.Element("Iva")!.Elements("AlicIva").Single();
+        Assert.Equal("90.00", alicIva.Element("BaseImp")!.Value);
+        Assert.Equal("18.90", alicIva.Element("Importe")!.Value);
     }
 
     // --- La nota del 600: invalidar-TA + reintentar UNA vez, el segundo es DEFINITIVO (judgment

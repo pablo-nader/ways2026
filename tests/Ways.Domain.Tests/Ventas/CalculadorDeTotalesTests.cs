@@ -136,4 +136,168 @@ public class CalculadorDeTotalesTests
         Assert.Equal(100m, resultado.Total);
         Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
     }
+
+    // ---- ajuste manual por línea (negativo = descuento, positivo = recargo) -----------------------
+
+    [Fact]
+    public void UnDescuentoManualRestaElPorcentajeDelNetoDeLaLinea()
+    {
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 100m, 0m, -10m)]);
+
+        Assert.Equal(-10m, resultado.Items[0].AjusteManual);
+        Assert.Equal(90m, resultado.Items[0].Total);
+        Assert.Equal(100m, resultado.Subtotal);
+        Assert.Equal(0m, resultado.DescuentoTotal);
+        Assert.Equal(10m, resultado.DescuentoManualTotal);
+        Assert.Equal(0m, resultado.RecargoManualTotal);
+        Assert.Equal(90m, resultado.Total);
+    }
+
+    [Fact]
+    public void UnRecargoManualSumaElPorcentajeDelNetoDeLaLinea()
+    {
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 100m, 0m, 15m)]);
+
+        Assert.Equal(15m, resultado.Items[0].AjusteManual);
+        Assert.Equal(115m, resultado.Items[0].Total);
+        Assert.Equal(0m, resultado.DescuentoManualTotal);
+        Assert.Equal(15m, resultado.RecargoManualTotal);
+        Assert.Equal(115m, resultado.Total);
+    }
+
+    [Fact]
+    public void ElAjusteManualSeAplicaSobreElNetoPosteriorALaOfertaNoSobreElBruto()
+    {
+        // 2 x 100 = 200 bruto, oferta de 10 por unidad = 20 -> neto 180. -10 % sobre 180 = -18
+        // (sobre el bruto hubiera sido -20).
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(2m, 100m, 10m, -10m)]);
+
+        Assert.Equal(20m, resultado.Items[0].Descuento);
+        Assert.Equal(-18m, resultado.Items[0].AjusteManual);
+        Assert.Equal(162m, resultado.Items[0].Total);
+        Assert.Equal(200m, resultado.Subtotal);
+        Assert.Equal(20m, resultado.DescuentoTotal);
+        Assert.Equal(18m, resultado.DescuentoManualTotal);
+        Assert.Equal(162m, resultado.Total);
+    }
+
+    [Fact]
+    public void ElAjusteManualRedondeaAwayFromZeroEnElMedioParaRecargoYDescuento()
+    {
+        // Neto 0.05 x 10 % = 0.005 exacto: punto medio real. AwayFromZero da 0.01 / -0.01; el
+        // banker's rounding default de .NET hubiera dado 0.00 en ambos.
+        var recargo = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 0.05m, 0m, 10m)]);
+        var descuento = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 0.05m, 0m, -10m)]);
+
+        Assert.Equal(0.01m, recargo.Items[0].AjusteManual);
+        Assert.Equal(0.06m, recargo.Items[0].Total);
+        Assert.Equal(-0.01m, descuento.Items[0].AjusteManual);
+        Assert.Equal(0.04m, descuento.Items[0].Total);
+        Assert.Equal(0.01m, descuento.DescuentoManualTotal);
+    }
+
+    [Fact]
+    public void UnDescuentoManualSobreUnaLineaDeNcxSeClasificaComoDescuentoPorElSignoDelPorcentaje()
+    {
+        // NCX: cantidad -3. Bruto -300, descuento de oferta -30, neto -270. -10 % sobre -270 da
+        // un ajuste de +27 (acerca el total a cero, como cualquier descuento). Clasificar por el
+        // signo del MONTO lo contaría como recargo; el criterio es el signo del porcentaje, igual
+        // que descuento_total, que en NCX también es negativo.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(-3m, 100m, 10m, -10m)]);
+
+        Assert.Equal(27m, resultado.Items[0].AjusteManual);
+        Assert.Equal(-243m, resultado.Items[0].Total);
+        Assert.Equal(-30m, resultado.DescuentoTotal);
+        Assert.Equal(-27m, resultado.DescuentoManualTotal);
+        Assert.Equal(0m, resultado.RecargoManualTotal);
+        Assert.Equal(-243m, resultado.Total);
+        Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
+    }
+
+    [Fact]
+    public void UnRecargoManualSobreUnaLineaDeNcxSeClasificaComoRecargoPorElSignoDelPorcentaje()
+    {
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(-3m, 100m, 10m, 10m)]);
+
+        Assert.Equal(-27m, resultado.Items[0].AjusteManual);
+        Assert.Equal(-297m, resultado.Items[0].Total);
+        Assert.Equal(0m, resultado.DescuentoManualTotal);
+        Assert.Equal(-27m, resultado.RecargoManualTotal);
+        Assert.Equal(-297m, resultado.Total);
+    }
+
+    [Fact]
+    public void UnDescuentoManualDelCienPorCientoDejaLaLineaEnCero()
+    {
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 33.33m, 1m, -100m)]);
+
+        // Bruto 99.99, descuento 3.00, neto 96.99: el ajuste anula exactamente el neto.
+        Assert.Equal(-96.99m, resultado.Items[0].AjusteManual);
+        Assert.Equal(0m, resultado.Items[0].Total);
+        Assert.Equal(96.99m, resultado.DescuentoManualTotal);
+        Assert.Equal(0m, resultado.Total);
+    }
+
+    [Fact]
+    public void UnRecargoEnUnaLineaNoEscondeUnDescuentoEnOtraEnElEncabezado()
+    {
+        // Línea A: -10 % sobre 100 = -10. Línea B: +5 % sobre 200 = +10. El neto de ajustes es
+        // cero, pero el encabezado conserva los dos lados por separado.
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(1m, 100m, 0m, -10m),
+            new LineaParaCalcular(1m, 200m, 0m, 5m)
+        ]);
+
+        Assert.Equal(10m, resultado.DescuentoManualTotal);
+        Assert.Equal(10m, resultado.RecargoManualTotal);
+        Assert.Equal(300m, resultado.Total);
+        Assert.Equal(90m, resultado.Items[0].Total);
+        Assert.Equal(210m, resultado.Items[1].Total);
+    }
+
+    [Fact]
+    public void ElTotalConAjustesManualesSiempreCoincideConLaSumaDeLosItemsYConLaFormulaDelEncabezado()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, -12.5m),
+            new LineaParaCalcular(1m, 0.01m, 0m, 7.25m),
+            new LineaParaCalcular(7m, 33.333m, 1.111m, null),
+            new LineaParaCalcular(-4m, 59.9m, 3.3m, -33.33m),
+            new LineaParaCalcular(-1m, 12.34m, 0m, 99.99m)
+        ]);
+
+        Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
+        Assert.Equal(
+            resultado.Subtotal - resultado.DescuentoTotal - resultado.DescuentoManualTotal + resultado.RecargoManualTotal,
+            resultado.Total);
+        Assert.Equal(
+            resultado.Items.Sum(i => i.AjusteManual),
+            resultado.RecargoManualTotal - resultado.DescuentoManualTotal);
+    }
+
+    [Fact]
+    public void SinPorcentajeElResultadoEsIdenticoAlCalculoSinAjusteManual()
+    {
+        var sinCuartoArgumento = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m),
+            new LineaParaCalcular(-3m, 100m, 10m)
+        ]);
+        var conPorcentajeNulo = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, null),
+            new LineaParaCalcular(-3m, 100m, 10m, null)
+        ]);
+
+        Assert.Equal(sinCuartoArgumento.Items, conPorcentajeNulo.Items);
+        Assert.Equal(sinCuartoArgumento.Subtotal, conPorcentajeNulo.Subtotal);
+        Assert.Equal(sinCuartoArgumento.DescuentoTotal, conPorcentajeNulo.DescuentoTotal);
+        Assert.Equal(sinCuartoArgumento.Total, conPorcentajeNulo.Total);
+        Assert.All(conPorcentajeNulo.Items, i => Assert.Equal(0m, i.AjusteManual));
+        Assert.Equal(0m, conPorcentajeNulo.DescuentoManualTotal);
+        Assert.Equal(0m, conPorcentajeNulo.RecargoManualTotal);
+        Assert.Equal(sinCuartoArgumento.Subtotal - sinCuartoArgumento.DescuentoTotal, sinCuartoArgumento.Total);
+    }
 }

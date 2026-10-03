@@ -165,4 +165,26 @@ public class ManejadorDeErroresVentasTests
         Assert.Equal(StatusCodes.Status400BadRequest, estado);
         Assert.Equal("costo_estimado_sin_costo", codigo);
     }
+
+    // ---- ajuste manual por línea (backstop de esquema) ---------------------------------------
+
+    [Fact]
+    public async Task CkItemsComprobanteVentaAjusteManualPorcentajeValidoSeTraduceA400AjusteManualInvalido()
+    {
+        var postgres = CrearExcepcion("23514", "ck_items_comprobante_venta_ajuste_manual_porcentaje_valido");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("ajuste_manual_invalido", codigo);
+    }
+
+    [Fact]
+    public async Task CkItemsComprobanteVentaAjusteManualConPorcentajeSeTraduceA400AjusteManualSinPorcentaje()
+    {
+        var postgres = CrearExcepcion("23514", "ck_items_comprobante_venta_ajuste_manual_con_porcentaje");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("ajuste_manual_sin_porcentaje", codigo);
+    }
 }

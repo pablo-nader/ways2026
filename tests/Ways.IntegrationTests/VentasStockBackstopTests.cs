@@ -411,4 +411,132 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal("ck_items_comprobante_venta_estimado_con_costo", excepcion.ConstraintName);
     }
+
+    // ---- ajuste manual por línea: ck_items_comprobante_venta_ajuste_manual_* -----------------
+    // Inalcanzables por un cliente vía servicio: ReglaDeAjusteManual rechaza cero/rango antes del
+    // INSERT y CalculadorDeTotales sólo produce un monto cuando hay porcentaje. Se prueba el
+    // esquema con INSERTs crudos (SQLSTATE y nombre exacto de la CHECK).
+
+    private async Task InsertarItemConAjusteAsync(
+        Prerequisitos p, int idComprobante, int orden, decimal? porcentaje, decimal ajuste)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_comprobante_venta (id_tenant, id_comprobante_venta, orden, id_articulo, " +
+            "descripcion, id_area, id_lista_precio, id_alicuota_iva, porcentaje_iva, cantidad, " +
+            "precio_unitario, descuento, total, ajuste_manual_porcentaje, ajuste_manual, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, $4, 'item-con-ajuste', $5, $6, $7, 0, 1, 100, 0, 100, $8, $9, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = orden });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArea });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdListaPrecio });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+        comando.Parameters.Add(new NpgsqlParameter { Value = (object?)porcentaje ?? DBNull.Value });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ajuste });
+
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    public static TheoryData<string> PorcentajesDeAjusteManualInvalidos => new()
+    {
+        "0", "100.01", "-100.01", "999.99", "-999.99"
+    };
+
+    [Theory]
+    [MemberData(nameof(PorcentajesDeAjusteManualInvalidos))]
+    public async Task UnItemConPorcentajeDeAjusteManualCeroOFueraDeRangoViolaLaCheckDePorcentajeValido(string porcentaje)
+    {
+        var p = await SembrarPrerequisitosAsync(
+            nameof(UnItemConPorcentajeDeAjusteManualCeroOFueraDeRangoViolaLaCheckDePorcentajeValido)
+            + porcentaje.Replace("-", "neg").Replace(".", "p"));
+        var idComprobante = await SembrarComprobanteAsync(p);
+
+        // El monto distinto de cero deja satisfecha la otra CHECK: el único rechazo posible es el
+        // del porcentaje.
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => InsertarItemConAjusteAsync(
+            p, idComprobante, 1, decimal.Parse(porcentaje, System.Globalization.CultureInfo.InvariantCulture), 1m));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_venta_ajuste_manual_porcentaje_valido", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnItemConMontoDeAjusteManualSinPorcentajeViolaLaCheckDeMontoConPorcentaje()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnItemConMontoDeAjusteManualSinPorcentajeViolaLaCheckDeMontoConPorcentaje));
+        var idComprobante = await SembrarComprobanteAsync(p);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarItemConAjusteAsync(p, idComprobante, 1, porcentaje: null, ajuste: 5m));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_venta_ajuste_manual_con_porcentaje", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task LosLimitesExactosDelPorcentajeYUnItemSinAjusteSeInsertanYUnaFilaSinLasColumnasNuevasLasLeeEnCero()
+    {
+        var p = await SembrarPrerequisitosAsync(
+            nameof(LosLimitesExactosDelPorcentajeYUnItemSinAjusteSeInsertanYUnaFilaSinLasColumnasNuevasLasLeeEnCero));
+        var idComprobante = await SembrarComprobanteAsync(p);
+
+        await InsertarItemConAjusteAsync(p, idComprobante, 1, -100m, -100m);
+        await InsertarItemConAjusteAsync(p, idComprobante, 2, 100m, 100m);
+        await InsertarItemConAjusteAsync(p, idComprobante, 3, 0.01m, 0.01m);
+        await InsertarItemConAjusteAsync(p, idComprobante, 4, -0.01m, -0.01m);
+        await InsertarItemConAjusteAsync(p, idComprobante, 5, porcentaje: null, ajuste: 0m);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "SELECT orden, ajuste_manual_porcentaje, ajuste_manual FROM items_comprobante_venta " +
+            "WHERE id_comprobante_venta = $1 ORDER BY orden";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+
+        var filas = new List<(int Orden, decimal? Porcentaje, decimal Ajuste)>();
+        await using (var lector = await comando.ExecuteReaderAsync())
+        {
+            while (await lector.ReadAsync())
+            {
+                filas.Add((lector.GetInt32(0), lector.IsDBNull(1) ? null : lector.GetDecimal(1), lector.GetDecimal(2)));
+            }
+        }
+
+        Assert.Equal(
+            [(1, -100m, -100m), (2, 100m, 100m), (3, 0.01m, 0.01m), (4, -0.01m, -0.01m), (5, (decimal?)null, 0m)],
+            filas);
+
+        // Una fila sin las columnas nuevas (la forma de toda fila previa a la migración) lee el
+        // DEFAULT: ajuste en cero y porcentaje NULL en el item, ambos totales manuales en cero en el
+        // encabezado — la migración no necesita backfill.
+        await using var sinColumnas = cruda.CreateCommand();
+        sinColumnas.CommandText =
+            "INSERT INTO items_comprobante_venta (id_tenant, id_comprobante_venta, orden, id_articulo, " +
+            "descripcion, id_area, id_lista_precio, id_alicuota_iva, porcentaje_iva, cantidad, " +
+            "precio_unitario, descuento, total, created_at, updated_at) " +
+            "VALUES ($1, $2, 6, $3, 'item-previo', $4, $5, $6, 0, 1, 100, 0, 100, now(), now())";
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = p.IdArea });
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = p.IdListaPrecio });
+        sinColumnas.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+        await sinColumnas.ExecuteNonQueryAsync();
+
+        await using var defaults = cruda.CreateCommand();
+        defaults.CommandText =
+            "SELECT i.ajuste_manual_porcentaje, i.ajuste_manual, c.descuento_manual_total, c.recargo_manual_total " +
+            "FROM items_comprobante_venta i JOIN comprobantes_venta c ON c.id_comprobante_venta = i.id_comprobante_venta " +
+            "WHERE i.id_comprobante_venta = $1 AND i.orden = 6";
+        defaults.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        await using var lectorDeDefaults = await defaults.ExecuteReaderAsync();
+        Assert.True(await lectorDeDefaults.ReadAsync());
+        Assert.True(lectorDeDefaults.IsDBNull(0));
+        Assert.Equal(0m, lectorDeDefaults.GetDecimal(1));
+        Assert.Equal(0m, lectorDeDefaults.GetDecimal(2));
+        Assert.Equal(0m, lectorDeDefaults.GetDecimal(3));
+    }
 }

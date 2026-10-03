@@ -5,7 +5,9 @@
  * wirea `POST /api/ventas` (checkout real, Slice 4, mergeado a main).
  */
 import { api } from './cliente'
+import { calcularTotalesDeLinea, totalesDeAjusteManual } from './ajusteManual'
 import type { LineaCarrito } from './carrito'
+import { redondearImporte } from '../formato/importes'
 import type {
   ArticuloEscaneado,
   BloqueDeNumeracionReservado,
@@ -81,32 +83,56 @@ export function indexarResolucionPorArticulo(resultados: ResultadoDeResolucion[]
   return indice
 }
 
-/** Previsualización de una línea: `precioFinal` ya viene neto de descuento por unidad
- * (`ServicioDeOfertas.ResolverAsync`), así que el total de línea es `cantidad × precioFinal` —
- * nunca autoritativo (design decisión 3: el servidor vuelve a resolver en el checkout). */
+/** Previsualización de una línea con la fórmula del servidor (`calcularTotalesDeLinea`): bruto y
+ * descuento por oferta se redondean cada uno, y el ajuste manual de la línea (si lo tiene) se
+ * aplica sobre ese neto posterior a las ofertas. `total` ya incluye el ajuste y `ajusteManual` es
+ * su monto con signo (0 sin ajuste). Nunca autoritativo (design decisión 3: el servidor vuelve a
+ * resolver en el checkout). */
 export function previaDeLinea(
   linea: LineaCarrito,
   resultado: ResultadoDeResolucion | undefined,
-): { precioUnitario: number | null; descuentoUnitario: number; total: number | null } {
+): { precioUnitario: number | null; descuentoUnitario: number; total: number | null; ajusteManual: number } {
   if (!resultado || resultado.precioFinal === null) {
-    return { precioUnitario: null, descuentoUnitario: 0, total: null }
+    return { precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0 }
   }
+  const totales = calcularTotalesDeLinea({
+    cantidad: linea.cantidad,
+    // `precioFinal` ya es el precio de lista menos el descuento por unidad; sin lista explícita se
+    // reconstruye con esa misma identidad.
+    precioOriginal: resultado.precioOriginal ?? resultado.precioFinal + resultado.descuentoUnitario,
+    descuentoUnitario: resultado.descuentoUnitario,
+    porcentaje: linea.ajusteManualPorcentaje,
+  })
   return {
     precioUnitario: resultado.precioFinal,
     descuentoUnitario: resultado.descuentoUnitario,
-    total: linea.cantidad * resultado.precioFinal,
+    total: totales.total,
+    ajusteManual: totales.ajuste,
   }
 }
 
-/** Subtotal previsualizado del carrito completo — `null` mientras no haya ningún precio
- * resuelto todavía (primera carga, o el lote de `/resolver` falló); una línea sin precio propio
- * dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
+/** Total previsualizado del carrito completo, ya con los ajustes manuales — `null` mientras no haya
+ * ningún precio resuelto todavía (primera carga, o el lote de `/resolver` falló); una línea sin
+ * precio propio dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
 export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: Record<number, ResultadoDeResolucion>): number | null {
   if (Object.keys(precios).length === 0) return null
-  return lineas.reduce((acumulado, l) => {
-    const previa = previaDeLinea(l, precios[l.idArticulo])
-    return acumulado + (previa.total ?? 0)
-  }, 0)
+  return redondearImporte(
+    lineas.reduce((acumulado, l) => {
+      const previa = previaDeLinea(l, precios[l.idArticulo])
+      return acumulado + (previa.total ?? 0)
+    }, 0),
+  )
+}
+
+/** Descuento y recargo manual del carrito previsualizado, separados por el signo del porcentaje de
+ * cada línea (`totalesDeAjusteManual`). Una línea sin precio resuelto no aporta ajuste. */
+export function calcularAjustesManualesPrevia(
+  lineas: LineaCarrito[],
+  precios: Record<number, ResultadoDeResolucion>,
+): { descuentoManualTotal: number; recargoManualTotal: number } {
+  return totalesDeAjusteManual(
+    lineas.map((l) => ({ porcentaje: l.ajusteManualPorcentaje, ajuste: previaDeLinea(l, precios[l.idArticulo]).ajusteManual })),
+  )
 }
 
 /** Selección explícita de lote por línea del carrito, indexada por `idArticulo`
@@ -118,7 +144,8 @@ export type LotesSeleccionados = Record<number, number>
 /**
  * Carrito confirmado → `SolicitudDeVenta` (design: Checkout Contract), invocado por `Pos.tsx`
  * al cobrar. Sin precios en `LineaDeVenta` a propósito (design decisión 3: "no precioUnitario,
- * no descuento, no total en el request").
+ * no descuento, no total en el request"): el ajuste manual viaja solo como porcentaje, y solo en la
+ * línea que lo tiene.
  */
 export function aSolicitudDeVenta(params: {
   idPuntoVenta: number
@@ -136,6 +163,7 @@ export function aSolicitudDeVenta(params: {
     cantidad: l.cantidad,
     codigoBarra: l.codigoBarra,
     idLote: params.lotesSeleccionados[l.idArticulo] ?? null,
+    ...(l.ajusteManualPorcentaje != null ? { ajusteManualPorcentaje: l.ajusteManualPorcentaje } : {}),
   }))
 
   return {

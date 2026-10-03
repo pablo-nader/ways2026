@@ -78,6 +78,21 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
 
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
+
+        // Ajuste manual por línea, separado en descuentos y recargos; 0 en toda fila anterior a las
+        // columnas, sin backfill.
+        builder.Property(c => c.DescuentoManualTotal)
+            .HasColumnName("descuento_manual_total")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
+        builder.Property(c => c.RecargoManualTotal)
+            .HasColumnName("recargo_manual_total")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
         builder.Property(c => c.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
 
         // NULL mientras discrimina_iva = false (TX/NCX de esta etapa nunca discriminan IVA).

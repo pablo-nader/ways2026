@@ -51,7 +51,7 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
         var idsComprobante = elegibles.Select(e => e.IdComprobanteVenta).Distinct().ToList();
         var items = await db.ItemsComprobanteVenta
             .Where(i => idsComprobante.Contains(i.IdComprobanteVenta))
-            .Select(i => new { i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total })
+            .Select(i => new { i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total, i.AjusteManualPorcentaje })
             .ToListAsync(ct);
 
         var itemsPorComprobante = items.ToLookup(i => i.IdComprobanteVenta);
@@ -60,7 +60,8 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
             .Select(e => new ConsumoAReliquidar(
                 e.Id, e.IdComprobanteVenta, e.Importe, e.Total,
                 itemsPorComprobante[e.IdComprobanteVenta]
-                    .Select(i => new LineaAReliquidar(i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total))
+                    .Select(i => new LineaAReliquidar(
+                        i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total, i.AjusteManualPorcentaje))
                     .ToList()))
             .ToList();
     }

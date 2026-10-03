@@ -35,11 +35,32 @@ public class ExportacionDeListadosTests
     public void VentasConvierteLaFechaALaZonaLocalYDescartaElOffset()
     {
         var instante = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var fila = new ComprobanteListado(1, 1L, "0001-00000001", EstadoComprobante.Emitido, instante, 1, 1, 100m);
+        var fila = new ComprobanteListado(1, 1L, "0001-00000001", EstadoComprobante.Emitido, instante, 1, 1, 100m, 0m, 0m);
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
         Assert.Equal(new DateTime(2026, 8, 1, 9, 0, 0), tabla.Filas[0][1].Valor);
+    }
+
+    [Fact]
+    public void VentasExponeElDescuentoYElRecargoManualesCadaUnoEnSuColumnaConValoresDistintosPorFila()
+    {
+        var instante = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var filas = new[]
+        {
+            new ComprobanteListado(1, 1L, "0001-00000001", EstadoComprobante.Emitido, instante, 1, 7, 87.5m, 12.5m, 0m),
+            new ComprobanteListado(2, 2L, "0001-00000002", EstadoComprobante.Emitido, instante, 1, 8, 107.25m, 0m, 7.25m),
+            new ComprobanteListado(3, 3L, "0001-00000003", EstadoComprobante.Anulado, instante, 1, 9, 100m, 0m, 0m)
+        };
+
+        var tabla = ExportacionDeListados.De(filas, Contexto, ZonaBuenosAires);
+
+        Assert.Equal(
+            ["Número", "Fecha", "Punto de venta", "Cliente", "Estado", "Total", "Descuento manual", "Recargo manual"],
+            tabla.Columnas.Select(c => c.Titulo).ToList());
+        Assert.Equal([87.5m, 107.25m, 100m], tabla.Filas.Select(f => f[5].Valor).ToList());
+        Assert.Equal([12.5m, 0m, 0m], tabla.Filas.Select(f => f[6].Valor).ToList());
+        Assert.Equal([0m, 7.25m, 0m], tabla.Filas.Select(f => f[7].Valor).ToList());
     }
 
     // ---- Compras -------------------------------------------------------------------------------

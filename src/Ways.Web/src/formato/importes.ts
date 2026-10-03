@@ -95,6 +95,48 @@ export function redondearImporte(valor: number, decimales = 2): number {
   return escalado === 0 ? 0 : (signo * escalado) / factor
 }
 
+const PATRON_DE_NUMERO_DECIMAL = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i
+
+/**
+ * Valor decimal EXACTO de un `number` (`mantisa × 10^-escala`), tomado de su cadena más corta
+ * que hace round-trip: la misma que `JSON.stringify` manda al servidor y que este lee como
+ * `decimal`. Cubre la notación exponencial (`5e-7`), que `toString` usa por debajo de 1e-6.
+ */
+function aDecimalExacto(valor: number): { mantisa: bigint; escala: number } {
+  // El único llamador descarta los no finitos, y `String` de un finito siempre encaja en el patrón.
+  const [, signo, enteros, fraccion = '', exponente = '0'] = PATRON_DE_NUMERO_DECIMAL.exec(String(valor))!
+  return { mantisa: BigInt(`${signo}${enteros}${fraccion}`), escala: fraccion.length - Number(exponente) }
+}
+
+/**
+ * Producto de `factores` calculado con aritmética decimal exacta y redondeado "half away from
+ * zero" a `decimales` dígitos, como hace el servidor con `decimal`. Multiplicar `number`s y
+ * recién después redondear pierde los empates: `0,7 × 1,15` es 0,805 exacto (sube a 0,81) pero
+ * en punto flotante da `0.8049999999999999` y redondea a 0,80. Cada factor entra por su
+ * representación decimal más corta (cualquier cantidad de decimales) y se multiplica en
+ * enteros, así que un porcentaje se pasa como factor (`neto × porcentaje × 0.01`), no dividido.
+ * `NaN` si algún factor no es finito. Nunca devuelve `-0`.
+ */
+export function productoRedondeado(factores: readonly number[], decimales = 2): number {
+  if (!factores.every(Number.isFinite)) return Number.NaN
+  let mantisa = 1n
+  let escala = 0
+  for (const factor of factores) {
+    const decimal = aDecimalExacto(factor)
+    mantisa *= decimal.mantisa
+    escala += decimal.escala
+  }
+
+  const exceso = escala - decimales
+  if (exceso <= 0) return Number(mantisa * 10n ** BigInt(-exceso)) / 10 ** decimales
+
+  const divisor = 10n ** BigInt(exceso)
+  const magnitud = mantisa < 0n ? -mantisa : mantisa
+  let cociente = magnitud / divisor
+  if ((magnitud % divisor) * 2n >= divisor) cociente += 1n
+  return Number(mantisa < 0n ? -cociente : cociente) / 10 ** decimales
+}
+
 export interface OpcionesFormatearImporte {
   /** Antepone "$ " al resultado. Default `false`. */
   simbolo?: boolean
@@ -124,6 +166,17 @@ export function formatearImporte(valor: number | null | undefined, opciones: Opc
   const numero = `${enteros}${decimalesTexto}`
 
   return `${signoTexto}${simbolo ? '$ ' : ''}${numero}`
+}
+
+/**
+ * Igual que `formatearImporte`, pero un importe positivo lleva "+" delante ("+$ 15,00") para
+ * mostrar un ajuste con signo; el negativo ya lleva "-" y el cero (o lo que redondea a cero) no
+ * lleva ninguno. `null`/`undefined`/`NaN` devuelven `—`.
+ */
+export function formatearImporteConSigno(valor: number | null | undefined, opciones: OpcionesFormatearImporte = {}): string {
+  const texto = formatearImporte(valor, opciones)
+  if (valor === null || valor === undefined || !Number.isFinite(valor)) return texto
+  return redondearImporte(valor, opciones.decimales ?? 2) > 0 ? `+${texto}` : texto
 }
 
 /**

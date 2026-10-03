@@ -173,6 +173,25 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
     }
 
+    /// <summary>Un Consumo real de una unidad con ajuste manual porcentual (el cajero tipea solo el
+    /// porcentaje; el servidor calcula el importe): el pago por cuenta corriente es el total ya
+    /// ajustado, el mismo que el checkout persiste en el item.</summary>
+    private static async Task<ComprobanteEmitido> RealizarConsumoConAjusteManualAsync(
+        Contexto ctx, int idCliente, int idArticulo, decimal precio, decimal porcentaje)
+    {
+        var total = precio + CalculadorDeTotales.AjusteManualSobre(precio, porcentaje);
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: porcentaje)],
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, total, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+    }
+
     /// <summary>Seed crudo (sin checkout) para pruebas de volumen/presupuesto — mismo criterio que
     /// <c>CajaCierreAtomicidadYConcurrenciaTests.SembrarPagoAsync</c>: no hace falta el camino de
     /// escritura completo cuando lo que se mide es la forma de la consulta, no el negocio.</summary>
@@ -553,6 +572,149 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             .Where(m => m.IdComprobanteVenta == consumoNuevo.Id && m.Tipo == TipoMovimientoCc.Consumo)
             .Select(m => m.IdMovimientoActualizacion).SingleAsync();
         Assert.NotNull(marcadorNuevo);
+    }
+
+    // ---- ajuste manual: el porcentaje del cajero sobrevive a la reliquidación -----------------
+
+    /// <summary>Vende 1 unidad de un artículo de 100 con el ajuste manual dado, sube la lista al
+    /// precio indicado y corre la reliquidación; devuelve el resultado y el movimiento escrito.</summary>
+    private async Task<(ResultadoDeReliquidacion Resultado, decimal? ImporteDelMovimiento)> ReliquidarVentaConAjusteManualAsync(
+        string nombre, decimal porcentaje, decimal precioNuevo)
+    {
+        var ctx = await PrepararAsync(nombre);
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ajuste", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente ajuste");
+        await RealizarConsumoConAjusteManualAsync(ctx, idCliente, idArticulo, 100m, porcentaje);
+        if (precioNuevo != 100m)
+        {
+            await SubirPrecioAsync(ctx, idArticulo, precioNuevo);
+        }
+
+        var preview = await LeerResultadoAsync(await PreviewAsync(ctx, idCliente));
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+        Assert.Equal(preview.Delta, resultado.Delta);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var importe = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios)
+            .Select(m => (decimal?)m.Importe).SingleOrDefaultAsync();
+        return (resultado, importe);
+    }
+
+    [Fact]
+    public async Task UnDescuentoManualDelDiezPorCientoSeConservaAlReliquidarConElPrecioNuevo()
+    {
+        // Vendida a 100 con -10% (item total 90). Lista ahora en 120: 120 - 12 = 108 ⇒ delta 18.
+        // Sin conservar el porcentaje el delta sería 30 (120 - 90).
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnDescuentoManualDelDiezPorCientoSeConservaAlReliquidarConElPrecioNuevo), -10m, 120m);
+
+        Assert.Equal(18m, resultado.Delta);
+        Assert.Equal(18m, importe);
+    }
+
+    [Fact]
+    public async Task UnRecargoManualDelVeintePorCientoSeConservaAlReliquidarConElPrecioNuevo()
+    {
+        // Vendida a 100 con +20% (item total 120). Lista ahora en 150: 150 + 30 = 180 ⇒ delta 60.
+        // Sin conservar el porcentaje el delta sería 30 (150 - 120).
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnRecargoManualDelVeintePorCientoSeConservaAlReliquidarConElPrecioNuevo), 20m, 150m);
+
+        Assert.Equal(60m, resultado.Delta);
+        Assert.Equal(60m, importe);
+    }
+
+    [Fact]
+    public async Task UnRecargoManualConElPrecioSinCambiosNoGeneraNingunCreditoAlReliquidar()
+    {
+        // Vendida a 100 con +20% (item total 120) y la lista sigue en 100: el recargo se conserva,
+        // delta 0 ⇒ no-op limpio. Sin conservarlo la corrida escribiría un crédito de -20.
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnRecargoManualConElPrecioSinCambiosNoGeneraNingunCreditoAlReliquidar), 20m, 100m);
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Empty(resultado.IdsMovimientosCubiertos);
+        Assert.Null(importe);
+    }
+
+    private async Task<string> LeerDetalleDelMovimientoDeActualizacionAsync(Contexto ctx, int idCliente)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var detalle = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios)
+            .Select(m => m.Detalle).SingleAsync();
+        return Assert.IsType<string>(detalle);
+    }
+
+    /// <summary>Dos consumos en la misma corrida, uno con -10 % manual (artículo de 100 que pasa a
+    /// 120) y otro sin ajuste (artículo de 80 que pasa a 100): el detalle PERSISTIDO del movimiento
+    /// lleva el porcentaje solo en la línea que lo tuvo y alcanza para reconstruir su total del día
+    /// (neto 120 + ajuste -12 = 108), con datos distintos por consumo para que un porcentaje
+    /// asignado al consumo equivocado falle.</summary>
+    [Fact]
+    public async Task ElDetallePersistidoDelMovimientoLlevaElPorcentajeManualSoloEnLaLineaQueLoTuvo()
+    {
+        var ctx = await PrepararAsync(nameof(ElDetallePersistidoDelMovimientoLlevaElPorcentajeManualSoloEnLaLineaQueLoTuvo));
+        var idConAjuste = await SembrarArticuloConPrecioAsync(ctx, "articulo-detalle-con-ajuste", 100m);
+        var idSinAjuste = await SembrarArticuloConPrecioAsync(ctx, "articulo-detalle-sin-ajuste", 80m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente detalle");
+        var consumoConAjuste = await RealizarConsumoConAjusteManualAsync(ctx, idCliente, idConAjuste, 100m, -10m);
+        var consumoSinAjuste = await RealizarConsumoAsync(ctx, idCliente, idSinAjuste, 1m, 80m);
+        await SubirPrecioAsync(ctx, idConAjuste, 120m);
+        await SubirPrecioAsync(ctx, idSinAjuste, 100m);
+
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+        Assert.Equal(38m, resultado.Delta);
+
+        using var documento = JsonDocument.Parse(await LeerDetalleDelMovimientoDeActualizacionAsync(ctx, idCliente));
+        var consumos = documento.RootElement.EnumerateArray().ToList();
+        Assert.Equal(2, consumos.Count);
+
+        var deConAjuste = consumos.Single(c => c.GetProperty("IdComprobanteVenta").GetInt32() == consumoConAjuste.Id);
+        var lineaConAjuste = Assert.Single(deConAjuste.GetProperty("Lineas").EnumerateArray());
+        Assert.Equal(-10m, lineaConAjuste.GetProperty("AjusteManualPorcentaje").GetDecimal());
+        Assert.Equal(120m, lineaConAjuste.GetProperty("PrecioActual").GetDecimal());
+        Assert.Equal(108m, lineaConAjuste.GetProperty("TotalDelDia").GetDecimal());
+        Assert.Equal(90m, lineaConAjuste.GetProperty("TotalHistorico").GetDecimal());
+        Assert.Equal(18m, lineaConAjuste.GetProperty("Delta").GetDecimal());
+        var neto = Math.Round(
+            lineaConAjuste.GetProperty("Cantidad").GetDecimal() * lineaConAjuste.GetProperty("PrecioActual").GetDecimal(),
+            2, MidpointRounding.AwayFromZero);
+        Assert.Equal(
+            neto + CalculadorDeTotales.AjusteManualSobre(neto, lineaConAjuste.GetProperty("AjusteManualPorcentaje").GetDecimal()),
+            lineaConAjuste.GetProperty("TotalDelDia").GetDecimal());
+
+        var deSinAjuste = consumos.Single(c => c.GetProperty("IdComprobanteVenta").GetInt32() == consumoSinAjuste.Id);
+        var lineaSinAjuste = Assert.Single(deSinAjuste.GetProperty("Lineas").EnumerateArray());
+        Assert.Equal(100m, lineaSinAjuste.GetProperty("TotalDelDia").GetDecimal());
+        Assert.False(lineaSinAjuste.TryGetProperty("AjusteManualPorcentaje", out _));
+    }
+
+    /// <summary>Sin ningún ajuste manual el detalle persistido conserva la forma de antes de que
+    /// existiera el campo: las mismas ocho claves por línea, en el mismo orden, y el texto completo
+    /// no menciona el porcentaje (ni como clave ni como <c>null</c>).</summary>
+    [Fact]
+    public async Task ElDetallePersistidoSinAjusteManualNoTieneLaClaveDelPorcentaje()
+    {
+        var ctx = await PrepararAsync(nameof(ElDetallePersistidoSinAjusteManualNoTieneLaClaveDelPorcentaje));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-detalle-plano", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente detalle plano");
+        var consumo = await RealizarConsumoAsync(ctx, idCliente, idArticulo, 1m, 100m);
+        await SubirPrecioAsync(ctx, idArticulo, 150m);
+        await EjecutarAsync(ctx, idCliente);
+
+        var crudo = await LeerDetalleDelMovimientoDeActualizacionAsync(ctx, idCliente);
+
+        Assert.DoesNotContain("AjusteManualPorcentaje", crudo);
+        using var documento = JsonDocument.Parse(crudo);
+        var deConsumo = Assert.Single(documento.RootElement.EnumerateArray());
+        Assert.Equal(consumo.Id, deConsumo.GetProperty("IdComprobanteVenta").GetInt32());
+        var linea = Assert.Single(deConsumo.GetProperty("Lineas").EnumerateArray());
+        Assert.Equal(
+            ["IdArticulo", "Cantidad", "PrecioHistorico", "PrecioActual", "TotalHistorico", "TotalDelDia", "Delta", "Motivo"],
+            linea.EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.Equal(150m, linea.GetProperty("TotalDelDia").GetDecimal());
     }
 
     // ---- task 3.10: un único movimiento por N comprobantes/líneas; sin reversión --------------

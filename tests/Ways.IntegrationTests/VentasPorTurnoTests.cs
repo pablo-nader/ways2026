@@ -95,19 +95,34 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <see cref="SembrarComprobanteConPagosAsync"/>.</summary>
     private async Task<(int Id, long Numero)> SembrarComprobanteAsync(
         Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
-        DateTimeOffset fecha, params int[] idsMedioPago)
+        DateTimeOffset fecha, params int[] idsMedioPago) =>
+        await SembrarComprobanteConAjusteManualAsync(
+            ctx, idTurno, idCliente, total, 0m, 0m, estado, fecha, idsMedioPago);
+
+    /// <summary>Igual que <see cref="SembrarComprobanteAsync"/> pero con los dos totales de ajuste
+    /// manual sembrados (el subtotal los compensa para que la fila sea coherente).</summary>
+    private async Task<(int Id, long Numero)> SembrarComprobanteConAjusteManualAsync(
+        Contexto ctx, int? idTurno, int idCliente, decimal total, decimal descuentoManual, decimal recargoManual,
+        EstadoComprobante estado, DateTimeOffset fecha, params int[] idsMedioPago)
     {
         var pagos = idsMedioPago.Select(id => (IdMedioPago: id, Importe: total / idsMedioPago.Length, Vuelto: 0m)).ToArray();
-        return await SembrarComprobanteConPagosAsync(ctx, idTurno, idCliente, total, estado, fecha, pagos);
+        return await SembrarComprobanteConPagosAsync(
+            ctx, idTurno, idCliente, total, estado, fecha, descuentoManual, recargoManual, pagos);
     }
 
     /// <summary>Igual que <see cref="SembrarComprobanteAsync"/> pero con control explícito de
     /// importe/vuelto por pago — necesario para probar el neto (<c>Σimporte − Σvuelto</c>) de
     /// <see cref="MedioDeVentaNeto"/>, que un reparto en partes iguales con vuelto siempre 0 no
     /// puede discriminar del importe bruto.</summary>
+    private Task<(int Id, long Numero)> SembrarComprobanteConPagosAsync(
+        Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
+        DateTimeOffset fecha, params (int IdMedioPago, decimal Importe, decimal Vuelto)[] pagos) =>
+        SembrarComprobanteConPagosAsync(ctx, idTurno, idCliente, total, estado, fecha, 0m, 0m, pagos);
+
     private async Task<(int Id, long Numero)> SembrarComprobanteConPagosAsync(
         Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
-        DateTimeOffset fecha, params (int IdMedioPago, decimal Importe, decimal Vuelto)[] pagos)
+        DateTimeOffset fecha, decimal descuentoManual, decimal recargoManual,
+        params (int IdMedioPago, decimal Importe, decimal Vuelto)[] pagos)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -122,8 +137,10 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             IdTurnoCaja = idTurno,
             IdEmpleado = ctx.IdEmpleadoAdmin,
             IdCliente = idCliente,
-            Subtotal = total,
+            Subtotal = total + descuentoManual - recargoManual,
             DescuentoTotal = 0m,
+            DescuentoManualTotal = descuentoManual,
+            RecargoManualTotal = recargoManual,
             Total = total,
             Estado = estado,
             CreatedAt = ahora,
@@ -171,8 +188,12 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // igual al volver — un valor redondo evita ese falso negativo en el Assert.Equal de Fecha.
         var t0 = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
         var t1 = t0.AddMinutes(5);
-        var primera = await SembrarComprobanteAsync(ctx, idTurno, idClienteUno, 100m, EstadoComprobante.Emitido, t0, efectivo);
-        var segunda = await SembrarComprobanteAsync(ctx, idTurno, idClienteDos, 200m, EstadoComprobante.Anulado, t1, efectivo, tarjeta);
+        // Totales de ajuste manual DISTINTOS por fila y por columna (descuento 15 en la primera,
+        // recargo 25 en la segunda): un swap de columnas o de filas no puede pasar por casualidad.
+        var primera = await SembrarComprobanteConAjusteManualAsync(
+            ctx, idTurno, idClienteUno, 100m, descuentoManual: 15m, recargoManual: 0m, EstadoComprobante.Emitido, t0, efectivo);
+        var segunda = await SembrarComprobanteConAjusteManualAsync(
+            ctx, idTurno, idClienteDos, 200m, descuentoManual: 0m, recargoManual: 25m, EstadoComprobante.Anulado, t1, efectivo, tarjeta);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/ventas/por-turno/{idTurno}");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -193,6 +214,8 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(idClienteDos, filas[0].IdCliente);
         Assert.Equal("Cliente Reconciliación Dos", filas[0].NombreCliente);
         Assert.Equal(200m, filas[0].Total);
+        Assert.Equal(0m, filas[0].DescuentoManualTotal);
+        Assert.Equal(25m, filas[0].RecargoManualTotal);
         // MedioDeVentaNeto también se assertea campo por campo (mutation-proof-tests regla 12(b)):
         // dos medios DISTINTOS con el mismo importe (200 repartido en partes iguales) — un swap de
         // IdMedioPago↔Nombre entre ambos no lo detectaría un simple Count, sí el Single por id.

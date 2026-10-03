@@ -106,7 +106,8 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <summary>Mismo criterio que <c>CajaResumenContenidoTests.SembrarVentaAsync</c> — siembra
     /// directo, sin pasar por el checkout completo.</summary>
     private async Task SembrarVentaAsync(
-        Contexto ctx, int idTurno, decimal importe, EstadoComprobante estado = EstadoComprobante.Emitido)
+        Contexto ctx, int idTurno, decimal importe, EstadoComprobante estado = EstadoComprobante.Emitido,
+        decimal descuentoManual = 0m, decimal recargoManual = 0m)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -122,8 +123,10 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             IdTurnoCaja = idTurno,
             IdEmpleado = ctx.IdEmpleadoAdmin,
             IdCliente = ctx.IdCliente,
-            Subtotal = importe,
+            Subtotal = importe + descuentoManual - recargoManual,
             DescuentoTotal = 0m,
+            DescuentoManualTotal = descuentoManual,
+            RecargoManualTotal = recargoManual,
             Total = importe,
             Estado = estado,
             CreatedAt = ahora,
@@ -211,8 +214,10 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var ctx = await PrepararAsync(nameof(ElDetalleReponeElMismoResumenMasLosTicketsYGastosSembrados));
         var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 500m);
 
-        await SembrarVentaAsync(ctx, turno.Id, 100m);
-        await SembrarVentaAsync(ctx, turno.Id, 200m);
+        // Un ticket con descuento manual (15) y otro con recargo manual (25): los totales de ajuste
+        // viajan por fila en el detalle, uno por columna.
+        await SembrarVentaAsync(ctx, turno.Id, 100m, descuentoManual: 15m);
+        await SembrarVentaAsync(ctx, turno.Id, 200m, recargoManual: 25m);
         await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
 
         // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) = 770.
@@ -229,6 +234,10 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.Equal(2, detalle.Tickets.Count);
         Assert.Equal(300m, detalle.Tickets.Sum(t => t.Total));
+        var ticketConDescuento = detalle.Tickets.Single(t => t.Total == 100m);
+        Assert.Equal((15m, 0m), (ticketConDescuento.DescuentoManualTotal, ticketConDescuento.RecargoManualTotal));
+        var ticketConRecargo = detalle.Tickets.Single(t => t.Total == 200m);
+        Assert.Equal((0m, 25m), (ticketConRecargo.DescuentoManualTotal, ticketConRecargo.RecargoManualTotal));
         var gasto = Assert.Single(detalle.Gastos);
         Assert.Equal(30m, gasto.Importe);
     }
