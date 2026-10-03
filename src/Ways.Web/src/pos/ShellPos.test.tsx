@@ -218,6 +218,8 @@ function ventaDeTurnoDesdeComprobante(comprobante: ComprobanteEmitido): VentaDeT
     idCliente: comprobante.idCliente,
     nombreCliente: 'Consumidor Final',
     total: comprobante.total,
+    descuentoManualTotal: comprobante.descuentoManualTotal,
+    recargoManualTotal: comprobante.recargoManualTotal,
     mediosDePago: comprobante.pagos.map((p) => ({ idMedioPago: p.idMedioPago, nombre: medioEfectivo.nombre, importe: p.importe - p.vuelto })),
   }
 }
@@ -234,6 +236,8 @@ function comprobanteEmitidoFixture(): ComprobanteEmitido {
     idComprobanteAsociado: null,
     subtotal: 100,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 100,
     direccionEntrega: null,
     observaciones: null,
@@ -255,6 +259,8 @@ function comprobanteEmitidoFixture(): ComprobanteEmitido {
         idLote: null,
         codigoLote: null,
         loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],

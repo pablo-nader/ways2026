@@ -46,6 +46,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
     idComprobanteAsociado: null,
     subtotal: 1000,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 1000,
     direccionEntrega: null,
     observaciones: null,
@@ -67,6 +69,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
         idLote: null,
         codigoLote: null,
         loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }],
@@ -160,6 +164,159 @@ describe('ticketDeVenta', () => {
   it('la línea de REIMPRESION aparece ANTES del aviso de "no válido como factura"', () => {
     const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
     expect(reimpreso.indexOf('REIMPRESION')).toBeLessThan(reimpreso.indexOf('COMPROBANTE NO VALIDO COMO FACTURA'))
+  })
+})
+
+describe('ticketDeVenta — ajuste manual de precio', () => {
+  const MEDIOS = [medioFixture()]
+
+  /** Una línea de 2 × $ 500 (bruto $ 1.000) con el porcentaje dado; `ajusteManual` y los totales
+   * del encabezado salen de la misma cuenta que el servidor. */
+  function comprobanteAjustado(porcentaje: number | null, sobrescribir: Partial<ComprobanteEmitido> = {}): ComprobanteEmitido {
+    const base = comprobanteFixture()
+    const ajuste = porcentaje === null ? 0 : Math.round(1000 * porcentaje) / 100
+    return comprobanteFixture({
+      descuentoManualTotal: porcentaje !== null && porcentaje < 0 ? -ajuste : 0,
+      recargoManualTotal: porcentaje !== null && porcentaje > 0 ? ajuste : 0,
+      total: 1000 + ajuste,
+      items: [{ ...base.items[0], ajusteManualPorcentaje: porcentaje, ajusteManual: ajuste, total: 1000 + ajuste }],
+      ...sobrescribir,
+    })
+  }
+
+  /** Decodifica los bytes a líneas de texto SACANDO los comandos ESC/POS con su argumento (a
+   * diferencia de `textoPlano`, que deja filtrar el byte imprimible del comando: "ESC a 1" deja una
+   * "a" pegada al texto), para poder comparar una línea completa. Cubre los comandos que emite
+   * `ConstructorDeTicket`; un byte no ASCII (acentos en CP858) se vuelve "?". */
+  function lineasDelTicket(comprobante: ComprobanteEmitido, opciones: { reimpresion?: boolean } = {}): string[] {
+    const bytes = ticketDeVenta(comprobante, CONTEXTO, MEDIOS, opciones)
+    let texto = ''
+    for (let i = 0; i < bytes.length; i++) {
+      const byte = bytes[i]
+      if (byte === 0x1b) {
+        const comando = bytes[i + 1]
+        i += comando === 0x40 ? 1 : comando === 0x70 ? 4 : 2
+      } else if (byte === 0x1d) {
+        i += bytes[i + 1] === 0x56 ? 3 : 2
+      } else if (byte === 0x0a) {
+        texto += '\n'
+      } else {
+        texto += byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '?'
+      }
+    }
+    return texto.split('\n')
+  }
+
+  it('sin ajustes no imprime ningún aviso ni fila de ajuste', () => {
+    const texto = lineasDelTicket(comprobanteAjustado(null)).join('\n')
+
+    expect(texto).not.toContain('MANUAL')
+    expect(texto).not.toContain('Desc. manual')
+    expect(texto).not.toContain('Recargo')
+  })
+
+  it('sin ajustes imprime byte por byte lo mismo que un comprobante de un servidor que todavía no manda los campos', () => {
+    const conCampos = comprobanteFixture()
+    const sinCampos = {
+      ...conCampos,
+      items: conCampos.items.map(({ ajusteManualPorcentaje: _porcentaje, ajusteManual: _monto, ...resto }) => resto),
+      descuentoManualTotal: undefined,
+      recargoManualTotal: undefined,
+    } as unknown as ComprobanteEmitido
+
+    expect(ticketDeVenta(sinCampos, CONTEXTO, MEDIOS)).toEqual(ticketDeVenta(conCampos, CONTEXTO, MEDIOS))
+  })
+
+  it('con descuento manual: marca el encabezado, la línea con su porcentaje y monto con signo, y el bloque de totales', () => {
+    const lineas = lineasDelTicket(comprobanteAjustado(-10))
+
+    expect(lineas).toContain('*** CON DESCUENTO MANUAL ***')
+    expect(lineas.join('\n')).not.toContain('CON RECARGO MANUAL')
+
+    const filaDeLinea = lineas.find((l) => l.includes('Desc. manual 10%')) ?? ''
+    expect(filaDeLinea).toMatch(/^ {2}Desc\. manual 10% +-\$ 100,00$/)
+    expect(filaDeLinea).toHaveLength(48)
+
+    const filaDeTotales = lineas.find((l) => l.startsWith('Desc. manual')) ?? ''
+    expect(filaDeTotales).toMatch(/^Desc\. manual +-\$ 100,00$/)
+    expect(filaDeTotales).toHaveLength(48)
+    expect(lineas.some((l) => l.startsWith('Recargo'))).toBe(false)
+
+    // El total ya viene ajustado del servidor y es lo que se imprime.
+    expect(lineas.find((l) => l.startsWith('TOTAL'))).toContain('900,00')
+  })
+
+  it('con recargo manual: marca el encabezado y la línea y el total llevan "+"', () => {
+    const lineas = lineasDelTicket(comprobanteAjustado(15))
+
+    expect(lineas).toContain('*** CON RECARGO MANUAL ***')
+    expect(lineas.join('\n')).not.toContain('CON DESCUENTO MANUAL')
+    expect(lineas.find((l) => l.includes('Recargo 15%'))).toMatch(/^ {2}Recargo 15% +\+\$ 150,00$/)
+    expect(lineas.find((l) => l.startsWith('Recargo'))).toMatch(/^Recargo +\+\$ 150,00$/)
+    expect(lineas.some((l) => l.startsWith('Desc. manual'))).toBe(false)
+    expect(lineas.find((l) => l.startsWith('TOTAL'))).toContain('1.150,00')
+  })
+
+  it('con porcentaje decimal lo imprime con coma y sin ceros de relleno', () => {
+    const lineas = lineasDelTicket(comprobanteAjustado(-12.5))
+
+    expect(lineas.find((l) => l.includes('Desc. manual 12,5%'))).toMatch(/-\$ 125,00$/)
+  })
+
+  it('con descuento y recargo a la vez imprime los dos avisos (descuento primero) y las dos filas de totales', () => {
+    const base = comprobanteFixture()
+    const comprobante = comprobanteFixture({
+      subtotal: 1500,
+      descuentoManualTotal: 100,
+      recargoManualTotal: 75,
+      total: 1475,
+      items: [
+        { ...base.items[0], ajusteManualPorcentaje: -10, ajusteManual: -100, total: 900 },
+        { ...base.items[0], orden: 2, descripcion: 'Fanta 1.5L', cantidad: 1, precioUnitario: 500, ajusteManualPorcentaje: 15, ajusteManual: 75, total: 575 },
+      ],
+    })
+    const lineas = lineasDelTicket(comprobante)
+
+    const iDescuento = lineas.indexOf('*** CON DESCUENTO MANUAL ***')
+    const iRecargo = lineas.indexOf('*** CON RECARGO MANUAL ***')
+    expect(iDescuento).toBeGreaterThan(-1)
+    expect(iRecargo).toBe(iDescuento + 1)
+    expect(lineas.find((l) => l.startsWith('Desc. manual'))).toMatch(/-\$ 100,00$/)
+    expect(lineas.find((l) => l.startsWith('Recargo'))).toMatch(/\+\$ 75,00$/)
+  })
+
+  it('los avisos van debajo de "no válido como factura" y arriba de los datos del comprobante', () => {
+    const lineas = lineasDelTicket(comprobanteAjustado(-10))
+
+    const iFactura = lineas.indexOf('COMPROBANTE NO VALIDO COMO FACTURA')
+    const iAviso = lineas.indexOf('*** CON DESCUENTO MANUAL ***')
+    const iNumero = lineas.findIndex((l) => l.startsWith('Comprobante:'))
+    expect(iFactura).toBeGreaterThan(-1)
+    expect(iAviso).toBe(iFactura + 1)
+    expect(iNumero).toBeGreaterThan(iAviso)
+  })
+
+  it('la fila del ajuste va justo debajo de la línea y después del descuento por oferta, si lo hay', () => {
+    const base = comprobanteFixture()
+    const comprobante = comprobanteAjustado(-10, {
+      descuentoTotal: 40,
+      items: [{ ...base.items[0], descuento: 40, ajusteManualPorcentaje: -10, ajusteManual: -96, total: 864 }],
+      descuentoManualTotal: 96,
+      total: 864,
+    })
+    const lineas = lineasDelTicket(comprobante)
+
+    const iLinea = lineas.findIndex((l) => l.startsWith('2 x Coca Cola 1L'))
+    expect(lineas[iLinea + 1]).toMatch(/^ {2}Descuento +-\$ 40,00$/)
+    expect(lineas[iLinea + 2]).toMatch(/^ {2}Desc\. manual 10% +-\$ 96,00$/)
+  })
+
+  it('una reimpresión con ajuste conserva los avisos y sigue empezando por REIMPRESION', () => {
+    const lineas = lineasDelTicket(comprobanteAjustado(15), { reimpresion: true })
+
+    expect(lineas).toContain('*** REIMPRESION ***')
+    expect(lineas).toContain('*** CON RECARGO MANUAL ***')
+    expect(lineas.indexOf('*** REIMPRESION ***')).toBeLessThan(lineas.indexOf('*** CON RECARGO MANUAL ***'))
   })
 })
 

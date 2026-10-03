@@ -160,6 +160,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
     idComprobanteAsociado: null,
     subtotal: 500,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 500,
     direccionEntrega: null,
     observaciones: null,
@@ -911,6 +913,48 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     expect(within(dialogo).getByText('Movimiento #1 — $ 40,00')).toBeInTheDocument()
     expect(within(dialogo).getByText('Movimiento #2 — $ 0,00')).toBeInTheDocument()
     expect(within(dialogo).getByText('articulo_no_encontrado')).toBeInTheDocument()
+  })
+
+  it('el ajuste manual conservado se muestra en SU línea (rótulo y porcentaje) y ninguna otra lo muestra', async () => {
+    // Cuatro líneas con artículos distintos: descuento, recargo con decimales, clave ausente (la
+    // forma real del servidor sin ajuste: `WhenWritingNull`) y `null` explícito.
+    const detalle: DetalleDeConsumo[] = [
+      detalleConsumoFixture({
+        idMovimiento: 1,
+        lineas: [
+          detalleLineaFixture({
+            idArticulo: 701,
+            cantidad: 1,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 100,
+            totalDelDia: 108,
+            delta: 8,
+            ajusteManualPorcentaje: -10,
+          }),
+          detalleLineaFixture({ idArticulo: 702, ajusteManualPorcentaje: 12.5 }),
+          detalleLineaFixture({ idArticulo: 703 }),
+          detalleLineaFixture({ idArticulo: 704, ajusteManualPorcentaje: null }),
+        ],
+      }),
+    ]
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ detalle }))
+      }
+      return undefined
+    })
+
+    await abrirModalReliquidacion()
+    const dialogo = screen.getByRole('dialog')
+    await within(dialogo).findByTestId('cc-reliq-delta-estimado')
+
+    const filaDe = (idArticulo: number) => within(dialogo).getByText(String(idArticulo)).closest('tr')!
+    expect(within(filaDe(701)).getByTestId('cc-reliq-ajuste-manual')).toHaveTextContent(/^Desc\. manual 10%$/)
+    expect(within(filaDe(702)).getByTestId('cc-reliq-ajuste-manual')).toHaveTextContent(/^Recargo 12,5%$/)
+    expect(within(filaDe(703)).queryByTestId('cc-reliq-ajuste-manual')).not.toBeInTheDocument()
+    expect(within(filaDe(704)).queryByTestId('cc-reliq-ajuste-manual')).not.toBeInTheDocument()
+    expect(within(dialogo).getAllByTestId('cc-reliq-ajuste-manual')).toHaveLength(2)
   })
 
   it('Fix 4: el aviso de éxito muestra el delta EJECUTADO, nunca el delta previsualizado', async () => {

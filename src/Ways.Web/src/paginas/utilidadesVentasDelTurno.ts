@@ -84,6 +84,17 @@ export function puedeReimprimir(fila: VentaDeTurnoListado): boolean {
   return fila.estado === 'Emitido'
 }
 
+/** Una venta con el precio cambiado a mano lo muestra en el listado: descuento y recargo son marcas
+ * separadas (una venta puede llevar las dos). Los totales de ajuste son nuevos; un servidor anterior
+ * no los manda y ahí no hay marca. */
+export function tieneDescuentoManual(venta: Pick<VentaDeTurnoListado, 'descuentoManualTotal'>): boolean {
+  return (venta.descuentoManualTotal ?? 0) !== 0
+}
+
+export function tieneRecargoManual(venta: Pick<VentaDeTurnoListado, 'recargoManualTotal'>): boolean {
+  return (venta.recargoManualTotal ?? 0) !== 0
+}
+
 // ---- Filtros (spec: "filtros en cada columna de la tabla") --------------------------------
 
 export type EstadoFiltro = 'Todas' | EstadoComprobante

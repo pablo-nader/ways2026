@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
+import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
@@ -52,7 +53,9 @@ function formatearDisponibilidad(valor: number | null): string {
  * Detalle auditable por consumo (Fix 1: preview/commit de la reliquidación traían `detalle` pero
  * nunca se mostraba). Cada consumo queda siempre visible (id + delta); las líneas — histórico →
  * actual, delta y el `motivo` de las omitidas — quedan en un `<details>` expandible para que la
- * lista no se coma la pantalla cuando el cap de 500 trae muchos consumos.
+ * lista no se coma la pantalla cuando el cap de 500 trae muchos consumos. Una línea con ajuste
+ * manual conservado muestra su rótulo y porcentaje bajo el precio actual: el servidor lo reaplica
+ * sobre el neto nuevo, así que el total del día no es `cantidad × precio actual`.
  */
 function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsumo[] }) {
   if (detalle.length === 0) return null
@@ -81,7 +84,14 @@ function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsu
                   <td>{linea.idArticulo ?? '—'}</td>
                   <td>{linea.cantidad}</td>
                   <td>{formatearMoneda(linea.precioHistorico)}</td>
-                  <td>{linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}</td>
+                  <td>
+                    {linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}
+                    {linea.ajusteManualPorcentaje != null && (
+                      <div className="small text-muted" data-testid="cc-reliq-ajuste-manual">
+                        {`${rotuloDeAjusteManual(linea.ajusteManualPorcentaje)} ${formatearPorcentajeDeAjuste(linea.ajusteManualPorcentaje)}%`}
+                      </div>
+                    )}
+                  </td>
                   <td>{formatearMoneda(linea.delta)}</td>
                   <td>{linea.motivo ?? '—'}</td>
                 </tr>

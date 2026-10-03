@@ -119,6 +119,8 @@ function ventaFixture(sobrescribir: Partial<VentaDeTurnoListado> = {}): VentaDeT
     idCliente: 3,
     nombreCliente: 'Consumidor Final',
     total: 100,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 100 }],
     ...sobrescribir,
   }
@@ -136,6 +138,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
     idComprobanteAsociado: null,
     subtotal: 100,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 100,
     direccionEntrega: null,
     observaciones: null,
@@ -157,6 +161,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
         idLote: null,
         codigoLote: null,
         loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
@@ -245,6 +251,34 @@ describe('VentasDelTurno — listado', () => {
     expect(screen.getByText('Efectivo: $ 100,00')).toBeInTheDocument()
     expect(screen.getByText('Total general: $ 100,00')).toBeInTheDocument()
     expect(screen.getByText('1 venta(s)')).toBeInTheDocument()
+  })
+
+  it('marca con "Desc. manual" y/o "Recargo" las ventas con el precio cambiado a mano, y deja sin marca a las demás', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001' }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', descuentoManualTotal: 25 }),
+        ventaFixture({ id: 3, numeroVisible: '0007-00000003', recargoManualTotal: 15 }),
+        ventaFixture({ id: 4, numeroVisible: '0007-00000004', descuentoManualTotal: 10, recargoManualTotal: 5 }),
+      ],
+    })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000001')
+    const fila = (numero: string) => screen.getByText(numero).closest('tr') as HTMLElement
+
+    expect(within(fila('0007-00000001')).queryByText('Desc. manual')).not.toBeInTheDocument()
+    expect(within(fila('0007-00000001')).queryByText('Recargo')).not.toBeInTheDocument()
+
+    expect(within(fila('0007-00000002')).getByText('Desc. manual')).toHaveAttribute('title', 'Descuento manual: $ 25,00')
+    expect(within(fila('0007-00000002')).queryByText('Recargo')).not.toBeInTheDocument()
+
+    expect(within(fila('0007-00000003')).getByText('Recargo')).toHaveAttribute('title', 'Recargo manual: $ 15,00')
+    expect(within(fila('0007-00000003')).queryByText('Desc. manual')).not.toBeInTheDocument()
+
+    expect(within(fila('0007-00000004')).getByText('Desc. manual')).toBeInTheDocument()
+    expect(within(fila('0007-00000004')).getByText('Recargo')).toBeInTheDocument()
   })
 
   it('no ofrece "Anular" sobre una fila ya anulada', async () => {
@@ -668,6 +702,58 @@ describe('VentasDelTurno — detalle de venta', () => {
     expect(within(dialog).getByText('Efectivo')).toBeInTheDocument()
     // El total del comprobante aparece en el pie del modal.
     expect(within(dialog).getByText('Total: $ 100,00')).toBeInTheDocument()
+  })
+
+  it('muestra el ajuste manual de cada línea (porcentaje y monto con signo) y los totales de descuento y recargo manual', async () => {
+    const venta = ventaFixture({ id: 30, numeroVisible: '0007-00000030', descuentoManualTotal: 10, recargoManualTotal: 15, total: 105 })
+    const base = comprobanteFixture().items[0]
+    const comprobante = comprobanteFixture({
+      id: 30,
+      numeroVisible: '0007-00000030',
+      subtotal: 200,
+      descuentoManualTotal: 10,
+      recargoManualTotal: 15,
+      total: 205,
+      items: [
+        { ...base, orden: 1, descripcion: 'Maple de huevos', precioUnitario: 100, ajusteManualPorcentaje: -10, ajusteManual: -10, total: 90 },
+        { ...base, orden: 2, descripcion: 'Cigarrillos', precioUnitario: 100, ajusteManualPorcentaje: 15, ajusteManual: 15, total: 115 },
+        { ...base, orden: 3, descripcion: 'Agua 500ml', precioUnitario: 0, total: 0 },
+      ],
+    })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 30: comprobante } })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000030')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+
+    const dialog = within(await screen.findByRole('dialog', { name: /Detalle de la venta 0007-00000030/ }))
+    // Espera al DATO (la fila ya renderizada), no solo al diálogo, que existe antes de la carga.
+    const filaDelMaple = (await dialog.findByText('Maple de huevos')).closest('tr') as HTMLElement
+    expect(within(filaDelMaple).getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
+    const filaDelCigarrillo = dialog.getByText('Cigarrillos').closest('tr') as HTMLElement
+    expect(within(filaDelCigarrillo).getByText('Recargo 15% +$ 15,00')).toBeInTheDocument()
+    const filaSinAjuste = dialog.getByText('Agua 500ml').closest('tr') as HTMLElement
+    expect(within(filaSinAjuste).queryByText(/manual|Recargo/)).not.toBeInTheDocument()
+    expect(within(filaSinAjuste).getByText('—')).toBeInTheDocument()
+
+    expect(dialog.getByText('Desc. manual: -$ 10,00')).toBeInTheDocument()
+    expect(dialog.getByText('Recargo: +$ 15,00')).toBeInTheDocument()
+    expect(dialog.getByText('Total: $ 205,00')).toBeInTheDocument()
+  })
+
+  it('un comprobante sin ajustes no muestra filas de descuento ni recargo manual en los totales', async () => {
+    const venta = ventaFixture({ id: 31, numeroVisible: '0007-00000031' })
+    const comprobante = comprobanteFixture({ id: 31, numeroVisible: '0007-00000031' })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 31: comprobante } })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000031')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+
+    const dialog = within(await screen.findByRole('dialog', { name: /Detalle de la venta 0007-00000031/ }))
+    await dialog.findByText('Total: $ 100,00')
+    expect(dialog.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(dialog.queryByText(/Recargo/)).not.toBeInTheDocument()
   })
 
   it('muestra "Lote X" cuando el ítem tiene lote', async () => {

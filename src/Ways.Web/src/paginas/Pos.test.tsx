@@ -238,6 +238,8 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
     idComprobanteAsociado: null,
     subtotal: 100,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 100,
     direccionEntrega: null,
     observaciones: null,
@@ -259,6 +261,8 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
         idLote: null,
         codigoLote: null,
         loteVencido: false,
+        ajusteManualPorcentaje: null,
+        ajusteManual: 0,
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
@@ -1608,6 +1612,24 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
 
     expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+  })
+
+  it('el ajuste manual de una línea sigue ahí, con su monto y en el total, después de navegar a otra pantalla y volver', async () => {
+    render(arbolDePosConBorrador())
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await aplicarAjusteManual('Recargo', '15')
+    await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
+    await screen.findByText('Acá no hay nada de Pos')
+    await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
+
+    expect(await screen.findByText('Recargo 15% +$ 15,00')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
   })
 
   it('después de un cobro exitoso, navegar afuera y volver no resucita el carrito ya vendido', async () => {
@@ -3090,6 +3112,8 @@ describe('Pos — modal "Venta finalizada": aviso de lote vencido (design decisi
                 idLote: 2,
                 codigoLote: '2026-01-01',
                 loteVencido: true,
+                ajusteManualPorcentaje: null,
+                ajusteManual: 0,
               },
             ],
           }),
@@ -3190,6 +3214,16 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
 
     // Regla central de la tarea: ninguna resolución de precio bajo este modo.
     expect(apiPostMock).not.toHaveBeenCalledWith('/ofertas/resolver', expect.anything())
+  })
+
+  it('bajo ?idPresupuesto= las filas del presupuesto no ofrecen el control de ajuste manual', async () => {
+    mockearApiGetPresupuesto()
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText(/Esta venta viene del presupuesto N° 1/)
+    expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+
+    expect(screen.queryByRole('button', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
   })
 
   it('cobrar postea la SolicitudDeVenta con idPresupuestoOrigen, sin idCliente ni lineas (dto-contract-honesty)', async () => {
@@ -5115,6 +5149,389 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
   })
 })
 
+/** Ajuste manual por línea: las dos primeras funciones arman el carrito de una Coca Cola ($ 100) y
+ * abren/rellenan el editor inline; se comparten con los tests de offline y de borrador. */
+const NOMBRE_DEL_BOTON_DE_AJUSTE = 'Ajuste manual de Coca Cola 1L'
+
+async function armarCarritoConCocaCola() {
+  renderPos()
+  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  await screen.findByText('Coca Cola 1L')
+  // El dato (el total resuelto), no el elemento: la fila existe antes de que llegue el precio.
+  await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+}
+
+/** El select "Medio de pago" se renderiza deshabilitado hasta que llega `/catalogos/medios-pago`
+ * (`medios === null`): esperar a que se habilite es esperar al DATO y no al elemento, que existe
+ * desde el primer render (web-test-data-gates, variante 1). */
+async function esperarMediosDePago() {
+  const selector = await screen.findByLabelText('Medio de pago')
+  await waitFor(() => expect(selector).toBeEnabled())
+}
+
+function campoDePorcentajeDeAjuste() {
+  return screen.getByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' })
+}
+
+async function aplicarAjusteManual(tipo: 'Descuento' | 'Recargo', porcentaje: string) {
+  await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+  await userEvent.click(screen.getByRole('radio', { name: tipo }))
+  await userEvent.clear(campoDePorcentajeDeAjuste())
+  await userEvent.type(campoDePorcentajeDeAjuste(), porcentaje)
+  await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+}
+
+function panelDatosDeLaVenta(): HTMLElement {
+  return screen.getByText('Datos de la venta').closest('.box') as HTMLElement
+}
+
+function llamadasAResolver() {
+  return apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ofertas/resolver')
+}
+
+describe('Pos — ajuste manual por línea', () => {
+  it('un descuento manual baja el total de la línea y el total previo, se ve en un badge y en el panel de totales, y no vuelve a resolver precios', async () => {
+    await armarCarritoConCocaCola()
+    const resolucionesAntes = llamadasAResolver().length
+
+    await aplicarAjusteManual('Descuento', '10')
+
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    expect(within(fila).getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 90,00')).toBeInTheDocument()
+    const panel = within(panelDatosDeLaVenta())
+    expect(panel.getByText('Desc. manual')).toBeInTheDocument()
+    expect(panel.getByText('-$ 10,00')).toBeInTheDocument()
+    expect(panel.queryByText('Recargo')).not.toBeInTheDocument()
+
+    // Fijar un ajuste cambia `lineas` pero no lo que se resuelve: ni otra llamada ni "Calculando…".
+    await act(async () => {
+      await new Promise((resolver) => setTimeout(resolver, 30))
+    })
+    expect(llamadasAResolver()).toHaveLength(resolucionesAntes)
+    expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
+  })
+
+  it('un recargo manual sube el total y se muestra aparte, con su propio rótulo', async () => {
+    await armarCarritoConCocaCola()
+
+    await aplicarAjusteManual('Recargo', '15')
+
+    await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    expect(within(fila).getByText('Recargo 15% +$ 15,00')).toBeInTheDocument()
+    const panel = within(panelDatosDeLaVenta())
+    expect(panel.getByText('Recargo')).toBeInTheDocument()
+    expect(panel.getByText('+$ 15,00')).toBeInTheDocument()
+    expect(panel.queryByText('Desc. manual')).not.toBeInTheDocument()
+  })
+
+  it('al abrir el editor el foco va al campo del porcentaje, con "Descuento" elegido y sin el botón "Quitar ajuste"', async () => {
+    await armarCarritoConCocaCola()
+
+    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+
+    expect(campoDePorcentajeDeAjuste()).toHaveFocus()
+    expect(screen.getByRole('radio', { name: 'Descuento' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Recargo' })).not.toBeChecked()
+    expect(screen.queryByRole('button', { name: 'Quitar ajuste' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('un porcentaje inválido muestra el motivo en el lugar, deja el editor abierto y no toca el carrito; tipear de nuevo limpia el aviso', async () => {
+    await armarCarritoConCocaCola()
+    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+    const aplicar = screen.getByRole('button', { name: 'Aplicar' })
+
+    await userEvent.click(aplicar)
+    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá el porcentaje del ajuste.')
+
+    await userEvent.type(campoDePorcentajeDeAjuste(), '0')
+    await userEvent.click(aplicar)
+    expect(screen.getByRole('alert')).toHaveTextContent('El porcentaje debe ser mayor que 0 y como máximo 100.')
+    expect(campoDePorcentajeDeAjuste()).toHaveAttribute('aria-invalid', 'true')
+
+    await userEvent.clear(campoDePorcentajeDeAjuste())
+    await userEvent.type(campoDePorcentajeDeAjuste(), '101')
+    await userEvent.click(aplicar)
+    expect(screen.getByRole('alert')).toHaveTextContent('El porcentaje debe ser mayor que 0 y como máximo 100.')
+
+    await userEvent.clear(campoDePorcentajeDeAjuste())
+    await userEvent.type(campoDePorcentajeDeAjuste(), '10,555')
+    await userEvent.click(aplicar)
+    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá el porcentaje sin signo y con hasta 2 decimales (por ejemplo 10 o 12,5).')
+
+    // Nada de lo anterior llegó al carrito.
+    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
+
+    await userEvent.type(campoDePorcentajeDeAjuste(), '1')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    await userEvent.clear(campoDePorcentajeDeAjuste())
+    await userEvent.type(campoDePorcentajeDeAjuste(), '12,5')
+    await userEvent.click(aplicar)
+    await waitFor(() => expect(screen.getByText('$ 87,50', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Desc. manual 12,5% -$ 12,50')).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+  })
+
+  it('Escape cancela sin aplicar nada y devuelve el foco al botón que abrió el editor', async () => {
+    await armarCarritoConCocaCola()
+    const disparador = screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })
+    await userEvent.click(disparador)
+    await userEvent.type(campoDePorcentajeDeAjuste(), '10')
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+    expect(disparador).toHaveFocus()
+    expect(disparador).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
+  })
+
+  it('"Cancelar" y volver a tocar el botón también cierran el editor', async () => {
+    await armarCarritoConCocaCola()
+    const disparador = screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })
+
+    await userEvent.click(disparador)
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+    expect(disparador).toHaveFocus()
+
+    await userEvent.click(disparador)
+    expect(screen.getByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).toBeInTheDocument()
+    await userEvent.click(disparador)
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+  })
+
+  it('Enter en el campo aplica el ajuste (el editor es un formulario) y deja el foco en el input de código para seguir escaneando', async () => {
+    await armarCarritoConCocaCola()
+    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+
+    await userEvent.type(campoDePorcentajeDeAjuste(), '20{Enter}')
+
+    await waitFor(() => expect(screen.getByText('$ 80,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  it('reabrir una línea con ajuste lo trae cargado; "Quitar ajuste" lo elimina, deja el total original y devuelve el foco al input de código', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+    expect(screen.getByRole('radio', { name: 'Descuento' })).toBeChecked()
+    expect(campoDePorcentajeDeAjuste()).toHaveValue('10')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar ajuste' }))
+
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  it('cambiar de descuento a recargo sobre una línea que ya tiene ajuste lo reemplaza', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await aplicarAjusteManual('Recargo', '5')
+
+    await waitFor(() => expect(screen.getByText('$ 105,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Recargo 5% +$ 5,00')).toBeInTheDocument()
+    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+  })
+
+  it('el total a cobrar incluye el descuento: con total $ 90 y tolerancia 10, pagar $ 85 habilita Cobrar (sin el descuento faltarían 15)', async () => {
+    // tolerancia_pago = 10 (mock base). Descuento 10 % → total 90: pagar 85 queda dentro de la
+    // tolerancia; sin el ajuste el faltante sería 15 y "Cobrar" seguiría deshabilitado.
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '85')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  })
+
+  it('con recargo del 15 %, pagar $ 100 no cubre el total ($ 115): "Cobrar" queda deshabilitado hasta cubrirlo', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Recargo', '15')
+    await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+
+    await userEvent.type(importe, '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled())
+
+    await userEvent.clear(importe)
+    await userEvent.type(importe, '115')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  })
+
+  it('Cobrar manda SOLO el porcentaje en la línea ajustada, con su signo, y nada de dinero por línea', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '90')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const solicitud = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')?.[1] as {
+      lineas: Record<string, unknown>[]
+      pagos: unknown[]
+    }
+    expect(solicitud.lineas).toEqual([
+      { idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567', idLote: null, ajusteManualPorcentaje: -10 },
+    ])
+    expect(solicitud.pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 90, referencia: null, vuelto: 0 }])
+  })
+
+  it('re-escanear el mismo artículo suma la cantidad y conserva el ajuste, que se recalcula sobre el nuevo neto', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(screen.getByText('$ 180,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Desc. manual 10% -$ 20,00')).toBeInTheDocument()
+  })
+
+  it('cambiar la cantidad conserva el ajuste', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Recargo', '10')
+    await waitFor(() => expect(screen.getByText('$ 110,00', { selector: 'strong' })).toBeInTheDocument())
+
+    const cantidad = screen.getByLabelText('Cantidad de Coca Cola 1L')
+    await userEvent.clear(cantidad)
+    await userEvent.type(cantidad, '3')
+
+    await waitFor(() => expect(screen.getByText('$ 330,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Recargo 10% +$ 30,00')).toBeInTheDocument()
+  })
+
+  it('quitar la línea se lleva el ajuste: volver a escanear el artículo arranca sin ajuste ni editor', async () => {
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+    expect(screen.getByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+  })
+
+  it('con el diálogo "¿Finalizar venta?" abierto, el botón de ajuste queda inerte', async () => {
+    await armarVentaLista()
+    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toBeEnabled()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toBeDisabled()
+  })
+
+  // Lo tipeado en el editor todavía no está en el carrito: cobrar con el editor abierto cobraría sin
+  // el ajuste. La cláusula que lo impide es `ajusteEnEdicion === null` en `precondicionesListas`,
+  // de la que cuelgan `puedeCobrar` (el botón) y el F9.
+  describe('con el editor de ajuste abierto y un porcentaje sin aplicar no se puede cobrar', () => {
+    const AVISO_DE_AJUSTE_SIN_APLICAR = 'Aplicá o cancelá el ajuste antes de cobrar.'
+
+    async function abrirEditorYTipearSinAplicar() {
+      await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+      await userEvent.type(campoDePorcentajeDeAjuste(), '10')
+    }
+
+    function seEnvioLaVenta() {
+      return apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')
+    }
+
+    it('el botón "Cobrar" se deshabilita, el aviso se ve, hacerle clic no cobra, y al cancelar vuelve a habilitarse', async () => {
+      await armarVentaLista()
+      const cobrar = screen.getByRole('button', { name: /Cobrar/ })
+      expect(cobrar).toBeEnabled()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+
+      await abrirEditorYTipearSinAplicar()
+
+      expect(cobrar).toBeDisabled()
+      expect(screen.getByText(AVISO_DE_AJUSTE_SIN_APLICAR)).toBeInTheDocument()
+      await userEvent.click(cobrar)
+      expect(seEnvioLaVenta()).toBe(false)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+      expect(cobrar).toBeEnabled()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+      expect(seEnvioLaVenta()).toBe(false)
+    })
+
+    it('F9 con el foco en el campo del porcentaje no abre "¿Finalizar venta?" ni cobra; sin el editor, el mismo F9 sí abre el diálogo', async () => {
+      await armarVentaLista()
+      await abrirEditorYTipearSinAplicar()
+
+      fireEvent.keyDown(campoDePorcentajeDeAjuste(), { key: 'F9' })
+      await act(async () => {})
+
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+      expect(seEnvioLaVenta()).toBe(false)
+
+      // Control positivo: lo que lo detuvo fue el editor y no otra precondición.
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
+    })
+  })
+
+  it('un rechazo 400 ajuste_manual_invalido del servidor se muestra con el mensaje del ajuste, no con el texto crudo', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'ajuste_manual_invalido', 'detalle técnico del servidor'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await armarCarritoConCocaCola()
+    await aplicarAjusteManual('Descuento', '10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '90')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText(/El servidor rechazó un ajuste manual/)).toBeInTheDocument()
+    expect(screen.queryByText('detalle técnico del servidor')).not.toBeInTheDocument()
+    // La venta no se registró: el carrito y su ajuste siguen ahí para corregirlo.
+    expect(screen.getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
+  })
+})
+
 const TEXTO_DE_COBRO_INCIERTO =
   'No se pudo confirmar si la venta se registró: el servidor no respondió. Revisá las ventas del turno antes de volver a cobrar.'
 
@@ -5463,6 +5880,45 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Aceptar/ }))
       expect(await screen.findByText('Sin sincronizar: 1')).toBeInTheDocument()
+    })
+
+    it('con un ajuste manual: encola la línea con el porcentaje y el comprobante sintético trae el ajuste y el total ya ajustado', async () => {
+      await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+      const alEmitir = vi.fn()
+      renderPos('/pos', { alEmitir })
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await screen.findByText('Coca Cola 1L')
+      await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+      await aplicarAjusteManual('Descuento', '10')
+      await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+      await esperarMediosDePago()
+      await cobrarConEfectivo('90')
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+      expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
+      expect(screen.getByText('Total: $ 90,00')).toBeInTheDocument()
+
+      const outbox = await leerOutbox(crearAlmacenIndexedDb())
+      expect(outbox).toHaveLength(1)
+      expect(outbox[0].solicitud.lineas?.[0]).toMatchObject({
+        idArticulo: 1,
+        cantidad: 1,
+        precioUnitario: 100,
+        descuentoUnitario: 0,
+        ajusteManualPorcentaje: -10,
+      })
+
+      const comprobante = alEmitir.mock.calls[0][0] as ComprobanteEmitido
+      expect(comprobante).toMatchObject({ subtotal: 100, descuentoTotal: 0, descuentoManualTotal: 10, recargoManualTotal: 0, total: 90 })
+      expect(comprobante.items[0]).toMatchObject({ ajusteManualPorcentaje: -10, ajusteManual: -10, total: 90 })
     })
 
     it('un pago con tarjeta (electrónico) también se encola localmente, con su referencia', async () => {

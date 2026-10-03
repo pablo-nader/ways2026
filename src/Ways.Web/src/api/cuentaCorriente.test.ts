@@ -507,6 +507,7 @@ describe('parsearDetalleDeActualizacionPrecios', () => {
             totalDelDia: 240,
             delta: 40,
             motivo: null,
+            ajusteManualPorcentaje: null,
           },
           {
             idArticulo: null,
@@ -517,6 +518,7 @@ describe('parsearDetalleDeActualizacionPrecios', () => {
             totalDelDia: null,
             delta: 0,
             motivo: 'Línea de concepto libre (sin artículo) — no re-precificable.',
+            ajusteManualPorcentaje: null,
           },
         ],
       },
@@ -539,6 +541,7 @@ describe('parsearDetalleDeActualizacionPrecios', () => {
             totalDelDia: 240,
             delta: 40,
             motivo: null,
+            ajusteManualPorcentaje: -12.5,
           },
         ],
       },
@@ -559,10 +562,39 @@ describe('parsearDetalleDeActualizacionPrecios', () => {
             totalDelDia: 240,
             delta: 40,
             motivo: null,
+            ajusteManualPorcentaje: -12.5,
           },
         ],
       },
     ])
+  })
+
+  it('AjusteManualPorcentaje PascalCase se conserva con su signo en SU línea; la clave ausente da null', () => {
+    const lineaBase = {
+      IdArticulo: 1,
+      Cantidad: 1,
+      PrecioHistorico: 100,
+      PrecioActual: 120,
+      TotalHistorico: 100,
+      TotalDelDia: 108,
+      Delta: 8,
+      Motivo: null,
+    }
+    const crudo = JSON.stringify([
+      {
+        IdMovimiento: 3,
+        IdComprobanteVenta: 10,
+        Delta: 23,
+        Lineas: [
+          { ...lineaBase, AjusteManualPorcentaje: -10 },
+          { ...lineaBase, TotalDelDia: 120, Delta: 20 },
+          { ...lineaBase, TotalDelDia: 138, Delta: 38, AjusteManualPorcentaje: 15 },
+        ],
+      },
+    ])
+
+    const lineas = parsearDetalleDeActualizacionPrecios(crudo)?.[0].lineas
+    expect(lineas?.map((linea) => linea.ajusteManualPorcentaje)).toEqual([-10, null, 15])
   })
 
   it('un campo requerido ausente (ni PascalCase ni camelCase) da null, nunca lanza', () => {

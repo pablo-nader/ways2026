@@ -9,8 +9,12 @@
  *
  * Espeja pixel a pixel la fórmula de `Ways.Domain.Ventas.CalculadorDeTotales.Calcular`: bruto de
  * línea = cantidad × precio ORIGINAL (lista, antes de descuento), descuento = descuentoUnitario ×
- * cantidad, total de línea = bruto − descuento (neto). `subtotal`/`descuentoTotal`/`total` del
- * comprobante son la suma de esas mismas columnas — nunca un cálculo alternativo.
+ * cantidad, neto = bruto − descuento, y el ajuste manual de la línea (porcentaje con signo) se
+ * aplica sobre ese neto: total de línea = neto + ajuste (`calcularTotalesDeLinea`).
+ * `subtotal`/`descuentoTotal` del comprobante son la suma de esas mismas columnas;
+ * `descuentoManualTotal`/`recargoManualTotal` separan los ajustes por el signo del porcentaje y
+ * `total = subtotal − descuentoTotal − descuentoManualTotal + recargoManualTotal` — nunca un
+ * cálculo alternativo.
  *
  * El descuento por unidad y la oferta salen de `preciosVigentesOffline` sobre el precio de la lista
  * de la venta (no del precio plano): este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
@@ -24,12 +28,10 @@
  * dos campos — verificado contra ambos archivos antes de fijar este contrato.
  */
 import { precioEnLista, preciosVigentesOffline } from './instantaneaOffline'
+import { calcularTotalesDeLinea, totalesDeAjusteManual } from '../api/ajusteManual'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
-
-function redondear(valor: number): number {
-  return Math.round((valor + Number.EPSILON) * 100) / 100
-}
+import { redondearImporte } from '../formato/importes'
 
 export type ParametrosDeComprobanteOfflineSintetico = {
   numero: number
@@ -56,6 +58,7 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
   let subtotal = 0
   let descuentoTotal = 0
   const items: ItemEmitido[] = []
+  const ajustes: { porcentaje: number | null | undefined; ajuste: number }[] = []
 
   for (let indice = 0; indice < params.lineas.length; indice++) {
     const linea = params.lineas[indice]
@@ -64,10 +67,15 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     if (!articulo || !precio) return null
 
     const precios = preciosVigentesOffline(precio, linea.cantidad)
-    const bruto = redondear(linea.cantidad * precios.precioOriginal)
-    const descuento = redondear(precios.descuentoUnitario * linea.cantidad)
+    const { bruto, descuento, ajuste, total } = calcularTotalesDeLinea({
+      cantidad: linea.cantidad,
+      precioOriginal: precios.precioOriginal,
+      descuentoUnitario: precios.descuentoUnitario,
+      porcentaje: linea.ajusteManualPorcentaje,
+    })
     subtotal += bruto
     descuentoTotal += descuento
+    ajustes.push({ porcentaje: linea.ajusteManualPorcentaje, ajuste })
 
     items.push({
       orden: indice + 1,
@@ -82,16 +90,19 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       cantidad: linea.cantidad,
       precioUnitario: precios.precioOriginal,
       descuento,
-      total: redondear(bruto - descuento),
+      total,
       idLote: null,
       codigoLote: null,
       loteVencido: false,
       precioDiscrepante: false,
+      ajusteManualPorcentaje: linea.ajusteManualPorcentaje ?? null,
+      ajusteManual: ajuste,
     })
   }
 
-  subtotal = redondear(subtotal)
-  descuentoTotal = redondear(descuentoTotal)
+  subtotal = redondearImporte(subtotal)
+  descuentoTotal = redondearImporte(descuentoTotal)
+  const { descuentoManualTotal, recargoManualTotal } = totalesDeAjusteManual(ajustes)
 
   return {
     id: 0,
@@ -104,7 +115,9 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     idComprobanteAsociado: null,
     subtotal,
     descuentoTotal,
-    total: redondear(subtotal - descuentoTotal),
+    descuentoManualTotal,
+    recargoManualTotal,
+    total: redondearImporte(subtotal - descuentoTotal - descuentoManualTotal + recargoManualTotal),
     direccionEntrega: null,
     observaciones: null,
     items,
