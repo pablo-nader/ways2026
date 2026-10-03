@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
+using Ways.Application.Parametros;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -41,7 +42,8 @@ public class ServicioDeFacturacionFiscal(
     IClienteWsaa clienteWsaa,
     IClienteWsfe clienteWsfe,
     IRepositorioDeTicketDeAcceso repositorioDeTicket,
-    IAlmacenDeClavesFiscales almacen)
+    IAlmacenDeClavesFiscales almacen,
+    ServicioDeParametros parametros)
 {
     private const string ServicioWsfe = "wsfe";
 
@@ -166,6 +168,7 @@ public class ServicioDeFacturacionFiscal(
         var totales = ComposicionDeTotalesFiscales.Componer(lineasFiscales);
 
         var momento = reloj.Ahora;
+        var fechaFiscal = await ResolverFechaFiscalAsync(empresa.Id, momento, ct);
         var claveDeSerie = new ClaveDeSerie(numeroFiscalDePuntoVenta, tipoFiscal.CodigoAfip!.Value);
         var (tipoDocReceptor, nroDocReceptor) = MapearDocumentoArca(cliente);
 
@@ -237,7 +240,7 @@ public class ServicioDeFacturacionFiscal(
             const int conceptoProductos = 1;
             var solicitudDeCae = new SolicitudDeCae(
                 claveDeSerie, numero, numero, conceptoProductos, tipoDocReceptor, nroDocReceptor,
-                DateOnly.FromDateTime(momento.Date), totales.ImpTotal, totales.ImpTotConc, totales.ImpNeto,
+                fechaFiscal, totales.ImpTotal, totales.ImpTotConc, totales.ImpNeto,
                 totales.ImpOpEx, totales.ImpTrib, totales.ImpIVA, condicionIvaReceptorId, totales.Iva);
 
             var respuesta = await SolicitarCaeConReintentoDeTicketAsync(
@@ -264,11 +267,11 @@ public class ServicioDeFacturacionFiscal(
             await transaccion.CommitAsync(ct);
 
             var payloadQr = ConstruirQrSiCorresponde(
-                respuesta, momento, cuitEmisor, numeroFiscalDePuntoVenta, tipoFiscal.CodigoAfip.Value, numero,
+                respuesta, fechaFiscal, cuitEmisor, numeroFiscalDePuntoVenta, tipoFiscal.CodigoAfip.Value, numero,
                 totales.ImpTotal, tipoDocReceptor, nroDocReceptor);
 
             return new ComprobanteFiscalEmitido(
-                comprobante.Id, tipoFiscal.Codigo, letra, puntoVenta.Id, numero, DateOnly.FromDateTime(momento.Date),
+                comprobante.Id, tipoFiscal.Codigo, letra, puntoVenta.Id, numero, fechaFiscal,
                 respuesta.Resultado, respuesta.Cae, respuesta.CaeVencimiento, payloadQr);
         });
     }
@@ -308,6 +311,7 @@ public class ServicioDeFacturacionFiscal(
             MapearCondicionFiscal(condicionEmisor.Codigo), MapearCondicionFiscal(condicionReceptor.Codigo));
 
         var cuitEmisor = ExigirCuitNumerico(empresa);
+        var fechaFiscal = await ResolverFechaFiscalAsync(empresa.Id, comprobante.Fecha, ct);
         var claveDeSerie = new ClaveDeSerie(puntoVenta.NumeroFiscal!.Value, tipoFiscal.CodigoAfip!.Value);
         var (tipoDocReceptor, nroDocReceptor) = MapearDocumentoArca(cliente);
 
@@ -355,7 +359,7 @@ public class ServicioDeFacturacionFiscal(
                 const int conceptoProductos = 1;
                 var solicitudDeCae = new SolicitudDeCae(
                     claveDeSerie, comprobante.Numero, comprobante.Numero, conceptoProductos, tipoDocReceptor,
-                    nroDocReceptor, DateOnly.FromDateTime(comprobante.Fecha.Date), totales.ImpTotal,
+                    nroDocReceptor, fechaFiscal, totales.ImpTotal,
                     totales.ImpTotConc, totales.ImpNeto, totales.ImpOpEx, totales.ImpTrib, totales.ImpIVA,
                     condicionIvaReceptorId, totales.Iva);
 
@@ -371,7 +375,7 @@ public class ServicioDeFacturacionFiscal(
                 // carrera relee el estado definitivo en vez de pisar nada.
                 await transaccion.RollbackAsync(ct);
                 var actual = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante, ct);
-                return Proyectar(actual, tipoFiscal.Codigo, letra, cuitEmisor, puntoVenta.NumeroFiscal!.Value,
+                return Proyectar(actual, fechaFiscal, tipoFiscal.Codigo, letra, cuitEmisor, puntoVenta.NumeroFiscal!.Value,
                     tipoFiscal.CodigoAfip!.Value, tipoDocReceptor, nroDocReceptor);
             }
 
@@ -384,12 +388,12 @@ public class ServicioDeFacturacionFiscal(
             await transaccion.CommitAsync(ct);
 
             var payloadQr = ConstruirQrSiCorresponde(
-                respuesta, comprobante.Fecha, cuitEmisor, puntoVenta.NumeroFiscal!.Value, tipoFiscal.CodigoAfip.Value,
+                respuesta, fechaFiscal, cuitEmisor, puntoVenta.NumeroFiscal!.Value, tipoFiscal.CodigoAfip.Value,
                 comprobante.Numero, comprobante.Total, tipoDocReceptor, nroDocReceptor);
 
             return new ComprobanteFiscalEmitido(
                 comprobante.Id, tipoFiscal.Codigo, letra, puntoVenta.Id, comprobante.Numero,
-                DateOnly.FromDateTime(comprobante.Fecha.Date), respuesta.Resultado, respuesta.Cae,
+                fechaFiscal, respuesta.Resultado, respuesta.Cae,
                 respuesta.CaeVencimiento, payloadQr);
         });
     }
@@ -567,6 +571,13 @@ public class ServicioDeFacturacionFiscal(
             ? AmbienteFiscal.Produccion
             : AmbienteFiscal.Homologacion;
 
+    private async Task<DateOnly> ResolverFechaFiscalAsync(int idEmpresa, DateTimeOffset instante, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, null, ct);
+        var zona = TimeZoneInfo.FindSystemTimeZoneById(JsonSerializer.Deserialize<string>(resuelto.Valor)!);
+        return FechaFiscal.DeInstante(instante, zona);
+    }
+
     private static string ExigirCuitNumerico(Empresa empresa)
     {
         if (string.IsNullOrWhiteSpace(empresa.Cuit) || !long.TryParse(empresa.Cuit, NumberStyles.None, CultureInfo.InvariantCulture, out _))
@@ -579,7 +590,7 @@ public class ServicioDeFacturacionFiscal(
     }
 
     private static string? ConstruirQrSiCorresponde(
-        RespuestaCae respuesta, DateTimeOffset fecha, string cuitEmisor, int ptoVta, short tipoCmp, long nroCmp,
+        RespuestaCae respuesta, DateOnly fecha, string cuitEmisor, int ptoVta, short tipoCmp, long nroCmp,
         decimal importe, short tipoDocRec, long nroDocRec)
     {
         if (respuesta.Cae is null || !MaquinaDeEstadosCae.EsTerminal(respuesta.Resultado))
@@ -588,22 +599,22 @@ public class ServicioDeFacturacionFiscal(
         }
 
         return PayloadQrFiscal.Construir(
-            DateOnly.FromDateTime(fecha.Date), long.Parse(cuitEmisor, CultureInfo.InvariantCulture), ptoVta, tipoCmp,
+            fecha, long.Parse(cuitEmisor, CultureInfo.InvariantCulture), ptoVta, tipoCmp,
             nroCmp, importe, tipoDocRec, nroDocRec, long.Parse(respuesta.Cae, CultureInfo.InvariantCulture));
     }
 
     private static ComprobanteFiscalEmitido Proyectar(
-        ComprobanteVenta comprobante, string codigoTipo, char letra, string cuitEmisor, int ptoVta, short tipoCmp,
+        ComprobanteVenta comprobante, DateOnly fechaFiscal, string codigoTipo, char letra, string cuitEmisor, int ptoVta, short tipoCmp,
         short tipoDocRec, long nroDocRec)
     {
         var payloadQr = ConstruirQrSiCorresponde(
             new RespuestaCae(comprobante.ResultadoFiscal ?? ResultadoFiscal.Pendiente, comprobante.Cae,
                 comprobante.CaeVencimiento, [], []),
-            comprobante.Fecha, cuitEmisor, ptoVta, tipoCmp, comprobante.Numero, comprobante.Total, tipoDocRec, nroDocRec);
+            fechaFiscal, cuitEmisor, ptoVta, tipoCmp, comprobante.Numero, comprobante.Total, tipoDocRec, nroDocRec);
 
         return new ComprobanteFiscalEmitido(
             comprobante.Id, codigoTipo, letra, comprobante.IdPuntoVenta, comprobante.Numero,
-            DateOnly.FromDateTime(comprobante.Fecha.Date), comprobante.ResultadoFiscal ?? ResultadoFiscal.Pendiente,
+            fechaFiscal, comprobante.ResultadoFiscal ?? ResultadoFiscal.Pendiente,
             comprobante.Cae, comprobante.CaeVencimiento, payloadQr);
     }
 

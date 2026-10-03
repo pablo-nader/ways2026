@@ -94,23 +94,36 @@ public static class ComposicionDeTotalesFiscales
     /// conocido: bucketearla en cualquiera de los dos produciría un comprobante aritméticamente
     /// válido y legalmente incorrecto (decisión 11), así que falla fuerte. La comparten la emisión
     /// y el libro IVA para clasificar igual.</summary>
-    public static ClaseDeAlicuota Clasificar(short? codigoAfip, string nombreAlicuota)
-    {
-        if (codigoAfip is not null)
-        {
-            return ClaseDeAlicuota.Gravada;
-        }
-
-        return nombreAlicuota switch
-        {
-            NombreExento => ClaseDeAlicuota.Exento,
-            NombreNoGravado => ClaseDeAlicuota.NoGravado,
-            _ => throw new ErrorDominio(
+    public static ClaseDeAlicuota Clasificar(short? codigoAfip, string nombreAlicuota) =>
+        TryClasificar(codigoAfip, nombreAlicuota, out var clase)
+            ? clase
+            : throw new ErrorDominio(
                 "alicuota_sin_mapeo_afip",
                 $"La alícuota '{nombreAlicuota}' no tiene código AFIP y no es " +
                 $"'{NombreExento}' ni '{NombreNoGravado}'.",
-                409)
-        };
+                409);
+
+    /// <summary>Variante que no falla: <c>false</c> para una alícuota sin código que no es Exento ni
+    /// No gravado. La usa el libro IVA (solo lectura), que informa esas filas en vez de caerse.</summary>
+    public static bool TryClasificar(short? codigoAfip, string nombreAlicuota, out ClaseDeAlicuota clase)
+    {
+        clase = ClaseDeAlicuota.Gravada;
+        if (codigoAfip is not null)
+        {
+            return true;
+        }
+
+        switch (nombreAlicuota)
+        {
+            case NombreExento:
+                clase = ClaseDeAlicuota.Exento;
+                return true;
+            case NombreNoGravado:
+                clase = ClaseDeAlicuota.NoGravado;
+                return true;
+            default:
+                return false;
+        }
     }
 }
 
