@@ -9,12 +9,12 @@ namespace Ways.Domain.Auditoria;
 ///
 /// <c>dto-contract-honesty</c>: cada constante documenta el par exacto que su call site (design,
 /// tabla "Call sites") tiene permitido escribir — la convención del repo es usar siempre una de
-/// estas 19 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
+/// estas 21 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
 /// acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline. El <c>record</c>
 /// posicional público SÍ genera un constructor público (<c>new AccionAuditada("x", "y")</c>
 /// compila): nada en el tipo lo impide, y la membresía al catálogo no se valida en runtime
 /// (design decisión 15 — una acción retirada deja filas consultables cuyo <c>accion</c> ya no
-/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 19" es de convención +
+/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 21" es de convención +
 /// test (<see cref="Ways.Domain.Tests.Auditoria.AccionAuditadaTests"/> congela el catálogo
 /// exacto), no del tipo.
 /// </summary>
@@ -110,11 +110,20 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// <c>id_entidad</c> es el comprobante; el payload lleva cliente, saldos y límite.</summary>
     public static readonly AccionAuditada VentaExcedioLimiteSinValidar = new("venta.sobrelimite", "comprobante_venta");
 
-    /// <summary>Las 19 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Edición de un gasto ya registrado — <c>Gastos/ServicioDeGastos.cs</c>, los caminos
+    /// del POS (turno abierto) y de administración. <c>valor_anterior</c>/<c>valor_nuevo</c> llevan
+    /// los campos editables más el importe.</summary>
+    public static readonly AccionAuditada GastoEdicion = new("gasto.edicion", "gasto");
+
+    /// <summary>Baja lógica administrativa de un gasto — <c>Gastos/ServicioDeGastos.cs</c>. Mismos
+    /// campos que <see cref="GastoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
+    public static readonly AccionAuditada GastoBaja = new("gasto.baja", "gasto");
+
+    /// <summary>Las 21 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
-    /// validarlo) — usada por el catálogo genérico de tests (naming
+    /// validarlo y la edición/baja de gastos) — usada por el catálogo genérico de tests (naming
     /// <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier consumidor que
     /// necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
@@ -137,6 +146,8 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         PuntoVentaModo,
         VentaDiscrepanciaDePrecio,
         CierreForzadoSinRendicion,
-        VentaExcedioLimiteSinValidar
+        VentaExcedioLimiteSinValidar,
+        GastoEdicion,
+        GastoBaja
     ];
 }

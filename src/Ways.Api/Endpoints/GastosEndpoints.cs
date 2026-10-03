@@ -34,6 +34,13 @@ public static class GastosEndpoints
             servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Historial de gastos, paginado.");
 
+        // Edición desde el POS: sin GestionDeCatalogo apilado, un Vendedor corrige los gastos de su
+        // turno mientras siga abierto (el servicio lo exige bajo el lock del turno).
+        grupo.MapPut("/{id:int}", async (
+            ServicioDeGastos servicio, int id, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.EditarAsync(id, solicitud, ct)))
+        .WithSummary("Edita un gasto de un turno que sigue abierto.");
+
         // stage-gasto-a-compra (PR4), owner requirement: cualquier gasto (POS o admin) se liga a
         // una compra DESPUÉS de creado — GestionDeCatalogo propio (apila sobre el
         // Politicas.OperacionDePos del grupo), mismo criterio que las escrituras de
@@ -64,6 +71,20 @@ public static class GastosEndpoints
             return Results.Created($"/api/gastos/administracion/{gasto.Id}", gasto);
         })
         .WithSummary("Registra un gasto administrativo sin turno, pagado de la tesorería de la empresa.");
+
+        grupoAdministracion.MapPut("/{id:int}", async (
+            ServicioDeGastos servicio, int id, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.EditarDeAdministracionAsync(id, solicitud, ct)))
+        .WithSummary(
+            "Edita cualquier gasto; si es de caja de un turno cerrado, recalcula el arqueo de ese turno.");
+
+        grupoAdministracion.MapDelete("/{id:int}", async (ServicioDeGastos servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarDeAdministracionAsync(id, ct);
+            return Results.NoContent();
+        })
+        .WithSummary(
+            "Da de baja cualquier gasto, revirtiendo sus efectos; si es de caja de un turno cerrado, recalcula el arqueo.");
 
         grupoAdministracion.MapGet("/{id:int}", (ServicioDeGastos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDeAdministracionAsync(id, ct))

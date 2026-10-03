@@ -37,6 +37,10 @@ public class ArqueoTurnoConfiguration : IEntityTypeConfiguration<ArqueoTurno>
             .HasColumnType("numeric(14,2)")
             .IsRequired();
 
+        builder.Property(a => a.ImporteEsperadoOriginal)
+            .HasColumnName("importe_esperado_original")
+            .HasColumnType("numeric(14,2)");
+
         builder.Property(a => a.Diferencia)
             .HasColumnName("diferencia")
             .HasColumnType("numeric(14,2)")

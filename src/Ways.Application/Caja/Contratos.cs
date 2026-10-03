@@ -121,16 +121,21 @@ public sealed record ResumenDeTurno(
     EgresosDeTurno Egresos);
 
 /// <summary>Una fila ya persistida de <see cref="ArqueoTurno"/> — con <c>Diferencia</c> incluida
-/// (columna <c>GENERATED ALWAYS</c>, design decisión 6).</summary>
+/// (columna <c>GENERATED ALWAYS</c>, design decisión 6). <see cref="ImporteEsperadoOriginal"/> es
+/// el esperado del cierre cuando un recálculo administrativo lo cambió; <c>null</c> si nunca
+/// cambió.</summary>
 public sealed record LineaDeArqueoResumen(
-    int IdMedioPago, decimal ImporteEsperado, decimal ImporteDeclarado, decimal Diferencia);
+    int IdMedioPago, decimal ImporteEsperado, decimal ImporteDeclarado, decimal Diferencia,
+    decimal? ImporteEsperadoOriginal);
 
 /// <summary>Respuesta de <c>POST /api/caja/turnos/{id}/cierre</c> y de
 /// <c>GET /api/caja/turnos/{id}</c> (design: API Surface — "Turno + its arqueos_turno, the
 /// Z-report payload"): mismos campos planos que <see cref="TurnoResumen"/> más
 /// <see cref="Arqueos"/> — la deserialización de <see cref="TurnoResumen"/> sobre este mismo JSON
 /// sigue funcionando (System.Text.Json ignora propiedades no mapeadas), así que las pruebas de
-/// Slice 2 contra <c>GET …/{id}</c> quedan intactas.</summary>
+/// Slice 2 contra <c>GET …/{id}</c> quedan intactas. <see cref="FechaRecalculo"/>/<see
+/// cref="IdEmpleadoRecalculo"/>: el último recálculo administrativo del arqueo, <c>null</c> si
+/// nunca hubo uno.</summary>
 public sealed record TurnoConArqueos(
     int Id,
     int IdPuntoVenta,
@@ -141,7 +146,9 @@ public sealed record TurnoConArqueos(
     decimal FondoInicial,
     EstadoTurno Estado,
     string? Observaciones,
-    IReadOnlyList<LineaDeArqueoResumen> Arqueos);
+    IReadOnlyList<LineaDeArqueoResumen> Arqueos,
+    DateTimeOffset? FechaRecalculo,
+    int? IdEmpleadoRecalculo);
 
 // ---- stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
 // historico-de-cajas): G2 histórico de cierres y su detalle ----
@@ -149,7 +156,8 @@ public sealed record TurnoConArqueos(
 /// <summary>Fila de <c>GET /api/reportes/cajas</c> (spec: G2 Histórico Lists Closed Turnos Only,
 /// With Totals From Persisted Arqueos) — un turno <c>cerrado</c> con sus totales sumados de las
 /// filas YA PERSISTIDAS de <see cref="ArqueoTurno"/> (nunca <c>CalculadorDeArqueo</c>), más
-/// <see cref="Egresos"/> con la MISMA definición que <see cref="ResumenDeTurno.Egresos"/>.</summary>
+/// <see cref="Egresos"/> con la MISMA definición que <see cref="ResumenDeTurno.Egresos"/>, y la
+/// marca del último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
 public sealed record FilaDeHistoricoDeCajas(
     int IdTurnoCaja,
     int IdPuntoVenta,
@@ -158,7 +166,9 @@ public sealed record FilaDeHistoricoDeCajas(
     decimal Esperado,
     decimal Declarado,
     decimal Diferencia,
-    EgresosDeTurno Egresos);
+    EgresosDeTurno Egresos,
+    DateTimeOffset? FechaRecalculo,
+    int? IdEmpleadoRecalculo);
 
 /// <summary>Página de <c>GET /api/reportes/cajas</c> — mismo shape que
 /// <see cref="PaginaDeTurnos"/>.</summary>

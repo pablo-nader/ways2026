@@ -141,3 +141,4 @@ Usuario | presupuestos | id_empleado | marcado
 Usuario | remitos | id_empleado | marcado
 Usuario | turnos_caja | id_empleado_apertura | marcado
 Usuario | turnos_caja | id_empleado_cierre | marcado
+Usuario | turnos_caja | id_empleado_recalculo | marcado

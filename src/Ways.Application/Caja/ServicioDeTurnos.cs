@@ -214,7 +214,10 @@ public class ServicioDeTurnos(
 
     /// <summary>Cierre (design: The Cierre Transaction — orden de statements pineado; decisión 1
     /// declarada: el UPDATE guardado va PRIMERO, no derive-then-close). Irreversible: no existe
-    /// reapertura ni edición de arqueo (spec: Cierre Is One Atomic, Irreversible Transaction).
+    /// reapertura ni edición directa del arqueo (spec: Cierre Is One Atomic, Irreversible
+    /// Transaction). La única excepción es el recálculo administrativo del esperado cuando un admin
+    /// edita o da de baja un gasto de caja del turno ya cerrado (<c>ServicioDeGastos</c>), que
+    /// reusa esta misma derivación con el ancla pineada y deja marcado el turno.
     /// <see cref="FabricaDeEstrategiaSinReintento"/>: manual, raro, sin clave de idempotencia —
     /// un commit ambiguo tiene que llegar al operador como una falla que re-chequea, nunca como
     /// un reintento automático que reporte <c>409 turno_ya_cerrado</c> sobre un cierre que en
@@ -884,6 +887,9 @@ public class ServicioDeTurnos(
         turno.Estado,
         turno.Observaciones,
         arqueos
-            .Select(a => new LineaDeArqueoResumen(a.IdMedioPago, a.ImporteEsperado, a.ImporteDeclarado, a.Diferencia))
-            .ToList());
+            .Select(a => new LineaDeArqueoResumen(
+                a.IdMedioPago, a.ImporteEsperado, a.ImporteDeclarado, a.Diferencia, a.ImporteEsperadoOriginal))
+            .ToList(),
+        turno.FechaRecalculo,
+        turno.IdEmpleadoRecalculo);
 }
