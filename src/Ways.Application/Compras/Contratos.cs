@@ -48,7 +48,9 @@ public sealed record SolicitudDeCompra(
 /// cref="UnidadesPorBulto"/>) se persisten (design: Table Shapes — B). <see cref="CodigoLote"/>/
 /// <see cref="FechaVencimiento"/> son el input crudo de borrador; <see cref="IdLote"/> es el lote
 /// resuelto (get-or-create), <c>NULL</c> mientras la compra es borrador y para artículos que no
-/// controlan lote (etapa 12, slice 5).</summary>
+/// controlan lote (etapa 12, slice 5). <see cref="CostoUnitario"/>, <see cref="Descuento"/>,
+/// <see cref="Total"/> y <see cref="PrecioSugerido"/> son <c>null</c> para el rol vendedor, que
+/// no ve el costo de los artículos.</summary>
 public sealed record ItemDeCompra(
     int Orden,
     int IdArticulo,
@@ -56,11 +58,11 @@ public sealed record ItemDeCompra(
     decimal Cantidad,
     decimal? Bultos,
     decimal? UnidadesPorBulto,
-    decimal CostoUnitario,
-    decimal Descuento,
+    decimal? CostoUnitario,
+    decimal? Descuento,
     int IdAlicuotaIva,
     decimal PorcentajeIva,
-    decimal Total,
+    decimal? Total,
     bool ActualizaCosto,
     decimal? PrecioSugerido,
     string? CodigoLote,
