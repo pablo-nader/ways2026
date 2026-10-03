@@ -407,7 +407,10 @@ comprobantes_venta (          -- [operativa]
     id_empleado, id_cliente,
     id_comprobante_asociado integer NULL,    -- NC/ND → el comprobante que corrigen
     -- totales (redundantes con items, verificados por dominio)
-    subtotal, descuento_total, total,
+    subtotal, descuento_total,
+    descuento_manual_total numeric(14,2) NOT NULL DEFAULT 0,  -- Σ de los descuentos manuales de línea
+    recargo_manual_total   numeric(14,2) NOT NULL DEFAULT 0,  -- Σ de los recargos manuales de línea
+    total,                                   -- subtotal − descuento_total − descuento_manual_total + recargo_manual_total
     neto_gravado NULL, iva_total NULL,       -- solo si discrimina_iva
     -- entrega
     direccion_entrega text NULL, observaciones text NULL,
@@ -431,8 +434,10 @@ items_comprobante_venta (
     id_lista_precio integer,                 -- con qué lista se vendió
     id_oferta       integer NULL,            -- si una oferta tocó esta línea
     descuento       numeric(14,2) NOT NULL DEFAULT 0,   -- importe descontado en la línea
+    ajuste_manual_porcentaje numeric(5,2) NULL,         -- con signo: negativo = descuento, positivo = recargo
+    ajuste_manual   numeric(14,2) NOT NULL DEFAULT 0,   -- monto con signo del ajuste, sobre el neto de la línea
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),  -- snapshot
-    total           numeric(14,2)            -- cantidad × precio − descuento
+    total           numeric(14,2)            -- cantidad × precio − descuento + ajuste_manual
 );
 
 pagos_comprobante (
@@ -449,6 +454,7 @@ Cambios de fondo respecto del legacy:
 |---|---|
 | `ventas.articulos` string serializado | `items_comprobante_venta` |
 | Descuento como línea fantasma `OF...` | `descuento` + `id_oferta` **en el item** |
+| Precio cambiado a mano en caja, sin rastro | `ajuste_manual_porcentaje` + `ajuste_manual` **en el item** |
 | Columnas `efectivo/tarjetas/c_corriente/vuelto` | N filas en `pagos_comprobante` |
 | `tipo` 1/2 (venta/devolución) | `tipos_comprobante` con `signo` (ticket X / NC X) |
 | `tipo` 3/4/5 metidos en `ventas` | `movimientos_cuenta_corriente` (§8) |
@@ -508,6 +514,27 @@ movimientos, y los movimientos no se editan.
 > cifrado). El camino de escritura fiscal es `ServicioDeFacturacionFiscal` (slice 5) — el único
 > escritor de estas cuatro columnas, vía la guarded `UPDATE` U2 (`WHERE … AND resultado_fiscal =
 > 'pendiente'`).
+>
+> **Estado (ajuste manual de precio en ventas): implementada**, migración `AjusteManualEnVentas`
+> (solo DDL, sin backfill: los valores por defecto cubren las filas existentes).
+> `items_comprobante_venta` gana `ajuste_manual_porcentaje numeric(5,2) NULL` — porcentaje con
+> signo que el operador aplica a mano sobre el **neto de la línea** (bruto menos `descuento` de
+> oferta): negativo = descuento, positivo = recargo, `NULL` = sin ajuste — y `ajuste_manual
+> numeric(14,2) NOT NULL DEFAULT 0`, el monto resultante con el signo del porcentaje. Dos CHECKs:
+> `ck_items_comprobante_venta_ajuste_manual_porcentaje_valido` (`NULL`, o distinto de cero y
+> entre −100 y 100) y `ck_items_comprobante_venta_ajuste_manual_con_porcentaje` (sin porcentaje
+> el monto es 0). El total de línea pasa a ser `round(cantidad × precio) − descuento +
+> ajuste_manual`. `comprobantes_venta` gana `descuento_manual_total` y `recargo_manual_total`
+> (ambos `numeric(14,2) NOT NULL DEFAULT 0`): la suma de los ajustes de las líneas de
+> porcentaje negativo y positivo respectivamente, separados a propósito para que un recargo en
+> una línea no pueda ocultar un descuento en otra; el total del encabezado es `subtotal −
+> descuento_total − descuento_manual_total + recargo_manual_total`. La clasificación depende del
+> signo del **porcentaje**, no del monto, de modo que una línea de NCX (cantidad negativa) sigue
+> la misma convención de signo que `descuento_total`. El cliente envía únicamente el porcentaje
+> (`ajusteManualPorcentaje`, `400 ajuste_manual_invalido` si es 0, está fuera de ±100 o trae más
+> de dos decimales); todo importe lo calcula `CalculadorDeTotales`, en el camino online y en el
+> offline. Sin tablas nuevas: ambas columnas viven en tablas operativas que ya tienen
+> `id_tenant` y RLS.
 
 ### Fiscal ARCA (Etapa 19a)
 

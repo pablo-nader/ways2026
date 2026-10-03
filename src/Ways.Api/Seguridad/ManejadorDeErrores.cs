@@ -930,6 +930,21 @@ public class ManejadorDeErrores(
                     "Un item marcado como costo estimado tiene que tener un costo cargado.",
                     "costo_estimado_sin_costo"),
 
+            // Reusa el código de dominio de ReglaDeAjusteManual a propósito: es la misma regla de
+            // negocio y la CHECK es solo su backstop de esquema (mismo criterio que
+            // pago_importe_negativo).
+            "ck_items_comprobante_venta_ajuste_manual_porcentaje_valido" =>
+                (StatusCodes.Status400BadRequest,
+                    "El ajuste manual tiene que ser un porcentaje distinto de cero, entre -100 y 100.",
+                    "ajuste_manual_invalido"),
+
+            // Código distinto: ninguna regla de dominio produce un monto sin porcentaje, así que
+            // llegar acá es una escritura fuera de banda, no un error del cliente.
+            "ck_items_comprobante_venta_ajuste_manual_con_porcentaje" =>
+                (StatusCodes.Status400BadRequest,
+                    "Un item con monto de ajuste manual tiene que tener su porcentaje.",
+                    "ajuste_manual_sin_porcentaje"),
+
             _ => null
         };
 

@@ -4,9 +4,10 @@ namespace Ways.Domain.Ventas;
 
 /// <summary>
 /// Regla pura del porcentaje de ajuste manual de una línea de venta (negativo = descuento,
-/// positivo = recargo). Mismo rango y precisión que la CHECK
-/// <c>ck_items_comprobante_venta_ajuste_manual_porcentaje_valido</c>: el servicio rechaza acá con un
-/// 400 de dominio y la CHECK queda como backstop de una escritura cruda.
+/// positivo = recargo). El servicio rechaza acá con un 400 de dominio; la CHECK
+/// <c>ck_items_comprobante_venta_ajuste_manual_porcentaje_valido</c> repite el cero y el rango como
+/// backstop de una escritura cruda. Los 2 decimales NO los impone esa CHECK sino el tipo de la
+/// columna (<c>numeric(5,2)</c>, que redondea), así que sólo esta regla los rechaza.
 /// </summary>
 public static class ReglaDeAjusteManual
 {

@@ -60,6 +60,17 @@ public class ComprobanteVenta : EntidadTenant
 
     public decimal Subtotal { get; set; }
     public decimal DescuentoTotal { get; set; }
+
+    /// <summary>Suma de los descuentos manuales de las líneas (las de porcentaje negativo), en
+    /// positivo para un TX y en negativo para un NCX, igual que <see cref="DescuentoTotal"/>.
+    /// Separado de <see cref="RecargoManualTotal"/> a propósito: un recargo en una línea no puede
+    /// esconder un descuento en otra.</summary>
+    public decimal DescuentoManualTotal { get; set; }
+
+    /// <summary>Suma de los recargos manuales de las líneas (las de porcentaje positivo). El total
+    /// es <c>subtotal − descuento_total − descuento_manual_total + recargo_manual_total</c>.</summary>
+    public decimal RecargoManualTotal { get; set; }
+
     public decimal Total { get; set; }
 
     /// <summary><c>NULL</c> mientras <c>tipos_comprobante.discrimina_iva = false</c> (TX/NCX de

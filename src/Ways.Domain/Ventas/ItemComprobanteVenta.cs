@@ -60,8 +60,19 @@ public class ItemComprobanteVenta : EntidadTenant
     public decimal PrecioUnitario { get; set; }
     public decimal Descuento { get; set; }
 
-    /// <summary><c>cantidad × precio_unitario − descuento</c> (<c>CalculadorDeTotales</c>,
-    /// redondeo <c>MidpointRounding.AwayFromZero</c>).</summary>
+    /// <summary>Porcentaje que el operador aplicó a mano sobre el neto de la línea (bruto menos
+    /// <see cref="Descuento"/>): negativo = descuento, positivo = recargo, <c>NULL</c> = sin ajuste.
+    /// Nunca cero ni fuera de ±100 (<c>ck_items_comprobante_venta_ajuste_manual_porcentaje_valido</c>).
+    /// Es el único dato del ajuste que llega del cliente; el monto lo calcula el servidor.</summary>
+    public decimal? AjusteManualPorcentaje { get; set; }
+
+    /// <summary>Monto del ajuste manual, con el signo del porcentaje sobre un neto positivo (en una
+    /// línea de NCX sale con el signo opuesto, igual que <see cref="Descuento"/>). <c>0</c> sin
+    /// porcentaje (<c>ck_items_comprobante_venta_ajuste_manual_con_porcentaje</c>).</summary>
+    public decimal AjusteManual { get; set; }
+
+    /// <summary><c>cantidad × precio_unitario − descuento + ajuste_manual</c>
+    /// (<c>CalculadorDeTotales</c>, redondeo <c>MidpointRounding.AwayFromZero</c>).</summary>
     public decimal Total { get; set; }
 
     /// <summary>Snapshot de <c>articulos.costo_nominal</c> al emitir, por unidad, sin signo
