@@ -904,7 +904,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       setCompra(confirmada)
       setPanelConfirmarAbierto(false)
       setConfirmadoParaConfirmar(false)
-      setAviso('Compra confirmada: el stock y el costo ya se actualizaron.')
+      setAviso(
+        confirmada.items.some((i) => i.idArticulo !== null)
+          ? 'Compra confirmada: el stock y el costo ya se actualizaron.'
+          : 'Compra confirmada.',
+      )
 
       // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
       // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
@@ -978,6 +982,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const esBorrador = esNuevo || compra?.estado === 'Borrador'
   const esConfirmada = compra?.estado === 'Confirmada'
   const tienePreciosSugeridos = compra?.items.some((i) => i.precioSugerido !== null) ?? false
+  const tieneArticulos = compra?.items.some((i) => i.idArticulo !== null) ?? false
   // Un rol sin escritura ve el borrador existente en la tabla de solo lectura: el formulario
   // recalcula los totales desde los costos de cada línea, que el vendedor no recibe.
   const mostrarFormulario = esBorrador && (puedeEscribir || compra === null)
@@ -1350,8 +1355,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                     onChange={(e) => setConfirmadoParaConfirmar(e.target.checked)}
                   />
                   <label className="form-check-label" htmlFor="compra-confirmacion-confirmar">
-                    Confirmo que quiero confirmar esta compra. Es irreversible: el stock entra, el costo del artículo
-                    se actualiza y no se puede volver a borrador.
+                    {tieneArticulos
+                      ? 'Confirmo que quiero confirmar esta compra. Es irreversible: el stock entra, el costo del artículo se actualiza y no se puede volver a borrador.'
+                      : 'Confirmo que quiero confirmar esta compra. Es irreversible: no se puede volver a borrador.'}
                   </label>
                 </div>
                 <div className="d-flex gap-2">
@@ -1432,8 +1438,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                           onChange={(e) => setConfirmadoParaAnular(e.target.checked)}
                         />
                         <label className="form-check-label" htmlFor="compra-confirmacion-anular">
-                          Confirmo que quiero anular esta compra. Es irreversible: se revierte el stock que entró, el
-                          costo del artículo NO se corrige solo (se edita aparte).
+                          {tieneArticulos
+                            ? 'Confirmo que quiero anular esta compra. Es irreversible: se revierte el stock que entró, el costo del artículo NO se corrige solo (se edita aparte).'
+                            : 'Confirmo que quiero anular esta compra. Es irreversible.'}
                         </label>
                       </div>
                       <div className="d-flex gap-2">

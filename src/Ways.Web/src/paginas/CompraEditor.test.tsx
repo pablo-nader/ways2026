@@ -1130,4 +1130,29 @@ describe('CompraEditor — líneas por concepto', () => {
     expect(within(celda).getByText('Concepto')).toBeInTheDocument()
     expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
   })
+
+  it('confirmar una compra solo de conceptos no promete mover stock ni costo', async () => {
+    const concepto = itemFixture({
+      orden: 1, idArticulo: null, descripcion: 'Ferretería', cantidad: 1, costoUnitario: 500, descuento: 0, total: 500,
+      actualizaCosto: false, precioSugerido: null,
+    })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ items: [concepto] })) : undefined))
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras/1/confirmar'
+        ? Promise.resolve(compraFixture({ estado: 'Confirmada', items: [concepto] }))
+        : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('Ferretería')
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
+
+    const casilla = screen.getByLabelText(/Confirmo que quiero confirmar esta compra/)
+    expect(casilla.closest('div')).not.toHaveTextContent('stock')
+    await usuario.click(casilla)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+
+    expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+  })
 })
