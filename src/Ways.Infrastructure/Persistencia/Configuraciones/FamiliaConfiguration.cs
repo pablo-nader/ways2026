@@ -7,8 +7,9 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
 /// Mapea <see cref="Familia"/> (doc 10 §3): tabla tenant-wide sin <c>id_empresa</c>, mismo alcance
-/// que <c>articulos</c>. La familia no guarda valores — solo su nombre —, así que no hay nada más
-/// que mapear; la pertenencia vive en <c>articulos.id_familia</c> (<see cref="ArticuloConfiguration"/>).
+/// que <c>articulos</c>. La familia no guarda los valores compartidos: se mapean su clave, su
+/// nombre, su estado y las columnas comunes de toda entidad, y nada más; la pertenencia vive en
+/// <c>articulos.id_familia</c> (<see cref="ArticuloConfiguration"/>).
 /// </summary>
 public class FamiliaConfiguration : IEntityTypeConfiguration<Familia>
 {

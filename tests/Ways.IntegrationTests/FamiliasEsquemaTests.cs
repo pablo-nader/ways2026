@@ -161,10 +161,13 @@ public class FamiliasEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(["timestamptz", "YES", "<null>", "NO", "<null>"], porColumna["deleted_at"][1..]);
     }
 
+    /// <summary><c>articulos.id_familia</c> es <c>int4</c>, nulable y sin default (<c>information_schema</c>),
+    /// y un artículo creado sin familia la guarda en <c>NULL</c>. Las filas anteriores a la migración no
+    /// se pueden observar acá: el contenedor migra antes de sembrar nada.</summary>
     [Fact]
-    public async Task ArticulosGanaIdFamiliaNulableSinDefaultYSinBackfill()
+    public async Task ArticulosGanaIdFamiliaNulableSinDefaultYUnArticuloNuevoQuedaSinFamilia()
     {
-        var s = await SembrarAsync(nameof(ArticulosGanaIdFamiliaNulableSinDefaultYSinBackfill));
+        var s = await SembrarAsync(nameof(ArticulosGanaIdFamiliaNulableSinDefaultYUnArticuloNuevoQuedaSinFamilia));
         await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
 
         var columna = Assert.Single(await LeerAsync(
@@ -323,15 +326,20 @@ public class FamiliasEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("42501", excepcion.SqlState);
     }
 
+    /// <summary>Capa 1 (filtro de EF) sola: corre sobre <c>ways_owner</c> (<see cref="WaysApiFixture.CrearContextoDeOwner"/>,
+    /// que bypasea RLS), así que lo único que separa a un tenant del otro es el query filter de
+    /// <c>WaysDbContext.AplicarFiltroDeTenant</c>. Sobre <c>ways_app</c> la RLS excluiría la fila ajena
+    /// aunque el filtro no existiera, y la prueba no diría nada de él. Cada sesión ve exactamente su
+    /// familia y ninguna de las demás que hay en la base.</summary>
     [Fact]
     public async Task ElFiltroDeEfNuncaDevuelveFamiliasDeOtroTenant()
     {
         var s = await SembrarAsync(nameof(ElFiltroDeEfNuncaDevuelveFamiliasDeOtroTenant));
 
-        await using var sesionA = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, s.IdTenantA));
+        await using var sesionA = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, s.IdTenantA));
         Assert.Equal([s.IdFamiliaA], await sesionA.Familias.Select(f => f.Id).ToListAsync());
 
-        await using var sesionB = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, s.IdTenantB));
+        await using var sesionB = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, s.IdTenantB));
         Assert.Equal([s.IdFamiliaB], await sesionB.Familias.Select(f => f.Id).ToListAsync());
     }
 

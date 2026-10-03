@@ -4,8 +4,7 @@ namespace Ways.Domain.Articulos;
 /// Los doce campos de <see cref="Articulo"/> que son IGUALES para todos los miembros de una
 /// <see cref="Familia"/> (doc 10 §3). Regla pura, sin base de datos: <see cref="De"/> toma la foto de
 /// un artículo, <see cref="AplicarA"/> la copia sobre otro y <see cref="CamposDistintos"/> nombra, con
-/// el nombre de columna de la tabla <c>articulos</c>, qué campos difieren — es el insumo del detalle
-/// de un error de API.
+/// el nombre de columna de la tabla <c>articulos</c>, qué campos difieren.
 ///
 /// Lo que NO está acá es propio de cada artículo y nunca se copia ni se compara:
 /// <c>nombre</c>, <c>descripcion</c>, <c>codigo_interno</c>, los códigos de barra, <c>id_marca</c>,

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -39,6 +40,55 @@ public class ModeloDeArticulosYPreciosTests
 
         return new WaysDbContext(opciones, TenantActualFijo.Plataforma);
     }
+
+    /// <summary>Cambia UNA sola propiedad compartida de <see cref="Articulo"/> (clave: nombre de la
+    /// propiedad) a un valor distinto del de <see cref="CrearArticuloBase"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, Action<Articulo>> CambiosCompartidos =
+        new Dictionary<string, Action<Articulo>>
+        {
+            [nameof(Articulo.IdArea)] = a => a.IdArea = 91,
+            [nameof(Articulo.IdCategoria)] = a => a.IdCategoria = 92,
+            [nameof(Articulo.IdGrupo)] = a => a.IdGrupo = 94,
+            [nameof(Articulo.IdProveedorHabitual)] = a => a.IdProveedorHabitual = 95,
+            [nameof(Articulo.IdAlicuotaIva)] = a => a.IdAlicuotaIva = 96,
+            [nameof(Articulo.UnidadVenta)] = a => a.UnidadVenta = UnidadVenta.Peso,
+            [nameof(Articulo.UnidadesPorBulto)] = a => a.UnidadesPorBulto = 24m,
+            [nameof(Articulo.EsProducto)] = a => a.EsProducto = false,
+            [nameof(Articulo.ControlaLote)] = a => a.ControlaLote = true,
+            [nameof(Articulo.CostoLista)] = a => a.CostoLista = 150m,
+            [nameof(Articulo.DescuentoProveedor)] = a => a.DescuentoProveedor = 15m,
+            [nameof(Articulo.CostoNominal)] = a => a.CostoNominal = 130m
+        };
+
+    public static TheoryData<string> PropiedadesCompartidas()
+    {
+        var datos = new TheoryData<string>();
+
+        foreach (var propiedad in CambiosCompartidos.Keys)
+        {
+            datos.Add(propiedad);
+        }
+
+        return datos;
+    }
+
+    private static Articulo CrearArticuloBase() => new()
+    {
+        CodigoInterno = "ART-1",
+        Nombre = "Gaseosa cola 500 cc",
+        IdArea = 1,
+        IdCategoria = 2,
+        IdGrupo = 4,
+        IdProveedorHabitual = 5,
+        IdAlicuotaIva = 6,
+        UnidadVenta = UnidadVenta.Unidad,
+        UnidadesPorBulto = 12m,
+        EsProducto = true,
+        ControlaLote = false,
+        CostoLista = 100m,
+        DescuentoProveedor = 10m,
+        CostoNominal = 90m
+    };
 
     [Fact]
     public void ArticulosTieneElIndiceUnicoDeCodigoInternoYLaClaveAlterna()
@@ -103,6 +153,38 @@ public class ModeloDeArticulosYPreciosTests
         Assert.Equal(
             [nameof(Articulo.IdFamilia), nameof(Articulo.IdTenant)],
             indice.Properties.Select(p => p.Name));
+    }
+
+    /// <summary>El nombre con que <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> informa un
+    /// campo es la columna que el modelo de EF mapea para esa propiedad de <see cref="Articulo"/>. Un
+    /// nombre mal escrito en la regla y repetido en <c>ValoresCompartidosDeFamiliaTests</c> —que compara
+    /// contra su propia lista— pasaría allá y falla acá.</summary>
+    [Theory]
+    [MemberData(nameof(PropiedadesCompartidas))]
+    public void ElNombreDeColumnaQueInformaLaReglaEsElQueElModeloMapeaParaEsaPropiedad(string propiedad)
+    {
+        using var db = CrearContexto();
+        var entidad = db.Model.FindEntityType(typeof(Articulo))!;
+
+        var otro = CrearArticuloBase();
+        CambiosCompartidos[propiedad](otro);
+
+        var distintos = ValoresCompartidosDeFamilia.De(CrearArticuloBase())
+            .CamposDistintos(ValoresCompartidosDeFamilia.De(otro));
+
+        Assert.Equal([entidad.FindProperty(propiedad)!.GetColumnName()!], distintos);
+    }
+
+    /// <summary>Completitud de la prueba anterior: tiene un caso por cada propiedad del registro de la
+    /// regla.</summary>
+    [Fact]
+    public void LaPruebaDeNombresDeColumnaCubreExactamenteLasPropiedadesDeLaRegla()
+    {
+        var delRegistro = typeof(ValoresCompartidosDeFamilia)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.Name);
+
+        Assert.Equal(delRegistro.Order(), CambiosCompartidos.Keys.Order());
     }
 
     [Fact]

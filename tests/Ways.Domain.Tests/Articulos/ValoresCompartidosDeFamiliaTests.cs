@@ -15,7 +15,8 @@ public class ValoresCompartidosDeFamiliaTests
 {
     /// <summary>Las doce columnas de <c>articulos</c> compartidas por la familia, en el orden en que
     /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> las informa. Escritas a mano a
-    /// propósito: pinean los nombres de columna que viajan al detalle de un error de API.</summary>
+    /// propósito: pinean los nombres que <c>CamposDistintos</c> devuelve. Que cada uno sea una columna
+    /// real de <c>articulos</c> lo comprueba <c>ModeloDeArticulosYPreciosTests</c> contra el modelo de EF.</summary>
     private static readonly string[] ColumnasCompartidas =
     [
         "id_area",
@@ -143,8 +144,12 @@ public class ValoresCompartidosDeFamiliaTests
         UpdatedAt = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero)
     };
 
+    /// <summary>Con los doce campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
+    /// informa exactamente los nombres de <see cref="ColumnasCompartidas"/>, en el orden de
+    /// declaración, y hay un cambio por cada nombre. Compara contra la lista escrita en esta clase: no
+    /// consulta la tabla ni el modelo de EF.</summary>
     [Fact]
-    public void LasDoceColumnasCompartidasSonExactamenteLasDeLaTabla()
+    public void CamposDistintosInformaLasDoceColumnasDeLaPruebaEnOrdenDeDeclaracion()
     {
         Assert.Equal(12, ColumnasCompartidas.Length);
         Assert.Equal(ColumnasCompartidas.Order(), CambiosCompartidos.Keys.Order());

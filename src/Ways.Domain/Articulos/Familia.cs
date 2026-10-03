@@ -5,10 +5,12 @@ namespace Ways.Domain.Articulos;
 /// <summary>
 /// Familia de artículos (doc 10 §3): agrupa artículos que son SIEMPRE idénticos en sus campos
 /// compartidos (<see cref="ValoresCompartidosDeFamilia"/>, incluido el estado de precios de las
-/// listas fijas). La familia NO guarda ningún valor propio salvo su nombre: sus miembros son la
-/// fuente de verdad. Los lectores (listados, POS, ventas, reportes) siguen leyendo cada artículo
-/// tal cual; quienes escriben un campo compartido o un precio deben replicar el cambio a todos los
-/// miembros en la misma transacción — el esquema no fuerza la igualdad.
+/// listas fijas). La familia NO guarda ninguno de esos valores: sus miembros son la fuente de
+/// verdad. Lo suyo es su identidad, su nombre, su estado (<see cref="Activo"/>) y las columnas
+/// comunes de toda entidad (tenant, sellos de auditoría y baja lógica). Los lectores (listados,
+/// POS, ventas, reportes) leen cada artículo tal cual; quienes escriben un campo compartido o un
+/// precio deben replicar el cambio a todos los miembros en la misma transacción — el esquema no
+/// fuerza la igualdad.
 ///
 /// Es miembro de una familia todo artículo con <see cref="Articulo.IdFamilia"/> igual a
 /// <see cref="Id"/> y sin baja lógica: un artículo dado de baja no cuenta como miembro para
