@@ -284,6 +284,8 @@ describe('aSolicitudDeCompra', () => {
         fechaComprobante: '',
         observaciones: '  ',
         idOrdenCompra: null,
+        discriminaIva: null,
+        ivaImpreso: {},
       },
       [],
     )
@@ -302,6 +304,8 @@ describe('aSolicitudDeCompra', () => {
         fechaComprobante: '2026-08-05',
         observaciones: '',
         idOrdenCompra: null,
+        discriminaIva: null,
+        ivaImpreso: {},
       },
       [],
     )
@@ -318,6 +322,8 @@ describe('aSolicitudDeCompra', () => {
         fechaComprobante: '',
         observaciones: '',
         idOrdenCompra: null,
+        discriminaIva: null,
+        ivaImpreso: {},
       },
       [lineaFixture({ clave: 1 }), lineaFixture({ clave: 2, idArticulo: '' })],
     )
@@ -328,7 +334,7 @@ describe('aSolicitudDeCompra', () => {
   // recortado ni defaulteado a 0/undefined, campo posicional final de SolicitudDeCompra.
   it('idOrdenCompra viaja tal cual desde el encabezado (mutation-proof-tests regla 12b)', () => {
     const solicitud = aSolicitudDeCompra(
-      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: 42 },
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: 42, discriminaIva: null, ivaImpreso: {} },
       [],
     )
     expect(solicitud.idOrdenCompra).toBe(42)
@@ -336,7 +342,7 @@ describe('aSolicitudDeCompra', () => {
 
   it('idOrdenCompra ausente viaja como null, nunca 0', () => {
     const solicitud = aSolicitudDeCompra(
-      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null },
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null, discriminaIva: null, ivaImpreso: {} },
       [],
     )
     expect(solicitud.idOrdenCompra).toBeNull()
@@ -358,7 +364,7 @@ describe('lineaFormularioACalculo', () => {
 // ---- calcularTotalesDeCompra: espejo de CalculadorDeCompra (design: "Compra Arithmetic") -----
 
 function lineaDeCalculoFixture(sobrescribir: Partial<LineaDeCalculo> = {}): LineaDeCalculo {
-  return { unidades: 10, bultos: 0, unidadesPorBulto: 0, costoUnitario: 100, descuento: 50, porcentajeIva: 21, ...sobrescribir }
+  return { idAlicuotaIva: 1, unidades: 10, bultos: 0, unidadesPorBulto: 0, costoUnitario: 100, descuento: 50, porcentajeIva: 21, ...sobrescribir }
 }
 
 describe('calcularTotalesDeCompra', () => {
@@ -392,7 +398,7 @@ describe('calcularTotalesDeCompra', () => {
 
   it('un set vacío de líneas da totales en cero, iva NULL cuando no discrimina', () => {
     const totales = calcularTotalesDeCompra([], false)
-    expect(totales).toEqual({ items: [], subtotal: 0, descuentoTotal: 0, ivaTotal: null, total: 0 })
+    expect(totales).toEqual({ items: [], subtotal: 0, descuentoTotal: 0, ivaTotal: null, total: 0, alicuotas: [] })
   })
 
   it('cantidad 0 no divide por cero — costoEfectivo es null', () => {
@@ -402,7 +408,7 @@ describe('calcularTotalesDeCompra', () => {
 
   it('dos líneas suman sus brutos/descuentos/iva independientemente', () => {
     const totales = calcularTotalesDeCompra(
-      [lineaDeCalculoFixture(), lineaDeCalculoFixture({ unidades: 5, costoUnitario: 40, descuento: 0, porcentajeIva: 10.5 })],
+      [lineaDeCalculoFixture(), lineaDeCalculoFixture({ idAlicuotaIva: 2, unidades: 5, costoUnitario: 40, descuento: 0, porcentajeIva: 10.5 })],
       true,
     )
     // línea 2: cantidad 5, bruto 200, total 200, iva round(200×10.5/100,2)=21

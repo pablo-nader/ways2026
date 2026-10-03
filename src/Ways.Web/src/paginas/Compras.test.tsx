@@ -81,6 +81,7 @@ function tipoFixture(sobrescribir: Partial<TipoComprobanteListado> = {}): TipoCo
     afectaStock: true,
     codigoAfip: null,
     activo: true,
+    registraLibroIva: true,
     ...sobrescribir,
   }
 }

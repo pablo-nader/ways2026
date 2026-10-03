@@ -253,6 +253,9 @@ export type TipoComprobanteListado = {
   afectaStock: boolean
   codigoAfip: number | null
   activo: boolean
+  /** Entra al libro IVA: en una compra, además, el tipo fija si discrimina IVA (factura). Un tipo
+   * que no lo registra (remito, comprobante no fiscal) deja elegirlo al cargar el comprobante. */
+  registraLibroIva: boolean
 }
 
 // --- Parámetros operativos (ADR-13) ---
@@ -1673,7 +1676,17 @@ export type SolicitudDeCompra = {
   observaciones: string | null
   items: LineaDeCompraSolicitada[]
   idOrdenCompra: number | null
+  /** `null` = el valor del tipo. En una factura lo fija el tipo y pedir lo contrario es 400. */
+  discriminaIva: boolean | null
+  /** Override de redondeo: el IVA que el proveedor imprimió por alícuota (tolerancia $1,00). */
+  ivaImpreso: IvaImpresoSolicitado[] | null
 }
+
+/** El IVA impreso en el comprobante para una alícuota (espejo de `IvaImpresoSolicitado`). */
+export type IvaImpresoSolicitado = { idAlicuotaIva: number; iva: number }
+
+/** Una fila del desglose de IVA de una compra (espejo de `AlicuotaDeCompra`). */
+export type AlicuotaDeCompra = { idAlicuotaIva: number; porcentaje: number; neto: number; iva: number }
 
 /** Un item ya persistido, con su `precioSugerido` (espejo de `ItemDeCompra`). */
 export type ItemDeCompra = {
@@ -1721,6 +1734,9 @@ export type CompraDetalle = {
   estado: EstadoCompra
   items: ItemDeCompra[]
   idOrdenCompra: number | null
+  discriminaIva: boolean
+  /** Vacío cuando la compra no discrimina IVA. */
+  alicuotas: AlicuotaDeCompra[]
 }
 
 /** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). */
