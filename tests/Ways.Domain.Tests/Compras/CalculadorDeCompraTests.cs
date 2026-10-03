@@ -13,7 +13,7 @@ public class CalculadorDeCompraTests
         new Dictionary<int, (decimal?, decimal?)>();
 
     private static LineaDeCompra Linea(
-        int orden = 1, int idArticulo = 1, decimal unidades = 1m, decimal? bultos = null,
+        int orden = 1, int? idArticulo = 1, decimal unidades = 1m, decimal? bultos = null,
         decimal? unidadesPorBulto = null, decimal costoUnitario = 100m, decimal descuento = 0m,
         int idAlicuotaIva = 1, decimal porcentajeIva = 21m, bool actualizaCosto = true) =>
         new(orden, idArticulo, "item de prueba", unidades, bultos, unidadesPorBulto, costoUnitario, descuento,
@@ -212,7 +212,7 @@ public class CalculadorDeCompraTests
     [Fact]
     public void ResolverActualizacionesDeCostoDedupeaConElMayorOrdenGanando()
     {
-        var items = new List<(int Orden, int IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
+        var items = new List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
         {
             (1, 7, true, 100m, 100m),
             (2, 7, true, 200m, 200m)
@@ -227,7 +227,7 @@ public class CalculadorDeCompraTests
     [Fact]
     public void ResolverActualizacionesDeCostoExcluyeActualizaCostoFalso()
     {
-        var items = new List<(int Orden, int IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
+        var items = new List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
         {
             (1, 7, false, 100m, 100m)
         };
@@ -242,7 +242,7 @@ public class CalculadorDeCompraTests
     {
         // Guard anti-bonificación (design decisión 4): una línea con costo cero no debe pisar
         // articulos.costo_nominal aunque actualizaCosto sea true.
-        var items = new List<(int Orden, int IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
+        var items = new List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
         {
             (1, 7, true, 0m, 0m)
         };
@@ -260,6 +260,85 @@ public class CalculadorDeCompraTests
 
         Assert.Equal(121m, conIva);
         Assert.Equal(121m, sinIva);
+    }
+
+    // ---- líneas por concepto (sin artículo) ----------------------------------------------------
+
+    private static LineaDeCompra Concepto(
+        string descripcion = "Flete", decimal unidades = 1m, decimal costoUnitario = 1000m, decimal descuento = 0m,
+        decimal porcentajeIva = 21m, decimal? bultos = null, decimal? unidadesPorBulto = null, bool actualizaCosto = false) =>
+        new(1, null, descripcion, unidades, bultos, unidadesPorBulto, costoUnitario, descuento, 1, porcentajeIva, actualizaCosto);
+
+    [Fact]
+    public void UnConceptoSumaSuImporteAlTotalPeroNoTieneArticuloNiPrecioSugerido()
+    {
+        var margenes = new Dictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> { [1] = (30m, null) };
+
+        var resultado = CalculadorDeCompra.Calcular(
+            [Linea(orden: 1, idArticulo: 1, costoUnitario: 100m), Concepto() with { Orden = 2 }],
+            discriminaIva: false, margenes);
+
+        Assert.NotNull(resultado.Items[0].PrecioSugerido);
+        Assert.Null(resultado.Items[1].IdArticulo);
+        Assert.Null(resultado.Items[1].PrecioSugerido);
+        Assert.Equal(1000m, resultado.Items[1].Total);
+        Assert.Equal(1100m, resultado.Total);
+    }
+
+    [Fact]
+    public void UnConceptoDiscriminaIvaComoCualquierOtraLinea()
+    {
+        var resultado = CalculadorDeCompra.Calcular([Concepto(costoUnitario: 1000m)], discriminaIva: true, SinMargenes);
+
+        Assert.Equal(210m, resultado.IvaTotal);
+        Assert.Equal(1210m, resultado.Total);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UnConceptoSinDescripcionEsRechazado(string descripcion)
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            CalculadorDeCompra.Calcular([Concepto(descripcion: descripcion)], discriminaIva: false, SinMargenes));
+
+        Assert.Equal("concepto_sin_descripcion", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnConceptoConBultosEsRechazado()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            CalculadorDeCompra.Calcular([Concepto(bultos: 2m, unidadesPorBulto: 6m)], discriminaIva: false, SinMargenes));
+
+        Assert.Equal("concepto_con_bultos", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnConceptoQueActualizaCostoEsRechazado()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            CalculadorDeCompra.Calcular([Concepto(actualizaCosto: true)], discriminaIva: false, SinMargenes));
+
+        Assert.Equal("concepto_actualiza_costo", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ResolverActualizacionesDeCostoNuncaIncluyeUnConcepto()
+    {
+        var items = new List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
+        {
+            (1, null, true, 100m, 100m),
+            (2, 7, true, 50m, 50m)
+        };
+
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+
+        Assert.Single(resultado);
+        Assert.Equal(50m, resultado[7]);
     }
 
     // ---- header: varias líneas ------------------------------------------------------------------

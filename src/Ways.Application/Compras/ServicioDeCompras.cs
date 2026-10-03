@@ -166,6 +166,7 @@ public class ServicioDeCompras(
         // Etapa 12, slice 5 (spec comprobantes-compra: "Expired Reception Is Refused") — chequeo
         // puro, sin base de datos, ANTES de cualquier lectura: fecha_vencimiento en el pasado se
         // rechaza al guardar, no solo al confirmar.
+        ValidarLineasDeConcepto(solicitud.Items);
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
@@ -221,6 +222,7 @@ public class ServicioDeCompras(
         var momento = reloj.Ahora;
 
         // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
+        ValidarLineasDeConcepto(solicitud.Items);
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
@@ -402,15 +404,20 @@ public class ServicioDeCompras(
         }
 
         // 2. El read set de items queda congelado bajo el lock del header (design decisión 1).
-        var items = await db.ItemsComprobanteCompra
+        var todosLosItems = await db.ItemsComprobanteCompra
             .Where(i => i.IdComprobanteCompra == id)
             .OrderBy(i => i.IdArticulo)
             .ToListAsync(ct);
 
-        if (items.Count == 0)
+        if (todosLosItems.Count == 0)
         {
             throw new ErrorDominio("compra_sin_items", "La compra no tiene items para confirmar.", 400);
         }
+
+        // Las líneas por concepto (sin artículo) ya cuentan en el total del header y de la cuenta
+        // corriente, pero no tienen stock, lote ni costo que mover: todo lo que sigue opera solo
+        // sobre las líneas con artículo.
+        var items = todosLosItems.Where(i => i.IdArticulo is not null).ToList();
 
         // discriminaIva del tipo QUE VIO este lock (encabezado.IdTipoComprobante), nunca el
         // resuelto antes de entrar a la transacción — un PUT concurrente que cambia el tipo
@@ -423,7 +430,7 @@ public class ServicioDeCompras(
         // bajo el MISMO lock del header que el paso 1 ya tomó, antes del primer lock de stock del
         // paso 3. Orden ascendente (id_articulo, codigo_lote) para que dos confirmaciones
         // concurrentes que comparten códigos de lote tomen esas filas en el mismo orden.
-        var idsArticulo = items.Select(i => i.IdArticulo).Distinct().ToList();
+        var idsArticulo = items.Select(i => i.IdArticulo!.Value).Distinct().ToList();
 
         // EsLoteEfectivo necesita controla_lote por artículo y lotes_habilitado de la empresa del
         // encabezado — ambos FUERA del presupuesto de comandos del checkout (design: Write site
@@ -444,7 +451,7 @@ public class ServicioDeCompras(
         var hoy = DateOnly.FromDateTime(momento.UtcDateTime);
 
         var itemsLoteEfectivos = items
-            .Where(i => ReglaDeLotes.ControlEfectivo(controlaLotePorArticulo.GetValueOrDefault(i.IdArticulo), lotesHabilitado))
+            .Where(i => ReglaDeLotes.ControlEfectivo(controlaLotePorArticulo.GetValueOrDefault(i.IdArticulo!.Value), lotesHabilitado))
             .OrderBy(i => i.IdArticulo)
             .ThenBy(i => i.CodigoLote);
 
@@ -471,7 +478,7 @@ public class ServicioDeCompras(
             }
 
             item.IdLote = await ServicioDeLotes.ResolverOCrearAsync(
-                conexion, transaccionCruda, idTenant, item.IdArticulo, item.CodigoLote, item.FechaVencimiento.Value,
+                conexion, transaccionCruda, idTenant, item.IdArticulo!.Value, item.CodigoLote, item.FechaVencimiento.Value,
                 momento, ct);
         }
 
@@ -486,16 +493,18 @@ public class ServicioDeCompras(
         // es); el upsert de stock_lotes solo cuando el item resolvió un lote.
         foreach (var item in items.OrderBy(i => i.IdArticulo).ThenBy(i => i.IdLote))
         {
+            var idArticuloDelItem = item.IdArticulo!.Value;
+
             await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad,
+                conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, item.Cantidad,
                 MotivoStock.Compra, id, idEmpleado, momento, item.IdLote, ct);
 
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad, ct);
+            await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, item.Cantidad, ct);
 
             if (item.IdLote is { } idLote)
             {
                 await UpsertStockLoteAsync(
-                    conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, idLote, item.Cantidad, ct);
+                    conexion, transaccionCruda, idTenant, idArticuloDelItem, encabezado.IdPuntoVenta, idLote, item.Cantidad, ct);
             }
         }
 
@@ -725,7 +734,7 @@ public class ServicioDeCompras(
         }
 
         var items = await db.ItemsComprobanteCompra
-            .Where(i => i.IdComprobanteCompra == id && i.PrecioSugerido != null)
+            .Where(i => i.IdComprobanteCompra == id && i.IdArticulo != null && i.PrecioSugerido != null)
             .OrderBy(i => i.Orden)
             .ToListAsync(ct);
 
@@ -736,15 +745,15 @@ public class ServicioDeCompras(
             try
             {
                 var precio = await servicioDePrecios.EstablecerPrecioAsync(
-                    item.IdArticulo,
+                    item.IdArticulo!.Value,
                     new AltaPrecio(solicitud.IdListaPrecio, item.PrecioSugerido!.Value, solicitud.ConfirmarReemplazo),
                     ct);
 
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo, true, precio.Precio, null));
+                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo.Value, true, precio.Precio, null));
             }
             catch (ErrorDominio error)
             {
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo, false, null, error.Message));
+                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo!.Value, false, null, error.Message));
             }
         }
 
@@ -1050,7 +1059,7 @@ public class ServicioDeCompras(
         var proveedor = await ResolverProveedorAsync(solicitud.IdProveedor, ct);
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
-        var idsArticulo = solicitud.Items.Select(i => i.IdArticulo).Distinct().ToList();
+        var idsArticulo = solicitud.Items.Where(i => i.IdArticulo is not null).Select(i => i.IdArticulo!.Value).Distinct().ToList();
         var articuloPorId = idsArticulo.Count == 0
             ? new Dictionary<int, Articulo>()
             : await db.Articulos.Where(a => idsArticulo.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
@@ -1110,7 +1119,8 @@ public class ServicioDeCompras(
         var lineas = items
             .Select(i => new LineaDeCompra(
                 orden++, i.IdArticulo, i.Descripcion, i.Unidades, i.Bultos, i.UnidadesPorBulto,
-                i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, porcentajePorAlicuota[i.IdAlicuotaIva], i.ActualizaCosto))
+                i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, porcentajePorAlicuota[i.IdAlicuotaIva],
+                i.ActualizaCosto ?? i.IdArticulo is not null))
             .ToList();
 
         var calculada = CalculadorDeCompra.Calcular(lineas, discriminaIva, margenes);
@@ -1160,6 +1170,21 @@ public class ServicioDeCompras(
         }
 
         return items;
+    }
+
+    /// <summary>Un concepto (sin artículo) no recibe mercadería, así que un lote no tiene dónde
+    /// resolverse: <c>codigo_lote</c>/<c>fecha_vencimiento</c> se rechazan en vez de descartarse.
+    /// Descripción, bultos y <c>actualizaCosto</c> los valida <see cref="CalculadorDeCompra"/>.</summary>
+    private static void ValidarLineasDeConcepto(IReadOnlyList<LineaDeCompraSolicitada> items)
+    {
+        foreach (var item in items.Where(i => i.IdArticulo is null))
+        {
+            if (!string.IsNullOrWhiteSpace(item.CodigoLote) || item.FechaVencimiento is not null)
+            {
+                throw new ErrorDominio(
+                    "concepto_con_lote", "Una línea por concepto no admite lote ni fecha de vencimiento.", 400);
+            }
+        }
     }
 
     /// <summary>Chequeo puro (spec comprobantes-compra: "Expired Reception Is Refused") — corre

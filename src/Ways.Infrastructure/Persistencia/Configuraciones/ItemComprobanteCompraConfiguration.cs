@@ -34,6 +34,14 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
             t.HasCheckConstraint(
                 "ck_items_comprobante_compra_lote_input",
                 "(codigo_lote IS NULL AND fecha_vencimiento IS NULL) OR fecha_vencimiento IS NOT NULL");
+
+            // Una línea por concepto (sin artículo) no puede tener efectos sobre stock, costo ni
+            // lotes: la base misma lo exige aunque el servicio ya lo rechace antes.
+            t.HasCheckConstraint(
+                "ck_items_comprobante_compra_concepto_sin_efectos",
+                "id_articulo IS NOT NULL OR (actualiza_costo = false AND codigo_lote IS NULL " +
+                "AND fecha_vencimiento IS NULL AND id_lote IS NULL AND bultos IS NULL " +
+                "AND unidades_por_bulto IS NULL AND precio_sugerido IS NULL)");
         });
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_compra");
@@ -49,10 +57,8 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
         builder.Property(i => i.IdComprobanteCompra).HasColumnName("id_comprobante_compra").IsRequired();
         builder.Property(i => i.Orden).HasColumnName("orden").IsRequired();
 
-        // Deliberadamente NOT NULL (design: Table Shapes — B), a diferencia de
-        // ItemComprobanteVenta.IdArticulo: una línea sin artículo no puede mover stock ni
-        // actualizar costo — sería un gasto.
-        builder.Property(i => i.IdArticulo).HasColumnName("id_articulo").IsRequired();
+        // NULL = línea por concepto, sin efectos sobre stock ni costo (ver el CHECK de arriba).
+        builder.Property(i => i.IdArticulo).HasColumnName("id_articulo");
 
         builder.Property(i => i.Descripcion).HasColumnName("descripcion").HasColumnType("text").IsRequired();
 
@@ -131,8 +137,8 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
             .HasConstraintName("fk_items_comprobante_compra_alicuota_iva")
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Etapa 12 (proposal gate §G, gate amendment 2): a diferencia de la de venta, IdArticulo
-        // es NOT NULL acá, así que la FK queda completamente exigida en cuanto IdLote se setea.
+        // Etapa 12 (proposal gate §G, gate amendment 2): con IdLote seteado la FK exige el
+        // artículo; el CHECK de concepto garantiza que un concepto nunca llega a tener lote.
         builder.HasOne<Lote>()
             .WithMany()
             .HasForeignKey(i => new { i.IdLote, i.IdArticulo, i.IdTenant })

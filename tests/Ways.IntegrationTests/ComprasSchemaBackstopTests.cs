@@ -313,6 +313,78 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("ck_items_comprobante_compra_cantidad_positiva", excepcion.ConstraintName);
     }
 
+    private static async Task InsertarConceptoAsync(
+        NpgsqlConnection cruda, Prerequisitos p, int idComprobante, string columnaProhibida, string valorSql)
+    {
+        var columnaExtra = columnaProhibida.Length == 0 ? string.Empty : $", {columnaProhibida}";
+        var valorExtra = columnaProhibida.Length == 0 ? string.Empty : $", {valorSql}";
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_comprobante_compra (id_tenant, id_comprobante_compra, orden, id_articulo, " +
+            "descripcion, cantidad, costo_unitario, descuento, id_alicuota_iva, porcentaje_iva, total, " +
+            $"actualiza_costo, created_at, updated_at{columnaExtra}) " +
+            $"VALUES ($1, $2, 1, NULL, 'concepto', 1, 10, 0, $3, 21, 10, false, now(), now(){valorExtra})";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task UnConceptoSinArticuloNiEfectosSePuedeInsertar()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnConceptoSinArticuloNiEfectosSePuedeInsertar));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        await InsertarConceptoAsync(cruda, p, idComprobante, string.Empty, string.Empty);
+    }
+
+    [Theory]
+    [InlineData("bultos", "2")]
+    [InlineData("unidades_por_bulto", "6")]
+    [InlineData("precio_sugerido", "15")]
+    [InlineData("codigo_lote", "'L-1'")]
+    [InlineData("fecha_vencimiento", "'2999-01-01'")]
+    public async Task UnConceptoConEfectosViolaLaCheckDeConceptoSinEfectos(string columna, string valorSql)
+    {
+        var p = await SembrarPrerequisitosAsync($"{nameof(UnConceptoConEfectosViolaLaCheckDeConceptoSinEfectos)}-{columna}");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarConceptoAsync(cruda, p, idComprobante, columna, valorSql));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_compra_concepto_sin_efectos", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnConceptoQueActualizaCostoViolaLaCheckDeConceptoSinEfectos()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnConceptoQueActualizaCostoViolaLaCheckDeConceptoSinEfectos));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_comprobante_compra (id_tenant, id_comprobante_compra, orden, id_articulo, " +
+            "descripcion, cantidad, costo_unitario, descuento, id_alicuota_iva, porcentaje_iva, total, " +
+            "actualiza_costo, created_at, updated_at) " +
+            "VALUES ($1, $2, 1, NULL, 'concepto', 1, 10, 0, $3, 21, 10, true, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_compra_concepto_sin_efectos", excepcion.ConstraintName);
+    }
+
     [Fact]
     public async Task UnItemConCostoUnitarioNegativoViolaLaCheckDeCostoNoNegativo()
     {

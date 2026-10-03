@@ -7,9 +7,14 @@ namespace Ways.Application.Compras;
 /// <c>CalculadorDeCompra</c> deriva todo eso server-side. <see cref="CodigoLote"/>/<see
 /// cref="FechaVencimiento"/> (etapa 12, slice 5) son input crudo de recepción — se persisten tal
 /// cual mientras la compra es borrador y solo se resuelven contra <c>lotes</c> al confirmar
-/// (design: Write site 2 — "nothing is resolved at draft time").</summary>
+/// (design: Write site 2 — "nothing is resolved at draft time").
+///
+/// <see cref="IdArticulo"/> nulo declara una línea por concepto: <see cref="Descripcion"/> es
+/// obligatoria y la línea no admite lote, bultos ni <see cref="ActualizaCosto"/> verdadero (se
+/// rechaza con 400, nunca se descarta en silencio). <see cref="ActualizaCosto"/> nulo significa
+/// "el default de la línea": <c>true</c> para un artículo, <c>false</c> para un concepto.</summary>
 public sealed record LineaDeCompraSolicitada(
-    int IdArticulo,
+    int? IdArticulo,
     string Descripcion,
     decimal Unidades,
     decimal? Bultos,
@@ -17,7 +22,7 @@ public sealed record LineaDeCompraSolicitada(
     decimal CostoUnitario,
     decimal Descuento,
     int IdAlicuotaIva,
-    bool ActualizaCosto = true,
+    bool? ActualizaCosto = null,
     string? CodigoLote = null,
     DateOnly? FechaVencimiento = null);
 
@@ -50,10 +55,10 @@ public sealed record SolicitudDeCompra(
 /// resuelto (get-or-create), <c>NULL</c> mientras la compra es borrador y para artículos que no
 /// controlan lote (etapa 12, slice 5). <see cref="CostoUnitario"/>, <see cref="Descuento"/>,
 /// <see cref="Total"/> y <see cref="PrecioSugerido"/> son <c>null</c> para el rol vendedor, que
-/// no ve el costo de los artículos.</summary>
+/// no ve el costo de los artículos. <see cref="IdArticulo"/> nulo es una línea por concepto.</summary>
 public sealed record ItemDeCompra(
     int Orden,
-    int IdArticulo,
+    int? IdArticulo,
     string Descripcion,
     decimal Cantidad,
     decimal? Bultos,

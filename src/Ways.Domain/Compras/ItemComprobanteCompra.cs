@@ -7,9 +7,11 @@ namespace Ways.Domain.Compras;
 /// scope: <c>id_tenant</c> únicamente, sin FK propia a <c>puntos_venta</c> — se deriva del
 /// comprobante padre, mismo criterio que <c>ItemComprobanteVenta</c>.
 ///
-/// A diferencia de <c>ItemComprobanteVenta</c>, <see cref="IdArticulo"/> es deliberadamente
-/// <c>NOT NULL</c> (design: Table Shapes — B): una línea de compra sin artículo no puede mover
-/// stock ni actualizar costo — sería un gasto, y los gastos ya existen como concepto separado.
+/// <see cref="IdArticulo"/> nulo es una línea por concepto (un flete, una factura cargada por
+/// total): importe libre con descripción que suma al total de la compra y a la cuenta corriente
+/// del proveedor pero no mueve stock, no actualiza costo, no resuelve lote ni cuenta para la
+/// cobertura de una orden de compra. <c>ck_items_comprobante_compra_concepto_sin_efectos</c>
+/// cierra a nivel esquema que un concepto no lleve lote, bultos, costo ni precio sugerido.
 ///
 /// Mientras el comprobante está en <see cref="EstadoCompra.Borrador"/> las filas se reemplazan
 /// físicamente (<c>DELETE</c> + <c>INSERT</c>, design decisión 2, <c>ServicioDeCompras.
@@ -25,7 +27,7 @@ public class ItemComprobanteCompra : EntidadTenant
     /// de cliente.</summary>
     public int Orden { get; set; }
 
-    public int IdArticulo { get; set; }
+    public int? IdArticulo { get; set; }
 
     /// <summary>Snapshot al momento del guardado del borrador.</summary>
     public required string Descripcion { get; set; }
