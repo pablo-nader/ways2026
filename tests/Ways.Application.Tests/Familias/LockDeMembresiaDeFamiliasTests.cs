@@ -4,9 +4,10 @@ namespace Ways.Application.Tests.Familias;
 
 /// <summary>
 /// La clave y el contrato de <see cref="LockDeMembresiaDeFamilias"/> que se pueden probar sin base
-/// de datos. Que el lock compartido espera al exclusivo (y no al revés), y en qué orden se toma
-/// respecto de los demás locks de una escritura de precios, lo prueban las pruebas de integración
-/// contra Postgres (<c>PreciosDeFamiliaTests</c>).
+/// de datos. Que el lock compartido espera al exclusivo, que el exclusivo espera a un compartido
+/// ajeno y que dos compartidos conviven, y en qué orden se toma respecto de los demás locks de una
+/// escritura de precios, lo prueban las pruebas de integración contra Postgres
+/// (<c>PreciosDeFamiliaTests</c>).
 /// </summary>
 public class LockDeMembresiaDeFamiliasTests
 {

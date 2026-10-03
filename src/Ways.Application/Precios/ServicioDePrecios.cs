@@ -101,10 +101,11 @@ public class ServicioDePrecios(
     /// valor: ausente ⇒ <see cref="ModoDeAlcanceDeFamilia.ExigirDecision"/>, <c>Familia</c> ⇒
     /// <see cref="ModoDeAlcanceDeFamilia.Familia"/>, <c>SoloEste</c> ⇒
     /// <see cref="ModoDeAlcanceDeFamilia.SoloEste"/>. El conversor JSON del servidor acepta también
-    /// el ordinal del enum, así que un número fuera de rango llega hasta acá: se rechaza con 400 en
-    /// vez de caer en silencio en alguno de los tres. El cuarto modo,
-    /// <see cref="ModoDeAlcanceDeFamilia.FamiliaSiCorresponde"/>, no tiene valor en la API: lo piden
-    /// los llamadores internos directo a <see cref="AbrirNuevoPrecioAsync"/>.
+    /// el ordinal del enum, así que un número que no es el de ninguno de los dos (el <c>0</c> incluido)
+    /// llega hasta acá: se rechaza con <c>alcance_invalido</c> (400) en vez de caer en silencio en
+    /// alguno de los tres. El cuarto modo, <see cref="ModoDeAlcanceDeFamilia.FamiliaSiCorresponde"/>,
+    /// no tiene valor en la API: lo piden los llamadores internos directo a
+    /// <see cref="AbrirNuevoPrecioAsync"/>.
     /// </summary>
     public static ModoDeAlcanceDeFamilia ModoDeLaSolicitud(AlcanceDeFamilia? alcance) => alcance switch
     {
@@ -128,31 +129,39 @@ public class ServicioDePrecios(
     /// bajo ese lock) y la decisión de <see cref="ReglaDeFamilias.ResolverAlcance"/>: escribir solo
     /// el artículo, escribir toda su familia —las filas de <c>articulos</c> de los miembros vivos
     /// quedan bloqueadas en orden ascendente de id, <see cref="BloquearMiembrosAsync"/>—, o sacarlo de
-    /// la familia y escribir solo él; o un rechazo 409 sin escribir nada (<c>alcance_requerido</c>,
-    /// <c>familia_cambio</c>). Quien no es miembro no toma ningún lock de fila: queda igual que antes
-    /// de las familias, salvo por el lock de membresía compartido.</item>
+    /// la familia y escribir solo él —su fila queda bloqueada
+    /// (<see cref="BloquearFilaDelArticuloAsync"/>) y la salida misma se escribe más abajo—; o un
+    /// rechazo 409 sin escribir nada (<c>alcance_requerido</c>, <c>familia_cambio</c>). Quien no es
+    /// miembro no toma ningún lock de fila: solo el lock de membresía compartido.</item>
     /// <item>Un <c>pg_advisory_xact_lock</c> determinístico sobre el par <c>(artículo, lista)</c> de
-    /// este tenant por CADA artículo objetivo, en orden ascendente de <c>id_articulo</c>
-    /// (<see cref="TomarLockDelParAsync"/>) — serializa CUALQUIER escritura concurrente sobre el
-    /// mismo par, exista o no una fila abierta todavía (a diferencia del viejo <c>SELECT ... FOR
-    /// UPDATE</c>, que solo podía lockear una fila YA EXISTENTE). Que los tres pasos suban siempre en
-    /// el mismo orden (membresía, filas, pares; ids ascendentes) es lo que impide el ciclo entre dos
-    /// escritores.</item>
-    /// <item>Recién ahí resuelve "ahora" —UNA vez, igual para todos los objetivos— y por cada
-    /// objetivo lee la fila actualmente abierta con un SELECT plano (<see
-    /// cref="BuscarFilaAbiertaAsync"/>; seguro porque el lock del par ya garantiza que ningún otro
-    /// escritor está tocando ese par), decide si hace falta confirmación (fila pendiente —
-    /// <c>vigente_desde &gt; ahora</c> — sin <paramref name="confirmarReemplazo"/>), la cierra (y,
-    /// si era pendiente, re-cierra también su PREDECESOR — localizado con <see
-    /// cref="BuscarPredecesorAsync"/> y re-cerrado con el mismo <see cref="CerrarFilaAsync"/> inline
-    /// que usa el resto del método), e inserta la nueva fila abierta junto con su fila de auditoría
-    /// (<see cref="AbrirPrecioDeUnArticuloAsync"/>).</item>
+    /// este tenant por CADA artículo objetivo, en orden ascendente de la CLAVE del lock
+    /// (<see cref="OrdenDeLocksDePares"/>, <see cref="TomarLockDelParAsync"/>) — serializa CUALQUIER
+    /// escritura concurrente sobre el mismo par, exista o no una fila abierta todavía (a diferencia del
+    /// viejo <c>SELECT ... FOR UPDATE</c>, que solo podía lockear una fila YA EXISTENTE). Que los tres
+    /// pasos suban siempre en el mismo orden (membresía; filas por id ascendente; pares por clave
+    /// ascendente) es lo que impide el ciclo entre dos escritores.</item>
+    /// <item>Recién ahí resuelve "ahora" —UNA vez, igual para todos los objetivos y para la salida de
+    /// la familia— y trabaja en dos fases. FASE 1, solo lecturas: por cada objetivo lee la fila
+    /// actualmente abierta con un SELECT plano (<see cref="BuscarFilaAbiertaAsync"/>; seguro porque el
+    /// lock del par ya garantiza que ningún otro escritor está tocando ese par), decide si hace falta
+    /// confirmación (fila pendiente —<c>vigente_desde &gt; ahora</c>— sin
+    /// <paramref name="confirmarReemplazo"/>) y valida las fechas contra esa fila y su PREDECESOR
+    /// (<see cref="PlanificarPrecioDeUnArticuloAsync"/>): un rechazo de CUALQUIER objetivo corta acá,
+    /// antes de que ningún otro escriba. FASE 2, solo escrituras: la salida de la familia (en "solo
+    /// este"), el cierre de las filas abiertas y de los predecesores
+    /// (<see cref="CerrarFilasDelPlanAsync"/>) y el encolado de cada fila nueva con su fila de
+    /// auditoría (<see cref="EncolarPrecioNuevo"/>).</item>
     /// </list>
     ///
     /// Es todo o nada: un conflicto de CUALQUIER objetivo (<c>precio_pendiente_existe</c>,
-    /// <c>vigente_desde_invalido</c>) aborta la transacción entera, incluida la salida de la familia
-    /// de "solo este", y no queda ni un miembro cambiado. Se confirma con un solo
-    /// <c>SaveChangesAsync</c>. El resultado es el <see cref="PrecioVigente"/> del artículo pedido.
+    /// <c>vigente_desde_invalido</c>) se detecta en la fase 1 y no escribe nada, y un fallo de la
+    /// fase 2 aborta la transacción entera, incluida la salida de la familia de "solo este". Se
+    /// confirma con un solo <c>SaveChangesAsync</c>. Si la fase 2 falla, además se sueltan del
+    /// <c>ChangeTracker</c> las entidades que esta operación agregó
+    /// (<see cref="DesacoplarLoAgregadoDesde"/>): el contexto vive todo el request, y un llamador que
+    /// sigue con otro artículo después de un rechazo (<c>ServicioDeCompras.AplicarPrecioSugeridoAsync</c>)
+    /// no puede terminar guardando por detrás las filas de una escritura revertida. El resultado es el
+    /// <see cref="PrecioVigente"/> del artículo pedido.
     ///
     /// Con el advisory lock, la carrera de <c>ux_precios_vigente</c> (dos primeros precios
     /// concurrentes para el mismo par) YA NO es alcanzable por este camino de servicio: el
@@ -190,26 +199,58 @@ public class ServicioDePrecios(
 
             var objetivos = await ResolverObjetivosAsync(idArticulo, idTenant, modo, ct);
 
-            foreach (var idObjetivo in objetivos)
+            foreach (var idObjetivo in OrdenDeLocksDePares(idTenant, idListaPrecio, objetivos.Ids))
             {
                 await TomarLockDelParAsync(idTenant, idObjetivo, idListaPrecio, ct);
             }
 
             // "ahora" se captura DESPUÉS de todos los locks (judgment-day, item 3) — nunca antes de
-            // entrar a la transacción. vigenteDesde == null (caso inmediato, EstablecerPrecioAsync)
-            // también se resuelve acá, con el mismo "ahora" post-lock, igual para todos los objetivos.
+            // entrar a la transacción ni en un helper de la escritura. vigenteDesde == null (caso
+            // inmediato, EstablecerPrecioAsync) también se resuelve acá, con el mismo "ahora"
+            // post-lock para todos los objetivos y para la salida de la familia.
             var ahora = reloj.Ahora;
             var vigenteDesdeEfectivo = vigenteDesde ?? ahora;
 
-            foreach (var idObjetivo in objetivos)
+            var planes = new List<PlanDeUnArticulo>(objetivos.Ids.Count);
+
+            foreach (var idObjetivo in objetivos.Ids)
             {
-                await AbrirPrecioDeUnArticuloAsync(
-                    idObjetivo, idListaPrecio, precio, vigenteDesdeEfectivo, ahora, confirmarReemplazo, idTenant,
-                    esDeFamilia: objetivos.Count > 1, ct);
+                planes.Add(await PlanificarPrecioDeUnArticuloAsync(
+                    idObjetivo, idListaPrecio, vigenteDesdeEfectivo, ahora, confirmarReemplazo, idTenant,
+                    esDeFamilia: objetivos.Ids.Count > 1, ct));
             }
 
-            await db.SaveChangesAsync(ct);
-            await transaccion.CommitAsync(ct);
+            // Desde acá todo es escritura. Cualquier fallo, incluido el del guardado, deja las entidades
+            // agregadas rastreadas por el contexto: se sueltan antes de propagar el error.
+            var yaRastreadas = db.ChangeTracker.Entries()
+                .Select(entrada => entrada.Entity)
+                .ToHashSet(ReferenceEqualityComparer.Instance);
+
+            try
+            {
+                if (objetivos.IdFamiliaDeLaQueSale is not null)
+                {
+                    await SacarDeLaFamiliaAsync(idArticulo, idTenant, ahora, ct);
+                }
+
+                foreach (var plan in planes)
+                {
+                    await CerrarFilasDelPlanAsync(plan, vigenteDesdeEfectivo, ahora, ct);
+                }
+
+                foreach (var plan in planes)
+                {
+                    EncolarPrecioNuevo(plan, idListaPrecio, precio, vigenteDesdeEfectivo, ahora, idTenant);
+                }
+
+                await db.SaveChangesAsync(ct);
+                await transaccion.CommitAsync(ct);
+            }
+            catch
+            {
+                DesacoplarLoAgregadoDesde(yaRastreadas);
+                throw;
+            }
 
             return new PrecioVigente(idArticulo, idListaPrecio, precio, vigenteDesdeEfectivo);
         });
@@ -235,13 +276,13 @@ public class ServicioDePrecios(
     }
 
     /// <summary>
-    /// Lee la pertenencia del artículo bajo el lock de membresía y devuelve los ids que hay que
-    /// escribir, ascendentes. Ni <c>BuscarArticuloAsync</c> ni ninguna lectura previa a la transacción
-    /// decide acá: la lectura de <c>id_familia</c> es UNA sola y nace después del lock
-    /// (<c>single-read-under-lock</c>), y la salida de la familia es un <c>UPDATE</c> crudo guardado
-    /// por el valor leído, no una mutación de una entidad leída antes del lock.
+    /// Lee la pertenencia del artículo bajo el lock de membresía, bloquea lo que corresponda y devuelve
+    /// los ids que hay que escribir, ascendentes. Ni <c>BuscarArticuloAsync</c> ni ninguna lectura
+    /// previa a la transacción decide acá: la lectura de <c>id_familia</c> es UNA sola y nace después
+    /// del lock (<c>single-read-under-lock</c>). No escribe nada: la salida de la familia de "solo
+    /// este" queda para <see cref="SacarDeLaFamiliaAsync"/>, después de resolver "ahora".
     /// </summary>
-    private async Task<IReadOnlyList<int>> ResolverObjetivosAsync(
+    private async Task<ObjetivosDeLaEscritura> ResolverObjetivosAsync(
         int idArticulo, int idTenant, ModoDeAlcanceDeFamilia modo, CancellationToken ct)
     {
         var idFamilia = await LeerIdFamiliaAsync(idArticulo, idTenant, ct);
@@ -249,7 +290,7 @@ public class ServicioDePrecios(
         switch (ReglaDeFamilias.ResolverAlcance(modo, esMiembro: idFamilia is not null))
         {
             case ResolucionDeAlcanceDeFamilia.SoloElArticulo:
-                return [idArticulo];
+                return new ObjetivosDeLaEscritura([idArticulo], IdFamiliaDeLaQueSale: null);
 
             case ResolucionDeAlcanceDeFamilia.TodaLaFamilia:
                 var miembros = await BloquearMiembrosAsync(idFamilia!.Value, idTenant, ct);
@@ -263,11 +304,11 @@ public class ServicioDePrecios(
                     throw ErrorDeFamiliaCambio();
                 }
 
-                return miembros;
+                return new ObjetivosDeLaEscritura(miembros, IdFamiliaDeLaQueSale: null);
 
             case ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia:
-                await SacarDeLaFamiliaAsync(idArticulo, idFamilia!.Value, idTenant, ct);
-                return [idArticulo];
+                await BloquearFilaDelArticuloAsync(idArticulo, idFamilia!.Value, idTenant, ct);
+                return new ObjetivosDeLaEscritura([idArticulo], IdFamiliaDeLaQueSale: idFamilia);
 
             case ResolucionDeAlcanceDeFamilia.AlcanceRequerido:
                 throw await ErrorDeAlcanceRequeridoAsync(idFamilia!.Value, idTenant, ct);
@@ -281,114 +322,138 @@ public class ServicioDePrecios(
     }
 
     /// <summary>
-    /// Cierra y abre el precio de UN artículo objetivo, con su fila de auditoría (design call site 1
-    /// / task 2.1). El cuerpo es el de siempre de <see cref="AbrirNuevoPrecioAsync"/>, ahora por
-    /// objetivo; todos los objetivos comparten <paramref name="ahora"/> y
+    /// FASE 1, solo lecturas y validaciones: lee el estado del par de UN artículo objetivo y rechaza lo
+    /// que no se puede escribir. No cierra ninguna fila, no registra auditoría y no agrega ninguna
+    /// entidad: así un rechazo de un miembro posterior no deja nada hecho por los anteriores. Todos los objetivos comparten <paramref name="ahora"/> y
     /// <paramref name="vigenteDesdeEfectivo"/>. <paramref name="esDeFamilia"/> solo cambia la redacción
     /// de <c>precio_pendiente_existe</c>, que con más de un objetivo puede referirse a otro miembro.
     /// </summary>
-    private async Task AbrirPrecioDeUnArticuloAsync(
-        int idArticulo, int idListaPrecio, decimal precio, DateTimeOffset vigenteDesdeEfectivo, DateTimeOffset ahora,
+    private async Task<PlanDeUnArticulo> PlanificarPrecioDeUnArticuloAsync(
+        int idArticulo, int idListaPrecio, DateTimeOffset vigenteDesdeEfectivo, DateTimeOffset ahora,
         bool confirmarReemplazo, int idTenant, bool esDeFamilia, CancellationToken ct)
     {
         var filaAbierta = await BuscarFilaAbiertaAsync(idArticulo, idListaPrecio, idTenant, ct);
 
-        if (filaAbierta is { } fila)
+        if (filaAbierta is not { } fila)
         {
-            // Reemplazar una fila pendiente con la MISMA fecha ("corregir el importe
-            // manteniendo la fecha") es una operación legítima — exactamente por eso
-            // BuscarPredecesorAsync tiene que ser determinístico y excluir filas muertas
-            // (judgment-day ronda 3, item 1): un reemplazo mismo-fecha deja una fila muerta
-            // (vigente_desde == vigente_hasta) que puede compartir límite con el predecesor
-            // real si esa fila, a su vez, se vuelve a reemplazar.
-            var esPendiente = fila.VigenteDesde > ahora;
-
-            if (esPendiente && !confirmarReemplazo)
-            {
-                throw ErrorDominio.Conflicto(
-                    "precio_pendiente_existe",
-                    esDeFamilia
-                        ? "Ya existe un precio pendiente en esta lista para al menos un artículo de la familia; hay que confirmar el reemplazo."
-                        : "Ya existe un precio pendiente para este artículo en esta lista; confirmá el reemplazo.");
-            }
-
-            if (!esPendiente && vigenteDesdeEfectivo < fila.VigenteDesde)
-            {
-                throw new ErrorDominio(
-                    "vigente_desde_invalido",
-                    "vigente_desde no puede ser anterior al del precio vigente actual.",
-                    400);
-            }
-
-            // (judgment-day ronda 2, item 1) Chequeo SIMÉTRICO al de arriba, pero contra el
-            // PREDECESOR en vez de contra la fila activa: si `fila` es pendiente, buscamos
-            // ANTES de tocar nada quién es su predecesor (la fila cuyo vigente_hasta coincide
-            // con el vigente_desde original de `fila`) y rechazamos si la fecha nueva cae en
-            // o antes del inicio de ESE predecesor — mismo criterio de "no anterior al inicio
-            // de la fila que se está por afectar" que el chequeo de la fila activa, aplicado
-            // un nivel más atrás. Sin esto, la búsqueda del predecesor (BuscarPredecesorAsync
-            // + CerrarFilaAsync) re-cerraba el
-            // predecesor con un límite ANTERIOR a su propio inicio, invirtiendo su intervalo
-            // (vigente_hasta < vigente_desde) — silencioso hasta la constraint de esquema
-            // (ck_precios_ventana_valida), que acá se adelanta con un 400 claro y sin tocar
-            // ninguna fila.
-            FilaVigente? predecesor = esPendiente
-                ? await BuscarPredecesorAsync(idArticulo, idListaPrecio, idTenant, fila.Id, fila.VigenteDesde, ct)
-                : null;
-
-            if (predecesor is { } pred && vigenteDesdeEfectivo <= pred.VigenteDesde)
-            {
-                throw new ErrorDominio(
-                    "vigente_desde_invalido",
-                    "vigente_desde no puede ser anterior o igual al del precio predecesor.",
-                    400);
-            }
-
-            // Reemplazo de una fila PENDIENTE: se cierra en su PROPIO vigente_desde (ventana
-            // vacía, vigente_hasta == vigente_desde), no en el vigente_desde de la fila
-            // nueva. Si se cerrara ahí, un reemplazo con una fecha nueva POSTERIOR a la
-            // original dejaría al precio reemplazado brevemente "vigente" entre su fecha
-            // original y la fecha nueva — exactamente lo que "reemplazado" dice que NO tiene
-            // que pasar (spec: "the $150 pending row is REPLACED by the $160 one", no
-            // "activo hasta que el nuevo empiece"). Para la fila ACTIVA (no pendiente) el
-            // criterio es el opuesto y correcto: se cierra en el vigente_desde de la fila
-            // nueva, porque esa fila SÍ estuvo vigente hasta ese momento (spec: "the $100
-            // row's vigente_hasta is set to the new row's vigente_desde").
-            var vigenteHastaDeLaFilaCerrada = esPendiente ? fila.VigenteDesde : vigenteDesdeEfectivo;
-
-            await CerrarFilaAsync(fila.Id, vigenteHastaDeLaFilaCerrada, ahora, ct);
-
-            if (predecesor is { } predecesorAReabrir)
-            {
-                // (judgment-day, item 1) El PREDECESOR — la fila que se cerró originalmente
-                // al abrirse `fila` (su vigente_hasta == fila.VigenteDesde) — queda con un
-                // límite VIEJO si no se corrige acá. Sin esto: una fecha nueva ANTERIOR a la
-                // original produce SOLAPAMIENTO (dos filas satisfacen el predicado "vigente"
-                // en el rango entre ambas fechas — el historial miente); una fecha nueva
-                // POSTERIOR produce un HUECO (ningún precio vigente en ese rango). Se
-                // re-cierra al vigente_desde EFECTIVO de la fila nueva — mismo criterio que
-                // la fila ACTIVA usa arriba para su propio cierre. El chequeo simétrico de
-                // arriba ya garantizó que `vigenteDesdeEfectivo` es estrictamente posterior
-                // al inicio de este predecesor, así que el intervalo resultante nunca se
-                // invierte.
-                await CerrarFilaAsync(predecesorAReabrir.Id, vigenteDesdeEfectivo, ahora, ct);
-            }
+            return new PlanDeUnArticulo(idArticulo, FilaAbierta: null, EsPendiente: false, Predecesor: null);
         }
 
-        // Design call site 1 / task 2.1 — UNA llamada por artículo objetivo, después del cierre de
-        // la fila abierta y del re-cierre del predecesor (arriba), ANTES de db.Precios.Add:
-        // ambas escrituras quedan encoladas en el MISMO SaveChangesAsync de AbrirNuevoPrecioAsync,
-        // así que un INSERT de auditoría roto (fail-closed) revierte también el cambio de precio —
-        // y, con una familia, el de todos los miembros.
+        // Reemplazar una fila pendiente con la MISMA fecha ("corregir el importe
+        // manteniendo la fecha") es una operación legítima — exactamente por eso
+        // BuscarPredecesorAsync tiene que ser determinístico y excluir filas muertas
+        // (judgment-day ronda 3, item 1): un reemplazo mismo-fecha deja una fila muerta
+        // (vigente_desde == vigente_hasta) que puede compartir límite con el predecesor
+        // real si esa fila, a su vez, se vuelve a reemplazar.
+        var esPendiente = fila.VigenteDesde > ahora;
+
+        if (esPendiente && !confirmarReemplazo)
+        {
+            throw ErrorDominio.Conflicto(
+                "precio_pendiente_existe",
+                esDeFamilia
+                    ? "Ya existe un precio pendiente en esta lista para al menos un artículo de la familia; hay que confirmar el reemplazo."
+                    : "Ya existe un precio pendiente para este artículo en esta lista; confirmá el reemplazo.");
+        }
+
+        if (!esPendiente && vigenteDesdeEfectivo < fila.VigenteDesde)
+        {
+            throw new ErrorDominio(
+                "vigente_desde_invalido",
+                "vigente_desde no puede ser anterior al del precio vigente actual.",
+                400);
+        }
+
+        // (judgment-day ronda 2, item 1) Chequeo SIMÉTRICO al de arriba, pero contra el
+        // PREDECESOR en vez de contra la fila activa: si `fila` es pendiente, buscamos
+        // ANTES de tocar nada quién es su predecesor (la fila cuyo vigente_hasta coincide
+        // con el vigente_desde original de `fila`) y rechazamos si la fecha nueva cae en
+        // o antes del inicio de ESE predecesor — mismo criterio de "no anterior al inicio
+        // de la fila que se está por afectar" que el chequeo de la fila activa, aplicado
+        // un nivel más atrás. Sin esto, el re-cierre del predecesor
+        // (CerrarFilasDelPlanAsync) lo dejaba con un límite ANTERIOR a su propio inicio,
+        // invirtiendo su intervalo (vigente_hasta < vigente_desde) — silencioso hasta la
+        // constraint de esquema (ck_precios_ventana_valida), que acá se adelanta con un
+        // 400 claro y sin tocar ninguna fila.
+        FilaVigente? predecesor = esPendiente
+            ? await BuscarPredecesorAsync(idArticulo, idListaPrecio, idTenant, fila.Id, fila.VigenteDesde, ct)
+            : null;
+
+        if (predecesor is { } pred && vigenteDesdeEfectivo <= pred.VigenteDesde)
+        {
+            throw new ErrorDominio(
+                "vigente_desde_invalido",
+                "vigente_desde no puede ser anterior o igual al del precio predecesor.",
+                400);
+        }
+
+        return new PlanDeUnArticulo(idArticulo, fila, esPendiente, predecesor);
+    }
+
+    /// <summary>
+    /// FASE 2, primera mitad: cierra la fila abierta del objetivo y, si era pendiente, re-cierra también
+    /// su predecesor. Son <c>UPDATE</c> crudos sobre la transacción: no dejan nada en el
+    /// <c>ChangeTracker</c>.
+    /// </summary>
+    private async Task CerrarFilasDelPlanAsync(
+        PlanDeUnArticulo plan, DateTimeOffset vigenteDesdeEfectivo, DateTimeOffset ahora, CancellationToken ct)
+    {
+        if (plan.FilaAbierta is not { } fila)
+        {
+            return;
+        }
+
+        // Reemplazo de una fila PENDIENTE: se cierra en su PROPIO vigente_desde (ventana
+        // vacía, vigente_hasta == vigente_desde), no en el vigente_desde de la fila
+        // nueva. Si se cerrara ahí, un reemplazo con una fecha nueva POSTERIOR a la
+        // original dejaría al precio reemplazado brevemente "vigente" entre su fecha
+        // original y la fecha nueva — exactamente lo que "reemplazado" dice que NO tiene
+        // que pasar (spec: "the $150 pending row is REPLACED by the $160 one", no
+        // "activo hasta que el nuevo empiece"). Para la fila ACTIVA (no pendiente) el
+        // criterio es el opuesto y correcto: se cierra en el vigente_desde de la fila
+        // nueva, porque esa fila SÍ estuvo vigente hasta ese momento (spec: "the $100
+        // row's vigente_hasta is set to the new row's vigente_desde").
+        var vigenteHastaDeLaFilaCerrada = plan.EsPendiente ? fila.VigenteDesde : vigenteDesdeEfectivo;
+
+        await CerrarFilaAsync(fila.Id, vigenteHastaDeLaFilaCerrada, ahora, ct);
+
+        if (plan.Predecesor is { } predecesor)
+        {
+            // (judgment-day, item 1) El PREDECESOR — la fila que se cerró originalmente
+            // al abrirse `fila` (su vigente_hasta == fila.VigenteDesde) — queda con un
+            // límite VIEJO si no se corrige acá. Sin esto: una fecha nueva ANTERIOR a la
+            // original produce SOLAPAMIENTO (dos filas satisfacen el predicado "vigente"
+            // en el rango entre ambas fechas — el historial miente); una fecha nueva
+            // POSTERIOR produce un HUECO (ningún precio vigente en ese rango). Se
+            // re-cierra al vigente_desde EFECTIVO de la fila nueva — mismo criterio que
+            // la fila ACTIVA usa arriba para su propio cierre. El chequeo simétrico de la
+            // fase 1 ya garantizó que `vigenteDesdeEfectivo` es estrictamente posterior
+            // al inicio de este predecesor, así que el intervalo resultante nunca se
+            // invierte.
+            await CerrarFilaAsync(predecesor.Id, vigenteDesdeEfectivo, ahora, ct);
+        }
+    }
+
+    /// <summary>
+    /// FASE 2, segunda mitad, sin I/O: encola la fila de auditoría y la fila de precio nueva de UN
+    /// objetivo (design call site 1 / task 2.1), después de los cierres: ambas quedan en el MISMO
+    /// <c>SaveChangesAsync</c> de <see cref="AbrirNuevoPrecioAsync"/>, así que un INSERT de auditoría
+    /// roto (fail-closed) revierte también el cambio de precio —y, con una familia, el de todos los
+    /// miembros—.
+    /// </summary>
+    private void EncolarPrecioNuevo(
+        PlanDeUnArticulo plan, int idListaPrecio, decimal precio, DateTimeOffset vigenteDesdeEfectivo,
+        DateTimeOffset ahora, int idTenant)
+    {
         var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDePrecio(
-            idListaPrecio, filaAbierta?.Monto, filaAbierta?.VigenteDesde, precio, vigenteDesdeEfectivo);
+            idListaPrecio, plan.FilaAbierta?.Monto, plan.FilaAbierta?.VigenteDesde, precio, vigenteDesdeEfectivo);
 
         Auditoria.Registrar(new RegistroDeAuditoria(
-            idTenant, idPuntoVenta: null, AccionAuditada.PrecioCambio, idArticulo, valorAnterior, valorNuevo));
+            idTenant, idPuntoVenta: null, AccionAuditada.PrecioCambio, plan.IdArticulo, valorAnterior, valorNuevo));
 
         db.Precios.Add(new Precio
         {
-            IdArticulo = idArticulo,
+            IdArticulo = plan.IdArticulo,
             IdListaPrecio = idListaPrecio,
             Monto = precio,
             VigenteDesde = vigenteDesdeEfectivo,
@@ -396,6 +461,23 @@ public class ServicioDePrecios(
             CreatedAt = ahora,
             UpdatedAt = ahora
         });
+    }
+
+    /// <summary>Suelta del <c>ChangeTracker</c> todo lo que esta operación le agregó —lo rastreado ahora
+    /// que no estaba en <paramref name="yaRastreadas"/>, en el estado en que esté— y nada más: lo que el
+    /// llamador ya tenía rastreado queda como estaba, a diferencia de <c>ChangeTracker.Clear()</c>. Así un
+    /// <c>SaveChangesAsync</c> posterior sobre el mismo contexto no vuelve a ver las filas de una escritura
+    /// que se revirtió.</summary>
+    private void DesacoplarLoAgregadoDesde(IReadOnlySet<object> yaRastreadas)
+    {
+        var agregadas = db.ChangeTracker.Entries()
+            .Where(entrada => !yaRastreadas.Contains(entrada.Entity))
+            .ToList();
+
+        foreach (var entrada in agregadas)
+        {
+            entrada.State = EntityState.Detached;
+        }
     }
 
     /// <summary>Precio vigente de UN artículo en UNA lista a una fecha (spec: Current-Price
@@ -734,14 +816,26 @@ public class ServicioDePrecios(
     /// incorpora una semilla aleatoria por proceso (dos instancias de la app, o la misma tras un
     /// reinicio, calcularían claves DISTINTAS para el MISMO par, y el lock dejaría de
     /// serializarlas entre sí — justo lo opuesto de lo que se busca). Una colisión de la clave 2
-    /// entre dos pares DISTINTOS del mismo tenant es tolerable y no compromete la corrección:
-    /// el peor caso es serializar de más (dos pares no relacionados se esperan entre sí sin
-    /// necesidad) — nunca una lectura incorrecta, porque el estado real siempre se lee de la
-    /// fila (<see cref="BuscarFilaAbiertaAsync"/>) DESPUÉS de tomar el lock, nunca del hash en
-    /// sí. Pública para que las pruebas puedan sostener, o buscar en <c>pg_locks</c>, el mismo lock
-    /// del par desde otra conexión.</summary>
+    /// entre dos pares DISTINTOS del mismo tenant (pares de listas distintas: dentro de una lista cada
+    /// artículo tiene la suya) no compromete la corrección de una escritura sola: dos pares no
+    /// relacionados se esperan entre sí sin necesidad, y el estado real siempre se lee de la fila
+    /// (<see cref="BuscarFilaAbiertaAsync"/>) DESPUÉS de tomar el lock, nunca del hash en sí. Lo que
+    /// una colisión SÍ puede hacer es cruzar el orden de dos escrituras que toman VARIOS pares (una
+    /// familia, en dos listas): por eso los pares se toman en orden ascendente de esta clave
+    /// (<see cref="OrdenDeLocksDePares"/>) y no de <c>id_articulo</c>. Pública para que las pruebas
+    /// puedan sostener, o buscar en <c>pg_locks</c>, el mismo lock del par desde otra conexión.</summary>
     public static (int Clave1, int Clave2) ClaveDeLockDePar(int idTenant, int idArticulo, int idListaPrecio) =>
         (idTenant, unchecked((idArticulo * 397) ^ idListaPrecio));
+
+    /// <summary>Los artículos en el orden en que se toman sus locks de par: ascendente por la CLAVE del
+    /// lock (<see cref="ClaveDeLockDePar"/>), no por <c>id_articulo</c>. La identidad de un lock
+    /// advisory es su clave, y la de dos pares de listas distintas puede coincidir: dos escrituras de la
+    /// misma familia sobre dos listas pueden tener las mismas dos claves en orden cruzado respecto de
+    /// <c>id_articulo</c>, y cada una esperaría la que la otra ya tiene. Con todas las escrituras
+    /// subiendo por clave, el orden de adquisición es el mismo para cualquier par de ellas. Todos los
+    /// objetivos de una escritura comparten tenant y lista.</summary>
+    public static IReadOnlyList<int> OrdenDeLocksDePares(int idTenant, int idListaPrecio, IEnumerable<int> idsArticulo) =>
+        [.. idsArticulo.OrderBy(idArticulo => ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio))];
 
     /// <summary><c>pg_advisory_xact_lock</c> con alcance de TRANSACCIÓN (se libera solo al
     /// COMMIT/ROLLBACK) tomado ANTES de leer nada de precios (judgment-day, item 2) — a diferencia del
@@ -751,7 +845,7 @@ public class ServicioDePrecios(
     /// acá hasta que el primero comitee o revierta, y recién ahí lee el estado ACTUAL — la
     /// semántica de "esperar y actuar sobre el estado actual" que el doc-comment de
     /// <see cref="AbrirNuevoPrecioAsync"/> promete. Va después del lock de membresía y de resolver
-    /// los objetivos, y se toma una vez por objetivo en orden ascendente de <c>id_articulo</c>.</summary>
+    /// los objetivos, y se toma una vez por objetivo en el orden de <see cref="OrdenDeLocksDePares"/>.</summary>
     private async Task TomarLockDelParAsync(int idTenant, int idArticulo, int idListaPrecio, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -770,9 +864,10 @@ public class ServicioDePrecios(
     /// <summary>La familia del artículo (<c>null</c> ⇒ no es miembro) leída DENTRO de la transacción
     /// y DESPUÉS del lock de membresía — la única lectura de la pertenencia de esta operación
     /// (<c>single-read-under-lock</c>). Una proyección escalar con <c>deleted_at IS NULL</c>, nunca
-    /// una entidad rastreada: la salida de la familia se escribe con un <c>UPDATE</c> crudo guardado
-    /// por este valor (<see cref="SacarDeLaFamiliaAsync"/>). Si la fila ya no existe (la dieron de
-    /// baja entre el pre-chequeo y el lock) es el mismo 404 que el pre-chequeo.</summary>
+    /// una entidad rastreada: la salida de la familia es un <c>UPDATE</c> crudo
+    /// (<see cref="SacarDeLaFamiliaAsync"/>) sobre una fila que se bloqueó guardada por este valor
+    /// (<see cref="BloquearFilaDelArticuloAsync"/>). Si la fila ya no existe (la dieron de baja entre
+    /// el pre-chequeo y el lock) es el mismo 404 que el pre-chequeo.</summary>
     private async Task<int?> LeerIdFamiliaAsync(int idArticulo, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -827,30 +922,53 @@ public class ServicioDePrecios(
         return miembros;
     }
 
-    /// <summary>"Solo este": el artículo sale de la familia. <c>UPDATE</c> crudo guardado por la
-    /// familia que se leyó bajo el lock (<c>id_familia = $4</c>) y por la baja lógica; el
-    /// <c>UPDATE</c> toma además la fila del artículo, paso (2) del orden de locks. Que afecte
-    /// exactamente una fila es una invariante del lock exclusivo de membresía; si no se cumple, otro
-    /// escritor tocó la pertenencia sin respetarlo y se rechaza como <c>familia_cambio</c>.</summary>
-    private async Task SacarDeLaFamiliaAsync(int idArticulo, int idFamilia, int idTenant, CancellationToken ct)
+    /// <summary>"Solo este", paso (2) del orden de locks: bloquea la fila del artículo
+    /// <c>FOR NO KEY UPDATE</c> —el mismo modo que <see cref="BloquearMiembrosAsync"/>— guardada por la
+    /// familia que se leyó bajo el lock de membresía y por la baja lógica. La salida de la familia se
+    /// escribe después, con el "ahora" de la operación (<see cref="SacarDeLaFamiliaAsync"/>). Si la fila
+    /// no cumple el <c>WHERE</c> —otro escritor cambió su pertenencia o la dio de baja sin respetar el
+    /// lock de membresía, también mientras se esperaba el lock de la fila— se rechaza como
+    /// <c>familia_cambio</c>.</summary>
+    private async Task BloquearFilaDelArticuloAsync(int idArticulo, int idFamilia, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
-            "UPDATE articulos SET id_familia = NULL, updated_at = $1 " +
-            "WHERE id_articulo = $2 AND id_tenant = $3 AND id_familia = $4 AND deleted_at IS NULL";
+            "SELECT 1 FROM articulos " +
+            "WHERE id_articulo = $1 AND id_tenant = $2 AND id_familia = $3 AND deleted_at IS NULL " +
+            "FOR NO KEY UPDATE";
 
-        ParametrosDeComando.Agregar(comando, reloj.Ahora);
         ParametrosDeComando.Agregar(comando, idArticulo);
         ParametrosDeComando.Agregar(comando, idTenant);
         ParametrosDeComando.Agregar(comando, idFamilia);
 
-        if (await comando.ExecuteNonQueryAsync(ct) != 1)
+        if (await comando.ExecuteScalarAsync(ct) is null)
         {
             throw ErrorDeFamiliaCambio();
         }
+    }
+
+    /// <summary>"Solo este": el artículo sale de la familia, con el "ahora" de la operación (FASE 2,
+    /// después de resolverlo). <c>UPDATE</c> crudo por clave sobre la fila que
+    /// <see cref="BloquearFilaDelArticuloAsync"/> ya dejó bloqueada, viva y en esa familia.</summary>
+    private async Task SacarDeLaFamiliaAsync(int idArticulo, int idTenant, DateTimeOffset ahora, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // Sin id_familia ni deleted_at: la fila ya quedó bloqueada y verificada en la fase de filas.
+        comando.CommandText =
+            "UPDATE articulos SET id_familia = NULL, updated_at = $1 WHERE id_articulo = $2 AND id_tenant = $3";
+
+        ParametrosDeComando.Agregar(comando, ahora);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>409 <c>alcance_requerido</c>: el artículo es miembro y el cliente no eligió. El mensaje
@@ -887,7 +1005,8 @@ public class ServicioDePrecios(
     }
 
     /// <summary>409 <c>familia_cambio</c>: la pertenencia que el cliente daba por cierta ya no lo es
-    /// (eligió un alcance sobre un artículo que dejó de ser miembro).</summary>
+    /// (eligió un alcance sobre un artículo que dejó de ser miembro, o que dejó de existir mientras
+    /// esta escritura esperaba el lock de su fila).</summary>
     private static ErrorDominio ErrorDeFamiliaCambio() =>
         ErrorDominio.Conflicto(
             "familia_cambio",
@@ -938,20 +1057,22 @@ public class ServicioDePrecios(
     /// antes del reemplazo). Devuelve <c>null</c> si no hay predecesor (la pendiente reemplazada
     /// era el primer precio del par) — nada que validar ni re-cerrar.
     ///
-    /// Solo BUSCA: el caller (<see cref="AbrirNuevoPrecioAsync"/>) valida el límite nuevo contra
-    /// <see cref="FilaVigente.VigenteDesde"/> ANTES de cerrar cualquier fila (ronda 2, item 1) —
-    /// separar la búsqueda del cierre es lo que permite ese orden: sin esto, el cierre del
-    /// predecesor ocurría a ciegas, sin chance de rechazar un límite inválido antes de escribir.
+    /// Solo BUSCA: <see cref="PlanificarPrecioDeUnArticuloAsync"/> valida el límite nuevo contra
+    /// <see cref="FilaVigente.VigenteDesde"/> en la fase 1, ANTES de que ninguna fila se cierre
+    /// (ronda 2, item 1) — separar la búsqueda del cierre (<see cref="CerrarFilasDelPlanAsync"/>) es
+    /// lo que permite ese orden: sin esto, el cierre del predecesor ocurría a ciegas, sin chance de
+    /// rechazar un límite inválido antes de escribir.
     ///
     /// <paramref name="idFilaPendienteCerrada"/> se EXCLUYE explícitamente de la búsqueda —
     /// cuando el reemplazo cierra la pendiente en su ventana muerta (<c>vigente_hasta ==
-    /// vigente_desde == limiteOriginal</c>, ver el caller), esa MISMA fila también matchea
+    /// vigente_desde == limiteOriginal</c>, ver <see cref="CerrarFilasDelPlanAsync"/>), esa MISMA fila también matchea
     /// <c>vigente_hasta = limiteOriginal</c>. Sin esta exclusión, la pendiente recién cerrada
     /// aparecería como su propio predecesor — el bug encontrado corriendo el caso "primer precio
     /// del par es directamente un programado, sin predecesor real".
     ///
     /// (judgment-day ronda 3, item 1) DOS defensas más, necesarias porque un reemplazo con la
-    /// MISMA fecha ("corregir el importe manteniendo la fecha", ver el caller) deja una fila
+    /// MISMA fecha ("corregir el importe manteniendo la fecha", ver
+    /// <see cref="PlanificarPrecioDeUnArticuloAsync"/>) deja una fila
     /// MUERTA (<c>vigente_desde == vigente_hasta</c>) que comparte el mismo límite que el
     /// predecesor REAL cuando ese reemplazo mismo-fecha, a su vez, se vuelve a reemplazar con una
     /// fecha nueva: <c>vigente_hasta = limiteOriginal</c> por sí solo es AMBIGUO entre la fila
@@ -1028,4 +1149,15 @@ public class ServicioDePrecios(
     /// significativo cuando la fila viene de <see cref="BuscarFilaAbiertaAsync"/>; el predecesor
     /// (<see cref="BuscarPredecesorAsync"/>) nunca lo lee.</summary>
     private readonly record struct FilaVigente(int Id, DateTimeOffset VigenteDesde, decimal Monto);
+
+    /// <summary>Lo que resolvió la lectura de pertenencia bajo el lock de membresía: los artículos que
+    /// hay que escribir, ascendentes por <c>id_articulo</c>, y —solo en "solo este"— la familia de la
+    /// que sale el artículo pedido.</summary>
+    private readonly record struct ObjetivosDeLaEscritura(IReadOnlyList<int> Ids, int? IdFamiliaDeLaQueSale);
+
+    /// <summary>Lo que la fase 1 leyó y validó de UN objetivo y la fase 2 necesita para escribirlo: la
+    /// fila abierta (<c>null</c> si el par todavía no tiene precio), si era pendiente y, entonces, su
+    /// predecesor.</summary>
+    private readonly record struct PlanDeUnArticulo(
+        int IdArticulo, FilaVigente? FilaAbierta, bool EsPendiente, FilaVigente? Predecesor);
 }

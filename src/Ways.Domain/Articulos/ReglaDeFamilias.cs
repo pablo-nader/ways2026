@@ -2,7 +2,7 @@ namespace Ways.Domain.Articulos;
 
 /// <summary>
 /// Reglas puras de familias de artículos (doc 10 §3), sin base de datos — mismo criterio que
-/// <see cref="ReglaDeArticulos"/>. Hoy las usa el escritor de precios
+/// <see cref="ReglaDeArticulos"/>. Las usa el escritor de precios
 /// (<c>ServicioDePrecios.AbrirNuevoPrecioAsync</c>).
 /// </summary>
 public static class ReglaDeFamilias

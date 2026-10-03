@@ -22,11 +22,13 @@ public class ServicioDePreciosAlcanceTests
         Assert.Equal(esperado, ServicioDePrecios.ModoDeLaSolicitud(alcance));
     }
 
-    /// <summary>El conversor JSON del servidor acepta también el ordinal del enum: un número fuera
-    /// de rango llega al servicio como un valor no definido, y no puede caer en silencio en ninguno
-    /// de los destinos.</summary>
+    /// <summary>El conversor JSON del servidor acepta también el ordinal del enum: un número que no es
+    /// el de ninguno de los dos valores llega al servicio como un valor no definido, y no puede caer en
+    /// silencio en ninguno de los destinos. El <c>0</c> es el caso que importa: es lo que produce un
+    /// entero sin inicializar, y mientras <c>Familia</c> valía 0 elegía el alcance más amplio.</summary>
     [Theory]
-    [InlineData(2)]
+    [InlineData(0)]
+    [InlineData(3)]
     [InlineData(99)]
     [InlineData(-1)]
     public void UnAlcanceFueraDelEnumSeRechazaConAlcanceInvalido(int ordinal)
@@ -47,8 +49,17 @@ public class ServicioDePreciosAlcanceTests
             modo => modo == ModoDeAlcanceDeFamilia.FamiliaSiCorresponde);
     }
 
+    /// <summary>Los valores de la API son 1 y 2: ninguno es el 0 de un entero sin inicializar.</summary>
+    [Fact]
+    public void NingunValorDelEnumEsElCeroDeUnEnteroSinInicializar()
+    {
+        Assert.Equal(1, (int)AlcanceDeFamilia.Familia);
+        Assert.Equal(2, (int)AlcanceDeFamilia.SoloEste);
+        Assert.False(Enum.IsDefined((AlcanceDeFamilia)0));
+    }
+
     /// <summary>Ambos contratos de alta aceptan el alcance, opcional, sin valor por defecto. Un
-    /// cliente que no lo manda sigue siendo válido para un artículo sin familia.</summary>
+    /// cliente que no lo manda es válido para un artículo sin familia.</summary>
     [Fact]
     public void LosDosContratosDeAltaAceptanUnAlcanceOpcionalSinValorPorDefecto()
     {

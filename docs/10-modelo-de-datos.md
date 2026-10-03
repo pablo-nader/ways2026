@@ -361,12 +361,15 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 
 | `alcance` | Artículo sin familia | Artículo miembro |
 |---|---|---|
-| ausente | se escribe solo, como siempre | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
+| ausente | se escribe solo | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
 | `Familia` | `409 familia_cambio` | el precio se aplica a **todos** los miembros vivos |
 | `SoloEste` | `409 familia_cambio` | el artículo **sale de la familia** y se escribe solo él |
 
-Un valor fuera de los dos (el JSON acepta también el ordinal) es `400 alcance_invalido`. La escritura
-es **todo o nada**: una sola transacción, y un conflicto de cualquier miembro
+Un **ordinal** que no es el de ninguno de los dos (el JSON acepta el ordinal además del nombre; los
+valores son `Familia = 1` y `SoloEste = 2`, así que el `0` tampoco vale) es `400 alcance_invalido`. Un
+**texto** que no se lee ni como el nombre de un valor ni como un ordinal no llega al servicio: lo rechaza
+el binding JSON del framework, como a cualquier otro enum de la API, y no produce `alcance_invalido`.
+La escritura es **todo o nada**: una sola transacción, y un conflicto de cualquier miembro
 (`precio_pendiente_existe` sin `confirmarReemplazo`, `vigente_desde_invalido`) la aborta entera, incluida
 la salida de la familia de "solo este". Todos los miembros comparten el mismo "ahora" y cada uno
 registra su propia auditoría `precio.cambio`. Los llamadores internos que no tienen a quién preguntar
@@ -378,10 +381,13 @@ orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` 
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
 como primera sentencia; (2) las **filas de `articulos`** de los miembros en orden ascendente de id
 (`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE`, nunca `FOR UPDATE` sobre varias filas: choca con
-el `FOR KEY SHARE` que toman las ventas por sus FK); (3) los **locks de par artículo-lista** en orden
-ascendente de `id_articulo`. La pertenencia que se lee después de (1) es estable hasta el commit; un
-artículo sin familia no toma (2). El escritor de precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo
-implementa; el de campos compartidos tendrá que respetarlo.
+el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del propio artículo; (3) los **locks de par artículo-lista** en orden
+ascendente de su **clave de lock** (`ServicioDePrecios.ClaveDeLockDePar`), no de `id_articulo`: la clave
+de pares de listas distintas puede coincidir, y por id dos escrituras de la misma familia sobre dos
+listas podrían tomar las mismas dos claves en orden opuesto y esperarse en ciclo. La pertenencia que se
+lee después de (1) es estable hasta el commit; un artículo sin familia no toma (2). El escritor de
+precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo implementa; todo escritor de campos compartidos
+tiene que respetarlo.
 
 ### Listas de precio, con historia
 

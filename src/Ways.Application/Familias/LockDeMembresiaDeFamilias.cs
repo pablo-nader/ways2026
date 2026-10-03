@@ -13,10 +13,13 @@ namespace Ways.Application.Familias;
 ///
 /// <para><b>Protocolo.</b> Toda transacción que escribe campos compartidos de una familia o precios
 /// toma, en este orden global: (1) este lock, (2) las filas de <c>articulos</c> en orden ascendente
-/// de <c>id_articulo</c> (<c>SELECT … ORDER BY id_articulo FOR NO KEY UPDATE</c>, nunca
-/// <c>FOR UPDATE</c> sobre varias filas: choca con el <c>FOR KEY SHARE</c> que toman las ventas por
-/// sus FK y puede formar un deadlock), (3) los locks de pares artículo-lista en orden ascendente de
-/// <c>id_articulo</c>. Como todos suben en el mismo orden, dos escritores nunca se esperan en
+/// de <c>id_articulo</c> —las de los miembros o, en "solo este", la del propio artículo— (<c>SELECT …
+/// ORDER BY id_articulo FOR NO KEY UPDATE</c>, nunca <c>FOR UPDATE</c> sobre varias filas: choca con
+/// el <c>FOR KEY SHARE</c> que toman las ventas por sus FK y puede formar un deadlock), (3) los locks
+/// de pares artículo-lista en orden ascendente de su CLAVE
+/// (<c>ServicioDePrecios.OrdenDeLocksDePares</c>), no de <c>id_articulo</c>: la clave de dos pares de
+/// listas distintas puede coincidir, y por id dos escrituras podrían tomar las mismas dos claves en
+/// orden opuesto. Como todos suben en el mismo orden, dos escritores nunca se esperan en
 /// ciclo.</para>
 ///
 /// <para><b>Compartido o exclusivo.</b> <see cref="TomarCompartidoAsync"/> es para quien escribe
