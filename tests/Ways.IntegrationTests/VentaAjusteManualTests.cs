@@ -856,6 +856,42 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(-10m, Assert.Single(items).AjusteManualPorcentaje);
     }
 
+    /// <summary>Dos líneas del MISMO artículo y la MISMA cantidad que solo difieren en el porcentaje
+    /// (el API las acepta: no hay rechazo por artículo repetido), reenviadas bajo el mismo número en
+    /// el orden inverso, son la misma venta y devuelven el comprobante original, no un 409. Cada caso
+    /// de la teoría deja en rojo un desempate de <c>ExigirMismoContenido</c> al quitarlo: con el
+    /// descuento primero, lo persistido ya queda de menor a mayor porcentaje y el reenvío trae las
+    /// solicitadas al revés, así que solo las ordena su <c>ThenBy(Item3)</c>; con el recargo primero,
+    /// el reenvío ya trae las solicitadas de menor a mayor porcentaje y lo persistido (por
+    /// <c>orden</c>) queda al revés, así que solo lo ordena el <c>ThenBy(AjusteManualPorcentaje)</c>
+    /// de las existentes.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReenviarLasMismasLineasDelMismoArticuloYCantidadEnOtroOrdenDevuelveElComprobanteOriginal(
+        bool primeroElDescuento)
+    {
+        var ctx = await PrepararOfflineAsync(
+            $"ReenviarLineasMismoArticuloOtroOrden{(primeroElDescuento ? "DescuentoPrimero" : "RecargoPrimero")}");
+        var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
+        var descuento = new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 100m, AjusteManualPorcentaje: -10m);
+        var recargo = new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 100m, AjusteManualPorcentaje: 20m);
+        LineaDeVenta[] original = primeroElDescuento ? [descuento, recargo] : [recargo, descuento];
+        LineaDeVenta[] invertido = [.. original.Reverse()];
+
+        var primera = await EmitirOkAsync(ctx.Cliente, VentaOffline(ctx, 210m, numero: 1, original));
+        var persistidoPorOrden = original.Select(l => l.AjusteManualPorcentaje).ToList();
+        Assert.Equal(persistidoPorOrden, primera.Items.Select(i => i.AjusteManualPorcentaje).ToList());
+        var (_, itemsPrimera) = await LeerPersistidoAsync(ctx.IdTenant, primera.Id);
+        Assert.Equal(persistidoPorOrden, itemsPrimera.Select(i => i.AjusteManualPorcentaje).ToList());
+
+        var segunda = await EmitirOkAsync(ctx.Cliente, VentaOffline(ctx, 210m, numero: 1, invertido));
+
+        Assert.Equal(primera.Id, segunda.Id);
+        Assert.Equal(persistidoPorOrden, segunda.Items.Select(i => i.AjusteManualPorcentaje).ToList());
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+    }
+
     /// <summary>Anular devuelve el comprobante releído de la base: conserva los cuatro campos del
     /// ajuste manual y la identidad del total.</summary>
     [Fact]
