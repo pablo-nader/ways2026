@@ -1004,11 +1004,19 @@ export type LineaDeArqueoResumen = {
   importeEsperado: number
   importeDeclarado: number
   diferencia: number
+  /** Esperado del cierre cuando un recálculo administrativo lo cambió; `null` si nunca cambió. */
+  importeEsperadoOriginal: number | null
 }
 
 /** Respuesta de `POST /api/caja/turnos/{id}/cierre` y de `GET /api/caja/turnos/{id}` (el
  * payload del comprobante Z) — mismos campos planos que `TurnoResumen` más `arqueos`. */
-export type TurnoConArqueos = TurnoResumen & { arqueos: LineaDeArqueoResumen[] }
+export type TurnoConArqueos = TurnoResumen & {
+  arqueos: LineaDeArqueoResumen[]
+  /** Último recálculo administrativo del arqueo (edición/baja de un gasto de un turno cerrado);
+   * `null` si nunca hubo uno. */
+  fechaRecalculo: string | null
+  idEmpleadoRecalculo: number | null
+}
 
 // --- Cierre por retiro (etapa 5): segundo modo de cierre — el cajero retira el efectivo
 // contado y deja el fondo inicial en el cajón, nada se cuenta. Espejo de
@@ -1085,6 +1093,8 @@ export type FilaDeHistoricoDeCajas = {
   declarado: number
   diferencia: number
   egresos: EgresosDeTurno
+  fechaRecalculo: string | null
+  idEmpleadoRecalculo: number | null
 }
 
 /** Página de `GET /api/reportes/cajas` — espejo de `PaginaDeHistoricoDeCajas`. */
@@ -1138,6 +1148,14 @@ export type GastoDeTurno = {
   idMedioPago: number
   importe: number
   origenFondos: OrigenFondosGasto
+  idTurnoCaja: number | null
+  /** `true` solo si el gasto tiene turno y ese turno sigue abierto: habilita la edición del POS. */
+  turnoAbierto: boolean
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  numeroFactura: string | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1247,6 +1265,23 @@ export type GastoDeAdministracionListado = {
   importe: number
   origenFondos: OrigenFondosGasto
   idComprobanteCompra: number | null
+  /** `true` solo si el gasto tiene turno y ese turno sigue abierto (editar uno de un turno
+   * cerrado recalcula su arqueo). */
+  turnoAbierto: boolean
+}
+
+/** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
+ * `SolicitudDeEdicionDeGasto`: solo los campos editables (origen de fondos, punto de venta,
+ * empresa, turno, fecha y compra ligada no se cambian por esta vía). */
+export type SolicitudDeEdicionDeGasto = {
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
 }
 
 /** Página de resultados de `GET /api/gastos/administracion` — espejo de

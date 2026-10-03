@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -94,7 +94,9 @@ function turnoConArqueosFixture(sobrescribir: Partial<TurnoConArqueos> = {}): Tu
     fondoInicial: 500,
     estado: 'Cerrado',
     observaciones: null,
-    arqueos: [{ idMedioPago: 1, importeEsperado: 640, importeDeclarado: 635, diferencia: 5 }],
+    arqueos: [{ idMedioPago: 1, importeEsperado: 640, importeDeclarado: 635, diferencia: 5, importeEsperadoOriginal: null }],
+    fechaRecalculo: null,
+    idEmpleadoRecalculo: null,
     ...sobrescribir,
   }
 }
@@ -826,5 +828,38 @@ describe('CierreDeCaja — rechazo por rendición de dispositivo pendiente', () 
     renderCierre()
     await intentarCierreYRecibirElRechazo()
     expect(screen.queryByText(avisoDeRol)).not.toBeInTheDocument()
+  })
+})
+
+describe('CierreDeCaja — arqueo recalculado', () => {
+  async function cerrarConRespuesta(respuesta: TurnoConArqueos) {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(respuesta)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    renderCierre()
+    await cerrarElTurno()
+  }
+
+  it('un turno recalculado muestra la insignia y el esperado original de la línea modificada', async () => {
+    await cerrarConRespuesta(
+      turnoConArqueosFixture({
+        fechaRecalculo: '2026-09-20T15:30:00Z',
+        idEmpleadoRecalculo: 4,
+        arqueos: [{ idMedioPago: 1, importeEsperado: 640, importeDeclarado: 635, diferencia: 5, importeEsperadoOriginal: 700 }],
+      }),
+    )
+
+    expect(screen.getByText('Recalculado')).toBeInTheDocument()
+    const fila = screen.getByText('Efectivo').closest('tr') as HTMLElement
+    expect(within(fila).getByText('Esperado original: $ 700,00')).toBeInTheDocument()
+  })
+
+  it('un turno sin recálculo no muestra insignia ni esperado original', async () => {
+    await cerrarConRespuesta(turnoConArqueosFixture())
+
+    expect(screen.queryByText('Recalculado')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Esperado original/)).not.toBeInTheDocument()
   })
 })

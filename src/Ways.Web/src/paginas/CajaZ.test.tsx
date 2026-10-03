@@ -84,8 +84,8 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idPuntoVenta: 10, idCliente: 2, total: 250 },
     ],
     gastos: [
-      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno' },
-      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria' },
+      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null },
+      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null },
     ],
     ...sobrescribir,
   }

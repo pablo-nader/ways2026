@@ -192,7 +192,9 @@ describe('reporteZ', () => {
       fondoInicial: 5000,
       estado: 'Cerrado',
       observaciones: null,
-      arqueos: [{ idMedioPago: 1, importeEsperado: 10000, importeDeclarado: 9900, diferencia: -100 }],
+      arqueos: [{ idMedioPago: 1, importeEsperado: 10000, importeDeclarado: 9900, diferencia: -100, importeEsperadoOriginal: null }],
+      fechaRecalculo: null,
+      idEmpleadoRecalculo: null,
       ...sobrescribir,
     }
   }

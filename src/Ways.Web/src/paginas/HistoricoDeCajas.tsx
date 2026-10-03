@@ -6,6 +6,7 @@ import type { PaginaDeHistoricoDeCajas, PuntoVentaListado } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
@@ -187,7 +188,10 @@ export function HistoricoDeCajas() {
                 <tbody>
                   {pagina.items.map((f) => (
                     <tr key={f.idTurnoCaja}>
-                      <td>#{f.idTurnoCaja}</td>
+                      <td>
+                        #{f.idTurnoCaja}
+                        <InsigniaDeRecalculo fechaRecalculo={f.fechaRecalculo} />
+                      </td>
                       <td>{puntoVentaPorId[f.idPuntoVenta]?.nombre ?? `PV #${f.idPuntoVenta}`}</td>
                       <td>{formatearFechaHora(f.fechaApertura)}</td>
                       <td>{formatearFechaHora(f.fechaCierre)}</td>

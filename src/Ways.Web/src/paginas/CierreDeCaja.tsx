@@ -9,6 +9,7 @@ import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, SolicitudDeCierre
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
 import { crearAlmacenIndexedDb } from '../pos/almacenPos'
 import { leerOutbox, leerRechazadas } from '../pos/outboxOffline'
@@ -349,6 +350,11 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                   <div className="small text-muted">Fondo inicial</div>
                   <div>{formatearMoneda(zReporte.fondoInicial)}</div>
                 </div>
+                {zReporte.fechaRecalculo !== null && (
+                  <div className="col-12">
+                    <InsigniaDeRecalculo fechaRecalculo={zReporte.fechaRecalculo} />
+                  </div>
+                )}
               </div>
 
               <div className="table-responsive">
@@ -365,7 +371,14 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                     {zReporte.arqueos.map((a) => (
                       <tr key={a.idMedioPago}>
                         <td>{medioPorId[a.idMedioPago]?.nombre ?? `Medio #${a.idMedioPago}`}</td>
-                        <td className="text-end">{formatearMoneda(a.importeEsperado)}</td>
+                        <td className="text-end">
+                          {formatearMoneda(a.importeEsperado)}
+                          {a.importeEsperadoOriginal !== null && (
+                            <div className="small text-muted">
+                              Esperado original: {formatearMoneda(a.importeEsperadoOriginal)}
+                            </div>
+                          )}
+                        </td>
                         <td className="text-end">{formatearMoneda(a.importeDeclarado)}</td>
                         <td className="text-end">{formatearMoneda(a.diferencia)}</td>
                       </tr>

@@ -90,6 +90,8 @@ function filaFixture(sobrescribir: Partial<FilaDeHistoricoDeCajas> = {}): FilaDe
     declarado: 950,
     diferencia: -50,
     egresos: { porCategoria: [], porArea: [], retiros: 0 },
+    fechaRecalculo: null,
+    idEmpleadoRecalculo: null,
     ...sobrescribir,
   }
 }
@@ -191,6 +193,22 @@ describe('HistoricoDeCajas — listado (stage-11-exportacion-reportes, Slice 6a)
     expect(within(filaDosDom).getByText('$ 2.500,00')).toBeInTheDocument()
     expect(within(filaDosDom).getByText('$ 2.550,00')).toBeInTheDocument()
     expect(within(filaDosDom).getByText('$ 50,00')).toBeInTheDocument()
+  })
+
+  it('marca como Recalculado, con la fecha en el tooltip, solo los turnos con fechaRecalculo', async () => {
+    const recalculada = filaFixture({ idTurnoCaja: 100, fechaRecalculo: '2026-09-20T15:30:00Z', idEmpleadoRecalculo: 4 })
+    const intacta = filaFixture({ idTurnoCaja: 101 })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/cajas?')) return Promise.resolve(paginaFixture([recalculada, intacta]))
+      return undefined
+    })
+    renderHistoricoDeCajas()
+
+    await screen.findByText('#100')
+    const filaRecalculada = screen.getByRole('row', { name: /#100/ })
+    const insignia = within(filaRecalculada).getByText('Recalculado')
+    expect(insignia).toHaveAttribute('title', `Arqueo recalculado el ${new Date('2026-09-20T15:30:00Z').toLocaleString('es-AR')}`)
+    expect(within(screen.getByRole('row', { name: /#101/ })).queryByText('Recalculado')).not.toBeInTheDocument()
   })
 
   it('cambiar el filtro de punto de venta dispara una nueva consulta con idPuntoVenta', async () => {
