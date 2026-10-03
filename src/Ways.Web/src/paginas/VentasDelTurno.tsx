@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -12,6 +13,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { Modal } from '../componentes/Modal'
+import { formatearImporteConSigno } from '../formato/importes'
 import {
   FILTROS_VACIOS,
   claseDeBadgeDeEstadoVenta,
@@ -24,6 +26,8 @@ import {
   nombreDeMedio,
   puedeAnular,
   puedeReimprimir,
+  tieneDescuentoManual,
+  tieneRecargoManual,
   totalesDeVentas,
   totalesPorMedioDeVentas,
 } from './utilidadesVentasDelTurno'
@@ -158,6 +162,7 @@ function ModalDetalleDeVenta({
                   <th className="text-end">Cantidad</th>
                   <th className="text-end">Precio unit.</th>
                   <th className="text-end">Descuento</th>
+                  <th>Ajuste manual</th>
                   <th className="text-end">Total</th>
                 </tr>
               </thead>
@@ -171,6 +176,11 @@ function ModalDetalleDeVenta({
                     <td className="text-end">{item.cantidad}</td>
                     <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
                     <td className="text-end">{formatearMoneda(item.descuento)}</td>
+                    <td>
+                      {item.ajusteManualPorcentaje != null
+                        ? `${rotuloDeAjusteManual(item.ajusteManualPorcentaje)} ${formatearPorcentajeDeAjuste(item.ajusteManualPorcentaje)}% ${formatearImporteConSigno(item.ajusteManual, { simbolo: true })}`
+                        : '—'}
+                    </td>
                     <td className="text-end">{formatearMoneda(item.total)}</td>
                   </tr>
                 ))}
@@ -204,6 +214,12 @@ function ModalDetalleDeVenta({
           <div className="d-flex justify-content-end gap-4 small">
             <span>Subtotal: {formatearMoneda(comprobante.subtotal)}</span>
             <span>Descuento: {formatearMoneda(comprobante.descuentoTotal)}</span>
+            {(comprobante.descuentoManualTotal ?? 0) !== 0 && (
+              <span>Desc. manual: {formatearImporteConSigno(-comprobante.descuentoManualTotal, { simbolo: true })}</span>
+            )}
+            {(comprobante.recargoManualTotal ?? 0) !== 0 && (
+              <span>Recargo: {formatearImporteConSigno(comprobante.recargoManualTotal, { simbolo: true })}</span>
+            )}
             <strong>Total: {formatearMoneda(comprobante.total)}</strong>
           </div>
 
@@ -628,6 +644,16 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                         <span className={`badge ${claseDeBadgeDeEstadoVenta(v.estado)}`}>
                           {etiquetaDeEstadoVenta(v.estado)}
                         </span>
+                        {tieneDescuentoManual(v) && (
+                          <span className="badge text-bg-warning ms-1" title={`Descuento manual: ${formatearMoneda(v.descuentoManualTotal)}`}>
+                            Desc. manual
+                          </span>
+                        )}
+                        {tieneRecargoManual(v) && (
+                          <span className="badge text-bg-info ms-1" title={`Recargo manual: ${formatearMoneda(v.recargoManualTotal)}`}>
+                            Recargo
+                          </span>
+                        )}
                       </td>
                       <td>
                         <div className="d-flex flex-wrap gap-2">
