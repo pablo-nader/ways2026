@@ -687,8 +687,8 @@ comprobantes_compra (         -- [operativa]
 
 items_comprobante_compra (
     id_item, id_comprobante_compra, orden,
-    id_articulo,
-    descripcion text,                        -- snapshot
+    id_articulo NULL,                        -- NULL = línea por concepto (ver más abajo)
+    descripcion text,                        -- snapshot; en un concepto es el texto libre
     cantidad        numeric(12,3),           -- unidades totales
     bultos          numeric(10,2) NULL, unidades_por_bulto numeric(10,2) NULL,
     costo_unitario  numeric(14,4),           -- 4 decimales: costos con más precisión
@@ -699,6 +699,18 @@ items_comprobante_compra (
     precio_sugerido numeric(14,2) NULL       -- propuesta de nuevo precio de venta (margen)
 );
 ```
+
+**Líneas por concepto.** Una línea con `id_articulo NULL` es un concepto (un flete, una
+factura de ferretería cargada por total): descripción libre, cantidad, costo, descuento y
+alícuota, sin artículo detrás. Suma al subtotal, al IVA y al `total` del comprobante, y por lo
+tanto a la cuenta corriente del proveedor, pero no tiene efectos de inventario: no genera
+`movimientos_stock`, no actualiza `articulos.costo_nominal`, no resuelve lote ni calcula
+`precio_sugerido`, y no cuenta para la cobertura de una orden de compra. Una compra solo con
+conceptos es válida. La CHECK `ck_items_comprobante_compra_concepto_sin_efectos` lo exige en la
+base: con `id_articulo IS NULL`, `actualiza_costo = false` y `codigo_lote`, `fecha_vencimiento`,
+`id_lote`, `bultos`, `unidades_por_bulto` y `precio_sugerido` son `NULL`. El servicio rechaza con
+400 (`concepto_sin_descripcion`, `concepto_con_lote`, `concepto_con_bultos`,
+`concepto_actualiza_costo`) lo que la CHECK prohíbe, en vez de aceptarlo y descartarlo.
 
 Ciclo: se carga en `borrador` (se puede ir armando con el remito en la mano), y al
 **confirmar** — en una sola transacción — genera los `movimientos_stock` de entrada,
@@ -714,9 +726,9 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > (2) es una **unicidad PARCIAL** (`WHERE estado <> 'anulada' AND numero_externo IS NOT
 > NULL`), no una UNIQUE llana: excluye `numero_externo NULL` mientras es borrador y permite
 > reingresar el número de una factura anulada por error de carga. `id_articulo` en
-> `items_comprobante_compra` es **`NOT NULL`**, a diferencia de `items_comprobante_venta`
-> (§4): una línea de compra sin artículo no puede mover stock ni actualizar costo — sería un
-> gasto, y los gastos ya existen como concepto separado. Nueva CHECK
+> `items_comprobante_compra` nació **`NOT NULL`**, a diferencia de `items_comprobante_venta`
+> (§4); la migración `ComprasLineasPorConcepto` lo volvió nullable (ver "Líneas por concepto"
+> arriba). Nueva CHECK
 > `ck_comprobantes_compra_confirmada_completa` (`estado = 'borrador' OR (numero_externo,
 > fecha_comprobante, fecha_recepcion todos NOT NULL)`), no especificada arriba, cierra a nivel
 > esquema la regla de negocio "no se confirma sin identidad de factura". `estado_compra` se

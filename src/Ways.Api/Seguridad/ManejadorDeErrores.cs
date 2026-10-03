@@ -1015,6 +1015,14 @@ public class ManejadorDeErrores(
                     "Un ítem con codigo_lote tiene que traer también fecha_vencimiento.",
                     "lote_input_incompleto"),
 
+            // Backstop de ck_items_comprobante_compra_concepto_sin_efectos — el servicio y
+            // CalculadorDeCompra ya rechazan antes lote, bultos y actualizaCosto en una línea por
+            // concepto; esta rama atrapa una escritura que esquive esos guards.
+            "ck_items_comprobante_compra_concepto_sin_efectos" =>
+                (StatusCodes.Status400BadRequest,
+                    "Una línea por concepto no puede llevar lote, bultos, costo ni precio sugerido.",
+                    "concepto_con_efectos"),
+
             _ => null
         };
 

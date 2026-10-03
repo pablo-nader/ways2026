@@ -60,7 +60,8 @@ public static class EscriturasDeOrdenDeCompra
     /// <summary>Statement 2 — la derivación, en su PROPIO statement (snapshot nuevo: ve el commit
     /// del ganador de una carrera). Agrupa por <c>id_articulo</c> en AMBOS lados (design decisión
     /// 3, proposal decisión 2: line-to-line es imposible, un artículo puede repetirse en cualquiera
-    /// de las dos tablas) — <c>completa</c> exige que TODO artículo pedido esté cubierto;
+    /// de las dos tablas); una línea por concepto (<c>id_articulo IS NULL</c>) no cuenta en la
+    /// recepción, no recibe mercadería — <c>completa</c> exige que TODO artículo pedido esté cubierto;
     /// <c>algoRecibido</c> se toma del lado RECEPCIÓN, nunca del pedido (design decisión 3/T9: una
     /// entrega por sustitución — recibido no pedido — tiene que contar).</summary>
     private static async Task<(bool Completa, bool AlgoRecibido)> DerivarAsync(
@@ -81,7 +82,7 @@ public static class EscriturasDeOrdenDeCompra
             "      ON c.id_comprobante_compra = ic.id_comprobante_compra AND c.id_tenant = ic.id_tenant " +
             "    WHERE c.id_orden_compra = $1 AND c.id_tenant = $2 " +
             "      AND c.estado = 'confirmada'::estado_compra " +
-            "      AND c.deleted_at IS NULL AND ic.deleted_at IS NULL " +
+            "      AND c.deleted_at IS NULL AND ic.deleted_at IS NULL AND ic.id_articulo IS NOT NULL " +
             "    GROUP BY ic.id_articulo) " +
             "SELECT " +
             "    NOT EXISTS (SELECT 1 FROM pedido p " +

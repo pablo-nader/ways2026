@@ -1636,9 +1636,11 @@ export type ResultadoDeReliquidacion = {
 
 export type EstadoCompra = 'Borrador' | 'Confirmada' | 'Anulada'
 
-/** Una línea del cuerpo de `POST`/`PUT /api/compras` (espejo de `LineaDeCompraSolicitada`). */
+/** Una línea del cuerpo de `POST`/`PUT /api/compras` (espejo de `LineaDeCompraSolicitada`).
+ * `idArticulo: null` declara una línea por concepto: no admite lote, bultos ni `actualizaCosto`
+ * verdadero (el servidor responde 400 en vez de descartarlos). */
 export type LineaDeCompraSolicitada = {
-  idArticulo: number
+  idArticulo: number | null
   descripcion: string
   unidades: number
   bultos: number | null
@@ -1676,7 +1678,8 @@ export type SolicitudDeCompra = {
 /** Un item ya persistido, con su `precioSugerido` (espejo de `ItemDeCompra`). */
 export type ItemDeCompra = {
   orden: number
-  idArticulo: number
+  /** `null` = línea por concepto (sin artículo, sin stock ni costo). */
+  idArticulo: number | null
   descripcion: string
   cantidad: number
   bultos: number | null

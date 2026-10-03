@@ -7,10 +7,11 @@ namespace Ways.Domain.Compras;
 /// Una línea de compra tal como llega del request (design: Interfaces/Contracts) — <see
 /// cref="Unidades"/>/<see cref="Bultos"/>/<see cref="UnidadesPorBulto"/> son los inputs crudos;
 /// <see cref="CalculadorDeCompra.Calcular"/> deriva <c>cantidad</c> a partir de ellos (design
-/// decisión 3: ningún endpoint acepta <c>cantidad</c> directamente).
+/// decisión 3: ningún endpoint acepta <c>cantidad</c> directamente). Con <see cref="IdArticulo"/>
+/// nulo la línea es un concepto: un importe libre con descripción, sin stock, costo ni lote.
 /// </summary>
 public sealed record LineaDeCompra(
-    int Orden, int IdArticulo, string Descripcion,
+    int Orden, int? IdArticulo, string Descripcion,
     decimal Unidades, decimal? Bultos, decimal? UnidadesPorBulto,
     decimal CostoUnitario, decimal Descuento,
     int IdAlicuotaIva, decimal PorcentajeIva, bool ActualizaCosto);
@@ -20,7 +21,7 @@ public sealed record LineaDeCompra(
 /// (design decisión 4); <see cref="PrecioSugerido"/> es la sugerencia vía <see
 /// cref="SugeridorDePrecio"/>, nunca aplicada por el cálculo en sí.</summary>
 public sealed record ItemCalculado(
-    int Orden, int IdArticulo, decimal Cantidad, decimal Total,
+    int Orden, int? IdArticulo, decimal Cantidad, decimal Total,
     decimal CostoEfectivo, decimal? PrecioSugerido);
 
 /// <summary>Resultado completo de <see cref="CalculadorDeCompra.Calcular"/>.</summary>
@@ -52,6 +53,11 @@ public static class CalculadorDeCompra
 
         foreach (var linea in lineas)
         {
+            if (linea.IdArticulo is null)
+            {
+                ValidarLineaDeConcepto(linea);
+            }
+
             var cantidad = Redondear(linea.Unidades + (linea.Bultos ?? 0m) * (linea.UnidadesPorBulto ?? 0m), 3);
 
             if (cantidad <= 0m)
@@ -94,10 +100,14 @@ public static class CalculadorDeCompra
                 costoEfectivo = Redondear(total / cantidad, 2);
             }
 
-            var (margenGrupo, margenProveedor) = margenes.TryGetValue(linea.IdArticulo, out var margen)
-                ? margen
-                : (null, null);
-            var precioSugerido = SugeridorDePrecio.Sugerir(costoEfectivo, null, null, margenGrupo, margenProveedor);
+            decimal? precioSugerido = null;
+            if (linea.IdArticulo is { } idArticulo)
+            {
+                var (margenGrupo, margenProveedor) = margenes.TryGetValue(idArticulo, out var margen)
+                    ? margen
+                    : (null, null);
+                precioSugerido = SugeridorDePrecio.Sugerir(costoEfectivo, null, null, margenGrupo, margenProveedor);
+            }
 
             items.Add(new ItemCalculado(linea.Orden, linea.IdArticulo, cantidad, total, costoEfectivo, precioSugerido));
 
@@ -108,6 +118,30 @@ public static class CalculadorDeCompra
         var total2 = discriminaIva ? subtotal - descuentoTotal + (ivaTotal ?? 0m) : subtotal - descuentoTotal;
 
         return new CompraCalculada(subtotal, descuentoTotal, ivaTotal, total2, items);
+    }
+
+    /// <summary>Un concepto no mueve stock ni toca <c>articulos.costo_nominal</c>, así que no admite
+    /// los inputs que solo tienen sentido para un artículo. Se rechaza en vez de ignorarlo: aceptar
+    /// y descartar <c>bultos</c> o <c>actualizaCosto</c> mentiría sobre lo que se guardó.</summary>
+    private static void ValidarLineaDeConcepto(LineaDeCompra linea)
+    {
+        if (string.IsNullOrWhiteSpace(linea.Descripcion))
+        {
+            throw new ErrorDominio(
+                "concepto_sin_descripcion", "Una línea por concepto necesita una descripción.", 400);
+        }
+
+        if (linea.Bultos is not null || linea.UnidadesPorBulto is not null)
+        {
+            throw new ErrorDominio(
+                "concepto_con_bultos", "Una línea por concepto no admite bultos ni unidades por bulto.", 400);
+        }
+
+        if (linea.ActualizaCosto)
+        {
+            throw new ErrorDominio(
+                "concepto_actualiza_costo", "Una línea por concepto no puede actualizar el costo de un artículo.", 400);
+        }
     }
 
     /// <summary>Deriva <c>costoEfectivo</c> directo de los valores YA persistidos de un item
@@ -124,22 +158,22 @@ public static class CalculadorDeCompra
     /// <summary>Design: Compra Arithmetic — "dos líneas del mismo artículo... el costo_nominal se
     /// deduplica en memoria con el mayor orden ganando, así que se emite exactamente un UPDATE
     /// por artículo". Filtra por <c>actualizaCosto AND costoUnitario &gt; 0</c> (design decisión
-    /// 4, el guard anti-bonificación) antes de dedupear.</summary>
+    /// 4, el guard anti-bonificación) antes de dedupear. Un concepto (sin artículo) nunca entra.</summary>
     public static IReadOnlyDictionary<int, decimal> ResolverActualizacionesDeCosto(
-        IReadOnlyList<(int Orden, int IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)> items)
+        IReadOnlyList<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)> items)
     {
         var ganador = new Dictionary<int, (int Orden, decimal Costo)>();
 
         foreach (var item in items)
         {
-            if (!item.ActualizaCosto || item.CostoUnitario <= 0m)
+            if (item.IdArticulo is not { } idArticulo || !item.ActualizaCosto || item.CostoUnitario <= 0m)
             {
                 continue;
             }
 
-            if (!ganador.TryGetValue(item.IdArticulo, out var actual) || item.Orden > actual.Orden)
+            if (!ganador.TryGetValue(idArticulo, out var actual) || item.Orden > actual.Orden)
             {
-                ganador[item.IdArticulo] = (item.Orden, item.CostoEfectivo);
+                ganador[idArticulo] = (item.Orden, item.CostoEfectivo);
             }
         }
 

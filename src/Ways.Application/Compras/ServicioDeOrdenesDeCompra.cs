@@ -227,8 +227,8 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             join c in db.ComprobantesCompra.AsNoTracking() on ic.IdComprobanteCompra equals c.Id
             join t in db.TiposComprobante.AsNoTracking() on c.IdTipoComprobante equals t.Id
             where c.IdOrdenCompra == idOrdenCompra && c.Estado == EstadoCompra.Confirmada
-                  && c.DeletedAt == null && ic.DeletedAt == null
-            select new { ic.IdArticulo, ic.Cantidad, ic.Total, ic.PorcentajeIva, t.DiscriminaIva })
+                  && c.DeletedAt == null && ic.DeletedAt == null && ic.IdArticulo != null
+            select new { IdArticulo = ic.IdArticulo!.Value, ic.Cantidad, ic.Total, ic.PorcentajeIva, t.DiscriminaIva })
             .ToListAsync(ct);
 
         var pedidaPorArticulo = itemsPedido
@@ -788,7 +788,8 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
     /// (<c>ck_items_comprobante_compra_cantidad_positiva</c>) — por eso alcanza con un EXISTS de
     /// cualquier item confirmado y ligado, sin necesidad de sumar por artículo como hace
     /// <see cref="EscriturasDeOrdenDeCompra"/>: cualquier fila que pase el filtro ya prueba
-    /// "recibida &gt; 0" para SU artículo. SIN lock de fila — lectura simple, nunca bloquea bajo
+    /// "recibida &gt; 0" para SU artículo. Las líneas por concepto (<c>id_articulo IS NULL</c>) no
+    /// cuentan: no recibieron mercadería de la orden. SIN lock de fila — lectura simple, nunca bloquea bajo
     /// READ COMMITTED (decisión 9).</summary>
     private static async Task<bool> TieneRecepcionConfirmadaAsync(
         DbConnection conexion, DbTransaction? transaccion, int idOrdenCompra, int idTenant, CancellationToken ct)
@@ -803,7 +804,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             "      ON c.id_comprobante_compra = ic.id_comprobante_compra AND c.id_tenant = ic.id_tenant " +
             "    WHERE c.id_orden_compra = $1 AND c.id_tenant = $2 " +
             "      AND c.estado = 'confirmada'::estado_compra " +
-            "      AND c.deleted_at IS NULL AND ic.deleted_at IS NULL" +
+            "      AND c.deleted_at IS NULL AND ic.deleted_at IS NULL AND ic.id_articulo IS NOT NULL" +
             ")";
 
         ParametrosDeComando.Agregar(comando, idOrdenCompra);
