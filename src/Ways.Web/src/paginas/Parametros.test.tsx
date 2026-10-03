@@ -24,6 +24,8 @@ const empresaUno: EmpresaListado = {
   nombreFantasia: null,
   cuit: null,
   nombreTenant: 'Tenant Demo',
+  alicuotaPercepcionIibb: null,
+  alicuotaPercepcionIva: null,
 }
 
 const puntoVentaUno: PuntoVentaListado = {

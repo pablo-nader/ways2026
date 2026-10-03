@@ -352,9 +352,19 @@ export type EmpresaListado = {
   nombreFantasia: string | null
   cuit: string | null
   nombreTenant: string | null
+  /** Porcentaje de percepción de IIBB que los proveedores le aplican a la empresa (0 a 100).
+   * `null` = no informado: la compra no pre-carga la percepción. */
+  alicuotaPercepcionIibb: number | null
+  alicuotaPercepcionIva: number | null
 }
 
-export type EmpresaEdicion = { razonSocial: string; nombreFantasia: string | null; cuit: string | null }
+export type EmpresaEdicion = {
+  razonSocial: string
+  nombreFantasia: string | null
+  cuit: string | null
+  alicuotaPercepcionIibb: number | null
+  alicuotaPercepcionIva: number | null
+}
 
 /** stage-desktop-pos (DB CHANGE GATE aprobado): invariante "una PC-caja = un punto de venta" —
  * `Escritorio` exige a lo sumo un dispositivo activo vinculado y que solo ese dispositivo pueda
@@ -504,6 +514,11 @@ export type ProveedorListado = {
   observaciones: string | null
   activo: boolean
   idEmpresa: number | null
+  /** El proveedor es agente de percepción: pre-carga la percepción en sus compras. */
+  percibeIibb: boolean
+  percibeIva: boolean
+  /** Sus precios ya traen el IVA incluido: pre-carga el modo "precio final" de la compra. */
+  preciosIncluyenIva: boolean
 }
 
 export type AltaProveedor = {
@@ -522,6 +537,9 @@ export type AltaProveedor = {
   observaciones: string | null
   idEmpresa: number | null
   activo: boolean
+  percibeIibb: boolean
+  percibeIva: boolean
+  preciosIncluyenIva: boolean
 }
 
 export type EdicionProveedor = AltaProveedor
@@ -1680,6 +1698,31 @@ export type SolicitudDeCompra = {
   discriminaIva: boolean | null
   /** Override de redondeo: el IVA que el proveedor imprimió por alícuota (tolerancia $1,00). */
   ivaImpreso: IvaImpresoSolicitado[] | null
+  /** El costo unitario tipeado ya trae el IVA. Solo vale si el comprobante discrimina IVA: en otro
+   * caso el servidor responde 400, así que el editor lo manda en `false`. */
+  preciosIncluyenIva: boolean
+  /** Reemplaza el conjunto completo de percepciones; `null` = ninguna. */
+  percepciones: PercepcionSolicitada[] | null
+}
+
+export type TipoDePercepcion = 'iibb' | 'iva'
+
+/** Una percepción tal como la imprimió el proveedor (espejo de `PercepcionSolicitada`): el importe
+ * es lo que dice la factura; base y alícuota son informativas. */
+export type PercepcionSolicitada = {
+  tipo: TipoDePercepcion
+  baseImponible: number
+  alicuota: number
+  importe: number
+}
+
+/** Una percepción persistida (espejo de `PercepcionDeCompraDetalle`). `baseImponible`/`importe` son
+ * `null` para el rol vendedor, igual que el desglose de IVA. */
+export type PercepcionDeCompra = {
+  tipo: TipoDePercepcion
+  alicuota: number
+  baseImponible: number | null
+  importe: number | null
 }
 
 /** El IVA impreso en el comprobante para una alícuota (espejo de `IvaImpresoSolicitado`). */
@@ -1738,6 +1781,8 @@ export type CompraDetalle = {
   discriminaIva: boolean
   /** Vacío cuando la compra no discrimina IVA. */
   alicuotas: AlicuotaDeCompra[]
+  preciosIncluyenIva: boolean
+  percepciones: PercepcionDeCompra[]
 }
 
 /** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). */

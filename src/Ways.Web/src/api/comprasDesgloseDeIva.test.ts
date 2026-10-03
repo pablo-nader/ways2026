@@ -72,6 +72,9 @@ function encabezado(sobrescribir: Partial<EncabezadoDeCompraFormulario> = {}): E
     idOrdenCompra: null,
     discriminaIva: true,
     ivaImpreso: {},
+    preciosIncluyenIva: false,
+    percepciones: [],
+    percepcionesDescartadas: [],
     ...sobrescribir,
   }
 }

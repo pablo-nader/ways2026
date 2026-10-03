@@ -15,6 +15,7 @@ import {
   lineaDesdeTotal,
   lineaFormularioACalculo,
   lineaConDescuentoInvalido,
+  percepcionesAplicables,
   type EncabezadoDeCompraFormulario,
   type LineaDeCompraFormulario,
 } from '../api/compras'
@@ -30,6 +31,7 @@ import type {
   AlicuotaIvaListado,
   ArticuloListado,
   CompraDetalle,
+  EmpresaListado,
   GastoDeAdministracionListado,
   ListaPrecioListado,
   OrdenDeCompraDetalle,
@@ -39,6 +41,7 @@ import type {
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
   TipoComprobanteListado,
+  TipoDePercepcion,
 } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
@@ -46,6 +49,18 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 import { DesgloseDeIvaDeCompra } from './DesgloseDeIvaDeCompra'
+import {
+  alElegirProveedor,
+  alicuotaDeEmpresaParaCompra,
+  baseDePercepcion,
+  conSugerenciasDePercepcion,
+  editarPercepcion,
+  percepcionesDesdeDetalle,
+  percepcionManual,
+  resolverPercepciones,
+  type ReferenciaDePercepciones,
+} from './sugerenciasDePercepcion'
+import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -77,6 +92,9 @@ function encabezadoVacio(): EncabezadoDeCompraFormulario {
     idOrdenCompra: null,
     discriminaIva: null,
     ivaImpreso: {},
+    preciosIncluyenIva: false,
+    percepciones: [],
+    percepcionesDescartadas: [],
   }
 }
 
@@ -91,6 +109,9 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
     idOrdenCompra: c.idOrdenCompra,
     discriminaIva: c.discriminaIva,
     ivaImpreso: ivaImpresoDesdeDetalle(c),
+    preciosIncluyenIva: c.preciosIncluyenIva,
+    percepciones: percepcionesDesdeDetalle(c.percepciones),
+    percepcionesDescartadas: [],
   }
 }
 
@@ -562,6 +583,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [tipos, setTipos] = useState<TipoComprobanteListado[] | null>(null)
   const [alicuotas, setAlicuotas] = useState<AlicuotaIvaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
+  const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
   const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[] | null>(null)
   const [errorReferencia, setErrorReferencia] = useState('')
 
@@ -601,6 +623,14 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       .catch(() => {
         setPuntosVenta([])
         marcarError('No se pudieron cargar los puntos de venta.')
+      })
+
+    clienteDeOrganizacion
+      .listarEmpresas()
+      .then((lista) => vigente && setEmpresas(lista))
+      .catch(() => {
+        // Las alícuotas de percepción de la empresa solo sirven para pre-cargar la percepción: sin
+        // ellas se carga a mano, así que no bloquea el resto de la pantalla.
       })
 
     clienteDePrecios
@@ -754,6 +784,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   const tipoSeleccionado = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
   const discriminaIva = discriminaIvaEfectivo(tipoSeleccionado, encabezado.discriminaIva)
+  const registraLibroIva = tipoSeleccionado?.registraLibroIva ?? false
+  const referenciaDePercepciones = useMemo<ReferenciaDePercepciones>(
+    () => ({ proveedores: proveedores ?? [], tipos: tipos ?? [], puntosVenta: puntosVenta ?? [], empresas }),
+    [proveedores, tipos, puntosVenta, empresas],
+  )
   const nombrePorAlicuota = useMemo(
     () => Object.fromEntries((alicuotas ?? []).map((a) => [a.id, a.nombre])) as Record<number, string>,
     [alicuotas],
@@ -768,9 +803,31 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
     [lineasCompletas, porcentajePorAlicuota],
   )
+  const preciosFinales = discriminaIva && encabezado.preciosIncluyenIva
+  // La base de las percepciones automáticas sale de los totales SIN percepciones; recién con las
+  // filas ya resueltas se calcula el total del comprobante.
+  const basePercepcion = useMemo(
+    () => baseDePercepcion(calcularTotalesDeCompra(calculo, discriminaIva, encabezado.ivaImpreso, preciosFinales), discriminaIva),
+    [calculo, discriminaIva, encabezado.ivaImpreso, preciosFinales],
+  )
+  const percepcionesResueltas = useMemo(
+    () => resolverPercepciones(encabezado.percepciones, basePercepcion),
+    [encabezado.percepciones, basePercepcion],
+  )
+  const percepcionesVisibles = useMemo(
+    () => percepcionesAplicables(percepcionesResueltas, registraLibroIva, discriminaIva),
+    [percepcionesResueltas, registraLibroIva, discriminaIva],
+  )
   const totales = useMemo(
-    () => calcularTotalesDeCompra(calculo, discriminaIva, encabezado.ivaImpreso),
-    [calculo, discriminaIva, encabezado.ivaImpreso],
+    () => calcularTotalesDeCompra(calculo, discriminaIva, encabezado.ivaImpreso, preciosFinales, percepcionesVisibles),
+    [calculo, discriminaIva, encabezado.ivaImpreso, preciosFinales, percepcionesVisibles],
+  )
+  const tiposAgregables = useMemo(
+    () =>
+      (['iibb', ...(discriminaIva ? (['iva'] as const) : [])] as TipoDePercepcion[]).filter(
+        (tipo) => !percepcionesVisibles.some((p) => p.tipo === tipo),
+      ),
+    [discriminaIva, percepcionesVisibles],
   )
 
   const [panelTotalAbierto, setPanelTotalAbierto] = useState(false)
@@ -838,17 +895,76 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // sobre otro tipo libre: la de una factura no era una elección. Los IVA impresos pertenecen a
     // un desglose concreto, así que un cambio de tipo los descarta.
     const conservaEleccion = tipo !== null && !tipo.registraLibroIva && anterior !== null && !anterior.registraLibroIva
-    setEncabezado((prev) => ({
-      ...prev,
-      idTipoComprobante: idTipo,
-      discriminaIva: conservaEleccion ? prev.discriminaIva : null,
-      ivaImpreso: {},
-    }))
+    setEncabezado((prev) =>
+      conSugerenciasDePercepcion(
+        {
+          ...prev,
+          idTipoComprobante: idTipo,
+          discriminaIva: conservaEleccion ? prev.discriminaIva : null,
+          ivaImpreso: {},
+        },
+        referenciaDePercepciones,
+      ),
+    )
   }
 
   function cambiarDiscriminaIva(valor: boolean) {
     if (ocupado) return
-    setEncabezado((prev) => ({ ...prev, discriminaIva: valor, ivaImpreso: {} }))
+    setEncabezado((prev) =>
+      conSugerenciasDePercepcion({ ...prev, discriminaIva: valor, ivaImpreso: {} }, referenciaDePercepciones),
+    )
+  }
+
+  function cambiarProveedor(valor: string) {
+    if (ocupado) return
+    setEncabezado((prev) => alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones))
+  }
+
+  function cambiarPuntoVenta(valor: string) {
+    if (ocupado) return
+    setEncabezado((prev) =>
+      conSugerenciasDePercepcion({ ...prev, idPuntoVenta: valor === '' ? '' : Number(valor) }, referenciaDePercepciones),
+    )
+  }
+
+  function cambiarPreciosIncluyenIva(valor: boolean) {
+    if (ocupado) return
+    // Los IVA impresos pertenecen a un desglose concreto: cambiar la modalidad los invalida.
+    setEncabezado((prev) => ({ ...prev, preciosIncluyenIva: valor, ivaImpreso: {} }))
+  }
+
+  function cambiarPercepcion(
+    tipo: TipoDePercepcion,
+    cambios: Parameters<typeof editarPercepcion>[1],
+  ) {
+    if (ocupado) return
+    // Parte de la fila RESUELTA (lo que el operador ve) para congelar sus valores al primer cambio.
+    const resuelta = percepcionesResueltas.find((p) => p.tipo === tipo)
+    if (!resuelta) return
+    const editada = editarPercepcion(resuelta, cambios)
+    setEncabezado((prev) => ({ ...prev, percepciones: prev.percepciones.map((p) => (p.tipo === tipo ? editada : p)) }))
+  }
+
+  function quitarPercepcion(tipo: TipoDePercepcion) {
+    if (ocupado) return
+    setEncabezado((prev) => ({
+      ...prev,
+      percepciones: prev.percepciones.filter((p) => p.tipo !== tipo),
+      percepcionesDescartadas: prev.percepcionesDescartadas.includes(tipo)
+        ? prev.percepcionesDescartadas
+        : [...prev.percepcionesDescartadas, tipo],
+    }))
+  }
+
+  function agregarPercepcion(tipo: TipoDePercepcion) {
+    if (ocupado) return
+    const alicuota = alicuotaDeEmpresaParaCompra(encabezado, referenciaDePercepciones, tipo)
+    const nueva = percepcionManual(tipo, basePercepcion, alicuota)
+    setEncabezado((prev) => ({
+      ...prev,
+      percepciones: [...prev.percepciones.filter((p) => p.tipo !== tipo), nueva],
+      percepcionesDescartadas: prev.percepcionesDescartadas.filter((t) => t !== tipo),
+    }))
   }
 
   function cambiarIvaImpreso(idAlicuotaIva: number, valor: number | null) {
@@ -916,7 +1032,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     generacionRef.current += 1
 
     try {
-      const solicitud = aSolicitudDeCompra(encabezado, lineas, discriminaIva)
+      const solicitud = aSolicitudDeCompra(
+        { ...encabezado, percepciones: percepcionesResueltas },
+        lineas,
+        discriminaIva,
+        registraLibroIva,
+      )
       if (esNuevo) {
         const creada = await clienteDeCompras.crear(solicitud)
         guardandoRef.current = false
@@ -1108,7 +1229,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               className="form-select"
               value={encabezado.idProveedor}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, idProveedor: e.target.value === '' ? '' : Number(e.target.value) }))}
+              onChange={(e) => cambiarProveedor(e.target.value)}
             >
               <option value="">Elegir…</option>
               {(proveedores ?? []).map((p) => (
@@ -1151,6 +1272,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 </label>
               </div>
             )}
+            {discriminaIva && (
+              <div className="form-check mt-1">
+                <input
+                  id="compra-precios-incluyen-iva"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={encabezado.preciosIncluyenIva}
+                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  onChange={(e) => cambiarPreciosIncluyenIva(e.target.checked)}
+                />
+                <label className="form-check-label small" htmlFor="compra-precios-incluyen-iva">
+                  Precios con IVA incluido
+                </label>
+              </div>
+            )}
           </div>
           <div className="col-md-3">
             <label className="form-label" htmlFor="compra-punto-venta">
@@ -1161,7 +1297,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               className="form-select"
               value={encabezado.idPuntoVenta}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, idPuntoVenta: e.target.value === '' ? '' : Number(e.target.value) }))}
+              onChange={(e) => cambiarPuntoVenta(e.target.value)}
             >
               <option value="">Elegir…</option>
               {(puntosVenta ?? []).map((pv) => (
@@ -1289,7 +1425,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 <strong>Cargar por total</strong>
                 <div className="small text-muted mb-2">
                   {discriminaIva
-                    ? 'Este tipo de comprobante discrimina IVA: cargá el importe neto, el IVA se suma.'
+                    ? preciosFinales
+                      ? 'Este comprobante discrimina IVA y sus precios lo incluyen: cargá el importe final, el IVA se discrimina.'
+                      : 'Este tipo de comprobante discrimina IVA: cargá el importe neto, el IVA se suma.'
                     : 'Cargá el total del comprobante.'}{' '}
                   Se agrega una sola línea por concepto: no mueve stock ni actualiza costos.
                 </div>
@@ -1367,7 +1505,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
             <div className="row g-3 mb-3">
               <div className="col-md-3">
-                <div className="small text-muted">Subtotal (mirror, no autoritativo)</div>
+                <div className="small text-muted">
+                  Subtotal{preciosFinales ? ' con IVA' : ''} (mirror, no autoritativo)
+                </div>
                 <div>{formatearMoneda(totales.subtotal)}</div>
               </div>
               <div className="col-md-3">
@@ -1378,6 +1518,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 <div className="small text-muted">IVA</div>
                 <div>{totales.ivaTotal === null ? '—' : formatearMoneda(totales.ivaTotal)}</div>
               </div>
+              {totales.percepcionesTotal !== 0 && (
+                <div className="col-md-3">
+                  <div className="small text-muted">Percepciones</div>
+                  <div>{formatearMoneda(totales.percepcionesTotal)}</div>
+                </div>
+              )}
               <div className="col-md-3">
                 <div className="small text-muted">Total</div>
                 <div className="fs-6">{formatearMoneda(totales.total)}</div>
@@ -1390,6 +1536,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 nombrePorAlicuota={nombrePorAlicuota}
                 onCambiarIva={cambiarIvaImpreso}
                 disabled={ocupado || !puedeEscribir}
+              />
+            )}
+
+            {registraLibroIva && (
+              <PercepcionesDeCompra
+                filas={percepcionesVisibles}
+                onCambiar={cambiarPercepcion}
+                onQuitar={quitarPercepcion}
+                agregables={puedeEscribir ? tiposAgregables : []}
+                onAgregar={agregarPercepcion}
+                disabled={ocupado || !referenciaOk || !puedeEscribir}
               />
             )}
 
@@ -1482,6 +1639,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               {compra.discriminaIva && (
                 <DesgloseDeIvaDeCompra filas={compra.alicuotas} nombrePorAlicuota={nombrePorAlicuota} />
               )}
+
+              {compra.discriminaIva && compra.preciosIncluyenIva && (
+                <div className="small text-muted mb-3">Los precios del comprobante incluyen IVA.</div>
+              )}
+
+              <PercepcionesDeCompra filas={percepcionesDesdeDetalle(compra.percepciones)} />
 
               {resultadoAnulacion && (
                 <div className="alert alert-warning">

@@ -286,6 +286,9 @@ describe('aSolicitudDeCompra', () => {
         idOrdenCompra: null,
         discriminaIva: null,
         ivaImpreso: {},
+        preciosIncluyenIva: false,
+        percepciones: [],
+        percepcionesDescartadas: [],
       },
       [],
     )
@@ -306,6 +309,9 @@ describe('aSolicitudDeCompra', () => {
         idOrdenCompra: null,
         discriminaIva: null,
         ivaImpreso: {},
+        preciosIncluyenIva: false,
+        percepciones: [],
+        percepcionesDescartadas: [],
       },
       [],
     )
@@ -324,6 +330,9 @@ describe('aSolicitudDeCompra', () => {
         idOrdenCompra: null,
         discriminaIva: null,
         ivaImpreso: {},
+        preciosIncluyenIva: false,
+        percepciones: [],
+        percepcionesDescartadas: [],
       },
       [lineaFixture({ clave: 1 }), lineaFixture({ clave: 2, idArticulo: '' })],
     )
@@ -334,7 +343,7 @@ describe('aSolicitudDeCompra', () => {
   // recortado ni defaulteado a 0/undefined, campo posicional final de SolicitudDeCompra.
   it('idOrdenCompra viaja tal cual desde el encabezado (mutation-proof-tests regla 12b)', () => {
     const solicitud = aSolicitudDeCompra(
-      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: 42, discriminaIva: null, ivaImpreso: {} },
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: 42, discriminaIva: null, ivaImpreso: {}, preciosIncluyenIva: false, percepciones: [], percepcionesDescartadas: [] },
       [],
     )
     expect(solicitud.idOrdenCompra).toBe(42)
@@ -342,7 +351,7 @@ describe('aSolicitudDeCompra', () => {
 
   it('idOrdenCompra ausente viaja como null, nunca 0', () => {
     const solicitud = aSolicitudDeCompra(
-      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null, discriminaIva: null, ivaImpreso: {} },
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null, discriminaIva: null, ivaImpreso: {}, preciosIncluyenIva: false, percepciones: [], percepcionesDescartadas: [] },
       [],
     )
     expect(solicitud.idOrdenCompra).toBeNull()
@@ -398,7 +407,15 @@ describe('calcularTotalesDeCompra', () => {
 
   it('un set vacío de líneas da totales en cero, iva NULL cuando no discrimina', () => {
     const totales = calcularTotalesDeCompra([], false)
-    expect(totales).toEqual({ items: [], subtotal: 0, descuentoTotal: 0, ivaTotal: null, total: 0, alicuotas: [] })
+    expect(totales).toEqual({
+      items: [],
+      subtotal: 0,
+      descuentoTotal: 0,
+      ivaTotal: null,
+      total: 0,
+      alicuotas: [],
+      percepcionesTotal: 0,
+    })
   })
 
   it('cantidad 0 no divide por cero — costoEfectivo es null', () => {

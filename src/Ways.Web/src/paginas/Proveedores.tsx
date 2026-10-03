@@ -4,13 +4,14 @@ import { copiaDeFalloDeBaja } from '../api/bajas'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { claseDeBadgeDeEstadoPago, clienteDeCompras, etiquetaDeEstadoPago } from '../api/compras'
 import { clienteDeProveedores } from '../api/proveedores'
-import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
+import type { CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedorFormulario'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -118,89 +119,6 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
       )}
     </div>
   )
-}
-
-type Formulario = {
-  id: number | null
-  razonSocial: string
-  nombreFantasia: string
-  cuit: string
-  idCondicionFiscal: number | ''
-  domicilio: string
-  telefono: string
-  email: string
-  vendedor: string
-  celularVendedor: string
-  supervisor: string
-  celularSupervisor: string
-  margen: string
-  observaciones: string
-  activo: boolean
-}
-
-function formularioVacio(): Formulario {
-  return {
-    id: null,
-    razonSocial: '',
-    nombreFantasia: '',
-    cuit: '',
-    idCondicionFiscal: '',
-    domicilio: '',
-    telefono: '',
-    email: '',
-    vendedor: '',
-    celularVendedor: '',
-    supervisor: '',
-    celularSupervisor: '',
-    margen: '',
-    observaciones: '',
-    activo: true,
-  }
-}
-
-function aFormulario(p: ProveedorListado): Formulario {
-  return {
-    id: p.id,
-    razonSocial: p.razonSocial,
-    nombreFantasia: p.nombreFantasia ?? '',
-    cuit: p.cuit ?? '',
-    idCondicionFiscal: p.idCondicionFiscal,
-    domicilio: p.domicilio ?? '',
-    telefono: p.telefono ?? '',
-    email: p.email ?? '',
-    vendedor: p.vendedor ?? '',
-    celularVendedor: p.celularVendedor ?? '',
-    supervisor: p.supervisor ?? '',
-    celularSupervisor: p.celularSupervisor ?? '',
-    margen: p.margen === null ? '' : String(p.margen),
-    observaciones: p.observaciones ?? '',
-    activo: p.activo,
-  }
-}
-
-function aVacioNulo(valor: string): string | null {
-  const limpio = valor.trim()
-  return limpio === '' ? null : limpio
-}
-
-function aAlta(f: Formulario): AltaProveedor {
-  return {
-    razonSocial: f.razonSocial.trim(),
-    nombreFantasia: aVacioNulo(f.nombreFantasia),
-    cuit: aVacioNulo(f.cuit),
-    idCondicionFiscal: f.idCondicionFiscal === '' ? 0 : f.idCondicionFiscal,
-    domicilio: aVacioNulo(f.domicilio),
-    telefono: aVacioNulo(f.telefono),
-    email: aVacioNulo(f.email),
-    vendedor: aVacioNulo(f.vendedor),
-    celularVendedor: aVacioNulo(f.celularVendedor),
-    supervisor: aVacioNulo(f.supervisor),
-    celularSupervisor: aVacioNulo(f.celularSupervisor),
-    margen: f.margen.trim() === '' ? null : Number(f.margen),
-    observaciones: aVacioNulo(f.observaciones),
-    idEmpresa: null,
-    activo: f.activo,
-  }
 }
 
 /**
@@ -738,6 +656,58 @@ function FormularioProveedor({
           onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
           disabled={bloqueado}
         />
+      </div>
+
+      <div className="col-12">
+        <strong>Impuestos de la compra</strong>
+      </div>
+
+      <div className="col-md-4">
+        <div className="form-check">
+          <input
+            id="p-precios-incluyen-iva"
+            type="checkbox"
+            className="form-check-input"
+            checked={valor.preciosIncluyenIva}
+            onChange={(e) => onCambio({ ...valor, preciosIncluyenIva: e.target.checked })}
+            disabled={bloqueado}
+          />
+          <label className="form-check-label" htmlFor="p-precios-incluyen-iva">
+            Sus precios incluyen IVA
+          </label>
+        </div>
+      </div>
+
+      <div className="col-md-4">
+        <div className="form-check">
+          <input
+            id="p-percibe-iibb"
+            type="checkbox"
+            className="form-check-input"
+            checked={valor.percibeIibb}
+            onChange={(e) => onCambio({ ...valor, percibeIibb: e.target.checked })}
+            disabled={bloqueado}
+          />
+          <label className="form-check-label" htmlFor="p-percibe-iibb">
+            Percibe IIBB
+          </label>
+        </div>
+      </div>
+
+      <div className="col-md-4">
+        <div className="form-check">
+          <input
+            id="p-percibe-iva"
+            type="checkbox"
+            className="form-check-input"
+            checked={valor.percibeIva}
+            onChange={(e) => onCambio({ ...valor, percibeIva: e.target.checked })}
+            disabled={bloqueado}
+          />
+          <label className="form-check-label" htmlFor="p-percibe-iva">
+            Percibe IVA
+          </label>
+        </div>
       </div>
 
       <div className="col-md-3 d-flex align-items-end">
