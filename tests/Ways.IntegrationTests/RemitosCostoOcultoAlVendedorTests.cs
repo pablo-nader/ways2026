@@ -20,12 +20,12 @@ using Ways.Infrastructure.Seguridad;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// El costo congelado del item de remito (<c>CostoUnitario</c>) lo ve solo el admin: el grupo
-/// <c>/api/remitos</c> exige <c>OperacionDePos</c>, así que vendedor y supervisor reciben
-/// <c>null</c> tanto en la respuesta de emitir como en el detalle.
+/// El costo congelado del item de remito (<c>CostoUnitario</c>) lo ven admin y supervisor: el grupo
+/// <c>/api/remitos</c> exige <c>OperacionDePos</c>, así que el vendedor recibe <c>null</c> tanto en
+/// la respuesta de emitir como en el detalle.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class RemitosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class RemitosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -143,24 +143,25 @@ public class RemitosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixture<
         return (await emitido.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
     }
 
-    [Fact]
-    public async Task ElAdminVeElCostoCongeladoAlEmitirYEnElDetalle()
+    [Theory]
+    [InlineData(RolConocido.Admin)]
+    [InlineData(RolConocido.Supervisor)]
+    public async Task UnRolDeBackOfficeVeElCostoCongeladoAlEmitirYEnElDetalle(RolConocido rol)
     {
-        var escenario = await PrepararAsync(nameof(ElAdminVeElCostoCongeladoAlEmitirYEnElDetalle), RolConocido.Vendedor);
+        var escenario = await PrepararAsync($"RemCostoVisible{rol}", RolConocido.Supervisor);
+        var cliente = rol == RolConocido.Admin ? escenario.Admin : escenario.Operador;
 
-        var emitido = await EmitirAsync(escenario.Admin, escenario.Solicitud);
+        var emitido = await EmitirAsync(cliente, escenario.Solicitud);
         Assert.Equal(CostoNominal, Assert.Single(emitido.Items).CostoUnitario);
 
-        var detalle = await escenario.Admin.GetFromJsonAsync<RemitoDetalle>($"/api/remitos/{emitido.Id}", OpcionesJson);
+        var detalle = await cliente.GetFromJsonAsync<RemitoDetalle>($"/api/remitos/{emitido.Id}", OpcionesJson);
         Assert.Equal(CostoNominal, Assert.Single(detalle!.Items).CostoUnitario);
     }
 
-    [Theory]
-    [InlineData(RolConocido.Vendedor)]
-    [InlineData(RolConocido.Supervisor)]
-    public async Task UnRolDePosQueNoEsAdminRecibeElCostoCongeladoEnNull(RolConocido rol)
+    [Fact]
+    public async Task ElVendedorRecibeElCostoCongeladoEnNull()
     {
-        var escenario = await PrepararAsync($"RemCostoNull{rol}", rol);
+        var escenario = await PrepararAsync(nameof(ElVendedorRecibeElCostoCongeladoEnNull), RolConocido.Vendedor);
 
         var emitido = await EmitirAsync(escenario.Operador, escenario.Solicitud);
         Assert.Null(Assert.Single(emitido.Items).CostoUnitario);

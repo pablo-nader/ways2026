@@ -167,11 +167,11 @@ public class ServicioDeGrillaDeArticulos(
         ListaDefault? listaDefault) =>
         listaDefault is { } lista && precios.TryGetValue((idArticulo, lista.Id), out var precio) ? precio : null;
 
-    /// <summary>El costo es del back-office (<c>GestionDeCatalogo</c>, solo admin): esta grilla
-    /// hereda <c>OperacionDePos</c>, así que un vendedor que la llame recibe <c>null</c>.</summary>
+    /// <summary>El costo es del back-office (admin y supervisor): esta grilla hereda
+    /// <c>OperacionDePos</c>, así que un vendedor que la llame recibe <c>null</c>.</summary>
     private ArticuloGrillaFila Proyectar(FilaCandidata c, decimal? precio) => new(
         c.Id, c.CodigoInterno, c.Nombre, precio,
-        contexto.Rol == Ways.Domain.Usuarios.RolConocido.Admin ? c.CostoNominal : null, c.IdProveedorHabitual,
+        contexto.Rol is Ways.Domain.Usuarios.RolConocido.Admin or Ways.Domain.Usuarios.RolConocido.Supervisor ? c.CostoNominal : null, c.IdProveedorHabitual,
         EtiquetaProveedor(c.ProveedorNombreFantasia, c.ProveedorRazonSocial), c.Activo);
 
     /// <summary>Regla de etiqueta de proveedor (spec de la slice, compartida con el selector de
