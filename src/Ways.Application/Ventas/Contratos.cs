@@ -84,10 +84,19 @@ public sealed record SolicitudDeVenta(
 /// (<c>ExigirPreciosOfflineValidos</c>), y exige que TODAS las líneas de la solicitud los traigan,
 /// o ninguna — no hay un tercer estado "algunas sí, algunas no". <see cref="DescuentoUnitario"/>
 /// sin <see cref="PrecioUnitario"/> tampoco tiene destino (dto-contract-honesty regla 1): se
-/// rechaza igual que un <c>idLote</c> sin lote efectivo, arriba.</summary>
+/// rechaza igual que un <c>idLote</c> sin lote efectivo, arriba.
+///
+/// <see cref="AjusteManualPorcentaje"/> (ajuste manual de precio en caja): porcentaje con signo
+/// —negativo = descuento, positivo = recargo— que el operador aplica sobre el neto de la línea
+/// (bruto menos el descuento de oferta). Es lo ÚNICO que el cliente manda del ajuste: el monto lo
+/// calcula el servidor (<c>CalculadorDeTotales</c>), también en la venta offline, donde conviven el
+/// precio que cobró el dispositivo y este porcentaje. <c>null</c> = sin ajuste; cero, fuera de
+/// ±100 o con más de dos decimales ⇒ 400 <c>ajuste_manual_invalido</c>
+/// (<see cref="ReglaDeAjusteManual"/>). Con <see cref="SolicitudDeVenta.IdPresupuestoOrigen"/> las
+/// líneas no se admiten, así que el porcentaje tampoco llega nunca por esa conversión.</summary>
 public sealed record LineaDeVenta(
     int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null,
-    decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null);
+    decimal? PrecioUnitario = null, decimal? DescuentoUnitario = null, decimal? AjusteManualPorcentaje = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo
@@ -110,7 +119,13 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// MaterializarItems</c>), NO se persiste en <c>items_comprobante_venta</c> (DB CHANGE GATE
 /// evitado a propósito) — una relectura/reprint siempre devuelve <c>false</c> acá, aunque el
 /// rastro completo (precio cobrado vs. esperado) siga disponible en <c>GET /api/auditoria</c>
-/// (<c>AccionAuditada.VentaDiscrepanciaDePrecio</c>).</summary>
+/// (<c>AccionAuditada.VentaDiscrepanciaDePrecio</c>).
+///
+/// <see cref="AjusteManualPorcentaje"/>/<see cref="AjusteManual"/> sí se persisten
+/// (<c>items_comprobante_venta.ajuste_manual_porcentaje</c>/<c>ajuste_manual</c>), así que una
+/// relectura devuelve lo mismo que el checkout fresco: porcentaje con signo (<c>null</c> = sin
+/// ajuste) y monto con signo ya incluido en <see cref="Total"/> (<c>0</c> sin ajuste). Un item de
+/// un <c>TXR</c> (que viene de <c>items_remito</c>) siempre los lleva en <c>null</c>/<c>0</c>.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -124,6 +139,8 @@ public sealed record ItemEmitido(
     decimal Cantidad,
     decimal PrecioUnitario,
     decimal Descuento,
+    decimal? AjusteManualPorcentaje,
+    decimal AjusteManual,
     decimal Total,
     int? IdLote = null,
     string? CodigoLote = null,
@@ -141,7 +158,12 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 /// cref="IdPresupuestoOrigen"/> — <c>null</c> en el 100% del tráfico previo a esta etapa,
 /// round-trip del presupuesto convertido cuando la venta nació de uno
 /// (<c>dto-contract-honesty</c> regla 2: un campo request-only no alcanza para probar el
-/// round-trip).</summary>
+/// round-trip).
+///
+/// <see cref="DescuentoManualTotal"/>/<see cref="RecargoManualTotal"/>: suma de los ajustes manuales
+/// de las líneas de porcentaje negativo/positivo, por separado a propósito (un recargo en una línea
+/// no esconde un descuento en otra). <see cref="Total"/> = <see cref="Subtotal"/> −
+/// <see cref="DescuentoTotal"/> − <see cref="DescuentoManualTotal"/> + <see cref="RecargoManualTotal"/>.</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
@@ -153,6 +175,8 @@ public sealed record ComprobanteEmitido(
     int? IdComprobanteAsociado,
     decimal Subtotal,
     decimal DescuentoTotal,
+    decimal DescuentoManualTotal,
+    decimal RecargoManualTotal,
     decimal Total,
     string? DireccionEntrega,
     string? Observaciones,
@@ -162,7 +186,9 @@ public sealed record ComprobanteEmitido(
 
 /// <summary>Fila de <c>GET /api/ventas</c> (listado paginado) — sin items/pagos, mismo criterio
 /// que los demás <c>*Listado</c> del proyecto (evita el N+1 de traer el detalle completo de cada
-/// fila listada).</summary>
+/// fila listada). <see cref="DescuentoManualTotal"/>/<see cref="RecargoManualTotal"/> son los mismos
+/// dos totales de <see cref="ComprobanteEmitido"/>: alcanzan para marcar en el listado una venta
+/// con precio cambiado a mano sin abrir el detalle.</summary>
 public sealed record ComprobanteListado(
     int Id,
     long Numero,
@@ -171,7 +197,9 @@ public sealed record ComprobanteListado(
     DateTimeOffset Fecha,
     int IdPuntoVenta,
     int IdCliente,
-    decimal Total);
+    decimal Total,
+    decimal DescuentoManualTotal,
+    decimal RecargoManualTotal);
 
 /// <summary>Página de resultados de <c>GET /api/ventas</c> — mismo shape que
 /// <c>Ways.Application.Usuarios.PaginaDe&lt;T&gt;</c>, redeclarado acá porque ese genérico vive en
@@ -190,7 +218,9 @@ public sealed record PaginaDeVentas(IReadOnlyList<ComprobanteListado> Items, int
 ///
 /// <see cref="MediosDePago"/> lleva el monto NETO por medio (ampliación "Ventas del turno" con
 /// totales por medio arriba de la tabla) — el front deriva el nombre y arma los totales a partir
-/// de esta única lista, nunca de una segunda fuente.</summary>
+/// de esta única lista, nunca de una segunda fuente. <see cref="DescuentoManualTotal"/>/
+/// <see cref="RecargoManualTotal"/>: los mismos totales de ajuste manual de
+/// <see cref="ComprobanteEmitido"/>.</summary>
 public sealed record VentaDeTurnoListado(
     int Id,
     long Numero,
@@ -200,6 +230,8 @@ public sealed record VentaDeTurnoListado(
     int IdCliente,
     string NombreCliente,
     decimal Total,
+    decimal DescuentoManualTotal,
+    decimal RecargoManualTotal,
     IReadOnlyList<MedioDeVentaNeto> MediosDePago);
 
 /// <summary>Monto neto cobrado por UN medio de pago dentro de una <see cref="VentaDeTurnoListado"/>

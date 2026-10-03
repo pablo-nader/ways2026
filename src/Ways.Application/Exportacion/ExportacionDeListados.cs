@@ -22,7 +22,9 @@ public static class ExportacionDeListados
         new ColumnaExportable("Punto de venta", TipoDeColumna.Entero),
         new ColumnaExportable("Cliente", TipoDeColumna.Entero),
         new ColumnaExportable("Estado", TipoDeColumna.Texto),
-        new ColumnaExportable("Total", TipoDeColumna.Moneda)
+        new ColumnaExportable("Total", TipoDeColumna.Moneda),
+        new ColumnaExportable("Descuento manual", TipoDeColumna.Moneda),
+        new ColumnaExportable("Recargo manual", TipoDeColumna.Moneda)
     ];
 
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasCompras =
@@ -55,7 +57,9 @@ public static class ExportacionDeListados
                 Celda.Entero(f.IdPuntoVenta),
                 Celda.Entero(f.IdCliente),
                 Celda.Texto(f.Estado.ToString()),
-                Celda.Moneda(f.Total)
+                Celda.Moneda(f.Total),
+                Celda.Moneda(f.DescuentoManualTotal),
+                Celda.Moneda(f.RecargoManualTotal)
             ])
             .ToList();
 

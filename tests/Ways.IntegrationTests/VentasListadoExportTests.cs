@@ -83,7 +83,8 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
     /// <summary>Siembra directo, sin pasar por <c>ServicioDeVentas</c> — mismo criterio que
     /// <c>ReportesVentasResumenExportTests.SembrarComprobanteAsync</c>. Fecha fija a mediodía UTC
     /// (evita la ventana 00-03 UTC que corre el día en zonas horarias -03).</summary>
-    private async Task<int> SembrarComprobanteAsync(Contexto ctx, DateOnly fecha, decimal total)
+    private async Task<int> SembrarComprobanteAsync(
+        Contexto ctx, DateOnly fecha, decimal total, decimal descuentoManual = 0m, decimal recargoManual = 0m)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -98,8 +99,10 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdEmpleado = ctx.IdEmpleadoAdmin,
             IdCliente = ctx.IdCliente,
-            Subtotal = total,
+            Subtotal = total + descuentoManual - recargoManual,
             DescuentoTotal = 0m,
+            DescuentoManualTotal = descuentoManual,
+            RecargoManualTotal = recargoManual,
             Total = total,
             Estado = EstadoComprobante.Emitido,
             CreatedAt = ahora,
@@ -137,14 +140,27 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
         var desde = new DateOnly(2026, 8, 1);
         var hasta = new DateOnly(2026, 8, 2);
 
-        await SembrarComprobanteAsync(ctx, desde, 100m);
-        await SembrarComprobanteAsync(ctx, desde, 50m);
-        await SembrarComprobanteAsync(ctx, hasta, 200m);
+        // Totales manuales distintos por fila (descuento, recargo, ninguno): el listado JSON y las
+        // dos columnas nuevas del export tienen que asignar cada valor a su fila y a su columna.
+        var idConDescuento = await SembrarComprobanteAsync(ctx, desde, 100m, descuentoManual: 12.5m);
+        var idConRecargo = await SembrarComprobanteAsync(ctx, desde, 50m, recargoManual: 7.25m);
+        var idSinAjuste = await SembrarComprobanteAsync(ctx, hasta, 200m);
 
         var jsonRespuesta = await LlamarListadoAsync(ctx.Admin, ctx.IdPuntoVenta, desde, hasta);
         Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
         var pagina = JsonSerializer.Deserialize<PaginaDeVentas>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
         Assert.Equal(3, pagina.Items.Count);
+
+        var manualesEsperados = new Dictionary<int, (decimal Descuento, decimal Recargo)>
+        {
+            [idConDescuento] = (12.5m, 0m),
+            [idConRecargo] = (0m, 7.25m),
+            [idSinAjuste] = (0m, 0m)
+        };
+        foreach (var item in pagina.Items)
+        {
+            Assert.Equal(manualesEsperados[item.Id], (item.DescuentoManualTotal, item.RecargoManualTotal));
+        }
 
         var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, desde, hasta);
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
@@ -167,8 +183,8 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
         // el test de igualdad de abajo solo lee celdas por posición.
         const int filaDeEncabezados = 6;
         Assert.Equal(
-            ["Número", "Fecha", "Punto de venta", "Cliente", "Estado", "Total"],
-            Enumerable.Range(1, 6).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+            ["Número", "Fecha", "Punto de venta", "Cliente", "Estado", "Total", "Descuento manual", "Recargo manual"],
+            Enumerable.Range(1, 8).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
 
         // Los datos empiezan en la fila 7, mismo orden que el listado JSON (newest-first, ver
         // ServicioDeVentas.ConstruirQuery).
@@ -184,6 +200,8 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
             Assert.Equal(item.IdCliente, fila.Cell(4).GetValue<int>());
             Assert.Equal(item.Estado.ToString(), fila.Cell(5).GetString());
             Assert.Equal(item.Total, fila.Cell(6).GetValue<decimal>());
+            Assert.Equal(manualesEsperados[item.Id].Descuento, fila.Cell(7).GetValue<decimal>());
+            Assert.Equal(manualesEsperados[item.Id].Recargo, fila.Cell(8).GetValue<decimal>());
         }
     }
 

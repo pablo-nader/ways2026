@@ -1976,6 +1976,15 @@ bloqueo" que `ItemComprobanteVenta.LoteVencido`):
    vía `GET /api/auditoria`. Se escribe UNA fila por comprobante (no una por línea), solo cuando
    hay al menos una línea discrepante.
 
+**El ajuste manual de precio no es una discrepancia.** Una línea offline también puede traer
+`ajusteManualPorcentaje` (§4, descuento o recargo que el cajero aplicó a mano sobre el neto de la
+línea). El servidor lo valida (`400 ajuste_manual_invalido`), calcula el monto con
+`CalculadorDeTotales` —nunca toma un importe del dispositivo— y aplica el MISMO porcentaje al
+total esperado de `NetoDeLinea`: un ajuste manual por sí solo no marca `PrecioDiscrepante` ni
+escribe la fila de auditoría, y una diferencia real de precio sigue marcándose aunque haya ajuste.
+Cuando la fila de auditoría existe, lleva el porcentaje y el monto del ajuste junto al total
+cobrado.
+
 Se descartó agregar `precio_unitario_esperado`/`descuento_esperado`/un `precio_discrepante
 GENERATED` a `items_comprobante_venta` (el patrón de `ArqueoTurno.Diferencia`, que hubiera sido la
 alternativa más consultable) porque el DB CHANGE GATE de este proyecto exige presentar el modelo

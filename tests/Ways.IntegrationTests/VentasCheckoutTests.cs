@@ -1008,6 +1008,23 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(16, consultasConPocasLineas);
     }
 
+    /// <summary>El ajuste manual no suma ninguna consulta: se calcula en memoria sobre lo que ya se
+    /// leyó. Mismo techo (16) que el checkout sin ajuste, con pocas y con muchas líneas — el valor
+    /// pineado de <c>ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas</c>
+    /// no se toca.</summary>
+    [Fact]
+    public async Task ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutConAjusteManualEmiteLasMismasDieciseisConsultas));
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Presupuesto Ajuste", limiteCredito: 1_000_000m);
+
+        var consultasConPocasLineas = await EmitirYContarConsultasAsync(ctx, idCliente, 2, ajusteManualPorcentaje: -10m);
+        var consultasConMuchasLineas = await EmitirYContarConsultasAsync(ctx, idCliente, 20, ajusteManualPorcentaje: 25m);
+
+        Assert.Equal(16, consultasConPocasLineas);
+        Assert.Equal(16, consultasConMuchasLineas);
+    }
+
     // ---- stage-12 slice 2 (design decisión 2 / tasks 2.5-2.6): parametro read batcheado -------
 
     [Fact]
@@ -1177,7 +1194,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
     }
 
-    private async Task<int> EmitirYContarConsultasAsync(Contexto ctx, int idCliente, int cantidadDeLineas)
+    private async Task<int> EmitirYContarConsultasAsync(
+        Contexto ctx, int idCliente, int cantidadDeLineas, decimal? ajusteManualPorcentaje = null)
     {
         var lineas = new List<LineaDeVenta>();
         var totalEsperado = 0m;
@@ -1185,8 +1203,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         for (var i = 0; i < cantidadDeLineas; i++)
         {
             var idArticulo = await SembrarArticuloConPrecioAsync(ctx, $"presupuesto-{Guid.NewGuid():N}", 10m);
-            lineas.Add(new LineaDeVenta(idArticulo, 1m, null));
-            totalEsperado += 10m;
+            lineas.Add(new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: ajusteManualPorcentaje));
+            totalEsperado += 10m + (ajusteManualPorcentaje is { } porcentaje ? 10m * porcentaje / 100m : 0m);
         }
 
         var contador = new ContadorDeComandos();

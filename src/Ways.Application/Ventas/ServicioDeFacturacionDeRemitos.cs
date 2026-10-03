@@ -365,7 +365,8 @@ public class ServicioDeFacturacionDeRemitos(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,
-        comprobante.IdComprobanteAsociado, comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.Total,
+        comprobante.IdComprobanteAsociado, comprobante.Subtotal, comprobante.DescuentoTotal,
+        comprobante.DescuentoManualTotal, comprobante.RecargoManualTotal, comprobante.Total,
         comprobante.DireccionEntrega, comprobante.Observaciones,
         [],
         pagos

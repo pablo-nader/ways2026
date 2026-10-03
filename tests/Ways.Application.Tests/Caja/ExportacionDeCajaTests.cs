@@ -145,7 +145,7 @@ public class ExportacionDeCajaTests
     {
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var ticket = new ComprobanteListado(
-            1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m);
+            1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m, 0m, 0m);
         var gasto = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno,
             7, false, null, null, "Gasto", null, null, null);
         var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [gasto], null, null);
