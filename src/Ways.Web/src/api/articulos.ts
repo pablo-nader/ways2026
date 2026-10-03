@@ -7,9 +7,11 @@ import { api } from './cliente'
 import type {
   AltaArticulo,
   AltaCodigoBarra,
+  AltaCodigoProveedor,
   ArticuloEscaneado,
   ArticuloListado,
   CodigoBarraListado,
+  CodigoProveedorListado,
   EdicionArticulo,
   FiltrosDeGrillaDeArticulos,
   PaginaDe,
@@ -54,10 +56,13 @@ export function construirQueryDeGrillaDeArticulos(filtros: FiltrosDeGrillaDeArti
 }
 
 export const clienteDeArticulos = {
-  listar: (busqueda: string, incluirEliminados: boolean) => {
+  /** `idProveedor` solo viaja cuando está definido: con él, el servidor prioriza los artículos
+   * cuyo código de ese proveedor coincide con `busqueda` y completa `codigoProveedor`. */
+  listar: (busqueda: string, incluirEliminados: boolean, idProveedor?: number) => {
     const parametros = new URLSearchParams()
     if (busqueda) parametros.set('busqueda', busqueda)
     if (incluirEliminados) parametros.set('incluirEliminados', 'true')
+    if (idProveedor !== undefined) parametros.set('idProveedor', String(idProveedor))
     const cadena = parametros.toString()
     return api.get<PaginaDe<ArticuloListado>>(`/articulos${cadena ? `?${cadena}` : ''}`)
   },
@@ -75,6 +80,10 @@ export const clienteDeArticulos = {
   codigosBarra: (id: number) => api.get<CodigoBarraListado[]>(`/articulos/${id}/codigos-barra`),
   agregarCodigoBarra: (id: number, datos: AltaCodigoBarra) =>
     api.post<CodigoBarraListado>(`/articulos/${id}/codigos-barra`, datos),
+  /** 201 si el código es nuevo, 200 si ya estaba en este artículo; 409 `codigo_proveedor_duplicado`
+   * si lo tiene otro artículo del mismo proveedor. */
+  asociarCodigoProveedor: (idArticulo: number, datos: AltaCodigoProveedor) =>
+    api.post<CodigoProveedorListado>(`/articulos/${idArticulo}/codigos-proveedor`, datos),
   eliminarCodigoBarra: (id: number, idCodigoBarra: number) =>
     api.delete(`/articulos/${id}/codigos-barra/${idCodigoBarra}`),
   /** Solo lectura: propone, nunca persiste un precio por sí sola (spec: Margin-Based Price

@@ -595,6 +595,9 @@ export type ArticuloListado = {
    * edición vive en el editor de `Articulos.tsx`; el picker del POS no necesita este flag
    * porque `GET /api/stock/lotes` ya resuelve todo server-side. */
   controlaLote: boolean
+  /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
+   * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
+  codigoProveedor?: string | null
 }
 
 /** `codigoInterno: null` deja que el servidor lo autogenere desde el contador atómico del
@@ -620,14 +623,18 @@ export type AltaArticulo = {
   idsEmpresas: number[] | null
   activo: boolean
   controlaLote: boolean
+  /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
+  codigoProveedor?: string | null
 }
 
 /** Sin `codigoInterno`: no es editable por este ABM (valor asignado en el alta, mismo criterio
  * que `ClienteListado.numero`). */
-export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno'>
+export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno' | 'codigoProveedor'>
 
 export type CodigoBarraListado = { id: number; idArticulo: number; codigo: string; activo: boolean }
 export type AltaCodigoBarra = { codigo: string }
+export type AltaCodigoProveedor = { idProveedor: number; codigo: string }
+export type CodigoProveedorListado = { idCodigoProveedor: number; idArticulo: number; idProveedor: number; codigo: string }
 
 // --- Grilla de artículos con filtros por columna (feat: articulos-grilla-web) ---
 // Espejo de `GET /api/articulos/grilla`: reemplaza la búsqueda libre + primera página fija de

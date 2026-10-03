@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1501,5 +1501,261 @@ describe('CompraEditor — pagar una compra confirmada', () => {
     expect(llamadas[0][1]).toMatchObject({ importe: 1149.5, idMedioPago: 1, concepto: null })
     // El detalle se pidió una sola vez: el pago no dispara una segunda lectura.
     expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1')).toHaveLength(1)
+  })
+})
+
+describe('CompraEditor — códigos de proveedor en el selector de artículos', () => {
+  const area = { id: 4, nombre: 'Almacén', activo: true, orden: 1 }
+
+  function mockearBusqueda(items: ArticuloListado[], compra: CompraDetalle = compraFixture({ items: [] })) {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compra)
+      if (ruta === '/catalogos/areas') return Promise.resolve([area])
+      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+  }
+
+  async function abrirBusquedaEnUnaLineaNueva(termino: string) {
+    const usuario = userEvent.setup()
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
+    return usuario
+  }
+
+  async function abrirBusquedaEnCompraSinProveedor(termino: string) {
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
+    return usuario
+  }
+
+  async function abrirModalConAreaCargada(usuario: ReturnType<typeof userEvent.setup>, termino: string) {
+    await usuario.click(await screen.findByRole('button', { name: `Crear artículo «${termino}»` }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    await within(dialogo).findByRole('option', { name: 'Almacén' })
+    return dialogo
+  }
+
+  it('la búsqueda manda el idProveedor de la compra', async () => {
+    mockearBusqueda([articuloFixture()])
+    await abrirBusquedaEnUnaLineaNueva('leche')
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((c) => c[0] as string)
+      expect(rutas).toContain('/articulos?busqueda=leche&idProveedor=1')
+    })
+  })
+
+  it('sin proveedor elegido la búsqueda no manda idProveedor', async () => {
+    mockearBusqueda([articuloFixture()])
+    await abrirBusquedaEnCompraSinProveedor('leche')
+
+    await screen.findByText('ART-20 — Leche en polvo 800g')
+    const rutas = apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.startsWith('/articulos?busqueda='))
+    expect(rutas).toEqual(['/articulos?busqueda=leche'])
+  })
+
+  it('muestra el código del proveedor cuando el resultado coincide, y no ofrece asociarlo', async () => {
+    mockearBusqueda([articuloFixture({ codigoProveedor: 'LEC-1' })])
+    const usuario = await abrirBusquedaEnUnaLineaNueva('lec-1')
+
+    const opcion = await screen.findByText('ART-20 — Leche en polvo 800g (Cód. prov.: LEC-1)')
+    await usuario.click(opcion)
+
+    expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
+  })
+
+  it('sin resultados ofrece crear el artículo con el término buscado', async () => {
+    mockearBusqueda([])
+    await abrirBusquedaEnUnaLineaNueva('yerba rara')
+
+    expect(await screen.findByRole('button', { name: 'Crear artículo «yerba rara»' })).toBeInTheDocument()
+  })
+
+  it('con resultados ofrece "Crear artículo nuevo…" al final y no la variante con el término', async () => {
+    mockearBusqueda([articuloFixture()])
+    await abrirBusquedaEnUnaLineaNueva('leche')
+
+    expect(await screen.findByRole('button', { name: 'Crear artículo nuevo…' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Crear artículo «/ })).not.toBeInTheDocument()
+  })
+
+  it('si la búsqueda falla no ofrece crear', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
+      if (ruta.startsWith('/articulos?busqueda=')) return Promise.reject(new Error('red'))
+      return undefined
+    })
+    await abrirBusquedaEnUnaLineaNueva('leche')
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((c) => c[0] as string)
+      expect(rutas.some((r) => r.startsWith('/articulos?busqueda='))).toBe(true)
+    })
+    await waitFor(() => expect(screen.queryByText('Buscando…')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /Crear artículo/ })).not.toBeInTheDocument()
+  })
+
+  it('crear desde un código manda codigoProveedor e idProveedorHabitual y selecciona el artículo en la línea', async () => {
+    mockearBusqueda([])
+    apiPostMock.mockResolvedValue(
+      articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva', controlaLote: false }),
+    )
+    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('')
+    expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('AB-1234')
+    expect(within(dialogo).getByLabelText('Alícuota de IVA')).toHaveValue('3')
+
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
+    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(ruta).toBe('/articulos')
+    expect(cuerpo).toMatchObject({
+      nombre: 'Yerba nueva',
+      idArea: 4,
+      idAlicuotaIva: 3,
+      idProveedorHabitual: 1,
+      codigoProveedor: 'AB-1234',
+      codigoInterno: null,
+    })
+
+    expect(await screen.findByText('Elegido: Yerba nueva')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
+  })
+
+  it('crear desde un texto con aspecto de nombre precarga el nombre y deja el código vacío', async () => {
+    mockearBusqueda([])
+    const usuario = await abrirBusquedaEnUnaLineaNueva('Yerba mate 1kg')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'Yerba mate 1kg')
+
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Yerba mate 1kg')
+    expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('')
+  })
+
+  it('un 409 codigo_proveedor_duplicado se muestra en el modal y el modal sigue abierto', async () => {
+    mockearBusqueda([])
+    apiPostMock.mockRejectedValue(
+      new ErrorApi(409, 'codigo_proveedor_duplicado', 'Ese código ya pertenece a otro artículo del proveedor.'),
+    )
+    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
+    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+    expect(await within(dialogo).findByText('Ese código ya pertenece a otro artículo del proveedor.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toBeEnabled()
+    expect(screen.queryByText(/^Elegido:/)).not.toBeInTheDocument()
+  })
+
+  it('un doble clic sincrónico en Crear emite una sola request y deshabilita el formulario mientras guarda', async () => {
+    mockearBusqueda([])
+    let resolver: (a: ArticuloListado) => void = () => {}
+    apiPostMock.mockImplementation(() => new Promise<ArticuloListado>((r) => (resolver = r)))
+    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
+    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+
+    const crear = within(dialogo).getByRole('button', { name: 'Crear' })
+    act(() => {
+      crear.click()
+      crear.click()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(within(dialogo).getByLabelText('Nombre')).toBeDisabled()
+    expect(within(dialogo).getByLabelText('Área')).toBeDisabled()
+
+    await act(async () => {
+      resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+    })
+    expect(await screen.findByText('Elegido: Yerba nueva')).toBeInTheDocument()
+  })
+
+  it('sin proveedor elegido el código del proveedor del modal queda deshabilitado con una pista', async () => {
+    mockearBusqueda([])
+    const usuario = await abrirBusquedaEnCompraSinProveedor('AB-1234')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+
+    expect(within(dialogo).getByLabelText('Código del proveedor')).toBeDisabled()
+    expect(within(dialogo).getByText('Elegí un proveedor en la compra para poder cargar su código.')).toBeInTheDocument()
+  })
+
+  describe('asociar el código tipeado', () => {
+    it('aparece al elegir a mano un artículo sin coincidencia y llama al endpoint; luego se oculta', async () => {
+      mockearBusqueda([articuloFixture()])
+      apiPostMock.mockResolvedValue({ idCodigoProveedor: 1, idArticulo: 20, idProveedor: 1, codigo: 'AB-1234' })
+      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+
+      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+      const accion = await screen.findByRole('button', { name: 'Asociar «AB-1234» como código de Proveedor Uno SA' })
+      await usuario.click(accion)
+
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+      expect(apiPostMock).toHaveBeenCalledWith('/articulos/20/codigos-proveedor', { idProveedor: 1, codigo: 'AB-1234' })
+      expect(await screen.findByText('Código «AB-1234» asociado a Proveedor Uno SA.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
+    })
+
+    it('un 409 muestra el mensaje y deja la acción disponible', async () => {
+      mockearBusqueda([articuloFixture()])
+      apiPostMock.mockRejectedValue(
+        new ErrorApi(409, 'codigo_proveedor_duplicado', 'Ese código ya pertenece a otro artículo del proveedor.'),
+      )
+      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+
+      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+      await usuario.click(await screen.findByRole('button', { name: /Asociar «AB-1234»/ }))
+
+      expect(await screen.findByText('Ese código ya pertenece a otro artículo del proveedor.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Asociar «AB-1234»/ })).toBeEnabled()
+    })
+
+    it('un doble clic sincrónico emite una sola request', async () => {
+      mockearBusqueda([articuloFixture()])
+      apiPostMock.mockImplementation(() => new Promise(() => {}))
+      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+
+      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+      const accion = await screen.findByRole('button', { name: /Asociar «AB-1234»/ })
+      act(() => {
+        accion.click()
+        accion.click()
+      })
+
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('no aparece si el término tiene más de 50 caracteres', async () => {
+      mockearBusqueda([articuloFixture()])
+      const usuario = await abrirBusquedaEnUnaLineaNueva('X'.repeat(51))
+
+      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+      expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
+    })
+
+    it('no aparece si la compra no tiene proveedor elegido', async () => {
+      mockearBusqueda([articuloFixture()])
+      const usuario = await abrirBusquedaEnCompraSinProveedor('AB-1234')
+
+      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+      expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
+    })
   })
 })

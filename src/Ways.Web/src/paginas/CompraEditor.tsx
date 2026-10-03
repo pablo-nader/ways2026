@@ -64,6 +64,7 @@ import {
   type ReferenciaDePercepciones,
 } from './sugerenciasDePercepcion'
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
+import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -122,19 +123,61 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
 
 type PropsSelectorDeArticulo = {
   descripcion: string
+  /** Artículo hoy elegido en la línea: la acción de asociar solo aplica mientras siga siéndolo. */
+  idArticulo: number | ''
   disabled: boolean
+  idProveedor: number | null
+  nombreProveedor: string
+  alicuotas: AlicuotaIvaListado[]
+  idAlicuotaIvaDeLaLinea: number | ''
+  costoDeLaLinea: number | null
   onElegir: (articulo: ArticuloListado) => void
 }
 
-function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDeArticulo) {
+const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
+
+/** Código tipeado que el operador puede asociar al artículo elegido a mano. */
+type AsociacionPendiente = { idArticulo: number; idProveedor: number; nombreProveedor: string; codigo: string }
+
+function SelectorDeArticulo({
+  descripcion,
+  idArticulo,
+  disabled,
+  idProveedor,
+  nombreProveedor,
+  alicuotas,
+  idAlicuotaIvaDeLaLinea,
+  costoDeLaLinea,
+  onElegir,
+}: PropsSelectorDeArticulo) {
   const [termino, setTermino] = useState('')
   const [resultados, setResultados] = useState<ArticuloListado[]>([])
+  // Término cuya búsqueda terminó bien: distingue "sin resultados" de "todavía sin buscar" y de
+  // "la búsqueda falló" (en ambos casos queda en null y no se ofrece crear).
+  const [terminoBuscado, setTerminoBuscado] = useState<string | null>(null)
   const [buscando, setBuscando] = useState(false)
+  const [creando, setCreando] = useState<string | null>(null)
+  const [pendiente, setPendiente] = useState<AsociacionPendiente | null>(null)
+  const [asociando, setAsociando] = useState(false)
+  const [errorAsociacion, setErrorAsociacion] = useState('')
+  const [asociado, setAsociado] = useState('')
   const generacionRef = useRef(0)
+  const asociandoRef = useRef(false)
+  // Generación de la asociación: elegir otro artículo o desmontar la fila invalida la respuesta en vuelo.
+  const generacionAsociacionRef = useRef(0)
+
+  useEffect(
+    () => () => {
+      generacionAsociacionRef.current += 1
+    },
+    [],
+  )
 
   useEffect(() => {
-    if (termino.trim().length < 2) {
+    const limpio = termino.trim()
+    if (limpio.length < 2) {
       setResultados([])
+      setTerminoBuscado(null)
       return
     }
 
@@ -144,14 +187,16 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
 
     const temporizador = setTimeout(() => {
       clienteDeArticulos
-        .listar(termino, false)
+        .listar(termino, false, idProveedor ?? undefined)
         .then((pagina) => {
           if (!vigente || generacionRef.current !== miGeneracion) return
           setResultados(pagina.items)
+          setTerminoBuscado(termino)
         })
         .catch(() => {
           if (!vigente || generacionRef.current !== miGeneracion) return
           setResultados([])
+          setTerminoBuscado(null)
         })
         .finally(() => {
           if (!vigente || generacionRef.current !== miGeneracion) return
@@ -163,7 +208,69 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
       vigente = false
       clearTimeout(temporizador)
     }
-  }, [termino])
+  }, [termino, idProveedor])
+
+  function reiniciarAsociacion() {
+    generacionAsociacionRef.current += 1
+    setAsociando(false)
+    setErrorAsociacion('')
+    setAsociado('')
+  }
+
+  function limpiarBusqueda() {
+    setTermino('')
+    setResultados([])
+    setTerminoBuscado(null)
+  }
+
+  function elegir(a: ArticuloListado) {
+    const codigo = termino.trim()
+    const sinCoincidencia = !resultados.some((r) => r.codigoProveedor)
+    reiniciarAsociacion()
+    setPendiente(
+      idProveedor !== null && codigo.length >= 2 && codigo.length <= LARGO_MAXIMO_CODIGO_PROVEEDOR && sinCoincidencia
+        ? { idArticulo: a.id, idProveedor, nombreProveedor, codigo }
+        : null,
+    )
+    onElegir(a)
+    limpiarBusqueda()
+  }
+
+  function elegirCreado(a: ArticuloListado) {
+    reiniciarAsociacion()
+    setPendiente(null)
+    onElegir(a)
+    setCreando(null)
+    limpiarBusqueda()
+  }
+
+  async function asociar() {
+    if (pendiente === null || asociandoRef.current) return
+    asociandoRef.current = true
+    const generacion = (generacionAsociacionRef.current += 1)
+    setAsociando(true)
+    setErrorAsociacion('')
+    try {
+      await clienteDeArticulos.asociarCodigoProveedor(pendiente.idArticulo, {
+        idProveedor: pendiente.idProveedor,
+        codigo: pendiente.codigo,
+      })
+      if (generacionAsociacionRef.current !== generacion) return
+      setAsociado(`Código «${pendiente.codigo}» asociado a ${pendiente.nombreProveedor}.`)
+      setPendiente(null)
+    } catch (e) {
+      if (generacionAsociacionRef.current !== generacion) return
+      setErrorAsociacion(e instanceof ErrorApi ? e.message : 'No se pudo asociar el código.')
+    } finally {
+      asociandoRef.current = false
+      if (generacionAsociacionRef.current === generacion) setAsociando(false)
+    }
+  }
+
+  const limpio = termino.trim()
+  const sinResultados = !buscando && terminoBuscado === termino && resultados.length === 0 && limpio.length >= 2
+  const accionDeAsociar =
+    pendiente !== null && pendiente.idArticulo === idArticulo && pendiente.idProveedor === idProveedor ? pendiente : null
 
   return (
     <div className="position-relative">
@@ -176,24 +283,54 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
         onChange={(e) => setTermino(e.target.value)}
       />
       {descripcion && <div className="small text-muted">Elegido: {descripcion}</div>}
+      {accionDeAsociar && (
+        <button
+          type="button"
+          className="btn btn-link btn-sm p-0 small"
+          disabled={disabled || asociando}
+          onClick={asociar}
+        >
+          {asociando
+            ? 'Asociando…'
+            : `Asociar «${accionDeAsociar.codigo}» como código de ${accionDeAsociar.nombreProveedor}`}
+        </button>
+      )}
+      {errorAsociacion && accionDeAsociar && <div className="small text-danger">{errorAsociacion}</div>}
+      {asociado && <div className="small text-success">{asociado}</div>}
       {buscando && <div className="small text-muted">Buscando…</div>}
-      {!buscando && resultados.length > 0 && (
+      {!buscando && (resultados.length > 0 || sinResultados) && (
         <div className="list-group position-absolute w-100" style={{ zIndex: 10 }}>
           {resultados.map((a) => (
             <button
               key={a.id}
               type="button"
               className="list-group-item list-group-item-action py-1 px-2 small"
-              onClick={() => {
-                onElegir(a)
-                setTermino('')
-                setResultados([])
-              }}
+              onClick={() => elegir(a)}
             >
               {a.codigoInterno} — {a.nombre}
+              {a.codigoProveedor ? ` (Cód. prov.: ${a.codigoProveedor})` : ''}
             </button>
           ))}
+          <button
+            type="button"
+            className="list-group-item list-group-item-action py-1 px-2 small text-primary"
+            onClick={() => setCreando(limpio)}
+          >
+            {sinResultados ? `Crear artículo «${limpio}»` : 'Crear artículo nuevo…'}
+          </button>
         </div>
+      )}
+      {creando !== null && (
+        <AltaRapidaArticuloDeCompra
+          termino={creando}
+          idProveedor={idProveedor}
+          nombreProveedor={nombreProveedor}
+          alicuotas={alicuotas}
+          idAlicuotaIvaDeLaLinea={idAlicuotaIvaDeLaLinea}
+          costoDeLaLinea={costoDeLaLinea}
+          onCreado={elegirCreado}
+          onCancelar={() => setCreando(null)}
+        />
       )}
     </div>
   )
@@ -207,11 +344,23 @@ type PropsFilaDeItem = {
   disabled: boolean
   discriminaIva: boolean
   porcentajePorAlicuota: Record<number, number>
+  idProveedor: number | null
+  nombreProveedor: string
   onCambio: (clave: number, cambios: Partial<LineaDeCompraFormulario>) => void
   onQuitar: (clave: number) => void
 }
 
-function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAlicuota, onCambio, onQuitar }: PropsFilaDeItem) {
+function FilaDeItem({
+  linea,
+  alicuotas,
+  disabled,
+  discriminaIva,
+  porcentajePorAlicuota,
+  idProveedor,
+  nombreProveedor,
+  onCambio,
+  onQuitar,
+}: PropsFilaDeItem) {
   const calculo = lineaFormularioACalculo(linea, porcentajePorAlicuota)
   const item = calcularTotalesDeCompra([calculo], discriminaIva).items[0]
   const descuentoInvalido = lineaConDescuentoInvalido(calculo)
@@ -237,7 +386,13 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         ) : (
           <SelectorDeArticulo
             descripcion={linea.descripcion}
+            idArticulo={linea.idArticulo}
             disabled={disabled}
+            idProveedor={idProveedor}
+            nombreProveedor={nombreProveedor}
+            alicuotas={alicuotas}
+            idAlicuotaIvaDeLaLinea={linea.idAlicuotaIva}
+            costoDeLaLinea={linea.costoUnitario}
             onElegir={(a) => {
               // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
               // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
@@ -1419,6 +1574,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                       disabled={ocupado || !referenciaOk || !puedeEscribir}
                       discriminaIva={discriminaIva}
                       porcentajePorAlicuota={porcentajePorAlicuota}
+                      idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
+                      nombreProveedor={
+                        (proveedores ?? []).find((p) => p.id === encabezado.idProveedor)?.razonSocial ?? ''
+                      }
                       onCambio={cambiarLinea}
                       onQuitar={quitarLinea}
                     />

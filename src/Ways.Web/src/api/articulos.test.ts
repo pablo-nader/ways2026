@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest'
-import { construirQueryDeGrillaDeArticulos, filtrosDeGrillaDeArticulosVacios } from './articulos'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
+
+vi.mock('./cliente', () => ({
+  api: {
+    get: (...args: unknown[]) => apiGetMock(...args),
+    post: (...args: unknown[]) => apiPostMock(...args),
+  },
+}))
+
+import { clienteDeArticulos, construirQueryDeGrillaDeArticulos, filtrosDeGrillaDeArticulosVacios } from './articulos'
 import type { FiltrosDeGrillaDeArticulos } from './tipos'
 
 function filtros(sobrescribir: Partial<FiltrosDeGrillaDeArticulos> = {}): FiltrosDeGrillaDeArticulos {
@@ -84,5 +95,27 @@ describe('filtrosDeGrillaDeArticulosVacios', () => {
       pagina: 1,
       tamanio: 25,
     })
+  })
+})
+
+describe('clienteDeArticulos — códigos de proveedor', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+  })
+
+  it('listar sin idProveedor no manda el parámetro', () => {
+    clienteDeArticulos.listar('leche', false)
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=leche')
+  })
+
+  it('listar con idProveedor lo manda junto a la búsqueda', () => {
+    clienteDeArticulos.listar('AB-12', false, 7)
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=AB-12&idProveedor=7')
+  })
+
+  it('asociarCodigoProveedor hace POST con idProveedor y codigo al artículo indicado', () => {
+    clienteDeArticulos.asociarCodigoProveedor(20, { idProveedor: 7, codigo: 'AB-12' })
+    expect(apiPostMock).toHaveBeenCalledWith('/articulos/20/codigos-proveedor', { idProveedor: 7, codigo: 'AB-12' })
   })
 })
