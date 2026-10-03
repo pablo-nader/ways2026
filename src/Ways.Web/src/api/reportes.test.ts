@@ -3,6 +3,7 @@ import type {
   FiltrosDeBreakdown,
   FiltrosDeBreakdownConPv,
   FiltrosDeHistoricoDeCajas,
+  FiltrosDeLibroIva,
   FiltrosDeRentabilidad,
   FiltrosDeReporte,
   FiltrosDeReporteDeArticulos,
@@ -21,11 +22,13 @@ const {
   construirQueryDeBreakdown,
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
+  construirQueryDeLibroIva,
   construirQueryDeReporte,
   construirQueryDeReporteDeArticulos,
   construirQueryDeTesoreria,
   filtrosDeHistoricoDeCajasVacios,
   filtrosDeReporteDeArticulosVacios,
+  rangoDelMesActual,
   rangoUltimosSieteDias,
   rutasDeExportacion,
 } = await import('./reportes')
@@ -422,5 +425,49 @@ describe('rangoUltimosSieteDias', () => {
     const rango = rangoUltimosSieteDias(new Date(2026, 0, 1, 0, 30)) // 1 de enero, 00:30 local
 
     expect(rango.hasta).toBe('2026-01-01')
+  })
+})
+
+describe('libro IVA', () => {
+  const filtros: FiltrosDeLibroIva = { idEmpresa: null, desde: '2026-05-01', hasta: '2026-05-31' }
+
+  it('sin empresa elegida el query no manda idEmpresa (el backend lo lee como "todas")', () => {
+    expect(construirQueryDeLibroIva(filtros)).toBe('?desde=2026-05-01&hasta=2026-05-31')
+  })
+
+  it('con empresa elegida la manda primero', () => {
+    expect(construirQueryDeLibroIva({ ...filtros, idEmpresa: 7 })).toBe('?idEmpresa=7&desde=2026-05-01&hasta=2026-05-31')
+  })
+
+  it('cada pestaña pega a su ruta JSON y a su export con el mismo query', () => {
+    apiGetMock.mockClear()
+
+    clienteDeReportes.libroIvaCompras({ ...filtros, idEmpresa: 7 })
+    clienteDeReportes.libroIvaVentas(filtros)
+
+    expect(apiGetMock.mock.calls).toEqual([
+      ['/reportes/libro-iva-compras?idEmpresa=7&desde=2026-05-01&hasta=2026-05-31'],
+      ['/reportes/libro-iva-ventas?desde=2026-05-01&hasta=2026-05-31'],
+    ])
+    expect(rutasDeExportacion.libroIvaCompras({ ...filtros, idEmpresa: 7 })).toBe(
+      '/reportes/libro-iva-compras/export?idEmpresa=7&desde=2026-05-01&hasta=2026-05-31&formato=xlsx',
+    )
+    expect(rutasDeExportacion.libroIvaVentas(filtros)).toBe(
+      '/reportes/libro-iva-ventas/export?desde=2026-05-01&hasta=2026-05-31&formato=xlsx',
+    )
+  })
+})
+
+describe('rangoDelMesActual', () => {
+  it('va del primer al último día del mes, también en un mes de 31 días', () => {
+    expect(rangoDelMesActual(new Date(2026, 4, 15))).toEqual({ desde: '2026-05-01', hasta: '2026-05-31' })
+  })
+
+  it('febrero de un año bisiesto termina el 29', () => {
+    expect(rangoDelMesActual(new Date(2028, 1, 10))).toEqual({ desde: '2028-02-01', hasta: '2028-02-29' })
+  })
+
+  it('usa la fecha local, no UTC: el 1 de enero a las 00:30 sigue siendo enero', () => {
+    expect(rangoDelMesActual(new Date(2026, 0, 1, 0, 30))).toEqual({ desde: '2026-01-01', hasta: '2026-01-31' })
   })
 })

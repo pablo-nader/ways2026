@@ -11,6 +11,7 @@ import type {
   Comisiones,
   Existencias,
   Granularidad,
+  LibroIva,
   PaginaDe,
   PaginaDeHistoricoDeCajas,
   PaginaDeMovimientosTesoreria,
@@ -85,6 +86,18 @@ export type FiltrosDeTopArticulos = FiltrosDeBreakdownConPv & { limite: number |
  * Estimated Cost Lines By Default). */
 export type FiltrosDeRentabilidad = FiltrosDeBreakdownConPv & { incluirEstimados: boolean }
 
+/** Filtro del libro IVA (compras y ventas): `idEmpresa` nulo = todas las empresas del tenant, por
+ * eso el parámetro solo viaja si hay una elegida. `desde`/`hasta` son `DateOnly` del servidor. */
+export type FiltrosDeLibroIva = { idEmpresa: number | null; desde: string; hasta: string }
+
+export function construirQueryDeLibroIva(filtros: FiltrosDeLibroIva): string {
+  const parametros = new URLSearchParams()
+  if (filtros.idEmpresa !== null) parametros.set('idEmpresa', String(filtros.idEmpresa))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  return `?${parametros.toString()}`
+}
+
 export const clienteDeReportes = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeVentas>(`/reportes/ventas/resumen${construirQueryDeReporte(filtros)}`),
@@ -139,6 +152,10 @@ export const clienteDeReportes = {
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
   articulos: (filtros: FiltrosDeReporteDeArticulos) =>
     api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros)}`),
+  libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
+    api.get<LibroIva>(`/reportes/libro-iva-compras${construirQueryDeLibroIva(filtros)}`),
+  libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
+    api.get<LibroIva>(`/reportes/libro-iva-ventas${construirQueryDeLibroIva(filtros)}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
@@ -265,6 +282,10 @@ export const rutasDeExportacion = {
    * el export no pagina) — un builder separado desincronizó una vez la descarga del listado
    * (lección del proyecto), así que acá se reconstruye el query completo y se le recorta la
    * paginación en vez de reimplementar los filtros. */
+  libroIvaCompras: (filtros: FiltrosDeLibroIva) =>
+    `/reportes/libro-iva-compras/export${construirQueryDeLibroIva(filtros)}&formato=xlsx`,
+  libroIvaVentas: (filtros: FiltrosDeLibroIva) =>
+    `/reportes/libro-iva-ventas/export${construirQueryDeLibroIva(filtros)}&formato=xlsx`,
   articulos: (filtros: FiltrosDeReporteDeArticulos) => {
     const query = construirQueryDeAlcanceDeArticulos(filtros)
     const separador = query === '' ? '?' : `${query}&`
@@ -357,4 +378,12 @@ export function rangoUltimosSieteDias(ahora: Date = new Date()): { desde: string
   const hace6Dias = new Date(ahora)
   hace6Dias.setDate(hace6Dias.getDate() - 6)
   return { desde: aFechaIso(hace6Dias), hasta: aFechaIso(ahora) }
+}
+
+/** Período por defecto del libro IVA: del primer al último día del mes de `ahora`. Recibe `ahora`
+ * como parámetro para quedar testeable sin mockear el reloj. */
+export function rangoDelMesActual(ahora: Date = new Date()): { desde: string; hasta: string } {
+  const primero = new Date(ahora.getFullYear(), ahora.getMonth(), 1)
+  const ultimo = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0)
+  return { desde: aFechaIso(primero), hasta: aFechaIso(ultimo) }
 }
