@@ -4,9 +4,9 @@ using Ways.Domain.Ventas;
 namespace Ways.Domain.Tests.Ventas;
 
 /// <summary>
-/// <see cref="ReglaDeAjusteManual.Validar"/> — pura, sin base de datos. Cada caso inválido vive en
-/// el borde exacto de UNA cláusula (cero, mínimo, máximo, decimales) para que borrar cualquiera de
-/// ellas rompa su propio caso.
+/// <see cref="ReglaDeAjusteManual.Validar"/> — pura, sin base de datos. Los casos incluyen el borde
+/// exacto de cada cláusula (cero, mínimo, máximo, decimales), válido e inválido, para que borrar
+/// cualquiera de ellas rompa al menos un caso propio.
 /// </summary>
 public class ReglaDeAjusteManualTests
 {

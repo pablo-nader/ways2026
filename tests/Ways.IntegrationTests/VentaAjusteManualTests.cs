@@ -382,8 +382,8 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(162m, emitido.Total);
     }
 
-    /// <summary>Cada valor inválido se rechaza con 400 <c>ajuste_manual_invalido</c> ANTES de
-    /// numerar o escribir: la base queda sin comprobantes.</summary>
+    /// <summary>Cada valor inválido se rechaza con 400 <c>ajuste_manual_invalido</c> y no se persiste
+    /// ningún comprobante.</summary>
     [Fact]
     public async Task UnPorcentajeCeroFueraDeRangoOConMasDeDosDecimalesSeRechazaConAjusteManualInvalidoSinPersistirNada()
     {
