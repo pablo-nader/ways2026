@@ -286,6 +286,22 @@ describe('conSugerenciasDePercepcion / alElegirProveedor', () => {
     expect(conSegundo.percepciones).toEqual([])
   })
 
+  it('con costos ya tipeados conserva el modo de precios actual en vez del default del proveedor', () => {
+    const conModoApagado = encabezado({ idProveedor: '', preciosIncluyenIva: false })
+    const conModoEncendido = encabezado({ idProveedor: '', preciosIncluyenIva: true })
+    const sinFlag = referencia({ proveedores: [proveedor({ preciosIncluyenIva: false })] })
+
+    expect(alElegirProveedor(conModoApagado, 1, referencia(), true).preciosIncluyenIva).toBe(false)
+    expect(alElegirProveedor(conModoEncendido, 1, sinFlag, true).preciosIncluyenIva).toBe(true)
+    expect(alElegirProveedor(conModoApagado, 1, referencia(), false).preciosIncluyenIva).toBe(true)
+  })
+
+  it('conservar el modo no impide sugerir las percepciones del proveedor', () => {
+    const resultado = alElegirProveedor(encabezado({ idProveedor: '' }), 1, referencia(), true)
+
+    expect(resultado.percepciones.map((p) => p.tipo)).toEqual(['iibb', 'iva'])
+  })
+
   it('cambiar de proveedor reinicia los tipos descartados del anterior', () => {
     const resultado = alElegirProveedor(encabezado({ percepcionesDescartadas: ['iibb'] }), 1, referencia())
 

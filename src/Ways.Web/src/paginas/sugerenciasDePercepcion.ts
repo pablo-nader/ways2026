@@ -112,18 +112,21 @@ export function conSugerenciasDePercepcion(
 }
 
 /** Elegir proveedor pre-carga su modo de precios y reinicia las percepciones que el operador había
- * quitado (son decisiones sobre el proveedor anterior), y recién entonces sugiere las del nuevo. */
+ * quitado (son decisiones sobre el proveedor anterior), y recién entonces sugiere las del nuevo.
+ * Con `conservarModo` (el borrador ya tiene líneas con costo tipeado) el modo de precios actual se
+ * respeta: cambiarlo reinterpretaría importes que el operador ya cargó. */
 export function alElegirProveedor(
   encabezado: EncabezadoDeCompraFormulario,
   idProveedor: number | '',
   referencia: ReferenciaDePercepciones,
+  conservarModo = false,
 ): EncabezadoDeCompraFormulario {
   const proveedor = referencia.proveedores.find((p) => p.id === idProveedor) ?? null
   return conSugerenciasDePercepcion(
     {
       ...encabezado,
       idProveedor,
-      preciosIncluyenIva: proveedor?.preciosIncluyenIva ?? false,
+      preciosIncluyenIva: conservarModo ? encabezado.preciosIncluyenIva : (proveedor?.preciosIncluyenIva ?? false),
       percepcionesDescartadas: [],
     },
     referencia,

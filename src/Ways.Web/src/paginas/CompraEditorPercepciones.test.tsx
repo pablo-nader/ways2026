@@ -524,3 +524,169 @@ describe('CompraEditor — percepciones', () => {
     expect(within(fila).queryByText(/\$ 30,00/)).not.toBeInTheDocument()
   })
 })
+
+describe('CompraEditor — borradores que arrancan de un origen y referencia que llega tarde', () => {
+  const gasto = {
+    id: 5,
+    fecha: '2026-08-15T12:00:00Z',
+    idEmpresa: 10,
+    idPuntoVenta: 2,
+    idProveedor: 1,
+    concepto: 'Pago de mercadería',
+    numeroFactura: null,
+  }
+
+  function orden(costoEstimado: number | null) {
+    return {
+      id: 30,
+      idProveedor: 1,
+      idPuntoVenta: 2,
+      items: [{ orden: 1, idArticulo: 10, descripcion: 'Yerba', cantidadPedida: 7, costoUnitarioEstimado: costoEstimado }],
+      cobertura: [{ idArticulo: 10, pedida: 7, recibida: 5, pendiente: 2, costoEstimado, costoReal: null, desvio: null }],
+    }
+  }
+
+  async function esperarReferencia() {
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await screen.findByRole('option', { name: /C-FA/ })
+    await screen.findByRole('option', { name: 'Casa Central' })
+  }
+
+  it('un borrador desde un gasto aplica el modo y las percepciones del proveedor al elegir el tipo', async () => {
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/gastos/administracion/5' ? Promise.resolve(gasto) : undefined,
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva?desdeGasto=5')
+    await esperarReferencia()
+    await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    expect(screen.getByLabelText('Precios con IVA incluido')).toBeChecked()
+    expect(within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB')).toBeInTheDocument()
+  })
+
+  it('un borrador desde una orden sin costos aplica el modo del proveedor', async () => {
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/ordenes-compra/30' ? Promise.resolve(orden(null)) : undefined,
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva?idOrdenCompra=30')
+    await esperarReferencia()
+    await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    expect(screen.getByLabelText('Precios con IVA incluido')).toBeChecked()
+    expect(screen.getByRole('table', { name: 'Percepciones' })).toBeInTheDocument()
+  })
+
+  it('un borrador desde una orden con costos estimados conserva el modo de precios netos', async () => {
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/ordenes-compra/30' ? Promise.resolve(orden(100)) : undefined,
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva?idOrdenCompra=30')
+    await esperarReferencia()
+    await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
+    expect(screen.getByRole('table', { name: 'Percepciones' })).toBeInTheDocument()
+  })
+
+  it('las sugerencias aparecen cuando las empresas terminan de cargar, si llegaron después de elegir', async () => {
+    let resolverEmpresas!: (lista: EmpresaListado[]) => void
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/empresas'
+        ? new Promise<EmpresaListado[]>((resolver) => {
+            resolverEmpresas = resolver
+          })
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    expect(screen.queryByRole('table', { name: 'Percepciones' })).not.toBeInTheDocument()
+
+    resolverEmpresas([empresa])
+
+    const tabla = await screen.findByRole('table', { name: 'Percepciones' })
+    expect(within(tabla).getByLabelText('Alícuota Percepción IIBB')).toHaveValue('3,000')
+  })
+
+  it('la recomputación al llegar la referencia no pisa lo que el operador ya tocó', async () => {
+    let resolverEmpresas!: (lista: EmpresaListado[]) => void
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/empresas'
+        ? new Promise<EmpresaListado[]>((resolver) => {
+            resolverEmpresas = resolver
+          })
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+    await cargarPorTotal(usuario, '1210')
+    await usuario.click(screen.getByRole('button', { name: '+ Percepción IIBB' }))
+    const importe = screen.getByLabelText('Importe Percepción IIBB')
+    await usuario.type(importe, '7')
+    await usuario.tab()
+
+    resolverEmpresas([empresa])
+
+    await screen.findByLabelText('Importe Percepción IVA')
+    expect(screen.getByLabelText('Importe Percepción IIBB')).toHaveValue('7,00')
+  })
+
+  it('si las empresas no cargan avisa junto a las percepciones que no se sugieren', async () => {
+    mockearReferencia([proveedorFixture()], (ruta) => (ruta === '/empresas' ? Promise.reject(new Error('403')) : undefined))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    expect(await screen.findByText(/las percepciones no se sugieren/)).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Percepciones' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ Percepción IIBB' })).toBeInTheDocument()
+  })
+
+  it('sin error de empresas no muestra el aviso', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+
+    expect(screen.queryByText(/las percepciones no se sugieren/)).not.toBeInTheDocument()
+  })
+
+  it('una percepción sugerida que da cero no se manda', async () => {
+    mockearReferencia([proveedorFixture()], (ruta) =>
+      ruta === '/empresas' ? Promise.resolve([{ ...empresa, alicuotaPercepcionIibb: 0 }]) : undefined,
+    )
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+    await cargarPorTotal(usuario, '1210')
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.percepciones).toEqual([{ tipo: 'iva', baseImponible: 1000, alicuota: 1.5, importe: 15 }])
+  })
+
+  it('al elegir otro proveedor con costos ya tipeados el modo de precios no cambia', async () => {
+    mockearReferencia([
+      proveedorFixture({ id: 1, preciosIncluyenIva: false, percibeIibb: false, percibeIva: false }),
+      proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA', preciosIncluyenIva: true }),
+    ])
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+    await cargarPorTotal(usuario, '1000')
+    expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
+    expect(within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB')).toBeInTheDocument()
+  })
+})

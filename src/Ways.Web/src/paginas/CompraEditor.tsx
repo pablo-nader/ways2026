@@ -584,6 +584,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [alicuotas, setAlicuotas] = useState<AlicuotaIvaListado[] | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
+  const [errorEmpresas, setErrorEmpresas] = useState(false)
   const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[] | null>(null)
   const [errorReferencia, setErrorReferencia] = useState('')
 
@@ -630,7 +631,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       .then((lista) => vigente && setEmpresas(lista))
       .catch(() => {
         // Las alícuotas de percepción de la empresa solo sirven para pre-cargar la percepción: sin
-        // ellas se carga a mano, así que no bloquea el resto de la pantalla.
+        // ellas se carga a mano, así que no bloquea el resto de la pantalla; se avisa junto al
+        // bloque de percepciones.
+        if (vigente) setErrorEmpresas(true)
       })
 
     clienteDePrecios
@@ -789,6 +792,27 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     () => ({ proveedores: proveedores ?? [], tipos: tipos ?? [], puntosVenta: puntosVenta ?? [], empresas }),
     [proveedores, tipos, puntosVenta, empresas],
   )
+
+  // Un borrador NUEVO que viene de una orden de compra o de un gasto fija proveedor y punto de venta
+  // por efecto, antes de que la referencia termine de cargar: el modo de precios del proveedor se
+  // aplica UNA vez, cuando su lista llega, por el mismo camino que elegirlo a mano. Si la orden ya
+  // trae costos estimados, el modo actual se conserva.
+  const origenAplicadoRef = useRef(false)
+  useEffect(() => {
+    if (!esNuevo || origenAplicadoRef.current || proveedores === null) return
+    if (ordenParaPrecargar === null && gastoOrigen === null) return
+    origenAplicadoRef.current = true
+    const conservarModo = ordenParaPrecargar?.cobertura.some((c) => c.pendiente > 0 && c.costoEstimado !== null) ?? false
+    setEncabezado((prev) => alElegirProveedor(prev, prev.idProveedor, referenciaDePercepciones, conservarModo))
+  }, [esNuevo, proveedores, ordenParaPrecargar, gastoOrigen, referenciaDePercepciones])
+
+  // Las sugerencias dependen de datos que llegan por separado (proveedores, tipos, puntos de venta,
+  // empresas): cada vez que cambia la referencia de un borrador NUEVO se recomputan. Las filas que el
+  // operador tocó o quitó se respetan; un borrador existente nunca recibe sugerencias nuevas.
+  useEffect(() => {
+    if (!esNuevo) return
+    setEncabezado((prev) => conSugerenciasDePercepcion(prev, referenciaDePercepciones))
+  }, [esNuevo, referenciaDePercepciones])
   const nombrePorAlicuota = useMemo(
     () => Object.fromEntries((alicuotas ?? []).map((a) => [a.id, a.nombre])) as Record<number, string>,
     [alicuotas],
@@ -917,7 +941,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   function cambiarProveedor(valor: string) {
     if (ocupado) return
-    setEncabezado((prev) => alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones))
+    const hayCostoTipeado = lineas.some((l) => l.costoUnitario !== null)
+    setEncabezado((prev) =>
+      alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
+    )
   }
 
   function cambiarPuntoVenta(valor: string) {
@@ -1537,6 +1564,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 onCambiarIva={cambiarIvaImpreso}
                 disabled={ocupado || !puedeEscribir}
               />
+            )}
+
+            {registraLibroIva && errorEmpresas && (
+              <div className="alert alert-warning py-1 px-2 small">
+                No se pudieron cargar las alícuotas de percepción de la empresa: las percepciones no se sugieren,
+                cargalas a mano.
+              </div>
             )}
 
             {registraLibroIva && (

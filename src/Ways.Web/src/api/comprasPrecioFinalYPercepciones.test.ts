@@ -233,6 +233,33 @@ describe('aSolicitudDeCompra — precio final y percepciones', () => {
     expect(solicitud.percepciones).toEqual([{ tipo: 'iibb', baseImponible: 0, alicuota: 0, importe: 12 }])
   })
 
+  it('una percepción automática en cero no se persiste', () => {
+    const solicitud = aSolicitudDeCompra(
+      encabezado({
+        percepciones: [
+          percepcion({ automatica: true, baseImponible: 0, importe: 0 }),
+          percepcion({ tipo: 'iva', automatica: true, importe: 15 }),
+        ],
+      }),
+      [lineaFormulario()],
+      true,
+      true,
+    )
+
+    expect(solicitud.percepciones?.map((p) => p.tipo)).toEqual(['iva'])
+  })
+
+  it('una percepción en cero que el operador tocó o agregó sí viaja', () => {
+    const solicitud = aSolicitudDeCompra(
+      encabezado({ percepciones: [percepcion({ automatica: false, importe: 0 })] }),
+      [lineaFormulario()],
+      true,
+      true,
+    )
+
+    expect(solicitud.percepciones).toEqual([{ tipo: 'iibb', baseImponible: 1000, alicuota: 3, importe: 0 }])
+  })
+
   it('sin percepciones manda null', () => {
     expect(aSolicitudDeCompra(encabezado(), [lineaFormulario()], true, true).percepciones).toBeNull()
   })

@@ -199,7 +199,8 @@ describe('aSolicitudDeCompra — IVA impreso y discrimina IVA', () => {
 })
 
 describe('ivaImpresoDesdeDetalle', () => {
-  const detalle = (alicuotas: CompraDetalle['alicuotas']) => ({ alicuotas }) as CompraDetalle
+  const detalle = (alicuotas: CompraDetalle['alicuotas'], preciosIncluyenIva = false) =>
+    ({ alicuotas, preciosIncluyenIva }) as CompraDetalle
 
   it('devuelve solo las alícuotas cuyo IVA guardado difiere del que sale de su neto', () => {
     const overrides = ivaImpresoDesdeDetalle(
@@ -214,5 +215,29 @@ describe('ivaImpresoDesdeDetalle', () => {
 
   it('un desglose sin diferencias no tiene overrides', () => {
     expect(ivaImpresoDesdeDetalle(detalle([{ idAlicuotaIva: 1, porcentaje: 21, neto: 1000, iva: 210 }]))).toEqual({})
+  })
+
+  // Con precios finales el neto guardado es final − iva: 100 final al 21% da iva 17,36 y neto 82,64,
+  // y 82,64 × 21% = 17,35 — comparar contra el neto solo inventaba un override que después fallaba
+  // la tolerancia al volver a guardar.
+  it('con precios finales el IVA calculado sale del final de la alícuota, no del neto', () => {
+    const alicuotas = [{ idAlicuotaIva: 1, porcentaje: 21, neto: 82.64, iva: 17.36 }]
+
+    expect(ivaImpresoDesdeDetalle(detalle(alicuotas, true))).toEqual({})
+    expect(ivaImpresoDesdeDetalle(detalle(alicuotas, false))).toEqual({ 1: 17.36 })
+  })
+
+  it('con precios finales un IVA que difiere del extraído del final sí es un override', () => {
+    const overrides = ivaImpresoDesdeDetalle(
+      detalle(
+        [
+          { idAlicuotaIva: 1, porcentaje: 21, neto: 99.5, iva: 21.5 },
+          { idAlicuotaIva: 2, porcentaje: 10.5, neto: 100, iva: 10.5 },
+        ],
+        true,
+      ),
+    )
+
+    expect(overrides).toEqual({ 1: 21.5 })
   })
 })

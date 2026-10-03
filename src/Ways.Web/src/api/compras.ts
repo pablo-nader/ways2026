@@ -350,12 +350,17 @@ export function discriminaIvaEfectivo(tipo: TipoComprobanteListado | null, elecc
 }
 
 /** Un comprobante persistido → overrides de IVA impreso: solo las alícuotas cuyo IVA guardado difiere
- * del que sale de su neto (las demás se recalculan al guardar de nuevo, sin override). */
+ * del que el servidor calcularía en la modalidad del comprobante (las demás se recalculan al guardar
+ * de nuevo, sin override). Con precios finales el neto guardado es `final − iva`, así que el IVA
+ * calculado sale de `neto + iva` (el final de la alícuota), no del neto solo. */
 export function ivaImpresoDesdeDetalle(compra: CompraDetalle): Record<number, number | null> {
   const overrides: Record<number, number | null> = {}
   for (const a of compra.alicuotas) {
     if (a.neto === null || a.iva === null) continue
-    if (redondear((a.neto * a.porcentaje) / 100, 2) !== a.iva) overrides[a.idAlicuotaIva] = a.iva
+    const calculado = compra.preciosIncluyenIva
+      ? redondear(((a.neto + a.iva) * a.porcentaje) / (100 + a.porcentaje), 2)
+      : redondear((a.neto * a.porcentaje) / 100, 2)
+    if (calculado !== a.iva) overrides[a.idAlicuotaIva] = a.iva
   }
   return overrides
 }
@@ -410,8 +415,10 @@ function aPercepcionesSolicitadas(
   registraLibroIva: boolean,
   discriminaIva: boolean,
 ): PercepcionSolicitada[] | null {
+  // Una automática en cero (base o alícuota cero) no es una percepción de la factura: no se
+  // persiste. Una fila que el operador tocó o agregó viaja aunque sea cero.
   const enviables = percepcionesAplicables(percepciones, registraLibroIva, discriminaIva)
-    .filter((p) => p.importe !== null)
+    .filter((p) => p.importe !== null && !(p.automatica && p.importe === 0))
     .map((p) => ({
       tipo: p.tipo,
       baseImponible: p.baseImponible ?? 0,
