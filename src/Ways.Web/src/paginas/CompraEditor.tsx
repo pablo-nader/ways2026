@@ -4,8 +4,10 @@ import {
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
   clienteDeCompras,
+  discriminaIvaEfectivo,
   etiquetaDeEstadoCompra,
   itemAFormulario,
+  ivaImpresoDesdeDetalle,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
   lineaDeConceptoVacia,
@@ -43,6 +45,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
+import { DesgloseDeIvaDeCompra } from './DesgloseDeIvaDeCompra'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -64,7 +67,17 @@ function fechaLocalDesdeIso(iso: string): string {
 }
 
 function encabezadoVacio(): EncabezadoDeCompraFormulario {
-  return { idProveedor: '', idTipoComprobante: '', idPuntoVenta: '', numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null }
+  return {
+    idProveedor: '',
+    idTipoComprobante: '',
+    idPuntoVenta: '',
+    numeroExterno: '',
+    fechaComprobante: '',
+    observaciones: '',
+    idOrdenCompra: null,
+    discriminaIva: null,
+    ivaImpreso: {},
+  }
 }
 
 function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario {
@@ -76,6 +89,8 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
     fechaComprobante: c.fechaComprobante ?? '',
     observaciones: c.observaciones ?? '',
     idOrdenCompra: c.idOrdenCompra,
+    discriminaIva: c.discriminaIva,
+    ivaImpreso: ivaImpresoDesdeDetalle(c),
   }
 }
 
@@ -738,7 +753,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   }, [compra])
 
   const tipoSeleccionado = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
-  const discriminaIva = tipoSeleccionado?.discriminaIva ?? false
+  const discriminaIva = discriminaIvaEfectivo(tipoSeleccionado, encabezado.discriminaIva)
+  const nombrePorAlicuota = useMemo(
+    () => Object.fromEntries((alicuotas ?? []).map((a) => [a.id, a.nombre])) as Record<number, string>,
+    [alicuotas],
+  )
 
   // El mirror de totales se calcula SOLO sobre las líneas completas (`lineaCompletaParaEnvio`):
   // es la misma fuente de verdad que decide qué líneas viajan en `aSolicitudDeCompra` — una fila a
@@ -749,7 +768,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
     [lineasCompletas, porcentajePorAlicuota],
   )
-  const totales = useMemo(() => calcularTotalesDeCompra(calculo, discriminaIva), [calculo, discriminaIva])
+  const totales = useMemo(
+    () => calcularTotalesDeCompra(calculo, discriminaIva, encabezado.ivaImpreso),
+    [calculo, discriminaIva, encabezado.ivaImpreso],
+  )
 
   const [panelTotalAbierto, setPanelTotalAbierto] = useState(false)
   const [totalImporte, setTotalImporte] = useState<number | null>(null)
@@ -805,6 +827,38 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
   const ocupado = guardando || confirmando || anulando || aplicandoPrecios || vinculandoGasto
+
+  function cambiarTipo(valor: string) {
+    if (ocupado) return
+    const idTipo = valor === '' ? '' : Number(valor)
+    const tipo = (tipos ?? []).find((t) => t.id === idTipo) ?? null
+    const anterior = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
+    // Una factura fija si discrimina IVA (el tipo manda); un remito o comprobante no fiscal lo
+    // elige quien carga y arranca en lo que dice el tipo. Solo se conserva una elección ya hecha
+    // sobre otro tipo libre: la de una factura no era una elección. Los IVA impresos pertenecen a
+    // un desglose concreto, así que un cambio de tipo los descarta.
+    const conservaEleccion = tipo !== null && !tipo.registraLibroIva && anterior !== null && !anterior.registraLibroIva
+    setEncabezado((prev) => ({
+      ...prev,
+      idTipoComprobante: idTipo,
+      discriminaIva: conservaEleccion ? prev.discriminaIva : null,
+      ivaImpreso: {},
+    }))
+  }
+
+  function cambiarDiscriminaIva(valor: boolean) {
+    if (ocupado) return
+    setEncabezado((prev) => ({ ...prev, discriminaIva: valor, ivaImpreso: {} }))
+  }
+
+  function cambiarIvaImpreso(idAlicuotaIva: number, valor: number | null) {
+    if (ocupado) return
+    const calculada = totales.alicuotas.find((a) => a.idAlicuotaIva === idAlicuotaIva)?.ivaCalculado
+    // Tipear el mismo importe que sale del neto no es un override: si no, quedaría fijo un valor
+    // que el próximo cambio de líneas dejaría desactualizado.
+    const override = valor === null || valor === calculada ? null : valor
+    setEncabezado((prev) => ({ ...prev, ivaImpreso: { ...prev.ivaImpreso, [idAlicuotaIva]: override } }))
+  }
 
   function cambiarLinea(clave: number, cambios: Partial<LineaDeCompraFormulario>) {
     if (ocupado) return
@@ -862,7 +916,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     generacionRef.current += 1
 
     try {
-      const solicitud = aSolicitudDeCompra(encabezado, lineas)
+      const solicitud = aSolicitudDeCompra(encabezado, lineas, discriminaIva)
       if (esNuevo) {
         const creada = await clienteDeCompras.crear(solicitud)
         guardandoRef.current = false
@@ -1073,17 +1127,30 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               className="form-select"
               value={encabezado.idTipoComprobante}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
-              onChange={(e) =>
-                setEncabezado((prev) => ({ ...prev, idTipoComprobante: e.target.value === '' ? '' : Number(e.target.value) }))
-              }
+              onChange={(e) => cambiarTipo(e.target.value)}
             >
               <option value="">Elegir…</option>
               {(tipos ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
+                <option key={t.id} value={t.id} title={t.nombre}>
                   {t.codigo}
                 </option>
               ))}
             </select>
+            {tipoSeleccionado !== null && !tipoSeleccionado.registraLibroIva && (
+              <div className="form-check mt-1">
+                <input
+                  id="compra-discrimina-iva"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={discriminaIva}
+                  disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
+                  onChange={(e) => cambiarDiscriminaIva(e.target.checked)}
+                />
+                <label className="form-check-label small" htmlFor="compra-discrimina-iva">
+                  Discrimina IVA
+                </label>
+              </div>
+            )}
           </div>
           <div className="col-md-3">
             <label className="form-label" htmlFor="compra-punto-venta">
@@ -1317,6 +1384,15 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               </div>
             </div>
 
+            {discriminaIva && (
+              <DesgloseDeIvaDeCompra
+                filas={totales.alicuotas}
+                nombrePorAlicuota={nombrePorAlicuota}
+                onCambiarIva={cambiarIvaImpreso}
+                disabled={ocupado || !puedeEscribir}
+              />
+            )}
+
             {lineasIncompletas > 0 && (
               <div className="alert alert-warning py-1 px-2 small mb-3">
                 {lineasIncompletas} línea(s) incompleta(s) — no se van a guardar.
@@ -1402,6 +1478,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   <div className="fs-6">{formatearMoneda(compra.total)}</div>
                 </div>
               </div>
+
+              {compra.discriminaIva && (
+                <DesgloseDeIvaDeCompra filas={compra.alicuotas} nombrePorAlicuota={nombrePorAlicuota} />
+              )}
 
               {resultadoAnulacion && (
                 <div className="alert alert-warning">

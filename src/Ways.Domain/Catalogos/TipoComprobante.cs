@@ -36,6 +36,12 @@ public class TipoComprobante : EntidadBase
     /// <summary>Presupuesto: no.</summary>
     public bool AfectaStock { get; set; }
 
+    /// <summary>¿Entra al libro IVA? Solo los comprobantes fiscales (facturas): un remito o un
+    /// comprobante no fiscal nunca se declara, aunque discrimine IVA. Para compras decide además
+    /// si <see cref="DiscriminaIva"/> está fijo por el tipo (registra) o lo elige quien carga el
+    /// comprobante (no registra).</summary>
+    public bool RegistraLibroIva { get; set; }
+
     public short? CodigoAfip { get; set; }
 
     public bool Activo { get; set; } = true;

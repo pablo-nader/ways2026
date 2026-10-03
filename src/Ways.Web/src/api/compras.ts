@@ -21,6 +21,7 @@ import type {
   SaldoDeProveedor,
   SolicitudDeAplicarPrecios,
   SolicitudDeCompra,
+  TipoComprobanteListado,
 } from './tipos'
 
 function redondear(valor: number, decimales: number): number {
@@ -311,6 +312,31 @@ export type EncabezadoDeCompraFormulario = {
    * `?idOrdenCompra=` en `CompraEditor`, design decisión — "Registrar recepción" de
    * `OrdenDeCompra.tsx`). `null` = compra sin OC, el 100% del tráfico previo a esta etapa. */
   idOrdenCompra: number | null
+  /** Elección de quien carga el comprobante: solo cuenta en un tipo que no registra libro IVA
+   * (remito, comprobante no fiscal). `null` = el valor del tipo. En una factura el editor la deja
+   * en `null`: lo fija el tipo y mandar lo contrario es 400. */
+  discriminaIva: boolean | null
+  /** IVA impreso por el proveedor, por id de alícuota, cuando difiere del calculado por
+   * redondeo. Solo se editan las alícuotas que el comprobante tiene; `null` = sin override. */
+  ivaImpreso: Record<number, number | null>
+}
+
+/** Si el comprobante discrimina IVA: lo fija el tipo en una factura y lo elige quien carga un
+ * remito o comprobante no fiscal (espejo de `ReglaDeDiscriminacionDeIva`). */
+export function discriminaIvaEfectivo(tipo: TipoComprobanteListado | null, eleccion: boolean | null): boolean {
+  if (tipo === null) return false
+  return tipo.registraLibroIva ? tipo.discriminaIva : (eleccion ?? tipo.discriminaIva)
+}
+
+/** Un comprobante persistido → overrides de IVA impreso: solo las alícuotas cuyo IVA guardado difiere
+ * del que sale de su neto (las demás se recalculan al guardar de nuevo, sin override). */
+export function ivaImpresoDesdeDetalle(compra: CompraDetalle): Record<number, number | null> {
+  const overrides: Record<number, number | null> = {}
+  for (const a of compra.alicuotas) {
+    if (a.neto === null || a.iva === null) continue
+    if (redondear((a.neto * a.porcentaje) / 100, 2) !== a.iva) overrides[a.idAlicuotaIva] = a.iva
+  }
+  return overrides
 }
 
 /** `fechaComprobante` es `date` (`DateOnly`), no `timestamptz` — viaja tal cual el
@@ -319,7 +345,16 @@ export type EncabezadoDeCompraFormulario = {
 export function aSolicitudDeCompra(
   encabezado: EncabezadoDeCompraFormulario,
   lineas: LineaDeCompraFormulario[],
+  discriminaEfectivo = false,
 ): SolicitudDeCompra {
+  const completas = lineas.filter(lineaCompletaParaEnvio)
+  const idsPresentes = new Set(completas.map((l) => Number(l.idAlicuotaIva)))
+  const ivaImpreso = discriminaEfectivo
+    ? Object.entries(encabezado.ivaImpreso)
+        .filter(([id, iva]) => iva !== null && idsPresentes.has(Number(id)))
+        .map(([id, iva]) => ({ idAlicuotaIva: Number(id), iva: iva as number }))
+    : []
+
   return {
     idProveedor: encabezado.idProveedor === '' ? 0 : encabezado.idProveedor,
     idTipoComprobante: encabezado.idTipoComprobante === '' ? 0 : encabezado.idTipoComprobante,
@@ -327,14 +362,17 @@ export function aSolicitudDeCompra(
     numeroExterno: encabezado.numeroExterno.trim() === '' ? null : encabezado.numeroExterno.trim(),
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
-    items: lineas.filter(lineaCompletaParaEnvio).map(aLineaSolicitada),
+    items: completas.map(aLineaSolicitada),
     idOrdenCompra: encabezado.idOrdenCompra,
+    discriminaIva: encabezado.discriminaIva,
+    ivaImpreso: ivaImpreso.length === 0 ? null : ivaImpreso,
   }
 }
 
 // ---- Mirror no autoritativo de CalculadorDeCompra (design: "Compra Arithmetic") --------------
 
 export type LineaDeCalculo = {
+  idAlicuotaIva: number
   unidades: number
   bultos: number
   unidadesPorBulto: number
@@ -345,13 +383,29 @@ export type LineaDeCalculo = {
 
 export type ItemCalculado = { cantidad: number; bruto: number; total: number; costoEfectivo: number | null }
 
+/** Una alícuota del desglose: `ivaCalculado` es lo que sale del neto; `iva` lo que se guarda (el
+ * impreso, si se informó). `fueraDeTolerancia` anticipa el 400 del servidor. */
+export type AlicuotaDelDesglose = {
+  idAlicuotaIva: number
+  porcentaje: number
+  neto: number
+  ivaCalculado: number
+  iva: number
+  fueraDeTolerancia: boolean
+}
+
 export type TotalesDeCompra = {
   items: ItemCalculado[]
   subtotal: number
   descuentoTotal: number
   ivaTotal: number | null
   total: number
+  alicuotas: AlicuotaDelDesglose[]
 }
+
+/** Diferencia máxima, en pesos, entre el IVA calculado y el impreso (espejo de
+ * `CalculadorDeCompra.ToleranciaDeIvaImpreso`). */
+export const TOLERANCIA_DE_IVA_IMPRESO = 1
 
 /** Fila de formulario → `LineaDeCalculo`, resolviendo `porcentajeIva` desde el catálogo de
  * alícuotas (el formulario solo guarda el id, nunca el porcentaje). */
@@ -360,6 +414,7 @@ export function lineaFormularioACalculo(
   porcentajePorAlicuota: Record<number, number>,
 ): LineaDeCalculo {
   return {
+    idAlicuotaIva: l.idAlicuotaIva === '' ? 0 : l.idAlicuotaIva,
     unidades: numero(l.unidades),
     bultos: numero(l.bultos),
     unidadesPorBulto: numero(l.unidadesPorBulto),
@@ -383,8 +438,13 @@ function calcularItem(l: LineaDeCalculo, discriminaIva: boolean): ItemCalculado 
 }
 
 /** Espejo de `CalculadorDeCompra.Calcular` (design: "Compra Arithmetic") — puramente informativo,
- * el servidor recalcula todo desde cero al guardar (`dto-contract-honesty`). */
-export function calcularTotalesDeCompra(lineas: LineaDeCalculo[], discriminaIva: boolean): TotalesDeCompra {
+ * el servidor recalcula todo desde cero al guardar (`dto-contract-honesty`). `ivaImpreso` es el
+ * override por alícuota del IVA que imprimió el proveedor: `null` o ausente = el calculado. */
+export function calcularTotalesDeCompra(
+  lineas: LineaDeCalculo[],
+  discriminaIva: boolean,
+  ivaImpreso: Record<number, number | null> = {},
+): TotalesDeCompra {
   const items = lineas.map((l) => calcularItem(l, discriminaIva))
   const subtotal = redondear(
     items.reduce((acumulado, i) => acumulado + i.bruto, 0),
@@ -396,14 +456,42 @@ export function calcularTotalesDeCompra(lineas: LineaDeCalculo[], discriminaIva:
   )
 
   if (!discriminaIva) {
-    return { items, subtotal, descuentoTotal, ivaTotal: null, total: redondear(subtotal - descuentoTotal, 2) }
+    return { items, subtotal, descuentoTotal, ivaTotal: null, total: redondear(subtotal - descuentoTotal, 2), alicuotas: [] }
   }
 
+  const alicuotas = desglosarIva(lineas, items, ivaImpreso)
   const ivaTotal = redondear(
-    items.reduce((acumulado, item, indice) => acumulado + redondear((item.total * lineas[indice].porcentajeIva) / 100, 2), 0),
+    alicuotas.reduce((acumulado, a) => acumulado + a.iva, 0),
     2,
   )
-  return { items, subtotal, descuentoTotal, ivaTotal, total: redondear(subtotal - descuentoTotal + ivaTotal, 2) }
+  return { items, subtotal, descuentoTotal, ivaTotal, total: redondear(subtotal - descuentoTotal + ivaTotal, 2), alicuotas }
+}
+
+/** Neto por alícuota (suma de totales de línea) e IVA redondeado una sola vez sobre ese neto — la
+ * convención de una factura, igual que el servidor —, ordenado por id de alícuota. */
+function desglosarIva(
+  lineas: LineaDeCalculo[],
+  items: ItemCalculado[],
+  ivaImpreso: Record<number, number | null>,
+): AlicuotaDelDesglose[] {
+  const porAlicuota = new Map<number, { porcentaje: number; neto: number }>()
+  lineas.forEach((l, indice) => {
+    const acumulado = porAlicuota.get(l.idAlicuotaIva)
+    porAlicuota.set(l.idAlicuotaIva, {
+      porcentaje: l.porcentajeIva,
+      neto: redondear((acumulado?.neto ?? 0) + items[indice].total, 2),
+    })
+  })
+
+  return [...porAlicuota.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([idAlicuotaIva, { porcentaje, neto }]) => {
+      const ivaCalculado = redondear((neto * porcentaje) / 100, 2)
+      const impreso = ivaImpreso[idAlicuotaIva] ?? null
+      const fueraDeTolerancia =
+        impreso !== null && (impreso < 0 || redondear(Math.abs(impreso - ivaCalculado), 2) > TOLERANCIA_DE_IVA_IMPRESO)
+      return { idAlicuotaIva, porcentaje, neto, ivaCalculado, iva: impreso ?? ivaCalculado, fueraDeTolerancia }
+    })
 }
 
 /** Espejo de la regla `descuento(i) > bruto(i) ⇒ 400 descuento_de_item_invalido` — feedback

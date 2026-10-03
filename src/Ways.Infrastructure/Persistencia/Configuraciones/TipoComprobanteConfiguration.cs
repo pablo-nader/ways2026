@@ -42,6 +42,7 @@ public class TipoComprobanteConfiguration : IEntityTypeConfiguration<TipoComprob
         builder.Property(t => t.DiscriminaIva).HasColumnName("discrimina_iva").IsRequired();
         builder.Property(t => t.EsFiscal).HasColumnName("es_fiscal").IsRequired();
         builder.Property(t => t.AfectaStock).HasColumnName("afecta_stock").IsRequired();
+        builder.Property(t => t.RegistraLibroIva).HasColumnName("registra_libro_iva").HasDefaultValue(false).IsRequired();
         builder.Property(t => t.CodigoAfip).HasColumnName("codigo_afip");
         builder.Property(t => t.Activo).HasColumnName("activo").HasDefaultValue(true).IsRequired();
 

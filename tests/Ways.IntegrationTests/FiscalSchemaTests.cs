@@ -1034,7 +1034,9 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 return (long)(await comando.ExecuteScalarAsync())!;
             }
 
-            Assert.Equal(8, await ContarAsync("tipos_comprobante"));
+            // Los 8 sembrados + C-RM, que agrega ComprasRemitoYAlicuotas (posterior a 19a) sobre un
+            // catálogo ya poblado: ninguno de los tres data statements de 19a inserta nada.
+            Assert.Equal(9, await ContarAsync("tipos_comprobante"));
             Assert.Equal(5, await ContarAsync("condiciones_fiscales"));
             Assert.Equal(6, await ContarAsync("alicuotas_iva"));
         }

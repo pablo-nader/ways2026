@@ -101,4 +101,5 @@ public sealed record TipoComprobanteListado(
     bool EsFiscal,
     bool AfectaStock,
     short? CodigoAfip,
-    bool Activo);
+    bool Activo,
+    bool RegistraLibroIva);

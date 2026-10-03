@@ -123,8 +123,8 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         comando.CommandText =
             "INSERT INTO comprobantes_compra (id_tenant, id_proveedor, id_tipo_comprobante, numero_externo, " +
             "fecha_comprobante, fecha_recepcion, id_punto_venta, id_empleado, subtotal, descuento_total, total, " +
-            "estado, created_at, updated_at) VALUES " +
-            "($1, $2, $3, $4::citext, $5, $6, $7, $8, 100, 0, 100, $9::estado_compra, now(), now()) " +
+            "estado, created_at, updated_at, discrimina_iva) VALUES " +
+            "($1, $2, $3, $4::citext, $5, $6, $7, $8, 100, 0, 100, $9::estado_compra, now(), now(), false) " +
             "RETURNING id_comprobante_compra";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdProveedor });
@@ -275,8 +275,8 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO comprobantes_compra (id_tenant, id_proveedor, id_tipo_comprobante, id_punto_venta, " +
-            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, 100, 0, -10, 'borrador', now(), now())";
+            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at, discrimina_iva) " +
+            "VALUES ($1, $2, $3, $4, $5, 100, 0, -10, 'borrador', now(), now(), false)";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdProveedor });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTipoComprobanteCompra });
@@ -450,8 +450,8 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO comprobantes_compra (id_tenant, id_proveedor, id_tipo_comprobante, id_punto_venta, " +
-            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, 100, 0, 100, 'borrador', now(), now())";
+            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at, discrimina_iva) " +
+            "VALUES ($1, $2, $3, $4, $5, 100, 0, 100, 'borrador', now(), now(), false)";
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = valores["id_proveedor"] });
         comando.Parameters.Add(new NpgsqlParameter { Value = valores["id_tipo_comprobante"] });
@@ -515,8 +515,8 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO comprobantes_compra (id_tenant, id_proveedor, id_tipo_comprobante, id_punto_venta, " +
-            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at) " +
-            "VALUES ($1, $2, $3, $4, $5, 100, 0, 100, 'borrador', now(), now())";
+            "id_empleado, subtotal, descuento_total, total, estado, created_at, updated_at, discrimina_iva) " +
+            "VALUES ($1, $2, $3, $4, $5, 100, 0, 100, 'borrador', now(), now(), false)";
         comando.Parameters.Add(new NpgsqlParameter { Value = IdInexistente });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdProveedor });
         comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTipoComprobanteCompra });
@@ -705,5 +705,105 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23503", excepcion.SqlState);
         Assert.Equal("fk_gastos_comprobante_compra", excepcion.ConstraintName);
+    }
+
+    // ---- alicuotas_comprobante_compra (desglose de IVA) --------------------------------------
+
+    private static async Task InsertarAlicuotaAsync(
+        NpgsqlConnection cruda, int idTenant, int idComprobante, int idAlicuotaIva, decimal neto = 100m, decimal iva = 21m)
+    {
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO alicuotas_comprobante_compra (id_tenant, id_comprobante_compra, id_alicuota_iva, " +
+            "porcentaje, neto, iva, created_at, updated_at) VALUES ($1, $2, $3, 21, $4, $5, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idAlicuotaIva });
+        comando.Parameters.Add(new NpgsqlParameter { Value = neto });
+        comando.Parameters.Add(new NpgsqlParameter { Value = iva });
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task DosFilasDeLaMismaAlicuotaEnUnComprobanteViolanLaUnicidad()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(DosFilasDeLaMismaAlicuotaEnUnComprobanteViolanLaUnicidad));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        await InsertarAlicuotaAsync(cruda, p.IdTenant, idComprobante, p.IdAlicuotaIva);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarAlicuotaAsync(cruda, p.IdTenant, idComprobante, p.IdAlicuotaIva));
+
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_alicuotas_comprobante_compra_alicuota", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task DosInsertsConcurrentesDeLaMismaAlicuotaDanExactamenteUnGanador()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(DosInsertsConcurrentesDeLaMismaAlicuotaDanExactamenteUnGanador));
+        await using var preparacion = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(preparacion, p, "borrador", null);
+
+        await using var conexionA = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var conexionB = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+
+        var tareaA = InsertarAlicuotaAsync(conexionA, p.IdTenant, idComprobante, p.IdAlicuotaIva);
+        var tareaB = InsertarAlicuotaAsync(conexionB, p.IdTenant, idComprobante, p.IdAlicuotaIva);
+
+        await Task.WhenAll(tareaA.ContinueWith(_ => { }), tareaB.ContinueWith(_ => { }));
+
+        var tareas = new[] { tareaA, tareaB };
+        Assert.Equal(1, tareas.Count(t => t.IsCompletedSuccessfully));
+        Assert.Equal(1, tareas.Count(t => t.IsFaulted));
+
+        var excepcion = Assert.IsType<PostgresException>(tareas.Single(t => t.IsFaulted).Exception!.InnerException);
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_alicuotas_comprobante_compra_alicuota", excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData(-1, 21)]
+    [InlineData(100, -1)]
+    public async Task UnaAlicuotaConImporteNegativoViolaLaCheckDeImportes(int neto, int iva)
+    {
+        var p = await SembrarPrerequisitosAsync($"{nameof(UnaAlicuotaConImporteNegativoViolaLaCheckDeImportes)}{neto}{iva}");
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarAlicuotaAsync(cruda, p.IdTenant, idComprobante, p.IdAlicuotaIva, neto, iva));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_alicuotas_comprobante_compra_importes_no_negativos", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnaAlicuotaDeIvaInexistenteViolaLaFk()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnaAlicuotaDeIvaInexistenteViolaLaFk));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarAlicuotaAsync(cruda, p.IdTenant, idComprobante, IdInexistente));
+
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_alicuotas_comprobante_compra_alicuota_iva", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnComprobanteInexistenteViolaLaFkDelDesglose()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnComprobanteInexistenteViolaLaFkDelDesglose));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarAlicuotaAsync(cruda, p.IdTenant, IdInexistente, p.IdAlicuotaIva));
+
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_alicuotas_comprobante_compra_comprobante", excepcion.ConstraintName);
     }
 }

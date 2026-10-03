@@ -97,6 +97,7 @@ function tipoFixture(sobrescribir: Partial<TipoComprobanteListado> = {}): TipoCo
     afectaStock: true,
     codigoAfip: null,
     activo: true,
+    registraLibroIva: true,
     ...sobrescribir,
   }
 }
@@ -203,6 +204,8 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     estado: 'Borrador',
     items: [itemFixture()],
     idOrdenCompra: null,
+    discriminaIva: true,
+    alicuotas: [{ idAlicuotaIva: 3, porcentaje: 21, neto: 950, iva: 199.5 }],
     ...sobrescribir,
   }
 }
@@ -252,10 +255,13 @@ function renderEditorProtegido(idCompra: string | number = 1) {
 
 /** Rutas de referencia compartidas por casi todos los tests — cada test suma encima las rutas de
  * compra que le hacen falta. */
-function mockearReferencia(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
+function mockearReferencia(
+  sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined,
+  tipos: TipoComprobanteListado[] = [tipoFixture()],
+) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [proveedorFixture()], total: 1, pagina: 1, tamanio: 200 })
-    if (ruta === '/catalogos-fiscales/tipos-comprobante') return Promise.resolve([tipoFixture()])
+    if (ruta === '/catalogos-fiscales/tipos-comprobante') return Promise.resolve(tipos)
     if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve([alicuotaFixture()])
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([listaPrecioFixture()])
@@ -1154,5 +1160,249 @@ describe('CompraEditor — líneas por concepto', () => {
     await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
 
     expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+  })
+})
+
+describe('CompraEditor — remito y desglose de IVA', () => {
+  const tipoFB = () => tipoFixture({ id: 6, codigo: 'C-FB', nombre: 'Factura B de compra', letra: 'B', discriminaIva: false })
+  const tipoRM = () =>
+    tipoFixture({
+      id: 7,
+      codigo: 'C-RM',
+      nombre: 'Remito / comprobante no fiscal',
+      letra: 'X',
+      discriminaIva: false,
+      registraLibroIva: false,
+    })
+
+  async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>, idTipo: string) {
+    mockearReferencia(undefined, [tipoFixture(), tipoFB(), tipoRM()])
+    renderEditor('nueva')
+    // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await screen.findByRole('option', { name: /C-RM/ })
+    await screen.findByRole('option', { name: 'Casa Central' })
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
+    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cargar por total' })).toBeEnabled())
+  }
+
+  async function cargarConceptoPorTotal(usuario: ReturnType<typeof userEvent.setup>, importe: string) {
+    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
+    await usuario.type(screen.getByLabelText('Importe total'), importe)
+    await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
+  }
+
+  it('el remito ofrece el tilde Discrimina IVA y arranca apagado; una factura no lo ofrece', async () => {
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+
+    expect(screen.getByLabelText('Discrimina IVA')).not.toBeChecked()
+
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    expect(screen.queryByLabelText('Discrimina IVA')).not.toBeInTheDocument()
+  })
+
+  it('un remito sin tocar el tilde no muestra desglose y manda el valor del tipo, sin IVA impreso', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+
+    expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idTipoComprobante).toBe(7)
+    expect(cuerpo.discriminaIva).toBeNull()
+    expect(cuerpo.ivaImpreso).toBeNull()
+  })
+
+  it('tildar Discrimina IVA en un remito muestra el desglose por alícuota y lo manda como discriminaIva true', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+
+    const tabla = screen.getByRole('table', { name: 'Desglose de IVA' })
+    const fila = within(tabla).getByText('21%').closest('tr') as HTMLElement
+    expect(within(fila).getByText('$ 1.000,00')).toBeInTheDocument()
+    expect(within(fila).getByLabelText('IVA impreso 21%')).toHaveValue('210,00')
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.discriminaIva).toBe(true)
+    expect(cuerpo.ivaImpreso).toBeNull()
+  })
+
+  it('corregir el IVA de una alícuota recalcula el total y manda el importe impreso', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+
+    const campo = screen.getByLabelText('IVA impreso 21%')
+    await usuario.clear(campo)
+    await usuario.type(campo, '210,5')
+    await usuario.tab()
+
+    expect(screen.getByText('Calculado: $ 210,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 1.210,50')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.ivaImpreso).toEqual([{ idAlicuotaIva: 3, iva: 210.5 }])
+  })
+
+  it('un IVA impreso que se pasa de un peso del calculado avisa antes de guardar', async () => {
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+
+    const campo = screen.getByLabelText('IVA impreso 21%')
+    await usuario.clear(campo)
+    await usuario.type(campo, '215')
+    await usuario.tab()
+
+    expect(screen.getByText(/Difiere más de \$ 1,00 del calculado/)).toBeInTheDocument()
+  })
+
+  it('tipear el mismo IVA que sale del neto no cuenta como override', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+
+    const campo = screen.getByLabelText('IVA impreso 21%')
+    await usuario.clear(campo)
+    await usuario.type(campo, '210')
+    await usuario.tab()
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.ivaImpreso).toBeNull()
+  })
+
+  it('cambiar de tipo descarta el IVA impreso y una factura A siempre discrimina', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+    const campo = screen.getByLabelText('IVA impreso 21%')
+    await usuario.clear(campo)
+    await usuario.type(campo, '210,5')
+    await usuario.tab()
+
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    expect(screen.getByLabelText('IVA impreso 21%')).toHaveValue('210,00')
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.discriminaIva).toBeNull()
+    expect(cuerpo.ivaImpreso).toBeNull()
+  })
+
+  it('una factura B no discrimina IVA: ni tilde ni desglose', async () => {
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '6')
+    await cargarConceptoPorTotal(usuario, '1000')
+
+    expect(screen.queryByLabelText('Discrimina IVA')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
+  })
+
+  it('un borrador de remito que discrimina se reabre con el tilde puesto y el IVA guardado, y el PUT lo conserva', async () => {
+    const remito = compraFixture({
+      idTipoComprobante: 7,
+      discriminaIva: true,
+      ivaTotal: 200,
+      total: 1150,
+      alicuotas: [{ idAlicuotaIva: 3, porcentaje: 21, neto: 950, iva: 200 }],
+    })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(remito) : undefined), [tipoFixture(), tipoRM()])
+    apiPutMock.mockResolvedValue(remito)
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+    await waitFor(() => expect(screen.getByLabelText('Discrimina IVA')).toBeChecked())
+
+    // El IVA guardado (200) difiere del que sale del neto (199,50): es un override y se conserva.
+    expect(screen.getByLabelText('IVA impreso 21%')).toHaveValue('200,00')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.discriminaIva).toBe(true)
+    expect(cuerpo.ivaImpreso).toEqual([{ idAlicuotaIva: 3, iva: 200 }])
+  })
+
+  it('destildar Discrimina IVA después de tildarlo lo manda como false explícito y oculta el desglose', async () => {
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '7')
+    await cargarConceptoPorTotal(usuario, '1000')
+
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+    expect(screen.getByRole('table', { name: 'Desglose de IVA' })).toBeInTheDocument()
+    await usuario.click(screen.getByLabelText('Discrimina IVA'))
+    expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.discriminaIva).toBe(false)
+    expect(cuerpo.ivaImpreso).toBeNull()
+  })
+
+  it('pasar de una factura A al remito no hereda el IVA discriminado de la factura', async () => {
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario, '5')
+    await cargarConceptoPorTotal(usuario, '1000')
+    expect(screen.getByRole('table', { name: 'Desglose de IVA' })).toBeInTheDocument()
+
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '7')
+
+    expect(screen.getByLabelText('Discrimina IVA')).not.toBeChecked()
+    expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
+  })
+
+  it('una compra confirmada muestra el desglose de IVA de solo lectura', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1'
+        ? Promise.resolve(
+            compraFixture({
+              estado: 'Confirmada',
+              alicuotas: [
+                { idAlicuotaIva: 3, porcentaje: 21, neto: 950, iva: 199.5 },
+                { idAlicuotaIva: 4, porcentaje: 0, neto: 50, iva: 0 },
+              ],
+            }),
+          )
+        : undefined,
+    )
+    renderEditor()
+
+    const tabla = await screen.findByRole('table', { name: 'Desglose de IVA' })
+    expect(within(tabla).getByText('21%')).toBeInTheDocument()
+    expect(within(tabla).getByText('$ 199,50')).toBeInTheDocument()
+    expect(within(tabla).queryByLabelText(/IVA impreso/)).not.toBeInTheDocument()
   })
 })

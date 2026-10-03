@@ -111,32 +111,37 @@ public class InicializadorDeBaseDeDatos(
     // FA=1, NDA=2, NCA=3, NCB=8, FC=11, NCC=13, FB=6 — CERO filas insertadas/activadas/
     // desactivadas, solo el campo nuevo. TX/NCX/PRE/RC/TXR y los tres C-* de compra quedan
     // CodigoAfip = null (no son fiscales, decisión 9: el guard del POS jamás los deja emitir).
-    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo, short? CodigoAfip)[] TiposComprobanteBase =
+    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo, short? CodigoAfip, bool RegistraLibroIva)[] TiposComprobanteBase =
     [
-        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true, 1),
-        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true, true, 6),
-        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true, true, 11),
-        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true, true, 3),
-        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true, true, 8),
-        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true, true, 13),
-        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true, true, 2),
-        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true, true, null),
-        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true, true, null),
+        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true, 1, false),
+        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true, true, 6, false),
+        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true, true, 11, false),
+        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true, true, 3, false),
+        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true, true, 8, false),
+        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true, true, 13, false),
+        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true, true, 2, false),
+        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true, true, null, false),
+        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true, true, null, false),
         // stage-17: PRE nace desactivado en el seed (net 1b) — el hallazgo del "PRE latente"
         // (explore.md): un tipo activo, afecta_stock=false, colaba como venta fantasma.
-        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false, null),
-        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true, null),
+        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false, null, false),
+        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true, null, false),
         // stage-17-presupuestos-y-remitos (proposal §I, decisión 2/7 del explore): comprobante
         // consolidado de facturación de remitos, sin items por construcción — nace ACTIVO pero
         // INEMITIBLE por mostrador (afecta_stock=false, mismo guard del resolver que bloquea PRE).
-        (ClaseComprobante.Venta, "TXR", "Ticket X por remitos", 'X', 1, false, false, false, true, null),
+        (ClaseComprobante.Venta, "TXR", "Ticket X por remitos", 'X', 1, false, false, false, true, null, false),
 
         // stage-8-compras-transferencias-inventario (design decisión 12/7 del proposal): solo
         // tres tipos — notas de crédito de proveedor están fuera de alcance (anulación es la
         // única reversión). es_fiscal=false: nunca EMITIMOS la factura del proveedor.
-        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true, true, null),
-        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true, true, null),
-        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true, true, null)
+        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true, true, null, true),
+        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true, true, null, true),
+        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true, true, null, true),
+
+        // Remito o comprobante no fiscal del proveedor: no entra al libro IVA, y si discrimina IVA
+        // lo decide quien carga el comprobante (nace sin discriminar). Se siembra acá para una base
+        // nueva y, de forma idempotente, en la migración ComprasRemitoYAlicuotas para una ya migrada.
+        (ClaseComprobante.Compra, "C-RM", "Remito / comprobante no fiscal", 'X', 1, false, false, true, true, null, false)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
@@ -502,6 +507,7 @@ public class InicializadorDeBaseDeDatos(
                 AfectaStock = t.AfectaStock,
                 Activo = t.Activo,
                 CodigoAfip = t.CodigoAfip,
+                RegistraLibroIva = t.RegistraLibroIva,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             }));

@@ -225,10 +225,9 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         var itemsRecibido = await (
             from ic in db.ItemsComprobanteCompra.AsNoTracking()
             join c in db.ComprobantesCompra.AsNoTracking() on ic.IdComprobanteCompra equals c.Id
-            join t in db.TiposComprobante.AsNoTracking() on c.IdTipoComprobante equals t.Id
             where c.IdOrdenCompra == idOrdenCompra && c.Estado == EstadoCompra.Confirmada
                   && c.DeletedAt == null && ic.DeletedAt == null && ic.IdArticulo != null
-            select new { IdArticulo = ic.IdArticulo!.Value, ic.Cantidad, ic.Total, ic.PorcentajeIva, t.DiscriminaIva })
+            select new { IdArticulo = ic.IdArticulo!.Value, ic.Cantidad, ic.Total, ic.PorcentajeIva, c.DiscriminaIva })
             .ToListAsync(ct);
 
         var pedidaPorArticulo = itemsPedido

@@ -99,6 +99,26 @@ public class ManejadorDeErroresComprasTests
         Assert.Equal("orden_de_item_duplicado", codigo);
     }
 
+    [Fact]
+    public async Task UxAlicuotasComprobanteCompraAlicuotaSeTraduceA409AlicuotaDeCompraDuplicada()
+    {
+        var postgres = CrearExcepcion("23505", "ux_alicuotas_comprobante_compra_alicuota");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("dup", postgres));
+
+        Assert.Equal(StatusCodes.Status409Conflict, estado);
+        Assert.Equal("alicuota_de_compra_duplicada", codigo);
+    }
+
+    [Fact]
+    public async Task CkAlicuotasComprobanteCompraImportesNoNegativosSeTraduceA400AlicuotaDeCompraInvalida()
+    {
+        var postgres = CrearExcepcion("23514", "ck_alicuotas_comprobante_compra_importes_no_negativos");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("alicuota_de_compra_invalida", codigo);
+    }
+
     // ---- ClasificarCheckDeCompras (detrás del guard de prefijo) -------------------------------
 
     [Fact]
