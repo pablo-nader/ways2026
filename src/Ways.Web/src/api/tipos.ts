@@ -1162,6 +1162,10 @@ export type VentaDeTurnoListado = {
   idCliente: number
   nombreCliente: string
   total: number
+  /** Totales de ajuste manual del comprobante (mismo criterio que en `ComprobanteEmitido`): la
+   * pantalla los usa para marcar las ventas con precios cambiados a mano. */
+  descuentoManualTotal: number
+  recargoManualTotal: number
   mediosDePago: MedioDeVentaNeto[]
 }
 
@@ -1444,6 +1448,11 @@ export type LineaDeVenta = {
   idLote: number | null
   precioUnitario?: number
   descuentoUnitario?: number
+  /** Ajuste manual de precio de la línea, en porcentaje con signo: negativo = descuento, positivo =
+   * recargo; distinto de 0, entre -100 y 100, hasta 2 decimales. Solo viaja la línea que lo tiene
+   * (ausente = sin ajuste, el payload queda idéntico al de antes): el servidor recalcula el monto
+   * sobre el neto posterior a las ofertas y es la única autoridad del importe. */
+  ajusteManualPorcentaje?: number | null
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
@@ -1529,6 +1538,11 @@ export type ItemEmitido = {
    * `false` fijo) para no forzar a cada fixture preexistente de `ItemEmitido` en el resto de la
    * suite a declararlo — un consumidor lo trata como `?? false`. */
   precioDiscrepante?: boolean
+  /** Ajuste manual de la línea (espejo de `ItemEmitido.AjusteManualPorcentaje`/`AjusteManual`):
+   * `ajusteManualPorcentaje` es `null` en una línea sin ajuste; `ajusteManual` es el monto con signo
+   * (negativo = descuento, positivo = recargo) ya incluido en `total`. */
+  ajusteManualPorcentaje: number | null
+  ajusteManual: number
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */
@@ -1552,6 +1566,11 @@ export type ComprobanteEmitido = {
   idComprobanteAsociado: number | null
   subtotal: number
   descuentoTotal: number
+  /** Totales de los ajustes manuales por línea (espejo de `ComprobanteEmitido`): descuento y
+   * recargo van separados, ambos en positivo en una venta normal, para que un recargo no oculte un
+   * descuento. `total = subtotal - descuentoTotal - descuentoManualTotal + recargoManualTotal`. */
+  descuentoManualTotal: number
+  recargoManualTotal: number
   total: number
   direccionEntrega: string | null
   observaciones: string | null

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { estaEnRangoSoportado, formatearImporte, parsearImporte, redondearImporte } from './importes'
+import { estaEnRangoSoportado, formatearImporte, formatearImporteConSigno, parsearImporte, redondearImporte } from './importes'
 
 describe('formatearImporte', () => {
   const casos: Array<[number, string]> = [
@@ -142,6 +142,29 @@ describe('redondearImporte', () => {
   it('respeta `decimales`', () => {
     expect(redondearImporte(1234.5, 0)).toBe(1235)
     expect(redondearImporte(1234.5678, 3)).toBe(1234.568)
+  })
+})
+
+describe('formatearImporteConSigno', () => {
+  it('antepone "+" a un importe positivo', () => {
+    expect(formatearImporteConSigno(15, { simbolo: true })).toBe('+$ 15,00')
+    expect(formatearImporteConSigno(1234.5)).toBe('+1.234,50')
+  })
+
+  it('deja el "-" del importe negativo antes del símbolo, nunca "$ -"', () => {
+    expect(formatearImporteConSigno(-10, { simbolo: true })).toBe('-$ 10,00')
+  })
+
+  it('el cero y lo que redondea a cero no llevan signo', () => {
+    expect(formatearImporteConSigno(0, { simbolo: true })).toBe('$ 0,00')
+    expect(formatearImporteConSigno(0.004, { simbolo: true })).toBe('$ 0,00')
+    expect(formatearImporteConSigno(-0.004, { simbolo: true })).toBe('$ 0,00')
+  })
+
+  it('null, undefined y NaN devuelven el guion largo', () => {
+    expect(formatearImporteConSigno(null)).toBe('—')
+    expect(formatearImporteConSigno(undefined)).toBe('—')
+    expect(formatearImporteConSigno(Number.NaN)).toBe('—')
   })
 })
 

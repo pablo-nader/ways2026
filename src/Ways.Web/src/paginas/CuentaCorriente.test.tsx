@@ -160,6 +160,8 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
     idComprobanteAsociado: null,
     subtotal: 500,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 500,
     direccionEntrega: null,
     observaciones: null,

@@ -127,6 +127,17 @@ export function formatearImporte(valor: number | null | undefined, opciones: Opc
 }
 
 /**
+ * Igual que `formatearImporte`, pero un importe positivo lleva "+" delante ("+$ 15,00") para
+ * mostrar un ajuste con signo; el negativo ya lleva "-" y el cero (o lo que redondea a cero) no
+ * lleva ninguno. `null`/`undefined`/`NaN` devuelven `—`.
+ */
+export function formatearImporteConSigno(valor: number | null | undefined, opciones: OpcionesFormatearImporte = {}): string {
+  const texto = formatearImporte(valor, opciones)
+  if (valor === null || valor === undefined || !Number.isFinite(valor)) return texto
+  return redondearImporte(valor, opciones.decimales ?? 2) > 0 ? `+${texto}` : texto
+}
+
+/**
  * Parsea un texto de importe con la regla: "," es el ÚNICO separador decimal, "." es
  * ÚNICAMENTE separador de miles y solo es válido en grupos completos de 3 dígitos
  * (ej. "1.234", "12.345.678"). Cualquier otro uso de "." (por ejemplo "1234.56", donde

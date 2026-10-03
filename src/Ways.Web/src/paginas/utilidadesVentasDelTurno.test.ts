@@ -28,6 +28,8 @@ function ventaFixture(sobrescribir: Partial<VentaDeTurnoListado> = {}): VentaDeT
     idCliente: 1,
     nombreCliente: 'Consumidor Final',
     total: 100,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     mediosDePago: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 100 }],
     ...sobrescribir,
   }

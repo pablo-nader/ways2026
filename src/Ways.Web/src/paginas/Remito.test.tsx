@@ -128,6 +128,8 @@ function facturaFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Comprob
     idComprobanteAsociado: null,
     subtotal: 200,
     descuentoTotal: 0,
+    descuentoManualTotal: 0,
+    recargoManualTotal: 0,
     total: 200,
     direccionEntrega: null,
     observaciones: null,

@@ -256,6 +256,164 @@ describe('construirComprobanteOfflineSintetico', () => {
     expect(comprobante).toMatchObject({ subtotal: 140, descuentoTotal: 14, total: 126 })
   })
 
+  describe('ajuste manual por línea', () => {
+    const AHORA = new Date('2026-09-20T10:05:00.000Z')
+
+    it('una línea sin ajuste lleva porcentaje null y monto 0, y el comprobante no tiene totales manuales', () => {
+      const comprobante = construir({
+        numero: 20,
+        numeroVisible: '0007-00000020',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 2 })],
+        instantanea: instantaneaFixture([articuloFixture()]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(comprobante?.items[0]).toMatchObject({ ajusteManualPorcentaje: null, ajusteManual: 0, total: 200 })
+      expect(comprobante).toMatchObject({ descuentoManualTotal: 0, recargoManualTotal: 0, total: 200 })
+    })
+
+    it('un descuento manual baja el total de la línea y se informa en positivo en el encabezado', () => {
+      const comprobante = construir({
+        numero: 21,
+        numeroVisible: '0007-00000021',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 2, ajusteManualPorcentaje: -10 })],
+        instantanea: instantaneaFixture([articuloFixture()]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(comprobante?.items[0]).toMatchObject({ ajusteManualPorcentaje: -10, ajusteManual: -20, total: 180 })
+      expect(comprobante).toMatchObject({ subtotal: 200, descuentoTotal: 0, descuentoManualTotal: 20, recargoManualTotal: 0, total: 180 })
+    })
+
+    it('un recargo manual sube el total de la línea y se informa aparte', () => {
+      const comprobante = construir({
+        numero: 22,
+        numeroVisible: '0007-00000022',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 2, ajusteManualPorcentaje: 15 })],
+        instantanea: instantaneaFixture([articuloFixture()]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(comprobante?.items[0]).toMatchObject({ ajusteManualPorcentaje: 15, ajusteManual: 30, total: 230 })
+      expect(comprobante).toMatchObject({ subtotal: 200, descuentoManualTotal: 0, recargoManualTotal: 30, total: 230 })
+    })
+
+    it('el ajuste se aplica sobre el neto posterior a la oferta, no sobre el bruto', () => {
+      // bruto = 3 × 150 = 450; oferta = 30 × 3 = 90; neto = 360; descuento manual 10 % = 36
+      const comprobante = construir({
+        numero: 23,
+        numeroVisible: '0007-00000023',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 3, ajusteManualPorcentaje: -10 })],
+        instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 150, precioFinal: 120, descuentoUnitario: 30 })]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(comprobante?.items[0]).toMatchObject({ descuento: 90, ajusteManual: -36, total: 324 })
+      expect(comprobante).toMatchObject({ subtotal: 450, descuentoTotal: 90, descuentoManualTotal: 36, total: 324 })
+    })
+
+    it('un recargo no oculta un descuento: el encabezado lleva los dos y el total los combina', () => {
+      const comprobante = construir({
+        numero: 24,
+        numeroVisible: '0007-00000024',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [
+          lineaFixture({ idArticulo: 1, cantidad: 2, ajusteManualPorcentaje: -10 }),
+          lineaFixture({ idArticulo: 2, cantidad: 1, nombre: 'Fanta 1.5L', codigoBarra: '7790009999999', ajusteManualPorcentaje: 15 }),
+        ],
+        instantanea: instantaneaFixture([
+          articuloFixture({ idArticulo: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 }),
+          articuloFixture({ idArticulo: 2, codigosBarra: ['7790009999999'], precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 }),
+        ]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      // 300 − 0 − 20 + 15
+      expect(comprobante).toMatchObject({ subtotal: 300, descuentoManualTotal: 20, recargoManualTotal: 15, total: 295 })
+      expect(comprobante?.items.map((i) => i.total)).toEqual([180, 115])
+    })
+
+    it('redondea el ajuste half-away-from-zero con ambos signos', () => {
+      const instantanea = instantaneaFixture([articuloFixture({ precioOriginal: 10.05, precioFinal: 10.05, descuentoUnitario: 0 })])
+      const descuento = construir({
+        numero: 25,
+        numeroVisible: '0007-00000025',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 1, ajusteManualPorcentaje: -10 })],
+        instantanea,
+        pagos: [],
+        ahora: AHORA,
+      })
+      const recargo = construir({
+        numero: 26,
+        numeroVisible: '0007-00000026',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 1, ajusteManualPorcentaje: 10 })],
+        instantanea,
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(descuento?.items[0]).toMatchObject({ ajusteManual: -1.01, total: 9.04 })
+      expect(recargo?.items[0]).toMatchObject({ ajusteManual: 1.01, total: 11.06 })
+    })
+
+    it('con una cantidad que cruza un umbral, el ajuste va sobre el neto del TRAMO', () => {
+      // bruto = 6 × 100 = 600; oferta del tramo = 20 × 6 = 120; neto = 480; recargo 5 % = 24
+      const comprobante = construir({
+        numero: 27,
+        numeroVisible: '0007-00000027',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [lineaFixture({ cantidad: 6, ajusteManualPorcentaje: 5 })],
+        instantanea: instantaneaFixture([articuloConEscalonesFixture()]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      expect(comprobante?.items[0]).toMatchObject({ descuento: 120, ajusteManual: 24, total: 504 })
+      expect(comprobante).toMatchObject({ subtotal: 600, descuentoTotal: 120, recargoManualTotal: 24, total: 504 })
+    })
+
+    it('el total del comprobante es la suma de los totales de línea (nunca un cálculo alternativo)', () => {
+      const comprobante = construir({
+        numero: 28,
+        numeroVisible: '0007-00000028',
+        idPuntoVenta: 7,
+        idCliente: 1,
+        lineas: [
+          lineaFixture({ idArticulo: 1, cantidad: 3, ajusteManualPorcentaje: -33.33 }),
+          lineaFixture({ idArticulo: 2, cantidad: 7, nombre: 'Fanta 1.5L', codigoBarra: '7790009999999', ajusteManualPorcentaje: 12.5 }),
+        ],
+        instantanea: instantaneaFixture([
+          articuloFixture({ idArticulo: 1, precioOriginal: 99.99, precioFinal: 89.99, descuentoUnitario: 10 }),
+          articuloFixture({ idArticulo: 2, codigosBarra: ['7790009999999'], precioOriginal: 17.35, precioFinal: 17.35, descuentoUnitario: 0 }),
+        ]),
+        pagos: [],
+        ahora: AHORA,
+      })
+
+      const sumaDeLineas = Math.round((comprobante?.items.reduce((acumulado, i) => acumulado + i.total, 0) ?? 0) * 100) / 100
+      expect(comprobante?.total).toBe(sumaDeLineas)
+    })
+  })
+
   it('sin precio en la lista de la venta no arma comprobante', () => {
     const comprobante = construir({
       numero: 15,

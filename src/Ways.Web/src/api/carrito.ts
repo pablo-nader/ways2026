@@ -15,6 +15,10 @@ export type LineaCarrito = {
    * devolución (NCX, design decisión 4) — el reducer no impone el signo, solo lo preserva; la
    * pantalla que arma el carrito de una NCX (Slice 7) es quien decide sumar con signo negativo. */
   cantidad: number
+  /** Ajuste manual de precio en porcentaje con signo (negativo = descuento, positivo = recargo).
+   * Ausente o `null` = línea sin ajuste. Un borrador guardado antes de que existiera el campo
+   * restaura sin ajuste, sin necesitar migración. */
+  ajusteManualPorcentaje?: number | null
 }
 
 export type AccionCarrito =
