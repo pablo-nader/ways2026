@@ -643,6 +643,69 @@ public static class ReportesEndpoints
             "Export XLSX de /cajas: mismos filtros y figuras, gate LecturaDeReportes heredado por " +
             "co-locación. desde/hasta obligatorios (a diferencia de /cajas), rango acotado por diseño.");
 
+        // Libro IVA: sin idEmpresa abarca todas las empresas del tenant. Hereda LecturaDeReportes del
+        // grupo (supervisor y admin): el libro de compras expone costos, así que el vendedor nunca lo ve.
+        grupo.MapGet("/libro-iva-compras", (
+            ServicioDeLibroIva servicio, IOptions<OpcionesDeExportacion> opciones, int? idEmpresa, DateOnly desde,
+            DateOnly hasta, CancellationToken ct) =>
+            servicio.ObtenerComprasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct))
+        .WithSummary(
+            "Libro IVA compras: comprobantes confirmados de tipos que registran libro IVA, por fecha del " +
+            "comprobante. Neto e IVA por alícuota, no gravado, exento y percepciones; borrador y anulada excluidas.");
+
+        grupo.MapGet("/libro-iva-compras/export", async (
+            ServicioDeLibroIva servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int? idEmpresa, DateOnly desde, DateOnly hasta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var libro = await servicio.ObtenerComprasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, await servicio.NombreDeEmpresaAsync(idEmpresa, ct), null, desde, hasta, "N/A");
+            var tabla = ExportacionDeLibroIva.DeCompras(libro, ctx);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idEmpresa is { } id ? $"empresa{id}" : "todas";
+            var nombre = NombreDeArchivo.Construir("libro_iva_compras", alcance, desde, hasta);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary("Export XLSX de /libro-iva-compras: mismos parámetros y figuras.");
+
+        grupo.MapGet("/libro-iva-ventas", (
+            ServicioDeLibroIva servicio, IOptions<OpcionesDeExportacion> opciones, int? idEmpresa, DateOnly desde,
+            DateOnly hasta, CancellationToken ct) =>
+            servicio.ObtenerVentasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct))
+        .WithSummary(
+            "Libro IVA ventas: comprobantes fiscales emitidos con CAE aprobado, por el día local de la " +
+            "empresa, la misma fecha que se envía a ARCA. El desglose por alícuota se recompone desde las líneas " +
+            "con la misma composición que la emisión fiscal; una nota de crédito resta. Un comprobante con CAE " +
+            "anulado localmente sigue en el libro con la advertencia anulado_sin_nc.");
+
+        grupo.MapGet("/libro-iva-ventas/export", async (
+            ServicioDeLibroIva servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int? idEmpresa, DateOnly desde, DateOnly hasta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var libro = await servicio.ObtenerVentasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, await servicio.NombreDeEmpresaAsync(idEmpresa, ct), null, desde, hasta,
+                libro.ZonaHoraria ?? "Por empresa");
+            var tabla = ExportacionDeLibroIva.DeVentas(libro, ctx);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idEmpresa is { } id ? $"empresa{id}" : "todas";
+            var nombre = NombreDeArchivo.Construir("libro_iva_ventas", alcance, desde, hasta);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary("Export XLSX de /libro-iva-ventas: mismos parámetros y figuras.");
+
         return app;
     }
 }

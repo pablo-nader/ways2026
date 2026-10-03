@@ -192,10 +192,15 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     }
 
     private async Task<(Contexto Ctx, HttpClient Admin, HttpClient Vendedor, HttpClient Root)> PrepararAsync(
-        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe)
+        string nombre, EspiaWsaa espiaWsaa, EspiaWsfe espiaWsfe, IRelojDelSistema? reloj = null)
     {
         var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
         {
+            if (reloj is not null)
+            {
+                services.AddSingleton(reloj);
+            }
+
             // Sobre-registro DELIBERADO (mismo trámite que WaysApiFixture.ConfigureWebHost con el
             // DbContext): AddHttpClient<TClient,TImpl> vuelve a agregar el named client de
             // ASP.NET Core — ConfigurePrimaryHttpMessageHandler, llamado DESPUÉS del registro de
@@ -540,10 +545,10 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     /// del comprobante ya usaba), preservando byte-a-byte el comportamiento de los tests
     /// preexistentes que no pasan <paramref name="lineas"/> explícitas.</summary>
     private async Task<int> SembrarPendienteAsync(
-        Contexto ctx, long numero, IReadOnlyList<LineaDeItemSembrado>? lineas = null)
+        Contexto ctx, long numero, IReadOnlyList<LineaDeItemSembrado>? lineas = null, DateTimeOffset? fecha = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var ahora = DateTimeOffset.UtcNow;
+        var ahora = fecha ?? DateTimeOffset.UtcNow;
 
         var proximoNumero = numero + 1;
         await db.Database.ExecuteSqlAsync(
@@ -705,6 +710,71 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal("5", alicIva.Element("Id")!.Value); // codigo_afip = 5 ⇒ 21%
         Assert.Equal("100.00", alicIva.Element("BaseImp")!.Value);
         Assert.Equal("21.00", alicIva.Element("Importe")!.Value);
+    }
+
+    private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    private static string FechaEnviadaAArca(string cuerpo) =>
+        XDocument.Parse(cuerpo).Descendants("FECAEDetRequest").Single().Element("CbteFch")!.Value;
+
+    /// <summary>Cláusula bajo prueba: la fecha que viaja como <c>CbteFch</c> es el día de negocio de
+    /// la empresa. A las 23:30 del 31/03 en Argentina el día UTC ya es el 01/04.</summary>
+    [Fact]
+    public async Task LaEmisionEnviaAArcaElDiaLocalDeLaEmpresaYNoElDiaUtc()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        string? cuerpo = null;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Solicitar = req =>
+            {
+                cuerpo = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return RespuestaXml(FecaeAprobado(1));
+            }
+        };
+        var instante = new DateTimeOffset(2026, 3, 31, 23, 30, 0, TimeSpan.FromHours(-3));
+        Assert.Equal(new DateOnly(2026, 4, 1), DateOnly.FromDateTime(instante.UtcDateTime));
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(LaEmisionEnviaAArcaElDiaLocalDeLaEmpresaYNoElDiaUtc), espiaWsaa, espiaWsfe, new RelojFijo(instante));
+
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.NotNull(cuerpo);
+        Assert.Equal("20260331", FechaEnviadaAArca(cuerpo));
+        Assert.Equal(new DateOnly(2026, 3, 31), emitido.Fecha);
+    }
+
+    [Fact]
+    public async Task ElReintentoEnviaAArcaElDiaLocalDeLaEmpresaDelInstanteGuardado()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        string? cuerpo = null;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarNoEncontrado()),
+            Solicitar = req =>
+            {
+                cuerpo = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return RespuestaXml(FecaeAprobado(71, "70555555555556"));
+            }
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoEnviaAArcaElDiaLocalDeLaEmpresaDelInstanteGuardado), espiaWsaa, espiaWsfe);
+        var idComprobante = await SembrarPendienteAsync(
+            ctx, 71, fecha: new DateTimeOffset(2026, 4, 1, 2, 30, 0, TimeSpan.Zero));
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        Assert.NotNull(cuerpo);
+        Assert.Equal("20260331", FechaEnviadaAArca(cuerpo));
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal(new DateOnly(2026, 3, 31), emitido.Fecha);
     }
 
     // --- La nota del 600: invalidar-TA + reintentar UNA vez, el segundo es DEFINITIVO (judgment

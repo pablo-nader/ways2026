@@ -2696,3 +2696,52 @@ export type SolicitudDeFacturacionDeRemitos = {
   pagos: PagoDeVenta[]
   observaciones: string | null
 }
+
+/** Neto gravado e IVA de una alícuota dentro de una fila del libro IVA — espejo de
+ * `AlicuotaDeLibroIva`. */
+export type AlicuotaDeLibroIva = { porcentaje: number; neto: number; iva: number }
+
+/** Un comprobante del libro IVA (espejo de `FilaDeLibroIva`). `total` lleva signo (una nota de
+ * crédito resta). `diferencia` es `total − componentes`: distinta de cero cuando los importes del
+ * comprobante no cierran. En ventas las percepciones vienen siempre en cero. */
+export type FilaDeLibroIva = {
+  fecha: string
+  tipoComprobante: string
+  numero: string
+  contraparte: string
+  documento: string | null
+  alicuotas: AlicuotaDeLibroIva[]
+  noGravado: number
+  exento: number
+  percepcionIva: number
+  percepcionIibb: number
+  total: number
+  diferencia: number
+  /** Códigos de aviso de la fila (`anulado_sin_nc`, `alicuota_sin_clasificar`, `sin_numero_fiscal`). */
+  advertencias: string[]
+  netoGravado: number
+  ivaTotal: number
+}
+
+export type TotalesDeLibroIva = {
+  porAlicuota: AlicuotaDeLibroIva[]
+  noGravado: number
+  exento: number
+  percepcionIva: number
+  percepcionIibb: number
+  total: number
+  diferencia: number
+  netoGravado: number
+  ivaTotal: number
+}
+
+/** Respuesta de `GET /api/reportes/libro-iva-compras` y `libro-iva-ventas` — espejo de `LibroIva`.
+ * `idEmpresa` nulo = todas las empresas del tenant. */
+export type LibroIva = {
+  desde: string
+  hasta: string
+  idEmpresa: number | null
+  zonaHoraria: string | null
+  filas: FilaDeLibroIva[]
+  totales: TotalesDeLibroIva
+}

@@ -452,7 +452,7 @@ homologación se hace por empresa o una sola vez a nivel plataforma.
 >
 > **19c (bloques 5/6, FUTURO, depende de 19a)**: impresión fiscal con QR, UI de configuración de
 > certificado/PV/condición fiscal, contingencia operativa (cola durable + CAEA), el tipo fiscal de
-> la consolidación de remitos con su escritor, libro IVA. Independiente de 19b salvo para
+> la consolidación de remitos con su escritor, libro IVA (ya implementado, ver doc 10 §5). Independiente de 19b salvo para
 > verificar un CAE real impreso.
 >
 > Esta nota **no declara la Etapa 19 completa** — solo su primera sub-etapa, la que no dependía de
@@ -505,7 +505,7 @@ notas de etapas ya archivadas.
 | Conteo de inventario completo (la Etapa 8 entregó una versión mínima, sin workflow de snapshot/variance) | `stage-13b-conteo-por-planilla` (re-registrado desde la Etapa 13 — proposal decisión 5: necesita migración propia, incompatible con el gate sin-cambios-de-schema que la Etapa 13 ratificó; secuenciado después de la Etapa 13, cerca de la Etapa 14) |
 | Cuenta corriente de proveedores con ledger propio | Etapa 15 |
 | Órdenes de compra | Etapa 16 |
-| Libro IVA compras | Etapa 19 |
+| Libro IVA compras | Etapa 19 — implementado junto con el de ventas, sin tablas nuevas (doc 10 §5, "Libro IVA") |
 | `puntos_venta.numero` real (el `PPPP` actual es el id interno) | Etapa 19 |
 | `empresas.id_condicion_fiscal` (pedido por el doc 10, ausente en la entidad) | Etapa 19 |
 

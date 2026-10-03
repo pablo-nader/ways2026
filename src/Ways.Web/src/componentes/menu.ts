@@ -86,6 +86,7 @@ const MODELO: EntradaDelModelo[] = [
           enlace(puedeVerReportes, 'Vencimientos', '/reportes/stock/vencimientos'),
           enlace(puedeVerReportes, 'Reposición', '/reportes/stock/reposicion'),
           enlace(puedeVerReportes, 'Artículos', '/reportes/articulos'),
+          enlace(puedeVerReportes, 'Libro IVA', '/reportes/libro-iva'),
         ],
       },
     ],

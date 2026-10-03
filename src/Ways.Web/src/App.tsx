@@ -37,6 +37,7 @@ import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
 import { Gastos } from './paginas/Gastos'
+import { LibroIva } from './paginas/LibroIva'
 import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
 import { ReporteDeArticulos } from './paginas/ReporteDeArticulos'
@@ -195,6 +196,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <ReporteDeArticulos />
+                </RutaProtegida>
+              }
+            />
+            {/* Libro IVA compras y ventas: mismo gate que el resto de los reportes
+                (Politicas.LecturaDeReportes, Supervisor + Admin) — el de compras expone costos, así
+                que el Vendedor nunca lo ve. */}
+            <Route
+              path="/reportes/libro-iva"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <LibroIva />
                 </RutaProtegida>
               }
             />

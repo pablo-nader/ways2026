@@ -108,6 +108,7 @@ const REPORTES: Resumen = {
         ['Vencimientos', '/reportes/stock/vencimientos'],
         ['Reposición', '/reportes/stock/reposicion'],
         ['Artículos', '/reportes/articulos'],
+        ['Libro IVA', '/reportes/libro-iva'],
       ],
     },
   ],
