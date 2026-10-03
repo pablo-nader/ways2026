@@ -1655,6 +1655,11 @@ export type DetalleDeLinea = {
   totalDelDia: number | null
   delta: number
   motivo: string | null
+  /** Porcentaje manual con signo (negativo = descuento) que la reliquidación conservó en la línea.
+   * El servidor omite la clave cuando no hay ajuste, así que la respuesta de preview/commit lo trae
+   * `undefined`; el detalle guardado en el ledger pasa por `parsearDetalleDeActualizacionPrecios`,
+   * que lo devuelve siempre como `null`. */
+  ajusteManualPorcentaje?: number | null
 }
 
 /** Detalle auditable de un consumo cubierto — `delta` ya lleva aplicada la fracción financiada
