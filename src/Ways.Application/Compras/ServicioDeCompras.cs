@@ -1254,7 +1254,7 @@ public class ServicioDeCompras(
     /// <summary>El costo de las líneas es del back-office: el vendedor lee las compras para saber
     /// cuánto debe pagar desde el turno, pero no ve costo, descuento, total de línea ni precio
     /// sugerido. Los totales del encabezado se conservan.</summary>
-    private bool PuedeVerCostos => contexto.Rol != RolConocido.Vendedor;
+    private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
 
     private CompraDetalle Proyectar(ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items) => new(
         comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,

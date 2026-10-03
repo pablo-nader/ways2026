@@ -71,7 +71,7 @@ public sealed record OrdenDeCompraBorrador(
 /// decidir qué líneas pre-llenar. <see cref="CostoEstimado"/>/<see cref="CostoReal"/>/
 /// <see cref="Desvio"/> son promedios ponderados por cantidad, <c>null</c> cuando no hay dato
 /// comparable de ese lado — JAMÁS <c>0</c> (design decisión 14, spec: "no comparable, never
-/// zero").</summary>
+/// zero"). También son <c>null</c> para el vendedor, que no ve el dinero de la orden.</summary>
 public sealed record CoberturaDeArticulo(
     int IdArticulo,
     decimal Pedida,
