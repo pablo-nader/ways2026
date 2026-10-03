@@ -129,7 +129,7 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
 
     private static SolicitudDeCompra SolicitudSimple(Contexto ctx, int idProveedor, decimal costoUnitario = 100m, string? numeroExterno = "0001-00000001") =>
         new(
-            idProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno, DateOnly.FromDateTime(DateTime.UtcNow), null,
+            idProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno, FechaDelNegocio.Hoy(), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, true)]);
 
     private static async Task<CompraDetalle> CrearYConfirmarCompraAsync(
@@ -152,7 +152,7 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         int? idPuntoVenta = null, decimal importe = 500m)
     {
         var solicitud = new SolicitudDeGastoDeAdministracion(
-            DateOnly.FromDateTime(DateTime.UtcNow), ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor, null,
+            FechaDelNegocio.Hoy(), ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor, null,
             "Gasto de prueba", null, ctx.IdMedioEfectivo, null, importe);
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -382,7 +382,7 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         var ctx = await PrepararAsync(nameof(UnProveedorInexistenteEnElAltaAdministrativaDevuelveNoEncontrado));
 
         var solicitud = new SolicitudDeGastoDeAdministracion(
-            DateOnly.FromDateTime(DateTime.UtcNow), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaGasto.Proveedor,
+            FechaDelNegocio.Hoy(), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaGasto.Proveedor,
             999999, null, "Gasto con proveedor inexistente", null, ctx.IdMedioEfectivo, null, 100m);
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/gastos/administracion", solicitud);
 
@@ -469,7 +469,7 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         var compraPropia = await CrearYConfirmarCompraAsync(ctx, numeroExterno: "0001-00000001");
 
         var solicitudOtra = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", FechaDelNegocio.Hoy(), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de otra empresa", 5m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
         var respuestaCrearOtra = await ctx.Admin.PostAsJsonAsync("/api/compras", solicitudOtra);
         Assert.Equal(HttpStatusCode.Created, respuestaCrearOtra.StatusCode);
@@ -504,13 +504,13 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         await CrearYConfirmarCompraAsync(ctx, numeroExterno: "0001-00000001");
 
         var solicitudOtra = new SolicitudDeCompra(
-            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, idPuntoVentaDeOtraEmpresa, "0002-00000001", FechaDelNegocio.Hoy(), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de otra empresa", 5m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
         var respuestaCrearOtra = await ctx.Admin.PostAsJsonAsync("/api/compras", solicitudOtra);
         var compraDeOtraEmpresa = JsonSerializer.Deserialize<CompraDetalle>(await respuestaCrearOtra.Content.ReadAsStringAsync(), OpcionesJson)!;
         await ctx.Admin.PostAsync($"/api/compras/{compraDeOtraEmpresa.Id}/confirmar", null);
 
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hoy = FechaDelNegocio.Hoy();
         var rango = $"desde={hoy:yyyy-MM-dd}T00:00:00-03:00&hasta={hoy:yyyy-MM-dd}T23:59:59-03:00";
 
         // Mismo layout que ComprasListadoExportTests: encabezado fila 6, datos desde la 7.
