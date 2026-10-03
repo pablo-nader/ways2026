@@ -142,13 +142,22 @@ describe('reducirCarrito — ajuste manual', () => {
     expect(reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 999 })).toEqual(carrito)
   })
 
-  it('las dos acciones devuelven un carrito nuevo sin mutar el anterior', () => {
+  it('las dos acciones devuelven un arreglo y una línea nuevos, y dejan el carrito anterior intacto', () => {
     const carrito = [lineaFixture({ ajusteManualPorcentaje: -10 })]
+    const lineaOriginal = carrito[0]
 
-    reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 1, porcentaje: 20 })
-    reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 1 })
+    const fijado = reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 1, porcentaje: 20 })
+    const quitado = reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 1 })
 
-    expect(carrito[0].ajusteManualPorcentaje).toBe(-10)
+    expect(fijado).not.toBe(carrito)
+    expect(quitado).not.toBe(carrito)
+    expect(fijado[0]).not.toBe(lineaOriginal)
+    expect(quitado[0]).not.toBe(lineaOriginal)
+    expect(fijado[0].ajusteManualPorcentaje).toBe(20)
+    expect(quitado[0]).not.toHaveProperty('ajusteManualPorcentaje')
+    expect(carrito).toHaveLength(1)
+    expect(carrito[0]).toBe(lineaOriginal)
+    expect(lineaOriginal).toEqual(lineaFixture({ ajusteManualPorcentaje: -10 }))
   })
 
   it('re-escanear el mismo artículo suma la cantidad y conserva el ajuste', () => {
