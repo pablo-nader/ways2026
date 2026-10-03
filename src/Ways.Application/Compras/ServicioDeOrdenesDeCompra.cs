@@ -7,6 +7,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Compras;
 
@@ -180,11 +181,24 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             .Select(c => c.Id)
             .ToListAsync(ct);
 
+        if (!PuedeVerCostos)
+        {
+            items = items.Select(i => i with { CostoUnitarioEstimado = null }).ToList();
+            cobertura = cobertura.Select(c => c with { CostoEstimado = null, CostoReal = null, Desvio = null }).ToList();
+            totalEstimado = null;
+            totalReal = null;
+            desvioTotal = null;
+        }
+
         return new OrdenDeCompraDetalle(
             orden.Id, orden.IdProveedor, orden.IdPuntoVenta, orden.Numero, orden.FechaEmision, orden.FechaEnvio,
             orden.FechaEsperada, orden.FechaCierre, orden.IdEmpleadoCierre is not null, orden.Observaciones,
             orden.Estado, items, cobertura, totalEstimado, totalReal, desvioTotal, comprobantesLigados);
     }
+
+    /// <summary>Todo el dinero de la orden es del back-office: el vendedor la lee para saber qué se
+    /// espera recibir y recibe las cantidades, pero ningún costo ni total.</summary>
+    private bool PuedeVerCostos => contexto.Rol != RolConocido.Vendedor;
 
     /// <summary>Deriva la cobertura per-artículo (design decisión 13): agrupa <c>items_orden_compra</c>
     /// (pedido) e <c>items_comprobante_compra</c> de comprobantes CONFIRMADOS ligados a esta orden
@@ -942,11 +956,12 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
             ?? throw new InvalidOperationException(
                 "ServicioDeOrdenesDeCompra requiere un actor de tenant; GestionDeCatalogo no admite plataforma.");
 
-    private static OrdenDeCompraBorrador Proyectar(OrdenCompra orden, IReadOnlyList<ItemOrdenCompra> items) => new(
+    private OrdenDeCompraBorrador Proyectar(OrdenCompra orden, IReadOnlyList<ItemOrdenCompra> items) => new(
         orden.Id, orden.IdProveedor, orden.IdPuntoVenta, orden.Numero, orden.FechaEmision, orden.FechaEnvio,
         orden.FechaEsperada, orden.FechaCierre, orden.IdEmpleadoCierre, orden.Observaciones, orden.Estado,
         items
             .OrderBy(i => i.Orden)
-            .Select(i => new ItemDeOrden(i.Orden, i.IdArticulo, i.Descripcion, i.CantidadPedida, i.CostoUnitarioEstimado))
+            .Select(i => new ItemDeOrden(
+                i.Orden, i.IdArticulo, i.Descripcion, i.CantidadPedida, PuedeVerCostos ? i.CostoUnitarioEstimado : null))
             .ToList());
 }

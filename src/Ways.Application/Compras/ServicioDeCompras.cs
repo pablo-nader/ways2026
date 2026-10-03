@@ -18,6 +18,7 @@ using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
+using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Compras;
 
@@ -1250,7 +1251,12 @@ public class ServicioDeCompras(
             ?? throw new InvalidOperationException(
                 "ServicioDeCompras requiere un actor de tenant; GestionDeCatalogo no admite plataforma.");
 
-    private static CompraDetalle Proyectar(ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items) => new(
+    /// <summary>El costo de las líneas es del back-office: el vendedor lee las compras para saber
+    /// cuánto debe pagar desde el turno, pero no ve costo, descuento, total de línea ni precio
+    /// sugerido. Los totales del encabezado se conservan.</summary>
+    private bool PuedeVerCostos => contexto.Rol != RolConocido.Vendedor;
+
+    private CompraDetalle Proyectar(ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items) => new(
         comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,
         comprobante.NumeroExterno, comprobante.FechaComprobante, comprobante.FechaRecepcion,
         comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.IvaTotal, comprobante.Total,
@@ -1259,8 +1265,9 @@ public class ServicioDeCompras(
             .OrderBy(i => i.Orden)
             .Select(i => new ItemDeCompra(
                 i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
-                i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, i.PorcentajeIva, i.Total, i.ActualizaCosto,
-                i.PrecioSugerido, i.CodigoLote, i.FechaVencimiento, i.IdLote))
+                PuedeVerCostos ? i.CostoUnitario : null, PuedeVerCostos ? i.Descuento : null, i.IdAlicuotaIva,
+                i.PorcentajeIva, PuedeVerCostos ? i.Total : null, i.ActualizaCosto,
+                PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote))
             .ToList(),
         comprobante.IdOrdenCompra);
 }
