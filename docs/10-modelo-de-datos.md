@@ -93,6 +93,7 @@ tipos_comprobante (           -- [global]
     es_fiscal       boolean,                 -- ¿reporta a AFIP/ARCA cuando exista FE?
     afecta_stock    boolean,                 -- presupuesto: no
     codigo_afip     smallint NULL,
+    registra_libro_iva boolean NOT NULL DEFAULT false, -- ¿entra al libro IVA? true en C-FA/C-FB/C-FC
     activo
 )
 ```
@@ -151,6 +152,20 @@ camino equivocado. No se siembran notas de crédito de proveedor — la anulaci�
 reversión de una compra confirmada (proposal decisión 10). Mismo mecanismo de siembra doble
 que `RC`: en la lista de arriba para una base nueva y, de forma idempotente, dentro de la
 migración `ComprasYTransferenciasEtapa8` para una base ya migrada.
+
+**`C-RM` (remito / comprobante no fiscal de compra, doc 10 §5):** `clase compra`, `letra X`,
+`signo +1`, `discrimina_iva false`, `es_fiscal false`, `afecta_stock true`,
+`registra_libro_iva false`. Es el documento de un proveedor que no emite factura (un remito, un
+comprobante informal): vive en `comprobantes_compra` como cualquier otro, con o sin artículos.
+Mismo mecanismo de siembra doble que `C-FA`: en la lista de arriba para una base nueva y, de
+forma idempotente (guard `AND EXISTS`), dentro de la migración `ComprasRemitoYAlicuotas` para una
+base ya migrada, de modo que todos los tenants existentes lo reciben.
+
+**`registra_libro_iva`:** distingue las facturas (que se declaran en el libro IVA) de todo lo
+demás. Vale `true` en `C-FA`, `C-FB` y `C-FC` y `false` en el resto, ventas incluidas (el libro de
+ventas se decide aparte). En compras cumple además otra función: un tipo que registra libro IVA es
+una factura y su letra fija si discrimina IVA; un tipo que no lo registra deja esa decisión a quien
+carga el comprobante (ver `comprobantes_compra.discrimina_iva` en §5).
 
 **Regla de la letra** (se implementa en dominio, no en tablas): la letra sale del cruce
 `condición fiscal de la empresa emisora × condición fiscal del cliente`. RI → RI emite A;
@@ -680,10 +695,21 @@ comprobantes_compra (         -- [operativa]
     id_punto_venta,                          -- a qué local ingresa el stock
     id_empleado,
     subtotal, descuento_total, iva_total NULL, total,
+    discrimina_iva boolean NOT NULL,         -- snapshot por comprobante; ver más abajo
     observaciones,
     estado estado_compra NOT NULL            -- enum: borrador | confirmada | anulada
 );
 -- UNIQUE (id_proveedor, id_tipo_comprobante, numero_externo): la misma factura no entra dos veces.
+
+alicuotas_comprobante_compra (            -- [operativa, child: solo id_tenant, como los items]
+    id_alicuota_comprobante_compra, id_tenant,
+    id_comprobante_compra,                   -- FK compuesta (id, id_tenant)
+    id_alicuota_iva integer NOT NULL,        -- FK a alicuotas_iva [global]
+    porcentaje      numeric(5,2),            -- snapshot del porcentaje
+    neto            numeric(14,2),           -- suma de los totales de línea con esa alícuota
+    iva             numeric(14,2)            -- el calculado, o el impreso por el proveedor
+);
+-- UNIQUE (id_comprobante_compra, id_alicuota_iva); CHECK (neto >= 0 AND iva >= 0).
 
 items_comprobante_compra (
     id_item, id_comprobante_compra, orden,
@@ -711,6 +737,43 @@ base: con `id_articulo IS NULL`, `actualiza_costo = false` y `codigo_lote`, `fec
 `id_lote`, `bultos`, `unidades_por_bulto` y `precio_sugerido` son `NULL`. El servicio rechaza con
 400 (`concepto_sin_descripcion`, `concepto_con_lote`, `concepto_con_bultos`,
 `concepto_actualiza_costo`) lo que la CHECK prohíbe, en vez de aceptarlo y descartarlo.
+
+**IVA por comprobante y desglose por alícuota.** `discrimina_iva` es un snapshot por
+comprobante, no un dato del tipo: es lo que usan el cálculo y el costo efectivo (en el guardado
+y en la confirmación, que lo lee del `RETURNING` bajo el lock del encabezado) y la cobertura de
+una orden de compra. Lo resuelve `ReglaDeDiscriminacionDeIva` según
+`tipos_comprobante.registra_libro_iva`:
+
+| Tipo | `registra_libro_iva` | `discrimina_iva` del comprobante |
+|---|---|---|
+| `C-FA` | true | siempre true |
+| `C-FB`, `C-FC` | true | siempre false |
+| `C-RM` | false | lo elige quien carga (`discriminaIva` del request; sin pedido, false) |
+
+Pedir un valor que contradice a una factura es 400 `discrimina_iva_incompatible`: nunca se acepta
+y se corrige en silencio. `alicuotas_comprobante_compra` tiene filas solo cuando el comprobante
+discrimina IVA y se reemplaza entero, junto con los ítems, en cada guardado del borrador. Cada
+fila es el neto de una alícuota (la suma de los totales de línea que la usan) y su IVA, calculado
+**una sola vez sobre ese neto** — la convención de una factura, no el redondeo por línea.
+`iva_total` y `total` salen de las filas guardadas: `iva_total = sum(iva)` y `total = subtotal −
+descuento_total + iva_total`. Con `discrimina_iva = false` no hay filas e `iva_total` es `NULL`.
+
+Exento y no gravado son filas de `alicuotas_iva` como cualquier otra (porcentaje 0, sin
+`codigo_afip`), así que aparecen en el desglose con IVA cero; la clasificación por nombre queda
+para el libro IVA, igual que en `ComposicionDeTotalesFiscales`.
+
+**IVA impreso (override de redondeo).** El request puede traer, por alícuota, el IVA que el
+proveedor imprimió (`ivaImpreso`). Se acepta cuando `|impreso − calculado| ≤ 1,00` y se guarda en
+`iva`; fuera de esa tolerancia, o negativo, es 400 `iva_impreso_fuera_de_tolerancia`. También es
+400 informarlo en un comprobante que no discrimina (`iva_impreso_sin_discriminar`), para una
+alícuota que no está en las líneas (`iva_impreso_alicuota_desconocida`) o repetida
+(`iva_impreso_duplicado`). El override no cambia el costo efectivo de los artículos, que sale del
+importe de la línea.
+
+La migración `ComprasRemitoYAlicuotas` backfillea `discrimina_iva` desde el tipo de cada
+comprobante existente y reconstruye el desglose de los que ya discriminan a partir de sus ítems,
+con el mismo redondeo por línea con el que se calculó su `iva_total`, de modo que la suma de las
+filas coincide con el encabezado.
 
 Ciclo: se carga en `borrador` (se puede ir armando con el remito en la mano), y al
 **confirmar** — en una sola transacción — genera los `movimientos_stock` de entrada,
@@ -1343,6 +1406,8 @@ erDiagram
     pagos_comprobante }o--|| medios_pago : ""
     comprobantes_compra }o--|| proveedores : ""
     comprobantes_compra ||--o{ items_comprobante_compra : ""
+    comprobantes_compra ||--o{ alicuotas_comprobante_compra : ""
+    alicuotas_comprobante_compra }o--|| alicuotas_iva : ""
     comprobantes_venta }o--o| turnos_caja : ""
     turnos_caja ||--o{ arqueos_turno : ""
     turnos_caja ||--o{ movimientos_caja : ""
