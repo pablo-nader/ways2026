@@ -103,9 +103,8 @@ const PATRON_DE_NUMERO_DECIMAL = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i
  * `decimal`. Cubre la notación exponencial (`5e-7`), que `toString` usa por debajo de 1e-6.
  */
 function aDecimalExacto(valor: number): { mantisa: bigint; escala: number } {
-  const partes = PATRON_DE_NUMERO_DECIMAL.exec(String(valor))
-  if (partes === null) throw new RangeError(`No es un número decimal finito: ${String(valor)}`)
-  const [, signo, enteros, fraccion = '', exponente = '0'] = partes
+  // El único llamador descarta los no finitos, y `String` de un finito siempre encaja en el patrón.
+  const [, signo, enteros, fraccion = '', exponente = '0'] = PATRON_DE_NUMERO_DECIMAL.exec(String(valor))!
   return { mantisa: BigInt(`${signo}${enteros}${fraccion}`), escala: fraccion.length - Number(exponente) }
 }
 
