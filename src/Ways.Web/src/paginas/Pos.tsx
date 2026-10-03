@@ -2276,7 +2276,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   const mutarCarrito = useCallback((accion: AccionCarrito) => {
     if (cobrandoRef.current) return
-    ultimaAccionEsEdicionRef.current = accion.tipo === 'editarCantidad'
+    // El ajuste manual no cambia lo que se resuelve contra el servidor (ids y cantidades): no
+    // arrastra ni consume la bandera del debounce de una edición de cantidad en curso.
+    if (accion.tipo !== 'fijarAjusteManual' && accion.tipo !== 'quitarAjusteManual') {
+      ultimaAccionEsEdicionRef.current = accion.tipo === 'editarCantidad'
+    }
     setLineas((prev) => reducirCarrito(prev, accion))
 
     // El mapa de ediciones en curso es un override por fila: si la fila desaparece (quitar,
@@ -2301,6 +2305,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         setCantidadesEnEdicion({})
         break
       case 'editarCantidad':
+      case 'fijarAjusteManual':
+      case 'quitarAjusteManual':
         break
       default: {
         const _exhaustivo: never = accion

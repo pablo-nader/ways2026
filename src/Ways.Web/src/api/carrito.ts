@@ -25,6 +25,8 @@ export type AccionCarrito =
   | { tipo: 'escanear'; linea: Omit<LineaCarrito, 'cantidad'>; cantidad: number }
   | { tipo: 'editarCantidad'; idArticulo: number; cantidad: number }
   | { tipo: 'quitarLinea'; idArticulo: number }
+  | { tipo: 'fijarAjusteManual'; idArticulo: number; porcentaje: number }
+  | { tipo: 'quitarAjusteManual'; idArticulo: number }
   | { tipo: 'vaciar' }
 
 /**
@@ -32,6 +34,11 @@ export type AccionCarrito =
  * cantidad a la línea existente en vez de duplicarla (spec: codigos-barra / "Re-scanning sums
  * quantity instead of duplicating the line") — el resto de las acciones no tiene ese caso
  * especial, cada `idArticulo` es a lo sumo una línea.
+ *
+ * El ajuste manual vive en la línea: re-escanear y editar la cantidad lo conservan (los dos
+ * construyen sobre `...l`) y quitar la línea se lo lleva. `fijarAjusteManual` no valida el
+ * porcentaje (como `editarCantidad` no valida la cantidad): la entrada se valida antes, en
+ * `validarPorcentajeDeAjuste`.
  */
 export function reducirCarrito(lineas: LineaCarrito[], accion: AccionCarrito): LineaCarrito[] {
   switch (accion.tipo) {
@@ -50,6 +57,16 @@ export function reducirCarrito(lineas: LineaCarrito[], accion: AccionCarrito): L
 
     case 'quitarLinea':
       return lineas.filter((l) => l.idArticulo !== accion.idArticulo)
+
+    case 'fijarAjusteManual':
+      return lineas.map((l) => (l.idArticulo === accion.idArticulo ? { ...l, ajusteManualPorcentaje: accion.porcentaje } : l))
+
+    case 'quitarAjusteManual':
+      return lineas.map((l) => {
+        if (l.idArticulo !== accion.idArticulo) return l
+        const { ajusteManualPorcentaje: _omitido, ...sinAjuste } = l
+        return sinAjuste
+      })
 
     case 'vaciar':
       return []

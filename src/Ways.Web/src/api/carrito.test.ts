@@ -100,6 +100,111 @@ describe('reducirCarrito — quitarLinea', () => {
   })
 })
 
+describe('reducirCarrito — ajuste manual', () => {
+  it('fijarAjusteManual pone el porcentaje en la línea indicada y no toca el resto', () => {
+    const carrito = [lineaFixture({ idArticulo: 1 }), lineaFixture({ idArticulo: 2 })]
+
+    const resultado = reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 2, porcentaje: -10 })
+
+    expect(resultado[0]).toEqual(lineaFixture({ idArticulo: 1 }))
+    expect(resultado[1].ajusteManualPorcentaje).toBe(-10)
+    expect(resultado[0]).not.toHaveProperty('ajusteManualPorcentaje')
+  })
+
+  it('fijarAjusteManual sobre una línea que ya tiene ajuste lo reemplaza (también cambiando de signo)', () => {
+    const carrito = [lineaFixture({ ajusteManualPorcentaje: -10 })]
+
+    const resultado = reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 1, porcentaje: 15 })
+
+    expect(resultado[0].ajusteManualPorcentaje).toBe(15)
+  })
+
+  it('fijarAjusteManual sobre un idArticulo inexistente no agrega ni modifica ninguna línea', () => {
+    const carrito = [lineaFixture()]
+
+    expect(reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 999, porcentaje: 5 })).toEqual(carrito)
+  })
+
+  it('quitarAjusteManual elimina el campo de esa línea (no lo deja en null) y no toca el resto', () => {
+    const carrito = [lineaFixture({ idArticulo: 1, ajusteManualPorcentaje: -10 }), lineaFixture({ idArticulo: 2, ajusteManualPorcentaje: 15 })]
+
+    const resultado = reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 1 })
+
+    expect(resultado[0]).not.toHaveProperty('ajusteManualPorcentaje')
+    expect(resultado[0]).toEqual(lineaFixture({ idArticulo: 1 }))
+    expect(resultado[1].ajusteManualPorcentaje).toBe(15)
+  })
+
+  it('quitarAjusteManual sobre una línea sin ajuste, o un idArticulo inexistente, deja el carrito igual', () => {
+    const carrito = [lineaFixture()]
+
+    expect(reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 1 })).toEqual(carrito)
+    expect(reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 999 })).toEqual(carrito)
+  })
+
+  it('las dos acciones devuelven un carrito nuevo sin mutar el anterior', () => {
+    const carrito = [lineaFixture({ ajusteManualPorcentaje: -10 })]
+
+    reducirCarrito(carrito, { tipo: 'fijarAjusteManual', idArticulo: 1, porcentaje: 20 })
+    reducirCarrito(carrito, { tipo: 'quitarAjusteManual', idArticulo: 1 })
+
+    expect(carrito[0].ajusteManualPorcentaje).toBe(-10)
+  })
+
+  it('re-escanear el mismo artículo suma la cantidad y conserva el ajuste', () => {
+    const carrito = [lineaFixture({ cantidad: 2, ajusteManualPorcentaje: -10 })]
+
+    const resultado = reducirCarrito(carrito, {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567' },
+      cantidad: 1,
+    })
+
+    expect(resultado).toHaveLength(1)
+    expect(resultado[0]).toMatchObject({ cantidad: 3, ajusteManualPorcentaje: -10 })
+  })
+
+  it('escanear un artículo nuevo lo agrega sin ajuste', () => {
+    const carrito = [lineaFixture({ idArticulo: 1, ajusteManualPorcentaje: -10 })]
+
+    const resultado = reducirCarrito(carrito, {
+      tipo: 'escanear',
+      linea: { idArticulo: 2, codigoInterno: 'A0002', nombre: 'Agua 500ml', codigoBarra: null },
+      cantidad: 1,
+    })
+
+    expect(resultado[1]).not.toHaveProperty('ajusteManualPorcentaje')
+  })
+
+  it('editar la cantidad conserva el ajuste', () => {
+    const carrito = [lineaFixture({ cantidad: 1, ajusteManualPorcentaje: 15 })]
+
+    const resultado = reducirCarrito(carrito, { tipo: 'editarCantidad', idArticulo: 1, cantidad: 4 })
+
+    expect(resultado[0]).toMatchObject({ cantidad: 4, ajusteManualPorcentaje: 15 })
+  })
+
+  it('quitar la línea se lleva su ajuste: volver a agregar el artículo arranca sin ajuste', () => {
+    const conAjuste = [lineaFixture({ ajusteManualPorcentaje: -10 })]
+
+    const sinLinea = reducirCarrito(conAjuste, { tipo: 'quitarLinea', idArticulo: 1 })
+    const reagregada = reducirCarrito(sinLinea, {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567' },
+      cantidad: 1,
+    })
+
+    expect(sinLinea).toEqual([])
+    expect(reagregada[0]).not.toHaveProperty('ajusteManualPorcentaje')
+  })
+
+  it('vaciar descarta también los ajustes', () => {
+    const carrito = [lineaFixture({ ajusteManualPorcentaje: -10 })]
+
+    expect(reducirCarrito(carrito, { tipo: 'vaciar' })).toEqual([])
+  })
+})
+
 describe('reducirCarrito — vaciar', () => {
   it('deja el carrito vacío sin importar cuántas líneas tenía', () => {
     const carrito = [lineaFixture({ idArticulo: 1 }), lineaFixture({ idArticulo: 2 })]
