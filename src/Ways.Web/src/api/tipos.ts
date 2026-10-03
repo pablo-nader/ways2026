@@ -636,6 +636,8 @@ export type FilaDeGrillaDeArticulos = {
   codigoInterno: string
   nombre: string
   precio: number | null
+  /** Costo real de reposición; `null` sin costo cargado (o para un rol que no es admin). */
+  costoNominal: number | null
   idProveedorHabitual: number | null
   proveedor: string | null
   activo: boolean

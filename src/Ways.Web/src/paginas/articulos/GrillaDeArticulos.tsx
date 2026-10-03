@@ -181,6 +181,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                 <tr>
                   <th scope="col">Código</th>
                   <th scope="col">Nombre</th>
+                  <th scope="col">Costo</th>
                   <th scope="col">{tituloColumnaPrecio}</th>
                   <th scope="col">Proveedor</th>
                   <th scope="col">Estado</th>
@@ -207,6 +208,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       onChange={(e) => programarCambioDeTexto({ nombre: e.target.value })}
                     />
                   </th>
+                  <th scope="col" />
                   <th scope="col">
                     <div className="d-flex gap-1">
                       <CampoImporte
@@ -275,6 +277,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <tr key={a.id}>
                     <td>{a.codigoInterno}</td>
                     <td>{a.nombre}</td>
+                    <td>{formatearPrecio(a.costoNominal)}</td>
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
                     <td>

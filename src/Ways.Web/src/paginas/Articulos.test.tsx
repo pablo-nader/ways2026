@@ -79,6 +79,7 @@ function filaGrillaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}):
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',
     precio: 100,
+    costoNominal: 60,
     idProveedorHabitual: null,
     proveedor: null,
     activo: true,

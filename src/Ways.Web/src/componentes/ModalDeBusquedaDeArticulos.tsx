@@ -14,7 +14,7 @@ const DEMORA_DEBOUNCE_MS = 300
  * barra escaneado sin multiplicador ("N*codigo"), spec: "same quantity default". */
 const CANTIDAD_POR_DEFECTO = 1
 
-function formatearMoneda(valor: number): string {
+function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
@@ -32,6 +32,10 @@ export type PropsModalDeBusquedaDeArticulos = {
    * oculto: la columna "Acciones" no debe quedar vacía sin explicación) con este mensaje como
    * `title`. `undefined` (default) ⇒ "Agregar" habilitado — no rompe ningún llamador existente. */
   motivoSinAgregar?: string
+  /** `true` agrega la columna "Costo" (`costoNominal`). Default `false`: el POS nunca la muestra y
+   * el servidor tampoco manda el costo a un rol que no sea admin. Solo lo enciende un llamador de
+   * back-office. */
+  mostrarCosto?: boolean
   onAgregar: (linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) => void
   onCerrar: () => void
 }
@@ -53,9 +57,11 @@ export function ModalDeBusquedaDeArticulos({
   idListaPrecio,
   idEmpresa,
   motivoSinAgregar,
+  mostrarCosto = false,
   onAgregar,
   onCerrar,
 }: PropsModalDeBusquedaDeArticulos) {
+  const columnas = mostrarCosto ? 5 : 4
   const puedeAgregar = motivoSinAgregar === undefined
   const [termino, setTermino] = useState('')
   const [buscando, setBuscando] = useState(false)
@@ -183,6 +189,7 @@ export function ModalDeBusquedaDeArticulos({
             <tr>
               <th>Código</th>
               <th>Nombre</th>
+              {mostrarCosto && <th className="text-end">Costo</th>}
               <th className="text-end">Precio</th>
               <th className="text-end">Acciones</th>
             </tr>
@@ -190,14 +197,14 @@ export function ModalDeBusquedaDeArticulos({
           <tbody>
             {buscando && (
               <tr>
-                <td colSpan={4} className="text-center text-muted py-3">
+                <td colSpan={columnas} className="text-center text-muted py-3">
                   Buscando…
                 </td>
               </tr>
             )}
             {!buscando && resultados !== null && resultados.length === 0 && (
               <tr>
-                <td colSpan={4} className="text-center text-muted py-3">
+                <td colSpan={columnas} className="text-center text-muted py-3">
                   Sin resultados
                 </td>
               </tr>
@@ -210,6 +217,7 @@ export function ModalDeBusquedaDeArticulos({
                   <tr key={a.id}>
                     <td>{a.codigoInterno}</td>
                     <td>{a.nombre}</td>
+                    {mostrarCosto && <td className="text-end">{formatearMoneda(a.costoNominal)}</td>}
                     <td className="text-end">{precioTexto}</td>
                     <td className="text-end">
                       <button

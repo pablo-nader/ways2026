@@ -32,6 +32,7 @@ function filaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaD
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',
     precio: 100,
+    costoNominal: 60,
     idProveedorHabitual: null,
     proveedor: null,
     activo: true,
@@ -146,6 +147,24 @@ describe('GrillaDeArticulos — columnas', () => {
     expect(within(filaDosDom).getByText('$ 250,50')).toBeInTheDocument()
     expect(within(filaDosDom).getByText('—')).toBeInTheDocument()
     expect(within(filaDosDom).getByText('Inactivo')).toBeInTheDocument()
+  })
+
+  // mutation-proof-tests: quitar la celda de costo (o apuntarla a `precio`) rompe los tres valores.
+  it('muestra la columna Costo con el costoNominal de cada fila, distinto del precio, y "—" cuando es null', async () => {
+    const conCosto = filaFixture({ id: 1, nombre: 'Con costo', precio: 100, costoNominal: 61.5 })
+    const sinCosto = filaFixture({ id: 2, nombre: 'Sin costo', precio: 250, costoNominal: null, proveedor: 'Alfa SA' })
+    mockearRutas(paginaFixture([conCosto, sinCosto]))
+    renderGrilla()
+
+    await screen.findByText('Con costo')
+    expect(screen.getByRole('columnheader', { name: 'Costo' })).toBeInTheDocument()
+    const filaConCosto = screen.getByText('Con costo').closest('tr')
+    const filaSinCosto = screen.getByText('Sin costo').closest('tr')
+    if (!filaConCosto || !filaSinCosto) throw new Error('No se encontraron las filas')
+    expect(within(filaConCosto).getByText('$ 61,50')).toBeInTheDocument()
+    expect(within(filaConCosto).getByText('$ 100,00')).toBeInTheDocument()
+    expect(within(filaSinCosto).getByText('$ 250,00')).toBeInTheDocument()
+    expect(within(filaSinCosto).getByText('—', { selector: 'td' })).toBeInTheDocument()
   })
 
   it('precio null se muestra "—"', async () => {
@@ -929,7 +948,7 @@ describe('GrillaDeArticulos — accesibilidad de headers (GW16)', () => {
     await screen.findByText('Articulo Uno')
 
     const headers = container.querySelectorAll('thead th')
-    expect(headers.length).toBe(12)
+    expect(headers.length).toBe(14)
     headers.forEach((th) => expect(th).toHaveAttribute('scope', 'col'))
   })
 })

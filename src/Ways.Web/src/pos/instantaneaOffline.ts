@@ -20,6 +20,7 @@ import type {
   ResultadoDeResolucion,
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
+import { normalizarParaBuscar } from '../formato/texto'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
  * `'instantanea'` con otra forma y nunca se lee — se vuelve a descargar entera. */
@@ -275,14 +276,6 @@ export function todasLasLineasTienenPrecioOffline(
 /** Mismo tope que la primera página de `GET /api/clientes` (`ServicioDeClientes.ListarAsync`). */
 export const TOPE_DE_RESULTADOS_DE_CLIENTES = 25
 
-function normalizar(texto: string): string {
-  return texto
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .trim()
-}
-
 function soloDigitos(texto: string): string {
   return texto.replace(/\D/g, '')
 }
@@ -294,12 +287,12 @@ function soloDigitos(texto: string): string {
  * Devuelve a lo sumo `TOPE_DE_RESULTADOS_DE_CLIENTES`, en el orden de la instantánea (por número).
  */
 export function buscarClientesOffline(instantanea: InstantaneaDePos, termino: string): ClienteDeInstantanea[] {
-  const buscado = normalizar(termino)
+  const buscado = normalizarParaBuscar(termino).trim()
   const digitos = soloDigitos(termino)
   const coincide = (c: ClienteDeInstantanea) => {
     if (buscado === '') return true
     const textos = [c.nombre, c.apellido, c.razonSocial, [c.nombre, c.apellido].filter(Boolean).join(' '), c.numeroDocumento]
-    if (textos.some((t) => t != null && normalizar(t).includes(buscado))) return true
+    if (textos.some((t) => t != null && normalizarParaBuscar(t).includes(buscado))) return true
     if (String(c.numero) === buscado) return true
     return digitos !== '' && digitos === buscado.replace(/[\s.-]/g, '') && c.numeroDocumento != null && soloDigitos(c.numeroDocumento).includes(digitos)
   }

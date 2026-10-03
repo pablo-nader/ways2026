@@ -107,12 +107,14 @@ public record SugerenciaDePrecio(decimal? PrecioSugerido);
 /// nunca se expone (mismo criterio que los filtros <c>idProveedor</c>/<c>sinProveedor</c> del
 /// servicio, que tampoco lo matchean/lo tratan como "sin proveedor"). <see cref="Proveedor"/> es
 /// el <c>NombreFantasia</c> del proveedor habitual cuando no es nulo/blanco, si no su
-/// <c>RazonSocial</c>.</summary>
+/// <c>RazonSocial</c>. <see cref="CostoNominal"/> es el costo real de reposición y solo lo recibe un
+/// admin; para cualquier otro rol viaja <c>null</c>, igual que un artículo sin costo cargado.</summary>
 public record ArticuloGrillaFila(
     int Id,
     string CodigoInterno,
     string Nombre,
     decimal? Precio,
+    decimal? CostoNominal,
     int? IdProveedorHabitual,
     string? Proveedor,
     bool Activo);

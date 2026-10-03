@@ -3,6 +3,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Usuarios;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Clientes;
 
@@ -45,13 +46,15 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
 
         if (!string.IsNullOrWhiteSpace(busqueda))
         {
-            // Columnas citext: el Contains ya es case-insensitive sin ILIKE explícito.
-            var termino = busqueda.Trim();
+            // Sin mayúsculas ni acentos (BusquedaSinAcentos). También matchea "nombre apellido",
+            // igual que la búsqueda offline del POS.
+            var patron = PatronDeContiene(busqueda.Trim());
             query = query.Where(c =>
-                c.Nombre.Contains(termino) ||
-                (c.Apellido != null && c.Apellido.Contains(termino)) ||
-                (c.RazonSocial != null && c.RazonSocial.Contains(termino)) ||
-                (c.NumeroDocumento != null && c.NumeroDocumento.Contains(termino)));
+                Coincide(c.Nombre, patron) ||
+                Coincide(c.Apellido, patron) ||
+                Coincide(c.RazonSocial, patron) ||
+                Coincide(c.NumeroDocumento, patron) ||
+                (c.Apellido != null && Coincide(c.Nombre + " " + c.Apellido, patron)));
         }
 
         var total = await query.CountAsync(ct);

@@ -7,6 +7,7 @@ using Ways.Application.Organizacion;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Usuarios;
 
@@ -73,11 +74,10 @@ public class ServicioDeUsuarios(
 
         if (!string.IsNullOrWhiteSpace(busqueda))
         {
-            // Las columnas son citext, así que el LIKE que genera Contains
-            // ya es case-insensitive sin necesidad de ILIKE.
-            var termino = busqueda.Trim();
+            // Sin mayúsculas ni acentos (BusquedaSinAcentos).
+            var patron = PatronDeContiene(busqueda.Trim());
             query = query.Where(u =>
-                u.NombreUsuario.Contains(termino) || u.Mail.Contains(termino));
+                Coincide(u.NombreUsuario, patron) || Coincide(u.Mail, patron));
         }
 
         var total = await query.CountAsync(ct);

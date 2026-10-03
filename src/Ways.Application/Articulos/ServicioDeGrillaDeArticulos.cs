@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Application.Precios;
 using Ways.Domain.Common;
+using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Articulos;
 
@@ -30,6 +31,7 @@ public class ServicioDeGrillaDeArticulos(
     IWaysDbContext db,
     IRelojDelSistema reloj,
     ServicioDePrecios servicioDePrecios,
+    IContextoDeUsuario contexto,
     IOptions<OpcionesDeGrillaDeArticulos> opciones)
 {
     public async Task<PaginaDeArticulosGrilla> ListarAsync(
@@ -165,8 +167,11 @@ public class ServicioDeGrillaDeArticulos(
         ListaDefault? listaDefault) =>
         listaDefault is { } lista && precios.TryGetValue((idArticulo, lista.Id), out var precio) ? precio : null;
 
-    private static ArticuloGrillaFila Proyectar(FilaCandidata c, decimal? precio) => new(
-        c.Id, c.CodigoInterno, c.Nombre, precio, c.IdProveedorHabitual,
+    /// <summary>El costo es del back-office (<c>GestionDeCatalogo</c>, solo admin): esta grilla
+    /// hereda <c>OperacionDePos</c>, así que un vendedor que la llame recibe <c>null</c>.</summary>
+    private ArticuloGrillaFila Proyectar(FilaCandidata c, decimal? precio) => new(
+        c.Id, c.CodigoInterno, c.Nombre, precio,
+        contexto.Rol == Ways.Domain.Usuarios.RolConocido.Admin ? c.CostoNominal : null, c.IdProveedorHabitual,
         EtiquetaProveedor(c.ProveedorNombreFantasia, c.ProveedorRazonSocial), c.Activo);
 
     /// <summary>Regla de etiqueta de proveedor (spec de la slice, compartida con el selector de
@@ -195,16 +200,16 @@ public class ServicioDeGrillaDeArticulos(
 
         if (!string.IsNullOrWhiteSpace(codigo))
         {
-            var termino = codigo.Trim();
+            var patron = PatronDeContiene(codigo.Trim());
             query = query.Where(a =>
-                a.CodigoInterno.Contains(termino) ||
-                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Codigo.Contains(termino)));
+                Coincide(a.CodigoInterno, patron) ||
+                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && Coincide(c.Codigo, patron)));
         }
 
         if (!string.IsNullOrWhiteSpace(nombre))
         {
-            var terminoNombre = nombre.Trim();
-            query = query.Where(a => a.Nombre.Contains(terminoNombre));
+            var patronNombre = PatronDeContiene(nombre.Trim());
+            query = query.Where(a => Coincide(a.Nombre, patronNombre));
         }
 
         if (idProveedor is { } idProveedorValor)
@@ -239,7 +244,7 @@ public class ServicioDeGrillaDeArticulos(
                 a.Id, a.CodigoInterno, a.Nombre, proveedor != null ? a.IdProveedorHabitual : null,
                 proveedor != null ? proveedor.NombreFantasia : null,
                 proveedor != null ? proveedor.RazonSocial : null,
-                a.Activo);
+                a.Activo, a.CostoNominal);
     }
 
     private readonly record struct ListaDefault(int Id, string Nombre);
@@ -251,5 +256,6 @@ public class ServicioDeGrillaDeArticulos(
         int? IdProveedorHabitual,
         string? ProveedorNombreFantasia,
         string? ProveedorRazonSocial,
-        bool Activo);
+        bool Activo,
+        decimal? CostoNominal);
 }
