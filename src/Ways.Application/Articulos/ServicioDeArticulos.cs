@@ -64,6 +64,10 @@ public class ServicioDeArticulos(
     /// coupling es el punto, no un accidente.</summary>
     public const int TamanioMaximoDePagina = 200;
 
+    /// <param name="idProveedor">Solo tiene efecto junto con <paramref name="busqueda"/>: suma a los
+    /// artículos que tengan, para ese proveedor, un código vivo igual (sin distinguir mayúsculas) al
+    /// término buscado, los lista primero y expone ese código en
+    /// <see cref="ArticuloListado.CodigoProveedor"/>. Un proveedor dado de baja no coincide por código.</param>
     public async Task<PaginaDe<ArticuloListado>> ListarAsync(
         string? busqueda = null,
         int? idEmpresa = null,
@@ -73,6 +77,7 @@ public class ServicioDeArticulos(
         int? idArea = null,
         int? idCategoria = null,
         int? idMarca = null,
+        int? idProveedor = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
@@ -92,17 +97,26 @@ public class ServicioDeArticulos(
             query = query.DisponibleEnEmpresa(db, idEmp);
         }
 
-        if (!string.IsNullOrWhiteSpace(busqueda))
+        var termino = busqueda?.Trim();
+        var buscaPorCodigoDeProveedor = idProveedor is not null && !string.IsNullOrEmpty(termino);
+        var idProveedorBuscado = idProveedor ?? 0;
+
+        if (!string.IsNullOrEmpty(termino))
         {
             // Sin mayúsculas ni acentos (BusquedaSinAcentos). El
             // término también busca por codigo_interno y por cualquiera de los codigos_barra
             // del artículo (subquery correlacionada, mismo shape que el EXISTS de
-            // DisponibleEnEmpresa).
-            var patron = PatronDeContiene(busqueda.Trim());
+            // DisponibleEnEmpresa). El código de proveedor es la excepción: igualdad exacta
+            // (citext), solo contra el proveedor pedido y solo si ese proveedor sigue visible.
+            var patron = PatronDeContiene(termino);
             query = query.Where(a =>
                 Coincide(a.Nombre, patron) ||
                 Coincide(a.CodigoInterno, patron) ||
-                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && Coincide(c.Codigo, patron)));
+                db.CodigosBarra.Any(c => c.IdArticulo == a.Id && Coincide(c.Codigo, patron)) ||
+                (buscaPorCodigoDeProveedor &&
+                    db.CodigosProveedor.Any(c =>
+                        c.IdArticulo == a.Id && c.IdProveedor == idProveedorBuscado && c.Codigo == termino &&
+                        db.Proveedores.Any(p => p.Id == c.IdProveedor))));
         }
 
         // stage-18-etiquetas-y-consulta, Slice 2 (task 2.5; design.md:219-224): tres filtros
@@ -137,14 +151,27 @@ public class ServicioDeArticulos(
         var total = await query.CountAsync(ct);
 
         var items = await query
-            .OrderBy(a => a.Nombre)
+            .Select(a => new
+            {
+                Articulo = a,
+                CodigoProveedor = db.CodigosProveedor
+                    .Where(c =>
+                        buscaPorCodigoDeProveedor && c.IdArticulo == a.Id && c.IdProveedor == idProveedorBuscado &&
+                        c.Codigo == termino && db.Proveedores.Any(p => p.Id == c.IdProveedor))
+                    .Select(c => c.Codigo)
+                    .FirstOrDefault()
+            })
+            .OrderBy(x => x.CodigoProveedor == null ? 1 : 0)
+            .ThenBy(x => x.Articulo.Nombre)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(a => new ArticuloListado(
-                a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca,
-                a.IdGrupo, a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto,
-                a.EsProducto, a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas,
-                Array.Empty<int>(), a.Activo, a.ControlaLote))
+            .Select(x => new ArticuloListado(
+                x.Articulo.Id, x.Articulo.CodigoInterno, x.Articulo.Nombre, x.Articulo.Descripcion,
+                x.Articulo.IdArea, x.Articulo.IdCategoria, x.Articulo.IdMarca, x.Articulo.IdGrupo,
+                x.Articulo.IdProveedorHabitual, x.Articulo.IdAlicuotaIva, x.Articulo.UnidadVenta,
+                x.Articulo.UnidadesPorBulto, x.Articulo.EsProducto, x.Articulo.CostoLista,
+                x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
+                Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote, x.CodigoProveedor))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -189,6 +216,8 @@ public class ServicioDeArticulos(
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
         var codigoInterno = NormalizarCodigoInternoOpcional(datos.CodigoInterno);
+        var codigoProveedor = ReglaDeCodigoProveedor.NormalizarOpcional(datos.CodigoProveedor, "codigo_proveedor");
+        ReglaDeCodigoProveedor.ExigirProveedor(codigoProveedor, datos.IdProveedorHabitual);
 
         ExigirIdRequerido(datos.IdArea, "id_area");
         ExigirIdRequerido(datos.IdAlicuotaIva, "id_alicuota_iva");
@@ -281,6 +310,16 @@ public class ServicioDeArticulos(
             if (!datos.DisponibleParaTodas && idsEmpresas is { Count: > 0 })
             {
                 AgregarFilasDeSubset(articulo.Id, idTenant, idsEmpresas);
+                await db.SaveChangesAsync(ct);
+            }
+
+            // El proveedor habitual ya quedó bloqueado vivo arriba (ExigirProveedorHabitualValidoAsync):
+            // el código se atribuye a él, en la misma transacción que el artículo.
+            if (codigoProveedor is not null)
+            {
+                await ExigirCodigoProveedorDisponibleAsync(datos.IdProveedorHabitual!.Value, codigoProveedor, ct);
+                db.CodigosProveedor.Add(NuevoCodigoProveedor(
+                    articulo.Id, datos.IdProveedorHabitual.Value, codigoProveedor));
                 await db.SaveChangesAsync(ct);
             }
 
@@ -476,7 +515,9 @@ public class ServicioDeArticulos(
     /// <see cref="CodigoBarra"/>/<see cref="ArticuloEmpresa"/> asociados quedan como están —
     /// sin cascada, mismo criterio que <see cref="Proveedores.ServicioDeProveedores.EliminarAsync"/>
     /// (sin guard de fila protegida a diferencia de clientes: artículos no tiene un equivalente
-    /// al Consumidor Final).
+    /// al Consumidor Final). La única excepción son los <see cref="CodigoProveedor"/> vivos del
+    /// artículo: se dan de baja en la misma transacción para liberar el par (proveedor, código)
+    /// del índice único parcial.
     ///
     /// La paridad con esa baja de proveedores era declarativa y ahora es real: allá el lock de fila
     /// se toma ANTES de cargar la entidad y acá no se tomaba ninguno, así que dos bajas concurrentes
@@ -500,6 +541,13 @@ public class ServicioDeArticulos(
             var ahora = reloj.Ahora;
             articulo.DeletedAt = ahora;
             articulo.UpdatedAt = ahora;
+
+            var codigosProveedor = await db.CodigosProveedor.Where(c => c.IdArticulo == id).ToListAsync(ct);
+            foreach (var codigoProveedor in codigosProveedor)
+            {
+                codigoProveedor.DeletedAt = ahora;
+                codigoProveedor.UpdatedAt = ahora;
+            }
 
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);
@@ -572,6 +620,63 @@ public class ServicioDeArticulos(
         codigoBarra.UpdatedAt = ahora;
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Asocia al artículo el código con que un proveedor lo imprime en su factura.
+    /// Idempotente: repetir el mismo (proveedor, código) sobre el MISMO artículo devuelve la fila
+    /// existente sin crear otra; sobre OTRO artículo es 409 <c>codigo_proveedor_duplicado</c>.
+    /// Artículo y proveedor se bloquean vivos dentro de la transacción (FOR KEY SHARE), como en
+    /// <see cref="CrearAsync"/>, y un 404 cubre inexistente, de otro tenant o dado de baja.
+    /// El pre-chequeo de duplicado es solo UX: el contrato real es
+    /// <c>ux_codigos_proveedor_proveedor_codigo</c> (23505 → 409 en <c>ManejadorDeErrores</c>), de modo
+    /// que dos asociaciones simultáneas del mismo código pueden resolverse con 409 también para el
+    /// mismo artículo.</summary>
+    public async Task<ResultadoDeCodigoProveedor> AgregarCodigoProveedorAsync(
+        int idArticulo, AltaCodigoProveedor datos, CancellationToken ct = default)
+    {
+        ExigirIdRequerido(datos.IdProveedor, "id_proveedor");
+        var codigo = ReglaDeCodigoProveedor.NormalizarRequerido(datos.Codigo, "codigo");
+
+        // Sin reintento: el INSERT no es idempotente a nivel de estrategia (ef-retry-safe-writes).
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        return await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            if (!await guarda.BloquearSiEstaVivaAsync<Articulo>(idArticulo, ct))
+            {
+                throw ErrorDominio.NoEncontrado($"No existe el artículo {idArticulo}.");
+            }
+
+            if (!await guarda.BloquearSiEstaVivaAsync<Proveedor>(datos.IdProveedor, ct))
+            {
+                throw ErrorDominio.NoEncontrado($"No existe el proveedor {datos.IdProveedor}.");
+            }
+
+            var existente = await db.CodigosProveedor
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.IdProveedor == datos.IdProveedor && c.Codigo == codigo, ct);
+
+            if (existente is not null)
+            {
+                if (existente.IdArticulo != idArticulo)
+                {
+                    throw ErrorDominio.Conflicto(
+                        "codigo_proveedor_duplicado",
+                        $"El código {codigo} ya está asignado a otro artículo para el proveedor {datos.IdProveedor}.");
+                }
+
+                return new ResultadoDeCodigoProveedor(Proyectar(existente), Creado: false);
+            }
+
+            var nuevo = NuevoCodigoProveedor(idArticulo, datos.IdProveedor, codigo);
+            db.CodigosProveedor.Add(nuevo);
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+
+            return new ResultadoDeCodigoProveedor(Proyectar(nuevo), Creado: true);
+        });
     }
 
     /// <summary>Spec: Margin-Based Price Suggestion — resuelve <c>margenGrupo</c>/
@@ -830,6 +935,34 @@ public class ServicioDeArticulos(
             throw ErrorDominio.Conflicto("codigo_barra_duplicado", $"Ya existe el código de barras {codigo} en este tenant.");
         }
     }
+
+    /// <summary>Pre-chequeo best-effort del alta de artículo (db-error-backstops): el backstop real
+    /// es <c>ux_codigos_proveedor_proveedor_codigo</c>.</summary>
+    private async Task ExigirCodigoProveedorDisponibleAsync(int idProveedor, string codigo, CancellationToken ct)
+    {
+        if (await db.CodigosProveedor.AnyAsync(c => c.IdProveedor == idProveedor && c.Codigo == codigo, ct))
+        {
+            throw ErrorDominio.Conflicto(
+                "codigo_proveedor_duplicado",
+                $"El código {codigo} ya está asignado a otro artículo para el proveedor {idProveedor}.");
+        }
+    }
+
+    private CodigoProveedor NuevoCodigoProveedor(int idArticulo, int idProveedor, string codigo)
+    {
+        var ahora = reloj.Ahora;
+        return new CodigoProveedor
+        {
+            IdArticulo = idArticulo,
+            IdProveedor = idProveedor,
+            Codigo = codigo,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+    }
+
+    private static CodigoProveedorListado Proyectar(CodigoProveedor c) =>
+        new(c.Id, c.IdArticulo, c.IdProveedor, c.Codigo);
 
     private static string? NormalizarCodigoInternoOpcional(string? valor)
     {
