@@ -20,11 +20,18 @@ export function GraficoDeLineas({ data, alto, titulo }: Props) {
     <div role="img" aria-label={titulo}>
       <ResponsiveContainer width="100%" height={alto}>
         <LineChart data={data as PuntoDeGrafico[]}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="etiqueta" />
-          <YAxis />
-          <Tooltip />
-          <Line type="monotone" dataKey="valor" stroke="#0d6efd" dot={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--bs-border-color)" />
+          <XAxis dataKey="etiqueta" stroke="var(--bs-border-color)" tick={{ fill: 'var(--bs-secondary-color)' }} />
+          <YAxis stroke="var(--bs-border-color)" tick={{ fill: 'var(--bs-secondary-color)' }} />
+          <Tooltip
+            contentStyle={{
+              background: 'var(--bs-body-bg)',
+              borderColor: 'var(--bs-border-color)',
+              color: 'var(--bs-body-color)',
+            }}
+            labelStyle={{ color: 'var(--bs-body-color)' }}
+          />
+          <Line type="monotone" dataKey="valor" stroke="#f7941d" dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

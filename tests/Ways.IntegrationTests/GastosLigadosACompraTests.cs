@@ -116,7 +116,7 @@ public class GastosLigadosACompraTests(WaysApiFixture fixture) : IClassFixture<W
 
     private static SolicitudDeCompra SolicitudSimple(Contexto ctx, int idProveedor, decimal costoUnitario = 100m, string? numeroExterno = "0001-00000001") =>
         new(
-            idProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno, FechaDelNegocio.Hoy(), null,
+            idProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno, DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, true)]);
 
     private static async Task<CompraDetalle> CrearYConfirmarCompraAsync(

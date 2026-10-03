@@ -98,11 +98,11 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
     <Modal titulo="Nuevo proveedor" ocupado={guardando} onCerrar={onCancelar}>
       <form onSubmit={guardar}>
         {errorCondiciones && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-warning py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
             <span>{errorCondiciones}</span>
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary rounded-0"
+              className="btn btn-sm btn-outline-secondary"
               onClick={cargarCondicionesFiscales}
               disabled={cargandoCondiciones}
             >
@@ -110,7 +110,7 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
             </button>
           </div>
         )}
-        {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+        {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
         <div className="mb-3">
           <label className="form-label" htmlFor="alta-rapida-proveedor-razon-social">
@@ -118,7 +118,7 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
           </label>
           <input
             id="alta-rapida-proveedor-razon-social"
-            className="form-control rounded-0"
+            className="form-control"
             maxLength={150}
             value={razonSocial}
             disabled={guardando}
@@ -134,7 +134,7 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
           </label>
           <input
             id="alta-rapida-proveedor-nombre-fantasia"
-            className="form-control rounded-0"
+            className="form-control"
             maxLength={150}
             value={nombreFantasia}
             disabled={guardando}
@@ -151,7 +151,7 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
           ) : (
             <select
               id="alta-rapida-proveedor-condicion-fiscal"
-              className="form-select rounded-0"
+              className="form-select"
               value={idCondicionFiscal}
               disabled={guardando}
               onChange={(e) => setIdCondicionFiscal(e.target.value === '' ? '' : Number(e.target.value))}
@@ -170,12 +170,12 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
         </div>
 
         <div className="d-flex gap-2">
-          <button type="submit" className="btn btn-success rounded-0" disabled={guardando || condiciones === null}>
+          <button type="submit" className="btn btn-success" disabled={guardando || condiciones === null}>
             {guardando ? 'Creando…' : 'Crear'}
           </button>
           <button
             type="button"
-            className="btn btn-outline-secondary rounded-0"
+            className="btn btn-outline-secondary"
             onClick={onCancelar}
             disabled={guardando}
           >

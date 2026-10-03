@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
 import { clienteDeArticulos, filtrosDeGrillaDeArticulosVacios } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import type { FilaDeGrillaDeArticulos, FiltrosDeGrillaDeArticulos, PaginaDeGrillaDeArticulos, ProveedorListado } from '../../api/tipos'
@@ -7,6 +6,7 @@ import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { formatearImporte } from '../../formato/importes'
 import { etiquetaDeProveedor } from './helpers'
+import { BotonIcono, EnlaceIcono } from '../../componentes/BotonIcono'
 
 const DEMORA_DEBOUNCE_MS = 300
 const TAMANIOS_DE_PAGINA = [25, 50, 100]
@@ -163,9 +163,9 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
   return (
     <>
       {error && (
-        <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+        <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
           <span>{error}</span>
-          <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
             Reintentar
           </button>
         </div>
@@ -193,7 +193,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <th scope="col">
                     <input
                       type="search"
-                      className="form-control form-control-sm rounded-0"
+                      className="form-control form-control-sm"
                       aria-label="Filtrar por código"
                       value={borrador.codigo}
                       onChange={(e) => programarCambioDeTexto({ codigo: e.target.value })}
@@ -202,7 +202,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <th scope="col">
                     <input
                       type="search"
-                      className="form-control form-control-sm rounded-0"
+                      className="form-control form-control-sm"
                       aria-label="Filtrar por nombre"
                       value={borrador.nombre}
                       onChange={(e) => programarCambioDeTexto({ nombre: e.target.value })}
@@ -213,7 +213,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <div className="d-flex gap-1">
                       <CampoImporte
                         aria-label="Precio desde"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         valor={borrador.precioDesde}
                         onChange={(valor) => programarCambioDeTexto({ precioDesde: valor })}
                         disabled={precioDeshabilitado}
@@ -221,7 +221,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       />
                       <CampoImporte
                         aria-label="Precio hasta"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         valor={borrador.precioHasta}
                         onChange={(valor) => programarCambioDeTexto({ precioHasta: valor })}
                         disabled={precioDeshabilitado}
@@ -231,7 +231,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   </th>
                   <th scope="col">
                     <select
-                      className="form-select form-select-sm rounded-0"
+                      className="form-select form-select-sm"
                       aria-label="Filtrar por proveedor"
                       value={valorSelectProveedor}
                       onChange={(e) => {
@@ -252,7 +252,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   </th>
                   <th scope="col">
                     <select
-                      className="form-select form-select-sm rounded-0"
+                      className="form-select form-select-sm"
                       aria-label="Filtrar por estado"
                       value={filtros.activo === null ? '' : String(filtros.activo)}
                       onChange={(e) => {
@@ -266,7 +266,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     </select>
                   </th>
                   <th scope="col" className="text-end">
-                    <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={limpiarFiltros}>
+                    <button type="button" className="btn btn-sm btn-outline-secondary" onClick={limpiarFiltros}>
                       Limpiar
                     </button>
                   </th>
@@ -281,7 +281,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
                     <td>
-                      <span className={`badge rounded-0 ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                      <span className={`badge ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {a.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
@@ -289,23 +289,19 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       {/* <Link> real (no un botón con navigate): permite click-del-medio/Ctrl-click
                           para abrir en pestaña nueva, con la navegación en ESTA pestaña bloqueada
                           mientras `ocupado` — ver `alClickearEditar`. */}
-                      <Link
+                      <EnlaceIcono
+                        icono="editar"
                         to={`/articulos/edit/${a.id}`}
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        className="me-1"
                         style={ocupado ? { opacity: 0.65 } : undefined}
                         aria-disabled={ocupado}
                         onClick={alClickearEditar}
-                      >
-                        Editar
-                      </Link>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                      />
+                      <BotonIcono
+                        icono="eliminar"
                         disabled={ocupado}
                         onClick={() => onEliminar(a)}
-                      >
-                        Baja
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -327,7 +323,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
               </span>
               <div className="d-flex gap-2 align-items-center">
                 <select
-                  className="form-select form-select-sm rounded-0 w-auto"
+                  className="form-select form-select-sm w-auto"
                   aria-label="Artículos por página"
                   value={filtros.tamanio}
                   onChange={(e) => cambiarTamanio(Number(e.target.value))}
@@ -340,7 +336,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                 </select>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -348,7 +344,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

@@ -245,7 +245,7 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
 
 function botonDeBajaDe(razonSocial: string) {
   return within(screen.getByRole('row', { name: new RegExp(razonSocial) })).getByRole('button', {
-    name: 'Baja',
+    name: 'Eliminar',
   })
 }
 
@@ -319,7 +319,7 @@ describe('Empresas (stage-20, slice 5 — baja lógica)', () => {
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
     ]) {
       expect(boton).toBeDisabled()
     }
@@ -337,7 +337,7 @@ describe('Empresas (stage-20, slice 5 — baja lógica)', () => {
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Baja' })[0]).toBeEnabled())
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Eliminar' })[0]).toBeEnabled())
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
@@ -471,7 +471,7 @@ describe('Empresas (slice 5, ronda 1 — la puerta es modal y el token se acuña
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
       ...screen.getAllByRole('button', { name: 'Guardar' }),
     ]) {
       expect(boton).toBeDisabled()

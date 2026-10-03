@@ -169,19 +169,19 @@ export function ModalDeBusquedaDeArticulos({
         <input
           ref={inputBusquedaRef}
           type="search"
-          className="form-control rounded-0"
+          className="form-control"
           placeholder="Buscar por nombre…"
           aria-label="Buscar artículo por nombre"
           value={termino}
           onChange={(e) => cambiarTermino(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarInmediato())}
         />
-        <button type="button" className="btn btn-primary rounded-0" disabled={buscando} onClick={buscarInmediato}>
+        <button type="button" className="btn btn-primary" disabled={buscando} onClick={buscarInmediato}>
           {buscando ? 'Buscando…' : 'Buscar'}
         </button>
       </div>
 
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
       <div className="table-responsive">
         <table className="table table-striped table-hover table-bordered align-middle">
@@ -222,7 +222,7 @@ export function ModalDeBusquedaDeArticulos({
                     <td className="text-end">
                       <button
                         type="button"
-                        className="btn btn-sm btn-primary rounded-0"
+                        className="btn btn-sm btn-primary"
                         disabled={!puedeAgregar}
                         title={motivoSinAgregar}
                         onClick={() => agregar(a)}

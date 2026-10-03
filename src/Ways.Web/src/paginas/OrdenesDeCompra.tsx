@@ -130,7 +130,7 @@ export function OrdenesDeCompra() {
     <nav className="p-2 d-flex gap-2">
       <button
         type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        className="btn btn-sm btn-success text-nowrap"
         onClick={() => navigate('/ordenes-compra/nueva')}
       >
         Nueva orden de compra
@@ -141,8 +141,8 @@ export function OrdenesDeCompra() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Órdenes de compra" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {errorReferencia && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorReferencia}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {errorReferencia && <div className="alert alert-warning py-1 px-2 small">{errorReferencia}</div>}
 
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-3">
@@ -151,7 +151,7 @@ export function OrdenesDeCompra() {
             </label>
             <select
               id="oc-filtro-proveedor"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idProveedor ?? ''}
               onChange={(e) => cambiarFiltro({ idProveedor: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -169,7 +169,7 @@ export function OrdenesDeCompra() {
             </label>
             <select
               id="oc-filtro-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -187,7 +187,7 @@ export function OrdenesDeCompra() {
             </label>
             <select
               id="oc-filtro-estado"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.estado ?? ''}
               onChange={(e) => cambiarFiltro({ estado: e.target.value === '' ? null : (e.target.value as EstadoOrdenCompra) })}
             >
@@ -205,7 +205,7 @@ export function OrdenesDeCompra() {
             <input
               id="oc-filtro-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -217,7 +217,7 @@ export function OrdenesDeCompra() {
             <input
               id="oc-filtro-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
@@ -251,7 +251,7 @@ export function OrdenesDeCompra() {
                       <td>{proveedorPorId[o.idProveedor]?.razonSocial ?? `Proveedor #${o.idProveedor}`}</td>
                       <td>{puntoVentaPorId[o.idPuntoVenta]?.nombre ?? `PV #${o.idPuntoVenta}`}</td>
                       <td>
-                        <span className={`badge rounded-0 ${claseDeBadgeDeEstadoOrdenCompra(o.estado)}`}>
+                        <span className={`badge ${claseDeBadgeDeEstadoOrdenCompra(o.estado)}`}>
                           {etiquetaDeEstadoOrdenCompra(o.estado)}
                         </span>
                       </td>
@@ -277,7 +277,7 @@ export function OrdenesDeCompra() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -285,7 +285,7 @@ export function OrdenesDeCompra() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

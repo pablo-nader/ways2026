@@ -188,7 +188,7 @@ describe('GrillaDeArticulos — columnas', () => {
     renderGrilla({ ocupado: true })
     await screen.findByText('Articulo Uno')
     expect(screen.getByRole('link', { name: 'Editar' })).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Eliminar' })).toBeDisabled()
   })
 
   it('click en "Baja" invoca onEliminar con la fila completa', async () => {
@@ -197,7 +197,7 @@ describe('GrillaDeArticulos — columnas', () => {
     renderGrilla({ onEliminar })
     await screen.findByText('Articulo Tres')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Baja' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
 
     expect(onEliminar).toHaveBeenCalledWith(expect.objectContaining({ id: 3, nombre: 'Articulo Tres' }))
   })

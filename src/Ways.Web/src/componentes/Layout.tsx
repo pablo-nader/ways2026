@@ -7,6 +7,7 @@ import { useAuth } from '../auth/useAuth'
 import { ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
 import { colorDePuntoVenta } from '../puntoVenta/colorDePuntoVenta'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { BotonDeTema } from '../tema/BotonDeTema'
 import { MenuDesplegable } from './MenuDesplegable'
 import { construirMenu, esRutaActiva } from './menu'
 
@@ -15,7 +16,7 @@ const RUTA_DE_CAMBIO_DE_PUNTO_VENTA = '/punto-de-venta'
 // El botón principal anuncia la ruta actual solo con `aria-current`: la clase `active` de
 // Bootstrap lo pintaría como "presionado".
 function claseDeEnlace(principal: boolean | undefined, activo: boolean) {
-  if (principal) return 'btn btn-success rounded-0 fw-bold me-2'
+  if (principal) return 'btn btn-success fw-bold me-2'
   return activo ? 'nav-link active' : 'nav-link'
 }
 
@@ -34,12 +35,12 @@ function InsigniaDePuntoVenta({ usuario, puntoVenta, puntosVenta, ubicacion }: P
   }
 
   if (puntosVenta.length <= 1) {
-    return <span className="text-light small">Punto de venta: {puntoVenta.nombre}</span>
+    return <span className="text-body small">Punto de venta: {puntoVenta.nombre}</span>
   }
 
   if (ubicacion.pathname === RUTA_DE_CAMBIO_DE_PUNTO_VENTA) {
     return (
-      <span className="text-light small" aria-current="page">
+      <span className="text-body small" aria-current="page">
         Punto de venta: {puntoVenta.nombre}
       </span>
     )
@@ -49,7 +50,7 @@ function InsigniaDePuntoVenta({ usuario, puntoVenta, puntosVenta, ubicacion }: P
     <Link
       to={RUTA_DE_CAMBIO_DE_PUNTO_VENTA}
       state={{ desde: ubicacion }}
-      className="btn btn-outline-light btn-sm rounded-0"
+      className="btn btn-outline-secondary btn-sm"
       aria-label={`Punto de venta ${puntoVenta.nombre}, cambiar`}
     >
       {puntoVenta.nombre}
@@ -92,11 +93,11 @@ export function Layout() {
   const menu = usuario ? construirMenu(usuario) : []
 
   return (
-    <div id="wrap" className="bg-dark dk">
+    <div id="wrap">
       <div id="top">
         <nav className={`ways-nav ${colorDePuntoVenta(puntoVenta, puntosVenta)}`} />
 
-        <nav className="navbar navbar-dark navbar-expand-lg bg-dark border-top-0">
+        <nav className="navbar navbar-expand-lg bg-body border-top-0 ways-navbar">
           <div className="container">
             <Link className="navbar-brand ways-brand" to="/" aria-label="Ways, ir al inicio">
               Ways
@@ -155,8 +156,8 @@ export function Layout() {
             </div>
 
             <div className="d-flex align-items-center gap-3">
-              <span className="text-light small">
-                {usuario?.usuario} <span className="text-secondary">· {usuario?.rol}</span>
+              <span className="text-body small">
+                {usuario?.usuario} <span className="text-body-secondary">· {usuario?.rol}</span>
               </span>
               {usuario && (
                 <InsigniaDePuntoVenta
@@ -166,9 +167,10 @@ export function Layout() {
                   ubicacion={ubicacion}
                 />
               )}
+              <BotonDeTema />
               <button
                 type="button"
-                className="btn btn-danger rounded-0"
+                className="btn btn-outline-secondary"
                 title="Salir"
                 onClick={salir}
               >
@@ -181,7 +183,7 @@ export function Layout() {
 
       <div id="content">
         <div className="outer">
-          <div className="inner bg-light lter">
+          <div className="inner">
             {/* stage-pos-adjustments: `Layout` es la instancia estable que React Router mantiene
                 montada al navegar entre rutas hermanas (`/pos` → `/caja` → `/pos`) — el `Provider`
                 acá adentro sobrevive a esa navegación, así que el borrador del ticket en curso

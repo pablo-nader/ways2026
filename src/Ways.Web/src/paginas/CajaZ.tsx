@@ -111,7 +111,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
         variante="inverse"
         herramientas={
           <div className="d-flex gap-2">
-            <button type="button" className="btn btn-sm btn-outline-light rounded-0 d-print-none" onClick={() => window.print()}>
+            <button type="button" className="btn btn-sm btn-outline-secondary d-print-none" onClick={() => window.print()}>
               Imprimir
             </button>
             <BotonDeDescarga
@@ -119,12 +119,12 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
               etiqueta="Descargar"
               onError={setErrorDescarga}
               onInicio={() => setErrorDescarga('')}
-              className="btn btn-sm btn-outline-secondary rounded-0 d-print-none"
+              className="btn btn-sm btn-outline-secondary d-print-none"
             />
             {contextoDeImpresion && enEscritorio() && (
               <button
                 type="button"
-                className="btn btn-sm btn-outline-light rounded-0 d-print-none"
+                className="btn btn-sm btn-outline-secondary d-print-none"
                 disabled={imprimiendo || !detalle}
                 onClick={() => void imprimirDetalle()}
               >
@@ -143,12 +143,12 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
           </div>
         </div>
 
-        {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
         {errorImpresion && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small mb-2">No se pudo imprimir: {errorImpresion}</div>
+          <div className="alert alert-warning py-1 px-2 small mb-2">No se pudo imprimir: {errorImpresion}</div>
         )}
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
           </div>
         )}
@@ -258,7 +258,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
                       <td>{formatearFechaHora(g.fecha)}</td>
                       <td>
                         {g.categoria}
-                        {g.origenFondos === 'Tesoreria' && <span className="badge bg-secondary rounded-0 ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>}
+                        {g.origenFondos === 'Tesoreria' && <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>}
                       </td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                     </tr>

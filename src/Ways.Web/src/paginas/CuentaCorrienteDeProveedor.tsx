@@ -114,12 +114,12 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
     <>
       <div className="modal d-block" tabIndex={-1} role="dialog">
         <div className="modal-dialog" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Ajuste manual de cuenta corriente</h5>
             </div>
             <div className="modal-body">
-              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+              {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
               <div className="mb-3" style={{ maxWidth: 320 }}>
                 <label className="form-label" htmlFor="ccp-ajuste-punto-venta">
@@ -127,7 +127,7 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
                 </label>
                 <select
                   id="ccp-ajuste-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   disabled={registrando}
                   onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
@@ -146,7 +146,7 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
                 </label>
                 <CampoImporte
                   id="ccp-ajuste-importe"
-                  className="form-control rounded-0"
+                  className="form-control"
                   valor={importe}
                   disabled={registrando}
                   admiteNegativos
@@ -164,7 +164,7 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
                 <input
                   id="ccp-ajuste-detalle"
                   type="text"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={detalle}
                   disabled={registrando}
                   onChange={(e) => setDetalle(e.target.value)}
@@ -175,10 +175,10 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
               {saldoResultante !== null && <div className="fs-6">Saldo resultante: {formatearSaldoConEtiqueta(saldoResultante)}</div>}
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrando} onClick={onCerrar}>
+              <button type="button" className="btn btn-outline-secondary" disabled={registrando} onClick={onCerrar}>
                 Cancelar
               </button>
-              <button type="button" className="btn btn-primary rounded-0" disabled={registrando} onClick={registrarAjuste}>
+              <button type="button" className="btn btn-primary" disabled={registrando} onClick={registrarAjuste}>
                 {registrando ? 'Registrando…' : 'Registrar ajuste'}
               </button>
             </div>
@@ -291,21 +291,21 @@ function PantallaCuentaCorrienteDeProveedor({
             : `Estado de cuenta — ${proveedorInfo?.razonSocial ?? `Proveedor #${idProveedor}`}`
         }
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/proveedores">
+          <Link className="btn btn-sm btn-outline-secondary" to="/proveedores">
             Volver a proveedores
           </Link>
         }
       >
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorProveedor && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorProveedor} El nombre del proveedor no se pudo confirmar — el estado de cuenta y el ajuste manual
             funcionan igual.
           </div>
         )}
         {errorPuntosVenta && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorPuntosVenta} No se puede registrar un ajuste hasta que esto se resuelva.
           </div>
         )}
@@ -323,7 +323,7 @@ function PantallaCuentaCorrienteDeProveedor({
                 <div className="col-md-8 text-md-end">
                   <button
                     type="button"
-                    className="btn btn-outline-secondary rounded-0"
+                    className="btn btn-outline-secondary"
                     disabled={!puedeAjustar}
                     title={motivoBloqueoAjuste}
                     onClick={() => {
@@ -345,7 +345,7 @@ function PantallaCuentaCorrienteDeProveedor({
                 <input
                   id="ccp-filtro-desde"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={filtros.desde}
                   disabled={filtros.historico}
                   onChange={(e) => cambiarFiltro({ desde: e.target.value })}
@@ -358,7 +358,7 @@ function PantallaCuentaCorrienteDeProveedor({
                 <input
                   id="ccp-filtro-hasta"
                   type="date"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={filtros.hasta}
                   disabled={filtros.historico}
                   onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
@@ -369,7 +369,7 @@ function PantallaCuentaCorrienteDeProveedor({
                   <input
                     id="ccp-filtro-historico"
                     type="checkbox"
-                    className="form-check-input rounded-0"
+                    className="form-check-input"
                     checked={filtros.historico}
                     onChange={(e) => cambiarFiltro({ historico: e.target.checked })}
                   />
@@ -423,7 +423,7 @@ function PantallaCuentaCorrienteDeProveedor({
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -431,7 +431,7 @@ function PantallaCuentaCorrienteDeProveedor({
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >
@@ -557,7 +557,7 @@ export function CuentaCorrienteDeProveedor() {
       <div className="container-fluid py-4">
         <Box titulo="Estado de cuenta" variante="warning">
           <p className="text-muted">No se especificó el proveedor.</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/proveedores">
+          <Link className="btn btn-outline-secondary" to="/proveedores">
             Volver a proveedores
           </Link>
         </Box>

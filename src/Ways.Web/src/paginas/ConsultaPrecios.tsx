@@ -209,7 +209,7 @@ function PantallaConsultaPrecios() {
               <span className="text-muted small">Punto de venta:</span> <strong>{puntoVentaSeleccionado.nombre}</strong>
             </>
           ) : (
-            <div className="alert alert-warning rounded-0 py-1 px-2 small">Sin puntos de venta disponibles</div>
+            <div className="alert alert-warning py-1 px-2 small">Sin puntos de venta disponibles</div>
           )}
         </div>
 
@@ -219,7 +219,7 @@ function PantallaConsultaPrecios() {
           </label>
           <select
             id="consulta-precios-lista"
-            className="form-select rounded-0"
+            className="form-select"
             value={idListaPrecio}
             disabled={listas === null}
             onChange={(e) => cambiarListaPrecio(Number(e.target.value))}
@@ -240,7 +240,7 @@ function PantallaConsultaPrecios() {
         <input
           ref={inputRef}
           type="text"
-          className="form-control rounded-0"
+          className="form-control"
           placeholder="Escaneá un código de barras…"
           aria-label="Código escaneado"
           value={entrada}
@@ -249,13 +249,13 @@ function PantallaConsultaPrecios() {
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), consultar())}
           autoFocus
         />
-        <button type="button" className="btn btn-primary rounded-0" disabled={buscando || !selectoresListos} onClick={consultar}>
+        <button type="button" className="btn btn-primary" disabled={buscando || !selectoresListos} onClick={consultar}>
           {buscando ? 'Buscando…' : 'Consultar'}
         </button>
       </div>
 
       {error && (
-        <div className="alert alert-danger rounded-0" role="alert">
+        <div className="alert alert-danger" role="alert">
           {error}
         </div>
       )}

@@ -223,7 +223,7 @@ export function EditorDePrecios({
         <strong className="text-muted small text-uppercase">Precios por lista</strong>
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary rounded-0"
+          className="btn btn-sm btn-outline-secondary"
           disabled={cargandoSugerencia || bloqueadoPorPadre}
           onClick={pedirSugerencia}
         >
@@ -232,21 +232,21 @@ export function EditorDePrecios({
       </div>
 
       {sugerencia !== null && (
-        <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
+        <div className="alert alert-info py-2 px-2 small mt-2">
           Precio sugerido a partir de costo y margen: <strong>{formatearImporte(sugerencia, { simbolo: true })}</strong>. Usá "Usar sugerencia"
           en la lista que corresponda — nunca se aplica sola.
         </div>
       )}
 
       {sinSugerencia && (
-        <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
+        <div className="alert alert-info py-2 px-2 small mt-2">
           No hay costo o margen suficientes para sugerir un precio.
         </div>
       )}
 
-      {errorSugerencia && <div className="alert alert-danger rounded-0 py-2 px-2 small mt-2">{errorSugerencia}</div>}
+      {errorSugerencia && <div className="alert alert-danger py-2 px-2 small mt-2">{errorSugerencia}</div>}
 
-      {errorVigentes && <div className="alert alert-danger rounded-0 mt-2">{errorVigentes}</div>}
+      {errorVigentes && <div className="alert alert-danger mt-2">{errorVigentes}</div>}
 
       <div className="table-responsive mt-2">
         <table className="table table-sm table-bordered align-middle mb-0">
@@ -268,7 +268,7 @@ export function EditorDePrecios({
                   <tr>
                     <td>
                       {lista.nombre}
-                      {lista.esDefault && <span className="badge rounded-0 text-bg-secondary ms-1">Default</span>}
+                      {lista.esDefault && <span className="badge text-bg-secondary ms-1">Default</span>}
                       {lista.modo === 'Derivada' && (
                         <div className="text-muted small">
                           Derivada de {listaBase?.nombre ?? lista.idListaBase} (
@@ -281,7 +281,7 @@ export function EditorDePrecios({
                     <td className="text-end">
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-primary rounded-0"
+                        className="btn btn-sm btn-outline-primary"
                         onClick={() => alternarExpandida(lista)}
                         disabled={bloqueadoPorPadre || estadoDe(lista.id).guardando || estadoDe(lista.id).refrescando}
                       >
@@ -291,7 +291,7 @@ export function EditorDePrecios({
                   </tr>
                   {expandida && (
                     <tr>
-                      <td colSpan={3} className="bg-light">
+                      <td colSpan={3} className="bg-body-tertiary">
                         <PanelDeLista
                           lista={lista}
                           estado={estadoDe(lista.id)}
@@ -359,20 +359,20 @@ function PanelDeLista({
   return (
     <div className="p-2">
       {pendiente && (
-        <div className="alert alert-warning rounded-0 py-1 px-2 small">
+        <div className="alert alert-warning py-1 px-2 small">
           Precio programado: {formatearImporte(pendiente.precio, { simbolo: true })} desde {new Date(pendiente.vigenteDesde).toLocaleString()}
         </div>
       )}
 
-      {estado.error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{estado.error}</div>}
+      {estado.error && <div className="alert alert-danger py-1 px-2 small">{estado.error}</div>}
 
       {estado.confirmarPendiente && (
-        <div className="alert alert-warning rounded-0 py-2 px-2 small d-flex align-items-center justify-content-between">
+        <div className="alert alert-warning py-2 px-2 small d-flex align-items-center justify-content-between">
           <span>Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?</span>
           <div className="d-flex gap-2">
             <button
               type="button"
-              className="btn btn-sm btn-warning rounded-0"
+              className="btn btn-sm btn-warning"
               disabled={bloqueado}
               onClick={() => onGuardar(true)}
             >
@@ -380,7 +380,7 @@ function PanelDeLista({
             </button>
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary rounded-0"
+              className="btn btn-sm btn-outline-secondary"
               onClick={() => onCambio({ confirmarPendiente: false })}
             >
               Cancelar
@@ -393,7 +393,7 @@ function PanelDeLista({
         <div className="col-auto">
           <label className="form-label mb-0 small">Precio</label>
           <CampoImporte
-            className="form-control form-control-sm rounded-0"
+            className="form-control form-control-sm"
             style={{ width: 140 }}
             valor={estado.monto === '' ? null : Number(estado.monto)}
             disabled={bloqueado}
@@ -405,7 +405,7 @@ function PanelDeLista({
           <div className="col-auto">
             <button
               type="button"
-              className="btn btn-sm btn-outline-info rounded-0"
+              className="btn btn-sm btn-outline-info"
               disabled={bloqueado || cargandoSugerencia}
               onClick={() => onCambio({ monto: String(sugerencia) })}
             >
@@ -419,7 +419,7 @@ function PanelDeLista({
             <input
               id={`lp-programado-${lista.id}`}
               type="checkbox"
-              className="form-check-input rounded-0"
+              className="form-check-input"
               checked={estado.programado}
               disabled={bloqueado}
               onChange={(e) => onCambio({ programado: e.target.checked })}
@@ -435,7 +435,7 @@ function PanelDeLista({
             <label className="form-label mb-0 small">Vigente desde</label>
             <input
               type="datetime-local"
-              className="form-control form-control-sm rounded-0"
+              className="form-control form-control-sm"
               value={estado.vigenteDesde}
               disabled={bloqueado}
               onChange={(e) => onCambio({ vigenteDesde: e.target.value })}
@@ -446,7 +446,7 @@ function PanelDeLista({
         <div className="col-auto">
           <button
             type="button"
-            className="btn btn-sm btn-success rounded-0"
+            className="btn btn-sm btn-success"
             disabled={bloqueado}
             onClick={() => onGuardar(false)}
           >

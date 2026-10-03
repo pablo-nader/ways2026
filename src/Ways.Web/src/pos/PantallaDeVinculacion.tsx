@@ -187,7 +187,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
   if (paso.paso === 'credencial-fallida') {
     return (
       <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-        <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+        <div className="card w-100" style={{ maxWidth: 480 }}>
           <div className="card-body">
             <h1 className="h4 text-center mb-4">Vincular este equipo</h1>
             <div className="text-danger text-center mb-0">{error}</div>
@@ -200,7 +200,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
   if (paso.paso === 'elegir-pv') {
     return (
       <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-        <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+        <div className="card w-100" style={{ maxWidth: 480 }}>
           <div className="card-body">
             <h1 className="h4 text-center mb-4">Vincular este equipo</h1>
 
@@ -211,7 +211,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
                 </label>
                 <select
                   id="vinculacion-pv"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   disabled={enviando}
                   onChange={(e) => setIdPuntoVenta(e.target.value)}
@@ -233,7 +233,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
                 <input
                   id="vinculacion-nombre"
                   type="text"
-                  className="form-control rounded-0"
+                  className="form-control"
                   placeholder="Caja 1"
                   value={nombreDispositivo}
                   disabled={enviando}
@@ -246,7 +246,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
 
               <button
                 type="submit"
-                className="btn btn-lg btn-success form-control rounded-0"
+                className="btn btn-lg btn-success form-control"
                 disabled={enviando || idPuntoVenta === '' || nombreDispositivo.trim() === ''}
               >
                 {enviando ? 'Vinculando…' : 'Vincular'}
@@ -260,7 +260,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
 
   return (
     <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-      <div className="card rounded-0 w-100" style={{ maxWidth: 480 }}>
+      <div className="card w-100" style={{ maxWidth: 480 }}>
         <div className="card-body">
           <h1 className="h4 text-center mb-1">Vincular este equipo</h1>
           <p className="text-muted text-center mb-4">Ingresá con un usuario administrador para vincularlo a un punto de venta.</p>
@@ -268,7 +268,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
           <form onSubmit={iniciarSesionAdmin} autoComplete="off" noValidate>
             <input
               type="email"
-              className="form-control mb-3 rounded-0"
+              className="form-control mb-3"
               placeholder="Correo electrónico"
               value={mail}
               disabled={enviando}
@@ -278,7 +278,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
             />
             <input
               type="password"
-              className="form-control mb-3 rounded-0"
+              className="form-control mb-3"
               placeholder="Contraseña"
               value={password}
               disabled={enviando}
@@ -288,7 +288,7 @@ export function PantallaDeVinculacion({ alVinculado }: Props) {
 
             {error && <div className="text-danger text-center mb-3">{error}</div>}
 
-            <button type="submit" className="btn btn-lg btn-success form-control rounded-0" disabled={enviando}>
+            <button type="submit" className="btn btn-lg btn-success form-control" disabled={enviando}>
               {enviando ? 'Ingresando…' : 'Continuar'}
             </button>
           </form>

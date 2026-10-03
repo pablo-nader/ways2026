@@ -239,9 +239,9 @@ export function AppPos() {
 
       {estado.fase === 'error' && (
         <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-          <div role="alert" className="alert alert-danger rounded-0 text-center w-100" style={{ maxWidth: 480 }}>
+          <div role="alert" className="alert alert-danger text-center w-100" style={{ maxWidth: 480 }}>
             <p>{estado.mensaje}</p>
-            <button type="button" className="btn btn-outline-dark rounded-0" onClick={() => void cargarDispositivo()}>
+            <button type="button" className="btn btn-outline-secondary" onClick={() => void cargarDispositivo()}>
               Reintentar
             </button>
           </div>
@@ -250,9 +250,9 @@ export function AppPos() {
 
       {estado.fase === 'sin-red-pero-vinculado' && (
         <div className="d-flex align-items-center justify-content-center min-vh-100 p-3">
-          <div role="alert" className="alert alert-warning rounded-0 text-center w-100" style={{ maxWidth: 480 }}>
+          <div role="alert" className="alert alert-warning text-center w-100" style={{ maxWidth: 480 }}>
             <p>No se pudo conectar con el servidor, pero este equipo ya está vinculado. Revisá la conexión y reintentá.</p>
-            <button type="button" className="btn btn-outline-dark rounded-0" onClick={() => void cargarDispositivo()}>
+            <button type="button" className="btn btn-outline-secondary" onClick={() => void cargarDispositivo()}>
               Reintentar
             </button>
           </div>

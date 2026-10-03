@@ -115,14 +115,14 @@ export function Auditoria() {
     <div className="container-fluid py-4">
       <Box titulo="Auditoría" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
 
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-2">
@@ -132,7 +132,7 @@ export function Auditoria() {
             <input
               id="auditoria-desde"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.desde}
               onChange={(e) => cambiarFiltro({ desde: e.target.value })}
             />
@@ -144,7 +144,7 @@ export function Auditoria() {
             <input
               id="auditoria-hasta"
               type="date"
-              className="form-control rounded-0"
+              className="form-control"
               value={filtros.hasta}
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
@@ -155,7 +155,7 @@ export function Auditoria() {
             </label>
             <select
               id="auditoria-accion"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.accion ?? ''}
               onChange={(e) => cambiarFiltro({ accion: e.target.value === '' ? null : e.target.value })}
             >
@@ -174,7 +174,7 @@ export function Auditoria() {
             <input
               id="auditoria-actor"
               type="number"
-              className="form-control rounded-0"
+              className="form-control"
               placeholder="Id"
               value={filtros.idActor ?? ''}
               onChange={(e) => cambiarFiltro({ idActor: e.target.value === '' ? null : Number(e.target.value) })}
@@ -187,7 +187,7 @@ export function Auditoria() {
             <input
               id="auditoria-entidad"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               placeholder="articulo, usuario…"
               value={filtros.entidad ?? ''}
               onChange={(e) => cambiarEntidad(e.target.value)}
@@ -200,7 +200,7 @@ export function Auditoria() {
             <input
               id="auditoria-id-entidad"
               type="number"
-              className="form-control rounded-0"
+              className="form-control"
               disabled={filtros.entidad === null}
               value={filtros.idEntidad ?? ''}
               onChange={(e) => cambiarFiltro({ idEntidad: e.target.value === '' ? null : Number(e.target.value) })}
@@ -212,7 +212,7 @@ export function Auditoria() {
             </label>
             <select
               id="auditoria-punto-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.idPuntoVenta ?? ''}
               onChange={(e) => cambiarFiltro({ idPuntoVenta: e.target.value === '' ? null : Number(e.target.value) })}
             >
@@ -249,7 +249,7 @@ export function Auditoria() {
           </div>
         </div>
 
-        {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {cargando && !pagina && <Cargando />}
 
@@ -287,7 +287,7 @@ export function Auditoria() {
                         <td>
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-secondary rounded-0"
+                            className="btn btn-sm btn-outline-secondary"
                             onClick={() => alternarDetalle(f)}
                           >
                             {filaExpandidaId === f.idAuditoria ? 'Ocultar' : 'Ver'}
@@ -321,7 +321,7 @@ export function Auditoria() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -329,7 +329,7 @@ export function Auditoria() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >

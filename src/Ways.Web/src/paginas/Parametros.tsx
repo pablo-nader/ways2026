@@ -154,8 +154,8 @@ export function Parametros() {
           es el default de la empresa; uno con punto de venta lo pisa solo para ese local.
         </p>
 
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {empresas === null ? (
           <Cargando />
@@ -170,7 +170,7 @@ export function Parametros() {
                 </label>
                 <select
                   id="p-empresa"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idEmpresa ?? ''}
                   onChange={(e) => setIdEmpresa(Number(e.target.value))}
                 >
@@ -183,7 +183,7 @@ export function Parametros() {
               </div>
             </div>
 
-            <form className="row g-3 border p-3 mb-4 bg-white" onSubmit={establecer}>
+            <form className="row g-3 border p-3 mb-4 bg-body" onSubmit={establecer}>
               <div className="col-12">
                 <strong>Crear o editar un parámetro</strong>
               </div>
@@ -194,7 +194,7 @@ export function Parametros() {
                 </label>
                 <select
                   id="p-clave"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={clave}
                   onChange={(e) => setClave(e.target.value)}
                 >
@@ -213,7 +213,7 @@ export function Parametros() {
                 {conocidoSeleccionado?.tipo === 'texto' ? (
                   <select
                     id="p-valor"
-                    className="form-select rounded-0"
+                    className="form-select"
                     value={valorTexto}
                     onChange={(e) => setValorTexto(e.target.value)}
                     required
@@ -240,7 +240,7 @@ export function Parametros() {
                     id="p-valor"
                     type="number"
                     step={conocidoSeleccionado?.tipo === 'entero' ? '1' : '0.01'}
-                    className="form-control rounded-0"
+                    className="form-control"
                     placeholder={`Default: ${conocidoSeleccionado?.porDefecto}`}
                     value={valorTexto}
                     onChange={(e) => setValorTexto(e.target.value)}
@@ -255,7 +255,7 @@ export function Parametros() {
                 </label>
                 <select
                   id="p-puntoventa"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   onChange={(e) => setIdPuntoVenta(e.target.value)}
                 >
@@ -269,12 +269,12 @@ export function Parametros() {
               </div>
 
               <div className="col-md-2 d-flex align-items-end gap-2">
-                <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+                <button type="submit" className="btn btn-success" disabled={guardando}>
                   {guardando ? 'Guardando…' : 'Guardar'}
                 </button>
                 <button
                   type="button"
-                  className="btn btn-outline-secondary rounded-0"
+                  className="btn btn-outline-secondary"
                   onClick={probarResolucion}
                   disabled={resolviendo}
                 >
@@ -284,7 +284,7 @@ export function Parametros() {
             </form>
 
             {resuelto && (
-              <div className="alert alert-info rounded-0">
+              <div className="alert alert-info">
                 Valor resuelto para «{resuelto.clave}»: <strong>{resuelto.valor}</strong>
               </div>
             )}

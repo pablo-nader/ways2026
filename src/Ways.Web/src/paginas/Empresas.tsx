@@ -15,6 +15,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { ROL } from '../api/tipos'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 type Formulario = { id: number; razonSocial: string; nombreFantasia: string; cuit: string }
 
@@ -207,8 +208,8 @@ export function Empresas() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Empresas" variante="inverse">
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -223,7 +224,7 @@ export function Empresas() {
 
         {formulario && (
           <form
-            className="row g-3 border p-3 mb-4 bg-white"
+            className="row g-3 border p-3 mb-4 bg-body"
             onSubmit={(e) => {
               e.preventDefault()
               guardar()
@@ -238,7 +239,7 @@ export function Empresas() {
               </label>
               <input
                 id="e-razon"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={formulario.razonSocial}
                 onChange={(e) => setFormulario({ ...formulario, razonSocial: e.target.value })}
@@ -252,7 +253,7 @@ export function Empresas() {
               </label>
               <input
                 id="e-fantasia"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={formulario.nombreFantasia}
                 onChange={(e) => setFormulario({ ...formulario, nombreFantasia: e.target.value })}
@@ -265,7 +266,7 @@ export function Empresas() {
               </label>
               <input
                 id="e-cuit"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={13}
                 value={formulario.cuit}
                 onChange={(e) => setFormulario({ ...formulario, cuit: e.target.value })}
@@ -273,12 +274,12 @@ export function Empresas() {
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+              <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 onClick={() => setFormulario(null)}
                 disabled={bloqueado}
               >
@@ -303,7 +304,7 @@ export function Empresas() {
                   </label>
                   <select
                     id="e-filtro-tenant"
-                    className="form-select rounded-0"
+                    className="form-select"
                     value={tenantVigente}
                     onChange={(e) => setFiltroTenant(e.target.value)}
                     disabled={bloqueado}
@@ -340,9 +341,9 @@ export function Empresas() {
                       <td>{e.nombreFantasia ?? '—'}</td>
                       <td>{e.cuit ?? '—'}</td>
                       <td className="text-end text-nowrap">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        <BotonIcono
+                          icono="editar"
+                          className="me-1"
                           onClick={() =>
                             setFormulario({
                               id: e.id,
@@ -352,17 +353,12 @@ export function Empresas() {
                             })
                           }
                           disabled={bloqueado}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-danger rounded-0"
+                        />
+                        <BotonIcono
+                          icono="eliminar"
                           onClick={(evento) => pedirBaja(e, evento.currentTarget)}
                           disabled={bloqueado}
-                        >
-                          Baja
-                        </button>
+                        />
                       </td>
                     </tr>
                   ))}

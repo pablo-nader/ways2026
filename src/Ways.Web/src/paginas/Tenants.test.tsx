@@ -157,7 +157,7 @@ describe('Tenants (stage-20, slice 2 — contadores de hijos)', () => {
 
 function botonDeBaja(nombre: string) {
   return within(screen.getByRole('row', { name: new RegExp(nombre) })).getByRole('button', {
-    name: 'Baja',
+    name: 'Eliminar',
   })
 }
 
@@ -262,7 +262,7 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
 
     expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    for (const boton of [...screen.getAllByRole('button', { name: 'Editar' }), ...screen.getAllByRole('button', { name: 'Baja' })]) {
+    for (const boton of [...screen.getAllByRole('button', { name: 'Editar' }), ...screen.getAllByRole('button', { name: 'Eliminar' })]) {
       expect(boton).toBeDisabled()
     }
 
@@ -273,14 +273,14 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
 
     await waitFor(() => expect(screen.getByText('Se dio de baja el tenant "Comercio Sur".')).toBeInTheDocument())
     expect(screen.getByText('Cargando…')).toBeInTheDocument()
-    expect(screen.queryAllByRole('button', { name: 'Baja' })).toHaveLength(0)
+    expect(screen.queryAllByRole('button', { name: 'Eliminar' })).toHaveLength(0)
 
     await act(async () => {
       resolverRefresco([tenantDos])
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Baja' })[0]).toBeEnabled())
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Eliminar' })[0]).toBeEnabled())
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
@@ -430,7 +430,7 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
       ...screen.getAllByRole('button', { name: 'Suspender' }),
       ...screen.getAllByRole('button', { name: 'Reactivar' }),
       ...screen.getAllByRole('button', { name: 'Guardar' }),
@@ -611,7 +611,7 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     // Suspender no borra nada: la nota de la baja lógica no puede colarse.
     expect(puerta).not.toHaveTextContent(/baja es lógica/)
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Eliminar' })).toBeDisabled()
 
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/plataforma/tenants') return Promise.resolve([{ ...tenantUno, estado: 'Suspendido' }])

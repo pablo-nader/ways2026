@@ -1,7 +1,7 @@
 namespace Ways.IntegrationTests;
 
-/// <summary>El día calendario del negocio (Argentina). El servidor valida fechas contra este día,
-/// no contra el día UTC: entre las 21 y las 24 hora local, el día UTC ya es el siguiente.</summary>
+/// <summary>El día calendario según la zona sembrada del negocio: entre las 21 y las 24 de
+/// Buenos Aires el día UTC ya es mañana y el servidor lo rechaza como fecha futura.</summary>
 internal static class FechaDelNegocio
 {
     private static readonly TimeZoneInfo Zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");

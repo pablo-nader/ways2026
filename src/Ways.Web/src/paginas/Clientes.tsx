@@ -15,6 +15,7 @@ import type {
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 type Formulario = {
   id: number | null
@@ -190,7 +191,7 @@ export function Clientes() {
     <nav className="p-2 d-flex gap-2">
       <input
         type="search"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar por nombre, apellido, razón social o documento…"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
@@ -198,30 +199,28 @@ export function Clientes() {
       />
       <button
         type="button"
-        className="btn btn-sm btn-outline-light rounded-0"
+        className="btn btn-sm btn-outline-secondary"
         onClick={() => cargar(busqueda)}
       >
         Buscar
       </button>
-      <button
-        type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+      <BotonIcono
+        icono="agregar"
+        className="text-nowrap"
         onClick={() => {
           setFormulario(formularioVacio(idListaPorDefecto))
           setAviso('')
           setError('')
         }}
-      >
-        Nuevo
-      </button>
+      />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Clientes" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {formulario && (
           <FormularioCliente
@@ -259,7 +258,7 @@ export function Clientes() {
                       {[c.nombre, c.apellido].filter(Boolean).join(' ')}
                       {c.razonSocial && <div className="text-muted small">{c.razonSocial}</div>}
                       {c.esConsumidorFinal && (
-                        <span className="badge rounded-0 text-bg-secondary ms-1">Protegido</span>
+                        <span className="badge text-bg-secondary ms-1">Protegido</span>
                       )}
                     </td>
                     <td>
@@ -268,7 +267,7 @@ export function Clientes() {
                     <td>{c.telefono ?? c.celular ?? '—'}</td>
                     <td>{c.email ?? '—'}</td>
                     <td>
-                      <span className={`badge rounded-0 ${c.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                      <span className={`badge ${c.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {c.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
@@ -277,15 +276,15 @@ export function Clientes() {
                           estado de cuenta — el cliente lo identifica la URL, la fila lo pasa por
                           state para no pagar un GET extra por el nombre a mostrar. */}
                       <Link
-                        className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                        className="btn btn-sm btn-outline-secondary me-1"
                         to={`/clientes/${c.id}/cuenta-corriente`}
                         state={{ cliente: c }}
                       >
                         Estado de cuenta
                       </Link>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                      <BotonIcono
+                        icono="editar"
+                        className="me-1"
                         disabled={c.esConsumidorFinal}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede editar.' : undefined}
                         onClick={() => {
@@ -293,18 +292,13 @@ export function Clientes() {
                           setAviso('')
                           setError('')
                         }}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                      />
+                      <BotonIcono
+                        icono="eliminar"
                         disabled={c.esConsumidorFinal}
                         title={c.esConsumidorFinal ? 'El Consumidor Final no se puede eliminar.' : undefined}
                         onClick={() => eliminar(c)}
-                      >
-                        Baja
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -345,7 +339,7 @@ function FormularioCliente({
 
   return (
     <form
-      className="row g-3 border p-3 mb-4 bg-white"
+      className="row g-3 border p-3 mb-4 bg-body"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault()
@@ -362,7 +356,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-nombre"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.nombre}
           onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
@@ -376,7 +370,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-apellido"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.apellido}
           onChange={(e) => onCambio({ ...valor, apellido: e.target.value })}
@@ -389,7 +383,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-razon-social"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.razonSocial}
           onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
@@ -402,7 +396,7 @@ function FormularioCliente({
         </label>
         <select
           id="c-condicion-fiscal"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.idCondicionFiscal}
           onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
           required
@@ -424,7 +418,7 @@ function FormularioCliente({
         </label>
         <select
           id="c-tipo-documento"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.tipoDocumento}
           onChange={(e) => onCambio({ ...valor, tipoDocumento: e.target.value as Formulario['tipoDocumento'] })}
         >
@@ -443,7 +437,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-numero-documento"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={30}
           value={valor.numeroDocumento}
           onChange={(e) => onCambio({ ...valor, numeroDocumento: e.target.value })}
@@ -457,7 +451,7 @@ function FormularioCliente({
         <input
           id="c-nacimiento"
           type="date"
-          className="form-control rounded-0"
+          className="form-control"
           value={valor.nacimiento}
           onChange={(e) => onCambio({ ...valor, nacimiento: e.target.value })}
         />
@@ -469,7 +463,7 @@ function FormularioCliente({
         </label>
         <select
           id="c-lista-precio"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.idListaPrecio}
           onChange={(e) => onCambio({ ...valor, idListaPrecio: Number(e.target.value) })}
           required
@@ -492,7 +486,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-domicilio"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={255}
           value={valor.domicilio}
           onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
@@ -505,7 +499,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-telefono"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           value={valor.telefono}
           onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
@@ -518,7 +512,7 @@ function FormularioCliente({
         </label>
         <input
           id="c-celular"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           value={valor.celular}
           onChange={(e) => onCambio({ ...valor, celular: e.target.value })}
@@ -532,7 +526,7 @@ function FormularioCliente({
         <input
           id="c-email"
           type="email"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={255}
           value={valor.email}
           onChange={(e) => onCambio({ ...valor, email: e.target.value })}
@@ -545,7 +539,7 @@ function FormularioCliente({
         </label>
         <textarea
           id="c-observaciones"
-          className="form-control rounded-0"
+          className="form-control"
           rows={2}
           value={valor.observaciones}
           onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
@@ -562,7 +556,7 @@ function FormularioCliente({
         </label>
         <CampoImporte
           id="c-limite-credito"
-          className="form-control rounded-0"
+          className="form-control"
           valor={valor.limiteCredito}
           disabled={valor.creditoIlimitado}
           onChange={(limiteCredito) => onCambio({ ...valor, limiteCredito })}
@@ -574,7 +568,7 @@ function FormularioCliente({
           <input
             id="c-credito-ilimitado"
             type="checkbox"
-            className="form-check-input rounded-0"
+            className="form-check-input"
             checked={valor.creditoIlimitado}
             onChange={(e) => onCambio({ ...valor, creditoIlimitado: e.target.checked })}
           />
@@ -589,7 +583,7 @@ function FormularioCliente({
           <input
             id="c-activo"
             type="checkbox"
-            className="form-check-input rounded-0"
+            className="form-check-input"
             checked={valor.activo}
             onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
           />
@@ -600,12 +594,12 @@ function FormularioCliente({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+        <button type="submit" className="btn btn-success" disabled={guardando}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={guardando}
         >
