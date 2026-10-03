@@ -515,7 +515,9 @@ public class ServicioDeArticulos(
     /// <see cref="CodigoBarra"/>/<see cref="ArticuloEmpresa"/> asociados quedan como están —
     /// sin cascada, mismo criterio que <see cref="Proveedores.ServicioDeProveedores.EliminarAsync"/>
     /// (sin guard de fila protegida a diferencia de clientes: artículos no tiene un equivalente
-    /// al Consumidor Final).
+    /// al Consumidor Final). La única excepción son los <see cref="CodigoProveedor"/> vivos del
+    /// artículo: se dan de baja en la misma transacción para liberar el par (proveedor, código)
+    /// del índice único parcial.
     ///
     /// La paridad con esa baja de proveedores era declarativa y ahora es real: allá el lock de fila
     /// se toma ANTES de cargar la entidad y acá no se tomaba ninguno, así que dos bajas concurrentes
@@ -539,6 +541,13 @@ public class ServicioDeArticulos(
             var ahora = reloj.Ahora;
             articulo.DeletedAt = ahora;
             articulo.UpdatedAt = ahora;
+
+            var codigosProveedor = await db.CodigosProveedor.Where(c => c.IdArticulo == id).ToListAsync(ct);
+            foreach (var codigoProveedor in codigosProveedor)
+            {
+                codigoProveedor.DeletedAt = ahora;
+                codigoProveedor.UpdatedAt = ahora;
+            }
 
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);

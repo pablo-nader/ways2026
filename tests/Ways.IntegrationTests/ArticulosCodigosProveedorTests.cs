@@ -307,6 +307,51 @@ public class ArticulosCodigosProveedorTests(WaysApiFixture fixture) : IClassFixt
         Assert.Empty(await BuscarAsync(c.Admin, "ART-BAJA", c.IdProveedor));
     }
 
+    /// <summary>Cláusula bajo prueba: la baja del artículo da de baja SUS códigos de proveedor (y solo
+    /// los suyos). Sin la cascada, el par (proveedor, código) quedaría ocupado por un artículo
+    /// invisible y reutilizarlo devolvería 409.</summary>
+    [Fact]
+    public async Task LaBajaDelArticuloDaDeBajaSusCodigosYLiberaElParParaOtroArticulo()
+    {
+        var c = await PrepararAsync(nameof(LaBajaDelArticuloDaDeBajaSusCodigosYLiberaElParParaOtroArticulo));
+        using var _ = c.Admin;
+        var viejo = await c.Admin.PostAsJsonAsync("/api/articulos", Alta(c, "Viejo", "LIBERA-1", c.IdProveedor));
+        Assert.Equal(HttpStatusCode.Created, viejo.StatusCode);
+        var idViejo = (await viejo.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.Id;
+        Assert.Equal(HttpStatusCode.Created, (await AsociarAsync(c.Admin, idViejo, c.IdProveedor, "LIBERA-2")).StatusCode);
+        var hermano = await CrearArticuloAsync(c, "Hermano");
+        await AsociarAsync(c.Admin, hermano.Id, c.IdProveedor, "HERMANO-1");
+
+        Assert.Equal(HttpStatusCode.NoContent, (await c.Admin.DeleteAsync($"/api/articulos/{idViejo}")).StatusCode);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var consulta = cruda.CreateCommand();
+        consulta.CommandText =
+            "SELECT id_articulo, codigo, deleted_at IS NOT NULL FROM codigos_proveedor " +
+            "WHERE id_tenant = $1 ORDER BY codigo";
+        consulta.Parameters.Add(new NpgsqlParameter { Value = c.IdTenant });
+        var filas = new List<(int IdArticulo, string Codigo, bool DadoDeBaja)>();
+        await using (var lector = await consulta.ExecuteReaderAsync())
+        {
+            while (await lector.ReadAsync())
+            {
+                filas.Add((lector.GetInt32(0), lector.GetString(1), lector.GetBoolean(2)));
+            }
+        }
+
+        Assert.Equal(
+            [(hermano.Id, "HERMANO-1", false), (idViejo, "LIBERA-1", true), (idViejo, "LIBERA-2", true)],
+            filas);
+
+        var porAlta = await c.Admin.PostAsJsonAsync("/api/articulos", Alta(c, "Nuevo por alta", "LIBERA-1", c.IdProveedor));
+        Assert.Equal(HttpStatusCode.Created, porAlta.StatusCode);
+
+        var otro = await CrearArticuloAsync(c, "Nuevo por asociación");
+        Assert.Equal(HttpStatusCode.Created, (await AsociarAsync(c.Admin, otro.Id, c.IdProveedor, "LIBERA-2")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Conflict, (await AsociarAsync(c.Admin, otro.Id, c.IdProveedor, "HERMANO-1")).StatusCode);
+    }
+
     [Fact]
     public async Task ElFiltroDeEmpresaSigueAplicandoALosCoincidentesPorCodigo()
     {
