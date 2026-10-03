@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { estaEnRangoSoportado, formatearImporte, formatearImporteConSigno, parsearImporte, redondearImporte } from './importes'
+import {
+  estaEnRangoSoportado,
+  formatearImporte,
+  formatearImporteConSigno,
+  parsearImporte,
+  productoRedondeado,
+  redondearImporte,
+} from './importes'
 
 describe('formatearImporte', () => {
   const casos: Array<[number, string]> = [
@@ -142,6 +149,66 @@ describe('redondearImporte', () => {
   it('respeta `decimales`', () => {
     expect(redondearImporte(1234.5, 0)).toBe(1235)
     expect(redondearImporte(1234.5678, 3)).toBe(1234.568)
+  })
+})
+
+describe('productoRedondeado', () => {
+  // Cada fila es un empate exacto de medio centavo cuyo producto flotante cae por DEBAJO del
+  // empate (0,7 × 1,15 = 0,8049999999999999): redondear ese flotante daría un centavo de menos.
+  const empatesQueElFlotantePierde: Array<[number[], number]> = [
+    [[0.7, 1.15], 0.81],
+    [[0.1, 0.35], 0.04],
+    [[3, 0.075], 0.23],
+    [[0.3, 2.05], 0.62],
+    [[0.7, 3.35], 2.35],
+  ]
+
+  it.each(empatesQueElFlotantePierde)('%j da %s: el decimal exacto sube el empate', (factores, esperado) => {
+    expect(productoRedondeado(factores)).toBe(esperado)
+  })
+
+  it('los casos anteriores discriminan: con productos flotantes, redondearImporte da un centavo menos', () => {
+    for (const [[a, b], esperado] of empatesQueElFlotantePierde) {
+      expect(redondearImporte(a * b)).toBe(Math.round(esperado * 100 - 1) / 100)
+    }
+  })
+
+  it('un porcentaje entra como factor 0.01: 4,10 × 15 × 0,01 = 0,615 sube a 0,62', () => {
+    expect(productoRedondeado([4.1, 15, 0.01])).toBe(0.62)
+    expect(redondearImporte((4.1 * 15) / 100)).toBe(0.61)
+  })
+
+  it('redondea half-away-from-zero: el signo del producto no cambia la dirección del empate', () => {
+    expect(productoRedondeado([-0.7, 1.15])).toBe(-0.81)
+    expect(productoRedondeado([0.7, -1.15])).toBe(-0.81)
+    expect(productoRedondeado([-0.7, -1.15])).toBe(0.81)
+  })
+
+  it('lo que no llega a medio centavo trunca, y nunca devuelve -0', () => {
+    expect(productoRedondeado([0.7, 1.14])).toBe(0.8)
+    const casiCero = productoRedondeado([-0.001, 1])
+    expect(casiCero).toBe(0)
+    expect(Object.is(casiCero, -0)).toBe(false)
+  })
+
+  it('admite cualquier cantidad de decimales por factor, también en notación exponencial', () => {
+    // 0,3333 × 3 = 0,9999; 5e-7 × 10000 = 0,005 exacto.
+    expect(productoRedondeado([0.3333, 3])).toBe(1)
+    expect(productoRedondeado([0.123456789, 100])).toBe(12.35)
+    expect(productoRedondeado([5e-7, 10000])).toBe(0.01)
+    expect(productoRedondeado([4e-7, 10000])).toBe(0)
+  })
+
+  it('un producto con menos decimales de los pedidos queda como está, y `decimales` se respeta', () => {
+    expect(productoRedondeado([2, 3.5])).toBe(7)
+    expect(productoRedondeado([1.5, 1.5], 0)).toBe(2)
+    expect(productoRedondeado([0.5, 1], 0)).toBe(1)
+    expect(productoRedondeado([1.2345, 2], 3)).toBe(2.469)
+  })
+
+  it('un factor no finito devuelve NaN', () => {
+    expect(Number.isNaN(productoRedondeado([1, Number.NaN]))).toBe(true)
+    expect(Number.isNaN(productoRedondeado([Number.POSITIVE_INFINITY, 2]))).toBe(true)
   })
 })
 

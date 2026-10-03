@@ -79,6 +79,22 @@ describe('construirComprobanteOfflineSintetico', () => {
     expect(comprobante).toMatchObject({ subtotal: 450, descuentoTotal: 90, total: 360 })
   })
 
+  it('un bruto que es empate exacto de medio centavo sube como en el servidor: 0,7 × 1,15 = 0,81, no 0,80', () => {
+    const comprobante = construir({
+      numero: 7,
+      numeroVisible: '0007-00000007',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad: 0.7 })],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 1.15, precioFinal: 1.15, descuentoUnitario: 0 })]),
+      pagos: [{ idMedioPago: 1, importe: 0.81, referencia: null, vuelto: 0 }],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 0.7, precioUnitario: 1.15, descuento: 0, total: 0.81 })
+    expect(comprobante).toMatchObject({ subtotal: 0.81, descuentoTotal: 0, total: 0.81 })
+  })
+
   it('suma correctamente varias líneas con valores discriminantes (nunca confunde una línea con otra)', () => {
     const comprobante = construir({
       numero: 7,

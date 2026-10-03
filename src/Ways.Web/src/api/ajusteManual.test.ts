@@ -33,7 +33,7 @@ describe('calcularAjusteManual', () => {
   })
 
   it('redondea half-away-from-zero: un empate exacto sube en valor absoluto, con ambos signos', () => {
-    // 10,05 × 10 % = 1,005 exacto; en punto flotante 10,05 × 10 / 100 queda en 1,00499…
+    // 10,05 × 10 % = 1,005 exacto
     expect(calcularAjusteManual(10.05, 10)).toBe(1.01)
     expect(calcularAjusteManual(10.05, -10)).toBe(-1.01)
     // 0,50 × 1 % = 0,005
@@ -42,6 +42,20 @@ describe('calcularAjusteManual', () => {
     // 33,33 × 15 % = 4,9995
     expect(calcularAjusteManual(33.33, 15)).toBe(5)
     expect(calcularAjusteManual(33.33, -15)).toBe(-5)
+  })
+
+  // Empates exactos en los que `neto * porcentaje / 100` en punto flotante cae por DEBAJO del medio
+  // centavo y redondea para el otro lado que el servidor (que calcula en decimal): 4,10 × 15 % es
+  // 0,615 exacto pero el producto flotante da 0,6149999999999999. Los casos de arriba no los
+  // distinguen: la fórmula flotante también da 1,005, 0,005 y 4,9995 en ellos.
+  it.each([
+    [4.1, 0.62],
+    [16.9, 2.54],
+    [33.3, 5],
+    [68.1, 10.22],
+  ])('un empate que el punto flotante pierde: %s × 15 % da %s, y el espejo negativo su opuesto', (neto, esperado) => {
+    expect(calcularAjusteManual(neto, 15)).toBe(esperado)
+    expect(calcularAjusteManual(neto, -15)).toBe(-esperado)
   })
 
   it('lo que no llega a medio centavo redondea a 0 y nunca a -0', () => {
@@ -88,6 +102,40 @@ describe('calcularTotalesDeLinea', () => {
     expect(totales.descuento).toBe(0.08)
     expect(totales.neto).toBe(3.42)
     expect(totales.total).toBe(3.42)
+  })
+
+  // El servidor calcula en decimal. 0,7 × 1,15 es 0,805 exacto y sube a 0,81, pero el producto
+  // flotante da 0,8049999999999999 y se redondeaba a 0,80: un centavo de diferencia en el importe
+  // que el cajero ve contra el que cobra el servidor.
+  it('el bruto es el producto decimal exacto: un empate de medio centavo sube aunque el producto flotante quede por debajo', () => {
+    expect(0.7 * 1.15).toBeLessThan(0.805)
+    const totales = calcularTotalesDeLinea({ cantidad: 0.7, precioOriginal: 1.15, descuentoUnitario: 0, porcentaje: null })
+    expect(totales.bruto).toBe(0.81)
+    expect(totales.neto).toBe(0.81)
+    expect(totales.total).toBe(0.81)
+  })
+
+  it('el descuento por oferta es el producto decimal exacto, también con más de 2 decimales por unidad', () => {
+    // 0,075 × 3 = 0,225 exacto → 0,23; el producto flotante da 0,22499999999999998.
+    expect(0.075 * 3).toBeLessThan(0.225)
+    const totales = calcularTotalesDeLinea({ cantidad: 3, precioOriginal: 10, descuentoUnitario: 0.075, porcentaje: null })
+    expect(totales.bruto).toBe(30)
+    expect(totales.descuento).toBe(0.23)
+    expect(totales.neto).toBe(29.77)
+  })
+
+  it('un descuento por unidad de 4 decimales se redondea una sola vez, sobre el producto de la línea', () => {
+    // 0,3333 × 3 = 0,9999 → 1,00 (redondear antes el descuento unitario daría 0,33 × 3 = 0,99).
+    const totales = calcularTotalesDeLinea({ cantidad: 3, precioOriginal: 10, descuentoUnitario: 0.3333, porcentaje: null })
+    expect(totales.descuento).toBe(1)
+    expect(totales.neto).toBe(29)
+  })
+
+  it('en una misma línea el bruto, el descuento y el ajuste son exactos: los tres empates suben un centavo', () => {
+    // bruto 0,7 × 3,35 = 2,345 → 2,35; descuento 0,35 × 0,7 = 0,245 → 0,25; neto 2,10;
+    // ajuste 2,10 × 15 % = 0,315 → 0,32. Con productos flotantes el bruto da 2,34 y el descuento 0,24.
+    const totales = calcularTotalesDeLinea({ cantidad: 0.7, precioOriginal: 3.35, descuentoUnitario: 0.35, porcentaje: 15 })
+    expect(totales).toEqual({ bruto: 2.35, descuento: 0.25, neto: 2.1, ajuste: 0.32, total: 2.42 })
   })
 
   it('el neto no arrastra ruido de punto flotante', () => {

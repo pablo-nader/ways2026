@@ -1,11 +1,14 @@
 /**
  * Ajuste manual de precio por línea (porcentaje con signo: negativo = descuento, positivo =
- * recargo). Todo puro y sin DOM: es la única fuente de la cuenta que comparten la vista previa del
- * carrito, el comprobante sintético de una venta offline y las plantillas, para que ninguno pueda
- * divergir del otro. El servidor recalcula el monto con la misma fórmula y es quien manda; acá solo
- * se anticipa lo que va a cobrar.
+ * recargo). Todo puro y sin DOM. La cuenta (`calcularTotalesDeLinea`, `totalesDeAjusteManual`) es
+ * la única fuente que comparten la vista previa del carrito y el comprobante sintético de una venta
+ * offline, para que ninguno pueda divergir del otro; la validación del texto que tipea el cajero y
+ * los rótulos del porcentaje viven acá también. Las plantillas de impresión usan solo los rótulos
+ * y el formato del porcentaje (`rotuloDeAjusteManual`, `formatearPorcentajeDeAjuste`), nunca la
+ * cuenta: imprimen los montos que ya trae el comprobante. El servidor recalcula cada monto con la
+ * misma fórmula, en decimal, y es quien manda; acá solo se anticipa lo que va a cobrar.
  */
-import { redondearImporte } from '../formato/importes'
+import { productoRedondeado, redondearImporte } from '../formato/importes'
 
 /** Magnitud máxima admitida del porcentaje (el rango válido es de -100 a 100, sin incluir el 0). */
 export const PORCENTAJE_MAXIMO_DE_AJUSTE = 100
@@ -26,29 +29,29 @@ export type TotalesDeLinea = {
 }
 
 /**
- * Monto del ajuste sobre `neto`, redondeado half-away-from-zero a 2 decimales. Opera sobre enteros
- * (centavos × centésimas de punto porcentual) y recién divide al final: `neto × porcentaje / 100`
- * en punto flotante puede caer apenas por debajo de un empate exacto (p. ej. 1,005) y redondear
- * para el otro lado que el servidor, que calcula en decimal. `neto` y `porcentaje` llegan con 2
- * decimales como máximo (el validador de entrada lo garantiza).
+ * Monto del ajuste sobre `neto` (`neto × porcentaje / 100`), redondeado half-away-from-zero a 2
+ * decimales con aritmética decimal exacta (`productoRedondeado`): dividir por 100 en punto
+ * flotante pierde empates exactos (4,10 × 15 % es 0,615 y el flotante da 0,6149999999999999), y
+ * el servidor, que calcula en decimal, redondea el empate hacia arriba. El 100 entra como el
+ * factor `0.01`, que es exacto en decimal.
  */
 export function calcularAjusteManual(neto: number, porcentaje: number | null | undefined): number {
   if (porcentaje === null || porcentaje === undefined) return 0
-  const centavos = Math.round(neto * 100)
-  const centesimas = Math.round(porcentaje * 100)
-  return redondearImporte((centavos * centesimas) / 1_000_000)
+  return productoRedondeado([neto, porcentaje, 0.01])
 }
 
 /** Fórmula de línea del servidor (`CalculadorDeTotales`): cada paso se redondea a 2 decimales
- * antes de pasar al siguiente, y el ajuste se aplica sobre el neto POSTERIOR a las ofertas. */
+ * antes de pasar al siguiente, y el ajuste se aplica sobre el neto POSTERIOR a las ofertas. El
+ * bruto y el descuento son productos decimales exactos (`productoRedondeado`), con cualquier
+ * cantidad de decimales por unidad. */
 export function calcularTotalesDeLinea(params: {
   cantidad: number
   precioOriginal: number
   descuentoUnitario: number
   porcentaje: number | null | undefined
 }): TotalesDeLinea {
-  const bruto = redondearImporte(params.cantidad * params.precioOriginal)
-  const descuento = redondearImporte(params.descuentoUnitario * params.cantidad)
+  const bruto = productoRedondeado([params.cantidad, params.precioOriginal])
+  const descuento = productoRedondeado([params.descuentoUnitario, params.cantidad])
   const neto = redondearImporte(bruto - descuento)
   const ajuste = calcularAjusteManual(neto, params.porcentaje)
   return { bruto, descuento, neto, ajuste, total: redondearImporte(neto + ajuste) }

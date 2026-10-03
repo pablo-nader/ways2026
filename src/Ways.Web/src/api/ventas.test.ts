@@ -143,6 +143,12 @@ describe('previaDeLinea', () => {
     expect(previaDeLinea(linea, resultado).total).toBe(3.5)
   })
 
+  it('un bruto que es empate exacto de medio centavo sube como en el servidor: 0,7 × 1,15 = 0,81, no 0,80', () => {
+    const resultado = resultadoFixture({ precioOriginal: 1.15, precioFinal: 1.15, descuentoUnitario: 0 })
+
+    expect(previaDeLinea(lineaFixture({ cantidad: 0.7 }), resultado).total).toBe(0.81)
+  })
+
   it('sin precioOriginal reconstruye el precio de lista como precioFinal + descuentoUnitario', () => {
     const linea = lineaFixture({ cantidad: 2, ajusteManualPorcentaje: -50 })
     const resultado = resultadoFixture({ precioOriginal: null, precioFinal: 90, descuentoUnitario: 10 })
