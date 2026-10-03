@@ -115,7 +115,11 @@ public sealed record PercepcionDeCompraDetalle(string Tipo, decimal Alicuota, de
 /// <see cref="IdOrdenCompra"/> — stage-16-ordenes-de-compra, Slice 3 (conflicto #4 de tasks.md,
 /// `state.yaml` OD8/T7): corrige el "no response shape changes" original del proposal bajo
 /// `dto-contract-honesty` regla 2 — un campo request-only no puede satisfacer la aserción de
-/// round-trip (task 3.16).</summary>
+/// round-trip (task 3.16).
+///
+/// <see cref="Pagado"/> y <see cref="SaldoPendiente"/> salen de <c>LectorDePagadoPorCompra</c> y de
+/// <c>ReglaDePagoDeCompra</c>; son datos de encabezado (como <see cref="Total"/>), no de costo, así
+/// que los ve también el vendedor. El saldo pendiente es cero fuera de una compra confirmada.</summary>
 public sealed record CompraDetalle(
     int Id,
     int IdProveedor,
@@ -135,11 +139,15 @@ public sealed record CompraDetalle(
     bool DiscriminaIva,
     IReadOnlyList<AlicuotaDeCompra> Alicuotas,
     bool PreciosIncluyenIva,
-    IReadOnlyList<PercepcionDeCompraDetalle> Percepciones);
+    IReadOnlyList<PercepcionDeCompraDetalle> Percepciones,
+    decimal Pagado,
+    decimal SaldoPendiente);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve
-/// <c>ServicioDeSaldoDeProveedor</c> (Slice 4) — <c>null</c> en esta slice.</summary>
+/// <c>ServicioDeSaldoDeProveedor</c> (Slice 4) — <c>null</c> en esta slice. <see cref="SaldoPendiente"/>
+/// es lo que falta pagar de la compra (cero si no está confirmada): el selector de "vincular gasto
+/// a compra" lo muestra para no ofrecer una compra ya saldada como si debiera algo.</summary>
 public sealed record CompraListada(
     int Id,
     int IdProveedor,
@@ -147,7 +155,8 @@ public sealed record CompraListada(
     string? NumeroExterno,
     EstadoCompra Estado,
     DateTimeOffset? FechaRecepcion,
-    decimal Total);
+    decimal Total,
+    decimal SaldoPendiente);
 
 /// <summary>Página de resultados de <c>GET /api/compras</c> — mismo shape que
 /// <c>PaginaDeVentas</c>/<c>PaginaDeGastos</c>.</summary>

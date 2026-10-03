@@ -62,7 +62,9 @@ public class ServicioDeCompras(
             .Where(x => x.IdComprobanteCompra == id)
             .ToListAsync(ct);
 
-        return Proyectar(comprobante, items, alicuotas, percepciones);
+        var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [id], ct)).GetValueOrDefault(id, 0m);
+
+        return Proyectar(comprobante, items, alicuotas, percepciones, pagado);
     }
 
     public async Task<PaginaDeCompras> ListarAsync(
@@ -86,10 +88,10 @@ public class ServicioDeCompras(
             .OrderByDescending(c => c.Id)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
             .ToListAsync(ct);
 
-        return new PaginaDeCompras(items, total, pagina, tamanio);
+        return new PaginaDeCompras(await ConSaldoPendienteAsync(items, ct), total, pagina, tamanio);
     }
 
     /// <summary>stage-11-exportacion-reportes (Slice 3, design decisión 7): mismo criterio que
@@ -114,12 +116,27 @@ public class ServicioDeCompras(
         var items = await query
             .OrderByDescending(c => c.Id)
             .Take(topeDeFilas + 1)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total, 0m))
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(items.Count, topeDeFilas);
 
-        return items;
+        return await ConSaldoPendienteAsync(items, ct);
+    }
+
+    /// <summary>Completa el saldo pendiente de una página ya leída con UNA consulta de pagado para
+    /// todas sus compras confirmadas (nunca una por fila).</summary>
+    private async Task<List<CompraListada>> ConSaldoPendienteAsync(List<CompraListada> items, CancellationToken ct)
+    {
+        var idsConfirmadas = items.Where(c => c.Estado == EstadoCompra.Confirmada).Select(c => c.Id).ToList();
+        var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(db, idsConfirmadas, ct);
+
+        return items
+            .Select(c => c with
+            {
+                SaldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagadoPorCompra.GetValueOrDefault(c.Id, 0m))
+            })
+            .ToList();
     }
 
     /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
@@ -226,7 +243,7 @@ public class ServicioDeCompras(
         db.PercepcionesComprobanteCompra.AddRange(percepcionesEntidad);
         await db.SaveChangesAsync(ct);
 
-        return Proyectar(comprobante, itemsEntidad, alicuotasEntidad, percepcionesEntidad);
+        return Proyectar(comprobante, itemsEntidad, alicuotasEntidad, percepcionesEntidad, pagado: 0m);
     }
 
     /// <summary>Design decisión 2: replace-set completo bajo <c>SELECT … FOR UPDATE … WHERE
@@ -325,7 +342,7 @@ public class ServicioDeCompras(
         await db.SaveChangesAsync(ct);
         await transaccion.CommitAsync(ct);
 
-        return Proyectar(comprobante, itemsNuevos, alicuotasNuevas, percepcionesNuevas);
+        return Proyectar(comprobante, itemsNuevos, alicuotasNuevas, percepcionesNuevas, pagado: 0m);
     }
 
     // ---- confirmar (design: Transactions — CONFIRMAR COMPRA) --------------------------------------
@@ -1386,7 +1403,8 @@ public class ServicioDeCompras(
 
     private CompraDetalle Proyectar(
         ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items,
-        IReadOnlyList<AlicuotaComprobanteCompra> alicuotas, IReadOnlyList<PercepcionComprobanteCompra> percepciones) => new(
+        IReadOnlyList<AlicuotaComprobanteCompra> alicuotas, IReadOnlyList<PercepcionComprobanteCompra> percepciones,
+        decimal pagado) => new(
         comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,
         comprobante.NumeroExterno, comprobante.FechaComprobante, comprobante.FechaRecepcion,
         comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.IvaTotal, comprobante.Total,
@@ -1411,5 +1429,7 @@ public class ServicioDeCompras(
             .OrderBy(x => x.Tipo, StringComparer.Ordinal)
             .Select(x => new PercepcionDeCompraDetalle(
                 x.Tipo, x.Alicuota, PuedeVerCostos ? x.BaseImponible : null, PuedeVerCostos ? x.Importe : null))
-            .ToList());
+            .ToList(),
+        pagado,
+        ReglaDePagoDeCompra.SaldoPendiente(comprobante.Estado, comprobante.Total, pagado));
 }

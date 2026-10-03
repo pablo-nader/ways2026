@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
-using Ways.Domain.CuentaCorriente;
 
 namespace Ways.Application.Compras;
 
@@ -38,29 +37,12 @@ public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
 
         var idsCompras = compras.Select(c => c.Id).ToList();
 
-        // Primer término de OD7 — el mecanismo retirado, verbatim: SUM(gastos.importe) por
-        // id_comprobante_compra, SIN filtro de categoria acá (distinto del predicado que escribe
-        // el movimiento 'pago' en ServicioDeGastos — ese sí filtra categoria = proveedor). Acotado
-        // a las compras de ESTE proveedor por índice (ix_gastos_comprobante_compra).
-        var pagadoPorGastos = await db.Gastos
-            .Where(g => g.IdComprobanteCompra != null && idsCompras.Contains(g.IdComprobanteCompra.Value))
-            .GroupBy(g => g.IdComprobanteCompra!.Value)
-            .Select(grupo => new { IdComprobanteCompra = grupo.Key, Total = grupo.Sum(g => g.Importe) })
-            .ToDictionaryAsync(g => g.IdComprobanteCompra, g => g.Total, ct);
-
-        // Segundo término de OD7 — SOLO 'ajuste' (contramovimiento de anulación o ajuste manual
-        // imputado); 'pago' queda EXCLUIDO a propósito (ya contado arriba vía gastos — target #24).
-        var reversadoPorAjustes = await db.MovimientosCuentaCorrienteProveedor
-            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Ajuste && m.IdComprobanteCompra != null
-                && idsCompras.Contains(m.IdComprobanteCompra.Value))
-            .GroupBy(m => m.IdComprobanteCompra!.Value)
-            .Select(grupo => new { IdComprobanteCompra = grupo.Key, Total = grupo.Sum(m => -m.Importe) })
-            .ToDictionaryAsync(g => g.IdComprobanteCompra, g => g.Total, ct);
+        var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(db, idsCompras, ct);
 
         var comprasConEstado = compras
             .Select(c =>
             {
-                var pagado = pagadoPorGastos.GetValueOrDefault(c.Id, 0m) + reversadoPorAjustes.GetValueOrDefault(c.Id, 0m);
+                var pagado = pagadoPorCompra.GetValueOrDefault(c.Id, 0m);
                 var estado = ResolverEstadoPago(pagado, c.Total);
                 return new CompraConEstadoPago(c.Id, c.NumeroExterno, c.Total, pagado, estado);
             })
