@@ -1,6 +1,6 @@
 [package]
 name = "ways-desktop"
-version = "0.4.2"
+version = "0.5.0"
 description = "Ways POS - aplicacion de escritorio para cajas"
 authors = ["Ways"]
 edition = "2021"
