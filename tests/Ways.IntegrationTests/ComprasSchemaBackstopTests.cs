@@ -794,6 +794,143 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("fk_alicuotas_comprobante_compra_alicuota_iva", excepcion.ConstraintName);
     }
 
+    // ---- percepciones_comprobante_compra ---------------------------------------------------------
+
+    private static async Task InsertarPercepcionAsync(
+        NpgsqlConnection cruda, int idTenant, int idComprobante, string tipo = "iibb", decimal baseImponible = 100m,
+        decimal alicuota = 3m, decimal importe = 3m)
+    {
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO percepciones_comprobante_compra (id_tenant, id_comprobante_compra, tipo, base_imponible, " +
+            "alicuota, importe, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = tipo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = baseImponible });
+        comando.Parameters.Add(new NpgsqlParameter { Value = alicuota });
+        comando.Parameters.Add(new NpgsqlParameter { Value = importe });
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    [Fact]
+    public async Task DosPercepcionesDelMismoTipoEnUnComprobanteViolanLaUnicidad()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(DosPercepcionesDelMismoTipoEnUnComprobanteViolanLaUnicidad));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        await InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante);
+        await InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante, tipo: "iva");
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante));
+
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_percepciones_comprobante_compra_tipo", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task DosInsertsConcurrentesDeLaMismaPercepcionDanExactamenteUnGanador()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(DosInsertsConcurrentesDeLaMismaPercepcionDanExactamenteUnGanador));
+        await using var preparacion = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(preparacion, p, "borrador", null);
+
+        await using var conexionA = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var conexionB = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+
+        var tareaA = InsertarPercepcionAsync(conexionA, p.IdTenant, idComprobante);
+        var tareaB = InsertarPercepcionAsync(conexionB, p.IdTenant, idComprobante);
+
+        await Task.WhenAll(tareaA.ContinueWith(_ => { }), tareaB.ContinueWith(_ => { }));
+
+        var tareas = new[] { tareaA, tareaB };
+        Assert.Equal(1, tareas.Count(t => t.IsCompletedSuccessfully));
+        Assert.Equal(1, tareas.Count(t => t.IsFaulted));
+
+        var excepcion = Assert.IsType<PostgresException>(tareas.Single(t => t.IsFaulted).Exception!.InnerException);
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_percepciones_comprobante_compra_tipo", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnTipoDePercepcionDesconocidoViolaLaCheckDeTipo()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnTipoDePercepcionDesconocidoViolaLaCheckDeTipo));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante, tipo: "ganancias"));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_percepciones_comprobante_compra_tipo", excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData(-1, 3)]
+    [InlineData(100, -1)]
+    public async Task UnaPercepcionConImporteNegativoViolaLaCheckDeImportes(int baseImponible, int importe)
+    {
+        var p = await SembrarPrerequisitosAsync($"{nameof(UnaPercepcionConImporteNegativoViolaLaCheckDeImportes)}{baseImponible}{importe}");
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante, baseImponible: baseImponible, importe: importe));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_percepciones_comprobante_compra_importes_no_negativos", excepcion.ConstraintName);
+    }
+
+    [Theory]
+    [InlineData(-0.001)]
+    [InlineData(100.001)]
+    public async Task UnaPercepcionConAlicuotaFueraDeRangoViolaLaCheckDeAlicuota(double alicuota)
+    {
+        var p = await SembrarPrerequisitosAsync($"{nameof(UnaPercepcionConAlicuotaFueraDeRangoViolaLaCheckDeAlicuota)}{alicuota}".Replace(".", "p").Replace("-", "m"));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarPercepcionAsync(cruda, p.IdTenant, idComprobante, alicuota: (decimal)alicuota));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_percepciones_comprobante_compra_alicuota_rango", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnComprobanteInexistenteViolaLaFkDeLasPercepciones()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnComprobanteInexistenteViolaLaFkDeLasPercepciones));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarPercepcionAsync(cruda, p.IdTenant, IdInexistente));
+
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_percepciones_comprobante_compra_comprobante", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnaAlicuotaDePercepcionDeEmpresaFueraDeRangoViolaLaCheckDeLaEmpresa()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnaAlicuotaDePercepcionDeEmpresaFueraDeRangoViolaLaCheckDeLaEmpresa));
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(async () =>
+        {
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText = "UPDATE empresas SET alicuota_percepcion_iva = 100.001 WHERE id_tenant = $1";
+            comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+            await comando.ExecuteNonQueryAsync();
+        });
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_empresas_alicuotas_percepcion_rango", excepcion.ConstraintName);
+    }
+
     [Fact]
     public async Task UnComprobanteInexistenteViolaLaFkDelDesglose()
     {

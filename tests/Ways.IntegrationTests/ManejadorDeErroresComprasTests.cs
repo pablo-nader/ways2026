@@ -119,6 +119,39 @@ public class ManejadorDeErroresComprasTests
         Assert.Equal("alicuota_de_compra_invalida", codigo);
     }
 
+    [Fact]
+    public async Task UxPercepcionesComprobanteCompraTipoSeTraduceA409PercepcionDeCompraDuplicada()
+    {
+        var postgres = CrearExcepcion("23505", "ux_percepciones_comprobante_compra_tipo");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("dup", postgres));
+
+        Assert.Equal(StatusCodes.Status409Conflict, estado);
+        Assert.Equal("percepcion_de_compra_duplicada", codigo);
+    }
+
+    [Theory]
+    [InlineData("ck_percepciones_comprobante_compra_tipo", "percepcion_tipo_invalido")]
+    [InlineData("ck_percepciones_comprobante_compra_importes_no_negativos", "percepcion_importes_invalidos")]
+    [InlineData("ck_percepciones_comprobante_compra_alicuota_rango", "percepcion_alicuota_invalida")]
+    public async Task LasChecksDePercepcionesSeTraduceanA400ConSuCodigo(string constraint, string codigoEsperado)
+    {
+        var postgres = CrearExcepcion("23514", constraint);
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal(codigoEsperado, codigo);
+    }
+
+    [Fact]
+    public async Task CkEmpresasAlicuotasPercepcionRangoSeTraduceA400AlicuotaPercepcionInvalida()
+    {
+        var postgres = CrearExcepcion("23514", "ck_empresas_alicuotas_percepcion_rango");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("alicuota_percepcion_invalida", codigo);
+    }
+
     // ---- ClasificarCheckDeCompras (detrás del guard de prefijo) -------------------------------
 
     [Fact]

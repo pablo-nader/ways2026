@@ -120,6 +120,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
     public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();
     public DbSet<AlicuotaComprobanteCompra> AlicuotasComprobanteCompra => Set<AlicuotaComprobanteCompra>();
+    public DbSet<PercepcionComprobanteCompra> PercepcionesComprobanteCompra => Set<PercepcionComprobanteCompra>();
 
     // stage-12-lotes-vencimientos, Slice 1 (schema + seed gate, DB CHANGE GATE aprobado con
     // enmiendas): modelo adelantado a la migración, mismo trámite que ComprobanteCompra/

@@ -23,4 +23,13 @@ public class Empresa : EntidadTenant
     /// Inscripto) — el camino fiscal exige el valor con un 409 nombrado
     /// (<c>empresa_sin_condicion_fiscal</c>) en vez de asumir.</summary>
     public int? IdCondicionFiscal { get; set; }
+
+    /// <summary>Porcentaje de percepción de IIBB que los proveedores le aplican a esta empresa
+    /// (una sola jurisdicción por ahora). <c>NULL</c> = no se conoce: la compra no pre-carga
+    /// percepción, pero se puede cargar a mano.</summary>
+    public decimal? AlicuotaPercepcionIibb { get; set; }
+
+    /// <summary>Porcentaje de percepción de IVA que los proveedores le aplican a esta empresa.
+    /// <c>NULL</c> = no se conoce.</summary>
+    public decimal? AlicuotaPercepcionIva { get; set; }
 }

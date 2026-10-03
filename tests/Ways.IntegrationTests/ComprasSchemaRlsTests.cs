@@ -26,12 +26,14 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     {
         { "comprobantes_compra", "id_comprobante_compra" },
         { "items_comprobante_compra", "id_item" },
-        { "alicuotas_comprobante_compra", "id_alicuota_comprobante_compra" }
+        { "alicuotas_comprobante_compra", "id_alicuota_comprobante_compra" },
+        { "percepciones_comprobante_compra", "id_percepcion_comprobante_compra" }
     };
 
     private sealed record Escenario(
         int IdTenant, int IdProveedor, int IdPuntoVenta, int IdEmpleado, int IdArticulo,
-        int IdAlicuotaIva, int IdTipoComprobanteCompra, int IdComprobanteCompra, int IdItem, int IdAlicuota);
+        int IdAlicuotaIva, int IdTipoComprobanteCompra, int IdComprobanteCompra, int IdItem, int IdAlicuota,
+        int IdPercepcion);
 
     /// <summary>Arma la cadena completa de prerequisitos y una fila en cada una de las dos
     /// tablas nuevas, todas del mismo tenant A.</summary>
@@ -160,9 +162,23 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         db.AlicuotasComprobanteCompra.Add(alicuota);
         await db.SaveChangesAsync();
 
+        var percepcion = new PercepcionComprobanteCompra
+        {
+            IdTenant = tenant.Id,
+            IdComprobanteCompra = comprobante.Id,
+            Tipo = TiposDePercepcion.Iibb,
+            BaseImponible = 100m,
+            Alicuota = 3m,
+            Importe = 3m,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.PercepcionesComprobanteCompra.Add(percepcion);
+        await db.SaveChangesAsync();
+
         return new Escenario(
             tenant.Id, proveedor.Id, puntoVenta.Id, usuario.Id, articulo.Id, idAlicuotaIva,
-            idTipoCompra, comprobante.Id, item.Id, alicuota.Id);
+            idTipoCompra, comprobante.Id, item.Id, alicuota.Id, percepcion.Id);
     }
 
     private static int IdDeFila(Escenario escenario, string tabla) => tabla switch
@@ -170,6 +186,7 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         "comprobantes_compra" => escenario.IdComprobanteCompra,
         "items_comprobante_compra" => escenario.IdItem,
         "alicuotas_comprobante_compra" => escenario.IdAlicuota,
+        "percepciones_comprobante_compra" => escenario.IdPercepcion,
         _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
     };
 
@@ -227,6 +244,7 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             "comprobantes_compra" => ("observaciones", "'tocado por intruso'"),
             "items_comprobante_compra" => ("descripcion", "'tocado por intruso'"),
             "alicuotas_comprobante_compra" => ("iva", "99"),
+            "percepciones_comprobante_compra" => ("importe", "99"),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
         };
 
@@ -266,6 +284,7 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             "comprobantes_compra" => await sesionB.ComprobantesCompra.AnyAsync(c => c.Id == escenario.IdComprobanteCompra),
             "items_comprobante_compra" => await sesionB.ItemsComprobanteCompra.AnyAsync(i => i.Id == escenario.IdItem),
             "alicuotas_comprobante_compra" => await sesionB.AlicuotasComprobanteCompra.AnyAsync(a => a.Id == escenario.IdAlicuota),
+            "percepciones_comprobante_compra" => await sesionB.PercepcionesComprobanteCompra.AnyAsync(p => p.Id == escenario.IdPercepcion),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")
         };
 
@@ -336,6 +355,18 @@ public class ComprasSchemaRlsTests(WaysApiFixture fixture) : IClassFixture<WaysA
                     c.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdComprobanteCompra });
                     c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdAlicuotaIva });
+                    c.Parameters.Add(new NpgsqlParameter { Value = ahora });
+                }),
+            // Otro tipo a propósito: esquiva ux_percepciones_comprobante_compra_tipo contra la fila ya
+            // sembrada — lo que se prueba acá es el 42501, no la unicidad.
+            "percepciones_comprobante_compra" => (
+                "INSERT INTO percepciones_comprobante_compra (id_tenant, id_comprobante_compra, tipo, " +
+                "base_imponible, alicuota, importe, created_at, updated_at) " +
+                "VALUES ($1, $2, 'iva', 10, 1, 1, $3, $3)",
+                c =>
+                {
+                    c.Parameters.Add(new NpgsqlParameter { Value = tenantB.Id });
+                    c.Parameters.Add(new NpgsqlParameter { Value = escenario.IdComprobanteCompra });
                     c.Parameters.Add(new NpgsqlParameter { Value = ahora });
                 }),
             _ => throw new ArgumentOutOfRangeException(nameof(tabla), tabla, "Tabla no cubierta por este helper.")

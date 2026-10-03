@@ -136,6 +136,9 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
             Observaciones = observaciones,
             IdEmpresa = datos.IdEmpresa,
             Activo = datos.Activo,
+            PercibeIibb = datos.PercibeIibb,
+            PercibeIva = datos.PercibeIva,
+            PreciosIncluyenIva = datos.PreciosIncluyenIva,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
@@ -183,6 +186,9 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
         proveedor.Observaciones = observaciones;
         proveedor.IdEmpresa = datos.IdEmpresa;
         proveedor.Activo = datos.Activo;
+        proveedor.PercibeIibb = datos.PercibeIibb;
+        proveedor.PercibeIva = datos.PercibeIva;
+        proveedor.PreciosIncluyenIva = datos.PreciosIncluyenIva;
         proveedor.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
@@ -359,5 +365,5 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
     private static ProveedorListado Proyectar(Proveedor p) => new(
         p.Id, p.RazonSocial, p.NombreFantasia, p.Cuit, p.IdCondicionFiscal, p.Domicilio, p.Telefono,
         p.Email, p.Vendedor, p.CelularVendedor, p.Supervisor, p.CelularSupervisor, p.Margen,
-        p.Observaciones, p.Activo, p.IdEmpresa);
+        p.Observaciones, p.Activo, p.IdEmpresa, p.PercibeIibb, p.PercibeIva, p.PreciosIncluyenIva);
 }

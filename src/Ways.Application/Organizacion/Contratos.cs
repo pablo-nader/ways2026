@@ -53,9 +53,18 @@ public record EmpresaListado(
     string RazonSocial,
     string? NombreFantasia,
     string? Cuit,
-    string? NombreTenant);
+    string? NombreTenant,
+    decimal? AlicuotaPercepcionIibb,
+    decimal? AlicuotaPercepcionIva);
 
-public record EmpresaEdicion(string RazonSocial, string? NombreFantasia, string? Cuit);
+/// <summary>Edición completa: las dos alícuotas de percepción (porcentajes entre 0 y 100, hasta 3
+/// decimales) se reemplazan con lo que llegue, y <c>null</c> las deja sin informar.</summary>
+public record EmpresaEdicion(
+    string RazonSocial,
+    string? NombreFantasia,
+    string? Cuit,
+    decimal? AlicuotaPercepcionIibb = null,
+    decimal? AlicuotaPercepcionIva = null);
 
 /// <summary>Los dos nombres de dueño son nullable por el mismo criterio que
 /// <see cref="EmpresaListado.NombreTenant"/> (design D13); <paramref name="IdTenant"/> e

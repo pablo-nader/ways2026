@@ -294,7 +294,9 @@ public class ServicioDeOrganizacion(
             db.Tenants
                 .Where(t => t.Id == e.IdTenant && t.DeletedAt == null)
                 .Select(t => t.Nombre)
-                .FirstOrDefault());
+                .FirstOrDefault(),
+            e.AlicuotaPercepcionIibb,
+            e.AlicuotaPercepcionIva);
 
     public async Task<IReadOnlyList<EmpresaListado>> ListarEmpresasAsync(CancellationToken ct = default) =>
         await db.Empresas
@@ -326,12 +328,16 @@ public class ServicioDeOrganizacion(
         var razonSocial = Normalizar(datos.RazonSocial, "razon_social", "razón social", 150);
         var nombreFantasia = NormalizarOpcional(datos.NombreFantasia, "nombre_fantasia", "nombre de fantasía", 150);
         var cuit = NormalizarOpcional(datos.Cuit, "cuit", "CUIT", 13);
+        ExigirAlicuotaDePercepcionValida(datos.AlicuotaPercepcionIibb, "IIBB");
+        ExigirAlicuotaDePercepcionValida(datos.AlicuotaPercepcionIva, "IVA");
 
         return await EnUnaTransaccionAsync(async () =>
         {
             empresa.RazonSocial = razonSocial;
             empresa.NombreFantasia = nombreFantasia;
             empresa.Cuit = cuit;
+            empresa.AlicuotaPercepcionIibb = datos.AlicuotaPercepcionIibb;
+            empresa.AlicuotaPercepcionIva = datos.AlicuotaPercepcionIva;
             empresa.UpdatedAt = reloj.Ahora;
 
             await db.SaveChangesAsync(ct);
@@ -345,6 +351,25 @@ public class ServicioDeOrganizacion(
                 .FirstOrDefaultAsync(ct)
                 ?? throw ErrorDominio.NoEncontrado($"No existe la empresa {id}.");
         }, ct);
+    }
+
+    /// <summary>La alícuota es un porcentaje entre 0 y 100 con hasta 3 decimales, que es lo que
+    /// guarda <c>numeric(6,3)</c>: más decimales se rechazan en vez de redondearse en silencio.
+    /// El backstop de rango es <c>ck_empresas_alicuotas_percepcion_rango</c>.</summary>
+    private static void ExigirAlicuotaDePercepcionValida(decimal? alicuota, string impuesto)
+    {
+        if (alicuota is not { } valor)
+        {
+            return;
+        }
+
+        if (valor < 0m || valor > 100m || valor != Math.Round(valor, 3))
+        {
+            throw new ErrorDominio(
+                "alicuota_percepcion_invalida",
+                $"La alícuota de percepción de {impuesto} tiene que estar entre 0 y 100, con hasta 3 decimales.",
+                400);
+        }
     }
 
     /// <summary>

@@ -9,7 +9,13 @@ public class EmpresaConfiguration : IEntityTypeConfiguration<Empresa>
 {
     public void Configure(EntityTypeBuilder<Empresa> builder)
     {
-        builder.ToTable("empresas");
+        builder.ToTable("empresas", t =>
+        {
+            t.HasCheckConstraint(
+                "ck_empresas_alicuotas_percepcion_rango",
+                "(alicuota_percepcion_iibb IS NULL OR (alicuota_percepcion_iibb >= 0 AND alicuota_percepcion_iibb <= 100)) " +
+                "AND (alicuota_percepcion_iva IS NULL OR (alicuota_percepcion_iva >= 0 AND alicuota_percepcion_iva <= 100))");
+        });
 
         builder.HasKey(e => e.Id);
 
@@ -44,6 +50,14 @@ public class EmpresaConfiguration : IEntityTypeConfiguration<Empresa>
         // stage-19a (proposal.md §B): NULLABLE a propósito — no existe default honesto (la
         // condición del emisor decide la letra A/B/C).
         builder.Property(e => e.IdCondicionFiscal).HasColumnName("id_condicion_fiscal");
+
+        builder.Property(e => e.AlicuotaPercepcionIibb)
+            .HasColumnName("alicuota_percepcion_iibb")
+            .HasColumnType("numeric(6,3)");
+
+        builder.Property(e => e.AlicuotaPercepcionIva)
+            .HasColumnName("alicuota_percepcion_iva")
+            .HasColumnType("numeric(6,3)");
 
         builder.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();

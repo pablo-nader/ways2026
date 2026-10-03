@@ -16,7 +16,10 @@ public record ProveedorListado(
     decimal? Margen,
     string? Observaciones,
     bool Activo,
-    int? IdEmpresa);
+    int? IdEmpresa,
+    bool PercibeIibb,
+    bool PercibeIva,
+    bool PreciosIncluyenIva);
 
 /// <summary><see cref="Cuit"/> es único por tenant cuando se lo provee (spec: cuit Uniqueness
 /// Is Scoped Per Tenant) — <c>NULL</c> permitido y nunca comparado contra otra fila.
@@ -36,7 +39,10 @@ public record AltaProveedor(
     decimal? Margen,
     string? Observaciones,
     int? IdEmpresa = null,
-    bool Activo = true);
+    bool Activo = true,
+    bool PercibeIibb = false,
+    bool PercibeIva = false,
+    bool PreciosIncluyenIva = false);
 
 /// <summary>JD-A1 (judgment-day): proyección MÍNIMA para selectores fuera de la gestión de
 /// catálogo (<c>GET /api/proveedores/opciones</c>, <c>Politicas.OperacionDePos</c>) — nunca
@@ -60,4 +66,7 @@ public record EdicionProveedor(
     decimal? Margen,
     string? Observaciones,
     int? IdEmpresa,
-    bool Activo);
+    bool Activo,
+    bool PercibeIibb = false,
+    bool PercibeIva = false,
+    bool PreciosIncluyenIva = false);

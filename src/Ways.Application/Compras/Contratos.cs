@@ -31,6 +31,12 @@ public sealed record LineaDeCompraSolicitada(
 /// ToleranciaDeIvaImpreso"/>. Solo tiene sentido en un comprobante que discrimina IVA.</summary>
 public sealed record IvaImpresoSolicitado(int IdAlicuotaIva, decimal Iva);
 
+/// <summary>Una percepción tal como la imprimió el proveedor (<c>iibb</c> o <c>iva</c>): el
+/// <see cref="Importe"/> es lo que dice la factura y suma al total; <see cref="BaseImponible"/> y
+/// <see cref="Alicuota"/> son informativas y no se recalculan. Una por tipo y comprobante, solo en
+/// un tipo que registra libro IVA (la de IVA, además, solo si el comprobante discrimina IVA).</summary>
+public sealed record PercepcionSolicitada(string Tipo, decimal BaseImponible, decimal Alicuota, decimal Importe);
+
 /// <summary>Cuerpo de <c>POST /api/compras</c> (crea un borrador) y de <c>PUT
 /// /api/compras/{id}</c> (design decisión 2: replace-set completo del header + los items — un
 /// PUT reemplaza <see cref="Items"/> entero, nunca un CRUD incremental por item).
@@ -45,7 +51,12 @@ public sealed record IvaImpresoSolicitado(int IdAlicuotaIva, decimal Iva);
 ///
 /// <see cref="DiscriminaIva"/> nulo toma el valor del tipo. En una factura (tipo que registra libro
 /// IVA) lo fija el tipo y pedir lo contrario es 400; en un remito o comprobante no fiscal lo elige
-/// quien carga el documento. <see cref="IvaImpreso"/> es el override de redondeo por alícuota.</summary>
+/// quien carga el documento. <see cref="IvaImpreso"/> es el override de redondeo por alícuota.
+///
+/// <see cref="PreciosIncluyenIva"/> declara que el costo unitario tipeado ya trae el IVA (modo
+/// "precio final"): solo vale en un comprobante que discrimina IVA y pedirlo en otro es 400, nunca
+/// se descarta. <see cref="Percepciones"/> reemplaza el conjunto completo del borrador; sin ellas
+/// (<c>null</c> o vacío) el comprobante queda sin percepciones.</summary>
 public sealed record SolicitudDeCompra(
     int IdProveedor,
     int IdTipoComprobante,
@@ -56,7 +67,9 @@ public sealed record SolicitudDeCompra(
     IReadOnlyList<LineaDeCompraSolicitada> Items,
     int? IdOrdenCompra = null,
     bool? DiscriminaIva = null,
-    IReadOnlyList<IvaImpresoSolicitado>? IvaImpreso = null);
+    IReadOnlyList<IvaImpresoSolicitado>? IvaImpreso = null,
+    bool PreciosIncluyenIva = false,
+    IReadOnlyList<PercepcionSolicitada>? Percepciones = null);
 
 /// <summary>Un item ya persistido, con su <c>precioSugerido</c> (design: API Surface — "Header +
 /// items + precioSugerido per item"). Sin <c>unidades</c> propio: solo <see cref="Cantidad"/>
@@ -91,6 +104,11 @@ public sealed record ItemDeCompra(
 /// reconstruye importes de línea. Los totales del encabezado se conservan.</summary>
 public sealed record AlicuotaDeCompra(int IdAlicuotaIva, decimal Porcentaje, decimal? Neto, decimal? Iva);
 
+/// <summary>Una percepción persistida. <see cref="BaseImponible"/> e <see cref="Importe"/> son
+/// <c>null</c> para el rol vendedor, igual que el desglose de IVA: reconstruyen importes del
+/// comprobante. El tipo y la alícuota se conservan.</summary>
+public sealed record PercepcionDeCompraDetalle(string Tipo, decimal Alicuota, decimal? BaseImponible, decimal? Importe);
+
 /// <summary>Detalle completo de una compra — respuesta de <c>GET /api/compras/{id}</c>,
 /// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.
 ///
@@ -115,7 +133,9 @@ public sealed record CompraDetalle(
     IReadOnlyList<ItemDeCompra> Items,
     int? IdOrdenCompra,
     bool DiscriminaIva,
-    IReadOnlyList<AlicuotaDeCompra> Alicuotas);
+    IReadOnlyList<AlicuotaDeCompra> Alicuotas,
+    bool PreciosIncluyenIva,
+    IReadOnlyList<PercepcionDeCompraDetalle> Percepciones);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve
