@@ -26,9 +26,8 @@ public sealed record SolicitudDeEtiquetas(
 /// — EL invariante de esta etapa): este record NO declara —ni declarará jamás— <c>costo_lista</c>,
 /// <c>costo_nominal</c>, <c>descuento_proveedor</c>, <c>id_proveedor_habitual</c>, <c>proveedor</c>
 /// ni <c>margen</c>. No están ocultos en la UI: están AUSENTES del contrato. Una hoja impresa se
-/// va del local, a cualquier persona que la levante del piso. El costo es admin-only por política
-/// (<c>Politicas.LecturaDeRentabilidad</c>) — este DTO nunca lo transporta, sin importar qué rol
-/// llame al endpoint. Mutation target 22: la prueba de exposición recorre el JSON serializado y
+/// va del local, a cualquier persona que la levante del piso. El costo es del back-office (admin y
+/// supervisor) — este DTO nunca lo transporta, sin importar qué rol llame al endpoint. Mutation target 22: la prueba de exposición recorre el JSON serializado y
 /// busca esos nombres de PROPIEDAD exactos, nunca un substring (<c>OfertaAplicadaDto.
 /// DescuentoUnitario</c> contiene legítimamente la palabra "descuento").</para></summary>
 public sealed record FilaDeEtiqueta(

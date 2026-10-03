@@ -973,9 +973,9 @@ public class ServicioDeRemitos(
 
     // ---- proyección (task 5.19: rules 12b/12c — todo campo posicional, valores distintos) ---------
 
-    /// <summary>El costo congelado es del back-office: vendedor y supervisor operan remitos desde el
-    /// POS bajo <c>OperacionDePos</c> y reciben <c>null</c>.</summary>
-    private bool PuedeVerCostos => contexto.Rol == RolConocido.Admin;
+    /// <summary>El costo congelado es del back-office (admin y supervisor): el vendedor opera
+    /// remitos bajo <c>OperacionDePos</c> y recibe <c>null</c>.</summary>
+    private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
 
     private RemitoDetalle ProyectarDetalle(Remito remito, IReadOnlyList<ItemRemito> items) =>
         new(

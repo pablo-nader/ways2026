@@ -16,13 +16,12 @@ using Ways.Infrastructure.Seguridad;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// Los costos del artículo (<c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>) los ve
-/// solo el admin: el listado, el detalle y la grilla heredan <c>OperacionDePos</c> (vendedor y
-/// supervisor leen los mismos endpoints desde el POS), así que a esos roles les llegan
-/// <c>null</c> en vez del costo.
+/// Los costos del artículo (<c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>) los ven
+/// admin y supervisor: el listado, el detalle y la grilla heredan <c>OperacionDePos</c> (el vendedor
+/// lee los mismos endpoints desde el POS), así que al vendedor le llega <c>null</c> en vez del costo.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
-public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
+public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
@@ -101,28 +100,29 @@ public class ArticulosCostoSoloAdminTests(WaysApiFixture fixture) : IClassFixtur
         return (idArticulo, admin, vendedor);
     }
 
-    [Fact]
-    public async Task ElAdminVeLosCostosEnListadoDetalleYGrilla()
+    [Theory]
+    [InlineData(RolConocido.Admin)]
+    [InlineData(RolConocido.Supervisor)]
+    public async Task UnRolDeBackOfficeVeLosCostosEnListadoDetalleYGrilla(RolConocido rol)
     {
-        var (idArticulo, admin, _) = await PrepararAsync(nameof(ElAdminVeLosCostosEnListadoDetalleYGrilla), RolConocido.Vendedor);
+        var (idArticulo, admin, supervisor) = await PrepararAsync($"CostoVisible{rol}", RolConocido.Supervisor);
+        var cliente = rol == RolConocido.Admin ? admin : supervisor;
 
-        var listado = await admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
+        var listado = await cliente.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);
         Assert.Equal((70m, 5m, 61.5m), (fila.CostoLista, fila.DescuentoProveedor, fila.CostoNominal));
 
-        var detalle = await admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{idArticulo}", OpcionesJson);
-        Assert.Equal(61.5m, detalle!.CostoNominal);
+        var detalle = await cliente.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{idArticulo}", OpcionesJson);
+        Assert.Equal((70m, 5m, 61.5m), (detalle!.CostoLista, detalle.DescuentoProveedor, detalle.CostoNominal));
 
-        var grilla = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>("/api/articulos/grilla?nombre=con+costo", OpcionesJson);
+        var grilla = await cliente.GetFromJsonAsync<PaginaDeArticulosGrilla>("/api/articulos/grilla?nombre=con+costo", OpcionesJson);
         Assert.Equal(61.5m, Assert.Single(grilla!.Items).CostoNominal);
     }
 
-    [Theory]
-    [InlineData(RolConocido.Vendedor)]
-    [InlineData(RolConocido.Supervisor)]
-    public async Task UnRolDePosQueNoEsAdminRecibeLosCostosEnNullEnListadoDetalleYGrilla(RolConocido rol)
+    [Fact]
+    public async Task ElVendedorRecibeLosCostosEnNullEnListadoDetalleYGrilla()
     {
-        var (idArticulo, _, vendedor) = await PrepararAsync($"CostoNull{rol}", rol);
+        var (idArticulo, _, vendedor) = await PrepararAsync(nameof(ElVendedorRecibeLosCostosEnNullEnListadoDetalleYGrilla), RolConocido.Vendedor);
 
         var listado = await vendedor.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=con+costo", OpcionesJson);
         var fila = Assert.Single(listado!.Items);

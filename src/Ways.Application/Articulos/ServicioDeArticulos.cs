@@ -172,9 +172,9 @@ public class ServicioDeArticulos(
         return PuedeVerCostos ? detalle : SinCostos(detalle);
     }
 
-    /// <summary>Los costos son del back-office (<c>GestionDeCatalogo</c>, solo admin): el POS
-    /// (vendedor, supervisor) lee este mismo endpoint y nunca los recibe.</summary>
-    private bool PuedeVerCostos => contexto.Rol == RolConocido.Admin;
+    /// <summary>Los costos son del back-office (admin y supervisor): el vendedor lee este mismo
+    /// endpoint desde el POS y nunca los recibe.</summary>
+    private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
 
     private static ArticuloListado SinCostos(ArticuloListado a) =>
         a with { CostoLista = null, DescuentoProveedor = null, CostoNominal = null };
