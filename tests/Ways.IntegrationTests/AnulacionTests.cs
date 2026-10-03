@@ -523,6 +523,76 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         await marcar.ExecuteNonQueryAsync();
     }
 
+    // ---- Guarda fiscal: CAE aprobado exige nota de crédito, CAE pendiente bloquea ---------------
+
+    /// <summary>La guarda decide solo por <c>resultado_fiscal</c> de la fila; el estado fiscal se
+    /// fija con SQL crudo como owner porque el camino fiscal real exige certificado y WSFE.</summary>
+    private async Task MarcarResultadoFiscalAsync(int idComprobante, string resultado)
+    {
+        var conCae = resultado is "aprobado" or "aprobado_con_observaciones";
+        await using var cruda = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await cruda.OpenAsync();
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "UPDATE comprobantes_venta SET resultado_fiscal = $1::resultado_fiscal, cae = $2, cae_vencimiento = $3 " +
+            "WHERE id_comprobante_venta = $4";
+        comando.Parameters.Add(new NpgsqlParameter { Value = resultado });
+        comando.Parameters.Add(new NpgsqlParameter { Value = conCae ? "75123456789012" : DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text });
+        comando.Parameters.Add(new NpgsqlParameter
+        {
+            Value = conCae ? new DateOnly(2026, 12, 31) : DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Date
+        });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    [Theory]
+    [InlineData("aprobado", "comprobante_fiscal_requiere_nota_de_credito")]
+    [InlineData("aprobado_con_observaciones", "comprobante_fiscal_requiere_nota_de_credito")]
+    [InlineData("pendiente", "comprobante_fiscal_cae_pendiente")]
+    public async Task UnComprobanteFiscalConCaeAprobadoOPendienteNoSeAnulaYQuedaIntacto(string resultado, string codigoEsperado)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnComprobanteFiscalConCaeAprobadoOPendienteNoSeAnulaYQuedaIntacto)}-{resultado}");
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-anulacion-fiscal", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Anulación Fiscal");
+        var emitido = await EmitirAsync(ctx, idCliente, idArticulo, 100m, cantidad: 2m);
+        await MarcarResultadoFiscalAsync(emitido.Id, resultado);
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(codigoEsperado, problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var comprobante = await db.ComprobantesVenta.AsNoTracking().SingleAsync(c => c.Id == emitido.Id);
+        Assert.Equal(EstadoComprobante.Emitido, comprobante.Estado);
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Anulacion));
+        var (cantidad, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        Assert.Equal(-2m, cantidad);
+    }
+
+    /// <summary>Un CAE rechazado nunca autorizó nada ante ARCA: con resultado fiscal presente,
+    /// la anulación sigue pasando y revierte el stock como cualquier otra.</summary>
+    [Fact]
+    public async Task UnComprobanteFiscalConCaeRechazadoSeAnulaComoHoy()
+    {
+        var ctx = await PrepararAsync(nameof(UnComprobanteFiscalConCaeRechazadoSeAnulaComoHoy));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-anulacion-rechazado", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Anulación Rechazado");
+        var emitido = await EmitirAsync(ctx, idCliente, idArticulo, 100m, cantidad: 2m);
+        await MarcarResultadoFiscalAsync(emitido.Id, "rechazado");
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var anulado = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+        Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
+        var (cantidad, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        Assert.Equal(0m, cantidad);
+    }
+
     // ---- Triaged: anulación de una NCX invierte el signo correctamente -------------------------
 
     /// <summary>Una devolución (NCX) escribe un movimiento de stock ORIGINAL positivo (motivo =

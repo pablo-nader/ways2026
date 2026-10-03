@@ -1,4 +1,5 @@
 using Ways.Domain.Common;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Ventas;
 
 namespace Ways.Domain.Tests.Ventas;
@@ -32,6 +33,34 @@ public class ReglaDeComprobantesTests
             UpdatedAt = ahora
         };
     }
+
+    // ---- ValidarAnulacionFiscal: CAE aprobado o pendiente bloquea la anulación ------------------
+
+    [Theory]
+    [InlineData(ResultadoFiscal.Aprobado)]
+    [InlineData(ResultadoFiscal.AprobadoConObservaciones)]
+    public void UnComprobanteConCaeAprobadoNoSeAnulaYExigeNotaDeCredito(ResultadoFiscal resultado)
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => ReglaDeComprobantes.ValidarAnulacionFiscal(resultado));
+        Assert.Equal("comprobante_fiscal_requiere_nota_de_credito", excepcion.Codigo);
+        Assert.Equal(409, excepcion.EstadoHttp);
+        Assert.Contains("nota de crédito", excepcion.Message);
+    }
+
+    [Fact]
+    public void UnComprobanteConCaePendienteNoSeAnula()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeComprobantes.ValidarAnulacionFiscal(ResultadoFiscal.Pendiente));
+        Assert.Equal("comprobante_fiscal_cae_pendiente", excepcion.Codigo);
+        Assert.Equal(409, excepcion.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ResultadoFiscal.Rechazado)]
+    public void UnComprobanteNoFiscalOConCaeRechazadoSigueAnulable(ResultadoFiscal? resultado) =>
+        ReglaDeComprobantes.ValidarAnulacionFiscal(resultado);
 
     // ---- ValidarSignoDeLineas: signo vs tipos_comprobante.signo ----------------------------
 

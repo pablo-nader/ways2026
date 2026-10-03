@@ -909,6 +909,12 @@ public class ServicioDeVentas(
         if (comprobantePreLectura is not null)
         {
             ReglaDeComprobantes.ValidarTransicionAEstado(comprobantePreLectura.Estado, EstadoComprobante.Anulado);
+
+            // La pre-lectura alcanza sin conjunción en el UPDATE del paso 1: los dos estados que
+            // dejan anular (sin resultado fiscal y rechazado) son terminales — ningún escritor los
+            // cambia después —, así que una carrera solo puede llevar de pendiente a terminal, y
+            // pendiente ya se rechaza acá.
+            ReglaDeComprobantes.ValidarAnulacionFiscal(comprobantePreLectura.ResultadoFiscal);
         }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
