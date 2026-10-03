@@ -174,6 +174,17 @@ es X. El comprobante guarda el `id_tipo_comprobante` ya resuelto: el cruce decid
 momento de emitir, nunca se re-deriva.
 
 - `empresas`, `clientes` y `proveedores` ganan `id_condicion_fiscal`.
+- `empresas` gana las alícuotas de percepción que los proveedores le aplican (ver
+  "Percepciones" en §5):
+
+```sql
+empresas (
+    ...,
+    alicuota_percepcion_iibb numeric(6,3) NULL,   -- una sola jurisdicción por ahora
+    alicuota_percepcion_iva  numeric(6,3) NULL    -- NULL = no se conoce
+);
+-- CHECK ck_empresas_alicuotas_percepcion_rango: cada una NULL o entre 0 y 100.
+```
 - El legacy completo mapea a: ticket X (`tipo=1`), nota de crédito X (`tipo=2`).
 
 ### Medios de pago
@@ -237,6 +248,9 @@ proveedores (                 -- [catálogo]
     vendedor, celular_vendedor, supervisor, celular_supervisor,   -- los contactos del legacy
     margen numeric(5,2) NULL,               -- margen sugerido de la línea
     observaciones, activo,
+    percibe_iibb        boolean NOT NULL DEFAULT false,  -- sus facturas suelen traer percepción
+    percibe_iva         boolean NOT NULL DEFAULT false,
+    precios_incluyen_iva boolean NOT NULL DEFAULT false, -- sus precios ya traen el IVA
     saldo numeric(14,2) NOT NULL DEFAULT 0  -- cache; el libro es
                                              -- movimientos_cuenta_corriente_proveedor (§8, Etapa 15)
 );
@@ -696,6 +710,7 @@ comprobantes_compra (         -- [operativa]
     id_empleado,
     subtotal, descuento_total, iva_total NULL, total,
     discrimina_iva boolean NOT NULL,         -- snapshot por comprobante; ver más abajo
+    precios_incluyen_iva boolean NOT NULL DEFAULT false,  -- snapshot; solo si discrimina_iva
     observaciones,
     estado estado_compra NOT NULL            -- enum: borrador | confirmada | anulada
 );
@@ -710,6 +725,18 @@ alicuotas_comprobante_compra (            -- [operativa, child: solo id_tenant, 
     iva             numeric(14,2)            -- el calculado, o el impreso por el proveedor
 );
 -- UNIQUE (id_comprobante_compra, id_alicuota_iva); CHECK (neto >= 0 AND iva >= 0).
+
+percepciones_comprobante_compra (         -- [operativa, child: solo id_tenant, como los items]
+    id_percepcion_comprobante_compra, id_tenant,
+    id_comprobante_compra,                   -- FK compuesta (id, id_tenant)
+    tipo            text NOT NULL,           -- 'iibb' | 'iva'
+    base_imponible  numeric(14,2),           -- informativa
+    alicuota        numeric(6,3),            -- informativa
+    importe         numeric(14,2)            -- lo que dice la factura; suma al total
+);
+-- UNIQUE (id_comprobante_compra, tipo) (la jurisdicción de IIBB agregará una columna);
+-- CHECK (tipo IN ('iibb', 'iva')); CHECK (base_imponible >= 0 AND importe >= 0);
+-- CHECK (alicuota >= 0 AND alicuota <= 100).
 
 items_comprobante_compra (
     id_item, id_comprobante_compra, orden,
@@ -769,6 +796,39 @@ proveedor imprimió (`ivaImpreso`). Se acepta cuando `|impreso − calculado| �
 alícuota que no está en las líneas (`iva_impreso_alicuota_desconocida`) o repetida
 (`iva_impreso_duplicado`). El override no cambia el costo efectivo de los artículos, que sale del
 importe de la línea.
+
+**Precios con IVA incluido.** `precios_incluyen_iva` es un snapshot por comprobante (se pre-carga
+del proveedor y se edita) que dice que el `costo_unitario` tipeado ya trae el IVA. Solo vale si el
+comprobante discrimina IVA: pedirlo en uno que no discrimina es 400
+`precios_incluyen_iva_sin_discriminar`, nunca se descarta (un comprobante que no discrimina ya es
+un precio final). En ese modo el `total` de cada línea es el precio final, `round(cantidad ×
+costo_unitario − descuento, 2)`, y el desglose se arma **una sola vez por alícuota** a partir de
+la suma de finales de esa alícuota: `iva = round(final × p / (100 + p), 2)` y `neto = final −
+iva`, de modo que `neto + iva` suma exactamente lo tipeado. Un IVA impreso se valida contra ese
+`iva` calculado (tolerancia 1,00) y mueve el neto en sentido contrario, así que el total tipeado
+no cambia; uno que dejaría el neto negativo es 400. El costo efectivo de un artículo es `total /
+cantidad` (con precios netos es `total × (1 + p/100) / cantidad`) y la confirmación lo deriva con
+el flag del `RETURNING` bajo el lock del encabezado, igual que `discrimina_iva`; la cobertura de
+una orden de compra usa el mismo flag. En este modo `subtotal` y `descuento_total` ya incluyen el
+IVA y `total = subtotal − descuento_total + percepciones` (sumar `iva_total` contaría el IVA dos
+veces); con precios netos sigue siendo `subtotal − descuento_total + iva_total + percepciones`.
+
+**Percepciones.** Un comprobante puede traer una percepción de IIBB y una de IVA
+(`percepciones_comprobante_compra`, reemplazadas junto con los ítems en cada guardado del
+borrador). Solo las admite un tipo con `registra_libro_iva` (`percepciones_sin_libro_iva`) y la de
+IVA además exige que el comprobante discrimine IVA (`percepcion_iva_sin_discriminar`); también son
+400 el tipo desconocido, el tipo repetido, los importes negativos, la alícuota fuera de 0 a 100 y
+los decimales de más (más de 2 en base e importe, más de 3 en la alícuota). `importe` es lo que
+imprimió el proveedor y es lo que suma al `total` del comprobante —y, al confirmar, a la cuenta
+corriente del proveedor—; `base_imponible` y `alicuota` son informativas y no se recalculan. Un
+vendedor ve el tipo y la alícuota pero no la base ni el importe, igual que el desglose de IVA.
+El editor pre-carga la sugerencia cuando el proveedor tiene el flag, la empresa del punto de venta
+de la compra tiene la alícuota y el tipo corresponde: base = neto gravado (suma del neto de las
+alícuotas mayores a 0%; en un comprobante que no discrimina, subtotal menos descuento) e importe =
+`round(base × alícuota / 100, 2)`, que se recalcula mientras la fila no se toque.
+
+La migración `ComprasPercepcionesYPrecioFinal` agrega las columnas y la tabla con sus `DEFAULT`
+(todo lo existente queda en precios netos y sin percepciones), así que no hace backfill.
 
 La migración `ComprasRemitoYAlicuotas` backfillea `discrimina_iva` desde el tipo de cada
 comprobante existente y reconstruye el desglose de los que ya discriminan a partir de sus ítems,
@@ -1407,6 +1467,7 @@ erDiagram
     comprobantes_compra }o--|| proveedores : ""
     comprobantes_compra ||--o{ items_comprobante_compra : ""
     comprobantes_compra ||--o{ alicuotas_comprobante_compra : ""
+    comprobantes_compra ||--o{ percepciones_comprobante_compra : ""
     alicuotas_comprobante_compra }o--|| alicuotas_iva : ""
     comprobantes_venta }o--o| turnos_caja : ""
     turnos_caja ||--o{ arqueos_turno : ""
