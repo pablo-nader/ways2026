@@ -5443,6 +5443,58 @@ describe('Pos — ajuste manual por línea', () => {
     expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toBeDisabled()
   })
 
+  // Lo tipeado en el editor todavía no está en el carrito: cobrar con el editor abierto cobraría sin
+  // el ajuste. La cláusula que lo impide es `ajusteEnEdicion === null` en `precondicionesListas`,
+  // de la que cuelgan `puedeCobrar` (el botón) y el F9.
+  describe('con el editor de ajuste abierto y un porcentaje sin aplicar no se puede cobrar', () => {
+    const AVISO_DE_AJUSTE_SIN_APLICAR = 'Aplicá o cancelá el ajuste antes de cobrar.'
+
+    async function abrirEditorYTipearSinAplicar() {
+      await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+      await userEvent.type(campoDePorcentajeDeAjuste(), '10')
+    }
+
+    function seEnvioLaVenta() {
+      return apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')
+    }
+
+    it('el botón "Cobrar" se deshabilita, el aviso se ve, hacerle clic no cobra, y al cancelar vuelve a habilitarse', async () => {
+      await armarVentaLista()
+      const cobrar = screen.getByRole('button', { name: /Cobrar/ })
+      expect(cobrar).toBeEnabled()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+
+      await abrirEditorYTipearSinAplicar()
+
+      expect(cobrar).toBeDisabled()
+      expect(screen.getByText(AVISO_DE_AJUSTE_SIN_APLICAR)).toBeInTheDocument()
+      await userEvent.click(cobrar)
+      expect(seEnvioLaVenta()).toBe(false)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+      expect(cobrar).toBeEnabled()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+      expect(seEnvioLaVenta()).toBe(false)
+    })
+
+    it('F9 con el foco en el campo del porcentaje no abre "¿Finalizar venta?" ni cobra; sin el editor, el mismo F9 sí abre el diálogo', async () => {
+      await armarVentaLista()
+      await abrirEditorYTipearSinAplicar()
+
+      fireEvent.keyDown(campoDePorcentajeDeAjuste(), { key: 'F9' })
+      await act(async () => {})
+
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+      expect(seEnvioLaVenta()).toBe(false)
+
+      // Control positivo: lo que lo detuvo fue el editor y no otra precondición.
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+      fireEvent.keyDown(document, { key: 'F9' })
+      expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
+    })
+  })
+
   it('un rechazo 400 ajuste_manual_invalido del servidor se muestra con el mensaje del ajuste, no con el texto crudo', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas/resolver') {

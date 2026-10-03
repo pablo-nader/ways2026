@@ -2767,6 +2767,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       errorParametros === ''
     : !bloqueadoPorTurno &&
       !sincronizacionOffline.sincronizacionInicialPendiente &&
+      // Con el editor de ajuste manual abierto lo tipeado todavía no está en el carrito: cobrar ahí
+      // cobraría sin el ajuste. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón
+      // "Cobrar" y el atajo quedan inertes hasta que se aplica o se cancela.
+      ajusteEnEdicion === null &&
       lineas.length > 0 &&
       clienteSeleccionado !== null &&
       puntoVentaSeleccionada !== null &&
@@ -3992,6 +3996,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+
+            {ajusteEnEdicion !== null && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                Aplicá o cancelá el ajuste antes de cobrar.
+              </div>
+            )}
 
             <button
               type="button"
