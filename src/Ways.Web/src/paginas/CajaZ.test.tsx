@@ -84,9 +84,11 @@ function detalleFixture(sobrescribir: Partial<DetalleDeTurno> = {}): DetalleDeTu
       { id: 2, numero: 2, numeroVisible: '0003-00000002', estado: 'Anulado', fecha: '2026-08-05T19:30:00Z', idPuntoVenta: 10, idCliente: 2, total: 250 },
     ],
     gastos: [
-      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null },
-      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null },
+      { id: 1, idPuntoVenta: 10, fecha: '2026-08-05T09:00:00Z', categoria: 'Sueldos', idMedioPago: 1, importe: 300, origenFondos: 'CajaTurno', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null },
+      { id: 2, idPuntoVenta: 10, fecha: '2026-08-05T10:00:00Z', categoria: 'Viaticos', idMedioPago: 2, importe: 120, origenFondos: 'Tesoreria', idTurnoCaja: 55, turnoAbierto: true, idProveedor: null, idArea: null, concepto: 'Gasto', detalle: null, numeroFactura: null, idComprobanteCompra: null },
     ],
+    fechaRecalculo: null,
+    idEmpleadoRecalculo: null,
     ...sobrescribir,
   }
 }
@@ -169,6 +171,30 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(within(filaGastoDos).getByText('$ 120,00')).toBeInTheDocument()
     // origenFondos Tesoreria: la fila lleva el badge "Caja general".
     expect(within(filaGastoDos).getByText('Caja general')).toBeInTheDocument()
+  })
+
+  it('muestra la marca "Recalculado" solo cuando el turno tiene un recálculo administrativo', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/412/detalle') {
+        return Promise.resolve(detalleFixture({ fechaRecalculo: '2026-08-06T10:00:00Z', idEmpleadoRecalculo: 9 }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    renderCajaZ()
+
+    expect(await screen.findByText('Recalculado')).toBeInTheDocument()
+  })
+
+  it('sin recálculo no muestra la marca "Recalculado"', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    renderCajaZ()
+
+    // Se espera al dato (la fila de medios) antes de afirmar la ausencia.
+    await screen.findByRole('row', { name: /Medio #1/ })
+    expect(screen.queryByText('Recalculado')).not.toBeInTheDocument()
   })
 
   it('sin medios/tickets/gastos muestra los estados vacíos de cada sección', async () => {

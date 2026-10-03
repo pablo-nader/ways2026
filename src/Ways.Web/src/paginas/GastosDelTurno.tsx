@@ -522,6 +522,7 @@ export function GastosDelTurno() {
         <ModalDeEdicionDeGasto
           key={edicion.id}
           gasto={edicion}
+          ligadoACompra={edicion.idComprobanteCompra !== null}
           medios={mediosParaGasto}
           proveedores={proveedores ?? []}
           areas={areas ?? []}

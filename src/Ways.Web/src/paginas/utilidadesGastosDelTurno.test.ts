@@ -43,6 +43,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     concepto: 'Flete',
     detalle: null,
     numeroFactura: null,
+    idComprobanteCompra: null,
     ...sobrescribir,
   }
 }

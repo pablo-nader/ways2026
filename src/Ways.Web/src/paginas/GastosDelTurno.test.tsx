@@ -121,6 +121,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     concepto: 'Flete',
     detalle: null,
     numeroFactura: null,
+    idComprobanteCompra: null,
     ...sobrescribir,
   }
 }
@@ -139,6 +140,8 @@ function detalleFixture(gastos: GastoDeTurno[] = []): DetalleDeTurno {
     },
     tickets: [],
     gastos,
+    fechaRecalculo: null,
+    idEmpleadoRecalculo: null,
   }
 }
 
@@ -520,6 +523,29 @@ describe('GastosDelTurno — edición', () => {
     expect(d.getByLabelText('Concepto')).toHaveValue('Flete')
     expect(d.getByLabelText('Detalle (opcional)')).toHaveValue('Entrega')
     expect(d.getByLabelText('N° de factura (opcional)')).toHaveValue('0001-9')
+  })
+
+  it('un gasto ligado a una compra abre la edición con categoría y proveedor bloqueados', async () => {
+    mockearRutas({
+      detalle: detalleFixture([gastoFixture({ categoria: 'Proveedor', idProveedor: 1, idComprobanteCompra: 40 })]),
+    })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    expect(d.getByLabelText('Categoría')).toBeDisabled()
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeDisabled()
+    expect(d.getByLabelText('Concepto')).toBeEnabled()
+  })
+
+  it('un gasto sin compra abre la edición con categoría y proveedor habilitados', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ idComprobanteCompra: null })]) })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    expect(d.getByLabelText('Categoría')).toBeEnabled()
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeEnabled()
   })
 
   it('guarda con PUT /gastos/{id}, cierra el modal, avisa y refresca el detalle', async () => {

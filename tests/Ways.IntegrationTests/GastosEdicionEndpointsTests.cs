@@ -532,6 +532,13 @@ public class GastosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(detalle.FechaRecalculo, filaRecalculada.FechaRecalculo);
         Assert.Equal(ctx.IdAdmin, filaRecalculada.IdEmpleadoRecalculo);
         Assert.Equal(910m, filaRecalculada.Esperado);
+
+        var zRecalculado = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{idTurno}/detalle", OpcionesJson);
+        Assert.Equal(detalle.FechaRecalculo, zRecalculado!.FechaRecalculo);
+        Assert.Equal(ctx.IdAdmin, zRecalculado.IdEmpleadoRecalculo);
+        var zHermano = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{idTurnoHermano}/detalle", OpcionesJson);
+        Assert.Null(zHermano!.FechaRecalculo);
+        Assert.Null(zHermano.IdEmpleadoRecalculo);
         var filaHermana = historico.Items.Single(f => f.IdTurnoCaja == idTurnoHermano);
         Assert.Null(filaHermana.FechaRecalculo);
         Assert.Null(filaHermana.IdEmpleadoRecalculo);
@@ -690,6 +697,9 @@ public class GastosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture
         var ajuste = await db.MovimientosCuentaCorrienteProveedor
             .SingleAsync(m => m.IdProveedor == ctx.IdProveedor && m.Tipo == TipoMovimientoCcProveedor.Ajuste);
         Assert.Equal(50m, ajuste.Importe);
+
+        var pos = await ctx.Admin.GetFromJsonAsync<PaginaDeGastos>("/api/gastos?tamanio=50", OpcionesJson);
+        Assert.Equal(idCompra, pos!.Items.Single(g => g.Id == gasto.Id).IdComprobanteCompra);
     }
 
     private async Task<int> CrearYConfirmarCompraAsync(Contexto ctx)
@@ -744,6 +754,7 @@ public class GastosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal((idTurnoCerrado, false), (cerrado.IdTurnoCaja, cerrado.TurnoAbierto));
         var administrativo = pos.Items.Single(g => g.Id == sinTurno.Id);
         Assert.Equal(((int?)null, false), (administrativo.IdTurnoCaja, administrativo.TurnoAbierto));
+        Assert.Null(abierto.IdComprobanteCompra);
 
         var admin = await ctx.Admin.GetFromJsonAsync<PaginaDeGastosDeAdministracion>("/api/gastos/administracion?tamanio=50", OpcionesJson);
         Assert.True(admin!.Items.Single(g => g.Id == deTurnoAbierto.Id).TurnoAbierto);
@@ -752,6 +763,7 @@ public class GastosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture
 
         var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{idTurnoAbierto}/detalle", OpcionesJson);
         var linea = Assert.Single(detalle!.Gastos);
+        Assert.Null(linea.IdComprobanteCompra);
         Assert.Equal(
             (deTurnoAbierto.Id, true, ctx.IdProveedor, ctx.IdArea, "Con todo", "Detalle", "FC-9", OrigenFondosGasto.CajaTurno),
             (linea.Id, linea.TurnoAbierto, linea.IdProveedor, linea.IdArea, linea.Concepto, linea.Detalle, linea.NumeroFactura, linea.OrigenFondos));

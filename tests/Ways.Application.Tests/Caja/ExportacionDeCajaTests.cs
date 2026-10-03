@@ -80,7 +80,7 @@ public class ExportacionDeCajaTests
     public void DetalleEscribeUnaFilaPorMedioEnLaSeccionMediosDePago()
     {
         var resumen = ResumenVacio(medios: [new LineaDeResumen(IdMedioPago: 3, ImporteEsperado: 500m)]);
-        var detalle = new DetalleDeTurno(resumen, [], []);
+        var detalle = new DetalleDeTurno(resumen, [], [], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
 
@@ -103,7 +103,7 @@ public class ExportacionDeCajaTests
             PorCategoria: [new EgresoPorCategoria(CategoriaGasto.Otros, 40m)],
             PorArea: [new EgresoPorArea(IdArea: null, NombreArea: "Sin área", Total: 40m)],
             Retiros: 100m);
-        var detalle = new DetalleDeTurno(ResumenVacio(egresos: egresos), [], []);
+        var detalle = new DetalleDeTurno(ResumenVacio(egresos: egresos), [], [], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
 
@@ -123,8 +123,8 @@ public class ExportacionDeCajaTests
         var ticket = new ComprobanteListado(
             1, 1L, "0003-00000001", EstadoComprobante.Emitido, fecha, 3, 1, 150m);
         var gasto = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno,
-            7, false, null, null, "Gasto", null, null);
-        var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [gasto]);
+            7, false, null, null, "Gasto", null, null, null);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [ticket], [gasto], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
 
@@ -147,10 +147,10 @@ public class ExportacionDeCajaTests
     {
         var fecha = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
         var deCaja = new GastoListado(1, 3, fecha, CategoriaGasto.Otros, 1, 40m, OrigenFondosGasto.CajaTurno,
-            7, false, null, null, "Gasto", null, null);
+            7, false, null, null, "Gasto", null, null, null);
         var deTesoreria = new GastoListado(2, 3, fecha, CategoriaGasto.Proveedor, 1, 70m, OrigenFondosGasto.Tesoreria,
-            7, false, 4, null, "Pago", null, null);
-        var detalle = new DetalleDeTurno(ResumenVacio(), [], [deCaja, deTesoreria]);
+            7, false, 4, null, "Pago", null, null, null);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [], [deCaja, deTesoreria], null, null);
 
         var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
 

@@ -1156,6 +1156,8 @@ export type GastoDeTurno = {
   concepto: string
   detalle: string | null
   numeroFactura: string | null
+  /** Compra a la que está ligado el gasto; no `null` bloquea categoría y proveedor en la edición. */
+  idComprobanteCompra: number | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1164,6 +1166,9 @@ export type DetalleDeTurno = {
   resumen: ResumenDeTurno
   tickets: TicketDeTurno[]
   gastos: GastoDeTurno[]
+  /** Último recálculo administrativo del arqueo; `null` si nunca hubo uno. */
+  fechaRecalculo: string | null
+  idEmpleadoRecalculo: number | null
 }
 
 // --- Gastos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —

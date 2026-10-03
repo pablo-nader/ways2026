@@ -222,6 +222,8 @@ describe('reporteZ', () => {
       },
       tickets: [],
       gastos: [],
+      fechaRecalculo: null,
+      idEmpleadoRecalculo: null,
     }
     const texto = textoPlano(reporteZ(detalle, CONTEXTO))
     expect(texto).toContain('Turno #8')

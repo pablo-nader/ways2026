@@ -7,6 +7,7 @@ import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { enEscritorio, imprimir } from '../impresion/impresora'
 import { reporteZ } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
@@ -157,6 +158,11 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
 
         {detalle && (
           <>
+            {detalle.fechaRecalculo !== null && (
+              <div className="mb-2">
+                <InsigniaDeRecalculo fechaRecalculo={detalle.fechaRecalculo} />
+              </div>
+            )}
             <div className="row g-3 mb-3">
               <div className="col-md-3">
                 <div className="text-muted small">Tickets</div>

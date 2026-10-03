@@ -179,11 +179,14 @@ public sealed record PaginaDeHistoricoDeCajas(
 /// ResumenDeTurno Plus Ticket And Gasto Listings) — el MISMO <see cref="ResumenDeTurno"/> que
 /// <c>/resumen</c> devuelve, sin tocarlo, más las dos listas que <see cref="LectorDeLineasDelTurno"/>
 /// lee: los tickets del turno (<see cref="Ways.Application.Ventas.ComprobanteListado"/>, anulados
-/// excluidos) y sus gastos (<see cref="Ways.Application.Gastos.GastoListado"/>).</summary>
+/// excluidos) y sus gastos (<see cref="Ways.Application.Gastos.GastoListado"/>), más la marca del
+/// último recálculo administrativo del arqueo (<c>null</c> si nunca hubo uno).</summary>
 public sealed record DetalleDeTurno(
     ResumenDeTurno Resumen,
     IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
-    IReadOnlyList<Ways.Application.Gastos.GastoListado> Gastos);
+    IReadOnlyList<Ways.Application.Gastos.GastoListado> Gastos,
+    DateTimeOffset? FechaRecalculo,
+    int? IdEmpleadoRecalculo);
 
 // ---- stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
 // MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec tesoreria:

@@ -59,7 +59,8 @@ public sealed record GastoRegistrado(
 /// <see cref="IdTurnoCaja"/>/<see cref="TurnoAbierto"/> le dicen a la UI si el POS todavía puede
 /// editar el gasto (<c>PUT /api/gastos/{id}</c> exige el turno abierto); los campos editables
 /// (<see cref="IdProveedor"/>…<see cref="NumeroFactura"/>) permiten precargar ese formulario desde
-/// el detalle del turno sin una segunda lectura.</summary>
+/// el detalle del turno sin una segunda lectura. <see cref="IdComprobanteCompra"/> le dice al POS
+/// que el gasto está ligado a una compra (categoría y proveedor quedan bloqueados en la edición).</summary>
 public sealed record GastoListado(
     int Id,
     int? IdPuntoVenta,
@@ -74,7 +75,8 @@ public sealed record GastoListado(
     int? IdArea,
     string Concepto,
     string? Detalle,
-    string? NumeroFactura);
+    string? NumeroFactura,
+    int? IdComprobanteCompra);
 
 /// <summary>Página de resultados de <c>GET /api/gastos</c> — mismo shape que
 /// <c>Ways.Application.Caja.PaginaDeTurnos</c>.</summary>

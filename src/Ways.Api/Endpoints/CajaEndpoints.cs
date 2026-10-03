@@ -107,13 +107,18 @@ public static class CajaEndpoints
         // (misma derivación que /resumen, invariante intacto) + LectorDeLineasDelTurno, dos
         // lecturas indexadas llanas — sin escritura, sin agregado nuevo.
         grupo.MapGet("/{id:int}/detalle", async (
-            ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas, int id, CancellationToken ct) =>
+            ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas, IWaysDbContext db,
+            int id, CancellationToken ct) =>
         {
             var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
             var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
             var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
+            var recalculo = await db.TurnosCaja
+                .Where(t => t.Id == id)
+                .Select(t => new { t.FechaRecalculo, t.IdEmpleadoRecalculo })
+                .FirstAsync(ct);
 
-            return Results.Ok(new DetalleDeTurno(resumen, tickets, gastos));
+            return Results.Ok(new DetalleDeTurno(resumen, tickets, gastos, recalculo.FechaRecalculo, recalculo.IdEmpleadoRecalculo));
         })
         .WithSummary(
             "Detalle del turno (Z-report): el mismo resumen de /resumen más los tickets y gastos " +
@@ -138,15 +143,16 @@ public static class CajaEndpoints
             var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
             var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
             var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
-            var detalle = new DetalleDeTurno(resumen, tickets, gastos);
 
             // El turno YA está confirmado existente por ObtenerAsync — lectura plana por PK para
             // el encabezado (PV/rango), el único dato que ResumenDeTurno no trae (nunca duplica la
             // derivación del arqueo).
             var turno = await db.TurnosCaja
                 .Where(t => t.Id == id)
-                .Select(t => new { t.IdPuntoVenta, t.FechaApertura, t.FechaCierre })
+                .Select(t => new { t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.FechaRecalculo, t.IdEmpleadoRecalculo })
                 .FirstAsync(ct);
+            var detalle = new DetalleDeTurno(
+                resumen, tickets, gastos, turno.FechaRecalculo, turno.IdEmpleadoRecalculo);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, turno.IdPuntoVenta, ct);
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
