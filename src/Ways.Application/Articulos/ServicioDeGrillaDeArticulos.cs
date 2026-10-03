@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Ways.Application.Abstracciones;
 using Ways.Application.Precios;
 using Ways.Domain.Common;
+using Ways.Domain.Usuarios;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
 namespace Ways.Application.Articulos;
@@ -169,9 +170,11 @@ public class ServicioDeGrillaDeArticulos(
 
     /// <summary>El costo es del back-office (admin y supervisor): esta grilla hereda
     /// <c>OperacionDePos</c>, así que un vendedor que la llame recibe <c>null</c>.</summary>
+    private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
+
     private ArticuloGrillaFila Proyectar(FilaCandidata c, decimal? precio) => new(
         c.Id, c.CodigoInterno, c.Nombre, precio,
-        contexto.Rol is Ways.Domain.Usuarios.RolConocido.Admin or Ways.Domain.Usuarios.RolConocido.Supervisor ? c.CostoNominal : null, c.IdProveedorHabitual,
+        PuedeVerCostos ? c.CostoNominal : null, c.IdProveedorHabitual,
         EtiquetaProveedor(c.ProveedorNombreFantasia, c.ProveedorRazonSocial), c.Activo);
 
     /// <summary>Regla de etiqueta de proveedor (spec de la slice, compartida con el selector de

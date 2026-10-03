@@ -33,7 +33,7 @@ export type PropsModalDeBusquedaDeArticulos = {
    * `title`. `undefined` (default) ⇒ "Agregar" habilitado — no rompe ningún llamador existente. */
   motivoSinAgregar?: string
   /** `true` agrega la columna "Costo" (`costoNominal`). Default `false`: el POS nunca la muestra y
-   * el servidor tampoco manda el costo a un rol que no sea admin. Solo lo enciende un llamador de
+   * el servidor tampoco manda el costo al vendedor. Solo lo enciende un llamador de
    * back-office. */
   mostrarCosto?: boolean
   onAgregar: (linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) => void
