@@ -98,6 +98,7 @@ function compraListadaFixture(sobrescribir: Partial<CompraListada> = {}): Compra
     estado: 'Confirmada',
     fechaRecepcion: '2026-08-05T12:00:00Z',
     total: 1149.5,
+    saldoPendiente: 0,
     ...sobrescribir,
   }
 }

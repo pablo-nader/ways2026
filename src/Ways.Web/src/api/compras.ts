@@ -19,9 +19,11 @@ import type {
   PercepcionSolicitada,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
+  ResultadoDePagoDeCompra,
   SaldoDeProveedor,
   SolicitudDeAplicarPrecios,
   SolicitudDeCompra,
+  SolicitudDePagoDeCompra,
   TipoComprobanteListado,
   TipoDePercepcion,
 } from './tipos'
@@ -91,6 +93,10 @@ export const clienteDeCompras = {
   anular: (id: number) => api.post<ResultadoAnulacion>(`/compras/${id}/anular`),
   aplicarPrecios: (id: number, solicitud: SolicitudDeAplicarPrecios) =>
     api.post<ResultadoAplicarPrecio[]>(`/compras/${id}/precios`, solicitud),
+  /** `POST /api/compras/{id}/pagos` — `GestionDeCatalogo` del lado del servidor: crea el gasto de
+   * tesorería y el pago de cuenta corriente imputado a la compra en una transacción. */
+  pagar: (id: number, solicitud: SolicitudDePagoDeCompra) =>
+    api.post<ResultadoDePagoDeCompra>(`/compras/${id}/pagos`, solicitud),
   /** `GET /api/proveedores/{id}/saldo` — top-level, no dentro de `/api/proveedores` (design: API
    * Surface). Usado acá solo para la columna de estado de pago cuando el listado está filtrado
    * por un proveedor puntual; el panel completo lo construye `Proveedores.tsx` en la Slice 6. */
@@ -599,4 +605,48 @@ export function lineaConDescuentoInvalido(l: LineaDeCalculo): boolean {
   const cantidad = redondear(l.unidades + l.bultos * l.unidadesPorBulto, 3)
   const bruto = redondear(cantidad * l.costoUnitario, 2)
   return l.descuento > bruto
+}
+
+// ---- Pago de una compra confirmada -----------------------------------------------------------
+
+/** Hoy como `YYYY-MM-DD` en la zona del navegador, la misma con la que el resto de la web decide la
+ * fecha de negocio por defecto (`Gastos.tsx`). */
+export function fechaDeHoyParaPago(ahora: Date = new Date()): string {
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0')
+  const dia = String(ahora.getDate()).padStart(2, '0')
+  return `${ahora.getFullYear()}-${mes}-${dia}`
+}
+
+/** Una compra se puede pagar solo si está confirmada y todavía le falta pagar algo. */
+export function sePuedePagarLaCompra(compra: Pick<CompraDetalle, 'estado' | 'saldoPendiente'>): boolean {
+  return compra.estado === 'Confirmada' && compra.saldoPendiente > 0
+}
+
+export type PagoDeCompraFormulario = {
+  importe: number | null
+  fecha: string
+  idMedioPago: number | null
+  concepto: string
+}
+
+/** Valida el formulario con lo mismo que el servidor rechaza antes de escribir (importe positivo y
+ * hasta el saldo pendiente, fecha no futura, medio de pago elegido) y, si pasa, arma la
+ * `SolicitudDePagoDeCompra`: feedback instantáneo, nunca autoritativo. Un concepto en blanco viaja
+ * como `null` y el servidor arma `Pago <tipo> <número>`. */
+export function prepararPagoDeCompra(
+  formulario: PagoDeCompraFormulario,
+  saldoPendiente: number,
+  hoy: string,
+): { solicitud: SolicitudDePagoDeCompra } | { error: string } {
+  const { importe, idMedioPago } = formulario
+  if (importe === null || !(importe > 0)) return { error: 'Ingresá un importe mayor a 0.' }
+  if (importe > saldoPendiente) return { error: 'El importe no puede superar el saldo pendiente de la compra.' }
+  if (!formulario.fecha) return { error: 'Elegí la fecha del pago.' }
+  if (formulario.fecha > hoy) return { error: 'La fecha del pago no puede ser futura.' }
+  if (idMedioPago === null) return { error: 'Elegí el medio de pago.' }
+
+  const concepto = formulario.concepto.trim()
+  return {
+    solicitud: { fecha: formulario.fecha, importe, idMedioPago, concepto: concepto === '' ? null : concepto },
+  }
 }

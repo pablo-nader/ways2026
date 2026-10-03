@@ -16,6 +16,7 @@ import {
   lineaFormularioACalculo,
   lineaConDescuentoInvalido,
   percepcionesAplicables,
+  sePuedePagarLaCompra,
   type EncabezadoDeCompraFormulario,
   type LineaDeCompraFormulario,
 } from '../api/compras'
@@ -40,6 +41,7 @@ import type {
   PuntoVentaListado,
   ResultadoAnulacion,
   ResultadoAplicarPrecio,
+  ResultadoDePagoDeCompra,
   TipoComprobanteListado,
   TipoDePercepcion,
 } from '../api/tipos'
@@ -47,6 +49,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
 import { DesgloseDeIvaDeCompra } from './DesgloseDeIvaDeCompra'
 import {
@@ -902,6 +905,19 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [errorAnular, setErrorAnular] = useState('')
   const [resultadoAnulacion, setResultadoAnulacion] = useState<ResultadoAnulacion | null>(null)
 
+  const [pagoAbierto, setPagoAbierto] = useState(false)
+
+  // El pago ya trae el pagado y el saldo pendiente leídos bajo el lock de la compra: se vuelcan al
+  // detalle en pantalla sin volver a pedirlo, así no hay una segunda lectura que pueda fallar o
+  // llegar vieja después de un pago que sí se registró.
+  function alPagar(resultado: ResultadoDePagoDeCompra) {
+    setPagoAbierto(false)
+    setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+    setCompra((prev) =>
+      prev === null ? prev : { ...prev, pagado: resultado.pagado, saldoPendiente: resultado.saldoPendiente },
+    )
+  }
+
   // El panel de aplicar precio sugerido es local a `PanelAplicarPrecios`, pero su "en vuelo" se
   // levanta acá (regla 9): sin esto, `ocupado` no lo ve y anular puede dispararse con un aplicar
   // todavía en curso — el gate queda asimétrico.
@@ -1670,6 +1686,19 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                 </div>
               </div>
 
+              {esConfirmada && (
+                <div className="row g-3 mb-3">
+                  <div className="col-md-3">
+                    <div className="small text-muted">Pagado</div>
+                    <div>{formatearMoneda(compra.pagado)}</div>
+                  </div>
+                  <div className="col-md-3">
+                    <div className="small text-muted">Saldo pendiente</div>
+                    <div className="fs-6">{formatearMoneda(compra.saldoPendiente)}</div>
+                  </div>
+                </div>
+              )}
+
               {compra.discriminaIva && (
                 <DesgloseDeIvaDeCompra filas={compra.alicuotas} nombrePorAlicuota={nombrePorAlicuota} />
               )}
@@ -1691,6 +1720,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               {esConfirmada && puedeEscribir && (
                 <>
                   <div className="d-flex gap-2 mb-3">
+                    {sePuedePagarLaCompra(compra) && (
+                      <button type="button" className="btn btn-primary" disabled={ocupado} onClick={() => setPagoAbierto(true)}>
+                        Pagar
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn-danger"
@@ -1700,6 +1734,16 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                       Anular compra
                     </button>
                   </div>
+
+                  {pagoAbierto && (
+                    <ModalDePagoDeCompra
+                      idCompra={compra.id}
+                      etiquetaDeLaCompra={compra.numeroExterno ?? `#${compra.id}`}
+                      saldoPendiente={compra.saldoPendiente}
+                      onCerrar={() => setPagoAbierto(false)}
+                      onPagado={alPagar}
+                    />
+                  )}
 
                   {panelAnularAbierto && (
                     <div className="border p-3 mb-3">

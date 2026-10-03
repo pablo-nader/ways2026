@@ -1783,9 +1783,14 @@ export type CompraDetalle = {
   alicuotas: AlicuotaDeCompra[]
   preciosIncluyenIva: boolean
   percepciones: PercepcionDeCompra[]
+  /** Lo ya pagado de la compra y lo que falta pagar (cero fuera de una compra confirmada): datos de
+   * encabezado, los ve también el vendedor. */
+  pagado: number
+  saldoPendiente: number
 }
 
-/** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). */
+/** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). `saldoPendiente` es lo
+ * que falta pagar de la compra (cero si no está confirmada). */
 export type CompraListada = {
   id: number
   idProveedor: number
@@ -1794,7 +1799,16 @@ export type CompraListada = {
   estado: EstadoCompra
   fechaRecepcion: string | null
   total: number
+  saldoPendiente: number
 }
+
+/** Cuerpo de `POST /api/compras/{id}/pagos` (espejo de `SolicitudDePagoDeCompra`). `fecha` viaja como
+ * `YYYY-MM-DD` (fecha de negocio, nunca futura); `concepto` nulo deja el default del servidor. */
+export type SolicitudDePagoDeCompra = { fecha: string; importe: number; idMedioPago: number; concepto: string | null }
+
+/** Respuesta de `POST /api/compras/{id}/pagos` (espejo de `ResultadoDePagoDeCompra`): el gasto creado
+ * y el estado de pago de la compra después de este pago. */
+export type ResultadoDePagoDeCompra = { gasto: GastoRegistrado; pagado: number; saldoPendiente: number }
 
 /** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
 export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }
@@ -1849,6 +1863,8 @@ export type MovimientoDeCuentaDeProveedor = {
   idComprobanteCompra: number | null
   idGasto: number | null
   etiqueta: EtiquetaDeAjuste | null
+  /** Solo en las filas de tipo `Compra`: lo que falta pagar de ESA compra hoy (cero si está anulada). */
+  saldoPendienteDeLaCompra: number | null
 }
 
 /** `saldo` viene de `proveedores.saldo` — NUNCA re-derivado de los movimientos de esta misma

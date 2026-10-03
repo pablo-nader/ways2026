@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aSolicitudDeAjusteDeProveedor,
   construirQueryEstadoDeCuentaDeProveedor,
+  compraPagableDelMovimiento,
   esSaldoAFavor,
   etiquetaDeTipoDeMovimiento,
   etiquetarAjuste,
@@ -21,6 +22,7 @@ function movimientoFixture(sobrescribir: Partial<MovimientoDeCuentaDeProveedor> 
     idComprobanteCompra: 5,
     idGasto: null,
     etiqueta: null,
+    saldoPendienteDeLaCompra: null,
     ...sobrescribir,
   }
 }
@@ -145,5 +147,22 @@ describe('aSolicitudDeAjusteDeProveedor', () => {
       importe: -200,
       detalle: 'saldo inicial mal cargado',
     })
+  })
+})
+
+describe('compraPagableDelMovimiento', () => {
+  it('una fila de compra con saldo pendiente ofrece pagar esa compra por ese saldo', () => {
+    expect(
+      compraPagableDelMovimiento(movimientoFixture({ tipo: 'Compra', idComprobanteCompra: 5, saldoPendienteDeLaCompra: 320 })),
+    ).toEqual({ idCompra: 5, saldoPendiente: 320 })
+  })
+
+  it('una compra saldada, sin dato de saldo o de otro tipo no ofrece pago', () => {
+    expect(compraPagableDelMovimiento(movimientoFixture({ saldoPendienteDeLaCompra: 0 }))).toBeNull()
+    expect(compraPagableDelMovimiento(movimientoFixture({ saldoPendienteDeLaCompra: null }))).toBeNull()
+    expect(
+      compraPagableDelMovimiento(movimientoFixture({ tipo: 'Pago', idGasto: 3, saldoPendienteDeLaCompra: 320 })),
+    ).toBeNull()
+    expect(compraPagableDelMovimiento(movimientoFixture({ idComprobanteCompra: null, saldoPendienteDeLaCompra: 320 }))).toBeNull()
   })
 })

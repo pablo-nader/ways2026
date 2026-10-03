@@ -921,6 +921,7 @@ export function Gastos() {
                         <th>N° externo</th>
                         <th>Fecha</th>
                         <th className="text-end">Total</th>
+                        <th className="text-end">Saldo pendiente</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -930,6 +931,7 @@ export function Gastos() {
                           <td>{c.numeroExterno ?? `#${c.id}`}</td>
                           <td>{c.fechaRecepcion ? formatearFecha(c.fechaRecepcion) : '—'}</td>
                           <td className="text-end">{formatearMoneda(c.total)}</td>
+                          <td className="text-end">{formatearMoneda(c.saldoPendiente)}</td>
                           <td>
                             <button type="button" className="btn btn-sm btn-primary" onClick={() => void vincularACompra(c.id)}>
                               {vinculando ? 'Vinculando…' : 'Elegir'}

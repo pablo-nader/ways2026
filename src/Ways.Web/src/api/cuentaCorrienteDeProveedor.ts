@@ -128,3 +128,15 @@ export function esSaldoAFavor(valor: number): boolean {
 export function aSolicitudDeAjusteDeProveedor(idPuntoVenta: number, importe: number, detalle: string): SolicitudDeAjusteDeProveedor {
   return { idPuntoVenta, importe, detalle: detalle.trim() }
 }
+
+/** La compra que se puede pagar desde una fila del ledger: solo una fila de tipo `compra` cuya
+ * compra todavía tiene saldo pendiente. El resto de las filas (pagos, ajustes, apertura, o una compra
+ * ya saldada o anulada) no ofrecen pago. */
+export function compraPagableDelMovimiento(
+  m: Pick<MovimientoDeCuentaDeProveedor, 'tipo' | 'idComprobanteCompra' | 'saldoPendienteDeLaCompra'>,
+): { idCompra: number; saldoPendiente: number } | null {
+  if (m.tipo !== 'Compra' || m.idComprobanteCompra === null || m.saldoPendienteDeLaCompra === null) return null
+  return m.saldoPendienteDeLaCompra > 0
+    ? { idCompra: m.idComprobanteCompra, saldoPendiente: m.saldoPendienteDeLaCompra }
+    : null
+}

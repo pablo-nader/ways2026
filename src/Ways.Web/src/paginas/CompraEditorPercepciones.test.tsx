@@ -177,6 +177,8 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     alicuotas: [{ idAlicuotaIva: 3, porcentaje: 21, neto: 1000, iva: 210 }],
     preciosIncluyenIva: true,
     percepciones: [{ tipo: 'iibb', alicuota: 3, baseImponible: 1000, importe: 30 }],
+    pagado: 0,
+    saldoPendiente: 0,
     ...sobrescribir,
   }
 }
