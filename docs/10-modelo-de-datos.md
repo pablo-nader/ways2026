@@ -162,8 +162,9 @@ forma idempotente (guard `AND EXISTS`), dentro de la migración `ComprasRemitoYA
 base ya migrada, de modo que todos los tenants existentes lo reciben.
 
 **`registra_libro_iva`:** distingue las facturas (que se declaran en el libro IVA) de todo lo
-demás. Vale `true` en `C-FA`, `C-FB` y `C-FC` y `false` en el resto, ventas incluidas (el libro de
-ventas se decide aparte). En compras cumple además otra función: un tipo que registra libro IVA es
+demás. Vale `true` en `C-FA`, `C-FB` y `C-FC` y `false` en el resto, ventas incluidas: el libro de
+ventas no lee este flag, entran los comprobantes con `es_fiscal` y CAE aprobado (ver "Libro IVA" en
+§5). En compras cumple además otra función: un tipo que registra libro IVA es
 una factura y su letra fija si discrimina IVA; un tipo que no lo registra deja esa decisión a quien
 carga el comprobante (ver `comprobantes_compra.discrimina_iva` en §5).
 
@@ -786,8 +787,8 @@ fila es el neto de una alícuota (la suma de los totales de línea que la usan) 
 descuento_total + iva_total`. Con `discrimina_iva = false` no hay filas e `iva_total` es `NULL`.
 
 Exento y no gravado son filas de `alicuotas_iva` como cualquier otra (porcentaje 0, sin
-`codigo_afip`), así que aparecen en el desglose con IVA cero; la clasificación por nombre queda
-para el libro IVA, igual que en `ComposicionDeTotalesFiscales`.
+`codigo_afip`), así que aparecen en el desglose con IVA cero; el libro IVA los clasifica por nombre
+con `ComposicionDeTotalesFiscales.Clasificar`, la misma función que usa la emisión fiscal.
 
 **IVA impreso (override de redondeo).** El request puede traer, por alícuota, el IVA que el
 proveedor imprimió (`ivaImpreso`). Se acepta cuando `|impreso − calculado| ≤ 1,00` y se guarda en
@@ -829,6 +830,35 @@ alícuotas mayores a 0%; en un comprobante que no discrimina, subtotal menos des
 
 La migración `ComprasPercepcionesYPrecioFinal` agrega las columnas y la tabla con sus `DEFAULT`
 (todo lo existente queda en precios netos y sin percepciones), así que no hace backfill.
+
+**Libro IVA (compras y ventas).** Implementado sin tablas ni columnas nuevas: es una lectura de
+`comprobantes_compra` y `comprobantes_venta` bajo `LecturaDeReportes` (supervisor y admin; el
+de compras expone costos, así que el vendedor nunca lo ve). `GET /api/reportes/libro-iva-compras`
+y `/libro-iva-ventas` (`desde`, `hasta`, `idEmpresa` opcional: sin él abarca todas las
+empresas del tenant), cada uno con su `/export` XLSX; el período máximo es el de los demás
+reportes (366 días) y el tope de filas el de las exportaciones.
+
+- *Compras:* comprobantes `confirmada` de tipos con `registra_libro_iva`, por
+  `fecha_comprobante` (inclusive en ambos extremos); borrador, anulada y `C-RM` quedan afuera. El
+  desglose sale de `alicuotas_comprobante_compra`: cada alícuota gravada aporta neto e IVA a su
+  porcentaje, Exento va a la columna *exento* y No gravado a *no gravado* (por nombre, nunca por
+  porcentaje 0: el 0% real tiene `codigo_afip` y es una alícuota más). Una factura sin
+  discriminar (`C-FB`, `C-FC`) no tiene crédito fiscal: su importe, menos las percepciones, va
+  entero a *no gravado*. Las percepciones de IVA e IIBB salen de `percepciones_comprobante_compra`.
+- *Ventas:* comprobantes `emitido` de tipos `es_fiscal` con `resultado_fiscal` `aprobado` o
+  `aprobado_con_observaciones` (es decir, con CAE); pendiente, rechazado, no fiscales (TX/NCX) y
+  anulados quedan afuera. Se filtra por el día local de la empresa (parámetro `zona_horaria`).
+  El desglose se recompone desde `items_comprobante_venta` con `ComposicionDeTotalesFiscales.Componer`
+  —la función de la emisión—, así que no hay tabla de alícuotas de venta. Las notas de crédito
+  fiscales (`NCA`/`NCB`/`NCC`) restan: la emisión guarda sus importes en positivo y el libro
+  aplica `tipos_comprobante.signo`. Las percepciones de ventas no existen y salen en cero. El
+  número es `puntos_venta.numero_fiscal` (o el id del punto de venta si no lo tiene) + el número fiscal del comprobante.
+- *Consistencia:* cada fila lleva `diferencia = total − (neto gravado + IVA + no gravado + exento +
+  percepciones)`. En un dato bien formado es cero; si no lo es, la fila se informa con su
+  diferencia en vez de ocultarse o corregirse.
+- Los catálogos globales (tipos, alícuotas) se leen sin el filtro de baja lógica, para que dar de
+  baja uno no saque del libro un comprobante ya declarado; proveedor o cliente dados de baja dejan
+  la fila con "(no disponible)".
 
 La migración `ComprasRemitoYAlicuotas` backfillea `discrimina_iva` desde el tipo de cada
 comprobante existente y reconstruye el desglose de los que ya discriminan a partir de sus ítems,
@@ -1528,7 +1558,7 @@ etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_
 > workflow de snapshot/variance completo) están todos implementados, y la web correspondiente
 > (`Compras`/`CompraEditor`/`Transferencias`/`ConteoDeInventario`, panel de saldo en
 > `Proveedores`). No hay etapa 9 en este documento: cualquier trabajo remanente (inventario de
-> conteo completo, órdenes de compra, libro IVA compras) es un cambio post-paridad normal, no
+> conteo completo, órdenes de compra; el libro IVA compras ya está implementado, ver §5) es un cambio post-paridad normal, no
 > una etapa nueva de este mapeo. El programa post-paridad (etapas 9 en adelante) vive en el
 > [doc 11](11-programa-post-paridad.md); las tablas nuevas que esas etapas introduzcan se
 > documentan en este documento al implementarse.
