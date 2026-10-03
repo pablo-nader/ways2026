@@ -54,7 +54,13 @@ public sealed record GastoRegistrado(
 /// puede no llevar punto de venta puntual (histórico pre-empresa). <see cref="OrigenFondos"/>
 /// también aparece acá (y en <c>LectorDeLineasDelTurno.LeerGastosAsync</c>, mismo DTO): esta fila
 /// es informativa (Z-report/historial), nunca un total de arqueo — el origen viaja para que la UI
-/// pueda etiquetar "Caja general" sin filtrar nada.</summary>
+/// pueda etiquetar "Caja general" sin filtrar nada.
+///
+/// <see cref="IdTurnoCaja"/>/<see cref="TurnoAbierto"/> le dicen a la UI si el POS todavía puede
+/// editar el gasto (<c>PUT /api/gastos/{id}</c> exige el turno abierto); los campos editables
+/// (<see cref="IdProveedor"/>…<see cref="NumeroFactura"/>) permiten precargar ese formulario desde
+/// el detalle del turno sin una segunda lectura. <see cref="IdComprobanteCompra"/> le dice al POS
+/// que el gasto está ligado a una compra (categoría y proveedor quedan bloqueados en la edición).</summary>
 public sealed record GastoListado(
     int Id,
     int? IdPuntoVenta,
@@ -62,7 +68,15 @@ public sealed record GastoListado(
     CategoriaGasto Categoria,
     int IdMedioPago,
     decimal Importe,
-    OrigenFondosGasto OrigenFondos);
+    OrigenFondosGasto OrigenFondos,
+    int? IdTurnoCaja,
+    bool TurnoAbierto,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    string? NumeroFactura,
+    int? IdComprobanteCompra);
 
 /// <summary>Página de resultados de <c>GET /api/gastos</c> — mismo shape que
 /// <c>Ways.Application.Caja.PaginaDeTurnos</c>.</summary>
@@ -109,7 +123,8 @@ public sealed record SolicitudDeGastoDeAdministracion(
 /// pantalla de gestión completa): nombres resueltos de proveedor/área/medio de pago vía LEFT
 /// JOIN (dangling-fk-read-models — un catálogo dado de baja lógica nunca puede tirar la fila ni
 /// romper el listado, el nombre simplemente sale <c>null</c>) y el número de compra ligada para
-/// trazabilidad.</summary>
+/// trazabilidad. <see cref="TurnoAbierto"/>: <c>true</c> solo si el gasto tiene turno y ese turno
+/// sigue abierto (la edición de un gasto de caja de un turno cerrado recalcula su arqueo).</summary>
 public sealed record GastoDeAdministracionListado(
     int Id,
     DateTimeOffset Fecha,
@@ -128,7 +143,8 @@ public sealed record GastoDeAdministracionListado(
     string? NumeroFactura,
     decimal Importe,
     OrigenFondosGasto OrigenFondos,
-    int? IdComprobanteCompra);
+    int? IdComprobanteCompra,
+    bool TurnoAbierto);
 
 /// <summary>Página de resultados de <c>GET /api/gastos/administracion</c> — mismo shape que
 /// <see cref="PaginaDeGastos"/>.</summary>
@@ -144,3 +160,19 @@ public sealed record PaginaDeGastosDeAdministracion(
 /// <summary>Cuerpo de <c>POST /api/gastos/{id}/vincular-compra</c> — un solo campo a propósito,
 /// mismo criterio minimalista que <c>SolicitudDeAplicarPrecios</c> para un comando puntual.</summary>
 public sealed record SolicitudDeVincularCompra(int IdComprobanteCompra);
+
+// ---- Edición y baja de gastos ---------------------------------------------------------------
+
+/// <summary>Cuerpo de <c>PUT /api/gastos/{id}</c> (POS, solo con el turno del gasto abierto) y de
+/// <c>PUT /api/gastos/administracion/{id}</c> (admin, cualquier gasto). Solo los campos editables:
+/// origen de fondos, punto de venta, empresa, turno, fecha y compra ligada no se cambian por esta
+/// vía. Mismas validaciones que el alta.</summary>
+public sealed record SolicitudDeEdicionDeGasto(
+    CategoriaGasto Categoria,
+    int? IdProveedor,
+    int? IdArea,
+    string Concepto,
+    string? Detalle,
+    int IdMedioPago,
+    string? NumeroFactura,
+    decimal Importe);

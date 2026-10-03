@@ -86,6 +86,13 @@ public class EscriturasSinReintentoEstructuralesTests
         // RegistrarDeAdministracionAsync (que ya usan la fábrica, fuera de esta lista porque no
         // son parte del audit original de fix/retry-double-add).
         { "Ways.Application/Gastos/ServicioDeGastos.cs", "VincularCompraAsync" },
+
+        // Edición y baja de gastos: ajustes de cuenta corriente y de tesorería, recálculo de arqueo y
+        // auditoría sin clave de idempotencia — un reintento sobre un commit ambiguo los duplicaría
+        // (y la baja reintentada respondería 404 a una baja que sí tuvo éxito).
+        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarAsync" },
+        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarDeAdministracionAsync" },
+        { "Ways.Application/Gastos/ServicioDeGastos.cs", "EliminarDeAdministracionAsync" },
     };
 
     /// <summary>

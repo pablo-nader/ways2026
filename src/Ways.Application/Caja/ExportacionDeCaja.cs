@@ -143,6 +143,20 @@ public static class ExportacionDeCaja
     {
         var filas = new List<IReadOnlyList<Celda>>();
 
+        if (respuesta.FechaRecalculo is not null)
+        {
+            // Primera fila: la marca de recálculo; la fecha viaja como celda de fecha (zona del comercio).
+            filas.Add(
+            [
+                Celda.Texto("Arqueo recalculado"),
+                Celda.Texto(respuesta.IdEmpleadoRecalculo is { } idEmpleado
+                    ? $"Recalculado por empleado #{idEmpleado}"
+                    : "Recalculado"),
+                Celda.FechaHora(respuesta.FechaRecalculo, zona),
+                Celda.Moneda(null)
+            ]);
+        }
+
         foreach (var medio in respuesta.Resumen.Medios)
         {
             filas.Add(

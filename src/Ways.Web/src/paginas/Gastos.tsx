@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import {
+  advertenciasDeGastoDeAdministracion,
   aSolicitudDeGastoDeAdministracion,
   clienteDeGastos,
   clienteDeGastosDeAdministracion,
@@ -8,6 +9,7 @@ import {
   formularioDeGastoDeAdministracionCompleto,
   formularioDeGastoDeAdministracionVacio,
   categoriaAlElegirProveedorAdministracion,
+  copiaDeFalloDeEdicion,
   type FiltrosDeGastosDeAdministracion,
   type FormularioDeGastoDeAdministracion,
 } from '../api/gastos'
@@ -23,18 +25,23 @@ import type {
   CategoriaGasto,
   CompraListada,
   EmpresaListado,
+  GastoDeAdministracionListado,
   MedioPagoAlta,
   MedioPagoListado,
   OpcionDeProveedor,
   OrigenFondosGasto,
   PaginaDeGastosDeAdministracion,
   PuntoVentaListado,
+  SolicitudDeEdicionDeGasto,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { BotonIcono } from '../componentes/BotonIcono'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
+import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
@@ -75,6 +82,11 @@ function mediosValidosParaGastoDeAdministracion(medios: MedioPagoListado[]): Med
  * respuesta desactualizada de cualquiera de las dos nunca pisa un estado más nuevo (regla 3); el
  * formulario entero queda inerte mientras un alta está en vuelo (regla 5); un doble click en el
  * mismo tick lo bloquea `guardandoRef` antes de que el re-render deshabilite el botón (regla 11).
+ *
+ * Edición y baja de un gasto (modal / `ConfirmacionDeBaja`): comparten `escribiendoRef` y un
+ * `bloqueado` que deja inerte la pantalla entera desde el click hasta que el refresco posterior
+ * aterrizó (reglas 5, 9 y 13) — se bloquea el supersede en vez de reconciliarlo con tokens. Si el
+ * gasto es de caja de un turno cerrado, ambos avisan que el servidor recalcula el arqueo.
  */
 export function Gastos() {
   const navigate = useNavigate()
@@ -100,6 +112,15 @@ export function Gastos() {
   const [aviso, setAviso] = useState('')
 
   const generacionRef = useRef(0)
+
+  const [edicion, setEdicion] = useState<GastoDeAdministracionListado | null>(null)
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false)
+  const [errorEdicion, setErrorEdicion] = useState('')
+  const [baja, setBaja] = useState<GastoDeAdministracionListado | null>(null)
+  const [disparadorDeLaBaja, setDisparadorDeLaBaja] = useState<HTMLElement | null>(null)
+  const [eliminando, setEliminando] = useState(false)
+  const [errorBaja, setErrorBaja] = useState('')
+  const escribiendoRef = useRef(false)
 
   // ---- stage-gasto-a-compra (PR4): picker "Vincular a compra" para un gasto sin compra ligada --
   const [pickerGastoId, setPickerGastoId] = useState<number | null>(null)
@@ -213,7 +234,7 @@ export function Gastos() {
     setCargando(true)
     setError('')
 
-    clienteDeGastosDeAdministracion
+    return clienteDeGastosDeAdministracion
       .listar(filtros)
       .then((datos) => {
         if (generacionRef.current !== miGeneracion) return
@@ -298,6 +319,96 @@ export function Gastos() {
     cargar()
   }
 
+  function ocupadoEscribiendo() {
+    return escribiendoRef.current || guardandoRef.current || vinculandoRef.current
+  }
+
+  function abrirEdicion(gasto: GastoDeAdministracionListado) {
+    if (ocupadoEscribiendo()) return
+    setAviso('')
+    setErrorEdicion('')
+    setEdicion(gasto)
+  }
+
+  function cancelarEdicion() {
+    if (escribiendoRef.current) return
+    setEdicion(null)
+    setErrorEdicion('')
+  }
+
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDeGasto) {
+    if (!edicion || ocupadoEscribiendo()) return
+
+    const idGasto = edicion.id
+    escribiendoRef.current = true
+    setGuardandoEdicion(true)
+    setErrorEdicion('')
+
+    // regla 3: un refresco del listado anterior a esta escritura queda obsoleto.
+    generacionRef.current += 1
+
+    try {
+      try {
+        await clienteDeGastosDeAdministracion.actualizar(idGasto, solicitud)
+      } catch (e) {
+        setErrorEdicion(copiaDeFalloDeEdicion(e))
+        return
+      }
+
+      setEdicion(null)
+      setAviso('Gasto actualizado.')
+      // regla 6: el refresco está aislado de la escritura; si falla, `error` lo dice aparte y el
+      // aviso de éxito se mantiene.
+      await cargar()
+    } finally {
+      // Sin gate de token a propósito: la guarda de ref impide otra escritura en vuelo.
+      escribiendoRef.current = false
+      setGuardandoEdicion(false)
+    }
+  }
+
+  function pedirBaja(gasto: GastoDeAdministracionListado, disparador: HTMLElement | null) {
+    if (ocupadoEscribiendo()) return
+    setDisparadorDeLaBaja(disparador)
+    setBaja(gasto)
+    setErrorBaja('')
+    setAviso('')
+  }
+
+  function cancelarBaja() {
+    if (escribiendoRef.current) return
+    setDisparadorDeLaBaja(null)
+    setBaja(null)
+    setErrorBaja('')
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoEscribiendo()) return
+
+    const idGasto = baja.id
+    escribiendoRef.current = true
+    setEliminando(true)
+    setErrorBaja('')
+    generacionRef.current += 1
+
+    try {
+      try {
+        await clienteDeGastosDeAdministracion.eliminar(idGasto)
+      } catch (e) {
+        setErrorBaja(copiaDeFalloDeEdicion(e, 'eliminar'))
+        return
+      }
+
+      setBaja(null)
+      setDisparadorDeLaBaja(null)
+      setAviso('Gasto eliminado.')
+      await cargar()
+    } finally {
+      escribiendoRef.current = false
+      setEliminando(false)
+    }
+  }
+
   const puntosVentaDeLaEmpresaDelFiltro = useMemo(
     () => (puntosVenta ?? []).filter((pv) => filtros.idEmpresa === null || pv.idEmpresa === filtros.idEmpresa),
     [puntosVenta, filtros.idEmpresa],
@@ -314,6 +425,12 @@ export function Gastos() {
     return indice
   }, [proveedores])
 
+  /** La edición o la baja abiertas, o cualquier escritura (y su refresco) en vuelo, dejan inerte la
+   * pantalla entera: ver el comentario del componente. */
+  const bloqueado = guardando || vinculando || pickerGastoId !== null || guardandoEdicion || eliminando || edicion !== null || baja !== null
+  /** Las acciones de fila además esperan al refresco posterior a una escritura. */
+  const filasBloqueadas = bloqueado || cargando
+
   const totalPaginas = pagina ? Math.max(1, Math.ceil(pagina.total / pagina.tamanio)) : 1
 
   const herramientas = (
@@ -321,6 +438,7 @@ export function Gastos() {
       <button
         type="button"
         className="btn btn-sm btn-success text-nowrap"
+        disabled={bloqueado}
         onClick={() => setMostrarFormulario((prev) => !prev)}
       >
         {mostrarFormulario ? 'Cancelar' : 'Nuevo gasto'}
@@ -333,6 +451,23 @@ export function Gastos() {
       <Box titulo="Gastos" variante="inverse" herramientas={herramientas}>
         {errorCatalogos && <div className="alert alert-warning py-1 px-2 small">{errorCatalogos}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
+
+        {baja && (
+          <>
+            {errorBaja && <div className="alert alert-danger">{errorBaja}</div>}
+            <ConfirmacionDeBaja
+              titulo={`el gasto "${baja.concepto}"`}
+              pregunta="Eliminar"
+              nota={advertenciasDeGastoDeAdministracion(baja).join(' ') || null}
+              etiquetaConfirmar="Confirmar eliminación"
+              etiquetaEnCurso="Eliminando…"
+              ocupado={eliminando}
+              disparador={disparadorDeLaBaja}
+              onConfirmar={() => void confirmarBaja()}
+              onCancelar={cancelarBaja}
+            />
+          </>
+        )}
 
         {mostrarFormulario && (
           <fieldset disabled={guardando} className="row g-2 align-items-end border p-3 mb-3 bg-body m-0">
@@ -534,7 +669,7 @@ export function Gastos() {
           </fieldset>
         )}
 
-        <div className="row g-2 align-items-end mb-3">
+        <fieldset disabled={bloqueado} className="row g-2 align-items-end mb-3 border-0 p-0 m-0">
           <div className="col-md-2">
             <label className="form-label" htmlFor="gastos-admin-filtro-empresa">
               Empresa
@@ -635,7 +770,7 @@ export function Gastos() {
               onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
             />
           </div>
-        </div>
+        </fieldset>
 
         {error && <div className="alert alert-danger">{error}</div>}
         {cargando && !pagina && <Cargando />}
@@ -657,6 +792,7 @@ export function Gastos() {
                     <th>Origen</th>
                     <th className="text-end">Importe</th>
                     <th>Compra</th>
+                    <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -686,6 +822,7 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-primary"
+                              disabled={filasBloqueadas}
                               onClick={() => abrirPicker(g)}
                             >
                               Vincular a compra
@@ -693,6 +830,7 @@ export function Gastos() {
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-secondary"
+                              disabled={filasBloqueadas}
                               onClick={() => navigate(`/compras/nueva?desdeGasto=${g.id}`)}
                             >
                               Crear compra
@@ -700,11 +838,26 @@ export function Gastos() {
                           </div>
                         )}
                       </td>
+                      <td className="text-end text-nowrap">
+                        <BotonIcono
+                          icono="editar"
+                          etiqueta={`Editar gasto ${g.concepto}`}
+                          className="me-1"
+                          disabled={filasBloqueadas}
+                          onClick={() => abrirEdicion(g)}
+                        />
+                        <BotonIcono
+                          icono="eliminar"
+                          etiqueta={`Eliminar gasto ${g.concepto}`}
+                          disabled={filasBloqueadas}
+                          onClick={(evento) => pedirBaja(g, evento.currentTarget)}
+                        />
+                      </td>
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="text-center text-muted py-4">
+                      <td colSpan={12} className="text-center text-muted py-4">
                         No hay gastos que coincidan con los filtros.
                       </td>
                     </tr>
@@ -721,7 +874,7 @@ export function Gastos() {
                 <button
                   type="button"
                   className="btn btn-sm btn-outline-secondary"
-                  disabled={pagina.pagina <= 1 || cargando}
+                  disabled={pagina.pagina <= 1 || cargando || bloqueado}
                   onClick={() => cambiarPagina(-1)}
                 >
                   Anterior
@@ -729,7 +882,7 @@ export function Gastos() {
                 <button
                   type="button"
                   className="btn btn-sm btn-outline-secondary"
-                  disabled={pagina.pagina >= totalPaginas || cargando}
+                  disabled={pagina.pagina >= totalPaginas || cargando || bloqueado}
                   onClick={() => cambiarPagina(1)}
                 >
                   Siguiente
@@ -792,6 +945,22 @@ export function Gastos() {
           </div>
         )}
       </Box>
+
+      {edicion && (
+        <ModalDeEdicionDeGasto
+          key={edicion.id}
+          gasto={edicion}
+          medios={mediosParaGasto}
+          proveedores={proveedores ?? []}
+          areas={areas ?? []}
+          ligadoACompra={edicion.idComprobanteCompra !== null}
+          advertencias={advertenciasDeGastoDeAdministracion(edicion)}
+          guardando={guardandoEdicion}
+          error={errorEdicion}
+          onGuardar={(solicitud) => void guardarEdicion(solicitud)}
+          onCancelar={cancelarEdicion}
+        />
+      )}
     </div>
   )
 }

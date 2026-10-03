@@ -1008,6 +1008,8 @@ turnos_caja (                 -- [operativa]
     fondo_inicial numeric(14,2) NOT NULL DEFAULT 0,     -- cambio con el que abre
     estado estado_turno,                     -- enum: abierto | cerrado
     id_medio_pago_efectivo integer NULL,     -- ancla PINEADA al cierre, ver nota abajo
+    fecha_recalculo timestamptz NULL,        -- último recálculo administrativo del arqueo
+    id_empleado_recalculo integer NULL,      -- quién lo hizo (junto con fecha_recalculo o ninguno)
     observaciones
 );
 -- Un solo turno abierto por punto de venta: UNIQUE (id_punto_venta) WHERE estado = 'abierto'.
@@ -1047,9 +1049,22 @@ arqueos_turno (               -- el cierre: contado vs esperado, POR MEDIO DE PA
     id_arqueo, id_turno_caja, id_medio_pago,
     importe_esperado numeric(14,2),          -- calculado: pagos + fondo − vueltos − gastos − retiros
     importe_declarado numeric(14,2),         -- lo que el cajero contó
-    diferencia numeric(14,2)                 -- esperado − declarado (el "saldo" del legacy, por medio)
+    diferencia numeric(14,2),                -- esperado − declarado (el "saldo" del legacy, por medio)
+    importe_esperado_original numeric(14,2) NULL  -- esperado del cierre, si un recálculo lo cambió
 );
 ```
+
+> **Recálculo administrativo del arqueo (DB CHANGE GATE aprobado).** Un admin puede editar o dar
+> de baja un gasto de caja de un turno ya cerrado. En la misma transacción se recalcula
+> `importe_esperado` de ese turno con la derivación del cierre y el ancla pineada: las filas que
+> cambian guardan su esperado del cierre en `importe_esperado_original` (solo la primera vez), un
+> medio que ganó actividad recibe una fila nueva (original `0`, declarado `0`) y ninguna fila se
+> elimina (un medio sin actividad queda en esperado `0`). `importe_declarado` nunca cambia: el
+> modo de cierre (clásico o por retiro) no queda persistido. El turno guarda la marca del último
+> recálculo en `fecha_recalculo`/`id_empleado_recalculo` (`fk_turnos_caja_empleado_recalculo` a
+> `usuarios`, simple como la de cierre, y `ck_turnos_caja_recalculo_consistente`: los dos o
+> ninguno). Los ledgers no se reescriben: los ajustes de cuenta corriente de proveedor y de
+> tesorería se agregan como movimientos `ajuste` nuevos.
 
 **Cerrar caja deja de ser un INSERT de 30 columnas.** Los totales del turno (por área,
 por medio de pago, tickets, gastos) se **derivan** de los comprobantes y gastos que

@@ -36,6 +36,14 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     idMedioPago: 1,
     importe: 100,
     origenFondos: 'CajaTurno',
+    idTurnoCaja: 55,
+    turnoAbierto: true,
+    idProveedor: null,
+    idArea: null,
+    concepto: 'Flete',
+    detalle: null,
+    numeroFactura: null,
+    idComprobanteCompra: null,
     ...sobrescribir,
   }
 }

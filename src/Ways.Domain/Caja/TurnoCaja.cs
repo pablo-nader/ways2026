@@ -11,8 +11,10 @@ namespace Ways.Domain.Caja;
 ///
 /// Mutable (hereda <see cref="EntidadTenant"/>, a diferencia de los ledgers append-only de esta
 /// misma etapa): la fila se abre y después se cierra —dos escrituras sobre la misma fila—, así
-/// que <c>updated_at</c> tiene sentido acá, a diferencia de <see cref="ArqueoTurno"/>/
-/// <see cref="MovimientoCaja"/>/<see cref="MovimientoTesoreria"/>.
+/// que <c>updated_at</c> tiene sentido acá, a diferencia de <see cref="MovimientoCaja"/>/
+/// <see cref="MovimientoTesoreria"/>. El cierre sigue sin reapertura, pero un admin que edita o da
+/// de baja un gasto de caja de un turno ya cerrado recalcula su arqueo y deja la marca en
+/// <see cref="FechaRecalculo"/>/<see cref="IdEmpleadoRecalculo"/>.
 /// </summary>
 public class TurnoCaja : EntidadTenant
 {
@@ -49,4 +51,11 @@ public class TurnoCaja : EntidadTenant
     /// <c>Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro</c> cae al catálogo actual solo
     /// en ese caso legado).</summary>
     public int? IdMedioPagoEfectivo { get; set; }
+
+    /// <summary>Último recálculo administrativo del arqueo de este turno ya cerrado (edición o baja
+    /// de un gasto de caja). Los dos campos van juntos o no van
+    /// (<c>ck_turnos_caja_recalculo_consistente</c>); el último recálculo pisa al anterior.</summary>
+    public DateTimeOffset? FechaRecalculo { get; set; }
+
+    public int? IdEmpleadoRecalculo { get; set; }
 }

@@ -2,9 +2,11 @@ namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Una fila por medio de pago con actividad en el turno, escrita una sola vez al cierre (doc 10
-/// §7, design: Table Shapes — write path A; The Cierre Transaction). Append-only e irreversible
-/// por diseño — ningún endpoint edita ni elimina una fila; no tiene columna de fecha propia
-/// porque su momento ES <see cref="TurnoCaja.FechaCierre"/>.
+/// §7, design: Table Shapes — write path A; The Cierre Transaction). Ninguna fila se elimina. La
+/// única escritura posterior al cierre es el recálculo administrativo de
+/// <see cref="ImporteEsperado"/> al editar o dar de baja un gasto de caja del turno, que conserva
+/// el valor del cierre en <see cref="ImporteEsperadoOriginal"/> y marca el turno
+/// (<see cref="TurnoCaja.FechaRecalculo"/>).
 ///
 /// A propósito NO hereda de <see cref="Common.EntidadBase"/>/<see cref="Common.EntidadTenant"/>
 /// — mismo criterio que <see cref="Ways.Domain.Stock.MovimientoStock"/>, con filtro de tenant
@@ -30,4 +32,9 @@ public class ArqueoTurno
     /// operandos ni por una escritura fuera de banda — ver <c>ArqueoTurnoConfiguration</c>, EF
     /// nunca la incluye en el INSERT.</summary>
     public decimal Diferencia { get; set; }
+
+    /// <summary>El <see cref="ImporteEsperado"/> que dejó el cierre, guardado la primera vez que un
+    /// recálculo lo cambia (0 para una fila que nació en un recálculo) y nunca pisado después.
+    /// <c>null</c> mientras ningún recálculo haya tocado la fila.</summary>
+    public decimal? ImporteEsperadoOriginal { get; set; }
 }

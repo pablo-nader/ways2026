@@ -360,6 +360,32 @@ public class GastosVincularCompraEndpointsTests(WaysApiFixture fixture) : IClass
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
+    /// <summary>Un gasto dado de baja es 404 (ADR-8) también en la vinculación: el lock lo filtra por
+    /// <c>deleted_at</c> igual que el filtro global, así que no llega a la lectura EF (que antes lanzaba
+    /// <c>InvalidOperationException</c> → 500).</summary>
+    [Fact]
+    public async Task UnGastoDadoDeBajaDevuelveNoEncontradoAlVincular()
+    {
+        var ctx = await PrepararAsync(nameof(UnGastoDadoDeBajaDevuelveNoEncontradoAlVincular));
+        var compra = await CrearYConfirmarCompraAsync(ctx);
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos/administracion",
+            new SolicitudDeGastoDeAdministracion(
+                DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), ctx.IdEmpresa, ctx.IdPuntoVenta, CategoriaGasto.Otros,
+                null, null, "Gasto de prueba", null, ctx.IdMedioEfectivo, null, 500m));
+        var cuerpoAlta = await alta.Content.ReadAsStringAsync();
+        Assert.True(alta.StatusCode == HttpStatusCode.Created, cuerpoAlta);
+        var gasto = JsonSerializer.Deserialize<GastoRegistrado>(cuerpoAlta, OpcionesJson)!;
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/gastos/administracion/{gasto.Id}");
+        Assert.True(baja.StatusCode == HttpStatusCode.NoContent || baja.StatusCode == HttpStatusCode.OK, await baja.Content.ReadAsStringAsync());
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/gastos/{gasto.Id}/vincular-compra", new SolicitudDeVincularCompra(compra.Id));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
     [Fact]
     public async Task UnVendedorEsRechazadoConForbidden()
     {

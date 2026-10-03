@@ -10,7 +10,7 @@ namespace Ways.Application.Caja;
 /// Histórico Lists Closed Turnos Only, With Totals From Persisted Arqueos) — la ÚNICA agregación
 /// nueva de la slice: para un turno YA CERRADO los totales salen de sumar las filas persistidas de
 /// <see cref="ArqueoTurno"/>, jamás re-corriendo <see cref="Ways.Domain.Caja.CalculadorDeArqueo"/>
-/// (que exige un turno todavía abierto). <see cref="EgresosDeTurno"/> reusa la MISMA definición que
+/// (un recálculo administrativo ya dejó esas filas al día). <see cref="EgresosDeTurno"/> reusa la MISMA definición que
 /// <see cref="ServicioDeResumenDeTurno"/> — gastos por categoría/área más retiros — pero agrupada
 /// de una sola vez para toda la página (nunca una consulta por fila, mismo criterio de "cantidad
 /// fija de consultas agrupadas" que <see cref="LectorDeContenidoDeResumen"/>).
@@ -36,7 +36,7 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
             .OrderByDescending(t => t.FechaCierre)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre))
+            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.FechaRecalculo, t.IdEmpleadoRecalculo))
             .ToListAsync(ct);
 
         var items = await ArmarFilasAsync(turnosDeLaPagina, ct);
@@ -71,7 +71,7 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
         var turnos = await query
             .OrderByDescending(t => t.FechaCierre)
             .Take(topeDeFilas + 1)
-            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre))
+            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre, t.FechaRecalculo, t.IdEmpleadoRecalculo))
             .ToListAsync(ct);
 
         GuardaDeTope.Exigir(turnos.Count, topeDeFilas);
@@ -143,12 +143,14 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
                     // turno cerrado — ConstruirQuery ya exige Estado == Cerrado.
                     t.FechaCierre!.Value,
                     totales?.Esperado ?? 0m, totales?.Declarado ?? 0m, totales?.Diferencia ?? 0m,
-                    egresos);
+                    egresos, t.FechaRecalculo, t.IdEmpleadoRecalculo);
             })
             .ToList();
     }
 
-    private sealed record TurnoBase(int Id, int IdPuntoVenta, DateTimeOffset FechaApertura, DateTimeOffset? FechaCierre);
+    private sealed record TurnoBase(
+        int Id, int IdPuntoVenta, DateTimeOffset FechaApertura, DateTimeOffset? FechaCierre,
+        DateTimeOffset? FechaRecalculo, int? IdEmpleadoRecalculo);
 
     /// <summary>Egresos de toda la página en tres consultas agrupadas de cantidad FIJA (nunca una
     /// por turno) — mismo criterio que <see cref="LectorDeContenidoDeResumen"/>, pero agrupando

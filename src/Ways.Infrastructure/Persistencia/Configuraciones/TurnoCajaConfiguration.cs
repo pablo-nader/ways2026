@@ -16,7 +16,8 @@ namespace Ways.Infrastructure.Persistencia.Configuraciones;
 /// aprobado) es defensa en profundidad de <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c>,
 /// que fija <see cref="TurnoCaja.IdMedioPagoEfectivo"/> DESPUÉS del UPDATE guardado que transiciona
 /// <c>estado</c> a <c>cerrado</c> (design: The Cierre Transaction, statement 1 sigue primero) —
-/// nunca antes.
+/// nunca antes. <c>ck_turnos_caja_recalculo_consistente</c> respalda a
+/// <c>ServicioDeGastos</c>, el único escritor de la marca de recálculo (fecha y empleado juntos).
 /// </summary>
 public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
 {
@@ -32,6 +33,9 @@ public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
             t.HasCheckConstraint(
                 "ck_turnos_caja_medio_efectivo_solo_cerrado",
                 "id_medio_pago_efectivo IS NULL OR estado = 'cerrado'");
+            t.HasCheckConstraint(
+                "ck_turnos_caja_recalculo_consistente",
+                "(fecha_recalculo IS NULL) = (id_empleado_recalculo IS NULL)");
         });
 
         builder.HasKey(t => t.Id).HasName("pk_turnos_caja");
@@ -69,6 +73,9 @@ public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
 
         builder.Property(t => t.IdMedioPagoEfectivo).HasColumnName("id_medio_pago_efectivo");
 
+        builder.Property(t => t.FechaRecalculo).HasColumnName("fecha_recalculo");
+        builder.Property(t => t.IdEmpleadoRecalculo).HasColumnName("id_empleado_recalculo");
+
         builder.Property(t => t.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(t => t.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(t => t.DeletedAt).HasColumnName("deleted_at");
@@ -90,6 +97,7 @@ public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
         // trampa que documenta ComprobanteVentaConfiguration).
         builder.HasIndex(t => t.IdEmpleadoApertura).HasDatabaseName("ix_turnos_caja_empleado_apertura");
         builder.HasIndex(t => t.IdEmpleadoCierre).HasDatabaseName("ix_turnos_caja_empleado_cierre");
+        builder.HasIndex(t => t.IdEmpleadoRecalculo).HasDatabaseName("ix_turnos_caja_empleado_recalculo");
 
         // Índice de soporte de la FK compuesta a medios_pago — mismo criterio que
         // ArqueoTurnoConfiguration.ix_arqueos_turno_medio_pago.
@@ -123,6 +131,12 @@ public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
             .WithMany()
             .HasForeignKey(t => t.IdEmpleadoCierre)
             .HasConstraintName("fk_turnos_caja_empleado_cierre")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Usuario>()
+            .WithMany()
+            .HasForeignKey(t => t.IdEmpleadoRecalculo)
+            .HasConstraintName("fk_turnos_caja_empleado_recalculo")
             .OnDelete(DeleteBehavior.Restrict);
 
         // FK compuesta a medios_pago — mismo shape que ArqueoTurnoConfiguration.fk_arqueos_turno_medio_pago

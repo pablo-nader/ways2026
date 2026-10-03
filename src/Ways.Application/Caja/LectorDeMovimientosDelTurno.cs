@@ -11,7 +11,8 @@ namespace Ways.Application.Caja;
 /// paso 2) — 7 consultas agrupadas de cantidad FIJA, nunca una por fila (Testing Strategy:
 /// Integration (budget), tasks 4.3/4.14): pagos por medio, vueltos por medio, gastos por medio,
 /// refuerzos, retiros, fondo inicial y el catálogo completo de medios. Compartido tal cual por
-/// <c>ServicioDeTurnos.CerrarAsync</c> y <c>ServicioDeResumenDeTurno</c> — la única fuente de
+/// <c>ServicioDeTurnos.CerrarAsync</c>, <c>ServicioDeResumenDeTurno</c> y el recálculo del arqueo de
+/// un turno cerrado en <c>ServicioDeGastos</c> — la única fuente de
 /// <see cref="InsumosDeArqueo"/> que existe en el sistema (spec: Resumen Parcial Uses The Same
 /// Derivation As Cierre).
 /// </summary>

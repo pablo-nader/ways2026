@@ -5,9 +5,11 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Parametros;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -33,7 +35,8 @@ namespace Ways.Application.Gastos;
 /// </summary>
 public class ServicioDeGastos(
     IWaysDbContext db, ServicioDeTurnos servicioDeTurnos, ServicioDeParametros servicioDeParametros,
-    IRelojDelSistema reloj, IContextoDeUsuario contexto)
+    IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lectorDeMovimientos,
+    ServicioDeAuditoria auditoria)
 {
     /// <summary>Resuelve el punto de venta (404 ADR-8) antes que el turno abierto (spec: Gasto
     /// Requires An Open Turno) — mismo orden que <c>ServicioDeVentas.EmitirAsync</c> (design
@@ -295,7 +298,8 @@ public class ServicioDeGastos(
 
     /// <summary>Lock-only, mismo patrón que <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c>
     /// (<c>SELECT 1 ... FOR UPDATE</c>): nunca materializa una entidad — la ÚNICA lectura EF de la
-    /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock).</summary>
+    /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock). Filtra
+    /// <c>deleted_at IS NULL</c> igual que el filtro global de EF: un gasto dado de baja es 404.</summary>
     private async Task TomarLockDeGastoAsync(int idGasto, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -303,7 +307,7 @@ public class ServicioDeGastos(
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
-        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 FOR UPDATE";
+        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 AND deleted_at IS NULL FOR UPDATE";
         ParametrosDeComando.Agregar(comando, idGasto);
         ParametrosDeComando.Agregar(comando, idTenant);
 
@@ -314,6 +318,396 @@ public class ServicioDeGastos(
             throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
         }
     }
+
+    // ---- edición y baja -----------------------------------------------------------------------
+
+    /// <summary>Edición desde el POS: solo mientras el turno del gasto siga abierto, decidido bajo
+    /// el lock del turno (un gasto sin turno, o con el turno ya cerrado, es <c>409
+    /// gasto_turno_cerrado</c>). Ver <see cref="EjecutarEscrituraAsync"/> para el orden de locks y
+    /// el análisis de ciclo.</summary>
+    public async Task<GastoRegistrado> EditarAsync(
+        int idGasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        ExigirImporteValido(solicitud.Importe);
+        ExigirConceptoValido(solicitud.Concepto);
+
+        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+        if (inmutables.IdTurnoCaja is null)
+        {
+            throw GastoTurnoCerrado();
+        }
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        var gasto = await estrategia.ExecuteAsync(async () =>
+            await EjecutarEscrituraAsync(
+                idTenant, idGasto, inmutables, solicitud, ModoDeEscritura.Pos, idEmpleado, momento, ct));
+
+        return Proyectar(gasto);
+    }
+
+    /// <summary>Edición administrativa de cualquier gasto: con turno abierto, cerrado (recalcula el
+    /// arqueo si cambia algo que el arqueo cuenta) o sin turno.</summary>
+    public async Task<GastoDeAdministracionListado> EditarDeAdministracionAsync(
+        int idGasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        ExigirImporteValido(solicitud.Importe);
+        ExigirConceptoValido(solicitud.Concepto);
+
+        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        await estrategia.ExecuteAsync(async () =>
+            await EjecutarEscrituraAsync(
+                idTenant, idGasto, inmutables, solicitud, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+
+        return await ObtenerDeAdministracionAsync(idGasto, ct);
+    }
+
+    /// <summary>Baja lógica administrativa de cualquier gasto: revierte su pago a proveedor y su
+    /// egreso de tesorería con ajustes, y recalcula el arqueo si era un gasto de caja de un turno
+    /// cerrado.</summary>
+    public async Task EliminarDeAdministracionAsync(int idGasto, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        await estrategia.ExecuteAsync(async () =>
+            await EjecutarEscrituraAsync(
+                idTenant, idGasto, inmutables, solicitud: null, ModoDeEscritura.Administracion, idEmpleado, momento, ct));
+    }
+
+    private enum ModoDeEscritura
+    {
+        Pos,
+        Administracion
+    }
+
+    /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
+    /// antes de los locks (single-read-under-lock regla 6): el turno es la clave del primer lock.
+    /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.</summary>
+    private sealed record DatosInmutablesDeGasto(int? IdTurnoCaja, int IdEmpresa, OrigenFondosGasto OrigenFondos);
+
+    private async Task<DatosInmutablesDeGasto> LeerDatosInmutablesAsync(int idGasto, CancellationToken ct) =>
+        await db.Gastos
+            .Where(g => g.Id == idGasto)
+            .Select(g => new DatosInmutablesDeGasto(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos))
+            .FirstOrDefaultAsync(ct)
+        // ADR-8: mismo 404 para "no existe", "es de otro tenant" y "está dado de baja".
+        ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+
+    /// <summary>Mismas validaciones de referencias que el alta, pero solo para las referencias NUEVAS
+    /// (OD4: una referencia que el gasto ya tenía puede estar dada de baja y la edición sigue siendo
+    /// válida): medio de pago visible y que no sea cuenta corriente, proveedor visible (404). Se compara
+    /// contra el gasto leído bajo el lock. El área sigue el criterio del alta: sin pre-chequeo, la FK
+    /// compuesta es el respaldo.</summary>
+    private async Task ExigirReferenciasNuevasDeLaEdicionAsync(
+        Gasto gasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct)
+    {
+        if (solicitud.IdMedioPago != gasto.IdMedioPago)
+        {
+            await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+        }
+
+        if (solicitud.IdProveedor is { } idProveedor && idProveedor != gasto.IdProveedor)
+        {
+            await ResolverProveedorAsync(idProveedor, ct);
+        }
+    }
+
+    private static ErrorDominio GastoTurnoCerrado() =>
+        new("gasto_turno_cerrado", "El gasto solo se puede editar mientras su turno siga abierto.", 409);
+
+    /// <summary>
+    /// Edición (<paramref name="solicitud"/> no nula) o baja de un gasto, en una sola transacción.
+    ///
+    /// Orden de locks:
+    /// 1) turno del gasto (si tiene): POS <c>FOR SHARE</c> con el estado leído bajo el lock (mismo
+    ///    criterio que <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/> en el alta, con
+    ///    su propio <c>409 gasto_turno_cerrado</c>); administración <c>FOR UPDATE</c>, que además
+    ///    serializa entre sí los recálculos del arqueo de un turno cerrado →
+    /// 2) gasto <c>FOR UPDATE</c> (lock-only, <see cref="TomarLockDeGastoAsync"/>) y la ÚNICA lectura
+    ///    EF de la fila, después del lock →
+    /// 3) filas de proveedor de los ajustes de cuenta corriente, en orden ascendente de id →
+    /// 4) filas de <c>arqueos_turno</c> y la marca del turno (ya cubiertas por el lock 1) →
+    /// 5) advisory de tesorería de la empresa, ÚLTIMO.
+    ///
+    /// Análisis de ciclo: el cierre (<see cref="ServicioDeTurnos"/>, los dos modos) toma el turno
+    /// EXCLUSIVO como primer statement y después solo el advisory de tesorería; nunca lockea gastos
+    /// ni proveedores, y su orden turno → advisory es el mismo relativo que el de acá. El alta de
+    /// gasto toma el turno <c>FOR SHARE</c> primero y después compra/proveedor/advisory, sin lockear
+    /// ningún gasto existente. <see cref="VincularCompraAsync"/> no toca turnos y toma gasto →
+    /// proveedor, el mismo orden relativo que los pasos 2 → 3. Dos ediciones que mueven pagos entre
+    /// los mismos dos proveedores en sentidos opuestos no se cruzan porque las dos lockean en orden
+    /// ascendente de id.
+    ///
+    /// Carrera con el cierre: si la edición del POS gana el <c>FOR SHARE</c>, el cierre espera y
+    /// deriva el arqueo con el gasto ya editado; si el cierre gana, la edición lee <c>cerrado</c> y
+    /// responde 409. La edición administrativa: si gana el cierre, lee <c>cerrado</c> bajo su
+    /// <c>FOR UPDATE</c> y recalcula; si gana la edición, el cierre deriva con el gasto ya editado.
+    /// En ningún orden queda un arqueo persistido que no refleje el gasto comiteado.
+    /// </summary>
+    private async Task<Gasto> EjecutarEscrituraAsync(
+        int idTenant, int idGasto, DatosInmutablesDeGasto inmutables, SolicitudDeEdicionDeGasto? solicitud,
+        ModoDeEscritura modo, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        TurnoBloqueado? turnoCerrado = null;
+        if (inmutables.IdTurnoCaja is { } idTurnoCaja)
+        {
+            var turno = await BloquearTurnoAsync(idTurnoCaja, idTenant, modo, ct);
+            if (!turno.Abierto)
+            {
+                if (modo == ModoDeEscritura.Pos)
+                {
+                    throw GastoTurnoCerrado();
+                }
+
+                turnoCerrado = turno;
+            }
+        }
+
+        await TomarLockDeGastoAsync(idGasto, idTenant, ct);
+        var gasto = await db.Gastos.FirstOrDefaultAsync(g => g.Id == idGasto, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
+
+        var anterior = EstadoContable(gasto);
+        var valorAnterior = PayloadDeEdicion(gasto);
+
+        if (solicitud is not null)
+        {
+            await ExigirReferenciasNuevasDeLaEdicionAsync(gasto, solicitud, ct);
+            ExigirEdicionCoherenteConLaCompra(gasto, solicitud);
+
+            if (gasto.IdComprobanteCompra is null)
+            {
+                ExigirPuntoVentaParaElPagoAProveedor(solicitud.Categoria, gasto.IdPuntoVenta);
+            }
+
+            gasto.Categoria = solicitud.Categoria;
+            gasto.IdProveedor = solicitud.IdProveedor;
+            gasto.IdArea = solicitud.IdArea;
+            gasto.Concepto = solicitud.Concepto;
+            gasto.Detalle = solicitud.Detalle;
+            gasto.IdMedioPago = solicitud.IdMedioPago;
+            gasto.NumeroFactura = solicitud.NumeroFactura;
+            gasto.Importe = solicitud.Importe;
+        }
+        else
+        {
+            gasto.DeletedAt = momento;
+        }
+
+        gasto.UpdatedAt = momento;
+        await db.SaveChangesAsync(ct);
+
+        var nuevo = solicitud is null ? null : EstadoContable(gasto);
+        var detalle = solicitud is null ? $"Baja del gasto #{gasto.Id}" : $"Edición del gasto #{gasto.Id}";
+
+        await EscribirAjustesDeProveedorAsync(
+            idTenant, gasto, CalculadorDeAjustesDeGasto.AjustesDeProveedor(anterior, nuevo), detalle, idEmpleado,
+            momento, ct);
+
+        if (turnoCerrado is not null && CalculadorDeAjustesDeGasto.AfectaElArqueo(gasto.OrigenFondos, anterior, nuevo))
+        {
+            await RecalcularArqueoAsync(idTenant, turnoCerrado, idEmpleado, momento, ct);
+        }
+
+        if (CalculadorDeAjustesDeGasto.AjusteDeTesoreriaPara(gasto.OrigenFondos, anterior.Importe, nuevo?.Importe)
+            is { } ajusteDeTesoreria)
+        {
+            var conexion = await ObtenerConexionAbiertaAsync(ct);
+            var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+            await EscriturasDeTesoreria.TomarLockDeEmpresaAsync(conexion, transaccionCruda, idTenant, gasto.IdEmpresa, ct);
+
+            await EscriturasDeTesoreria.ApendearAsync(
+                db, idTenant, gasto.IdEmpresa, gasto.IdPuntoVenta, momento, TipoMovimientoTesoreria.Ajuste,
+                gasto.IdTurnoCaja, idGasto: null, detalle, ajusteDeTesoreria.Ingreso, ajusteDeTesoreria.Egreso,
+                idEmpleado, ct);
+        }
+
+        var valorNuevo = PayloadDeEdicion(gasto);
+        if (solicitud is null)
+        {
+            valorNuevo["deleted_at"] = gasto.DeletedAt;
+        }
+
+        auditoria.Registrar(new RegistroDeAuditoria(
+            idTenant, gasto.IdPuntoVenta, solicitud is null ? AccionAuditada.GastoBaja : AccionAuditada.GastoEdicion,
+            gasto.Id, valorAnterior, valorNuevo));
+        await db.SaveChangesAsync(ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return gasto;
+    }
+
+    private sealed record TurnoBloqueado(int Id, bool Abierto, int? IdMedioPagoEfectivo);
+
+    /// <summary>POS: <c>FOR SHARE</c>, excluye al cierre sin serializar entre sí las ediciones del
+    /// mismo turno. Administración: <c>FOR UPDATE</c>, porque sobre un turno cerrado lo que sigue es
+    /// un recálculo del arqueo, y dos recálculos concurrentes tienen que verse uno al otro.</summary>
+    private async Task<TurnoBloqueado> BloquearTurnoAsync(
+        int idTurnoCaja, int idTenant, ModoDeEscritura modo, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText =
+            "SELECT estado::text, id_medio_pago_efectivo FROM turnos_caja " +
+            "WHERE id_turno_caja = $1 AND id_tenant = $2 " +
+            (modo == ModoDeEscritura.Pos ? "FOR SHARE" : "FOR UPDATE");
+        ParametrosDeComando.Agregar(comando, idTurnoCaja);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                $"El turno {idTurnoCaja} de un gasto existente no es visible — invariante de FK violado.");
+        }
+
+        return new TurnoBloqueado(
+            idTurnoCaja, lector.GetString(0) == "abierto", lector.IsDBNull(1) ? null : lector.GetInt32(1));
+    }
+
+    /// <summary>Mismos códigos que el alta para un gasto ligado a una compra: sigue siendo de
+    /// categoría proveedor y con el proveedor de la compra.</summary>
+    private static void ExigirEdicionCoherenteConLaCompra(Gasto gasto, SolicitudDeEdicionDeGasto solicitud)
+    {
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, gasto.IdComprobanteCompra);
+
+        if (gasto.IdComprobanteCompra is not null && solicitud.IdProveedor != gasto.IdProveedor)
+        {
+            throw new ErrorDominio(
+                "proveedor_no_coincide_con_la_compra",
+                "El proveedor indicado no coincide con el proveedor de la compra.", 400);
+        }
+    }
+
+    /// <summary>Ajustes de cuenta corriente de proveedor (<see cref="TipoMovimientoCcProveedor.Ajuste"/>
+    /// no admite <c>id_gasto</c>: el gasto queda referenciado en el detalle). El punto de venta es el
+    /// del gasto; un gasto administrativo sin punto de venta solo pudo pagar a un proveedor al
+    /// vincularse a una compra, y ese pago usó el punto de venta de la compra.</summary>
+    private async Task EscribirAjustesDeProveedorAsync(
+        int idTenant, Gasto gasto, IReadOnlyList<AjusteDeSaldoDeProveedor> ajustes, string detalle, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        if (ajustes.Count == 0)
+        {
+            return;
+        }
+
+        var idPuntoVenta = gasto.IdPuntoVenta ?? await PuntoVentaDeLaCompraAsync(gasto.IdComprobanteCompra, ct);
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        foreach (var ajuste in ajustes)
+        {
+            var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
+                conexion, transaccionCruda, idTenant, ajuste.IdProveedor, ajuste.Importe, ct);
+
+            await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
+                conexion, transaccionCruda, idTenant, ajuste.IdProveedor, momento, idPuntoVenta, idEmpleado,
+                TipoMovimientoCcProveedor.Ajuste, idComprobanteCompra: null, idGasto: null, ajuste.Importe, nuevoSaldo,
+                detalle, ct);
+        }
+    }
+
+    private async Task<int?> PuntoVentaDeLaCompraAsync(int? idComprobanteCompra, CancellationToken ct) =>
+        idComprobanteCompra is null
+            ? null
+            : await db.ComprobantesCompra
+                .Where(c => c.Id == idComprobanteCompra)
+                .Select(c => (int?)c.IdPuntoVenta)
+                .FirstOrDefaultAsync(ct);
+
+    /// <summary>Recalcula el arqueo persistido de un turno cerrado con la misma derivación que el
+    /// cierre (<see cref="LectorDeMovimientosDelTurno"/> + <see cref="CalculadorDeArqueo"/>) y el
+    /// ancla pineada al cierre. El modo de cierre (clásico o por retiro) no queda persistido, así
+    /// que el declarado de las filas existentes no se toca y las filas nuevas se declaran en 0:
+    /// nadie declaró nada para ese medio. La marca del turno se escribe solo si alguna fila
+    /// cambió.</summary>
+    private async Task RecalcularArqueoAsync(
+        int idTenant, TurnoBloqueado turno, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        var insumos = await lectorDeMovimientos.LeerAsync(turno.Id, ct);
+        var idAncla = turno.IdMedioPagoEfectivo ?? ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
+        var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
+
+        var filas = await db.ArqueosTurno.Where(a => a.IdTurnoCaja == turno.Id).ToListAsync(ct);
+        var cambios = RecalculadorDeArqueo.Planificar(
+            lineas, insumos.Actividad,
+            filas.Select(f => new ArqueoPersistido(f.IdMedioPago, f.ImporteEsperado, f.ImporteEsperadoOriginal)).ToList());
+
+        if (cambios.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var cambio in cambios)
+        {
+            if (cambio.EsNueva)
+            {
+                db.ArqueosTurno.Add(new ArqueoTurno
+                {
+                    IdTenant = idTenant,
+                    IdTurnoCaja = turno.Id,
+                    IdMedioPago = cambio.IdMedioPago,
+                    ImporteEsperado = cambio.ImporteEsperado,
+                    ImporteDeclarado = 0m,
+                    ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal
+                });
+                continue;
+            }
+
+            var fila = filas.Single(f => f.IdMedioPago == cambio.IdMedioPago);
+            fila.ImporteEsperado = cambio.ImporteEsperado;
+            fila.ImporteEsperadoOriginal = cambio.ImporteEsperadoOriginal;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE turnos_caja SET fecha_recalculo = $1, id_empleado_recalculo = $2, updated_at = $1 " +
+            "WHERE id_turno_caja = $3 AND id_tenant = $4";
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, turno.Id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private static EstadoContableDeGasto EstadoContable(Gasto gasto) =>
+        new(gasto.Categoria, gasto.IdProveedor, gasto.IdMedioPago, gasto.Importe);
+
+    private static Dictionary<string, object?> PayloadDeEdicion(Gasto gasto) => new()
+    {
+        ["categoria"] = gasto.Categoria,
+        ["id_proveedor"] = gasto.IdProveedor,
+        ["id_area"] = gasto.IdArea,
+        ["concepto"] = gasto.Concepto,
+        ["detalle"] = gasto.Detalle,
+        ["id_medio_pago"] = gasto.IdMedioPago,
+        ["numero_factura"] = gasto.NumeroFactura,
+        ["importe"] = gasto.Importe
+    };
 
     /// <summary>Historial paginado (design: API Surface, <c>GET /api/gastos</c>) — mismo criterio
     /// de paginado que <c>ServicioDeTurnos.ListarAsync</c>.</summary>
@@ -351,7 +745,7 @@ public class ServicioDeGastos(
             .OrderByDescending(g => g.Fecha)
             .Skip((pagina - 1) * tamanio)
             .Take(tamanio)
-            .Select(g => new GastoListado(g.Id, g.IdPuntoVenta, g.Fecha, g.Categoria, g.IdMedioPago, g.Importe, g.OrigenFondos))
+            .Select(ProyeccionesDeGasto.Listado(db))
             .ToListAsync(ct);
 
         return new PaginaDeGastos(items, total, pagina, tamanio);
@@ -443,7 +837,8 @@ public class ServicioDeGastos(
             g.NumeroFactura,
             g.Importe,
             g.OrigenFondos,
-            g.IdComprobanteCompra);
+            g.IdComprobanteCompra,
+            g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto));
 
     // ---- validación de dominio -------------------------------------------------------------
 

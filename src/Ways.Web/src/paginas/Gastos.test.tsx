@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -25,13 +25,15 @@ function renderGastos() {
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
-    put: vi.fn(),
-    delete: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown?])),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -126,6 +128,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
     importe: 1000,
     origenFondos: 'Tesoreria',
     idComprobanteCompra: null,
+    turnoAbierto: false,
     ...sobrescribir,
   }
 }
@@ -156,6 +159,8 @@ function mockearRutas(opciones: {
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
 })
 
 describe('Gastos (administración) — carga inicial', () => {
@@ -534,5 +539,176 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
 
     expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Gastos (administración) — edición y baja', () => {
+  const gastoDeCajaCerrado = () =>
+    gastoFixture({ id: 31, concepto: 'Flete', origenFondos: 'CajaTurno', idTurnoCaja: 9, turnoAbierto: false })
+
+  function dialogo() {
+    return screen.getByRole('dialog', { name: 'Editar gasto' })
+  }
+
+  function llamadasAlListado() {
+    return apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith('/gastos/administracion')).length
+  }
+
+  it('editar abre el modal precargado y guarda con PUT /gastos/administracion/{id}, refrescando el listado', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler', importe: 1000 })]) })
+    apiPutMock.mockResolvedValueOnce({ id: 31 })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
+    const d = within(await screen.findByRole('dialog', { name: 'Editar gasto' }))
+    expect(d.getByLabelText('Concepto')).toHaveValue('Alquiler')
+    expect(d.getByLabelText('Importe')).toHaveValue('1.000,00')
+
+    await userEvent.clear(d.getByLabelText('Importe'))
+    await userEvent.type(d.getByLabelText('Importe'), '1200')
+    const antes = llamadasAlListado()
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/gastos/administracion/31',
+        expect.objectContaining({ importe: 1200, concepto: 'Alquiler', idMedioPago: 1, categoria: 'Otros' }),
+      ),
+    )
+    await screen.findByText('Gasto actualizado.')
+    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('editar un gasto de caja de un turno cerrado muestra el aviso de recálculo del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoDeCajaCerrado()]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Flete' }))
+
+    expect(
+      await within(dialogo()).findByText(
+        'Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('un gasto de caja general avisa del ajuste compensatorio y no del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler', origenFondos: 'Tesoreria' })]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
+
+    expect(await within(dialogo()).findByText(/ajuste compensatorio sobre la caja general/)).toBeInTheDocument()
+    expect(within(dialogo()).queryByText(/turno cerrado/)).not.toBeInTheDocument()
+  })
+
+  it('un gasto ligado a una compra no deja cambiar categoría ni proveedor', async () => {
+    mockearRutas({
+      pagina: paginaFixture([
+        gastoFixture({
+          id: 31,
+          concepto: 'Mercadería',
+          categoria: 'Proveedor',
+          idProveedor: 1,
+          nombreProveedor: 'Distribuidora Sur SRL',
+          idComprobanteCompra: 44,
+        }),
+      ]),
+    })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Mercadería' }))
+
+    const d = within(dialogo())
+    expect(d.getByLabelText('Categoría')).toBeDisabled()
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeDisabled()
+    expect(d.getByLabelText('Concepto')).toBeEnabled()
+  })
+
+  it('un error del servidor al editar se muestra en el modal y no lo cierra', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    const { ErrorApi } = await import('../api/cliente')
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'gasto_proveedor_ligado', 'El proveedor no se puede cambiar.'))
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar gasto Alquiler' }))
+    await userEvent.click(within(dialogo()).getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await within(dialogo()).findByText('El proveedor no se puede cambiar.')).toBeInTheDocument()
+  })
+
+  it('eliminar pide confirmación y solo al confirmar manda el DELETE y refresca', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    apiDeleteMock.mockResolvedValueOnce(undefined)
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    const confirmacion = await screen.findByRole('alertdialog', { name: 'Confirmar eliminación' })
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+
+    const antes = llamadasAlListado()
+    await userEvent.click(within(confirmacion).getByRole('button', { name: 'Confirmar eliminación' }))
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/gastos/administracion/31'))
+    await screen.findByText('Gasto eliminado.')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlListado()).toBeGreaterThan(antes))
+  })
+
+  it('cancelar la confirmación no elimina nada', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  it('la confirmación de baja de un gasto de un turno cerrado advierte del recálculo del arqueo', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoDeCajaCerrado()]) })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Flete' }))
+
+    expect(
+      await within(await screen.findByRole('alertdialog')).findByText(
+        /Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado\./,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('un fallo del DELETE se muestra y la confirmación sigue abierta', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    const { ErrorApi } = await import('../api/cliente')
+    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(404, 'no_encontrado', 'No existe el gasto 31.'))
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar eliminación' }))
+
+    expect(await screen.findByText('No existe el gasto 31.')).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('un doble click sobre "Confirmar eliminación" en el mismo tick manda un solo DELETE', async () => {
+    mockearRutas({ pagina: paginaFixture([gastoFixture({ id: 31, concepto: 'Alquiler' })]) })
+    let resolver: (v: unknown) => void = () => undefined
+    apiDeleteMock.mockImplementationOnce(() => new Promise((r) => (resolver = r)))
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar gasto Alquiler' }))
+    const confirmar = within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Confirmar eliminación' })
+    act(() => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolver(undefined)
+    })
   })
 })

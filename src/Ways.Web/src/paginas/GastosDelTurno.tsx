@@ -2,23 +2,29 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeGastos } from '../api/gastos'
+import { clienteDeGastos, copiaDeFalloDeEdicion } from '../api/gastos'
 import { clienteDeProveedores } from '../api/proveedores'
 import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
 import type {
+  AreaAlta,
+  AreaListado,
   CategoriaGasto,
   DetalleDeTurno,
+  GastoDeTurno,
   MedioPagoAlta,
   MedioPagoListado,
   OpcionDeProveedor,
   OrigenFondosGasto,
+  SolicitudDeEdicionDeGasto,
   TurnoResumen,
 } from '../api/tipos'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { Box } from '../componentes/Box'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
 import {
   aSolicitudDeGasto,
   categoriaAlElegirProveedor,
@@ -31,6 +37,7 @@ import {
 } from './utilidadesGastosDelTurno'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 /**
  * "Gastos del turno" (stage-gastos-turno-carga-simple, POS de escritorio): captura gastos contra
@@ -52,6 +59,12 @@ const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('me
  * en vuelo (react-async-state regla 5); el refresco posterior corre aislado del try/catch de la
  * escritura (regla 6), así que un alta ya confirmada nunca se reporta como fallida aunque el
  * refresco falle.
+ *
+ * Edición: cada gasto de un turno que sigue abierto (`turnoAbierto`) se corrige en un modal
+ * (`PUT /api/gastos/{id}`) que comparte con el alta la guarda de reentrancia (`guardandoRef`) y la
+ * generación del detalle: mientras la edición está abierta o en vuelo, el resto de la pantalla
+ * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
+ * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
  */
 export function GastosDelTurno() {
   const { puntoVenta } = usePuntoVenta()
@@ -71,6 +84,12 @@ export function GastosDelTurno() {
 
   const [proveedores, setProveedores] = useState<OpcionDeProveedor[] | null>(null)
   const [errorProveedores, setErrorProveedores] = useState('')
+
+  const [areas, setAreas] = useState<AreaListado[] | null>(null)
+
+  const [edicion, setEdicion] = useState<GastoDeTurno | null>(null)
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false)
+  const [errorEdicion, setErrorEdicion] = useState('')
 
   const [importe, setImporte] = useState<number | null>(null)
   const [idMedioPago, setIdMedioPago] = useState<number | ''>('')
@@ -115,6 +134,19 @@ export function GastosDelTurno() {
         if (!vigente) return
         setProveedores([])
         setErrorProveedores(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
+      })
+
+    // El área solo se usa para precargar la edición: si no carga, el formulario conserva el valor
+    // del gasto rotulado como no disponible, así que no hace falta un aviso aparte.
+    clienteAreas
+      .listar(false)
+      .then((lista) => {
+        if (!vigente) return
+        setAreas(lista)
+      })
+      .catch(() => {
+        if (!vigente) return
+        setAreas([])
       })
 
     return () => {
@@ -243,6 +275,54 @@ export function GastosDelTurno() {
     await cargarDetalle(turno.id, miGeneracion)
   }
 
+  function abrirEdicion(gasto: GastoDeTurno) {
+    if (guardandoRef.current) return
+    setAviso('')
+    setErrorGuardar('')
+    setErrorEdicion('')
+    setEdicion(gasto)
+  }
+
+  function cancelarEdicion() {
+    if (guardandoRef.current) return
+    setEdicion(null)
+    setErrorEdicion('')
+  }
+
+  async function guardarEdicion(solicitud: SolicitudDeEdicionDeGasto) {
+    // regla 11: guarda de reentrancia síncrona, compartida con el alta.
+    if (guardandoRef.current) return
+    if (!turno || !edicion) return
+
+    guardandoRef.current = true
+    setGuardandoEdicion(true)
+    setErrorEdicion('')
+
+    // regla 3: invalida cualquier carga del detalle anterior a esta escritura.
+    const miGeneracion = (generacionRef.current += 1)
+
+    try {
+      await clienteDeGastos.actualizar(edicion.id, solicitud)
+      if (generacionRef.current !== miGeneracion) return
+      setEdicion(null)
+      setAviso('Gasto actualizado.')
+    } catch (e) {
+      if (generacionRef.current !== miGeneracion) return
+      setErrorEdicion(copiaDeFalloDeEdicion(e))
+    } finally {
+      // Sin gate de generación a propósito: `guardandoRef` impide otra escritura en vuelo, así que
+      // ninguna respuesta más nueva puede ser dueña de este flag y gatearlo lo dejaría trabado.
+      guardandoRef.current = false
+      setGuardandoEdicion(false)
+    }
+
+    // regla 6: el refresco queda aislado de la escritura; tras un 409 también corre, así el
+    // `turnoAbierto` de la fila queda al día.
+    await cargarDetalle(turno.id, miGeneracion)
+  }
+
+  const bloqueado = guardando || guardandoEdicion || edicion !== null
+
   const mediosParaGasto = mediosValidosParaGasto(medios ?? [])
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const gastos = detalle?.gastos ?? []
@@ -252,7 +332,7 @@ export function GastosDelTurno() {
     <button
       type="button"
       className="btn btn-sm btn-outline-secondary"
-      disabled={guardando}
+      disabled={bloqueado}
       onClick={() => void cargarTurnoYDetalle()}
     >
       {buscandoTurno || cargandoDetalle ? 'Actualizando…' : 'Refrescar'}
@@ -279,7 +359,7 @@ export function GastosDelTurno() {
             {aviso && <div className="alert alert-success">{aviso}</div>}
             {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
-            <fieldset disabled={guardando} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">
+            <fieldset disabled={bloqueado} className="row g-2 align-items-end border-0 p-0 m-0 mb-3">
               <div className="col-md-2">
                 <label className="form-label" htmlFor="gasto-importe">
                   Importe
@@ -393,6 +473,7 @@ export function GastosDelTurno() {
                     <th>Categoría</th>
                     <th>Medio de pago</th>
                     <th className="text-end">Importe</th>
+                    <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -407,11 +488,21 @@ export function GastosDelTurno() {
                       </td>
                       <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
+                      <td className="text-end text-nowrap">
+                        {g.turnoAbierto && (
+                          <BotonIcono
+                            icono="editar"
+                            etiqueta={`Editar gasto ${g.concepto}`}
+                            disabled={bloqueado}
+                            onClick={() => abrirEdicion(g)}
+                          />
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {gastos.length === 0 && !cargandoDetalle && (
                     <tr>
-                      <td colSpan={4} className="text-center text-muted py-4">
+                      <td colSpan={5} className="text-center text-muted py-4">
                         Este turno todavía no tiene gastos.
                       </td>
                     </tr>
@@ -426,6 +517,21 @@ export function GastosDelTurno() {
           </>
         )}
       </Box>
+
+      {edicion && (
+        <ModalDeEdicionDeGasto
+          key={edicion.id}
+          gasto={edicion}
+          ligadoACompra={edicion.idComprobanteCompra !== null}
+          medios={mediosParaGasto}
+          proveedores={proveedores ?? []}
+          areas={areas ?? []}
+          guardando={guardandoEdicion}
+          error={errorEdicion}
+          onGuardar={(solicitud) => void guardarEdicion(solicitud)}
+          onCancelar={cancelarEdicion}
+        />
+      )}
     </div>
   )
 }

@@ -1,18 +1,19 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GastosDelTurno } from './GastosDelTurno'
-import type { DetalleDeTurno, GastoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
+import type { AreaListado, DetalleDeTurno, GastoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
-    put: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown?])),
     delete: vi.fn(),
   },
   ErrorApi: class ErrorApiMock extends Error {
@@ -113,6 +114,14 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     idMedioPago: 1,
     importe: 300,
     origenFondos: 'CajaTurno',
+    idTurnoCaja: 55,
+    turnoAbierto: true,
+    idProveedor: null,
+    idArea: null,
+    concepto: 'Flete',
+    detalle: null,
+    numeroFactura: null,
+    idComprobanteCompra: null,
     ...sobrescribir,
   }
 }
@@ -131,6 +140,8 @@ function detalleFixture(gastos: GastoDeTurno[] = []): DetalleDeTurno {
     },
     tickets: [],
     gastos,
+    fechaRecalculo: null,
+    idEmpleadoRecalculo: null,
   }
 }
 
@@ -143,6 +154,7 @@ function mockearRutas(opciones: {
   errorMedios?: unknown
   errorProveedores?: unknown
   errorDetalle?: unknown
+  areas?: AreaListado[]
 }) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta.startsWith('/caja/turnos/abierto')) {
@@ -153,6 +165,7 @@ function mockearRutas(opciones: {
       if (opciones.errorMedios) return Promise.reject(opciones.errorMedios)
       return Promise.resolve(opciones.medios ?? [medioEfectivo, medioCuentaCorriente])
     }
+    if (ruta === '/catalogos/areas') return Promise.resolve(opciones.areas ?? [])
     if (ruta === '/proveedores/opciones') {
       if (opciones.errorProveedores) return Promise.reject(opciones.errorProveedores)
       return Promise.resolve(opciones.proveedores ?? [proveedorFixture()])
@@ -168,6 +181,7 @@ function mockearRutas(opciones: {
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  apiPutMock.mockReset()
   estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 })
 
@@ -467,5 +481,155 @@ describe('GastosDelTurno — listado', () => {
 
     const filaTesoreria = within(tabla).getByRole('row', { name: /Viáticos/ })
     expect(within(filaTesoreria).getByText('Caja general')).toBeInTheDocument()
+  })
+})
+
+describe('GastosDelTurno — edición', () => {
+  const areaCocina: AreaListado = { id: 3, nombre: 'Cocina', activo: true, idEmpresa: null } as AreaListado
+
+  function dialogo() {
+    return screen.getByRole('dialog', { name: 'Editar gasto' })
+  }
+
+  async function abrirEdicion(nombre = 'Editar gasto Flete') {
+    // web-test-data-gates: la fila llega con el detalle (el dato), no antes.
+    await userEvent.click(await screen.findByRole('button', { name: nombre }))
+    await screen.findByRole('dialog', { name: 'Editar gasto' })
+  }
+
+  it('no ofrece editar un gasto cuyo turno ya no está abierto', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ turnoAbierto: false })]) })
+    render(<GastosDelTurno />)
+
+    // Se espera a la fila (el DATO del detalle) antes de afirmar que no hay acción.
+    await screen.findByRole('cell', { name: '$ 300,00' })
+    expect(screen.queryByRole('button', { name: /Editar gasto/ })).not.toBeInTheDocument()
+  })
+
+  it('precarga el formulario con los valores del gasto', async () => {
+    mockearRutas({
+      detalle: detalleFixture([gastoFixture({ importe: 300, idArea: 3, detalle: 'Entrega', numeroFactura: '0001-9', idProveedor: 1, categoria: 'Proveedor' })]),
+      areas: [areaCocina],
+    })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    await waitFor(() => expect(d.getByLabelText('Área (opcional)')).toHaveValue('3'))
+    expect(d.getByLabelText('Importe')).toHaveValue('300,00')
+    expect(d.getByLabelText('Medio de pago')).toHaveValue('1')
+    expect(d.getByLabelText('Categoría')).toHaveValue('Proveedor')
+    expect(d.getByLabelText('Proveedor (opcional)')).toHaveValue('1')
+    expect(d.getByLabelText('Concepto')).toHaveValue('Flete')
+    expect(d.getByLabelText('Detalle (opcional)')).toHaveValue('Entrega')
+    expect(d.getByLabelText('N° de factura (opcional)')).toHaveValue('0001-9')
+  })
+
+  it('un gasto ligado a una compra abre la edición con categoría y proveedor bloqueados', async () => {
+    mockearRutas({
+      detalle: detalleFixture([gastoFixture({ categoria: 'Proveedor', idProveedor: 1, idComprobanteCompra: 40 })]),
+    })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    expect(d.getByLabelText('Categoría')).toBeDisabled()
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeDisabled()
+    expect(d.getByLabelText('Concepto')).toBeEnabled()
+  })
+
+  it('un gasto sin compra abre la edición con categoría y proveedor habilitados', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ idComprobanteCompra: null })]) })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    expect(d.getByLabelText('Categoría')).toBeEnabled()
+    expect(d.getByLabelText('Proveedor (opcional)')).toBeEnabled()
+  })
+
+  it('guarda con PUT /gastos/{id}, cierra el modal, avisa y refresca el detalle', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+    apiPutMock.mockResolvedValueOnce({ id: 12 })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    await userEvent.clear(d.getByLabelText('Concepto'))
+    await userEvent.type(d.getByLabelText('Concepto'), '  Flete corregido ')
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await waitFor(() =>
+      expect(apiPutMock).toHaveBeenCalledWith(
+        '/gastos/12',
+        expect.objectContaining({ concepto: 'Flete corregido', idMedioPago: 1, importe: 300, categoria: 'Otros', idProveedor: null, idArea: null }),
+      ),
+    )
+    await screen.findByText('Gasto actualizado.')
+    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    const llamadasDetalle = apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle'))
+    expect(llamadasDetalle.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('un 409 gasto_turno_cerrado deja el modal abierto con el motivo y refresca el detalle', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+    const { ErrorApi } = await import('../api/cliente')
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'gasto_turno_cerrado', 'cerrado'))
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const antes = apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle')).length
+    await userEvent.click(within(dialogo()).getByRole('button', { name: 'Guardar cambios' }))
+
+    await within(dialogo()).findByText(/ya está cerrado/)
+    await waitFor(() =>
+      expect(apiGetMock.mock.calls.filter((c) => (c[0] as string).endsWith('/detalle')).length).toBeGreaterThan(antes),
+    )
+    expect(screen.queryByText('Gasto actualizado.')).not.toBeInTheDocument()
+  })
+
+  it('un importe en cero se rechaza sin llegar al servidor', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture()]) })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const d = within(dialogo())
+    await userEvent.clear(d.getByLabelText('Importe'))
+    await userEvent.click(d.getByRole('button', { name: 'Guardar cambios' }))
+
+    await d.findByText('Completá el medio de pago, el concepto y un importe mayor a 0.')
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('mientras el guardado está en vuelo el modal queda inerte y un doble click manda una sola solicitud', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture({ id: 12 })]) })
+    let resolver: (v: unknown) => void = () => undefined
+    apiPutMock.mockImplementationOnce(() => new Promise((r) => (resolver = r)))
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    const guardar = within(dialogo()).getByRole('button', { name: 'Guardar cambios' })
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+
+    await waitFor(() => expect(within(dialogo()).getByLabelText('Concepto')).toBeDisabled())
+    expect(within(dialogo()).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      resolver({ id: 12 })
+    })
+  })
+
+  it('cancelar cierra el modal sin escribir', async () => {
+    mockearRutas({ detalle: detalleFixture([gastoFixture()]) })
+    render(<GastosDelTurno />)
+
+    await abrirEdicion()
+    await userEvent.click(within(dialogo()).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Editar gasto' })).not.toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
   })
 })

@@ -913,6 +913,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
     importe: 1500,
     origenFondos: 'Tesoreria',
     idComprobanteCompra: null,
+    turnoAbierto: false,
     ...sobrescribir,
   }
 }

@@ -83,6 +83,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // apilado, mismo criterio que las rutas de caja de arriba (spec: gastos / Gasto
         // Authorization, un Vendedor tiene que poder registrar un gasto).
         ("POST", "/api/gastos/"),
+        // Edición de un gasto del turno abierto desde el POS: mismo criterio que el alta. Su prueba
+        // positiva por rol es GastosEdicionEndpointsTests.UnVendedorEditaUnGastoDeSuTurnoAbierto.
+        ("PUT", "/api/gastos/{id:int}"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
         // GestionDeCatalogo (design: API Surface) — no van en este allowlist. Nada nuevo acá.
