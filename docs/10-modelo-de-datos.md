@@ -338,9 +338,10 @@ familia no guarda ningún valor: sus miembros son la fuente de verdad, así que 
 **escritores**: todo cambio de un campo compartido o de un precio debe replicarse a todos los
 miembros en la misma transacción. El esquema no fuerza la igualdad; la sostienen los escritores.
 
-> **Estado (familias de artículos — modelo):** implementados la tabla `familias`, la columna
-> `articulos.id_familia` y la regla pura `ValoresCompartidosDeFamilia`. Todavía no hay endpoint
-> de alta ni de membresía de familias, y ningún escritor replica a los miembros.
+> **Estado (familias de artículos):** implementados el modelo (tabla `familias`, columna
+> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y el escritor de **precios**
+> (ver "Precios con alcance de familia", abajo). Todavía no hay endpoint de alta ni de membresía de
+> familias, ni escritor de campos compartidos de `articulos`: la pertenencia se siembra por base.
 
 | | Campos |
 |---|---|
@@ -354,6 +355,33 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
   baja no cuenta como miembro para ningún efecto.
 - La regla pura de qué es compartido y qué es propio vive en `ValoresCompartidosDeFamilia`
   (Domain): una columna nueva en `articulos` obliga a clasificarla.
+
+**Precios con alcance de familia.** `POST /api/articulos/{id}/precios` y
+`POST /api/articulos/{id}/precios/programados` aceptan un `alcance` opcional (`Familia` o `SoloEste`):
+
+| `alcance` | Artículo sin familia | Artículo miembro |
+|---|---|---|
+| ausente | se escribe solo, como siempre | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
+| `Familia` | `409 familia_cambio` | el precio se aplica a **todos** los miembros vivos |
+| `SoloEste` | `409 familia_cambio` | el artículo **sale de la familia** y se escribe solo él |
+
+Un valor fuera de los dos (el JSON acepta también el ordinal) es `400 alcance_invalido`. La escritura
+es **todo o nada**: una sola transacción, y un conflicto de cualquier miembro
+(`precio_pendiente_existe` sin `confirmarReemplazo`, `vigente_desde_invalido`) la aborta entera, incluida
+la salida de la familia de "solo este". Todos los miembros comparten el mismo "ahora" y cada uno
+registra su propia auditoría `precio.cambio`. Los llamadores internos que no tienen a quién preguntar
+(aplicar el precio sugerido de una compra) piden "familia si corresponde": un miembro se escribe con
+su familia y quien no lo es, solo.
+
+**Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
+orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
+`bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
+como primera sentencia; (2) las **filas de `articulos`** de los miembros en orden ascendente de id
+(`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE`, nunca `FOR UPDATE` sobre varias filas: choca con
+el `FOR KEY SHARE` que toman las ventas por sus FK); (3) los **locks de par artículo-lista** en orden
+ascendente de `id_articulo`. La pertenencia que se lee después de (1) es estable hasta el commit; un
+artículo sin familia no toma (2). El escritor de precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo
+implementa; el de campos compartidos tendrá que respetarlo.
 
 ### Listas de precio, con historia
 

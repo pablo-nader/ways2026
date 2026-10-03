@@ -411,6 +411,85 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
         }
     }
 
+    /// <summary>Aplicar el precio sugerido no tiene a quién preguntarle el alcance: sobre una línea cuyo
+    /// artículo es miembro de una familia lo aplica a TODA la familia (modo "familia si corresponde"),
+    /// y sobre una línea de un artículo sin familia, solo a él. Si compras volviera al modo por defecto
+    /// del servicio —que exige decidir—, la línea del miembro se rechazaría y esta prueba lo vería.</summary>
+    [Fact]
+    public async Task AplicarElPrecioSugeridoDeUnMiembroLoAplicaATodaLaFamiliaYElDeUnArticuloSueltoSoloAEl()
+    {
+        var ctx = await PrepararAsync(nameof(AplicarElPrecioSugeridoDeUnMiembroLoAplicaATodaLaFamiliaYElDeUnArticuloSueltoSoloAEl));
+
+        int idHermano, idSuelto, idListaPrecio;
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var idArea = await db.Areas.Where(a => a.IdTenant == ctx.IdTenant).Select(a => a.Id).FirstAsync();
+
+            var familia = new Familia { IdTenant = ctx.IdTenant, Nombre = "Familia de la compra", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Familias.Add(familia);
+            await db.SaveChangesAsync();
+
+            Articulo NuevoArticulo(string nombre, int? idFamilia) => new()
+            {
+                IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre, IdArea = idArea,
+                IdAlicuotaIva = ctx.IdAlicuotaIva21, UnidadVenta = UnidadVenta.Unidad, EsProducto = true,
+                IdProveedorHabitual = ctx.IdProveedor, IdFamilia = idFamilia, CreatedAt = ahora, UpdatedAt = ahora
+            };
+
+            var hermano = NuevoArticulo("Hermano", familia.Id);
+            var suelto = NuevoArticulo("Suelto", null);
+            db.Articulos.AddRange(hermano, suelto);
+            foreach (var miembro in await db.Articulos.Where(a => a.Id == ctx.IdArticulo || a.Id == ctx.IdArticulo2).ToListAsync())
+            {
+                miembro.IdFamilia = familia.Id;
+            }
+
+            var lista = new ListaPrecio
+            {
+                IdTenant = ctx.IdTenant, Nombre = "Lista de la compra", EsDefault = false, Modo = ModoLista.Fija,
+                Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.ListasPrecio.Add(lista);
+            await db.SaveChangesAsync();
+
+            idHermano = hermano.Id;
+            idSuelto = suelto.Id;
+            idListaPrecio = lista.Id;
+        }
+
+        LineaDeCompraSolicitada Linea(int idArticulo) =>
+            new(idArticulo, "Item de prueba", 10m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true);
+
+        var solicitud = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "0001-00000077", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [Linea(ctx.IdArticulo), Linea(idSuelto)]);
+        var creada = await CrearBorradorAsync(ctx, solicitud);
+        await ConfirmarAsync(ctx, creada.Id);
+
+        var respuestaAplicar = await ctx.Admin.PostAsJsonAsync(
+            $"/api/compras/{creada.Id}/precios", new SolicitudDeAplicarPrecios(idListaPrecio));
+        Assert.Equal(HttpStatusCode.OK, respuestaAplicar.StatusCode);
+        var resultados = (await respuestaAplicar.Content.ReadFromJsonAsync<List<ResultadoAplicarPrecio>>(OpcionesJson))!;
+
+        Assert.Equal(2, resultados.Count);
+        Assert.All(resultados, resultado => Assert.True(resultado.Aplicado, resultado.Error));
+        Assert.All(resultados, resultado => Assert.Equal(181.5m, resultado.Precio));
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var abiertas = await lectura.Precios
+            .Where(p => p.IdListaPrecio == idListaPrecio && p.VigenteHasta == null)
+            .ToListAsync();
+
+        // La línea del miembro llegó a TODA su familia (el artículo de la línea, el otro del contexto y
+        // el hermano sembrado acá) y la del suelto solo a él: cuatro artículos con precio, ni uno más.
+        Assert.Equal(
+            new[] { ctx.IdArticulo, ctx.IdArticulo2, idHermano, idSuelto }.Order(),
+            abiertas.Select(p => p.IdArticulo).Order());
+        Assert.All(abiertas, precio => Assert.Equal(181.5m, precio.Monto));
+        Assert.Equal(4, await lectura.Precios.CountAsync(p => p.IdListaPrecio == idListaPrecio));
+    }
+
     // ---- task 2.14: autorización -------------------------------------------------------------------
 
     [Fact]
