@@ -132,6 +132,29 @@ public class CalculadorDeCompraAlicuotasTests
         Assert.Equal("iva_impreso_fuera_de_tolerancia", error.Codigo);
     }
 
+    [Theory]
+    [InlineData(0.5)]
+    [InlineData(-0.5)]
+    public void ElIvaImpresoDistintoDeCeroEnUnaAlicuotaDeCeroPorCientoSeRechazaAunqueEsteDentroDeLaTolerancia(double impreso)
+    {
+        var error = Assert.Throws<ErrorDominio>(() => CalculadorDeCompra.Calcular(
+            [Linea(1, 300m, idAlicuota: 5, porcentaje: 0m)],
+            discriminaIva: true, SinMargenes, new Dictionary<int, decimal> { [5] = (decimal)impreso }));
+
+        Assert.Equal("iva_impreso_en_alicuota_sin_iva", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ElIvaImpresoCeroEnUnaAlicuotaDeCeroPorCientoSeAcepta()
+    {
+        var resultado = CalculadorDeCompra.Calcular(
+            [Linea(1, 300m, idAlicuota: 5, porcentaje: 0m)],
+            discriminaIva: true, SinMargenes, new Dictionary<int, decimal> { [5] = 0m });
+
+        Assert.Equal(0m, resultado.IvaTotal);
+    }
+
     [Fact]
     public void ElIvaImpresoDeUnaAlicuotaQueNoEstaEnLasLineasSeRechaza()
     {

@@ -175,6 +175,14 @@ public static class CalculadorDeCompra
 
             if (ivaImpreso is not null && ivaImpreso.TryGetValue(idAlicuota, out var impreso))
             {
+                if (porcentaje == 0m && impreso != 0m)
+                {
+                    throw new ErrorDominio(
+                        "iva_impreso_en_alicuota_sin_iva",
+                        $"La alícuota {idAlicuota} es de 0% (exento, no gravado o 0%): su IVA solo puede ser 0.",
+                        400);
+                }
+
                 if (impreso < 0m || Math.Abs(impreso - calculado) > ToleranciaDeIvaImpreso)
                 {
                     throw new ErrorDominio(

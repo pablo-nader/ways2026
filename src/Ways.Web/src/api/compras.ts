@@ -333,6 +333,7 @@ export function discriminaIvaEfectivo(tipo: TipoComprobanteListado | null, elecc
 export function ivaImpresoDesdeDetalle(compra: CompraDetalle): Record<number, number | null> {
   const overrides: Record<number, number | null> = {}
   for (const a of compra.alicuotas) {
+    if (a.neto === null || a.iva === null) continue
     if (redondear((a.neto * a.porcentaje) / 100, 2) !== a.iva) overrides[a.idAlicuotaIva] = a.iva
   }
   return overrides

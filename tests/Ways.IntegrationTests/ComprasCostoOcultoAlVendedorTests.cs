@@ -183,6 +183,10 @@ public class ComprasCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(181.5m, item.PrecioSugerido);
         Assert.Equal(1210m, compra.Total);
 
+        var alicuota = Assert.Single(compra.Alicuotas);
+        Assert.Equal(1000m, alicuota.Neto);
+        Assert.Equal(210m, alicuota.Iva);
+
         var orden = await LeerOrdenAsync(cliente, escenario.IdOrden);
         Assert.Equal(1080m, orden.TotalEstimado);
         Assert.Equal(440m, orden.TotalReal);
@@ -227,6 +231,12 @@ public class ComprasCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassF
         Assert.Null(item.PrecioSugerido);
         Assert.Equal(10m, item.Cantidad);
         Assert.True(item.ActualizaCosto);
+
+        // El desglose por alícuota reconstruye importes de línea: la fila existe, sus montos no.
+        var alicuota = Assert.Single(compra.Alicuotas);
+        Assert.Equal(21m, alicuota.Porcentaje);
+        Assert.Null(alicuota.Neto);
+        Assert.Null(alicuota.Iva);
 
         Assert.Equal(1210m, compra.Total);
         Assert.Equal(vistoPorAdmin.Subtotal, compra.Subtotal);

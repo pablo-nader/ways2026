@@ -1685,8 +1685,9 @@ export type SolicitudDeCompra = {
 /** El IVA impreso en el comprobante para una alícuota (espejo de `IvaImpresoSolicitado`). */
 export type IvaImpresoSolicitado = { idAlicuotaIva: number; iva: number }
 
-/** Una fila del desglose de IVA de una compra (espejo de `AlicuotaDeCompra`). */
-export type AlicuotaDeCompra = { idAlicuotaIva: number; porcentaje: number; neto: number; iva: number }
+/** Una fila del desglose de IVA de una compra (espejo de `AlicuotaDeCompra`). `neto`/`iva` son `null`
+ * para el rol vendedor, igual que el total de cada ítem. */
+export type AlicuotaDeCompra = { idAlicuotaIva: number; porcentaje: number; neto: number | null; iva: number | null }
 
 /** Un item ya persistido, con su `precioSugerido` (espejo de `ItemDeCompra`). */
 export type ItemDeCompra = {

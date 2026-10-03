@@ -86,8 +86,10 @@ public sealed record ItemDeCompra(
     int? IdLote);
 
 /// <summary>Una fila del desglose de IVA de una compra que discrimina IVA: neto gravado e IVA de
-/// una alícuota. Exento y no gravado salen con IVA cero.</summary>
-public sealed record AlicuotaDeCompra(int IdAlicuotaIva, decimal Porcentaje, decimal Neto, decimal Iva);
+/// una alícuota. Exento y no gravado salen con IVA cero. <see cref="Neto"/> e <see cref="Iva"/> son
+/// <c>null</c> para el rol vendedor, igual que el total de cada ítem: el desglose por alícuota
+/// reconstruye importes de línea. Los totales del encabezado se conservan.</summary>
+public sealed record AlicuotaDeCompra(int IdAlicuotaIva, decimal Porcentaje, decimal? Neto, decimal? Iva);
 
 /// <summary>Detalle completo de una compra — respuesta de <c>GET /api/compras/{id}</c>,
 /// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.

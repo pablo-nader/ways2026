@@ -401,6 +401,26 @@ public class ComprasRemitoYAlicuotasTests(WaysApiFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task UnIvaImpresoDistintoDeCeroEnUnaAlicuotaExentaDa400PeroCeroSeAcepta()
+    {
+        var ctx = await PrepararAsync(nameof(UnIvaImpresoDistintoDeCeroEnUnaAlicuotaExentaDa400PeroCeroSeAcepta));
+
+        var rechazada = await ctx.Admin.PostAsJsonAsync(
+            "/api/compras",
+            Solicitud(
+                ctx, ctx.IdTipoCRM, [Concepto(ctx, 300m, ctx.IdAlicuotaExento)], discriminaIva: true,
+                ivaImpreso: [new IvaImpresoSolicitado(ctx.IdAlicuotaExento, 0.5m)]));
+        await AssertRechazoAsync(rechazada, "iva_impreso_en_alicuota_sin_iva");
+
+        var aceptada = await CrearBorradorAsync(
+            ctx,
+            Solicitud(
+                ctx, ctx.IdTipoCRM, [Concepto(ctx, 300m, ctx.IdAlicuotaExento)], discriminaIva: true,
+                ivaImpreso: [new IvaImpresoSolicitado(ctx.IdAlicuotaExento, 0m)]));
+        Assert.Equal(0m, Assert.Single(aceptada.Alicuotas).Iva);
+    }
+
+    [Fact]
     public async Task UnIvaImpresoDeUnaAlicuotaQueNoEstaEnLasLineasDa400()
     {
         var ctx = await PrepararAsync(nameof(UnIvaImpresoDeUnaAlicuotaQueNoEstaEnLasLineasDa400));

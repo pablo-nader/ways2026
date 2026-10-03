@@ -160,7 +160,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         {
             // Desactiva en vez de borrar, para que una compra ya cargada con este tipo siga siendo
             // legible después de un rollback (mismo criterio que ComprasYTransferenciasEtapa8).
-            migrationBuilder.Sql("UPDATE tipos_comprobante SET activo = false WHERE codigo = 'C-RM';");
+            // El GUC va dentro del mismo bloque, como en Up (rls-migration-backfills).
+            migrationBuilder.Sql(
+                """
+                SET LOCAL app.acceso = 'plataforma';
+                UPDATE tipos_comprobante SET activo = false WHERE codigo = 'C-RM';
+                """);
 
             migrationBuilder.DropTable(
                 name: "alicuotas_comprobante_compra");

@@ -4,8 +4,8 @@ import { formatearImporte } from '../formato/importes'
 export type FilaDeDesgloseDeIva = {
   idAlicuotaIva: number
   porcentaje: number
-  neto: number
-  iva: number
+  neto: number | null
+  iva: number | null
   /** Solo en el editor: lo que sale del neto, para mostrar contra lo impreso. */
   ivaCalculado?: number
   fueraDeTolerancia?: boolean
@@ -20,7 +20,7 @@ type Props = {
   disabled?: boolean
 }
 
-function moneda(valor: number): string {
+function moneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
@@ -48,7 +48,7 @@ export function DesgloseDeIvaDeCompra({ filas, nombrePorAlicuota, onCambiarIva, 
                 <td>{nombre}</td>
                 <td className="text-end">{moneda(fila.neto)}</td>
                 <td className="text-end">
-                  {onCambiarIva ? (
+                  {onCambiarIva && fila.porcentaje !== 0 && fila.iva !== null ? (
                     <>
                       <CampoImporte
                         aria-label={`IVA impreso ${nombre}`}

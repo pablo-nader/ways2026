@@ -1357,6 +1357,7 @@ public class ServicioDeCompras(
         comprobante.DiscriminaIva,
         alicuotas
             .OrderBy(a => a.IdAlicuotaIva)
-            .Select(a => new AlicuotaDeCompra(a.IdAlicuotaIva, a.Porcentaje, a.Neto, a.Iva))
+            .Select(a => new AlicuotaDeCompra(
+                a.IdAlicuotaIva, a.Porcentaje, PuedeVerCostos ? a.Neto : null, PuedeVerCostos ? a.Iva : null))
             .ToList());
 }
