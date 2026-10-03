@@ -130,7 +130,7 @@ public class GastosDeAdministracionEndpointsTests(WaysApiFixture fixture) : ICla
             fecha, ctx.IdEmpresa, idPuntoVenta, categoria, idProveedor, null, concepto, null,
             idMedioPago ?? ctx.IdMedioEfectivo, null, importe, idComprobanteCompra);
 
-    private static DateOnly Hoy() => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static DateOnly Hoy() => FechaDelNegocio.Hoy();
 
     // ---- happy path: sin turno, origen tesorería, fecha retroactiva persistida ------------------
 
