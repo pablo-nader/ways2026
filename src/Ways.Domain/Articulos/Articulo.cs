@@ -66,4 +66,12 @@ public class Articulo : EntidadTenant
     /// Default <c>false</c> — byte-idéntico al comportamiento de hoy para cualquier fila
     /// existente.</summary>
     public bool ControlaLote { get; set; }
+
+    /// <summary>Familia a la que pertenece el artículo (<see cref="Familia"/>), o <c>null</c> si no
+    /// pertenece a ninguna. FK compuesta <c>(id_familia, id_tenant)</c>, mismo estilo que
+    /// <see cref="IdCategoria"/>. Los miembros de una misma familia deben ser idénticos en sus campos
+    /// compartidos (<see cref="ValoresCompartidosDeFamilia"/>); lo sostienen los escritores, que
+    /// replican cada cambio a todos los miembros en la misma transacción, no el esquema. Salir de la
+    /// familia es dejar este valor en <c>null</c>.</summary>
+    public int? IdFamilia { get; set; }
 }

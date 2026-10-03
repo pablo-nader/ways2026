@@ -79,6 +79,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();
 
+    // Familias de artículos (doc 10 §3): expuesta en IWaysDbContext desde el mismo lote que la
+    // crea — todavía sin escritor de aplicación; las pruebas siembran familias por este DbSet.
+    public DbSet<Familia> Familias => Set<Familia>();
+
     // stage-4-ofertas, Slice 2: ServicioDeOfertas es el primer consumidor de Application —
     // los dos DbSet ya están expuestos en IWaysDbContext (Slice 1 solo adelantaba el modelo a
     // la migración, sin consumidor todavía).

@@ -61,7 +61,7 @@ public class ModeloDeArticulosYPreciosTests
     }
 
     [Fact]
-    public void ArticulosTieneLasSieteFksEsperadas()
+    public void ArticulosTieneLasOchoFksEsperadas()
     {
         using var db = CrearContexto();
 
@@ -75,7 +75,69 @@ public class ModeloDeArticulosYPreciosTests
         Assert.Contains("fk_articulos_grupo", nombresDeFk);
         Assert.Contains("fk_articulos_proveedor_habitual", nombresDeFk);
         Assert.Contains("fk_articulos_alicuota_iva", nombresDeFk);
-        Assert.Equal(7, nombresDeFk.Count);
+        Assert.Contains("fk_articulos_familia", nombresDeFk);
+        Assert.Equal(8, nombresDeFk.Count);
+    }
+
+    [Fact]
+    public void ArticulosTieneLaFkCompuestaOpcionalAFamiliasYSuIndiceParcial()
+    {
+        using var db = CrearContexto();
+
+        var entidad = db.Model.FindEntityType(typeof(Articulo))!;
+
+        var idFamilia = entidad.FindProperty(nameof(Articulo.IdFamilia))!;
+        Assert.True(idFamilia.IsNullable);
+        Assert.Equal("id_familia", idFamilia.GetColumnName());
+
+        var fk = entidad.GetForeignKeys().Single(f => f.GetConstraintName() == "fk_articulos_familia");
+        Assert.Equal(typeof(Familia), fk.PrincipalEntityType.ClrType);
+        Assert.Equal([nameof(Articulo.IdFamilia), nameof(Articulo.IdTenant)], fk.Properties.Select(p => p.Name));
+        Assert.Equal([nameof(Familia.Id), nameof(Familia.IdTenant)], fk.PrincipalKey.Properties.Select(p => p.Name));
+        Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior);
+        Assert.False(fk.IsRequired);
+
+        var indice = entidad.GetIndexes().Single(i => i.GetDatabaseName() == "ix_articulos_familia");
+        Assert.False(indice.IsUnique);
+        Assert.Equal("id_familia IS NOT NULL", indice.GetFilter());
+        Assert.Equal(
+            [nameof(Articulo.IdFamilia), nameof(Articulo.IdTenant)],
+            indice.Properties.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void FamiliasTieneLaClaveAlternaElIndiceUnicoParcialDeNombreYLaFkAlTenant()
+    {
+        using var db = CrearContexto();
+
+        var entidad = db.Model.FindEntityType(typeof(Familia))!;
+        Assert.Equal("familias", entidad.GetTableName());
+
+        var pk = entidad.FindPrimaryKey()!;
+        Assert.Equal("pk_familias", pk.GetName());
+        Assert.Equal([nameof(Familia.Id)], pk.Properties.Select(p => p.Name));
+        Assert.Equal("id_familia", entidad.FindProperty(nameof(Familia.Id))!.GetColumnName());
+
+        var claveAlterna = entidad.GetKeys().Single(k => k.GetName() == "ak_familias_id_familia_id_tenant");
+        Assert.Equal(
+            [nameof(Familia.Id), nameof(Familia.IdTenant)],
+            claveAlterna.Properties.Select(p => p.Name));
+
+        var nombre = entidad.FindProperty(nameof(Familia.Nombre))!;
+        Assert.Equal("citext", nombre.GetColumnType());
+        Assert.Equal(150, nombre.GetMaxLength());
+        Assert.False(nombre.IsNullable);
+
+        var indice = entidad.GetIndexes().Single(i => i.GetDatabaseName() == "ux_familias_nombre");
+        Assert.True(indice.IsUnique);
+        Assert.Equal("deleted_at IS NULL", indice.GetFilter());
+        Assert.Equal(
+            [nameof(Familia.IdTenant), nameof(Familia.Nombre)],
+            indice.Properties.Select(p => p.Name));
+
+        var fk = Assert.Single(entidad.GetForeignKeys());
+        Assert.Equal("fk_familias_tenant", fk.GetConstraintName());
+        Assert.Equal(typeof(Tenant), fk.PrincipalEntityType.ClrType);
     }
 
     [Fact]

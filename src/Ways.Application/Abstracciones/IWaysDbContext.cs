@@ -71,6 +71,10 @@ public interface IWaysDbContext
     DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
     DbSet<Precio> Precios { get; }
 
+    // Familias de artículos (doc 10 §3): expuesta desde el mismo lote que la crea, todavía sin
+    // escritor de aplicación.
+    DbSet<Familia> Familias { get; }
+
     // stage-4-ofertas, Slice 2: primer consumidor de Application — ServicioDeOfertas
     // (list/create/edit/soft-delete + replace-set de ofertas_listas).
     DbSet<Oferta> Ofertas { get; }
