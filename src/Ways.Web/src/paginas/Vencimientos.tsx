@@ -23,7 +23,7 @@ const BADGE_POR_ESTADO: Record<EstadoDeVencimiento, { etiqueta: string; clase: s
 
 function BadgeDeEstado({ estado }: { estado: EstadoDeVencimiento }) {
   const { etiqueta, clase } = BADGE_POR_ESTADO[estado]
-  return <span className={`badge rounded-0 ${clase}`}>{etiqueta}</span>
+  return <span className={`badge ${clase}`}>{etiqueta}</span>
 }
 
 /**
@@ -104,14 +104,14 @@ export function Vencimientos() {
     <div className="container-fluid py-4">
       <Box titulo="Vencimientos" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
 
         {puntosVenta === null ? (
           <Cargando />
@@ -128,7 +128,7 @@ export function Vencimientos() {
                 </label>
                 <select
                   id="vencimientos-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
                 >
@@ -148,7 +148,7 @@ export function Vencimientos() {
                   type="number"
                   step="1"
                   min="0"
-                  className="form-control rounded-0"
+                  className="form-control"
                   placeholder="Default de la empresa"
                   value={dias}
                   onChange={(e) => setDias(e.target.value)}
@@ -164,7 +164,7 @@ export function Vencimientos() {
               </div>
             </div>
 
-            {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !vencimientos && <Cargando />}
 

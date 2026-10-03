@@ -7,6 +7,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 type Formulario = {
   id: number | null
@@ -224,26 +225,24 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           onChange={(e) => setIncluirInactivos(e.target.checked)}
           disabled={bloqueado}
         />
-        <label className="form-check-label text-light small" htmlFor="incluir-inactivos">
+        <label className="form-check-label text-body-secondary small" htmlFor="incluir-inactivos">
           Incluir inactivos
         </label>
       </div>
-      <button
-        type="button"
-        className="btn btn-sm btn-success rounded-0 text-nowrap"
+      <BotonIcono
+        icono="agregar"
+        className="text-nowrap"
         onClick={abrirNuevo}
         disabled={bloqueado}
-      >
-        Nuevo
-      </button>
+      />
     </nav>
   )
 
   return (
     <div className="container-fluid py-4">
       <Box titulo={titulo} variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {baja && (
           <ConfirmacionDeBaja
@@ -296,28 +295,23 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
                         <td key={c.clave}>{formatearValorDeColumna(c, valores[c.clave])}</td>
                       ))}
                       <td>
-                        <span className={`badge rounded-0 ${item.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                        <span className={`badge ${item.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                           {item.activo ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
                       <td className="text-end text-nowrap">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        <BotonIcono
+                          icono="editar"
+                          className="me-1"
                           onClick={() => abrirEdicion(item)}
                           disabled={bloqueado}
-                        >
-                          Editar
-                        </button>
+                        />
                         {item.activo && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger rounded-0"
+                          <BotonIcono
+                            icono="eliminar"
                             onClick={(evento) => pedirBaja(item, evento.currentTarget)}
                             disabled={bloqueado}
-                          >
-                            Baja
-                          </button>
+                          />
                         )}
                       </td>
                     </tr>
@@ -377,7 +371,7 @@ function FormularioCatalogo({
 
   return (
     <form
-      className="row g-3 border p-3 mb-4 bg-white"
+      className="row g-3 border p-3 mb-4 bg-body"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault()
@@ -394,7 +388,7 @@ function FormularioCatalogo({
         </label>
         <input
           id="f-nombre"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={150}
           value={valor.nombre}
           onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
@@ -433,7 +427,7 @@ function FormularioCatalogo({
             ) : campo.tipo === 'select' ? (
               <select
                 id={`f-${campo.clave}`}
-                className="form-select rounded-0"
+                className="form-select"
                 value={valorActual}
                 onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
                 disabled={bloqueado}
@@ -454,7 +448,7 @@ function FormularioCatalogo({
                 id={`f-${campo.clave}`}
                 type="number"
                 step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
-                className="form-control rounded-0"
+                className="form-control"
                 value={valorActual}
                 onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
                 disabled={bloqueado}
@@ -471,7 +465,7 @@ function FormularioCatalogo({
         </label>
         <select
           id="f-activo"
-          className="form-select rounded-0"
+          className="form-select"
           value={valor.activo ? 'activo' : 'inactivo'}
           onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
           disabled={bloqueado}
@@ -482,12 +476,12 @@ function FormularioCatalogo({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+        <button type="submit" className="btn btn-success" disabled={bloqueado}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary rounded-0"
+          className="btn btn-outline-secondary"
           onClick={onCancelar}
           disabled={bloqueado}
         >

@@ -283,19 +283,19 @@ export function FacturarRemitos() {
         titulo="Facturar remitos"
         variante="inverse"
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/remitos">
+          <Link className="btn btn-sm btn-outline-secondary" to="/remitos">
             Volver a remitos
           </Link>
         }
       >
-        {errorReferencia && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorReferencia}</div>}
+        {errorReferencia && <div className="alert alert-warning py-1 px-2 small">{errorReferencia}</div>}
 
         {facturado ? (
-          <div className="alert alert-success rounded-0">
+          <div className="alert alert-success">
             <p className="mb-2">
               Comprobante <strong>{facturado.numeroVisible}</strong> emitido por {formatearMoneda(facturado.total)}.
             </p>
-            <button type="button" className="btn btn-primary btn-sm rounded-0" onClick={nuevaConsolidacion}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={nuevaConsolidacion}>
               Facturar otro grupo
             </button>
           </div>
@@ -308,7 +308,7 @@ export function FacturarRemitos() {
                 </label>
                 <select
                   id="facturar-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   disabled={!referenciaOk || ocupado}
                   onChange={(e) => setIdPuntoVenta(e.target.value === '' ? '' : Number(e.target.value))}
@@ -327,7 +327,7 @@ export function FacturarRemitos() {
                 </label>
                 <select
                   id="facturar-cliente"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idCliente}
                   disabled={!referenciaOk || ocupado}
                   onChange={(e) => setIdCliente(e.target.value === '' ? '' : Number(e.target.value))}
@@ -347,7 +347,7 @@ export function FacturarRemitos() {
             ) : (
               <>
                 {cargandoRemitos && <Cargando />}
-                {errorRemitos && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorRemitos}</div>}
+                {errorRemitos && <div className="alert alert-danger py-1 px-2 small">{errorRemitos}</div>}
 
                 {!cargandoRemitos && remitos && (
                   <>
@@ -415,15 +415,15 @@ export function FacturarRemitos() {
                           <input
                             id="facturar-observaciones"
                             type="text"
-                            className="form-control rounded-0"
+                            className="form-control"
                             value={observaciones}
                             disabled={ocupado}
                             onChange={(e) => setObservaciones(e.target.value)}
                           />
                         </div>
 
-                        {errorParametros && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorParametros}</div>}
-                        {errorFacturar && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorFacturar}</div>}
+                        {errorParametros && <div className="alert alert-danger py-1 px-2 small">{errorParametros}</div>}
+                        {errorFacturar && <div className="alert alert-danger py-1 px-2 small">{errorFacturar}</div>}
 
                         <h6>Pagos</h6>
                         {filasPago.map((fila) => {
@@ -435,7 +435,7 @@ export function FacturarRemitos() {
                             <div className="row g-2 mb-2 align-items-center" key={fila.id}>
                               <div className="col-4">
                                 <select
-                                  className="form-select form-select-sm rounded-0"
+                                  className="form-select form-select-sm"
                                   aria-label="Medio de pago"
                                   value={fila.idMedioPago}
                                   disabled={ocupado || medios === null}
@@ -453,7 +453,7 @@ export function FacturarRemitos() {
                               </div>
                               <div className="col-3">
                                 <CampoImporte
-                                  className="form-control form-control-sm rounded-0"
+                                  className="form-control form-control-sm"
                                   aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                                   valor={fila.importe}
                                   disabled={ocupado}
@@ -463,7 +463,7 @@ export function FacturarRemitos() {
                               <div className="col-3">
                                 <input
                                   type="text"
-                                  className="form-control form-control-sm rounded-0"
+                                  className="form-control form-control-sm"
                                   aria-label={etiquetaDeCampoFila('Referencia', medioDeFila, fila.id)}
                                   placeholder={medioDeFila?.requiereReferencia ? 'Referencia (requerida)' : 'Referencia'}
                                   value={fila.referencia}
@@ -473,7 +473,7 @@ export function FacturarRemitos() {
                               </div>
                               <div className="col-2 d-flex align-items-center gap-1">
                                 <CampoImporte
-                                  className="form-control form-control-sm rounded-0"
+                                  className="form-control form-control-sm"
                                   aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
                                   valor={vueltoMostrado}
                                   disabled={ocupado || !medioDeFila?.admiteVuelto}
@@ -482,7 +482,7 @@ export function FacturarRemitos() {
                                 {filasPago.length > 1 && (
                                   <button
                                     type="button"
-                                    className="btn btn-sm btn-outline-danger rounded-0"
+                                    className="btn btn-sm btn-outline-danger"
                                     disabled={ocupado}
                                     aria-label="Quitar medio de pago"
                                     onClick={() => quitarFilaPago(fila.id)}
@@ -495,7 +495,7 @@ export function FacturarRemitos() {
                           )
                         })}
 
-                        <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={ocupado} onClick={agregarFilaPago}>
+                        <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={ocupado} onClick={agregarFilaPago}>
                           + Agregar medio de pago
                         </button>
 
@@ -508,9 +508,9 @@ export function FacturarRemitos() {
                           <span>{formatearMoneda(excedente)}</span>
                         </div>
 
-                        {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+                        {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
-                        <button type="button" className="btn btn-primary rounded-0" disabled={!puedeFacturar} onClick={facturar}>
+                        <button type="button" className="btn btn-primary" disabled={!puedeFacturar} onClick={facturar}>
                           {facturando ? 'Facturando…' : 'Facturar'}
                         </button>
                       </>

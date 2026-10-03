@@ -222,7 +222,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // de tesorería que escribe EscriturasDeTesoreria lleva su propia Fecha = reloj.Ahora (hoy),
         // así que el rango del export tiene que cubrir HOY, no la fecha retroactiva del gasto.
         var fechaDeNegocio = new DateOnly(2026, 8, 1);
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hoy = FechaDelNegocio.Hoy();
 
         await RegistrarGastoDeAdministracionAsync(ctx, fechaDeNegocio, CategoriaGasto.Viaticos, "Pasaje a Rosario", 5000m);
 

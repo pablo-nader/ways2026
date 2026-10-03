@@ -121,14 +121,14 @@ export function Reposicion() {
     <div className="container-fluid py-4">
       <Box titulo="Reposición" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
-        {errorPuntosVenta && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
+        {errorPuntosVenta && <div className="alert alert-warning py-1 px-2 small">{errorPuntosVenta}</div>}
 
         {puntosVenta === null ? (
           <Cargando />
@@ -145,7 +145,7 @@ export function Reposicion() {
                 </label>
                 <select
                   id="reposicion-punto-venta"
-                  className="form-select rounded-0"
+                  className="form-select"
                   value={idPuntoVenta}
                   onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
                 >
@@ -166,7 +166,7 @@ export function Reposicion() {
               </div>
             </div>
 
-            {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+            {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
             {cargando && !reposicion && <Cargando />}
 
@@ -194,7 +194,7 @@ export function Reposicion() {
                               {grupo.idProveedor !== null && esAdmin && (
                                 <button
                                   type="button"
-                                  className="btn btn-sm btn-outline-primary rounded-0"
+                                  className="btn btn-sm btn-outline-primary"
                                   onClick={() => generarOrdenDeCompra(grupo)}
                                 >
                                   Generar OC

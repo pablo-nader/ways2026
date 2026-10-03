@@ -66,18 +66,18 @@ export function NuevoTenant() {
           ningún lado.
         </p>
 
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
 
         {resultado && (
-          <div className="alert alert-success rounded-0">
+          <div className="alert alert-success">
             <p className="mb-2">
               Tenant #{resultado.idTenant} creado: empresa #{resultado.idEmpresa}, punto de venta #
               {resultado.idPuntoVenta}, usuario admin #{resultado.idUsuarioAdmin}.
             </p>
             <p className="mb-2 fw-bold">Anotá esta contraseña temporal ahora — no se vuelve a mostrar:</p>
             <div className="d-flex align-items-center gap-2">
-              <code className="fs-5 bg-white px-2 py-1 border rounded-0">{resultado.passwordTemporal}</code>
-              <button type="button" className="btn btn-sm btn-outline-success rounded-0" onClick={copiarPassword}>
+              <code className="fs-5 bg-body px-2 py-1 border">{resultado.passwordTemporal}</code>
+              <button type="button" className="btn btn-sm btn-outline-success" onClick={copiarPassword}>
                 {copiado ? 'Copiada' : 'Copiar'}
               </button>
             </div>
@@ -91,7 +91,7 @@ export function NuevoTenant() {
             </label>
             <input
               id="nt-tenant"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={150}
               value={formulario.nombreTenant}
               onChange={(e) => setFormulario({ ...formulario, nombreTenant: e.target.value })}
@@ -105,7 +105,7 @@ export function NuevoTenant() {
             </label>
             <input
               id="nt-empresa"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={150}
               value={formulario.razonSocialEmpresa}
               onChange={(e) => setFormulario({ ...formulario, razonSocialEmpresa: e.target.value })}
@@ -119,7 +119,7 @@ export function NuevoTenant() {
             </label>
             <input
               id="nt-puntoventa"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={150}
               value={formulario.nombrePuntoVenta}
               onChange={(e) => setFormulario({ ...formulario, nombrePuntoVenta: e.target.value })}
@@ -134,7 +134,7 @@ export function NuevoTenant() {
             <input
               id="nt-mail"
               type="email"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={255}
               value={formulario.mailAdmin}
               onChange={(e) => setFormulario({ ...formulario, mailAdmin: e.target.value })}
@@ -148,7 +148,7 @@ export function NuevoTenant() {
             </label>
             <select
               id="nt-modo"
-              className="form-select rounded-0"
+              className="form-select"
               value={formulario.modo}
               onChange={(e) =>
                 setFormulario({ ...formulario, modo: e.target.value as SolicitudDeAprovisionamiento['modo'] })
@@ -163,7 +163,7 @@ export function NuevoTenant() {
           </div>
 
           <div className="col-12">
-            <button type="submit" className="btn btn-success rounded-0" disabled={enviando}>
+            <button type="submit" className="btn btn-success" disabled={enviando}>
               {enviando ? 'Aprovisionando…' : 'Aprovisionar tenant'}
             </button>
           </div>

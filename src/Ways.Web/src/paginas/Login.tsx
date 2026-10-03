@@ -5,6 +5,7 @@ import { useAuth } from '../auth/useAuth'
 import { ErrorApi } from '../api/cliente'
 import { puedeOperarPos } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
+import { BotonDeTema } from '../tema/BotonDeTema'
 
 type EstadoDeRuta = { desde?: { pathname: string; search: string } }
 
@@ -54,8 +55,11 @@ export function Login() {
   }
 
   return (
-    <div className="login d-flex align-items-center justify-content-center min-vh-100">
-      <div className="form-signin rounded-0">
+    <div className="login position-relative d-flex align-items-center justify-content-center min-vh-100">
+      <div className="position-absolute top-0 end-0 m-3">
+        <BotonDeTema />
+      </div>
+      <div className="form-signin">
         <h1 className="text-center ways-brand">Ways</h1>
         <hr />
 
@@ -65,7 +69,7 @@ export function Login() {
           <input
             type="email"
             name="mail"
-            className="form-control mb-3 rounded-0"
+            className="form-control mb-3"
             placeholder="Correo electrónico"
             value={mail}
             onChange={(e) => setMail(e.target.value)}
@@ -76,7 +80,7 @@ export function Login() {
           <input
             type="password"
             name="password"
-            className="form-control mb-3 rounded-0"
+            className="form-control mb-3"
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -87,7 +91,7 @@ export function Login() {
 
           <button
             type="submit"
-            className="btn btn-lg btn-success form-control rounded-0"
+            className="btn btn-lg btn-success form-control"
             disabled={enviando}
           >
             {enviando ? 'Ingresando…' : 'Continuar'}

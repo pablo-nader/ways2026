@@ -27,14 +27,14 @@ export function Descargar() {
   return (
     <div className="d-flex justify-content-center min-vh-100 py-5 bg-body-tertiary">
       <div className="container" style={{ maxWidth: '720px' }}>
-        <div className="bg-white rounded-0 shadow-sm p-4 p-md-5">
+        <div className="bg-body shadow-sm p-4 p-md-5">
           <h1 className="text-center ways-brand mb-1">Ways POS para Windows</h1>
           <p className="text-muted text-center mb-4">
             La aplicación de escritorio para vender e imprimir tickets directo desde la caja.
           </p>
 
           <div className="text-center mb-4">
-            <a href={url} className="btn btn-lg btn-success rounded-0">
+            <a href={url} className="btn btn-lg btn-success">
               Descargar para Windows
             </a>
           </div>

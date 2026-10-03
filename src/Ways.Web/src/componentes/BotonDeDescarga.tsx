@@ -46,7 +46,7 @@ export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, onInici
   return (
     <button
       type="button"
-      className={className ?? 'btn btn-sm btn-outline-secondary rounded-0'}
+      className={className ?? 'btn btn-sm btn-outline-secondary'}
       disabled={descargando || disabled}
       onClick={manejarClick}
     >

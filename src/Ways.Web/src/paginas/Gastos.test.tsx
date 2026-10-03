@@ -222,6 +222,14 @@ describe('Gastos (administración) — proveedor cambia la categoría', () => {
   })
 })
 
+function fechaLocal(fecha: Date): string {
+  return [
+    fecha.getFullYear(),
+    String(fecha.getMonth() + 1).padStart(2, '0'),
+    String(fecha.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
 describe('Gastos (administración) — fecha', () => {
   it('el campo de fecha no admite un valor posterior a hoy (atributo max)', async () => {
     mockearRutas({})
@@ -230,8 +238,7 @@ describe('Gastos (administración) — fecha', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     const campoFecha = await screen.findByLabelText('Fecha')
 
-    const hoy = new Date().toISOString().slice(0, 10)
-    expect(campoFecha).toHaveAttribute('max', hoy)
+    expect(campoFecha).toHaveAttribute('max', fechaLocal(new Date()))
   })
 
   it('una fecha futura (bypaseando el atributo max) se rechaza sin llegar a pegarle al servidor', async () => {
@@ -241,7 +248,7 @@ describe('Gastos (administración) — fecha', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
 
-    const manianaISO = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const manianaISO = fechaLocal(new Date(Date.now() + 24 * 60 * 60 * 1000))
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: manianaISO } })
     await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')

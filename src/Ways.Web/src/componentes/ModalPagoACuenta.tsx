@@ -107,7 +107,7 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
           pago que ya cargaste quedan como están — al abrir el turno volvés a este formulario para apretar
           «Registrar pago» de nuevo.
         </p>
-        {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+        {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
         <div className="row g-2 align-items-end">
           <div className="col-md-6">
             <label className="form-label" htmlFor="cc-gate-fondo-inicial">
@@ -115,7 +115,7 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
             </label>
             <CampoImporte
               id="cc-gate-fondo-inicial"
-              className="form-control rounded-0"
+              className="form-control"
               valor={fondoInicial}
               disabled={abriendo}
               onChange={setFondoInicial}
@@ -128,7 +128,7 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
             <input
               id="cc-gate-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={observaciones}
               disabled={abriendo}
               onChange={(e) => setObservaciones(e.target.value)}
@@ -137,10 +137,10 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
         </div>
       </div>
       <div className="modal-footer">
-        <button type="button" className="btn btn-outline-secondary rounded-0" disabled={abriendo} onClick={onCancelar}>
+        <button type="button" className="btn btn-outline-secondary" disabled={abriendo} onClick={onCancelar}>
           Cancelar
         </button>
-        <button type="button" className="btn btn-primary rounded-0" disabled={abriendo} onClick={abrir}>
+        <button type="button" className="btn btn-primary" disabled={abriendo} onClick={abrir}>
           {abriendo ? 'Abriendo…' : 'Abrir turno'}
         </button>
       </div>
@@ -269,7 +269,7 @@ export function ModalPagoACuenta({
     <>
       <div className="modal d-block" tabIndex={-1} role="dialog">
         <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             {gateTurno ? (
               <PanelAperturaDeTurnoEnModal idPuntoVenta={idPuntoVenta} onAbierto={() => setGateTurno(false)} onCancelar={onCerrar} />
             ) : (
@@ -278,7 +278,7 @@ export function ModalPagoACuenta({
                   <h5 className="modal-title">Ingresar pago a cuenta</h5>
                 </div>
                 <div className="modal-body">
-                  {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+                  {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
                   <div className="mb-3" style={{ maxWidth: 320 }}>
                     <label className="form-label" htmlFor="cc-pago-punto-venta">
                       Punto de venta
@@ -290,7 +290,7 @@ export function ModalPagoACuenta({
                     ) : (
                       <select
                         id="cc-pago-punto-venta"
-                        className="form-select rounded-0"
+                        className="form-select"
                         value={idPuntoVenta}
                         disabled={registrando}
                         onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
@@ -314,7 +314,7 @@ export function ModalPagoACuenta({
                           </label>
                           <select
                             id={`cc-pago-medio-${fila.id}`}
-                            className="form-select rounded-0"
+                            className="form-select"
                             value={fila.idMedioPago}
                             disabled={registrando}
                             onChange={(e) =>
@@ -335,7 +335,7 @@ export function ModalPagoACuenta({
                           </label>
                           <CampoImporte
                             id={`cc-pago-importe-${fila.id}`}
-                            className="form-control rounded-0"
+                            className="form-control"
                             valor={fila.importe}
                             disabled={registrando}
                             onChange={(v) => actualizarFila(fila.id, { importe: v })}
@@ -348,7 +348,7 @@ export function ModalPagoACuenta({
                           <input
                             id={`cc-pago-referencia-${fila.id}`}
                             type="text"
-                            className="form-control rounded-0"
+                            className="form-control"
                             value={fila.referencia}
                             disabled={registrando}
                             onChange={(e) => actualizarFila(fila.id, { referencia: e.target.value })}
@@ -360,7 +360,7 @@ export function ModalPagoACuenta({
                           </label>
                           <CampoImporte
                             id={`cc-pago-vuelto-${fila.id}`}
-                            className="form-control rounded-0"
+                            className="form-control"
                             valor={fila.vuelto}
                             disabled={registrando || !medioDeFila?.admiteVuelto}
                             onChange={(v) => actualizarFila(fila.id, { vuelto: v })}
@@ -369,7 +369,7 @@ export function ModalPagoACuenta({
                         <div className="col-md-2">
                           <button
                             type="button"
-                            className="btn btn-outline-danger btn-sm rounded-0 w-100"
+                            className="btn btn-outline-danger btn-sm w-100"
                             disabled={registrando || filas.length === 1}
                             onClick={() => quitarFila(fila.id)}
                           >
@@ -380,7 +380,7 @@ export function ModalPagoACuenta({
                     )
                   })}
 
-                  <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={registrando} onClick={agregarFila}>
+                  <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={registrando} onClick={agregarFila}>
                     + Agregar otro medio
                   </button>
 
@@ -391,7 +391,7 @@ export function ModalPagoACuenta({
                     <input
                       id="cc-pago-observaciones"
                       type="text"
-                      className="form-control rounded-0"
+                      className="form-control"
                       value={observaciones}
                       disabled={registrando}
                       onChange={(e) => setObservaciones(e.target.value)}
@@ -414,12 +414,12 @@ export function ModalPagoACuenta({
                   </div>
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrando} onClick={onCerrar}>
+                  <button type="button" className="btn btn-outline-secondary" disabled={registrando} onClick={onCerrar}>
                     Cancelar
                   </button>
                   <button
                     type="button"
-                    className="btn btn-primary rounded-0"
+                    className="btn btn-primary"
                     disabled={registrando || pagosCalculo.length === 0}
                     onClick={registrarPago}
                   >

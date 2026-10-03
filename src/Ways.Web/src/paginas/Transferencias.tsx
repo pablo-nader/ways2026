@@ -66,7 +66,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
     <div className="position-relative">
       <input
         type="text"
-        className="form-control form-control-sm rounded-0"
+        className="form-control form-control-sm"
         placeholder="Buscar artículo…"
         value={termino}
         disabled={disabled}
@@ -173,7 +173,7 @@ function SelectorDeLote({ idPuntoVenta, idArticulo, idLote, disabled, onCambio }
 
   return (
     <select
-      className="form-select form-select-sm rounded-0"
+      className="form-select form-select-sm"
       aria-label="Lote"
       value={idLote}
       disabled={disabled}
@@ -235,7 +235,7 @@ function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta
           type="number"
           step="0.001"
           min="0"
-          className="form-control form-control-sm rounded-0"
+          className="form-control form-control-sm"
           aria-label="Cantidad"
           value={linea.cantidad}
           disabled={disabled}
@@ -256,7 +256,7 @@ function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta
         )}
       </td>
       <td>
-        <button type="button" className="btn btn-outline-danger btn-sm rounded-0" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
+        <button type="button" className="btn btn-outline-danger btn-sm" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
           Quitar
         </button>
       </td>
@@ -391,15 +391,15 @@ export function Transferencias() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Transferencias de stock" variante="inverse">
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
         {errorPuntosVenta && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div className="alert alert-warning py-1 px-2 small">
             {errorPuntosVenta} No se pueden registrar transferencias hasta que esto se resuelva.
           </div>
         )}
 
         {resultado && (
-          <div className="alert alert-success rounded-0">
+          <div className="alert alert-success">
             <strong>
               Transferencia registrada: {nombrePuntoVenta(resultado.idPuntoVentaOrigen)} → {nombrePuntoVenta(resultado.idPuntoVentaDestino)}
             </strong>
@@ -437,7 +437,7 @@ export function Transferencias() {
             </label>
             <select
               id="transferencia-origen"
-              className="form-select rounded-0"
+              className="form-select"
               value={idPuntoVentaOrigen}
               disabled={ocupado || !referenciaOk}
               onChange={(e) => setIdPuntoVentaOrigen(e.target.value === '' ? '' : Number(e.target.value))}
@@ -456,7 +456,7 @@ export function Transferencias() {
             </label>
             <select
               id="transferencia-destino"
-              className="form-select rounded-0"
+              className="form-select"
               value={idPuntoVentaDestino}
               disabled={ocupado || !referenciaOk}
               onChange={(e) => setIdPuntoVentaDestino(e.target.value === '' ? '' : Number(e.target.value))}
@@ -479,7 +479,7 @@ export function Transferencias() {
             <input
               id="transferencia-observaciones"
               type="text"
-              className="form-control rounded-0"
+              className="form-control"
               value={observaciones}
               disabled={ocupado || !referenciaOk}
               onChange={(e) => setObservaciones(e.target.value)}
@@ -514,12 +514,12 @@ export function Transferencias() {
           </table>
         </div>
 
-        <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
+        <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
           + Agregar línea
         </button>
 
         {lineasIncompletas > 0 && (
-          <div className="alert alert-warning rounded-0 py-1 px-2 small mb-3">
+          <div className="alert alert-warning py-1 px-2 small mb-3">
             {lineasIncompletas} línea(s) incompleta(s) — no se van a transferir.
           </div>
         )}
@@ -529,7 +529,7 @@ export function Transferencias() {
             <input
               id="transferencia-confirmacion"
               type="checkbox"
-              className="form-check-input rounded-0"
+              className="form-check-input"
               checked={confirmado}
               disabled={ocupado}
               onChange={(e) => setConfirmado(e.target.checked)}
@@ -539,7 +539,7 @@ export function Transferencias() {
               transferido, corregirlo requiere una transferencia inversa.
             </label>
           </div>
-          <button type="button" className="btn btn-primary rounded-0" disabled={!puedeTransferir} onClick={transferir}>
+          <button type="button" className="btn btn-primary" disabled={!puedeTransferir} onClick={transferir}>
             {transfiriendo ? 'Transfiriendo…' : 'Transferir'}
           </button>
         </div>

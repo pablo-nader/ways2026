@@ -106,7 +106,7 @@ export function MenuDesplegable({ grupo, abierto, activo, alAlternar, alCerrar }
       </button>
       <ul
         id={idMenu}
-        className={abierto ? 'dropdown-menu dropdown-menu-dark show' : 'dropdown-menu dropdown-menu-dark'}
+        className={abierto ? 'dropdown-menu show' : 'dropdown-menu'}
         hidden={!abierto}
       >
         {grupo.secciones.map((seccion, indice) => (

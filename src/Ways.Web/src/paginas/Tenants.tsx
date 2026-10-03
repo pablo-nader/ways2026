@@ -7,6 +7,7 @@ import type { EstadoTenant, TenantListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { BotonIcono } from '../componentes/BotonIcono'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
@@ -274,7 +275,7 @@ export function Tenants() {
     <nav className="p-2">
       <Link
         to="/organizacion/nuevo-tenant"
-        className={`btn btn-sm btn-success rounded-0 text-nowrap${bloqueado ? ' disabled' : ''}`}
+        className={`btn btn-sm btn-success text-nowrap${bloqueado ? ' disabled' : ''}`}
         aria-disabled={bloqueado}
         tabIndex={bloqueado ? -1 : undefined}
         onClick={(evento) => {
@@ -289,8 +290,8 @@ export function Tenants() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Tenants" variante="inverse" herramientas={herramientas}>
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {confirmacion && (
           <ConfirmacionDeBaja
@@ -315,7 +316,7 @@ export function Tenants() {
 
         {edicion && (
           <form
-            className="row g-3 border p-3 mb-4 bg-white"
+            className="row g-3 border p-3 mb-4 bg-body"
             onSubmit={(e) => {
               e.preventDefault()
               guardarNombre()
@@ -330,7 +331,7 @@ export function Tenants() {
               </label>
               <input
                 id="t-nombre"
-                className="form-control rounded-0"
+                className="form-control"
                 maxLength={150}
                 value={edicion.nombre}
                 onChange={(e) => setEdicion({ ...edicion, nombre: e.target.value })}
@@ -339,12 +340,12 @@ export function Tenants() {
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
+              <button type="submit" className="btn btn-success" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 onClick={() => setEdicion(null)}
                 disabled={bloqueado}
               >
@@ -384,18 +385,16 @@ export function Tenants() {
                     <td className="text-end">{t.cantidadUsuarios}</td>
                     <td>{new Date(t.createdAt).toLocaleDateString('es-AR')}</td>
                     <td className="text-end text-nowrap">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                      <BotonIcono
+                        icono="editar"
+                        className="me-1"
                         onClick={() => setEdicion({ id: t.id, nombre: t.nombre })}
                         disabled={bloqueado}
-                      >
-                        Editar
-                      </button>
+                      />
                       {t.estado === 'Activo' && (
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-warning rounded-0 me-1"
+                          className="btn btn-sm btn-outline-warning me-1"
                           onClick={(evento) => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'suspenderTenant' }, evento.currentTarget)}
                           disabled={bloqueado}
                         >
@@ -405,21 +404,18 @@ export function Tenants() {
                       {t.estado === 'Suspendido' && (
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-success rounded-0 me-1"
+                          className="btn btn-sm btn-outline-success me-1"
                           onClick={(evento) => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'reactivarTenant' }, evento.currentTarget)}
                           disabled={bloqueado}
                         >
                           Reactivar
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                      <BotonIcono
+                        icono="eliminar"
                         onClick={(evento) => pedirConfirmacion({ tipo: 'baja', fila: t }, evento.currentTarget)}
                         disabled={bloqueado}
-                      >
-                        Baja
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -443,5 +439,5 @@ function EtiquetaEstado({ estado }: { estado: EstadoTenant }) {
   const clase =
     estado === 'Activo' ? 'text-bg-success' : estado === 'Suspendido' ? 'text-bg-warning' : 'text-bg-secondary'
 
-  return <span className={`badge rounded-0 ${clase}`}>{estado}</span>
+  return <span className={`badge ${clase}`}>{estado}</span>
 }

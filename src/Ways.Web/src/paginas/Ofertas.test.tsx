@@ -118,7 +118,7 @@ beforeEach(() => {
 describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
   it('con alcance Artículo (default) muestra el buscador de artículo y no los selects de grupo/categoría', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(screen.getByLabelText('Buscar artículo')).toBeInTheDocument()
     expect(screen.queryByLabelText('Grupo objetivo')).not.toBeInTheDocument()
@@ -127,7 +127,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
 
   it('cambiar el radio a Grupo hace aparecer el select de grupo y oculta el buscador de artículo', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
 
@@ -137,7 +137,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
 
   it('cambiar el radio a Categoría hace aparecer el select de categoría', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Categoría' }))
 
@@ -148,7 +148,7 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
 describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
   it('con beneficio Porcentaje (default) muestra el input de porcentaje y no los otros dos', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(screen.getByLabelText('Porcentaje (%)')).toBeInTheDocument()
     expect(screen.queryByLabelText('Importe fijo por unidad ($)')).not.toBeInTheDocument()
@@ -157,7 +157,7 @@ describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
 
   it('cambiar el radio a Importe fijo hace aparecer ese input y oculta el de porcentaje', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Importe fijo por unidad' }))
 
@@ -167,7 +167,7 @@ describe('Ofertas — radio de beneficio (visibleSi análogo)', () => {
 
   it('cambiar el radio a Precio unitario hace aparecer ese input', async () => {
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.click(screen.getByRole('radio', { name: 'Precio unitario' }))
 
@@ -179,7 +179,7 @@ describe('Ofertas — multi-select de listas', () => {
   it('sin marcar ninguna lista, el guardado envía idsListas vacío (aplica a todas)', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -197,7 +197,7 @@ describe('Ofertas — multi-select de listas', () => {
   it('marcar una lista la incluye en idsListas al guardar', async () => {
     apiPostMock.mockResolvedValue(ofertaFixture())
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -223,7 +223,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
         }),
     )
     render(<Ofertas />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
@@ -266,7 +266,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     render(<Ofertas />)
     await screen.findByText('Oferta existente')
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
     await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
     await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
     await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o código interno…'), 'coca')
@@ -279,8 +279,8 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
 
     // Con el guardado en vuelo, intentamos las tres acciones que podrían pisar la edición en curso.
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Baja' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
 
     expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringMatching(/^\/ofertas\/\d+$/))
     expect(confirmSpy).not.toHaveBeenCalled()

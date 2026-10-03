@@ -212,7 +212,7 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
               Para cobrar hace falta abrir un turno de caja en este punto de venta. El carrito y los pagos que ya
               cargaste quedan como están — al abrir el turno volvés a esta pantalla para apretar «Cobrar» de nuevo.
             </p>
-            {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+            {error && <div className="alert alert-danger py-1 px-2 small">{error}</div>}
 
             <div className="row g-2 align-items-end" style={{ maxWidth: 640 }}>
               <div className="col-md-4">
@@ -221,7 +221,7 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
                 </label>
                 <CampoImporte
                   id="pos-gate-fondo-inicial"
-                  className="form-control rounded-0"
+                  className="form-control"
                   valor={fondoInicial}
                   disabled={abriendo}
                   onChange={setFondoInicial}
@@ -234,14 +234,14 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
                 <input
                   id="pos-gate-observaciones"
                   type="text"
-                  className="form-control rounded-0"
+                  className="form-control"
                   value={observaciones}
                   disabled={abriendo}
                   onChange={(e) => setObservaciones(e.target.value)}
                 />
               </div>
               <div className="col-md-3">
-                <button type="button" className="btn btn-primary rounded-0 w-100" disabled={abriendo} onClick={abrir}>
+                <button type="button" className="btn btn-primary w-100" disabled={abriendo} onClick={abrir}>
                   {abriendo ? 'Abriendo…' : 'Abrir turno'}
                 </button>
               </div>
@@ -319,7 +319,7 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
         onKeyDown={atraparTab}
       >
         <div className="modal-dialog modal-dialog-centered" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-body">
               <p className="mb-2">
                 <strong>¿Finalizar venta?</strong>
@@ -339,7 +339,7 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
                 <button
                   ref={finalizarRef}
                   type="button"
-                  className="btn btn-success rounded-0"
+                  className="btn btn-success"
                   disabled={ocupado}
                   aria-keyshortcuts="F9"
                   onClick={onFinalizar}
@@ -349,7 +349,7 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
                 <button
                   ref={cancelarRef}
                   type="button"
-                  className="btn btn-outline-secondary rounded-0"
+                  className="btn btn-outline-secondary"
                   disabled={ocupado}
                   aria-keyshortcuts="F10"
                   onClick={onCancelar}
@@ -521,7 +521,7 @@ function VentaFinalizada({
         onKeyDown={manejarTeclado}
       >
         <div className="modal-dialog modal-dialog-centered" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Venta finalizada</h5>
             </div>
@@ -529,12 +529,12 @@ function VentaFinalizada({
               {/* stage-pos-venta-offline-web: distingue "guardada en este dispositivo, en cola"
                   de "ya sincronizada" — el cajero no debería asumir lo segundo. */}
               {pendienteDeSincronizar && (
-                <div className="alert alert-secondary rounded-0 text-start small py-2 mb-3">
+                <div className="alert alert-secondary text-start small py-2 mb-3">
                   <strong>Guardada en este dispositivo</strong> — se envía al servidor en segundo plano.
                 </div>
               )}
               {avisoLimiteDeCredito && (
-                <div className="alert alert-warning rounded-0 text-start small py-2 mb-3" role="status">
+                <div className="alert alert-warning text-start small py-2 mb-3" role="status">
                   {avisoLimiteDeCredito}
                 </div>
               )}
@@ -543,7 +543,7 @@ function VentaFinalizada({
                   vencido, ahora que la vieja pantalla de resumen con el detalle de items ya no
                   existe. */}
               {itemsVencidos.length > 0 && (
-                <div className="alert alert-danger rounded-0 text-start mb-3">
+                <div className="alert alert-danger text-start mb-3">
                   <strong>⚠ Se vendió un lote vencido</strong>
                   <ul className="mb-0 mt-1">
                     {itemsVencidos.map((item, indice) => (
@@ -574,7 +574,7 @@ function VentaFinalizada({
               </p>
             </div>
             <div className="modal-footer">
-              <button ref={aceptarRef} type="button" className="btn btn-primary rounded-0" aria-keyshortcuts="F9" onClick={cerrarSinEscanear}>
+              <button ref={aceptarRef} type="button" className="btn btn-primary" aria-keyshortcuts="F9" onClick={cerrarSinEscanear}>
                 Aceptar <sup aria-hidden="true">(F9)</sup>
               </button>
             </div>
@@ -764,7 +764,7 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
     <>
       <div className="modal d-block" tabIndex={-1} role="dialog">
         <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content rounded-0">
+          <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Cuenta corriente</h5>
               <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
@@ -775,7 +775,7 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
                   <div className="input-group input-group-sm mb-3">
                     <input
                       type="search"
-                      className="form-control rounded-0"
+                      className="form-control"
                       placeholder="Buscar cliente…"
                       aria-label="Buscar cliente de cuenta corriente"
                       value={terminoBusqueda}
@@ -783,14 +783,14 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
                       onChange={(e) => setTerminoBusqueda(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscar())}
                     />
-                    <button type="button" className="btn btn-outline-primary rounded-0" disabled={buscando} onClick={buscar}>
+                    <button type="button" className="btn btn-outline-primary" disabled={buscando} onClick={buscar}>
                       {buscando ? 'Buscando…' : 'Buscar'}
                     </button>
                   </div>
-                  {errorBusqueda && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorBusqueda}</div>}
+                  {errorBusqueda && <div className="alert alert-danger py-1 px-2 small">{errorBusqueda}</div>}
                   {opcionesBusqueda.length > 0 && (
                     <select
-                      className="form-select rounded-0"
+                      className="form-select"
                       aria-label="Resultados de la búsqueda"
                       size={Math.min(opcionesBusqueda.length, 6)}
                       value=""
@@ -811,13 +811,13 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
                 <>
                   <div className="d-flex justify-content-between align-items-center mb-3">
                     <strong>{etiquetaDeCliente(clienteElegido)}</strong>
-                    <button type="button" className="btn btn-outline-secondary btn-sm rounded-0" onClick={() => setClienteElegido(null)}>
+                    <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setClienteElegido(null)}>
                       Cambiar cliente
                     </button>
                   </div>
 
-                  {aviso && <div className="alert alert-success rounded-0 py-1 px-2 small">{aviso}</div>}
-                  {errorEstado && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEstado}</div>}
+                  {aviso && <div className="alert alert-success py-1 px-2 small">{aviso}</div>}
+                  {errorEstado && <div className="alert alert-danger py-1 px-2 small">{errorEstado}</div>}
 
                   {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
 
@@ -871,12 +871,12 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
               )}
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCerrar}>
+              <button type="button" className="btn btn-outline-secondary" onClick={onCerrar}>
                 Cerrar
               </button>
               <button
                 type="button"
-                className="btn btn-primary rounded-0"
+                className="btn btn-primary"
                 disabled={!clienteElegido || cargandoEstado || estado === null}
                 onClick={() => setModalPagoAbierto(true)}
               >
@@ -2706,7 +2706,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               hay algo pendiente, así el cajero nunca tiene que preguntarse si el indicador
               existe. */}
           <span
-            className={`badge ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-light text-dark border'}`}
+            className={`badge ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}`}
             title="Ventas registradas sin conexión que todavía no se sincronizaron con el servidor"
           >
             Sin sincronizar: {sincronizacionOffline.outboxCount}
@@ -2720,7 +2720,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <span className="d-flex align-items-center gap-2 small">
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm rounded-0"
+                className="btn btn-outline-secondary btn-sm"
                 disabled={sincronizacionOffline.sincronizando}
                 onClick={() => void sincronizacionOffline.sincronizarAhora()}
               >
@@ -2731,7 +2731,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 cada
                 <input
                   type="number"
-                  className="form-control form-control-sm rounded-0"
+                  className="form-control form-control-sm"
                   style={{ width: '4.5rem' }}
                   min={INTERVALO_MINIMO_MINUTOS}
                   max={INTERVALO_MAXIMO_MINUTOS}
@@ -2766,7 +2766,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 return (
                   <span
                     key={venta.idLocal}
-                    className="alert alert-danger rounded-0 py-1 px-2 small d-flex flex-wrap align-items-center gap-2 mb-0"
+                    className="alert alert-danger py-1 px-2 small d-flex flex-wrap align-items-center gap-2 mb-0"
                     role="alert"
                   >
                     <span>{venta.mensaje}</span>
@@ -2775,7 +2775,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         <span>¿Descartar la venta {numeroVisible}? Nunca se va a sincronizar con el servidor.</span>
                         <button
                           type="button"
-                          className="btn btn-sm btn-danger rounded-0"
+                          className="btn btn-sm btn-danger"
                           disabled={enAccion}
                           onClick={() => onConfirmarDescarteDeVenta(venta.idLocal)}
                         >
@@ -2783,7 +2783,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         </button>
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          className="btn btn-sm btn-outline-secondary"
                           disabled={enAccion}
                           onClick={onCancelarDescarteDeVenta}
                         >
@@ -2794,7 +2794,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                       <>
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-danger rounded-0"
+                          className="btn btn-sm btn-outline-danger"
                           disabled={enAccion}
                           onClick={() => onReintentarVentaConError(venta.idLocal)}
                         >
@@ -2802,7 +2802,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         </button>
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-secondary rounded-0"
+                          className="btn btn-sm btn-outline-secondary"
                           disabled={enAccion}
                           onClick={() => setIdLocalConfirmandoDescarte(venta.idLocal)}
                         >
@@ -2818,11 +2818,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           {cargandoTurno ? (
             <span className="text-muted small">Consultando turno…</span>
           ) : errorTurno ? (
-            <div className="alert alert-danger rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2 mb-0">
+            <div className="alert alert-danger py-1 px-2 small d-flex justify-content-between align-items-center gap-2 mb-0">
               <span>{errorTurno}</span>
               <button
                 type="button"
-                className="btn btn-sm btn-outline-danger rounded-0"
+                className="btn btn-sm btn-outline-danger"
                 disabled={cargandoTurno}
                 onClick={reintentarTurno}
               >
@@ -2836,7 +2836,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   <span className="badge bg-success">Caja abierta</span>
                   <button
                     type="button"
-                    className="btn btn-danger btn-sm rounded-0"
+                    className="btn btn-danger btn-sm"
                     disabled={controlesDeCajaInertes}
                     onClick={() => void irACerrarCaja()}
                   >
@@ -2847,7 +2847,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   {cajaDeEscritorio && (
                     <button
                       type="button"
-                      className="btn btn-outline-warning btn-sm rounded-0"
+                      className="btn btn-outline-warning btn-sm"
                       disabled={controlesDeCajaInertes}
                       onClick={abrirRetiro}
                     >
@@ -2858,13 +2858,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               ) : (
                 <>
                   <span className="badge bg-secondary">Caja cerrada</span>
-                  <button type="button" className="btn btn-warning btn-sm rounded-0" onClick={() => setGateTurno(true)}>
+                  <button type="button" className="btn btn-warning btn-sm" onClick={() => setGateTurno(true)}>
                     Abrir caja
                   </button>
                 </>
               )}
-              {avisoCerrarCaja && <span className="alert alert-warning rounded-0 py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
-              {avisoRetiroOk && <span className="alert alert-success rounded-0 py-1 px-2 small mb-0">{avisoRetiroOk}</span>}
+              {avisoCerrarCaja && <span className="alert alert-warning py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
+              {avisoRetiroOk && <span className="alert alert-success py-1 px-2 small mb-0">{avisoRetiroOk}</span>}
             </>
           )}
         </div>
@@ -3329,7 +3329,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       <div className="container-fluid py-4">
         <Box titulo="Presupuesto" variante="danger">
           <p className="text-muted">{errorPresupuesto}</p>
-          <Link className="btn btn-outline-secondary rounded-0" to="/presupuestos">
+          <Link className="btn btn-outline-secondary" to="/presupuestos">
             Volver a presupuestos
           </Link>
         </Box>
@@ -3388,26 +3388,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 todavía se está consultando, ni si la consulta falló: `errorTurno` tiene su propio
                 aviso en "Datos de la venta"). */}
             {bloqueadoPorTurno && !cargandoTurno && errorTurno === '' && (
-              <div className="alert alert-warning rounded-0 py-1 px-2 small">Caja cerrada: abrí la caja para vender.</div>
+              <div className="alert alert-warning py-1 px-2 small">Caja cerrada: abrí la caja para vender.</div>
             )}
             {/* Solo mientras la pantalla se apoya en la copia local por falta de red: la
                 sincronización no alcanza al servidor, o alguna carga del arranque (clientes,
                 medios, tolerancia, turno) falló sin red. La vejez es la de la última verificación
                 de la instantánea contra el servidor. */}
             {!modoPresupuesto && instantaneaDelPuntoVenta && (!sincronizacionOffline.enLinea || datosLocalesPorFaltaDeRed) && (
-              <div className="alert alert-secondary rounded-0 py-1 px-2 small">
+              <div className="alert alert-secondary py-1 px-2 small">
                 Sin conexión — datos de{' '}
                 {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? instantaneaDelPuntoVenta.momento, new Date())}. Se vende con la
                 copia local de este dispositivo.
               </div>
             )}
-            {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
+            {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger py-1 px-2 small">{errorEscaneo}</div>}
             {avisoPrecios && !modoPresupuesto && (
-              <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+              <div className="alert alert-warning py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
                 <span>{avisoPrecios}</span>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-warning rounded-0"
+                  className="btn btn-sm btn-outline-warning"
                   disabled={pantallaCobroInerte || resolviendo}
                   onClick={reintentarPrecios}
                 >
@@ -3421,7 +3421,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 <input
                   ref={inputEscaneoRef}
                   type="text"
-                  className="form-control rounded-0"
+                  className="form-control"
                   placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
                   aria-label="Código escaneado"
                   value={entradaEscaneo}
@@ -3431,7 +3431,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 />
                 <button
                   type="button"
-                  className="btn btn-primary rounded-0"
+                  className="btn btn-primary"
                   disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
                   onClick={() => void escanear()}
                 >
@@ -3446,7 +3446,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     exponer el atajo a tecnología asistiva. */}
                 <button
                   type="button"
-                  className="btn btn-outline-primary rounded-0"
+                  className="btn btn-outline-primary"
                   disabled={escaneando || pantallaCobroInerte}
                   aria-keyshortcuts="F2"
                   onClick={() => setBuscadorAbierto(true)}
@@ -3496,7 +3496,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 type="number"
                                 step={CANTIDAD_MINIMA}
                                 min={CANTIDAD_MINIMA}
-                                className="form-control form-control-sm rounded-0"
+                                className="form-control form-control-sm"
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 value={textoCantidad(l)}
                                 disabled={pantallaCobroInerte || bloqueadoPorTurno}
@@ -3534,7 +3534,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             <td className="text-end">
                               <button
                                 type="button"
-                                className="btn btn-sm btn-outline-danger rounded-0"
+                                className="btn btn-sm btn-outline-danger"
                                 disabled={pantallaCobroInerte || bloqueadoPorTurno}
                                 onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
                               >
@@ -3558,7 +3558,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {!modoPresupuesto && lineas.length > 0 && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm rounded-0"
+                className="btn btn-outline-secondary btn-sm"
                 disabled={pantallaCobroInerte || bloqueadoPorTurno}
                 onClick={() => mutarCarrito({ tipo: 'vaciar' })}
               >
@@ -3571,9 +3571,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         <div className="col-lg-4">
           <Box titulo="Datos de la venta">
             {errorCargaClientes && !(errorCargaClientesEsDeRed && datosLocalesDisponibles && instantaneaDelPuntoVenta?.clientes.some((c) => c.esConsumidorFinal)) && (
-              <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCargaClientes}</div>
+              <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
             )}
-            {errorClientes && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorClientes}</div>}
+            {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
 
             <div className="mb-2">
               <label className="form-label" htmlFor="pos-cliente">
@@ -3581,7 +3581,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </label>
               <select
                 id="pos-cliente"
-                className="form-select rounded-0"
+                className="form-select"
                 value={clienteSeleccionado?.id ?? ''}
                 disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
@@ -3603,7 +3603,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               <div className="input-group input-group-sm mb-3">
                 <input
                   type="search"
-                  className="form-control rounded-0"
+                  className="form-control"
                   placeholder="Buscar otro cliente…"
                   aria-label="Buscar cliente"
                   value={terminoCliente}
@@ -3613,7 +3613,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 />
                 <button
                   type="button"
-                  className="btn btn-outline-primary rounded-0"
+                  className="btn btn-outline-primary"
                   disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
                   onClick={buscarClientes}
                 >
@@ -3625,7 +3625,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             {!modoPresupuesto && (
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+                className="btn btn-outline-secondary btn-sm mb-3"
                 disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
                 onClick={() => setModalCuentaCorrienteAbierto(true)}
               >
@@ -3650,11 +3650,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </strong>
             </div>
 
-            {errorMedios && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorMedios}</div>}
-            {errorParametros && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorParametros}</div>}
-            {errorCobro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCobro}</div>}
+            {errorMedios && <div className="alert alert-danger py-1 px-2 small">{errorMedios}</div>}
+            {errorParametros && <div className="alert alert-danger py-1 px-2 small">{errorParametros}</div>}
+            {errorCobro && <div className="alert alert-danger py-1 px-2 small">{errorCobro}</div>}
             {avisoLimiteSegunInstantanea && !modoPresupuesto && (
-              <div className="alert alert-warning rounded-0 py-1 px-2 small">{avisoLimiteSegunInstantanea}</div>
+              <div className="alert alert-warning py-1 px-2 small">{avisoLimiteSegunInstantanea}</div>
             )}
 
             <h6>Pagos</h6>
@@ -3665,7 +3665,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 <div className="row g-2 mb-2 align-items-center" key={fila.id}>
                   <div className="col-5">
                     <select
-                      className="form-select form-select-sm rounded-0"
+                      className="form-select form-select-sm"
                       aria-label="Medio de pago"
                       value={fila.idMedioPago}
                       disabled={pantallaCobroInerte || medios === null || bloqueadoPorTurno}
@@ -3693,7 +3693,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   <div className="col-5">
                     <CampoImporte
                       id={`pos-fila-pago-importe-${fila.id}`}
-                      className="form-control form-control-sm rounded-0"
+                      className="form-control form-control-sm"
                       aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                       valor={fila.importe}
                       disabled={pantallaCobroInerte || bloqueadoPorTurno}
@@ -3704,7 +3704,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     {filasPago.length > 1 && (
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                        className="btn btn-sm btn-outline-danger"
                         disabled={pantallaCobroInerte || bloqueadoPorTurno}
                         aria-label="Quitar medio de pago"
                         onClick={() => quitarFilaPago(fila.id)}
@@ -3720,7 +3720,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     <div className="col-12">
                       <input
                         type="text"
-                        className="form-control form-control-sm rounded-0"
+                        className="form-control form-control-sm"
                         aria-label={etiquetaDeCampoFila('Referencia', medioDeFila, fila.id)}
                         placeholder="Referencia (requerida)"
                         value={fila.referencia}
@@ -3735,7 +3735,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             <button
               type="button"
-              className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
+              className="btn btn-outline-secondary btn-sm mb-3"
               disabled={pantallaCobroInerte || bloqueadoPorTurno}
               onClick={agregarFilaPago}
             >
@@ -3751,11 +3751,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(excedente)}</span>
             </div>
 
-            {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+            {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
             <button
               type="button"
-              className="btn btn-success w-100 rounded-0"
+              className="btn btn-success w-100"
               disabled={!puedeCobrar || confirmandoCobro || ventaFinalizada !== null}
               aria-keyshortcuts="F9"
               onClick={cobrar}
@@ -3838,12 +3838,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           onCerrar={cancelarRetiro}
           pie={
             <>
-              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrandoAperturaRetiro} onClick={cancelarRetiro}>
+              <button type="button" className="btn btn-outline-secondary" disabled={registrandoAperturaRetiro} onClick={cancelarRetiro}>
                 No
               </button>
               <button
                 type="button"
-                className="btn btn-primary rounded-0"
+                className="btn btn-primary"
                 disabled={registrandoAperturaRetiro}
                 onClick={() => void confirmarAperturaParaRetiro()}
               >
@@ -3852,7 +3852,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </>
           }
         >
-          {errorAperturaRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAperturaRetiro}</div>}
+          {errorAperturaRetiro && <div className="alert alert-danger py-1 px-2 small">{errorAperturaRetiro}</div>}
           <p className="mb-0">Se va a abrir el cajón para contar el retiro.</p>
         </Modal>
       )}
@@ -3864,12 +3864,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           onCerrar={cancelarMontoRetiro}
           pie={
             <>
-              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrandoRetiro} onClick={cancelarMontoRetiro}>
+              <button type="button" className="btn btn-outline-secondary" disabled={registrandoRetiro} onClick={cancelarMontoRetiro}>
                 Cancelar
               </button>
               <button
                 type="button"
-                className="btn btn-primary rounded-0"
+                className="btn btn-primary"
                 disabled={registrandoRetiro || montoRetiro === null || montoRetiro <= 0}
                 onClick={() => void confirmarMontoRetiro()}
               >
@@ -3878,13 +3878,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </>
           }
         >
-          {errorRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorRetiro}</div>}
+          {errorRetiro && <div className="alert alert-danger py-1 px-2 small">{errorRetiro}</div>}
           <label className="form-label" htmlFor="pos-retiro-monto">
             Monto
           </label>
           <CampoImporte
             id="pos-retiro-monto"
-            className="form-control rounded-0"
+            className="form-control"
             valor={montoRetiro}
             disabled={registrandoRetiro}
             onChange={setMontoRetiro}
@@ -3903,7 +3903,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 disabled={registrandoAperturaCierre}
                 onClick={cancelarConfirmarCierre}
               >
@@ -3911,7 +3911,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </button>
               <button
                 type="button"
-                className="btn btn-primary rounded-0"
+                className="btn btn-primary"
                 disabled={registrandoAperturaCierre}
                 onClick={() => void confirmarAperturaParaCierre()}
               >
@@ -3920,7 +3920,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </>
           }
         >
-          {errorAperturaCierre && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAperturaCierre}</div>}
+          {errorAperturaCierre && <div className="alert alert-danger py-1 px-2 small">{errorAperturaCierre}</div>}
           <p className="mb-0">Se va a abrir el cajón para contar el efectivo a retirar.</p>
         </Modal>
       )}
@@ -3942,7 +3942,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             cierreIncierto ? (
               <button
                 type="button"
-                className="btn btn-primary rounded-0"
+                className="btn btn-primary"
                 disabled={recuperandoCierre}
                 onClick={() => void recuperarCierreIncierto()}
               >
@@ -3950,12 +3950,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </button>
             ) : (
               <>
-                <button type="button" className="btn btn-outline-secondary rounded-0" disabled={cerrandoPorRetiro} onClick={cancelarMontoCierre}>
+                <button type="button" className="btn btn-outline-secondary" disabled={cerrandoPorRetiro} onClick={cancelarMontoCierre}>
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  className="btn btn-danger rounded-0"
+                  className="btn btn-danger"
                   disabled={cierrePorRetiroBloqueado}
                   onClick={() => void confirmarCierrePorRetiro()}
                 >
@@ -3965,7 +3965,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )
           }
         >
-          {errorCierrePorRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCierrePorRetiro}</div>}
+          {errorCierrePorRetiro && <div className="alert alert-danger py-1 px-2 small">{errorCierrePorRetiro}</div>}
           {!cierreIncierto && (
             <>
               <label className="form-label" htmlFor="pos-cierre-monto">
@@ -3973,7 +3973,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               </label>
               <CampoImporte
                 id="pos-cierre-monto"
-                className="form-control rounded-0"
+                className="form-control"
                 valor={montoCierre}
                 disabled={cerrandoPorRetiro}
                 onChange={setMontoCierre}
@@ -3988,7 +3988,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     <input
                       id="pos-cierre-forzar-sin-rendicion"
                       type="checkbox"
-                      className="form-check-input rounded-0"
+                      className="form-check-input"
                       checked={forzarSinRendicion}
                       disabled={cerrandoPorRetiro}
                       onChange={(e) => cambiarForzarSinRendicion(e.target.checked)}
@@ -4007,7 +4007,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     <input
                       id="pos-cierre-motivo-sin-rendicion"
                       type="text"
-                      className="form-control rounded-0"
+                      className="form-control"
                       value={motivoSinRendicion}
                       disabled={cerrandoPorRetiro || !forzarSinRendicion}
                       onChange={(e) => cambiarMotivoSinRendicion(e.target.value)}
@@ -4016,7 +4016,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                   </div>
 
                   {!esSupervisorOAdmin && (
-                    <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2 mb-0">
+                    <div className="alert alert-warning py-1 px-2 small mt-2 mb-0">
                       Con tu rol el servidor va a rechazar el cierre forzado: pedile a un supervisor o a un
                       administrador que lo haga.
                     </div>

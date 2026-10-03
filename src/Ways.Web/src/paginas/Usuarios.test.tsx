@@ -371,7 +371,7 @@ describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', ()
   })
 
   async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
   }
 
   async function completarDatosBasicos(usuario: ReturnType<typeof userEvent.setup>) {
@@ -635,7 +635,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
     expect(intentos).toBe(1)
 
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
     await waitFor(() => expect(intentos).toBe(2))
     await waitFor(() =>
@@ -669,7 +669,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
 
     render(<Usuarios />)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
 
@@ -697,7 +697,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
 
     render(<Usuarios />)
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled())
   })
@@ -723,7 +723,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
       ],
     )
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
     const etiquetas = within(screen.getByLabelText(SELECTOR_DE_ALTA))
       .getAllByRole('option')
@@ -788,7 +788,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
 
     await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'juan')
     await usuario.click(
-      within(screen.getByRole('row', { name: /vendedor\.sur/ })).getByRole('button', { name: 'Baja' }),
+      within(screen.getByRole('row', { name: /vendedor\.sur/ })).getByRole('button', { name: 'Eliminar' }),
     )
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
@@ -970,8 +970,8 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
     expect(intentos).toBe(1)
 
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
 
     expect(intentos).toBe(2)
 
@@ -991,7 +991,7 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
 
 function botonDeBajaDe(nombreDeUsuario: string) {
   return within(screen.getByRole('row', { name: new RegExp(nombreDeUsuario) })).getByRole('button', {
-    name: 'Baja',
+    name: 'Eliminar',
   })
 }
 
@@ -1081,12 +1081,12 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
 
     expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
     expect(screen.getByPlaceholderText('Buscar usuario o mail…')).toBeDisabled()
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
     ]) {
       expect(boton).toBeDisabled()
     }
@@ -1103,7 +1103,7 @@ describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirm
       await Promise.resolve()
     })
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Nuevo' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled())
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
@@ -1269,7 +1269,7 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
     render(<Usuarios />)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
 
     await act(async () => {
@@ -1318,7 +1318,7 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
     render(<Usuarios />)
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
-    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
     await act(async () => {
       fireEvent.submit(screen.getByLabelText('Usuario').closest('form') as HTMLFormElement)
       await Promise.resolve()
@@ -1451,10 +1451,10 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
     expect(screen.getByPlaceholderText('Buscar usuario o mail…')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByLabelText('Tenant')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Eliminar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
     // Ronda 2 (R2-1): los CINCO campos del formulario, no solo sus botones. Eran los únicos
     // controles de las cuatro pantallas raíz que se escapaban de la puerta modal — el resto de las

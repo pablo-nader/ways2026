@@ -82,18 +82,18 @@ export function GestorDeCodigosBarra({
   return (
     <div>
       <strong className="text-muted small text-uppercase">Códigos de barra</strong>
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{error}</div>}
+      {error && <div className="alert alert-danger py-1 px-2 small mt-2">{error}</div>}
 
       {cargando ? (
         <Cargando texto="Cargando códigos de barra…" />
       ) : (
         <div className="d-flex flex-wrap gap-2 mb-2 mt-2">
           {codigos.map((c) => (
-            <span key={c.id} className="badge rounded-0 text-bg-light border d-flex align-items-center gap-2 py-2 px-2">
+            <span key={c.id} className="badge bg-body-secondary text-body border d-flex align-items-center gap-2 py-2 px-2">
               {c.codigo}
               <button
                 type="button"
-                className="btn btn-sm btn-outline-danger rounded-0 py-0 px-1"
+                className="btn btn-sm btn-outline-danger py-0 px-1"
                 disabled={ocupado || bloqueadoPorPadre}
                 onClick={() => quitar(c)}
               >
@@ -108,7 +108,7 @@ export function GestorDeCodigosBarra({
       <div className="input-group" style={{ maxWidth: 320 }}>
         <input
           type="text"
-          className="form-control rounded-0"
+          className="form-control"
           maxLength={50}
           placeholder="Código de barras"
           value={nuevoCodigo}
@@ -118,7 +118,7 @@ export function GestorDeCodigosBarra({
         />
         <button
           type="button"
-          className="btn btn-outline-primary rounded-0"
+          className="btn btn-outline-primary"
           disabled={ocupado || bloqueadoPorPadre}
           onClick={agregar}
         >

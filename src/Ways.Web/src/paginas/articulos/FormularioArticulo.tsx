@@ -240,7 +240,7 @@ export function FormularioArticulo({
             </label>
             <input
               id="art-codigo-interno"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={30}
               placeholder={esNuevo ? 'Se autogenera si se omite' : undefined}
               value={valor.codigoInterno}
@@ -255,7 +255,7 @@ export function FormularioArticulo({
             </label>
             <input
               id="art-nombre"
-              className="form-control rounded-0"
+              className="form-control"
               maxLength={150}
               value={valor.nombre}
               onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
@@ -269,7 +269,7 @@ export function FormularioArticulo({
             </label>
             <select
               id="art-unidad-venta"
-              className="form-select rounded-0"
+              className="form-select"
               value={valor.unidadVenta}
               onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
             >
@@ -290,7 +290,7 @@ export function FormularioArticulo({
               type="number"
               step="0.01"
               min="0"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.unidadesPorBulto}
               onChange={(e) => onCambio({ ...valor, unidadesPorBulto: e.target.value })}
             />
@@ -301,7 +301,7 @@ export function FormularioArticulo({
               <input
                 id="art-es-producto"
                 type="checkbox"
-                className="form-check-input rounded-0"
+                className="form-check-input"
                 checked={valor.esProducto}
                 onChange={(e) => onCambio({ ...valor, esProducto: e.target.checked })}
               />
@@ -317,7 +317,7 @@ export function FormularioArticulo({
             </label>
             <textarea
               id="art-descripcion"
-              className="form-control rounded-0"
+              className="form-control"
               rows={2}
               value={valor.descripcion}
               onChange={(e) => onCambio({ ...valor, descripcion: e.target.value })}
@@ -334,7 +334,7 @@ export function FormularioArticulo({
             </label>
             <select
               id="art-area"
-              className="form-select rounded-0"
+              className="form-select"
               value={valor.idArea}
               onChange={(e) => onCambio({ ...valor, idArea: Number(e.target.value) })}
               required
@@ -359,7 +359,7 @@ export function FormularioArticulo({
               <select
                 id="art-categoria"
                 ref={refSelectCategoria}
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idCategoria}
                 onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
               >
@@ -373,7 +373,7 @@ export function FormularioArticulo({
               </select>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 aria-label="Nueva categoría"
                 disabled={ocupado}
                 onClick={() => abrirAltaRapida('categoria', refSelectCategoria.current)}
@@ -391,7 +391,7 @@ export function FormularioArticulo({
               <select
                 id="art-marca"
                 ref={refSelectMarca}
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idMarca}
                 onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
               >
@@ -405,7 +405,7 @@ export function FormularioArticulo({
               </select>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 aria-label="Nueva marca"
                 disabled={ocupado}
                 onClick={() => abrirAltaRapida('marca', refSelectMarca.current)}
@@ -423,7 +423,7 @@ export function FormularioArticulo({
               <select
                 id="art-grupo"
                 ref={refSelectGrupo}
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idGrupo}
                 onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
               >
@@ -438,7 +438,7 @@ export function FormularioArticulo({
               </select>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 aria-label="Nuevo grupo"
                 disabled={ocupado}
                 onClick={() => abrirAltaRapida('grupo', refSelectGrupo.current)}
@@ -456,7 +456,7 @@ export function FormularioArticulo({
               <select
                 id="art-proveedor-habitual"
                 ref={refSelectProveedor}
-                className="form-select rounded-0"
+                className="form-select"
                 value={valor.idProveedorHabitual}
                 onChange={(e) =>
                   onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
@@ -472,7 +472,7 @@ export function FormularioArticulo({
               </select>
               <button
                 type="button"
-                className="btn btn-outline-secondary rounded-0"
+                className="btn btn-outline-secondary"
                 aria-label="Nuevo proveedor"
                 disabled={ocupado}
                 onClick={() => abrirAltaRapida('proveedor', refSelectProveedor.current)}
@@ -491,7 +491,7 @@ export function FormularioArticulo({
             </label>
             <select
               id="art-alicuota-iva"
-              className="form-select rounded-0"
+              className="form-select"
               value={valor.idAlicuotaIva}
               onChange={(e) => onCambio({ ...valor, idAlicuotaIva: Number(e.target.value) })}
               required
@@ -517,7 +517,7 @@ export function FormularioArticulo({
             </label>
             <CampoImporte
               id="art-costo-lista"
-              className="form-control rounded-0"
+              className="form-control"
               valor={valor.costoLista === '' ? null : Number(valor.costoLista)}
               onChange={(n) => onCambio({ ...valor, costoLista: n === null ? '' : String(n) })}
             />
@@ -532,7 +532,7 @@ export function FormularioArticulo({
               type="number"
               step="0.01"
               min="0"
-              className="form-control rounded-0"
+              className="form-control"
               value={valor.descuentoProveedor}
               onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
             />
@@ -544,7 +544,7 @@ export function FormularioArticulo({
             </label>
             <CampoImporte
               id="art-costo-nominal"
-              className="form-control rounded-0"
+              className="form-control"
               valor={valor.costoNominal === '' ? null : Number(valor.costoNominal)}
               onChange={(n) => onCambio({ ...valor, costoNominal: n === null ? '' : String(n) })}
             />
@@ -581,7 +581,7 @@ export function FormularioArticulo({
                     <input
                       id={`art-empresa-${e.id}`}
                       type="checkbox"
-                      className="form-check-input rounded-0"
+                      className="form-check-input"
                       checked={valor.idsEmpresas.includes(e.id)}
                       onChange={() => alternarEmpresa(e.id)}
                     />
@@ -600,7 +600,7 @@ export function FormularioArticulo({
               <input
                 id="art-activo"
                 type="checkbox"
-                className="form-check-input rounded-0"
+                className="form-check-input"
                 checked={valor.activo}
                 onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
               />
@@ -618,7 +618,7 @@ export function FormularioArticulo({
               <input
                 id="art-controla-lote"
                 type="checkbox"
-                className="form-check-input rounded-0"
+                className="form-check-input"
                 checked={valor.controlaLote}
                 onChange={(e) => onCambio({ ...valor, controlaLote: e.target.checked })}
               />
@@ -629,10 +629,10 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-12 d-flex gap-2">
-            <button type="submit" className="btn btn-success rounded-0" disabled={ocupado || bloqueadoPorCatalogos}>
+            <button type="submit" className="btn btn-success" disabled={ocupado || bloqueadoPorCatalogos}>
               {guardando ? 'Guardando…' : 'Guardar'}
             </button>
-            <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={ocupado}>
+            <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={ocupado}>
               Cancelar
             </button>
           </div>

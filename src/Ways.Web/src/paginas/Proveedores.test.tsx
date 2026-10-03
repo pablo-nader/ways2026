@@ -159,7 +159,7 @@ describe('Proveedores — panel de saldo', () => {
 // mismo patrón que `Empresas.test.tsx`/`PaginaCatalogo.test.tsx` (`react-async-state` regla 10).
 
 function bajaDe(razonSocial: string) {
-  return within(screen.getByRole('row', { name: new RegExp(razonSocial) })).getByRole('button', { name: 'Baja' })
+  return within(screen.getByRole('row', { name: new RegExp(razonSocial) })).getByRole('button', { name: 'Eliminar' })
 }
 
 describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
@@ -248,11 +248,11 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
 
     expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
     for (const boton of [
       ...screen.getAllByRole('button', { name: 'Editar' }),
-      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Eliminar' }),
       ...screen.getAllByRole('button', { name: 'Ver saldo' }),
     ]) {
       expect(boton).toBeDisabled()

@@ -116,8 +116,8 @@ export function EquiposPos() {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Equipos POS" variante="inverse">
-        {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {error && <div className="alert alert-danger">{error}</div>}
+        {aviso && <div className="alert alert-success">{aviso}</div>}
 
         {revocacion && (
           <ConfirmacionDeBaja
@@ -157,7 +157,7 @@ export function EquiposPos() {
                     <td className="text-end text-nowrap">
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
+                        className="btn btn-sm btn-outline-danger"
                         onClick={(evento) => pedirRevocacion(d, evento.currentTarget)}
                         disabled={bloqueado}
                       >

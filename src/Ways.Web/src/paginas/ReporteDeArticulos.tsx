@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { EnlaceIcono } from '../componentes/BotonIcono'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeCatalogo } from '../api/catalogos'
 import {
@@ -163,15 +163,15 @@ export function ReporteDeArticulos() {
     <div className="container-fluid py-4">
       <Box titulo="Reporte de artículos" variante="inverse">
         {error && (
-          <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
+          <div className="alert alert-danger d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>
-            <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={cargar}>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={cargar}>
               Reintentar
             </button>
           </div>
         )}
         {erroresCatalogos.map((mensaje) => (
-          <div key={mensaje} className="alert alert-warning rounded-0 py-1 px-2 small">
+          <div key={mensaje} className="alert alert-warning py-1 px-2 small">
             {mensaje}
           </div>
         ))}
@@ -183,7 +183,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-area"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.sinArea ? VALOR_SIN : (filtros.idArea ?? '')}
               onChange={(e) => {
                 const valor = e.target.value
@@ -208,7 +208,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-categoria"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.sinCategoria ? VALOR_SIN : (filtros.idCategoria ?? '')}
               onChange={(e) => {
                 const valor = e.target.value
@@ -233,7 +233,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-marca"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.sinMarca ? VALOR_SIN : (filtros.idMarca ?? '')}
               onChange={(e) => {
                 const valor = e.target.value
@@ -258,7 +258,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-grupo"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.sinGrupo ? VALOR_SIN : (filtros.idGrupo ?? '')}
               onChange={(e) => {
                 const valor = e.target.value
@@ -283,7 +283,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-proveedor"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.sinProveedor ? VALOR_SIN : (filtros.idProveedor ?? '')}
               onChange={(e) => {
                 const valor = e.target.value
@@ -308,7 +308,7 @@ export function ReporteDeArticulos() {
             </label>
             <select
               id="reporte-articulos-estado"
-              className="form-select rounded-0"
+              className="form-select"
               value={filtros.activo === null ? '' : String(filtros.activo)}
               onChange={(e) => {
                 const valor = e.target.value
@@ -344,7 +344,7 @@ export function ReporteDeArticulos() {
           </div>
         </div>
 
-        {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+        {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
 
         {cargando && !pagina && <Cargando />}
 
@@ -391,9 +391,7 @@ export function ReporteDeArticulos() {
                           {/* <Link> real, igual que el "Editar" de la grilla de artículos: permite
                               click-del-medio/Ctrl-click para completar el artículo en otra pestaña
                               sin perder el reporte filtrado. */}
-                          <Link to={`/articulos/edit/${f.id}`} className="btn btn-sm btn-outline-primary rounded-0">
-                            Editar
-                          </Link>
+                          <EnlaceIcono icono="editar" to={`/articulos/edit/${f.id}`} />
                         </td>
                       )}
                     </tr>
@@ -416,7 +414,7 @@ export function ReporteDeArticulos() {
               <div className="d-flex gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina <= 1 || cargando}
                   onClick={() => cambiarPagina(-1)}
                 >
@@ -424,7 +422,7 @@ export function ReporteDeArticulos() {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary rounded-0"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={pagina.pagina >= totalPaginas || cargando}
                   onClick={() => cambiarPagina(1)}
                 >
