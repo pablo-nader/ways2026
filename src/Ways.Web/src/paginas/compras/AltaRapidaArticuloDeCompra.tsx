@@ -7,7 +7,7 @@ import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import { elegirAlicuotaPorDefecto } from '../articulos/helpers'
-import { prefillDeAltaRapidaDeArticulo } from './prefillAltaRapidaArticulo'
+import { costoDeListaDeAltaRapida, prefillDeAltaRapidaDeArticulo } from './prefillAltaRapidaArticulo'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
@@ -55,7 +55,7 @@ export function AltaRapidaArticuloDeCompra({
       ? idAlicuotaIvaDeLaLinea
       : elegirAlicuotaPorDefecto(alicuotasActivas),
   )
-  const [costo, setCosto] = useState<number | null>(costoDeLaLinea)
+  const [costo, setCosto] = useState<number | null>(() => costoDeListaDeAltaRapida(costoDeLaLinea))
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
   const bloqueadoRef = useRef(false)
@@ -246,7 +246,6 @@ export function AltaRapidaArticuloDeCompra({
           <CampoImporte
             id="alta-articulo-compra-costo"
             className="form-control"
-            decimales={4}
             valor={costo}
             disabled={guardando}
             onChange={setCosto}

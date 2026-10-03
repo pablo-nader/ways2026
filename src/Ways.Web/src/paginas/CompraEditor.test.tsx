@@ -1636,6 +1636,27 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
     expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
   })
 
+  it('el costo de la línea con más de 2 decimales se redondea a 2 en el modal y viaja como costoLista', async () => {
+    mockearBusqueda([])
+    apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+    const usuario = userEvent.setup()
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.type(screen.getAllByLabelText('Costo unitario').at(-1)!, '12,3456')
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'AB-1234')
+    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+
+    expect(within(dialogo).getByLabelText('Costo de lista')).toHaveValue('12,35')
+
+    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
+    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].costoLista).toBe(12.35)
+  })
+
   it('crear desde un texto con aspecto de nombre precarga el nombre y deja el código vacío', async () => {
     mockearBusqueda([])
     const usuario = await abrirBusquedaEnUnaLineaNueva('Yerba mate 1kg')
