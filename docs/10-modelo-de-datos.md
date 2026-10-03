@@ -1848,13 +1848,16 @@ antes del abandono, y el servidor lo sigue aceptando (ver la regla de pertenenci
   payload distinto bajo el mismo número en este camino: el lookup encuentra la fila existente y
   devuelve antes de llegar a ningún INSERT, así que ese índice nunca se ejercita acá. Lo que
   blinda un reenvío con contenido distinto es una comparación explícita de IDENTIDAD
-  (`ServicioDeVentas.ExigirMismoContenido`: el conjunto (idArticulo, cantidad) de líneas,
-  idCliente, idComprobanteAsociado y la composición de pagos) contra el comprobante ya guardado
+  (`ServicioDeVentas.ExigirMismoContenido`: el conjunto (idArticulo, cantidad,
+  ajusteManualPorcentaje) de líneas, idCliente, idComprobanteAsociado y la composición de pagos)
+  contra el comprobante ya guardado
   — sin coincidencia, `409 numero_preasignado_con_otro_contenido` en vez de devolver la venta
   ajena en silencio. A propósito NO compara el total ni el precio de ningún item (judgment-day,
   ronda 2): son server-derived y pueden cambiar legítimamente entre dos intentos del mismo pedido
   (p.ej. un dispositivo offline que sincroniza horas después, con otro precio vigente) — comparar
-  dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. Tampoco compara
+  dinero convertiría ese resync legítimo en un `409` espurio sobre toda su cola. El porcentaje de
+  ajuste manual (§4) es la excepción y sí entra: lo tipeó el operador, no lo deriva el servidor, y
+  el mismo número con otro porcentaje cobra otra cosa. Tampoco compara
   `observaciones` (judgment-day, ronda 2): es una nota de texto libre, metadata incidental sobre
   el pedido, no un rasgo que distinga una venta de otra — un reenvío manual puede traerla
   retipeada sin que eso signifique otra venta. La `referencia` de un pago SI entra, aunque tambien

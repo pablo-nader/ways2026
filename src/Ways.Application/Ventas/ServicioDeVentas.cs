@@ -481,24 +481,28 @@ public class ServicioDeVentas(
     /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
     /// NumeroPreasignado — sin esto, un reenvío bajo el mismo número pre-asignado con un carrito,
     /// cliente, comprobante asociado o composición de pagos DISTINTOS recibía en silencio el
-    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero: el conjunto (idArticulo,
-    /// cantidad) de líneas, idCliente, idComprobanteAsociado y la composición de pagos
-    /// (idMedioPago, importe, referencia) — nunca el total ni el precio de ningún item (ver el comentario
-    /// dentro del método), y tampoco <c>Observaciones</c> (idem, ver el comentario dentro del
-    /// método: es metadata, no identidad). Sin columna nueva: compara contra los propios
+    /// comprobante de la PRIMERA venta. Compara identidad, nunca dinero derivado: el conjunto
+    /// (idArticulo, cantidad, ajusteManualPorcentaje) de líneas, idCliente, idComprobanteAsociado y
+    /// la composición de pagos (idMedioPago, importe, referencia) — nunca el total ni el precio de
+    /// ningún item (ver el comentario dentro del método), y tampoco <c>Observaciones</c> (idem, ver
+    /// el comentario dentro del método: es metadata, no identidad). El porcentaje de ajuste manual
+    /// SÍ entra: lo tipeó el operador, no lo deriva el servidor, y dos envíos con porcentajes
+    /// distintos son dos ventas distintas. Sin columna nueva: compara contra los propios
     /// items/pagos ya persistidos del comprobante encontrado.</summary>
     private static void ExigirMismoContenido(ComprobanteEmitido existente, PlanDeVenta plan)
     {
         var lineasExistentes = existente.Items
-            .Select(i => (i.IdArticulo, i.Cantidad))
+            .Select(i => (i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
             .OrderBy(l => l.IdArticulo)
             .ThenBy(l => l.Cantidad)
+            .ThenBy(l => l.AjusteManualPorcentaje)
             .ToList();
 
         var lineasSolicitadas = plan.Items
-            .Select(i => ((int?)i.IdArticulo, i.Cantidad))
+            .Select(i => ((int?)i.IdArticulo, i.Cantidad, i.AjusteManualPorcentaje))
             .OrderBy(l => l.Item1)
             .ThenBy(l => l.Item2)
+            .ThenBy(l => l.Item3)
             .ToList();
 
         // La referencia entra en la identidad y observaciones no, aunque las dos sean texto:
@@ -526,8 +530,10 @@ public class ServicioDeVentas(
         // sincroniza horas después, ya con otro precio vigente) en un 409 espurio sobre TODA su
         // cola. Lo que distingue una venta ajena de un reenvío del mismo pedido es su identidad,
         // no lo que costó: mismas líneas, mismo cliente, mismo comprobante asociado y misma
-        // composición de pagos. Por el mismo motivo el porcentaje de ajuste manual de cada línea
-        // tampoco entra: es parte de lo que costó, no de qué se vendió.
+        // composición de pagos. El porcentaje de ajuste manual de cada línea es la excepción y SÍ
+        // entra en la comparación de líneas: a diferencia del total y del precio no se deriva en el
+        // servidor, es una decisión que tipeó el operador, y reenviar el mismo número con otro
+        // porcentaje cobra otra cosa — no es un reenvío del mismo pedido.
         // TODO(offline-sale/outbox, no implementado acá): sacar el total de esta guarda no cierra
         // un gap distinto y más profundo — el servidor re-precia al momento del sync, así que una
         // venta offline sincronizada después queda registrada al precio ACTUAL en vez del

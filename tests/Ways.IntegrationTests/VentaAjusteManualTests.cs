@@ -266,6 +266,18 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(10m, emitido.RecargoManualTotal);
         Assert.Equal(270m, emitido.Total);
 
+        // Identidades del contrato: subtotal = Σ bruto de línea; total = subtotal - descuento -
+        // descuento manual + recargo manual = Σ total de línea; total de línea = bruto - descuento
+        // (solo oferta) + ajuste manual.
+        Assert.Equal(emitido.Items.Sum(i => i.PrecioUnitario * i.Cantidad), emitido.Subtotal);
+        Assert.Equal(
+            emitido.Subtotal - emitido.DescuentoTotal - emitido.DescuentoManualTotal + emitido.RecargoManualTotal,
+            emitido.Total);
+        Assert.Equal(emitido.Items.Sum(i => i.Total), emitido.Total);
+        Assert.All(
+            emitido.Items,
+            i => Assert.Equal(i.PrecioUnitario * i.Cantidad - i.Descuento + i.AjusteManual, i.Total));
+
         void AssertItems(IReadOnlyList<(int IdArticulo, decimal? Porcentaje, decimal Ajuste, decimal Total)> reales)
         {
             Assert.Equal(
@@ -363,6 +375,7 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(-10m, item.AjusteManualPorcentaje);
         Assert.Equal(-18m, item.AjusteManual);
         Assert.Equal(162m, item.Total);
+        Assert.Equal(item.PrecioUnitario * item.Cantidad - item.Descuento + item.AjusteManual, item.Total);
         Assert.Equal(200m, emitido.Subtotal);
         Assert.Equal(20m, emitido.DescuentoTotal);
         Assert.Equal(18m, emitido.DescuentoManualTotal);
@@ -689,5 +702,70 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(12.5m, segunda.RecargoManualTotal);
         Assert.Equal(112.5m, segunda.Total);
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+    }
+
+    /// <summary>El porcentaje es contenido tipeado por el operador, no dinero derivado por el
+    /// servidor: reenviar el mismo número pre-asignado con otro porcentaje (o sin porcentaje) es otra
+    /// venta y se rechaza 409 <c>numero_preasignado_con_otro_contenido</c> en vez de devolver en
+    /// silencio el comprobante de la primera. Los pagos son idénticos en los tres envíos (90) y
+    /// quedan dentro de la tolerancia del total de cada envío (95, 100 y 91 contra 90 pagados): el porcentaje es la
+    /// ÚNICA diferencia entre las líneas.</summary>
+    [Fact]
+    public async Task ReenviarElMismoNumeroPreasignadoConOtroPorcentajeDeAjusteEs409()
+    {
+        var ctx = await PrepararOfflineAsync(nameof(ReenviarElMismoNumeroPreasignadoConOtroPorcentajeDeAjusteEs409));
+        var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
+        SolicitudDeVenta Solicitud(decimal? porcentaje) => VentaOffline(
+            ctx, 90m, numero: 1,
+            new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 100m, AjusteManualPorcentaje: porcentaje));
+
+        var primera = await EmitirOkAsync(ctx.Cliente, Solicitud(-10m));
+
+        foreach (var otro in new decimal?[] { -5m, null, -9m })
+        {
+            var respuesta = await ctx.Cliente.PostAsJsonAsync("/api/ventas", Solicitud(otro));
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, $"porcentaje {otro}: {cuerpo}");
+            Assert.Equal(
+                "numero_preasignado_con_otro_contenido",
+                JsonDocument.Parse(cuerpo).RootElement.GetProperty("codigo").GetString());
+        }
+
+        // El mismo contenido sigue devolviendo el comprobante original, y la base conserva el
+        // porcentaje del primer envío.
+        var reenvioIgual = await EmitirOkAsync(ctx.Cliente, Solicitud(-10m));
+        Assert.Equal(primera.Id, reenvioIgual.Id);
+        Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
+        var (_, items) = await LeerPersistidoAsync(ctx.IdTenant, primera.Id);
+        Assert.Equal(-10m, Assert.Single(items).AjusteManualPorcentaje);
+    }
+
+    /// <summary>Anular devuelve el comprobante releído de la base: conserva los cuatro campos del
+    /// ajuste manual y la identidad del total.</summary>
+    [Fact]
+    public async Task LaAnulacionDevuelveElComprobanteConSusAjustesManuales()
+    {
+        var ctx = await PrepararOnlineAsync(nameof(LaAnulacionDevuelveElComprobanteConSusAjustesManuales));
+        var idA = await SembrarServicioAsync(ctx.IdTenant, 100m);
+        var idB = await SembrarServicioAsync(ctx.IdTenant, 40m);
+        var emitido = await EmitirOkAsync(
+            ctx.Cliente,
+            VentaOnline(
+                ctx, 144m,
+                new LineaDeVenta(idA, 1m, null, AjusteManualPorcentaje: -10m),
+                new LineaDeVenta(idB, 1m, null, AjusteManualPorcentaje: 35m)));
+
+        var respuesta = await ctx.Cliente.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var anulado = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
+        Assert.Equal(10m, anulado.DescuentoManualTotal);
+        Assert.Equal(14m, anulado.RecargoManualTotal);
+        Assert.Equal(144m, anulado.Total);
+        Assert.Equal(
+            [(idA, (decimal?)-10m, -10m, 90m), (idB, 35m, 14m, 54m)],
+            anulado.Items.Select(i => (i.IdArticulo!.Value, i.AjusteManualPorcentaje, i.AjusteManual, i.Total)).ToList());
     }
 }
