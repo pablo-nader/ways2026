@@ -129,13 +129,14 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
 
     private sealed record Tenant1(int IdTenant, int IdPuntoVenta, int IdEmpleado);
 
-    /// <summary>Siembra tenant/empresa/rol/usuario vía EF (ninguna de esas tablas cambió en esta
+    /// <summary>Siembra tenant/rol/usuario vía EF (ninguna de esas tablas cambió desde esta
     /// migración) — mismo criterio que <c>SembrarEntornoAsync</c> de
-    /// <see cref="CuentaCorrienteProveedorBackfillTests"/>. <c>puntos_venta</c> es la EXCEPCIÓN
-    /// (stage-desktop-pos): esquema todavía en <see cref="MigracionBajoPrueba"/> acá, ANTES de
-    /// <c>modo</c> — SQL crudo con la lista de columnas de antes de esa columna, nunca vía EF
-    /// (que, con el modelo HEAD, incluiría la columna nueva en el INSERT y rompería contra el
-    /// esquema viejo con 42703 — misma trampa documentada en <c>CostoCongeladoTests</c>).</summary>
+    /// <see cref="CuentaCorrienteProveedorBackfillTests"/>. <c>empresas</c> y <c>puntos_venta</c> son
+    /// la EXCEPCIÓN (alícuotas de percepción y stage-desktop-pos respectivamente): esquema todavía
+    /// en <see cref="MigracionBajoPrueba"/> acá, ANTES de esas columnas — SQL crudo con la lista de
+    /// columnas de antes, nunca vía EF (que, con el modelo HEAD, incluiría la columna nueva en el
+    /// INSERT y rompería contra el esquema viejo con 42703 — misma trampa documentada en
+    /// <c>CostoCongeladoTests</c>).</summary>
     private static async Task<Tenant1> SembrarEntornoAsync(WaysDbContext db, string cadenaConexion, string nombre)
     {
         var ahora = DateTimeOffset.UtcNow;
@@ -147,20 +148,28 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
         db.Tenants.Add(tenant);
         await db.SaveChangesAsync();
 
-        var empresa = new Empresa { IdTenant = tenant.Id, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
-        db.Empresas.Add(empresa);
-        await db.SaveChangesAsync();
-
         int idPuntoVenta;
         await using (var cruda = new NpgsqlConnection(cadenaConexion))
         {
             await cruda.OpenAsync();
+
+            int idEmpresa;
+            await using (var insertEmpresa = cruda.CreateCommand())
+            {
+                insertEmpresa.CommandText =
+                    "INSERT INTO empresas (id_tenant, razon_social, created_at, updated_at) " +
+                    "VALUES ($1, $2, now(), now()) RETURNING id_empresa";
+                insertEmpresa.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+                insertEmpresa.Parameters.Add(new NpgsqlParameter { Value = nombre });
+                idEmpresa = (int)(await insertEmpresa.ExecuteScalarAsync())!;
+            }
+
             await using var comando = cruda.CreateCommand();
             comando.CommandText =
                 "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, created_at, updated_at) " +
                 "VALUES ($1, $2, $3, now(), now()) RETURNING id_punto_venta";
             comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
-            comando.Parameters.Add(new NpgsqlParameter { Value = empresa.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idEmpresa });
             comando.Parameters.Add(new NpgsqlParameter { Value = nombre });
             idPuntoVenta = (int)(await comando.ExecuteScalarAsync())!;
         }
