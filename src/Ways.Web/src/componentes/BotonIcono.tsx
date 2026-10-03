@@ -1,18 +1,20 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Link, type LinkProps } from 'react-router'
 
-export type IconoDeAccion = 'eliminar' | 'editar' | 'agregar'
+export type IconoDeAccion = 'eliminar' | 'editar' | 'agregar' | 'ajuste'
 
 const ETIQUETA_POR_DEFECTO: Record<IconoDeAccion, string> = {
   eliminar: 'Eliminar',
   editar: 'Editar',
   agregar: 'Agregar',
+  ajuste: 'Ajuste manual',
 }
 
 const VARIANTE: Record<IconoDeAccion, string> = {
   eliminar: 'btn-outline-danger',
   editar: 'btn-outline-primary',
   agregar: 'btn-primary',
+  ajuste: 'btn-outline-secondary',
 }
 
 const TRAZADOS: Record<IconoDeAccion, ReactNode> = {
@@ -35,6 +37,13 @@ const TRAZADOS: Record<IconoDeAccion, ReactNode> = {
     <>
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </>
+  ),
+  ajuste: (
+    <>
+      <path d="M19 5L5 19" />
+      <circle cx="7" cy="7" r="2" />
+      <circle cx="17" cy="17" r="2" />
     </>
   ),
 }

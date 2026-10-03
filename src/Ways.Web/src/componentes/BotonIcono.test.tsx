@@ -10,6 +10,7 @@ describe('BotonIcono', () => {
     ['eliminar', 'Eliminar', 'btn-outline-danger'],
     ['editar', 'Editar', 'btn-outline-primary'],
     ['agregar', 'Agregar', 'btn-primary'],
+    ['ajuste', 'Ajuste manual', 'btn-outline-secondary'],
   ] as const)('el ícono %s expone nombre accesible, tooltip y variante', (icono, etiqueta, variante) => {
     render(<BotonIcono icono={icono} />)
 

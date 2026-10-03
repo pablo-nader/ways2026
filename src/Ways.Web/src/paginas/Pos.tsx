@@ -1,6 +1,14 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router'
+import {
+  formatearPorcentajeDeAjuste,
+  mensajeDeRechazoDeAjusteManual,
+  rotuloDeAjusteManual,
+  tipoDeAjuste,
+  validarPorcentajeDeAjuste,
+  type TipoDeAjusteManual,
+} from '../api/ajusteManual'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
 import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/carrito'
@@ -50,6 +58,7 @@ import {
   aLineaDeCarritoDesdeEscaneo,
   aLineasDeResolucion,
   aSolicitudDeVenta,
+  calcularAjustesManualesPrevia,
   calcularSubtotalPrevia,
   clienteDeVentas,
   indexarResolucionPorArticulo,
@@ -57,12 +66,13 @@ import {
 } from '../api/ventas'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
-import { formatearImporte } from '../formato/importes'
+import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
@@ -112,6 +122,10 @@ function etiquetaDeCliente(c: ClienteListado): string {
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
+
+/** Editor inline del ajuste manual de una línea. `texto` es la magnitud tipeada, sin signo (el
+ * signo lo da `tipo`); `error` es el mensaje de la última validación fallida, vacío si no hay. */
+type EdicionDeAjusteManual = { idArticulo: number; tipo: TipoDeAjusteManual; texto: string; error: string }
 
 /** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
  * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
@@ -991,6 +1005,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setPreviaLocal(instantanea !== null)
   }
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
+  // Una sola línea a la vez tiene abierto el editor de ajuste manual. `disparadorDeAjusteRef` guarda
+  // el botón que lo abrió: se captura en el handler del click, nunca en un efecto posterior
+  // (react-async-state regla 12), para devolverle el foco al cerrar.
+  const [ajusteEnEdicion, setAjusteEnEdicion] = useState<EdicionDeAjusteManual | null>(null)
+  const disparadorDeAjusteRef = useRef<HTMLElement | null>(null)
+  const inputDeAjusteRef = useRef<HTMLInputElement>(null)
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -2111,6 +2131,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // venta, de los que depende el lote) dispara una nueva resolución de precios; una respuesta
   // de una resolución anterior nunca puede pisar la de la más reciente (design: POS Screen
   // Composition, regla 2 — "generacionResolucionRef gates every /resolver response").
+  //
+  // La resolución depende solo de QUÉ artículos hay y CUÁNTOS: fijar o quitar un ajuste manual
+  // cambia `lineas` pero no esta clave, así que no vuelve a pegarle a `/ofertas/resolver` ni
+  // enciende "Calculando…" (el ajuste se aplica en pantalla sobre los precios ya resueltos).
+  const claveDeResolucion = lineas.map((l) => `${l.idArticulo}:${l.cantidad}`).join('|')
   useEffect(() => {
     const generacion = (generacionResolucionRef.current += 1)
 
@@ -2233,8 +2258,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // refresco nunca reabre esta corrida, la instantánea que congela acá arriba es la misma que el
     // cajero sigue viendo en pantalla hasta el próximo cambio real de carrito/cliente/punto de
     // venta.
+    //
+    // `lineas` tampoco es dependencia: lo que cuenta es `claveDeResolucion` (ver arriba). El cuerpo
+    // lee `lineas` del render en que cambió la clave, que tiene los mismos artículos y cantidades.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineas, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios, modoPresupuesto])
+  }, [claveDeResolucion, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios, modoPresupuesto])
 
   /** Reintenta la vista previa de precios sin mutar el carrito (bumpea `reintentoPrecios` para
    * que el efecto de arriba vuelva a correr con las mismas líneas/cliente/punto de venta). */
@@ -2345,6 +2373,89 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       const { [idArticulo]: _omitido, ...resto } = prev
       return resto
     })
+  }
+
+  const idArticuloEnEdicionDeAjuste = ajusteEnEdicion?.idArticulo ?? null
+
+  // Un editor abierto sobre una línea que ya no está (quitada, carrito vaciado o venta cobrada) se
+  // cierra: si el mismo artículo volviera a escanearse, no debe reaparecer un editor viejo.
+  useEffect(() => {
+    if (idArticuloEnEdicionDeAjuste !== null && !lineas.some((l) => l.idArticulo === idArticuloEnEdicionDeAjuste)) {
+      disparadorDeAjusteRef.current = null
+      setAjusteEnEdicion(null)
+    }
+  }, [lineas, idArticuloEnEdicionDeAjuste])
+
+  // Al abrir el editor (o pasar de una línea a otra) el foco va al campo del porcentaje.
+  useEffect(() => {
+    if (idArticuloEnEdicionDeAjuste !== null) inputDeAjusteRef.current?.focus()
+  }, [idArticuloEnEdicionDeAjuste])
+
+  /** Cierra el editor. Cancelar (Escape, "Cancelar", tocar de nuevo el botón) devuelve el foco al
+   * botón que lo abrió. Tras aplicar o quitar el ajuste el foco va al input de código: lo que sigue
+   * es escanear, y un lector que termina con Enter sobre el botón lo reabriría. El `focus()`
+   * síncrono sirve porque ni el botón ni el input quedan deshabilitados por cerrar el editor (a
+   * diferencia de un control que se deshabilita mientras dura la operación, react-async-state
+   * regla 12); si el input está inerte (escaneo en vuelo) el foco cae al botón. */
+  function cerrarEditorDeAjuste(destinoDelFoco: 'disparador' | 'codigo' = 'disparador') {
+    const disparador = disparadorDeAjusteRef.current
+    disparadorDeAjusteRef.current = null
+    setAjusteEnEdicion(null)
+    const codigo = inputEscaneoRef.current
+    if (destinoDelFoco === 'codigo' && codigo !== null && !codigo.disabled) {
+      codigo.focus()
+      return
+    }
+    if (disparador !== null && disparador.isConnected && !disparador.matches(':disabled')) disparador.focus()
+  }
+
+  function alternarEditorDeAjuste(linea: LineaCarrito, disparador: HTMLElement) {
+    if (cobrandoRef.current) return
+    if (ajusteEnEdicion?.idArticulo === linea.idArticulo) {
+      cerrarEditorDeAjuste()
+      return
+    }
+    const porcentaje = linea.ajusteManualPorcentaje ?? null
+    disparadorDeAjusteRef.current = disparador
+    setAjusteEnEdicion({
+      idArticulo: linea.idArticulo,
+      tipo: porcentaje === null ? 'descuento' : tipoDeAjuste(porcentaje),
+      texto: porcentaje === null ? '' : formatearPorcentajeDeAjuste(porcentaje),
+      error: '',
+    })
+  }
+
+  function cambiarTextoDeAjuste(texto: string) {
+    setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, texto, error: '' }))
+  }
+
+  function cambiarTipoDeAjuste(tipo: TipoDeAjusteManual) {
+    setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, tipo, error: '' }))
+  }
+
+  function aplicarAjuste(evento: React.FormEvent<HTMLFormElement>) {
+    evento.preventDefault()
+    if (cobrandoRef.current || ajusteEnEdicion === null) return
+    const validacion = validarPorcentajeDeAjuste(ajusteEnEdicion.texto, ajusteEnEdicion.tipo)
+    if (!validacion.ok) {
+      setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, error: validacion.mensaje }))
+      return
+    }
+    mutarCarrito({ tipo: 'fijarAjusteManual', idArticulo: ajusteEnEdicion.idArticulo, porcentaje: validacion.porcentaje })
+    cerrarEditorDeAjuste('codigo')
+  }
+
+  function quitarAjusteDeLinea() {
+    if (cobrandoRef.current || ajusteEnEdicion === null) return
+    mutarCarrito({ tipo: 'quitarAjusteManual', idArticulo: ajusteEnEdicion.idArticulo })
+    cerrarEditorDeAjuste('codigo')
+  }
+
+  function teclaDelEditorDeAjuste(evento: React.KeyboardEvent<HTMLFormElement>) {
+    if (evento.key !== 'Escape') return
+    evento.preventDefault()
+    evento.stopPropagation()
+    cerrarEditorDeAjuste()
   }
 
   /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
@@ -2581,7 +2692,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     inputEscaneoRef.current?.focus()
   }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
+  // `subtotalPrevia` es lo que hay que cobrar, ya con los ajustes manuales de cada línea; de ahí
+  // salen `totalActual`, `validarPagosLocal` y el vuelto. `ajustesManuales` solo los separa para
+  // mostrarlos en "Datos de la venta".
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
+  const ajustesManuales = calcularAjustesManualesPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
   // resolución de precios (que ni siquiera corre) — sale del propio presupuesto congelado.
   const totalActual = modoPresupuesto ? (presupuesto?.total ?? 0) : (subtotalPrevia ?? 0)
@@ -3103,7 +3218,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         aplicarTurnoConfirmado(null)
         setGateTurno(true)
       } else {
-        setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
+        setErrorCobro(e instanceof ErrorApi ? (mensajeDeRechazoDeAjusteManual(e.codigo) ?? e.message) : 'No se pudo registrar la venta.')
       }
     } finally {
       if (generacionCobroRef.current === miGeneracion) {
@@ -3493,10 +3608,106 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         const resultado = precios[l.idArticulo]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
+                        const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
+                        const edicionDeAjuste = ajusteEnEdicion?.idArticulo === l.idArticulo ? ajusteEnEdicion : null
+                        const idEditorDeAjuste = `pos-ajuste-${l.idArticulo}`
+                        const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
+                        const textoDelAjuste =
+                          ajusteDeLinea === null
+                            ? ''
+                            : [
+                                `${rotuloDeAjusteManual(ajusteDeLinea)} ${formatearPorcentajeDeAjuste(ajusteDeLinea)}%`,
+                                previa.total === null ? '' : formatearImporteConSigno(previa.ajusteManual, { simbolo: true }),
+                              ]
+                                .filter(Boolean)
+                                .join(' ')
                         return (
                           <tr key={l.idArticulo}>
                             <td>{l.codigoBarra ?? l.codigoInterno}</td>
-                            <td>{l.nombre}</td>
+                            <td>
+                              {l.nombre}
+                              {ajusteDeLinea !== null && (
+                                <div>
+                                  <span className={`badge ${ajusteDeLinea < 0 ? 'text-bg-warning' : 'text-bg-info'}`}>{textoDelAjuste}</span>
+                                </div>
+                              )}
+                              {edicionDeAjuste !== null && (
+                                <form
+                                  id={idEditorDeAjuste}
+                                  className="mt-2 p-2 border rounded"
+                                  aria-label={`Ajuste manual de ${l.nombre}`}
+                                  noValidate
+                                  onSubmit={aplicarAjuste}
+                                  onKeyDown={teclaDelEditorDeAjuste}
+                                >
+                                  <div className="d-flex flex-wrap align-items-start gap-2">
+                                    <div role="radiogroup" aria-label={`Tipo de ajuste de ${l.nombre}`} className="d-flex gap-3 align-items-center py-1">
+                                      <div className="form-check mb-0">
+                                        <input
+                                          className="form-check-input"
+                                          type="radio"
+                                          name={`${idEditorDeAjuste}-tipo`}
+                                          id={`${idEditorDeAjuste}-descuento`}
+                                          checked={edicionDeAjuste.tipo === 'descuento'}
+                                          disabled={lineaInerte}
+                                          onChange={() => cambiarTipoDeAjuste('descuento')}
+                                        />
+                                        <label className="form-check-label" htmlFor={`${idEditorDeAjuste}-descuento`}>
+                                          Descuento
+                                        </label>
+                                      </div>
+                                      <div className="form-check mb-0">
+                                        <input
+                                          className="form-check-input"
+                                          type="radio"
+                                          name={`${idEditorDeAjuste}-tipo`}
+                                          id={`${idEditorDeAjuste}-recargo`}
+                                          checked={edicionDeAjuste.tipo === 'recargo'}
+                                          disabled={lineaInerte}
+                                          onChange={() => cambiarTipoDeAjuste('recargo')}
+                                        />
+                                        <label className="form-check-label" htmlFor={`${idEditorDeAjuste}-recargo`}>
+                                          Recargo
+                                        </label>
+                                      </div>
+                                    </div>
+                                    <div className="input-group input-group-sm" style={{ width: 130 }}>
+                                      <input
+                                        ref={inputDeAjusteRef}
+                                        type="text"
+                                        inputMode="decimal"
+                                        autoComplete="off"
+                                        className={`form-control${edicionDeAjuste.error ? ' is-invalid' : ''}`}
+                                        aria-label={`Porcentaje del ajuste de ${l.nombre}`}
+                                        aria-invalid={edicionDeAjuste.error !== ''}
+                                        aria-describedby={edicionDeAjuste.error ? `${idEditorDeAjuste}-error` : undefined}
+                                        placeholder="Ej. 10"
+                                        value={edicionDeAjuste.texto}
+                                        disabled={lineaInerte}
+                                        onChange={(e) => cambiarTextoDeAjuste(e.target.value)}
+                                      />
+                                      <span className="input-group-text">%</span>
+                                    </div>
+                                    <button type="submit" className="btn btn-sm btn-primary" disabled={lineaInerte}>
+                                      Aplicar
+                                    </button>
+                                    {ajusteDeLinea !== null && (
+                                      <button type="button" className="btn btn-sm btn-outline-danger" disabled={lineaInerte} onClick={quitarAjusteDeLinea}>
+                                        Quitar ajuste
+                                      </button>
+                                    )}
+                                    <button type="button" className="btn btn-sm btn-outline-secondary" disabled={lineaInerte} onClick={() => cerrarEditorDeAjuste()}>
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                  {edicionDeAjuste.error && (
+                                    <div id={`${idEditorDeAjuste}-error`} role="alert" className="text-danger small mt-1">
+                                      {edicionDeAjuste.error}
+                                    </div>
+                                  )}
+                                </form>
+                              )}
+                            </td>
                             <td>
                               <input
                                 type="number"
@@ -3537,15 +3748,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                               )}
                             </td>
                             <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
-                            <td className="text-end">
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline-danger"
-                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
-                                onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
-                              >
-                                Quitar
-                              </button>
+                            <td className="text-end text-nowrap">
+                              <div className="d-inline-flex gap-1">
+                                <BotonIcono
+                                  icono="ajuste"
+                                  etiqueta={`Ajuste manual de ${l.nombre}`}
+                                  aria-expanded={edicionDeAjuste !== null}
+                                  aria-controls={edicionDeAjuste !== null ? idEditorDeAjuste : undefined}
+                                  disabled={lineaInerte}
+                                  onClick={(e) => alternarEditorDeAjuste(l, e.currentTarget)}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger"
+                                  disabled={lineaInerte}
+                                  onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
+                                >
+                                  Quitar
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )
@@ -3640,6 +3861,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
 
             <hr />
+
+            {!modoPresupuesto && ajustesManuales.descuentoManualTotal !== 0 && (
+              <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
+                <span>Desc. manual</span>
+                <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
+              </div>
+            )}
+            {!modoPresupuesto && ajustesManuales.recargoManualTotal !== 0 && (
+              <div className="d-flex justify-content-between mb-1 text-info-emphasis">
+                <span>Recargo</span>
+                <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>
+              </div>
+            )}
 
             <div className="d-flex justify-content-between mb-3">
               <strong>Total previo</strong>
