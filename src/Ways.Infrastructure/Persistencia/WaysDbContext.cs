@@ -74,6 +74,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // sobre numeraciones_articulos, no un DbSet).
     public DbSet<Articulo> Articulos => Set<Articulo>();
     public DbSet<CodigoBarra> CodigosBarra => Set<CodigoBarra>();
+    public DbSet<CodigoProveedor> CodigosProveedor => Set<CodigoProveedor>();
     public DbSet<ArticuloEmpresa> ArticulosEmpresas => Set<ArticuloEmpresa>();
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();

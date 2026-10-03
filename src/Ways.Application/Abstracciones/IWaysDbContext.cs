@@ -67,6 +67,7 @@ public interface IWaysDbContext
     // interfaz para su backfill (caso que Articulo no tiene, al ser additive-only).
     DbSet<Articulo> Articulos { get; }
     DbSet<CodigoBarra> CodigosBarra { get; }
+    DbSet<CodigoProveedor> CodigosProveedor { get; }
     DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
     DbSet<Precio> Precios { get; }
 

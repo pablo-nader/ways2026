@@ -26,10 +26,13 @@ public static class ArticulosEndpoints
             int? idArea,
             int? idCategoria,
             int? idMarca,
+            // Con busqueda, suma (y lista primero) los artículos cuyo código de ESE proveedor
+            // coincide exacto con el término; sin busqueda no tiene efecto.
+            int? idProveedor,
             CancellationToken ct) =>
             servicio.ListarAsync(
                 busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25,
-                idArea, idCategoria, idMarca, ct))
+                idArea, idCategoria, idMarca, idProveedor, ct))
         .WithSummary("Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado.");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
@@ -99,6 +102,17 @@ public static class ArticulosEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Agrega un código de barras al artículo.");
+
+        grupo.MapPost("/{id:int}/codigos-proveedor", async (
+            ServicioDeArticulos servicio, int id, AltaCodigoProveedor datos, CancellationToken ct) =>
+        {
+            var resultado = await servicio.AgregarCodigoProveedorAsync(id, datos, ct);
+            return Results.Json(
+                resultado.Codigo,
+                statusCode: resultado.Creado ? StatusCodes.Status201Created : StatusCodes.Status200OK);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Asocia al artículo el código que un proveedor imprime en su factura (idempotente).");
 
         grupo.MapDelete("/{id:int}/codigos-barra/{idCodigoBarra:int}", async (
             ServicioDeArticulos servicio, int id, int idCodigoBarra, CancellationToken ct) =>

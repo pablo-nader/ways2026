@@ -302,6 +302,14 @@ articulos_empresas (          -- solo tiene filas cuando disponible_para_todas =
 codigos_barra (id_codigo_barra, id_articulo, codigo citext, activo)   -- [tenant-wide]
 -- UNIQUE (codigo, id_tenant) WHERE deleted_at IS NULL — N códigos por artículo,
 -- cada código pertenece a exactamente un artículo del tenant.
+
+codigos_proveedor (id_codigo_proveedor, id_articulo, id_proveedor, codigo citext)   -- [tenant-wide]
+-- Código con el que un proveedor identifica el artículo en sus facturas (el editor de compras
+-- busca por él). N códigos por (artículo, proveedor).
+-- UNIQUE (id_tenant, id_proveedor, codigo) WHERE deleted_at IS NULL — un código de un proveedor
+-- apunta a un único artículo vivo.
+-- CHECK codigo = btrim(codigo) AND codigo <> ''
+-- FKs compuestas con id_tenant a articulos y proveedores. Baja lógica (deleted_at).
 ```
 
 El artículo **no tiene precio de venta**: el precio vive en las listas. Se acabaron
@@ -1480,6 +1488,8 @@ erDiagram
     articulos }o--|| areas : ""
     articulos }o--|| alicuotas_iva : ""
     articulos ||--o{ codigos_barra : ""
+    articulos ||--o{ codigos_proveedor : ""
+    proveedores ||--o{ codigos_proveedor : ""
     articulos ||--o{ precios : ""
     listas_precio ||--o{ precios : ""
     ofertas }o--o| articulos : ""

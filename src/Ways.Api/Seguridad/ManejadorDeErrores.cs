@@ -782,6 +782,14 @@ public class ManejadorDeErrores(
             return ("codigo_barra_duplicado", "Ya existe ese código de barras en este tenant.");
         }
 
+        // ux_codigos_proveedor_proveedor_codigo: también contiene "_codigo", así que va ANTES de la
+        // rama genérica. Carrera probada en ArticulosCodigosProveedorTests (dos asociaciones
+        // simultáneas del mismo código a artículos distintos: un 201 y un 409).
+        if (nombreDeIndice.Contains("codigos_proveedor", StringComparison.Ordinal))
+        {
+            return ("codigo_proveedor_duplicado", "Ya existe ese código de proveedor para ese proveedor en este tenant.");
+        }
+
         if (nombreDeIndice.Contains("_codigo", StringComparison.Ordinal))
         {
             return ("codigo_duplicado", "Ya existe un registro con ese código.");
