@@ -25,7 +25,8 @@ public class ServicioDePreciosAlcanceTests
     /// <summary>El conversor JSON del servidor acepta también el ordinal del enum: un número que no es
     /// el de ninguno de los dos valores llega al servicio como un valor no definido, y no puede caer en
     /// silencio en ninguno de los destinos. El <c>0</c> es el caso que importa: es lo que produce un
-    /// entero sin inicializar, y mientras <c>Familia</c> valía 0 elegía el alcance más amplio.</summary>
+    /// entero sin inicializar y no es el ordinal de ningún alcance, así que se rechaza como cualquier otro
+    /// valor no definido.</summary>
     [Theory]
     [InlineData(0)]
     [InlineData(3)]

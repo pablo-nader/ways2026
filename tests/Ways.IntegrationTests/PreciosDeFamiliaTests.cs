@@ -429,8 +429,8 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// <summary>Un ordinal que no es el de ninguno de los dos valores llega al servidor (el conversor JSON
     /// acepta el ordinal además del nombre) y no se interpreta como ningún alcance ni se ignora: 400
     /// <c>alcance_invalido</c> y nada escrito, en los dos endpoints. El <c>0</c> es el caso que importa: es
-    /// lo que produce un entero sin inicializar, y mientras <c>Familia</c> valía 0 aplicaba el precio a toda
-    /// la familia.</summary>
+    /// lo que produce un entero sin inicializar y no es el ordinal de ningún alcance (<c>Familia</c> es 1 y
+    /// <c>SoloEste</c> es 2), así que no puede elegir uno por omisión.</summary>
     [Theory]
     [InlineData(0, false)]
     [InlineData(0, true)]
@@ -479,8 +479,8 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// JSON del framework y no produce <c>alcance_invalido</c>. La respuesta no es propia del alcance: el
     /// control manda el mismo texto en el <c>modo</c> del aprovisionamiento —otro enum de la API— y recibe
     /// la misma. En el entorno de las pruebas el fallo del binding es una excepción que
-    /// <c>ManejadorDeErrores</c> no traduce, y sale como 500 <c>error_interno</c>. Se afirma lo que hoy
-    /// pasa, sin corregirlo acá: alcanza a todos los enums de la API y es anterior a las familias.</summary>
+    /// <c>ManejadorDeErrores</c> no traduce, y sale como 500 <c>error_interno</c>. Es una prueba de
+    /// caracterización: afirma esa respuesta del framework tal cual es, igual para ambos enums.</summary>
     [Fact]
     public async Task UnTextoQueNoEsUnAlcanceLoRechazaElBindingJsonComoCualquierOtroEnumYNoEscribeNada()
     {
@@ -685,11 +685,13 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     // =================================================================================================
 
     /// <summary>El pendiente está en el miembro de id MÁS ALTO: es el último que se valida, así que el
-    /// rechazo llega después de que los dos anteriores pasaron su validación. Que ninguno quede
-    /// cambiado prueba que se valida a TODOS los miembros antes de que ninguno escriba; que lo ya
-    /// escrito se revierte ante un fallo posterior lo prueba
-    /// <see cref="UnFalloAlGuardarRevierteTambienLaSalidaDeLaFamiliaDeSoloEste"/>, y que el rechazo
-    /// no deja nada agregado en el contexto,
+    /// rechazo llega después de que los dos anteriores pasaron su validación. Se afirma el estado final de
+    /// todo o nada: ningún miembro cambia y no queda ninguna auditoría. Ese estado también lo dejaría una
+    /// escritura anterior que luego se revirtiera, así que el orden lo prueba
+    /// <see cref="UnRechazoDelUltimoMiembroLlegaSinIntentarEscribirLaFilaDelPrimero"/> (el rechazo llega
+    /// antes de intentar escribir la fila de ningún miembro); que lo ya escrito se revierte ante un fallo
+    /// posterior, <see cref="UnFalloAlGuardarRevierteTambienLaSalidaDeLaFamiliaDeSoloEste"/>, y que el
+    /// rechazo no deja nada agregado en el contexto,
     /// <see cref="UnRechazoDeFamiliaNoDejaFilasAgregadasYLaSiguienteEscrituraDelMismoContextoSeAplicaLimpia"/>.</summary>
     [Fact]
     public async Task UnPrecioPendienteEnUnMiembroSinConfirmarAbortaTodoYNingunMiembroCambia()
@@ -733,8 +735,10 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal([a1, a2, a3], (await AuditoriaDePreciosAsync(c.IdTenant)).Select(a => a.IdEntidad).Order());
     }
 
-    /// <summary>Si el cambio de precio de "solo este" se rechaza, el artículo SIGUE en su familia: la
-    /// validación corta antes de que la salida se escriba.</summary>
+    /// <summary>Si el cambio de precio de "solo este" se rechaza, el artículo SIGUE en su familia y no queda
+    /// ningún precio ni auditoría. Se afirma el estado final, que una salida escrita y luego revertida
+    /// también dejaría: que la validación corte antes de escribir la salida lo fija, sobre el texto fuente,
+    /// <c>ServicioDePreciosPosicionDeLocksTests</c>.</summary>
     [Fact]
     public async Task UnRechazoDeSoloEsteDejaAlArticuloEnSuFamilia()
     {
@@ -897,7 +901,9 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// <summary>Lo mismo cuando el que falla es el guardado: la transacción se revierte, pero las entidades
     /// que la operación agregó seguirían rastreadas por el contexto y la escritura siguiente las
     /// guardaría junto con las suyas. El interceptor rompe el primer <c>INSERT INTO precios</c> con un
-    /// <c>40001</c>; el servicio no reintenta, así que el error llega tal cual.</summary>
+    /// <c>40001</c>; el servicio no reintenta, así que el error llega tal cual. Se sueltan solo las
+    /// entidades que la operación agregó: una que el llamador ya tenía rastreada antes de llamar sigue
+    /// rastreada y sin cambios, a diferencia de lo que haría <c>ChangeTracker.Clear()</c>.</summary>
     [Fact]
     public async Task UnFalloAlGuardarSueltaLasEntidadesAgregadasYLaSiguienteEscrituraNoDuplicaNada()
     {
@@ -905,6 +911,7 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var familia = await SembrarFamiliaAsync(c, "Fallo al guardar");
         var a1 = await SembrarArticuloAsync(c, "a1", familia);
         var a2 = await SembrarArticuloAsync(c, "a2", familia);
+        var suelto = await SembrarArticuloAsync(c, "suelto");
         await SembrarPrecioVigenteAsync(c, a1, c.IdListaGeneral, 100m);
         await SembrarPrecioVigenteAsync(c, a2, c.IdListaGeneral, 110m);
 
@@ -912,12 +919,16 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var (db, servicio) = CrearServicio(c, new RelojFijo(DateTimeOffset.UtcNow), interceptor);
         await using var _ = db;
 
+        var rastreadaDeAntes = await db.Articulos.SingleAsync(a => a.Id == suelto);
+        Assert.Equal(EntityState.Unchanged, db.Entry(rastreadaDeAntes).State);
+
         var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.AbrirNuevoPrecioAsync(
             a1, c.IdListaGeneral, 150m, null, false, ModoDeAlcanceDeFamilia.Familia));
 
         Assert.Equal("40001", ErrorDePostgres(error).SqlState);
         Assert.Equal(1, interceptor.Intentos);
         Assert.DoesNotContain(db.ChangeTracker.Entries(), e => e.Entity is Precio or Ways.Domain.Auditoria.Auditoria);
+        Assert.Equal(EntityState.Unchanged, db.Entry(rastreadaDeAntes).State);
 
         foreach (var (id, monto) in new[] { (a1, 100m), (a2, 110m) })
         {
@@ -1372,13 +1383,13 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     /// <summary>Orden de los pares: ascendente por la CLAVE del lock, no por <c>id_articulo</c>. La familia
-    /// son dos miembros de ids consecutivos cuyas claves de par en la lista están al revés que sus ids:
-    /// se eligen donde <c>id_articulo * 397</c> desborda un entero con signo y la clave del segundo queda
-    /// negativa (el identity no llega a esos ids, y se siembran explícitos). Un tercero sostiene el lock
-    /// del par de MAYOR clave —el de id más bajo—; la escritura toma primero el de menor clave —el de id
-    /// más alto— y queda esperando el otro CON el primero concedido. Por id esperaría el de mayor clave
-    /// sin tener ninguno, y dos escrituras de la misma familia sobre dos listas cuyas claves colisionan
-    /// podrían cruzarse.</summary>
+    /// son dos miembros de ids consecutivos: el primer par, a partir de <c>5_400_000</c>, cuya clave de par
+    /// en la lista es menor para el id más alto que para el más bajo. Se siembran con id explícito, en una
+    /// zona que el identity no alcanza. Un tercero sostiene el lock del par de MAYOR clave —el de id más
+    /// bajo—; la escritura toma primero el de menor clave —el de id más alto— y queda esperando el otro CON
+    /// el primero concedido. Por id esperaría el de mayor clave sin tener ninguno; el orden por clave es el
+    /// que evita que dos escrituras de familias distintas, cuyas claves de pares de listas distintas
+    /// coinciden, se esperen en ciclo. Esta prueba observa el orden de UNA escritura.</summary>
     [Fact]
     public async Task LosLocksDeParesSeTomanEnOrdenAscendenteDeClaveYNoDeArticulo()
     {
@@ -1507,9 +1518,11 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Empty(await AuditoriaDePreciosAsync(c.IdTenant));
     }
 
-    /// <summary>Lo mismo para "solo este": el <c>UPDATE</c> que saca al artículo está guardado por la
-    /// familia que se leyó bajo el lock. Si otro escritor ya la había cambiado, afecta cero filas y la
-    /// solicitud se rechaza con 409 <c>familia_cambio</c> en vez de pisar la pertenencia nueva.</summary>
+    /// <summary>Lo mismo para "solo este": la fila del artículo se bloquea con la familia que se leyó bajo el
+    /// lock de membresía como condición del <c>WHERE</c>. Otro escritor cambia esa familia sin respetar el
+    /// lock y la escritura espera su fila; al retomar, PostgreSQL reevalúa el <c>WHERE</c> sobre la versión
+    /// nueva y no devuelve la fila: 409 <c>familia_cambio</c> sin llegar a escribir la salida, que solo corre
+    /// sobre una fila ya bloqueada y verificada, y la pertenencia nueva queda como estaba.</summary>
     [Fact]
     public async Task SiLaFamiliaCambioSinElLockElSoloEsteSeRechazaYNoPisaLaPertenenciaNueva()
     {

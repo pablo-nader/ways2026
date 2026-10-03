@@ -6,7 +6,7 @@ namespace Ways.Application.Tests.Precios;
 /// El orden en que <c>ServicioDePrecios.AbrirNuevoPrecioAsync</c> toma los locks advisory de los pares
 /// (artículo, lista) de una familia. La identidad de un lock es su CLAVE, y la clave de dos pares de
 /// listas distintas puede coincidir: si cada escritura tomara los pares por <c>id_articulo</c>, dos
-/// escrituras de la misma familia sobre dos listas podrían tomar las mismas dos claves en orden
+/// escrituras de familias distintas, cada una en su lista, podrían tomar las mismas dos claves en orden
 /// opuesto y esperarse en ciclo. Sin base de datos: <c>OrdenDeLocksDePares</c> y
 /// <c>ClaveDeLockDePar</c> son funciones puras.
 /// </summary>
@@ -14,9 +14,10 @@ public class ServicioDePreciosOrdenDeLocksDeParesTests
 {
     private const int Tenant = 7;
 
-    /// <summary>Cada fila son dos escrituras: la lista y los artículos (ascendentes por id) de cada una,
-    /// elegidos para que las dos claves de una sean las dos claves de la otra EN ORDEN CRUZADO respecto
-    /// del id. Las dos primeras son la misma familia en dos listas; la tercera, dos familias distintas.</summary>
+    /// <summary>Cada fila es un caso de colisión de claves: dos listas, con los artículos (ascendentes por
+    /// id) de cada una elegidos para que las dos claves de una sean las dos claves de la otra EN ORDEN
+    /// CRUZADO respecto del id. Las dos primeras repiten los mismos ids en las dos listas; la tercera usa
+    /// ids distintos en cada una.</summary>
     public static TheoryData<int, int[], int, int[]> EscriturasConClavesCruzadas() => new()
     {
         { 1, [1, 2], 662, [1, 2] },

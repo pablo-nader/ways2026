@@ -820,20 +820,22 @@ public class ServicioDePrecios(
     /// artículo tiene la suya) no compromete la corrección de una escritura sola: dos pares no
     /// relacionados se esperan entre sí sin necesidad, y el estado real siempre se lee de la fila
     /// (<see cref="BuscarFilaAbiertaAsync"/>) DESPUÉS de tomar el lock, nunca del hash en sí. Lo que
-    /// una colisión SÍ puede hacer es cruzar el orden de dos escrituras que toman VARIOS pares (una
-    /// familia, en dos listas): por eso los pares se toman en orden ascendente de esta clave
-    /// (<see cref="OrdenDeLocksDePares"/>) y no de <c>id_articulo</c>. Pública para que las pruebas
+    /// una colisión SÍ puede hacer es cruzar el orden de dos escrituras que toman VARIOS pares (dos
+    /// familias distintas, cada una en su lista): por eso los pares se toman en orden ascendente de esta
+    /// clave (<see cref="OrdenDeLocksDePares"/>) y no de <c>id_articulo</c>. Pública para que las pruebas
     /// puedan sostener, o buscar en <c>pg_locks</c>, el mismo lock del par desde otra conexión.</summary>
     public static (int Clave1, int Clave2) ClaveDeLockDePar(int idTenant, int idArticulo, int idListaPrecio) =>
         (idTenant, unchecked((idArticulo * 397) ^ idListaPrecio));
 
     /// <summary>Los artículos en el orden en que se toman sus locks de par: ascendente por la CLAVE del
     /// lock (<see cref="ClaveDeLockDePar"/>), no por <c>id_articulo</c>. La identidad de un lock
-    /// advisory es su clave, y la de dos pares de listas distintas puede coincidir: dos escrituras de la
-    /// misma familia sobre dos listas pueden tener las mismas dos claves en orden cruzado respecto de
-    /// <c>id_articulo</c>, y cada una esperaría la que la otra ya tiene. Con todas las escrituras
-    /// subiendo por clave, el orden de adquisición es el mismo para cualquier par de ellas. Todos los
-    /// objetivos de una escritura comparten tenant y lista.</summary>
+    /// advisory es su clave, y la de dos pares de listas distintas puede coincidir: dos escrituras de
+    /// familias distintas, cada una en su lista, pueden tener las mismas dos claves en orden cruzado
+    /// respecto de <c>id_articulo</c>, y cada una esperaría la que la otra ya tiene. Dos escrituras de la
+    /// misma familia no llegan a competir por los pares: se esperan antes, en el lock de membresía o en
+    /// las filas de los miembros. Con todas las escrituras subiendo por clave, el orden de adquisición es
+    /// el mismo para cualquier par de ellas. Todos los objetivos de una escritura comparten tenant y
+    /// lista.</summary>
     public static IReadOnlyList<int> OrdenDeLocksDePares(int idTenant, int idListaPrecio, IEnumerable<int> idsArticulo) =>
         [.. idsArticulo.OrderBy(idArticulo => ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio))];
 

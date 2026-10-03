@@ -381,13 +381,15 @@ orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` 
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
 como primera sentencia; (2) las **filas de `articulos`** de los miembros en orden ascendente de id
 (`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE`, nunca `FOR UPDATE` sobre varias filas: choca con
-el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del propio artículo; (3) los **locks de par artículo-lista** en orden
-ascendente de su **clave de lock** (`ServicioDePrecios.ClaveDeLockDePar`), no de `id_articulo`: la clave
-de pares de listas distintas puede coincidir, y por id dos escrituras de la misma familia sobre dos
-listas podrían tomar las mismas dos claves en orden opuesto y esperarse en ciclo. La pertenencia que se
-lee después de (1) es estable hasta el commit; un artículo sin familia no toma (2). El escritor de
-precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo implementa; todo escritor de campos compartidos
-tiene que respetarlo.
+el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del propio artículo; (3) los
+**locks de par artículo-lista** en orden ascendente de su **clave de lock**
+(`ServicioDePrecios.ClaveDeLockDePar`), no de `id_articulo`: la clave de pares de listas distintas
+puede coincidir, y por id dos escrituras de familias distintas, cada una en su lista, podrían tomar las
+mismas dos claves en orden opuesto y esperarse en ciclo. Dos escrituras de la misma familia no llegan a
+competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
+estable hasta el commit; un artículo sin familia no toma (2). El escritor de precios
+(`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo implementa; todo escritor de campos compartidos tiene que
+respetarlo.
 
 ### Listas de precio, con historia
 
