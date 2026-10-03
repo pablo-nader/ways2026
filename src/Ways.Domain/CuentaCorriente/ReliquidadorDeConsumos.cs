@@ -1,3 +1,5 @@
+using Ways.Domain.Ventas;
+
 namespace Ways.Domain.CuentaCorriente;
 
 /// <summary>
@@ -8,10 +10,13 @@ namespace Ways.Domain.CuentaCorriente;
 /// oferta" es <c>Descuento &gt; 0</c>, nunca <c>id_oferta IS NOT NULL</c>: por eso este record ni
 /// siquiera trae <c>id_oferta</c> — la fórmula revierte cualquier descuento por construcción
 /// (<see cref="ReliquidadorDeConsumos.Calcular"/> recalcula el total del día desde cero, sin
-/// descuento, sin importar de dónde vino el descuento histórico).
+/// descuento, sin importar de dónde vino el descuento histórico). El único ajuste que sobrevive
+/// es el manual: <see cref="AjusteManualPorcentaje"/> es una decisión del cajero sobre esta
+/// línea, no una promoción, y se reaplica sobre el neto nuevo.
 /// </summary>
 public readonly record struct LineaAReliquidar(
-    int? IdArticulo, decimal Cantidad, decimal PrecioUnitario, decimal Descuento, decimal TotalHistorico);
+    int? IdArticulo, decimal Cantidad, decimal PrecioUnitario, decimal Descuento, decimal TotalHistorico,
+    decimal? AjusteManualPorcentaje = null);
 
 /// <summary>Un <c>Consumo</c> elegible con sus líneas ya resueltas (design: Interfaces/Contracts).
 /// <see cref="ImporteFinanciado"/> es <c>movimientos_cuenta_corriente.importe</c> del propio
@@ -55,6 +60,12 @@ public sealed record ResultadoDeReliquidacion(
 /// prohíbe). <c>delta(i) = totalDelDia(i) − totalHistorico(i)</c> decompone en el re-pricing MÁS
 /// el descuento anulado sin que este código tenga que separar los dos términos — la resta sola ya
 /// los suma.</para>
+///
+/// <para>Si la línea trae <see cref="LineaAReliquidar.AjusteManualPorcentaje"/>, el total del día
+/// es <c>neto + AjusteManualSobre(neto, pct)</c> con ese neto sin descuento: el porcentaje manual se
+/// conserva, así que el delta no se infla por perder el descuento manual ni acredita por perder el
+/// recargo. El redondeo es el del checkout (<see cref="CalculadorDeTotales.AjusteManualSobre"/>,
+/// la única fórmula). Sin porcentaje el total del día es el neto, idéntico a antes.</para>
 /// </summary>
 public static class ReliquidadorDeConsumos
 {
@@ -111,7 +122,8 @@ public static class ReliquidadorDeConsumos
                 continue;
             }
 
-            var totalDelDia = Math.Round(linea.Cantidad * precioActual.Value, 2, MidpointRounding.AwayFromZero);
+            var netoNuevo = Math.Round(linea.Cantidad * precioActual.Value, 2, MidpointRounding.AwayFromZero);
+            var totalDelDia = netoNuevo + CalculadorDeTotales.AjusteManualSobre(netoNuevo, linea.AjusteManualPorcentaje);
             var deltaLinea = totalDelDia - linea.TotalHistorico;
             deltaBruto += deltaLinea;
 

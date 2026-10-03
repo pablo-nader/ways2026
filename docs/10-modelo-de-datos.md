@@ -1372,6 +1372,16 @@ que hoy, pero auditable.
 > colapsa exacto a la del legacy; el dueño del negocio confirmó la semántica de financiamiento
 > parcial como aceptable para esta etapa.
 >
+> **Ajuste manual de precio (sin cambio de esquema):** la reliquidación conserva el
+> `ajuste_manual_porcentaje` de cada item. El total del día de una línea es `neto nuevo +
+> ajuste` con `ajuste = round(neto nuevo × porcentaje / 100)`, la misma fórmula y el mismo
+> redondeo que el checkout (`CalculadorDeTotales.AjusteManualSobre`), en vez del neto solo: un
+> −10% manual sobre una línea de 100 que hoy cuesta 120 se re-precifica a 108 (delta 18, no 30)
+> y un +20% con el precio sin cambios da delta 0 (no un crédito de 20). El descuento de oferta
+> sigue anulándose como antes; solo el porcentaje manual sobrevive, y las líneas sin porcentaje
+> dan exactamente el mismo resultado de siempre. El movimiento de diferencia se compara contra
+> `items.total` (que ya incluye el ajuste original).
+>
 > **Irreversibilidad:** ningún endpoint revierte ni edita un movimiento `actualizacion_precios`
 > — la única corrección posible es un `Ajuste` manual nuevo, distinto y auditable por su propio
 > `detalle`. La reliquidación tampoco tiene turno de caja: no mueve plata física, así que no

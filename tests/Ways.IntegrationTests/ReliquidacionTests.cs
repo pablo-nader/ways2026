@@ -173,6 +173,25 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
     }
 
+    /// <summary>Un Consumo real de una unidad con ajuste manual porcentual (el cajero tipea solo el
+    /// porcentaje; el servidor calcula el importe): el pago por cuenta corriente es el total ya
+    /// ajustado, el mismo que el checkout persiste en el item.</summary>
+    private static async Task<ComprobanteEmitido> RealizarConsumoConAjusteManualAsync(
+        Contexto ctx, int idCliente, int idArticulo, decimal precio, decimal porcentaje)
+    {
+        var total = precio + CalculadorDeTotales.AjusteManualSobre(precio, porcentaje);
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: porcentaje)],
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, total, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+    }
+
     /// <summary>Seed crudo (sin checkout) para pruebas de volumen/presupuesto — mismo criterio que
     /// <c>CajaCierreAtomicidadYConcurrenciaTests.SembrarPagoAsync</c>: no hace falta el camino de
     /// escritura completo cuando lo que se mide es la forma de la consulta, no el negocio.</summary>
@@ -553,6 +572,70 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             .Where(m => m.IdComprobanteVenta == consumoNuevo.Id && m.Tipo == TipoMovimientoCc.Consumo)
             .Select(m => m.IdMovimientoActualizacion).SingleAsync();
         Assert.NotNull(marcadorNuevo);
+    }
+
+    // ---- ajuste manual: el porcentaje del cajero sobrevive a la reliquidación -----------------
+
+    /// <summary>Vende 1 unidad de un artículo de 100 con el ajuste manual dado, sube la lista al
+    /// precio indicado y corre la reliquidación; devuelve el resultado y el movimiento escrito.</summary>
+    private async Task<(ResultadoDeReliquidacion Resultado, decimal? ImporteDelMovimiento)> ReliquidarVentaConAjusteManualAsync(
+        string nombre, decimal porcentaje, decimal precioNuevo)
+    {
+        var ctx = await PrepararAsync(nombre);
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ajuste", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente ajuste");
+        await RealizarConsumoConAjusteManualAsync(ctx, idCliente, idArticulo, 100m, porcentaje);
+        if (precioNuevo != 100m)
+        {
+            await SubirPrecioAsync(ctx, idArticulo, precioNuevo);
+        }
+
+        var preview = await LeerResultadoAsync(await PreviewAsync(ctx, idCliente));
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+        Assert.Equal(preview.Delta, resultado.Delta);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var importe = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios)
+            .Select(m => (decimal?)m.Importe).SingleOrDefaultAsync();
+        return (resultado, importe);
+    }
+
+    [Fact]
+    public async Task UnDescuentoManualDelDiezPorCientoSeConservaAlReliquidarConElPrecioNuevo()
+    {
+        // Vendida a 100 con -10% (item total 90). Lista ahora en 120: 120 - 12 = 108 ⇒ delta 18.
+        // Sin conservar el porcentaje el delta sería 30 (120 - 90).
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnDescuentoManualDelDiezPorCientoSeConservaAlReliquidarConElPrecioNuevo), -10m, 120m);
+
+        Assert.Equal(18m, resultado.Delta);
+        Assert.Equal(18m, importe);
+    }
+
+    [Fact]
+    public async Task UnRecargoManualDelVeintePorCientoSeConservaAlReliquidarConElPrecioNuevo()
+    {
+        // Vendida a 100 con +20% (item total 120). Lista ahora en 150: 150 + 30 = 180 ⇒ delta 60.
+        // Sin conservar el porcentaje el delta sería 30 (150 - 120).
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnRecargoManualDelVeintePorCientoSeConservaAlReliquidarConElPrecioNuevo), 20m, 150m);
+
+        Assert.Equal(60m, resultado.Delta);
+        Assert.Equal(60m, importe);
+    }
+
+    [Fact]
+    public async Task UnRecargoManualConElPrecioSinCambiosNoGeneraNingunCreditoAlReliquidar()
+    {
+        // Vendida a 100 con +20% (item total 120) y la lista sigue en 100: el recargo se conserva,
+        // delta 0 ⇒ no-op limpio. Sin conservarlo la corrida escribiría un crédito de -20.
+        var (resultado, importe) = await ReliquidarVentaConAjusteManualAsync(
+            nameof(UnRecargoManualConElPrecioSinCambiosNoGeneraNingunCreditoAlReliquidar), 20m, 100m);
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Empty(resultado.IdsMovimientosCubiertos);
+        Assert.Null(importe);
     }
 
     // ---- task 3.10: un único movimiento por N comprobantes/líneas; sin reversión --------------
