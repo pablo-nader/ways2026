@@ -298,7 +298,8 @@ public class ServicioDeGastos(
 
     /// <summary>Lock-only, mismo patrón que <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c>
     /// (<c>SELECT 1 ... FOR UPDATE</c>): nunca materializa una entidad — la ÚNICA lectura EF de la
-    /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock).</summary>
+    /// fila nace DESPUÉS, en <see cref="EjecutarVincularCompraAsync"/> (single-read-under-lock). Filtra
+    /// <c>deleted_at IS NULL</c> igual que el filtro global de EF: un gasto dado de baja es 404.</summary>
     private async Task TomarLockDeGastoAsync(int idGasto, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -306,7 +307,7 @@ public class ServicioDeGastos(
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
-        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 FOR UPDATE";
+        comando.CommandText = "SELECT 1 FROM gastos WHERE id_gasto = $1 AND id_tenant = $2 AND deleted_at IS NULL FOR UPDATE";
         ParametrosDeComando.Agregar(comando, idGasto);
         ParametrosDeComando.Agregar(comando, idTenant);
 
@@ -340,8 +341,6 @@ public class ServicioDeGastos(
             throw GastoTurnoCerrado();
         }
 
-        await ExigirReferenciasDeLaEdicionAsync(solicitud, ct);
-
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var gasto = await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
@@ -363,8 +362,6 @@ public class ServicioDeGastos(
         ExigirConceptoValido(solicitud.Concepto);
 
         var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
-        await ExigirReferenciasDeLaEdicionAsync(solicitud, ct);
-
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
@@ -409,14 +406,20 @@ public class ServicioDeGastos(
         // ADR-8: mismo 404 para "no existe", "es de otro tenant" y "está dado de baja".
         ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
 
-    /// <summary>Mismas validaciones de referencias que el alta: medio de pago existente y que no sea
-    /// cuenta corriente, proveedor existente (404). El área sigue el criterio del alta: sin
-    /// pre-chequeo, la FK compuesta es el respaldo.</summary>
-    private async Task ExigirReferenciasDeLaEdicionAsync(SolicitudDeEdicionDeGasto solicitud, CancellationToken ct)
+    /// <summary>Mismas validaciones de referencias que el alta, pero solo para las referencias NUEVAS
+    /// (OD4: una referencia que el gasto ya tenía puede estar dada de baja y la edición sigue siendo
+    /// válida): medio de pago visible y que no sea cuenta corriente, proveedor visible (404). Se compara
+    /// contra el gasto leído bajo el lock. El área sigue el criterio del alta: sin pre-chequeo, la FK
+    /// compuesta es el respaldo.</summary>
+    private async Task ExigirReferenciasNuevasDeLaEdicionAsync(
+        Gasto gasto, SolicitudDeEdicionDeGasto solicitud, CancellationToken ct)
     {
-        await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+        if (solicitud.IdMedioPago != gasto.IdMedioPago)
+        {
+            await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+        }
 
-        if (solicitud.IdProveedor is { } idProveedor)
+        if (solicitud.IdProveedor is { } idProveedor && idProveedor != gasto.IdProveedor)
         {
             await ResolverProveedorAsync(idProveedor, ct);
         }
@@ -484,6 +487,7 @@ public class ServicioDeGastos(
 
         if (solicitud is not null)
         {
+            await ExigirReferenciasNuevasDeLaEdicionAsync(gasto, solicitud, ct);
             ExigirEdicionCoherenteConLaCompra(gasto, solicitud);
 
             if (gasto.IdComprobanteCompra is null)

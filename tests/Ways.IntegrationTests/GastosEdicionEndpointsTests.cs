@@ -349,6 +349,67 @@ public class GastosEdicionEndpointsTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(100m, await db.Gastos.Where(g => g.Id == gasto.Id).Select(g => g.Importe).SingleAsync());
     }
 
+    /// <summary>OD4: solo una referencia NUEVA debe apuntar a una fila visible. Un gasto cuyo medio de
+    /// pago o proveedor se dio de baja después sigue siendo editable mientras la edición no cambie esa
+    /// referencia; cambiarla a una fila dada de baja es 404.</summary>
+    [Fact]
+    public async Task LaEdicionConservaUnMedioDeBajaPeroNoAdmiteUnoNuevoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(LaEdicionConservaUnMedioDeBajaPeroNoAdmiteUnoNuevoDeBaja));
+        await AbrirTurnoAsync(ctx, 0m);
+        var idMedioBaja = await SembrarMedioAsync(ctx, "Medio a dar de baja");
+        var gasto = await RegistrarGastoPosAsync(ctx.Admin, ctx, 100m, idMedioBaja);
+        var idMedioOtroBaja = await SembrarMedioAsync(ctx, "Otro medio de baja");
+        await DarDeBajaMedioAsync(ctx, idMedioBaja);
+        await DarDeBajaMedioAsync(ctx, idMedioOtroBaja);
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarPosAsync(ctx.Admin, gasto.Id, Edicion(80m, idMedioBaja))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await EditarAdminAsync(ctx.Admin, gasto.Id, Edicion(70m, idMedioBaja))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(ctx.Admin, gasto.Id, Edicion(60m, idMedioOtroBaja))).StatusCode);
+
+        await using var db = Db(ctx);
+        var fila = await db.Gastos.SingleAsync(g => g.Id == gasto.Id);
+        Assert.Equal(70m, fila.Importe);
+        Assert.Equal(idMedioBaja, fila.IdMedioPago);
+    }
+
+    [Fact]
+    public async Task LaEdicionConservaUnProveedorDeBajaPeroNoAdmiteUnoNuevoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(LaEdicionConservaUnProveedorDeBajaPeroNoAdmiteUnoNuevoDeBaja));
+        await AbrirTurnoAsync(ctx, 0m);
+        var gasto = await RegistrarGastoPosAsync(
+            ctx.Admin, ctx, 100m, ctx.IdMedioEfectivo, CategoriaGasto.Proveedor, ctx.IdProveedor);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedor);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedor2);
+
+        Assert.Equal(HttpStatusCode.OK, (await EditarPosAsync(
+            ctx.Admin, gasto.Id, Edicion(80m, ctx.IdMedioEfectivo, CategoriaGasto.Proveedor, ctx.IdProveedor))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await EditarPosAsync(
+            ctx.Admin, gasto.Id, Edicion(60m, ctx.IdMedioEfectivo, CategoriaGasto.Proveedor, ctx.IdProveedor2))).StatusCode);
+
+        await using var db = Db(ctx);
+        var fila = await db.Gastos.SingleAsync(g => g.Id == gasto.Id);
+        Assert.Equal(80m, fila.Importe);
+        Assert.Equal(ctx.IdProveedor, fila.IdProveedor);
+    }
+
+    private async Task DarDeBajaMedioAsync(Contexto ctx, int idMedio)
+    {
+        await using var db = Db(ctx);
+        var medio = await db.MediosPago.SingleAsync(m => m.Id == idMedio);
+        medio.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DarDeBajaProveedorAsync(Contexto ctx, int idProveedor)
+    {
+        await using var db = Db(ctx);
+        var proveedor = await db.Proveedores.SingleAsync(p => p.Id == idProveedor);
+        proveedor.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     private async Task<int> MedioDeCuentaCorrienteAsync(Contexto ctx)
     {
         await using var db = Db(ctx);
