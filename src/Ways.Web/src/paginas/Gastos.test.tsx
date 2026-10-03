@@ -45,6 +45,14 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+// El componente toma la fecha local: comparar contra UTC falla cerca de la medianoche.
+function fechaLocalISO(fecha: Date): string {
+  const anio = fecha.getFullYear()
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
+  const dia = String(fecha.getDate()).padStart(2, '0')
+  return `${anio}-${mes}-${dia}`
+}
+
 function empresaFixture(sobrescribir: Partial<EmpresaListado> = {}): EmpresaListado {
   return {
     id: 1,
@@ -230,7 +238,7 @@ describe('Gastos (administración) — fecha', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     const campoFecha = await screen.findByLabelText('Fecha')
 
-    const hoy = new Date().toISOString().slice(0, 10)
+    const hoy = fechaLocalISO(new Date())
     expect(campoFecha).toHaveAttribute('max', hoy)
   })
 
@@ -241,7 +249,7 @@ describe('Gastos (administración) — fecha', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
 
-    const manianaISO = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const manianaISO = fechaLocalISO(new Date(Date.now() + 24 * 60 * 60 * 1000))
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: manianaISO } })
     await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
