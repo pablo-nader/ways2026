@@ -46,7 +46,7 @@ import {
 } from './outboxOffline'
 import { INTERVALO_POR_DEFECTO_MINUTOS, minutosAMilisegundos } from './intervaloDeSincronizacion'
 import { conTiempoLimite, ErrorDeTiempoAgotado } from './tiempoLimite'
-import { mensajeDeRechazoDeAjusteManual } from '../api/ajusteManual'
+import { mensajeDeRechazoDeAjusteManualAlDrenar } from '../api/ajusteManual'
 import { clienteDePos } from '../api/pos'
 import { clienteDeVentas } from '../api/ventas'
 import { clienteDeClientes } from '../api/clientes'
@@ -353,7 +353,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     // con su error real y se saca del outbox para que el drenado pueda seguir con el resto de la
     // cola, en vez de quedar rehén de un solo ítem trabado para siempre (judgment-day ronda 1,
     // CRITICAL).
-    const rechazoDeAjuste = e instanceof ErrorApi ? mensajeDeRechazoDeAjusteManual(e.codigo) : null
+    const rechazoDeAjuste = e instanceof ErrorApi ? mensajeDeRechazoDeAjusteManualAlDrenar(e.codigo) : null
     const mensaje =
       e instanceof ErrorApi && e.codigo === 'limite_credito_excedido'
         ? `La venta ${primera.numeroPreasignado} no se pudo sincronizar: el cliente no tiene crédito disponible para esta venta. ${INDICACION_DE_LIMITE_EXCEDIDO_AL_DRENAR}`

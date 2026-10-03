@@ -2131,7 +2131,7 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     )
   })
 
-  it('al drenar, un rechazo por ajuste manual inválido queda archivado con el mensaje del ajuste, no con el texto crudo del servidor', async () => {
+  it('al drenar, un rechazo por ajuste manual inválido queda archivado con el mensaje propio de la cola: venta ya cobrada, sin consejo sobre el carrito', async () => {
     const { result } = await montar()
     emitirMock.mockRejectedValue(new ErrorApi(400, 'ajuste_manual_invalido', 'detalle técnico del servidor'))
 
@@ -2141,8 +2141,10 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     })
 
     await waitFor(() => expect(result.current.ventasConError).toHaveLength(1))
-    const mensaje = result.current.ventasConError[0].mensaje
-    expect(mensaje).toMatch(/^La venta 150 no se pudo sincronizar: El servidor rechazó un ajuste manual/)
-    expect(mensaje).not.toContain('detalle técnico del servidor')
+    // La venta ya se cobró y su carrito ya no existe: el mensaje solo informa, sin mandar a
+    // "revisar los ajustes del carrito" (eso es del rechazo al cobrar, `mensajeDeRechazoDeAjusteManual`).
+    expect(result.current.ventasConError[0].mensaje).toBe(
+      'La venta 150 no se pudo sincronizar: el servidor rechazó el ajuste manual de alguna línea de esta venta, que ya estaba cobrada: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales.',
+    )
   })
 })

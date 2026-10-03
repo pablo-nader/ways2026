@@ -113,13 +113,22 @@ export function validarPorcentajeDeAjuste(texto: string, tipo: TipoDeAjusteManua
   return { ok: true, porcentaje: tipo === 'descuento' ? -magnitud : magnitud }
 }
 
-const MENSAJES_DE_RECHAZO_DE_AJUSTE: Record<string, string> = {
-  ajuste_manual_invalido:
-    'El servidor rechazó un ajuste manual: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales. Revisá los ajustes del carrito.',
+const CODIGO_DE_AJUSTE_INVALIDO = 'ajuste_manual_invalido'
+
+const REGLA_DEL_PORCENTAJE_DE_AJUSTE = 'el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales'
+
+/** Mensaje para el cajero cuando el servidor rechaza al COBRAR una venta por su ajuste manual: el
+ * carrito sigue en pantalla, así que le indica dónde corregirlo. `null` si el código no es de este
+ * tema (el llamador sigue con su mensaje habitual). */
+export function mensajeDeRechazoDeAjusteManual(codigo: string): string | null {
+  if (codigo !== CODIGO_DE_AJUSTE_INVALIDO) return null
+  return `El servidor rechazó un ajuste manual: ${REGLA_DEL_PORCENTAJE_DE_AJUSTE}. Revisá los ajustes del carrito.`
 }
 
-/** Mensaje para el cajero cuando el servidor rechaza una venta por su ajuste manual; `null` si el
- * código no es de este tema (el llamador sigue con su mensaje habitual). */
-export function mensajeDeRechazoDeAjusteManual(codigo: string): string | null {
-  return MENSAJES_DE_RECHAZO_DE_AJUSTE[codigo] ?? null
+/** Mensaje de la venta archivada cuando el servidor rechaza al DRENAR la cola una venta offline por
+ * su ajuste manual: la venta ya se cobró y su carrito ya no existe, así que no hay nada que
+ * revisar en pantalla y el mensaje solo informa. `null` si el código no es de este tema. */
+export function mensajeDeRechazoDeAjusteManualAlDrenar(codigo: string): string | null {
+  if (codigo !== CODIGO_DE_AJUSTE_INVALIDO) return null
+  return `el servidor rechazó el ajuste manual de alguna línea de esta venta, que ya estaba cobrada: ${REGLA_DEL_PORCENTAJE_DE_AJUSTE}.`
 }

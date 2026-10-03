@@ -4,6 +4,7 @@ import {
   calcularTotalesDeLinea,
   formatearPorcentajeDeAjuste,
   mensajeDeRechazoDeAjusteManual,
+  mensajeDeRechazoDeAjusteManualAlDrenar,
   rotuloDeAjusteManual,
   tipoDeAjuste,
   totalesDeAjusteManual,
@@ -251,12 +252,31 @@ describe('validarPorcentajeDeAjuste', () => {
 })
 
 describe('mensajeDeRechazoDeAjusteManual', () => {
-  it('traduce el código 400 ajuste_manual_invalido a un mensaje para el cajero', () => {
-    expect(mensajeDeRechazoDeAjusteManual('ajuste_manual_invalido')).toMatch(/ajuste manual/)
+  it('traduce el código 400 ajuste_manual_invalido a un mensaje para el cajero, que lo manda a revisar el carrito', () => {
+    expect(mensajeDeRechazoDeAjusteManual('ajuste_manual_invalido')).toBe(
+      'El servidor rechazó un ajuste manual: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales. Revisá los ajustes del carrito.',
+    )
   })
 
   it('un código ajeno devuelve null para que el llamador siga con su mensaje habitual', () => {
     expect(mensajeDeRechazoDeAjusteManual('turno_no_abierto')).toBeNull()
     expect(mensajeDeRechazoDeAjusteManual('')).toBeNull()
+    expect(mensajeDeRechazoDeAjusteManual('constructor')).toBeNull()
+  })
+})
+
+describe('mensajeDeRechazoDeAjusteManualAlDrenar', () => {
+  it('informa de una venta ya cobrada y no manda a revisar un carrito que ya no existe', () => {
+    const mensaje = mensajeDeRechazoDeAjusteManualAlDrenar('ajuste_manual_invalido')
+    expect(mensaje).toBe(
+      'el servidor rechazó el ajuste manual de alguna línea de esta venta, que ya estaba cobrada: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales.',
+    )
+    expect(mensaje).not.toMatch(/carrito|Revisá/)
+  })
+
+  it('un código ajeno devuelve null para que el llamador siga con su mensaje habitual', () => {
+    expect(mensajeDeRechazoDeAjusteManualAlDrenar('limite_credito_excedido')).toBeNull()
+    expect(mensajeDeRechazoDeAjusteManualAlDrenar('')).toBeNull()
+    expect(mensajeDeRechazoDeAjusteManualAlDrenar('constructor')).toBeNull()
   })
 })
