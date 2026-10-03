@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -692,8 +692,31 @@ describe('CompraEditor — role gating', () => {
     expect(screen.queryByRole('button', { name: 'Guardar borrador' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Confirmar compra' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
-    expect(screen.getByLabelText('Costo unitario')).toBeDisabled()
+    expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
   })
+
+  it.each(['Borrador', 'Confirmada'] as const)(
+    'un Vendedor con una compra %s sin costos por línea ve — y conserva los totales del encabezado',
+    async (estado) => {
+      usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+      const sinCostos = compraFixture({
+        estado,
+        items: [itemFixture({ costoUnitario: null, descuento: null, total: null, precioSugerido: null })],
+      })
+      mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(sinCostos) : undefined))
+
+      renderEditorProtegido()
+      await screen.findByDisplayValue('0003-00012345')
+
+      const fila = screen.getByRole('row', { name: /Fideos 500g/ })
+      // lote, vencimiento, costo unitario, descuento, total y precio sugerido.
+      expect(within(fila).getAllByText('—')).toHaveLength(6)
+      expect(fila.textContent).not.toMatch(/\$|NaN|0,00/)
+      expect(screen.getByText('Total', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.149,50')
+      expect(screen.getByText('Subtotal', { selector: 'div' }).nextElementSibling).toHaveTextContent('$ 1.000,00')
+      expect(screen.queryByText(/incompleta/)).not.toBeInTheDocument()
+    },
+  )
 
   it('un rol fuera de la lista (Root) es redirigido a "/" antes de llegar a la pantalla', async () => {
     usuarioActual = usuarioFixture({ id: 99, usuario: 'root', mail: 'root@ways.test', rolId: ROL.Root, rol: 'Root', idTenant: null })

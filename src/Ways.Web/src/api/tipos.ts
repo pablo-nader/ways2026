@@ -1639,11 +1639,13 @@ export type ItemDeCompra = {
   cantidad: number
   bultos: number | null
   unidadesPorBulto: number | null
-  costoUnitario: number
-  descuento: number
+  /** `costoUnitario`/`descuento`/`total`/`precioSugerido` son `null` para el rol vendedor: no ve
+   * el costo de los artículos (los totales del encabezado sí llegan). */
+  costoUnitario: number | null
+  descuento: number | null
   idAlicuotaIva: number
   porcentajeIva: number
-  total: number
+  total: number | null
   actualizaCosto: boolean
   precioSugerido: number | null
   /** `codigoLote`/`fechaVencimiento`: mismo input crudo de `LineaDeCompraSolicitada`, ya

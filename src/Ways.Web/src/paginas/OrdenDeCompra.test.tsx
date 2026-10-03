@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -183,6 +183,29 @@ describe('OrdenDeCompra — detalle (lectura)', () => {
     const filas = screen.getAllByRole('row')
     const filaArticulo11 = filas.find((f) => f.textContent?.includes('Artículo #11'))!
     expect(filaArticulo11.textContent).toContain('—')
+  })
+
+  it('un detalle sin dinero (Vendedor) renderiza — en cada monto y conserva las cantidades', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    const sinDinero = detalleFixture({
+      items: [{ orden: 1, idArticulo: 10, descripcion: 'Yerba mate 1kg', cantidadPedida: 7, costoUnitarioEstimado: null }],
+      cobertura: [{ idArticulo: 10, pedida: 7, recibida: 5, pendiente: 2, costoEstimado: null, costoReal: null, desvio: null }],
+      totalEstimado: null,
+      totalReal: null,
+      desvioTotal: null,
+    })
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(sinDinero) : undefined))
+    renderPantalla()
+
+    await screen.findByText('Enviada')
+    const [tablaDeItems, tablaDeCobertura] = screen.getAllByRole('table')
+    expect(within(tablaDeItems).getAllByText('—')).toHaveLength(1)
+    expect(within(tablaDeCobertura).getAllByText('—')).toHaveLength(3)
+    expect(within(tablaDeCobertura).getByText('5')).toBeInTheDocument() // Recibida: las cantidades se conservan
+    expect(screen.getByText('Total estimado').nextElementSibling).toHaveTextContent(/^—$/)
+    expect(screen.getByText('Total real').nextElementSibling).toHaveTextContent(/^—$/)
+    expect(screen.getByText('Desvío total').nextElementSibling).toHaveTextContent(/^—$/)
+    expect(document.body.textContent).not.toMatch(/\$|NaN|%/)
   })
 
   it('"Registrar recepción" navega con idOrdenCompra en la URL', async () => {

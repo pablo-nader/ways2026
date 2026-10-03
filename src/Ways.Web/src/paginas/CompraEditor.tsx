@@ -42,7 +42,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 
-function formatearMoneda(valor: number): string {
+function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
@@ -355,7 +355,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
               <td className="text-end">{item.porcentajeIva}%</td>
               <td className="text-end">{formatearMoneda(item.total)}</td>
               <td>{item.actualizaCosto ? 'Sí' : 'No'}</td>
-              <td className="text-end">{item.precioSugerido === null ? '—' : formatearMoneda(item.precioSugerido)}</td>
+              <td className="text-end">{formatearMoneda(item.precioSugerido)}</td>
             </tr>
           ))}
           {compra.items.length === 0 && (
@@ -915,6 +915,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const esBorrador = esNuevo || compra?.estado === 'Borrador'
   const esConfirmada = compra?.estado === 'Confirmada'
   const tienePreciosSugeridos = compra?.items.some((i) => i.precioSugerido !== null) ?? false
+  // Un rol sin escritura ve el borrador existente en la tabla de solo lectura: el formulario
+  // recalcula los totales desde los costos de cada línea, que el vendedor no recibe.
+  const mostrarFormulario = esBorrador && (puedeEscribir || compra === null)
 
   return (
     <div className="container-fluid py-4">
@@ -1074,7 +1077,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
           </div>
         </div>
 
-        {esBorrador ? (
+        {mostrarFormulario ? (
           <>
             <div className="table-responsive">
               <table className="table table-sm table-bordered align-middle">
