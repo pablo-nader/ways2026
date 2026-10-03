@@ -91,14 +91,56 @@ public class ComposicionDeLibroIvaTests
     }
 
     [Fact]
-    public void UnaAlicuotaSinCodigoQueNoEsExentoNiNoGravadoFallaFuerte()
+    public void UnaAlicuotaDeCompraSinMapeoSeMuestraConLasOtrasAlicuotasYSeAdvierteSinTirarElLibro()
     {
-        var rara = new AlicuotaDeCompraParaLibro(null, "Rara", 0m, 10m, 0m);
+        var rara = new AlicuotaDeCompraParaLibro(null, "Rara", 7m, 100m, 7m);
+        var buena = Compra("0001-00000002", total: 121m, alicuotas: [Gravada(21m, 100m, 21m)]);
+        var conRara = Compra("0001-00000001", total: 107m, alicuotas: [rara]);
 
-        var error = Assert.Throws<ErrorDominio>(() =>
-            ComposicionDeLibroIva.DeCompras(Desde, Hasta, null, [Compra(total: 10m, alicuotas: [rara])]));
+        var libro = ComposicionDeLibroIva.DeCompras(Desde, Hasta, null, [conRara, buena]);
 
-        Assert.Equal("alicuota_sin_mapeo_afip", error.Codigo);
+        var fila = libro.Filas.Single(f => f.Numero == "0001-00000001");
+        Assert.Equal([new AlicuotaDeLibroIva(7m, 100m, 7m)], fila.Alicuotas);
+        Assert.Equal(0m, fila.Diferencia);
+        Assert.Equal([AdvertenciasDeLibroIva.AlicuotaSinClasificar], fila.Advertencias);
+        Assert.Empty(libro.Filas.Single(f => f.Numero == "0001-00000002").Advertencias);
+        Assert.Equal(228m, libro.Totales.Total);
+    }
+
+    [Fact]
+    public void UnaAlicuotaDeVentaSinMapeoSeRecomponeEnSuPorcentajeYSeAdvierteSinTirarElLibro()
+    {
+        var lineas = new List<LineaFiscal> { new(77, "Rara", null, 10m, 110m), LineaGravada(21m, 5, 121m) };
+
+        var fila = Assert.Single(ComposicionDeLibroIva.DeVentas(Desde, Hasta, null, null, [Venta(lineas, 231m)]).Filas);
+
+        Assert.Equal(
+            [new AlicuotaDeLibroIva(21m, 100m, 21m), new AlicuotaDeLibroIva(10m, 100m, 10m)], fila.Alicuotas);
+        Assert.Equal(0m, fila.Diferencia);
+        Assert.Equal([AdvertenciasDeLibroIva.AlicuotaSinClasificar], fila.Advertencias);
+    }
+
+    [Fact]
+    public void UnaVentaAnuladaLocalmenteConCaeSigueEnElLibroConSuImporteYLaAdvertencia()
+    {
+        var anulada = Venta([LineaGravada(21m, 5, 121m)], 121m) with { AnuladoLocalmente = true };
+
+        var libro = ComposicionDeLibroIva.DeVentas(Desde, Hasta, null, null, [anulada]);
+
+        var fila = Assert.Single(libro.Filas);
+        Assert.Equal(121m, fila.Total);
+        Assert.Equal([AdvertenciasDeLibroIva.AnuladoSinNotaDeCredito], fila.Advertencias);
+        Assert.Equal(121m, libro.Totales.Total);
+    }
+
+    [Fact]
+    public void UnaVentaSinNumeroFiscalDePuntoDeVentaSeAdvierte()
+    {
+        var venta = Venta([LineaGravada(21m, 5, 121m)], 121m) with { SinNumeroFiscal = true };
+
+        var fila = Assert.Single(ComposicionDeLibroIva.DeVentas(Desde, Hasta, null, null, [venta]).Filas);
+
+        Assert.Equal([AdvertenciasDeLibroIva.SinNumeroFiscal], fila.Advertencias);
     }
 
     [Fact]

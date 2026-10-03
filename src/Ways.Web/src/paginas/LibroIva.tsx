@@ -10,7 +10,9 @@ import { formatearImporte } from '../formato/importes'
 import {
   alicuotaDeFila,
   CONFIGURACION_DE_PESTANA,
+  etiquetaDeAdvertencia,
   etiquetaDePorcentaje,
+  filasConAdvertencias,
   filasConDiferencia,
   formatearFechaDeLibro,
   periodoValido,
@@ -225,9 +227,11 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
   const porcentajes = porcentajesDelLibro(libro)
   const conDiferencia = filasConDiferencia(libro)
   const mostrarDiferencia = conDiferencia.length > 0
+  const mostrarAdvertencias = filasConAdvertencias(libro).length > 0
   const columnasFijas = 5
   const cantidadDeColumnas =
-    columnasFijas + porcentajes.length * 2 + 3 + (configuracion.conPercepciones ? 2 : 0) + (mostrarDiferencia ? 1 : 0)
+    columnasFijas + porcentajes.length * 2 + 3 + (configuracion.conPercepciones ? 2 : 0) + (mostrarDiferencia ? 1 : 0) +
+    (mostrarAdvertencias ? 1 : 0)
 
   return (
     <>
@@ -257,6 +261,7 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
               {configuracion.conPercepciones && <th className="text-end">Perc. IIBB</th>}
               <th className="text-end">Total</th>
               {mostrarDiferencia && <th className="text-end">Dif.</th>}
+              {mostrarAdvertencias && <th>Observaciones</th>}
             </tr>
           </thead>
           <tbody>
@@ -281,6 +286,15 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
                 {mostrarDiferencia && (
                   <td className={`text-end${fila.diferencia !== 0 ? ' text-danger fw-bold' : ''}`}>
                     {fila.diferencia !== 0 ? formatearMoneda(fila.diferencia) : '—'}
+                  </td>
+                )}
+                {mostrarAdvertencias && (
+                  <td>
+                    {fila.advertencias.map((codigo) => (
+                      <span key={codigo} className="badge text-bg-warning me-1">
+                        {etiquetaDeAdvertencia(codigo)}
+                      </span>
+                    ))}
                   </td>
                 )}
               </tr>
@@ -317,6 +331,7 @@ function TablaDeLibro({ libro, pestana }: PropsTablaDeLibro) {
                 )}
                 <td className="text-end">{formatearMoneda(libro.totales.total)}</td>
                 {mostrarDiferencia && <td className="text-end">{formatearMoneda(libro.totales.diferencia)}</td>}
+                {mostrarAdvertencias && <td />}
               </tr>
             </tfoot>
           )}

@@ -523,13 +523,18 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await SembrarVentaAsync(ctx, fecha, ctx.IdTipoTX, [new(ctx.IdAlicuota21, 21m, 7500m)]);
         await SembrarVentaAsync(ctx, fecha, ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 8000m)], resultado: ResultadoFiscal.Pendiente);
         await SembrarVentaAsync(ctx, fecha, ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 9000m)], resultado: ResultadoFiscal.Rechazado);
+        var anulada = await SembrarVentaAsync(
+            ctx, MediodiaUtc(new DateOnly(2026, 5, 13)), ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 242m)],
+            estado: EstadoComprobante.Anulado);
         await SembrarVentaAsync(
-            ctx, fecha, ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 9500m)], estado: EstadoComprobante.Anulado);
+            ctx, fecha, ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 9500m)], resultado: ResultadoFiscal.Rechazado,
+            estado: EstadoComprobante.Anulado);
 
         var libro = await VentasAsync(ctx.Admin, Desde, Hasta, ctx.IdEmpresa);
 
-        Assert.Equal(3, libro.Filas.Count);
+        Assert.Equal(4, libro.Filas.Count);
         var f = libro.Filas[0];
+        Assert.Empty(f.Advertencias);
         Assert.Equal(new DateOnly(2026, 5, 10), f.Fecha);
         Assert.Equal("FA", f.TipoComprobante);
         Assert.Equal($"0005-{factura:D8}", f.Numero);
@@ -557,14 +562,34 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal([new AlicuotaDeLibroIva(21m, 100m, 21m)], obs.Alicuotas);
         Assert.Equal(121m, obs.Total);
 
+        // Un CAE aprobado sigue valiendo ante ARCA aunque se anule local: queda en el libro, advertido.
+        var anuladaFila = libro.Filas[3];
+        Assert.Equal($"0005-{anulada:D8}", anuladaFila.Numero);
+        Assert.Equal([new AlicuotaDeLibroIva(21m, 200m, 42m)], anuladaFila.Alicuotas);
+        Assert.Equal(242m, anuladaFila.Total);
+        Assert.Equal([AdvertenciasDeLibroIva.AnuladoSinNotaDeCredito], anuladaFila.Advertencias);
+
         var t = libro.Totales;
         Assert.Equal(
-            [new AlicuotaDeLibroIva(21m, 150m, 31.5m), new AlicuotaDeLibroIva(10.5m, 100m, 10.5m)], t.PorAlicuota);
+            [new AlicuotaDeLibroIva(21m, 350m, 73.5m), new AlicuotaDeLibroIva(10.5m, 100m, 10.5m)], t.PorAlicuota);
         Assert.Equal(30m, t.NoGravado);
         Assert.Equal(40m, t.Exento);
-        Assert.Equal(362m, t.Total);
+        Assert.Equal(604m, t.Total);
         Assert.Equal(0m, t.Diferencia);
         Assert.Equal("America/Argentina/Buenos_Aires", libro.ZonaHoraria);
+    }
+
+    [Fact]
+    public async Task UnaVentaDeUnPuntoDeVentaSinNumeroFiscalMuestraSPVYLoAdvierteEnVezDeUsarElIdInterno()
+    {
+        var ctx = await PrepararAsync(nameof(UnaVentaDeUnPuntoDeVentaSinNumeroFiscalMuestraSPVYLoAdvierteEnVezDeUsarElIdInterno));
+        var numero = await SembrarVentaAsync(
+            ctx, MediodiaUtc(new DateOnly(2026, 5, 10)), ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 121m)]);
+
+        var fila = Assert.Single((await VentasAsync(ctx.Admin, Desde, Hasta)).Filas);
+
+        Assert.Equal($"s/PV-{numero:D8}", fila.Numero);
+        Assert.Equal([AdvertenciasDeLibroIva.SinNumeroFiscal], fila.Advertencias);
     }
 
     /// <summary>Cláusula bajo prueba: el rango de ventas se resuelve con la zona de la empresa. Una
@@ -672,9 +697,9 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 "Fecha", "Tipo", "Número", "Proveedor", "CUIT",
                 "Neto 21%", "IVA 21%", "Neto 10,5%", "IVA 10,5%", "Neto 27%", "IVA 27%", "Neto 5%", "IVA 5%",
                 "Neto 2,5%", "IVA 2,5%", "Neto otras alícuotas", "IVA otras alícuotas", "No gravado", "Exento",
-                "Percepción IVA", "Percepción IIBB", "Total", "Diferencia"
+                "Percepción IVA", "Percepción IIBB", "Total", "Diferencia", "Observaciones"
             ],
-            Enumerable.Range(1, 23).Select(c => hoja.Cell(6, c).GetString()));
+            Enumerable.Range(1, 24).Select(c => hoja.Cell(6, c).GetString()));
 
         for (var i = 0; i < libro.Filas.Count; i++)
         {
@@ -697,9 +722,11 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal(
                 [fila.NoGravado, fila.Exento, fila.PercepcionIva, fila.PercepcionIibb, fila.Total, fila.Diferencia],
                 Enumerable.Range(18, 6).Select(c => hoja.Cell(r, c).GetValue<decimal>()));
+            Assert.Equal(string.Empty, hoja.Cell(r, 24).GetString());
         }
 
         var total = 7 + libro.Filas.Count;
+        Assert.Equal("Empresa: Todas", hoja.Cell(1, 1).GetString());
         Assert.Equal("Total", hoja.Cell(total, 2).GetString());
         Assert.Equal(
             [
@@ -723,7 +750,11 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await SembrarVentaAsync(
             ctx, MediodiaUtc(new DateOnly(2026, 5, 11)), ctx.IdTipoNCA,
             [new(ctx.IdAlicuota21, 21m, 60.5m), new(ctx.IdAlicuotaExento, 0m, 10m)]);
+        await SembrarVentaAsync(
+            ctx, MediodiaUtc(new DateOnly(2026, 5, 12)), ctx.IdTipoFA, [new(ctx.IdAlicuota21, 21m, 121m)],
+            estado: EstadoComprobante.Anulado);
         var libro = await VentasAsync(ctx.Admin, Desde, Hasta, ctx.IdEmpresa);
+        Assert.Equal(3, libro.Filas.Count);
 
         using var xlsx = await DescargarAsync(
             ctx.Admin, $"/api/reportes/libro-iva-ventas/export?{Query(Desde, Hasta, ctx.IdEmpresa)}&formato=xlsx");
@@ -734,9 +765,9 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 "Fecha", "Tipo", "Número", "Cliente", "Documento",
                 "Neto 21%", "IVA 21%", "Neto 10,5%", "IVA 10,5%", "Neto 27%", "IVA 27%", "Neto 5%", "IVA 5%",
                 "Neto 2,5%", "IVA 2,5%", "Neto otras alícuotas", "IVA otras alícuotas", "No gravado", "Exento",
-                "Total", "Diferencia"
+                "Total", "Diferencia", "Observaciones"
             ],
-            Enumerable.Range(1, 21).Select(c => hoja.Cell(6, c).GetString()));
+            Enumerable.Range(1, 22).Select(c => hoja.Cell(6, c).GetString()));
 
         for (var i = 0; i < libro.Filas.Count; i++)
         {
@@ -758,9 +789,13 @@ public class ReportesLibroIvaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 Enumerable.Range(18, 4).Select(c => hoja.Cell(r, c).GetValue<decimal>()));
         }
 
-        Assert.Equal("Total", hoja.Cell(9, 2).GetString());
-        Assert.Equal(libro.Totales.Total, hoja.Cell(9, 20).GetValue<decimal>());
-        Assert.Equal(libro.Totales.Exento, hoja.Cell(9, 19).GetValue<decimal>());
+        Assert.Equal("Sin número fiscal de PV", hoja.Cell(7, 22).GetString());
+        Assert.Equal("Sin número fiscal de PV", hoja.Cell(8, 22).GetString());
+        Assert.Equal("Anulado sin NC; Sin número fiscal de PV", hoja.Cell(9, 22).GetString());
+        Assert.Equal($"Empresa: {nameof(ElExportDeVentasEsIgualAlEndpointJsonCeldaPorCelda)} SA", hoja.Cell(1, 1).GetString());
+        Assert.Equal("Total", hoja.Cell(10, 2).GetString());
+        Assert.Equal(libro.Totales.Total, hoja.Cell(10, 20).GetValue<decimal>());
+        Assert.Equal(libro.Totales.Exento, hoja.Cell(10, 19).GetValue<decimal>());
     }
 
     [Theory]

@@ -12,6 +12,22 @@ export const CONFIGURACION_DE_PESTANA: Record<
   ventas: { titulo: 'Ventas', contraparte: 'Cliente', documento: 'Documento', conPercepciones: false },
 }
 
+const ETIQUETA_DE_ADVERTENCIA: Record<string, string> = {
+  anulado_sin_nc: 'Anulado sin NC',
+  alicuota_sin_clasificar: 'Alícuota sin clasificar',
+  sin_numero_fiscal: 'Sin número fiscal de PV',
+}
+
+/** Etiqueta de un código de advertencia; un código que este front no conoce se muestra tal cual, así
+ * un aviso nuevo del backend nunca queda invisible. */
+export function etiquetaDeAdvertencia(codigo: string): string {
+  return ETIQUETA_DE_ADVERTENCIA[codigo] ?? codigo
+}
+
+export function filasConAdvertencias(libro: LibroIva): FilaDeLibroIva[] {
+  return libro.filas.filter((fila) => fila.advertencias.length > 0)
+}
+
 /** Porcentajes con columna propia: los presentes en los totales y en las filas, de mayor a menor.
  * Un porcentaje sin ningún importe no genera columna. */
 export function porcentajesDelLibro(libro: LibroIva): number[] {

@@ -1,5 +1,29 @@
 namespace Ways.Application.Reportes;
 
+/// <summary>Códigos estables de las advertencias de una fila del libro IVA.</summary>
+public static class AdvertenciasDeLibroIva
+{
+    /// <summary>Comprobante fiscal con CAE aprobado que se anuló localmente sin nota de crédito: sigue
+    /// siendo válido ante ARCA, por eso sigue en el libro.</summary>
+    public const string AnuladoSinNotaDeCredito = "anulado_sin_nc";
+
+    /// <summary>Una alícuota sin código AFIP que no es Exento ni No gravado: el importe se muestra con
+    /// las otras alícuotas, pero hay que revisar el catálogo.</summary>
+    public const string AlicuotaSinClasificar = "alicuota_sin_clasificar";
+
+    /// <summary>El punto de venta no tiene número fiscal: el número se muestra como <c>s/PV</c> en vez
+    /// de inventarlo con el id interno.</summary>
+    public const string SinNumeroFiscal = "sin_numero_fiscal";
+
+    public static string Etiqueta(string codigo) => codigo switch
+    {
+        AnuladoSinNotaDeCredito => "Anulado sin NC",
+        AlicuotaSinClasificar => "Alícuota sin clasificar",
+        SinNumeroFiscal => "Sin número fiscal de PV",
+        _ => codigo
+    };
+}
+
 /// <summary>Neto gravado e IVA de una alícuota. Una fila de libro trae una entrada por
 /// <see cref="Porcentaje"/> presente; no hay columnas fijas en el contrato, el export las arma.</summary>
 public sealed record AlicuotaDeLibroIva(decimal Porcentaje, decimal Neto, decimal Iva);
@@ -9,7 +33,9 @@ public sealed record AlicuotaDeLibroIva(decimal Porcentaje, decimal Neto, decima
 /// <c>Total − (neto gravado + IVA + no gravado + exento + percepciones)</c>: cero en un dato bien
 /// formado, distinto de cero cuando los componentes no cierran. Esas filas se informan, nunca se
 /// ocultan ni se corrigen en silencio. En ventas las percepciones son siempre cero (no se emiten
-/// percepciones en ventas).</summary>
+/// percepciones en ventas). <see cref="Advertencias"/> trae los códigos de
+/// <see cref="AdvertenciasDeLibroIva"/> que le aplican a la fila: datos que el contador tiene que
+/// ver y que el libro nunca esconde.</summary>
 public sealed record FilaDeLibroIva(
     DateOnly Fecha,
     string TipoComprobante,
@@ -22,7 +48,8 @@ public sealed record FilaDeLibroIva(
     decimal PercepcionIva,
     decimal PercepcionIibb,
     decimal Total,
-    decimal Diferencia)
+    decimal Diferencia,
+    IReadOnlyList<string> Advertencias)
 {
     public decimal NetoGravado => Alicuotas.Sum(a => a.Neto);
 

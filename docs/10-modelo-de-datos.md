@@ -845,14 +845,27 @@ reportes (366 días) y el tope de filas el de las exportaciones.
   porcentaje 0: el 0% real tiene `codigo_afip` y es una alícuota más). Una factura sin
   discriminar (`C-FB`, `C-FC`) no tiene crédito fiscal: su importe, menos las percepciones, va
   entero a *no gravado*. Las percepciones de IVA e IIBB salen de `percepciones_comprobante_compra`.
-- *Ventas:* comprobantes `emitido` de tipos `es_fiscal` con `resultado_fiscal` `aprobado` o
-  `aprobado_con_observaciones` (es decir, con CAE); pendiente, rechazado, no fiscales (TX/NCX) y
-  anulados quedan afuera. Se filtra por el día local de la empresa (parámetro `zona_horaria`).
+- *Ventas:* comprobantes de tipos `es_fiscal` con `resultado_fiscal` `aprobado` o
+  `aprobado_con_observaciones` (es decir, con CAE); pendiente, rechazado y no fiscales (TX/NCX)
+  quedan afuera. Un comprobante con CAE que se anuló localmente **sigue en el libro**: ante ARCA
+  solo lo revierte una nota de crédito. Entra con la advertencia `anulado_sin_nc` ("Anulado sin
+  NC" en la web y en la columna *Observaciones* del export). `AnularAsync` todavía no impide
+  anular un fiscal con CAE; ese guard queda como seguimiento. Se filtra y se muestra por el día
+  local de la empresa (parámetro `zona_horaria`), que es también la fecha (`CbteFch`) que la
+  emisión envía a ARCA. La fecha fiscal no se persiste (no hay columna): se deriva del instante
+  `comprobantes_venta.fecha`. Los comprobantes emitidos antes de este cambio, entre las 21:00 y las
+  24:00 (hora de Argentina), se enviaron a ARCA con el día UTC y pueden figurar un día después en
+  ARCA que en el libro.
   El desglose se recompone desde `items_comprobante_venta` con `ComposicionDeTotalesFiscales.Componer`
   —la función de la emisión—, así que no hay tabla de alícuotas de venta. Las notas de crédito
   fiscales (`NCA`/`NCB`/`NCC`) restan: la emisión guarda sus importes en positivo y el libro
   aplica `tipos_comprobante.signo`. Las percepciones de ventas no existen y salen en cero. El
-  número es `puntos_venta.numero_fiscal` (o el id del punto de venta si no lo tiene) + el número fiscal del comprobante.
+  número es `puntos_venta.numero_fiscal` + el número fiscal del comprobante; si el punto de venta no
+  tiene número fiscal se muestra `s/PV-NNNNNNNN` con la advertencia `sin_numero_fiscal`, nunca el id
+  interno.
+- *Alícuotas sin mapeo:* en la emisión una alícuota sin código AFIP que no es Exento ni No gravado
+  falla (409 `alicuota_sin_mapeo_afip`). El libro es de solo lectura y no se cae: muestra el importe en
+  su porcentaje, junto a las otras alícuotas, con la advertencia `alicuota_sin_clasificar`.
 - *Consistencia:* cada fila lleva `diferencia = total − (neto gravado + IVA + no gravado + exento +
   percepciones)`. En un dato bien formado es cero; si no lo es, la fila se informa con su
   diferencia en vez de ocultarse o corregirse.

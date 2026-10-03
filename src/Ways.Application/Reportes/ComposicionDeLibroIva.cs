@@ -19,7 +19,8 @@ public sealed record CompraParaLibro(
 
 /// <summary><see cref="Signo"/> viene de <c>tipos_comprobante.signo</c>: la emisión fiscal guarda
 /// los importes de una nota de crédito en positivo (exige cantidades positivas), así que el libro
-/// los resta acá.</summary>
+/// los resta acá. <see cref="AnuladoLocalmente"/> y <see cref="SinNumeroFiscal"/> no cambian los
+/// importes: solo generan advertencias en la fila.</summary>
 public sealed record VentaParaLibro(
     DateOnly Fecha,
     string CodigoTipo,
@@ -28,7 +29,9 @@ public sealed record VentaParaLibro(
     string? Documento,
     short Signo,
     decimal Total,
-    IReadOnlyList<LineaFiscal> Lineas);
+    IReadOnlyList<LineaFiscal> Lineas,
+    bool AnuladoLocalmente = false,
+    bool SinNumeroFiscal = false);
 
 /// <summary>
 /// Arma las filas y los totales del libro IVA. Pura, sin base de datos. Compras: el desglose sale
@@ -58,12 +61,22 @@ public static class ComposicionDeLibroIva
         var alicuotas = new List<AlicuotaDeLibroIva>();
         var exento = 0m;
         var noGravado = 0m;
+        var advertencias = new List<string>();
 
         if (compra.DiscriminaIva)
         {
             foreach (var alicuota in compra.Alicuotas)
             {
-                switch (ComposicionDeTotalesFiscales.Clasificar(alicuota.CodigoAfip, alicuota.NombreAlicuota))
+                // El libro es de solo lectura: una alícuota sin mapeo se muestra con las otras
+                // alícuotas y se advierte, no tira abajo todo el reporte (la emisión sí falla).
+                if (!ComposicionDeTotalesFiscales.TryClasificar(alicuota.CodigoAfip, alicuota.NombreAlicuota, out var clase))
+                {
+                    alicuotas.Add(new AlicuotaDeLibroIva(alicuota.Porcentaje, alicuota.Neto, alicuota.Iva));
+                    advertencias.Add(AdvertenciasDeLibroIva.AlicuotaSinClasificar);
+                    continue;
+                }
+
+                switch (clase)
                 {
                     case ClaseDeAlicuota.Gravada:
                         alicuotas.Add(new AlicuotaDeLibroIva(alicuota.Porcentaje, alicuota.Neto, alicuota.Iva));
@@ -84,15 +97,27 @@ public static class ComposicionDeLibroIva
 
         return NuevaFila(
             compra.Fecha, compra.CodigoTipo, compra.Numero, compra.Proveedor, compra.Cuit, alicuotas, noGravado,
-            exento, compra.PercepcionIva, compra.PercepcionIibb, compra.Total);
+            exento, compra.PercepcionIva, compra.PercepcionIibb, compra.Total, advertencias);
     }
 
     private static FilaDeLibroIva FilaDeVenta(VentaParaLibro venta)
     {
-        var totales = ComposicionDeTotalesFiscales.Componer(venta.Lineas);
+        var advertencias = new List<string>();
+        if (venta.AnuladoLocalmente)
+        {
+            advertencias.Add(AdvertenciasDeLibroIva.AnuladoSinNotaDeCredito);
+        }
+
+        if (venta.SinNumeroFiscal)
+        {
+            advertencias.Add(AdvertenciasDeLibroIva.SinNumeroFiscal);
+        }
+
+        var lineas = ConCodigoSinteticoParaLasSinClasificar(venta.Lineas, advertencias);
+        var totales = ComposicionDeTotalesFiscales.Componer(lineas);
         var signo = venta.Signo;
 
-        var porcentajePorCodigo = venta.Lineas
+        var porcentajePorCodigo = lineas
             .Where(l => l.CodigoAfip is not null)
             .GroupBy(l => l.CodigoAfip!.Value)
             .ToDictionary(g => g.Key, g => g.First().PorcentajeIva);
@@ -103,20 +128,50 @@ public static class ComposicionDeLibroIva
 
         return NuevaFila(
             venta.Fecha, venta.CodigoTipo, venta.Numero, venta.Cliente, venta.Documento, alicuotas,
-            signo * totales.ImpTotConc, signo * totales.ImpOpEx, 0m, 0m, signo * venta.Total);
+            signo * totales.ImpTotConc, signo * totales.ImpOpEx, 0m, 0m, signo * venta.Total, advertencias);
+    }
+
+    /// <summary><see cref="ComposicionDeTotalesFiscales.Componer"/> falla ante una alícuota sin código
+    /// que no es Exento ni No gravado. Para el libro esas líneas se tratan como gravadas con un código
+    /// sintético propio (uno por alícuota), así quedan en su porcentaje y la fila lo advierte.</summary>
+    private static List<LineaFiscal> ConCodigoSinteticoParaLasSinClasificar(
+        IReadOnlyList<LineaFiscal> lineas, List<string> advertencias)
+    {
+        var codigosSinteticos = new Dictionary<int, short>();
+        var resultado = new List<LineaFiscal>(lineas.Count);
+
+        foreach (var linea in lineas)
+        {
+            if (ComposicionDeTotalesFiscales.TryClasificar(linea.CodigoAfip, linea.NombreAlicuota, out _))
+            {
+                resultado.Add(linea);
+                continue;
+            }
+
+            if (!codigosSinteticos.TryGetValue(linea.IdAlicuotaIva, out var codigo))
+            {
+                codigo = (short)(short.MinValue + codigosSinteticos.Count);
+                codigosSinteticos[linea.IdAlicuotaIva] = codigo;
+            }
+
+            advertencias.Add(AdvertenciasDeLibroIva.AlicuotaSinClasificar);
+            resultado.Add(linea with { CodigoAfip = codigo });
+        }
+
+        return resultado;
     }
 
     private static FilaDeLibroIva NuevaFila(
         DateOnly fecha, string codigoTipo, string numero, string contraparte, string? documento,
         IReadOnlyList<AlicuotaDeLibroIva> alicuotas, decimal noGravado, decimal exento, decimal percepcionIva,
-        decimal percepcionIibb, decimal total)
+        decimal percepcionIibb, decimal total, IReadOnlyList<string> advertencias)
     {
         var porAlicuota = AgruparPorPorcentaje(alicuotas);
         var componentes = porAlicuota.Sum(a => a.Neto + a.Iva) + noGravado + exento + percepcionIva + percepcionIibb;
 
         return new FilaDeLibroIva(
             fecha, codigoTipo, numero, contraparte, documento, porAlicuota, noGravado, exento, percepcionIva,
-            percepcionIibb, total, total - componentes);
+            percepcionIibb, total, total - componentes, advertencias.Distinct().ToList());
     }
 
     private static LibroIva Armar(

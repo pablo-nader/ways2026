@@ -3,7 +3,9 @@ import type { FilaDeLibroIva, LibroIva } from '../api/tipos'
 import {
   alicuotaDeFila,
   CONFIGURACION_DE_PESTANA,
+  etiquetaDeAdvertencia,
   etiquetaDePorcentaje,
+  filasConAdvertencias,
   filasConDiferencia,
   formatearFechaDeLibro,
   periodoValido,
@@ -24,6 +26,7 @@ function fila(sobrescribir: Partial<FilaDeLibroIva> = {}): FilaDeLibroIva {
     percepcionIibb: 0,
     total: 0,
     diferencia: 0,
+    advertencias: [],
     netoGravado: 0,
     ivaTotal: 0,
     ...sobrescribir,
@@ -131,5 +134,23 @@ describe('CONFIGURACION_DE_PESTANA', () => {
       documento: 'Documento',
       conPercepciones: false,
     })
+  })
+})
+
+describe('advertencias', () => {
+  it.each([
+    ['anulado_sin_nc', 'Anulado sin NC'],
+    ['alicuota_sin_clasificar', 'Alícuota sin clasificar'],
+    ['sin_numero_fiscal', 'Sin número fiscal de PV'],
+    ['codigo_desconocido', 'codigo_desconocido'],
+  ])('%s se muestra como %s', (codigo, esperado) => {
+    expect(etiquetaDeAdvertencia(codigo)).toBe(esperado)
+  })
+
+  it('filasConAdvertencias devuelve solo las filas que traen alguna', () => {
+    const limpia = fila({ numero: 'A' })
+    const marcada = fila({ numero: 'B', advertencias: ['anulado_sin_nc'] })
+
+    expect(filasConAdvertencias(libro([limpia, marcada])).map((f) => f.numero)).toEqual(['B'])
   })
 })

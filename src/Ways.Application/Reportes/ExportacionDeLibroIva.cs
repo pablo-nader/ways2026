@@ -52,19 +52,21 @@ public static class ExportacionDeLibroIva
 
         columnas.Add(new ColumnaExportable("Total", TipoDeColumna.Moneda));
         columnas.Add(new ColumnaExportable("Diferencia", TipoDeColumna.Moneda));
+        columnas.Add(new ColumnaExportable("Observaciones", TipoDeColumna.Texto));
 
         var filas = libro.Filas
             .Select(f => (IReadOnlyList<Celda>)Celdas(
                 Celda.Fecha(f.Fecha), Celda.Texto(f.TipoComprobante), Celda.Texto(f.Numero),
                 Celda.Texto(f.Contraparte), Celda.Texto(f.Documento), f.Alicuotas, f.NoGravado, f.Exento,
-                f.PercepcionIva, f.PercepcionIibb, f.Total, f.Diferencia, conPercepciones))
+                f.PercepcionIva, f.PercepcionIibb, f.Total, f.Diferencia, conPercepciones,
+                string.Join("; ", f.Advertencias.Select(AdvertenciasDeLibroIva.Etiqueta))))
             .ToList();
 
         var t = libro.Totales;
         filas.Add(Celdas(
             Celda.Fecha(null), Celda.Texto("Total"), Celda.Texto(null), Celda.Texto(null), Celda.Texto(null),
             t.PorAlicuota, t.NoGravado, t.Exento, t.PercepcionIva, t.PercepcionIibb, t.Total, t.Diferencia,
-            conPercepciones));
+            conPercepciones, string.Empty));
 
         return new TablaExportable(hoja, ctx, columnas, filas);
     }
@@ -72,7 +74,7 @@ public static class ExportacionDeLibroIva
     private static List<Celda> Celdas(
         Celda fecha, Celda tipo, Celda numero, Celda contraparte, Celda documento,
         IReadOnlyList<AlicuotaDeLibroIva> alicuotas, decimal noGravado, decimal exento, decimal percepcionIva,
-        decimal percepcionIibb, decimal total, decimal diferencia, bool conPercepciones)
+        decimal percepcionIibb, decimal total, decimal diferencia, bool conPercepciones, string observaciones)
     {
         var celdas = new List<Celda> { fecha, tipo, numero, contraparte, documento };
 
@@ -97,6 +99,7 @@ public static class ExportacionDeLibroIva
 
         celdas.Add(Celda.Moneda(total));
         celdas.Add(Celda.Moneda(diferencia));
+        celdas.Add(Celda.Texto(observaciones));
         return celdas;
     }
 

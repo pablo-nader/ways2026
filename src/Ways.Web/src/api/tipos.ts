@@ -2710,6 +2710,8 @@ export type FilaDeLibroIva = {
   percepcionIibb: number
   total: number
   diferencia: number
+  /** Códigos de aviso de la fila (`anulado_sin_nc`, `alicuota_sin_clasificar`, `sin_numero_fiscal`). */
+  advertencias: string[]
   netoGravado: number
   ivaTotal: number
 }

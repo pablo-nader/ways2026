@@ -17,8 +17,11 @@ namespace Ways.Application.Reportes;
 /// Libro IVA compras y ventas. Lee, filtra por tenant y empresa y delega el armado en
 /// <see cref="ComposicionDeLibroIva"/>. Compras: comprobantes confirmados de tipos que registran
 /// libro IVA, por <c>fecha_comprobante</c>. Ventas: comprobantes emitidos de tipos fiscales con CAE
-/// aprobado (<c>aprobado</c> o <c>aprobado_con_observaciones</c>), por el día local de la empresa;
-/// pendientes, rechazados y anulados quedan afuera.
+/// aprobado (<c>aprobado</c> o <c>aprobado_con_observaciones</c>), por el día local de la empresa
+/// (la fecha que se envía a ARCA, ver <see cref="FechaFiscal"/>); pendientes, rechazados y no
+/// fiscales quedan afuera. Un fiscal con CAE anulado localmente sigue en el libro, con la advertencia
+/// <see cref="AdvertenciasDeLibroIva.AnuladoSinNotaDeCredito"/>: ante ARCA solo lo revierte una nota
+/// de crédito.
 ///
 /// Los catálogos globales (tipos de comprobante, alícuotas) se leen sin el filtro de baja lógica:
 /// dar de baja un tipo o una alícuota no puede sacar del libro un comprobante ya declarado.
@@ -140,7 +143,6 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
 
             var consulta = db.ComprobantesVenta
                 .Where(c => idsPuntoVenta.Contains(c.IdPuntoVenta))
-                .Where(c => c.Estado == EstadoComprobante.Emitido)
                 .Where(c => c.ResultadoFiscal == ResultadoFiscal.Aprobado
                     || c.ResultadoFiscal == ResultadoFiscal.AprobadoConObservaciones)
                 .Where(c => idsTipo.Contains(c.IdTipoComprobante))
@@ -177,7 +179,7 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
         var comprobantes = await alcance.Consulta
             .Select(c => new
             {
-                c.Id, c.Fecha, c.IdTipoComprobante, c.Numero, c.IdPuntoVenta, c.IdCliente, c.Total
+                c.Id, c.Fecha, c.IdTipoComprobante, c.Numero, c.IdPuntoVenta, c.IdCliente, c.Total, c.Estado
             })
             .ToListAsync(ct);
 
@@ -200,12 +202,14 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
             {
                 clientes.TryGetValue(c.IdCliente, out var cliente);
                 var tipo = tipos[c.IdTipoComprobante];
-                var puntoDeVenta = alcance.NumeroFiscalPorPuntoVenta[c.IdPuntoVenta] ?? c.IdPuntoVenta;
+                var puntoDeVenta = alcance.NumeroFiscalPorPuntoVenta[c.IdPuntoVenta];
 
                 return new VentaParaLibro(
-                    DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(c.Fecha, alcance.Zona).DateTime),
+                    FechaFiscal.DeInstante(c.Fecha, alcance.Zona),
                     tipo.Codigo,
-                    NumeroDeComprobante.Formatear(puntoDeVenta, c.Numero),
+                    puntoDeVenta is { } numeroFiscal
+                        ? NumeroDeComprobante.Formatear(numeroFiscal, c.Numero)
+                        : $"s/PV-{c.Numero:D8}",
                     cliente is null
                         ? ContraparteNoDisponible
                         : string.IsNullOrWhiteSpace(cliente.RazonSocial) ? cliente.Nombre : cliente.RazonSocial,
@@ -216,7 +220,9 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
                         .Select(i => new LineaFiscal(
                             i.IdAlicuotaIva, catalogo[i.IdAlicuotaIva].Nombre, catalogo[i.IdAlicuotaIva].CodigoAfip,
                             i.PorcentajeIva, i.Total))
-                        .ToList());
+                        .ToList(),
+                    c.Estado == EstadoComprobante.Anulado,
+                    puntoDeVenta is null);
             })
             .ToList();
     }
@@ -242,6 +248,19 @@ public class ServicioDeLibroIva(IWaysDbContext db, ServicioDeParametros parametr
                 $"El libro tiene {cantidad} comprobantes; el tope es {tope}. Acotá el período o la empresa.",
                 400);
         }
+    }
+
+    /// <summary>Lo que muestra el encabezado del export: la razón social de la empresa elegida o
+    /// "Todas".</summary>
+    public async Task<string> NombreDeEmpresaAsync(int? idEmpresa, CancellationToken ct = default)
+    {
+        if (idEmpresa is not { } id)
+        {
+            return "Todas";
+        }
+
+        return await db.Empresas.Where(e => e.Id == id).Select(e => e.RazonSocial).FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la empresa {id}.");
     }
 
     private async Task ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)

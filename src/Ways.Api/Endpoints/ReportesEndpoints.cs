@@ -663,7 +663,7 @@ public static class ReportesEndpoints
             var libro = await servicio.ObtenerComprasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct);
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, idEmpresa?.ToString() ?? "Todas", null, desde, hasta, "N/A");
+                usuario, reloj, await servicio.NombreDeEmpresaAsync(idEmpresa, ct), null, desde, hasta, "N/A");
             var tabla = ExportacionDeLibroIva.DeCompras(libro, ctx);
 
             var bytes = exportador.Generar(tabla);
@@ -680,8 +680,9 @@ public static class ReportesEndpoints
             servicio.ObtenerVentasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct))
         .WithSummary(
             "Libro IVA ventas: comprobantes fiscales emitidos con CAE aprobado, por el día local de la " +
-            "empresa. El desglose por alícuota se recompone desde las líneas con la misma composición que la " +
-            "emisión fiscal; una nota de crédito resta.");
+            "empresa, la misma fecha que se envía a ARCA. El desglose por alícuota se recompone desde las líneas " +
+            "con la misma composición que la emisión fiscal; una nota de crédito resta. Un comprobante con CAE " +
+            "anulado localmente sigue en el libro con la advertencia anulado_sin_nc.");
 
         grupo.MapGet("/libro-iva-ventas/export", async (
             ServicioDeLibroIva servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
@@ -693,7 +694,7 @@ public static class ReportesEndpoints
             var libro = await servicio.ObtenerVentasAsync(idEmpresa, desde, hasta, opciones.Value.TopeDeFilas, ct);
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, idEmpresa?.ToString() ?? "Todas", null, desde, hasta,
+                usuario, reloj, await servicio.NombreDeEmpresaAsync(idEmpresa, ct), null, desde, hasta,
                 libro.ZonaHoraria ?? "Por empresa");
             var tabla = ExportacionDeLibroIva.DeVentas(libro, ctx);
 

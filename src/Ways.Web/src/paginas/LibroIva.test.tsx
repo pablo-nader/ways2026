@@ -83,6 +83,7 @@ function filaFixture(sobrescribir: Partial<FilaDeLibroIva> = {}): FilaDeLibroIva
     percepcionIibb: 30,
     total: 1556,
     diferencia: 0,
+    advertencias: [],
     netoGravado: 1200,
     ivaTotal: 231,
     ...sobrescribir,
@@ -400,12 +401,41 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     expect(within(filaBuena).getAllByRole('cell').at(-1)).toHaveTextContent('—')
   })
 
+  it('una venta anulada sin nota de crédito o sin número fiscal se señala con una insignia en Observaciones', async () => {
+    const anulada = filaFixture({
+      tipoComprobante: 'FA',
+      numero: 's/PV-00000042',
+      contraparte: 'Cliente Uno SRL',
+      advertencias: ['anulado_sin_nc', 'sin_numero_fiscal', 'otro_codigo_nuevo'],
+    })
+    const normal = filaFixture({ tipoComprobante: 'FA', numero: '0005-00000001', contraparte: 'Cliente Dos SRL' })
+    mockearRutas((ruta) =>
+      ruta.startsWith('/reportes/libro-iva-ventas?')
+        ? Promise.resolve({ ...libroDeVentas(), filas: [anulada, normal] })
+        : undefined,
+    )
+    const usuario = userEvent.setup()
+    renderLibroIva()
+    await screen.findByText('Proveedor Uno SA')
+
+    await usuario.click(screen.getByRole('tab', { name: 'Ventas' }))
+
+    const filaAnulada = await screen.findByRole('row', { name: /PV-00000042/ })
+    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).toContain('Observaciones')
+    expect(within(filaAnulada).getByText('Anulado sin NC')).toBeInTheDocument()
+    expect(within(filaAnulada).getByText('Sin número fiscal de PV')).toBeInTheDocument()
+    expect(within(filaAnulada).getByText('otro_codigo_nuevo')).toBeInTheDocument()
+    const filaNormal = screen.getByRole('row', { name: /0005-00000001/ })
+    expect(within(filaNormal).queryByText('Anulado sin NC')).not.toBeInTheDocument()
+  })
+
   it('un libro bien formado no muestra la columna Dif. ni el aviso', async () => {
     mockearRutas()
     renderLibroIva()
 
     await screen.findByText('Proveedor Uno SA')
     expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).not.toContain('Dif.')
+    expect(screen.getAllByRole('columnheader').map((c) => c.textContent)).not.toContain('Observaciones')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
