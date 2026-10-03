@@ -113,7 +113,6 @@ export function validarPorcentajeDeAjuste(texto: string, tipo: TipoDeAjusteManua
 const MENSAJES_DE_RECHAZO_DE_AJUSTE: Record<string, string> = {
   ajuste_manual_invalido:
     'El servidor rechazó un ajuste manual: el porcentaje de cada línea debe ser distinto de 0, entre -100 y 100 y con hasta 2 decimales. Revisá los ajustes del carrito.',
-  ajuste_manual_no_admitido: 'Esta venta no admite ajustes manuales de precio.',
 }
 
 /** Mensaje para el cajero cuando el servidor rechaza una venta por su ajuste manual; `null` si el

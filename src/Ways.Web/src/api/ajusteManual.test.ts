@@ -203,9 +203,8 @@ describe('validarPorcentajeDeAjuste', () => {
 })
 
 describe('mensajeDeRechazoDeAjusteManual', () => {
-  it('traduce los códigos 400 del ajuste manual a un mensaje para el cajero', () => {
+  it('traduce el código 400 ajuste_manual_invalido a un mensaje para el cajero', () => {
     expect(mensajeDeRechazoDeAjusteManual('ajuste_manual_invalido')).toMatch(/ajuste manual/)
-    expect(mensajeDeRechazoDeAjusteManual('ajuste_manual_no_admitido')).toBe('Esta venta no admite ajustes manuales de precio.')
   })
 
   it('un código ajeno devuelve null para que el llamador siga con su mensaje habitual', () => {

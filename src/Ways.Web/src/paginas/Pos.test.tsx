@@ -5468,24 +5468,6 @@ describe('Pos — ajuste manual por línea', () => {
     // La venta no se registró: el carrito y su ajuste siguen ahí para corregirlo.
     expect(screen.getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
   })
-
-  it('un rechazo 400 ajuste_manual_no_admitido se muestra con su mensaje', async () => {
-    apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') {
-        const resultados: ResultadoDeResolucion[] = [
-          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
-        ]
-        return Promise.resolve(resultados)
-      }
-      if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'ajuste_manual_no_admitido', 'detalle técnico del servidor'))
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-    })
-    await armarVentaLista()
-
-    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-
-    expect(await screen.findByText('Esta venta no admite ajustes manuales de precio.')).toBeInTheDocument()
-  })
 })
 
 const TEXTO_DE_COBRO_INCIERTO =
