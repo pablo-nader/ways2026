@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.Caja;
+using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Parametros;
 using Ways.Domain.Auditoria;
@@ -125,6 +126,90 @@ public class ServicioDeGastos(
         return Proyectar(gasto);
     }
 
+    /// <summary>Paga una compra confirmada en UNA transacción: crea el gasto administrativo (categoría
+    /// proveedor, origen tesorería, punto de venta y proveedor de la compra, fecha de negocio del
+    /// pedido) y, por el mismo camino de escritura del alta administrativa, el movimiento
+    /// <c>pago</c> de cuenta corriente imputado a la compra y el egreso de tesorería. El importe no
+    /// puede superar el saldo pendiente de ESA compra.
+    ///
+    /// Forma (b) de ef-retry-safe-writes: <see cref="FabricaDeEstrategiaSinReintento"/>, porque el
+    /// pago no tiene clave de idempotencia y un reintento sobre un commit ambiguo pagaría dos veces.
+    ///
+    /// Orden de locks: 1) header de la compra <c>FOR UPDATE</c> (lock y lectura en una sola
+    /// sentencia, sin entidad: es la ÚNICA lectura del total y del estado) → 2) pagado de la compra,
+    /// leído después del lock → 3) fila del gasto (insert, sin lock) → 4) fila del proveedor
+    /// (<c>UPDATE saldo</c>, último lock de fila) → 5) advisory de tesorería de la empresa, ÚLTIMO.
+    /// Es el mismo orden que el alta administrativa (<see cref="InsertarGastoDeAdministracionAsync"/>)
+    /// con el lock de la compra endurecido a exclusivo. Sin ciclo: la anulación y la confirmación
+    /// toman el header exclusivo como primer lock, y los demás escritores que tocan la compra (alta
+    /// ligada, vinculación) la toman <c>FOR SHARE</c> primero, así que todos se serializan contra el
+    /// paso 1 y ninguno retiene algo que este método necesite antes de ese lock.</summary>
+    public async Task<ResultadoDePagoDeCompra> PagarCompraAsync(
+        int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        ExigirImporteValido(solicitud.Importe);
+        var concepto = string.IsNullOrWhiteSpace(solicitud.Concepto) ? null : solicitud.Concepto.Trim();
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarPagoDeCompraAsync(idTenant, idComprobanteCompra, solicitud, concepto, idEmpleado, momento, ct));
+    }
+
+    private async Task<ResultadoDePagoDeCompra> EjecutarPagoDeCompraAsync(
+        int idTenant, int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, string? concepto, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var compra = await BloquearCompraAsync(idComprobanteCompra, idTenant, paraPagar: true, ct);
+
+        var pagado = (await LectorDePagadoPorCompra.LeerAsync(db, [idComprobanteCompra], ct))
+            .GetValueOrDefault(idComprobanteCompra, 0m);
+        var saldoPendiente = ReglaDePagoDeCompra.SaldoPendiente(EstadoCompra.Confirmada, compra.Total, pagado);
+        ReglaDePagoDeCompra.ExigirPagoValido(solicitud.Importe, saldoPendiente);
+
+        var puntoVenta = await ResolverPuntoVentaAsync(compra.IdPuntoVenta, ct);
+        await ExigirMedioPagoValidoAsync(solicitud.IdMedioPago, ct);
+
+        var zona = await ResolverZonaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+        ExigirFechaNoFutura(solicitud.Fecha, momento, zona);
+        var fechaDeNegocio = FechaDeNegocioAInstante(solicitud.Fecha, zona);
+
+        concepto ??= await ConceptoPorDefectoDelPagoAsync(idComprobanteCompra, ct);
+
+        var gasto = await PersistirGastoDeAdministracionAsync(
+            idTenant, puntoVenta.IdEmpresa, fechaDeNegocio,
+            new SolicitudDeGastoDeAdministracion(
+                solicitud.Fecha, puntoVenta.IdEmpresa, puntoVenta.Id, CategoriaGasto.Proveedor, compra.IdProveedor,
+                IdArea: null, concepto, Detalle: null, solicitud.IdMedioPago, NumeroFactura: null, solicitud.Importe,
+                idComprobanteCompra),
+            compra.IdProveedor, idEmpleado, momento, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return new ResultadoDePagoDeCompra(
+            Proyectar(gasto), pagado + solicitud.Importe, saldoPendiente - solicitud.Importe);
+    }
+
+    private async Task<string> ConceptoPorDefectoDelPagoAsync(int idComprobanteCompra, CancellationToken ct)
+    {
+        var datos = await db.ComprobantesCompra
+            .Where(c => c.Id == idComprobanteCompra)
+            .Select(c => new
+            {
+                c.NumeroExterno,
+                NombreDelTipo = db.TiposComprobante
+                    .Where(t => t.Id == c.IdTipoComprobante).Select(t => t.Nombre).FirstOrDefault()
+            })
+            .FirstAsync(ct);
+
+        return ReglaDePagoDeCompra.ConceptoPorDefecto(datos.NombreDelTipo, datos.NumeroExterno, idComprobanteCompra);
+    }
+
     /// <summary>stage-gasto-a-compra (PR4), owner requirement: cualquier gasto (POS o admin) se
     /// puede ligar a una compra DESPUÉS de creado — a diferencia de
     /// <see cref="SolicitudDeGasto.IdComprobanteCompra"/>/<see
@@ -178,8 +263,8 @@ public class ServicioDeGastos(
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         // Paso 1 — compra FOR SHARE, PRIMER lock (mismo statement que ExigirCompraLigableAsync).
-        var (idProveedorDeLaCompra, idPuntoVentaDeLaCompra) =
-            await ExigirCompraParaVincularAsync(idComprobanteCompra, idTenant, ct);
+        var (idProveedorDeLaCompra, idPuntoVentaDeLaCompra, _) =
+            await BloquearCompraAsync(idComprobanteCompra, idTenant, paraPagar: false, ct);
 
         // Paso 2 — gasto FOR UPDATE (lock-only), y la ÚNICA lectura EF de la fila, DESPUÉS del
         // lock (single-read-under-lock).
@@ -254,12 +339,14 @@ public class ServicioDeGastos(
         return gasto;
     }
 
-    /// <summary>Fila devuelta por <see cref="ExigirCompraParaVincularAsync"/> — mismos códigos
-    /// 404/409 que <see cref="ExigirCompraLigableAsync"/> (compra no encontrada/anulada/no
-    /// confirmada), pero también expone <c>id_punto_venta</c> para el fallback de PV y la
-    /// resolución de empresa.</summary>
-    private async Task<(int IdProveedor, int IdPuntoVenta)> ExigirCompraParaVincularAsync(
-        int idComprobanteCompra, int idTenant, CancellationToken ct)
+    /// <summary>Lock del header de la compra, mismos códigos 404/409 que
+    /// <see cref="ExigirCompraLigableAsync"/> (compra no encontrada/anulada/no confirmada), y la ÚNICA
+    /// lectura de la fila: expone <c>id_punto_venta</c> para el fallback de PV y la resolución de
+    /// empresa, y el total para el saldo pendiente. Vincular toma <c>FOR SHARE</c>; pagar toma
+    /// <c>FOR UPDATE</c> (<paramref name="paraPagar"/>), porque dos pagos concurrentes tienen que
+    /// verse el uno al otro: con <c>FOR SHARE</c> los dos leerían el mismo saldo pendiente.</summary>
+    private async Task<(int IdProveedor, int IdPuntoVenta, decimal Total)> BloquearCompraAsync(
+        int idComprobanteCompra, int idTenant, bool paraPagar, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
@@ -267,8 +354,8 @@ public class ServicioDeGastos(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
         comando.CommandText =
-            "SELECT estado::text, id_proveedor, id_punto_venta FROM comprobantes_compra " +
-            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 FOR SHARE";
+            "SELECT estado::text, id_proveedor, id_punto_venta, total FROM comprobantes_compra " +
+            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 " + (paraPagar ? "FOR UPDATE" : "FOR SHARE");
         ParametrosDeComando.Agregar(comando, idComprobanteCompra);
         ParametrosDeComando.Agregar(comando, idTenant);
 
@@ -281,6 +368,7 @@ public class ServicioDeGastos(
         var estado = lector.GetString(0);
         var idProveedor = lector.GetInt32(1);
         var idPuntoVenta = lector.GetInt32(2);
+        var total = lector.GetDecimal(3);
 
         if (estado == "anulada")
         {
@@ -293,7 +381,7 @@ public class ServicioDeGastos(
                 "compra_no_confirmada", "La compra ligada todavía no está confirmada.", 409);
         }
 
-        return (idProveedor, idPuntoVenta);
+        return (idProveedor, idPuntoVenta, total);
     }
 
     /// <summary>Lock-only, mismo patrón que <c>ServicioDeOrganizacion.TomarLockDePuntoVentaAsync</c>
@@ -1098,6 +1186,23 @@ public class ServicioDeGastos(
             idProveedor = await ExigirCompraLigableAsync(idComprobanteCompra, idTenant, solicitud.IdProveedor, ct);
         }
 
+        var gasto = await PersistirGastoDeAdministracionAsync(
+            idTenant, idEmpresa, fechaDeNegocio, solicitud, idProveedor, idEmpleado, momento, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return gasto;
+    }
+
+    /// <summary>Escrituras del gasto administrativo dentro de la transacción del llamador, que ya
+    /// tomó el lock de la compra (si hay) y es quien comitea. Las comparten el alta administrativa y
+    /// <see cref="PagarCompraAsync"/>: un solo camino de escritura del gasto, del pago a proveedor y
+    /// del egreso de tesorería. <paramref name="idProveedor"/> ya viene resuelto contra la
+    /// compra.</summary>
+    private async Task<Gasto> PersistirGastoDeAdministracionAsync(
+        int idTenant, int idEmpresa, DateTimeOffset fechaDeNegocio, SolicitudDeGastoDeAdministracion solicitud,
+        int? idProveedor, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
         var gasto = new Gasto
         {
             IdTenant = idTenant,
@@ -1133,8 +1238,6 @@ public class ServicioDeGastos(
         // ningún lock de turno antes: la compra ligada FOR SHARE (si aplica) y el pago a proveedor
         // (si aplica) son los únicos locks de fila que pueden preceder a este advisory.
         await EscribirMovimientoDeTesoreriaAsync(idTenant, idEmpresa, gasto, idEmpleado, momento, ct);
-
-        await transaccion.CommitAsync(ct);
 
         return gasto;
     }

@@ -87,6 +87,10 @@ public class EscriturasSinReintentoEstructuralesTests
         // son parte del audit original de fix/retry-double-add).
         { "Ways.Application/Gastos/ServicioDeGastos.cs", "VincularCompraAsync" },
 
+        // Pagar una compra: crea gasto, pago de cuenta corriente y egreso de tesorería sin clave de
+        // idempotencia — un reintento sobre un commit ambiguo pagaría dos veces.
+        { "Ways.Application/Gastos/ServicioDeGastos.cs", "PagarCompraAsync" },
+
         // Edición y baja de gastos: ajustes de cuenta corriente y de tesorería, recálculo de arqueo y
         // auditoría sin clave de idempotencia — un reintento sobre un commit ambiguo los duplicaría
         // (y la baja reintentada respondería 404 a una baja que sí tuvo éxito).
