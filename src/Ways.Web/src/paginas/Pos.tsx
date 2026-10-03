@@ -3866,13 +3866,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             <hr />
 
-            {!modoPresupuesto && ajustesManuales.descuentoManualTotal !== 0 && (
+            {ajustesManuales.descuentoManualTotal !== 0 && (
               <div className="d-flex justify-content-between mb-1 text-warning-emphasis">
                 <span>Desc. manual</span>
                 <span>{formatearMoneda(-ajustesManuales.descuentoManualTotal)}</span>
               </div>
             )}
-            {!modoPresupuesto && ajustesManuales.recargoManualTotal !== 0 && (
+            {ajustesManuales.recargoManualTotal !== 0 && (
               <div className="d-flex justify-content-between mb-1 text-info-emphasis">
                 <span>Recargo</span>
                 <span>{formatearImporteConSigno(ajustesManuales.recargoManualTotal, { simbolo: true })}</span>

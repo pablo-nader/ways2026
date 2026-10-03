@@ -3216,7 +3216,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(apiPostMock).not.toHaveBeenCalledWith('/ofertas/resolver', expect.anything())
   })
 
-  it('bajo ?idPresupuesto= no hay control de ajuste manual ni filas de descuento/recargo manual: el precio congelado no se toca', async () => {
+  it('bajo ?idPresupuesto= las filas del presupuesto no ofrecen el control de ajuste manual', async () => {
     mockearApiGetPresupuesto()
     renderPos('/pos?idPresupuesto=1')
     await screen.findByText(/Esta venta viene del presupuesto N° 1/)
@@ -3224,8 +3224,6 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
 
     expect(screen.queryByRole('button', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('form', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
-    expect(screen.queryByText('Desc. manual')).not.toBeInTheDocument()
-    expect(screen.queryByText('Recargo')).not.toBeInTheDocument()
   })
 
   it('cobrar postea la SolicitudDeVenta con idPresupuestoOrigen, sin idCliente ni lineas (dto-contract-honesty)', async () => {
