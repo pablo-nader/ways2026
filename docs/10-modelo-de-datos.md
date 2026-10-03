@@ -1300,6 +1300,32 @@ que hoy, pero auditable.
 > aporta ningún término al arqueo — mismo criterio que el ajuste manual. Ambos llevan
 > `id_punto_venta` como *provenance* (de dónde salió el pedido), nunca como autoridad (ninguno
 > de los dos deriva nada de un turno).
+>
+> **Pagar una compra (sin cambio de esquema):** `POST /api/compras/{id}/pagos`
+> (`ServicioDeGastos.PagarCompraAsync`, `GestionDeCatalogo`) es el camino directo desde el detalle
+> de la compra y desde la fila `compra` de la cuenta corriente del proveedor. Cuerpo: `fecha`
+> (fecha de negocio, puede ser retroactiva, nunca futura en la zona de la empresa), `importe`,
+> `idMedioPago` (nunca un medio de cuenta corriente) y `concepto` opcional (sin él queda
+> `Pago <tipo> <número>`). Empresa, punto de venta, proveedor y categoría salen de la compra, no del
+> cliente. En UNA transacción crea el gasto (`categoria = proveedor`, `origen_fondos = tesoreria`,
+> sin turno, `id_comprobante_compra` = la compra, `fecha` = la fecha de negocio), el movimiento
+> `pago` imputado a esa compra (con `now`, como todo el ledger) y el egreso de tesorería: reusa el
+> mismo escritor que el alta administrativa de un gasto ligado a una compra, no duplica ninguna
+> escritura de ledger. Reglas: la compra tiene que estar `confirmada` (`409 compra_no_confirmada`
+> / `compra_anulada`); `importe > 0` (`400 gasto_importe_invalido`); `importe` ≤ saldo pendiente de
+> ESA compra (`409 pago_excede_saldo_pendiente`, o `409 compra_sin_saldo_pendiente` si ya está
+> saldada). Saldo pendiente = `total − pagado` (piso en cero), con `pagado` por la fórmula OD7
+> (`LectorDePagadoPorCompra`, la única fuente: el estado de pago, el detalle, el listado y la cuenta
+> corriente leen de ahí). Concurrencia: la compra se toma `FOR UPDATE` como primer lock (los demás
+> escritores que la tocan la toman `FOR SHARE` o exclusiva primero, sin ciclo) y el pagado se lee
+> después del lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin
+> reintento automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
+> arriba o dado de baja después de imputarse no toma el lock de la compra: puede dejarla sobrepagada
+> o con saldo distinto, que queda en cero y nunca negativo. Lecturas: `GET /api/compras/{id}` suma
+> `pagado` y `saldoPendiente` (cero fuera de una compra confirmada), `GET /api/compras` suma
+> `saldoPendiente` (lo usa el selector de vincular un gasto a una compra) y las filas `compra` de
+> `GET /api/proveedores/{id}/cuenta-corriente` suman `saldoPendienteDeLaCompra`. Son datos de
+> encabezado, los ve también el vendedor; el costo de las líneas sigue oculto.
 
 ### 8b. Cuenta corriente de proveedores
 

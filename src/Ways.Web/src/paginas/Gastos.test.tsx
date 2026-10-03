@@ -446,8 +446,8 @@ describe('Gastos (administración) — listado y filtros', () => {
 // stage-gasto-a-compra (PR4): acciones por fila para un gasto sin compra ligada — "Vincular a
 // compra" abre un picker filtrado por el proveedor del gasto (si tiene), "Crear compra" navega.
 describe('Gastos (administración) — vincular a una compra existente', () => {
-  function compraListadaFixture(sobrescribir: Partial<{ id: number; idProveedor: number; numeroExterno: string | null; estado: string; fechaRecepcion: string | null; total: number }> = {}) {
-    return { id: 9, idProveedor: 2, idTipoComprobante: 5, numeroExterno: '0003-00000009', estado: 'Confirmada', fechaRecepcion: '2026-08-20T12:00:00Z', total: 500, ...sobrescribir }
+  function compraListadaFixture(sobrescribir: Partial<{ id: number; idProveedor: number; numeroExterno: string | null; estado: string; fechaRecepcion: string | null; total: number; saldoPendiente: number }> = {}) {
+    return { id: 9, idProveedor: 2, idTipoComprobante: 5, numeroExterno: '0003-00000009', estado: 'Confirmada', fechaRecepcion: '2026-08-20T12:00:00Z', total: 500, saldoPendiente: 320, ...sobrescribir }
   }
 
   function mockearConCompras(opciones: { pagina?: PaginaDeGastosDeAdministracion; compras?: ReturnType<typeof compraListadaFixture>[] } = {}) {
@@ -488,6 +488,27 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
 
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('idEmpresa=1')))
+  })
+
+  it('el picker muestra el saldo pendiente de cada compra junto a su total', async () => {
+    mockearConCompras({
+      pagina: paginaFixture([gastoFixture({ id: 3 })]),
+      compras: [
+        compraListadaFixture({ id: 9, numeroExterno: '0003-00000009', total: 500, saldoPendiente: 320 }),
+        compraListadaFixture({ id: 10, numeroExterno: '0003-00000010', total: 700, saldoPendiente: 0 }),
+      ],
+    })
+    renderGastos()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Vincular a compra' }))
+
+    const fila9 = (await screen.findByText('0003-00000009')).closest('tr') as HTMLElement
+    const fila10 = screen.getByText('0003-00000010').closest('tr') as HTMLElement
+    expect(screen.getByRole('columnheader', { name: 'Saldo pendiente' })).toBeInTheDocument()
+    expect(within(fila9).getByText('$ 500,00')).toBeInTheDocument()
+    expect(within(fila9).getByText('$ 320,00')).toBeInTheDocument()
+    expect(within(fila10).getByText('$ 700,00')).toBeInTheDocument()
+    expect(within(fila10).getByText('$ 0,00')).toBeInTheDocument()
   })
 
   it('elegir una compra del picker vincula el gasto y refresca el listado', async () => {

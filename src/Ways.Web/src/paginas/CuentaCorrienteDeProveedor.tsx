@@ -5,6 +5,7 @@ import { saldoResultanteDeAjuste, validarAjusteLocal } from '../api/cuentaCorrie
 import {
   aSolicitudDeAjusteDeProveedor,
   clienteDeCuentaCorrienteDeProveedor,
+  compraPagableDelMovimiento,
   esSaldoAFavor,
   etiquetaDeTipoDeMovimiento,
   filtrosDeEstadoDeCuentaDeProveedorVacios,
@@ -19,11 +20,12 @@ import type {
   ProveedorListado,
   PuntoVentaListado,
 } from '../api/tipos'
-import { puedeSupervisarCuentaDeProveedor } from '../api/tipos'
+import { puedeGestionarCatalogos, puedeSupervisarCuentaDeProveedor } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
@@ -217,10 +219,13 @@ function PantallaCuentaCorrienteDeProveedor({
   const generacionRef = useRef(0)
 
   const [modalAjusteAbierto, setModalAjusteAbierto] = useState(false)
+  const [compraAPagar, setCompraAPagar] = useState<{ idCompra: number; saldoPendiente: number } | null>(null)
   const [aviso, setAviso] = useState('')
 
   const { usuario } = useAuth()
   const esSupervisorOAdmin = usuario !== null && puedeSupervisarCuentaDeProveedor(usuario.rolId)
+  // Pagar crea un gasto de tesorería: el servidor lo exige con `GestionDeCatalogo` (Admin).
+  const puedePagar = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
 
   // regla 2: cada cambio de filtro/página dispara una nueva consulta — una respuesta
   // desactualizada nunca puede pisar la más reciente.
@@ -392,6 +397,7 @@ function PantallaCuentaCorrienteDeProveedor({
                     <th>Detalle</th>
                     <th className="text-end">Importe</th>
                     <th className="text-end">Saldo resultante</th>
+                    {puedePagar && <th />}
                   </tr>
                 </thead>
                 <tbody>
@@ -403,11 +409,27 @@ function PantallaCuentaCorrienteDeProveedor({
                       <td>{m.detalle ?? '—'}</td>
                       <td className="text-end">{formatearMoneda(m.importe)}</td>
                       <td className="text-end">{formatearSaldoConEtiqueta(m.saldoResultante)}</td>
+                      {puedePagar && (
+                        <td className="text-end">
+                          {compraPagableDelMovimiento(m) !== null && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-primary"
+                              onClick={() => {
+                                setAviso('')
+                                setCompraAPagar(compraPagableDelMovimiento(m))
+                              }}
+                            >
+                              Pagar
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-center text-muted py-4">
+                      <td colSpan={puedePagar ? 7 : 6} className="text-center text-muted py-4">
                         No hay movimientos en el período seleccionado.
                       </td>
                     </tr>
@@ -442,6 +464,20 @@ function PantallaCuentaCorrienteDeProveedor({
           </>
         )}
       </Box>
+
+      {compraAPagar && (
+        <ModalDePagoDeCompra
+          idCompra={compraAPagar.idCompra}
+          etiquetaDeLaCompra={`#${compraAPagar.idCompra}`}
+          saldoPendiente={compraAPagar.saldoPendiente}
+          onCerrar={() => setCompraAPagar(null)}
+          onPagado={(resultado) => {
+            setCompraAPagar(null)
+            setAviso(`Pago registrado: ${formatearMoneda(resultado.gasto.importe)}.`)
+            cargar()
+          }}
+        />
+      )}
 
       {modalAjusteAbierto && pagina && puntosVenta && (
         <ModalAjusteDeProveedor

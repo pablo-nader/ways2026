@@ -3,6 +3,8 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Compras;
+using Ways.Domain.Compras;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
@@ -56,17 +58,51 @@ public sealed class ServicioDeCuentaCorrienteDeProveedor(
             })
             .ToListAsync(ct);
 
+        var saldosPendientes = await LeerSaldosPendientesDeComprasAsync(
+            filas.Where(f => f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra != null)
+                .Select(f => f.IdComprobanteCompra!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
         var items = filas
             .Select(f => new MovimientoDeCuentaDeProveedor(
                 f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteCompra, f.IdGasto,
                 f.Tipo == TipoMovimientoCcProveedor.Ajuste
                     ? CalculadorDeEstadoDeCuentaDeProveedor.EtiquetarAjuste(f.IdComprobanteCompra)
+                    : null,
+                f.Tipo == TipoMovimientoCcProveedor.Compra && f.IdComprobanteCompra is { } idCompra
+                    ? saldosPendientes.GetValueOrDefault(idCompra)
                     : null))
             .ToList();
 
         var header = new EstadoDeCuentaDeProveedorHeader(idProveedor, saldo);
         return new PaginaDeEstadoDeCuentaDeProveedor(
             header, items, total, pagina, tamanio, historico, desdeEfectivo, hastaEfectivo);
+    }
+
+    /// <summary>Saldo pendiente de las compras de una página, con UNA consulta de total/estado y una
+    /// de pagado (<see cref="LectorDePagadoPorCompra"/>) para todas. Una compra que ya no es visible
+    /// no figura en el resultado.</summary>
+    private async Task<Dictionary<int, decimal>> LeerSaldosPendientesDeComprasAsync(
+        IReadOnlyCollection<int> idsCompras, CancellationToken ct)
+    {
+        if (idsCompras.Count == 0)
+        {
+            return [];
+        }
+
+        var compras = await db.ComprobantesCompra
+            .Where(c => idsCompras.Contains(c.Id))
+            .Select(c => new { c.Id, c.Estado, c.Total })
+            .ToListAsync(ct);
+
+        var pagadoPorCompra = await LectorDePagadoPorCompra.LeerAsync(
+            db, compras.Where(c => c.Estado == EstadoCompra.Confirmada).Select(c => c.Id).ToList(), ct);
+
+        return compras.ToDictionary(
+            c => c.Id,
+            c => ReglaDePagoDeCompra.SaldoPendiente(c.Estado, c.Total, pagadoPorCompra.GetValueOrDefault(c.Id, 0m)));
     }
 
     /// <summary>

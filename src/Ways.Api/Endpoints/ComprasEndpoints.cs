@@ -4,6 +4,7 @@ using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Exportacion;
+using Ways.Application.Gastos;
 using Ways.Domain.Compras;
 
 namespace Ways.Api.Endpoints;
@@ -106,6 +107,17 @@ public static class ComprasEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Anula una compra confirmada: contramovimientos de stock, nunca revierte costo_nominal.");
+
+        grupo.MapPost("/{id:int}/pagos", async (
+            ServicioDeGastos servicio, int id, SolicitudDePagoDeCompra solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.PagarCompraAsync(id, solicitud, ct);
+            return Results.Created($"/api/gastos/administracion/{resultado.Gasto.Id}", resultado);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Paga una compra confirmada: crea el gasto de tesorería y el pago de cuenta corriente imputado a la " +
+            "compra en una transacción. El importe no puede superar el saldo pendiente de esa compra.");
 
         grupo.MapPost("/{id:int}/precios", async (
             ServicioDeCompras servicio, int id, SolicitudDeAplicarPrecios solicitud, CancellationToken ct) =>

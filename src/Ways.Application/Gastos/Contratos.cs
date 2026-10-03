@@ -176,3 +176,17 @@ public sealed record SolicitudDeEdicionDeGasto(
     int IdMedioPago,
     string? NumeroFactura,
     decimal Importe);
+
+// ---- Pago de una compra desde su detalle o su cuenta corriente --------------------------------
+
+/// <summary>Cuerpo de <c>POST /api/compras/{id}/pagos</c>. La empresa, el punto de venta, el
+/// proveedor y la categoría salen de la compra, nunca del cliente: un pago es siempre un gasto de
+/// categoría proveedor, de origen tesorería, imputado a esa compra. <see cref="Fecha"/> es la fecha
+/// de negocio (puede ser retroactiva, nunca futura, mismas reglas que
+/// <see cref="SolicitudDeGastoDeAdministracion.Fecha"/>). <see cref="Concepto"/> es opcional: sin él
+/// queda <c>Pago &lt;tipo&gt; &lt;número&gt;</c>.</summary>
+public sealed record SolicitudDePagoDeCompra(DateOnly Fecha, decimal Importe, int IdMedioPago, string? Concepto);
+
+/// <summary>Respuesta de <c>POST /api/compras/{id}/pagos</c>: el gasto creado y el estado de pago de
+/// la compra después de este pago, leído bajo el mismo lock que lo validó.</summary>
+public sealed record ResultadoDePagoDeCompra(GastoRegistrado Gasto, decimal Pagado, decimal SaldoPendiente);

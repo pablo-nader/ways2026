@@ -9,10 +9,15 @@ namespace Ways.Application.CuentaCorriente;
 /// esta es la lectura PAGINADA del ledger completo, aquella el resumen por-compra
 /// (design decisión 9 — dos read models a propósito, ninguno amplía al otro).
 /// </summary>
+///
+/// <see cref="SaldoPendienteDeLaCompra"/> solo viene en las filas de tipo <c>compra</c>: lo que falta
+/// pagar de ESA compra hoy (cero si está anulada), para ofrecer "Pagar" sobre la fila. En el resto de
+/// los tipos, y en el movimiento que devuelve un ajuste recién escrito, es <c>null</c>.
+/// </summary>
 public sealed record MovimientoDeCuentaDeProveedor(
     int IdMovimiento, DateTimeOffset Fecha, TipoMovimientoCcProveedor Tipo, decimal Importe,
     decimal SaldoResultante, string? Detalle, int? IdComprobanteCompra, int? IdGasto,
-    EtiquetaDeAjuste? Etiqueta);
+    EtiquetaDeAjuste? Etiqueta, decimal? SaldoPendienteDeLaCompra = null);
 
 /// <summary><see cref="Saldo"/> viene de <c>proveedores.saldo</c> (la caché de
 /// <c>EscriturasDeCuentaCorrienteProveedor</c>) — NUNCA re-derivado de los movimientos de esta

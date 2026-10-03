@@ -110,6 +110,7 @@ function movimientoFixture(sobrescribir: Partial<MovimientoDeCuentaDeProveedor> 
     idComprobanteCompra: 10,
     idGasto: null,
     etiqueta: null,
+    saldoPendienteDeLaCompra: null,
     ...sobrescribir,
   }
 }
@@ -477,5 +478,76 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     // problema DISTINTO, visible aparte, nunca disfrazado de fallo del ajuste (regla 6).
     expect(await screen.findByText('Ajuste registrado: -$ 200,00.')).toBeInTheDocument()
     expect(await screen.findByText('falló el refresco')).toBeInTheDocument()
+  })
+})
+
+describe('CuentaCorrienteDeProveedor — pagar una compra desde su fila', () => {
+  const medioEfectivo = {
+    id: 1,
+    nombre: 'Efectivo',
+    activo: true,
+    idEmpresa: null,
+    orden: 1,
+    comportamiento: 'Efectivo',
+    admiteVuelto: true,
+    requiereReferencia: false,
+    recargoPorcentaje: null,
+  }
+
+  function mockearConFilas(items: MovimientoDeCuentaDeProveedor[]) {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo])
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<PaginaDeEstadoDeCuentaDeProveedor>(paginaFixture({ items, total: items.length }))
+      }
+      return undefined
+    })
+  }
+
+  it('un Admin ve "Pagar" solo en la fila de una compra con saldo pendiente', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    mockearConFilas([
+      movimientoFixture({ idMovimiento: 1, idComprobanteCompra: 10, saldoPendienteDeLaCompra: 120 }),
+      movimientoFixture({ idMovimiento: 2, idComprobanteCompra: 11, saldoPendienteDeLaCompra: 0 }),
+      movimientoFixture({ idMovimiento: 3, tipo: 'Pago', idComprobanteCompra: 10, idGasto: 7, importe: -80 }),
+    ])
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    await screen.findByText('Compra #11')
+    expect(screen.getAllByRole('button', { name: 'Pagar' })).toHaveLength(1)
+  })
+
+  it('un Supervisor no ve "Pagar" aunque la compra tenga saldo pendiente', async () => {
+    mockearConFilas([movimientoFixture({ saldoPendienteDeLaCompra: 120 })])
+    renderPantalla(1, { proveedor: proveedorFixture() })
+
+    await screen.findByText('Compra #10')
+    expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
+  })
+
+  it('pagar abre el modal con el saldo de esa compra, registra el pago y refresca el estado de cuenta', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    mockearConFilas([movimientoFixture({ saldoPendienteDeLaCompra: 120 })])
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras/10/pagos'
+        ? Promise.resolve({ gasto: { id: 9, importe: 120 }, pagado: 300, saldoPendiente: 0 })
+        : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderPantalla(1, { proveedor: proveedorFixture() })
+    await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Pagar compra #10' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Importe')).toHaveValue('120,00')
+    await screen.findByRole('option', { name: 'Efectivo' })
+    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await screen.findByText('Pago registrado: $ 120,00.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledWith('/compras/10/pagos', expect.objectContaining({ importe: 120, idMedioPago: 1 }))
+    const lecturasDelEstado = apiGetMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes('/cuenta-corriente'))
+    expect(lecturasDelEstado).toHaveLength(2)
   })
 })

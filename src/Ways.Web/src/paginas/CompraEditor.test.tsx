@@ -211,6 +211,8 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     alicuotas: [{ idAlicuotaIva: 3, porcentaje: 21, neto: 950, iva: 199.5 }],
     preciosIncluyenIva: false,
     percepciones: [],
+    pagado: 0,
+    saldoPendiente: 0,
     ...sobrescribir,
   }
 }
@@ -1409,5 +1411,95 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     expect(within(tabla).getByText('21%')).toBeInTheDocument()
     expect(within(tabla).getByText('$ 199,50')).toBeInTheDocument()
     expect(within(tabla).queryByLabelText(/IVA impreso/)).not.toBeInTheDocument()
+  })
+})
+
+describe('CompraEditor — pagar una compra confirmada', () => {
+  const medioEfectivo = {
+    id: 1,
+    nombre: 'Efectivo',
+    activo: true,
+    idEmpresa: null,
+    orden: 1,
+    comportamiento: 'Efectivo',
+    admiteVuelto: true,
+    requiereReferencia: false,
+    recargoPorcentaje: null,
+  }
+
+  function mockearCompra(compra: CompraDetalle) {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compra)
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo])
+      return undefined
+    })
+  }
+
+  it('una confirmada con saldo muestra lo pagado, el saldo pendiente y el botón Pagar', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 400, saldoPendiente: 749.5 }))
+    renderEditor()
+
+    await screen.findByRole('button', { name: 'Pagar' })
+    expect(screen.getByText('Pagado').nextElementSibling).toHaveTextContent('$ 400,00')
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 749,50')
+  })
+
+  it('una confirmada saldada muestra el saldo en cero y no ofrece pagar', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 1149.5, saldoPendiente: 0 }))
+    renderEditor()
+
+    await screen.findByRole('button', { name: 'Anular compra' })
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+    expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
+  })
+
+  it('una compra anulada no ofrece pagar ni muestra el bloque de saldo', async () => {
+    mockearCompra(compraFixture({ estado: 'Anulada', pagado: 0, saldoPendiente: 0 }))
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Saldo pendiente')).not.toBeInTheDocument()
+  })
+
+  it('un rol sin escritura no ve el botón Pagar', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 0, saldoPendiente: 1149.5 }))
+    renderEditor()
+
+    await screen.findByText('Fideos 500g')
+    expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
+  })
+
+  it('pagar manda el POST de la compra, cierra el modal, avisa y actualiza el saldo sin recargar', async () => {
+    mockearCompra(compraFixture({ estado: 'Confirmada', pagado: 0, saldoPendiente: 1149.5 }))
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1/pagos') {
+        return Promise.resolve({
+          gasto: { id: 50, importe: 1149.5 },
+          pagado: 1149.5,
+          saldoPendiente: 0,
+        })
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await usuario.click(await screen.findByRole('button', { name: 'Pagar' }))
+    await screen.findByRole('option', { name: 'Efectivo' })
+    await usuario.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await screen.findByText('Pago registrado: $ 1.149,50.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Saldo pendiente').nextElementSibling).toHaveTextContent('$ 0,00')
+    expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument()
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/pagos')
+    expect(llamadas).toHaveLength(1)
+    expect(llamadas[0][1]).toMatchObject({ importe: 1149.5, idMedioPago: 1, concepto: null })
+    // El detalle se pidió una sola vez: el pago no dispara una segunda lectura.
+    expect(apiGetMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1')).toHaveLength(1)
   })
 })

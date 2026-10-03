@@ -47,7 +47,7 @@ public class ExportacionDeListadosTests
     [Fact]
     public void ComprasConNumeroExternoNuloQuedaComoElSentinela()
     {
-        var fila = new CompraListada(1, 1, 1, null, EstadoCompra.Borrador, null, 500m);
+        var fila = new CompraListada(1, 1, 1, null, EstadoCompra.Borrador, null, 500m, 0m);
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
@@ -57,7 +57,7 @@ public class ExportacionDeListadosTests
     [Fact]
     public void ComprasConNumeroExternoPasaElTextoTalCual()
     {
-        var fila = new CompraListada(1, 1, 1, "0001-00000042", EstadoCompra.Confirmada, null, 500m);
+        var fila = new CompraListada(1, 1, 1, "0001-00000042", EstadoCompra.Confirmada, null, 500m, 0m);
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
@@ -68,7 +68,7 @@ public class ExportacionDeListadosTests
     public void ComprasConvierteLaFechaDeRecepcionALaZonaLocalYDescartaElOffset()
     {
         var instante = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
-        var fila = new CompraListada(1, 1, 1, "0001-00000001", EstadoCompra.Confirmada, instante, 500m);
+        var fila = new CompraListada(1, 1, 1, "0001-00000001", EstadoCompra.Confirmada, instante, 500m, 0m);
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
@@ -78,7 +78,7 @@ public class ExportacionDeListadosTests
     [Fact]
     public void ComprasConFechaDeRecepcionNulaQuedaComoCeldaVacia()
     {
-        var fila = new CompraListada(1, 1, 1, "0001-00000001", EstadoCompra.Borrador, null, 500m);
+        var fila = new CompraListada(1, 1, 1, "0001-00000001", EstadoCompra.Borrador, null, 500m, 0m);
 
         var tabla = ExportacionDeListados.De([fila], Contexto, ZonaBuenosAires);
 
