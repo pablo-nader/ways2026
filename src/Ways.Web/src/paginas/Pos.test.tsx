@@ -5163,6 +5163,14 @@ async function armarCarritoConCocaCola() {
   await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 }
 
+/** El select "Medio de pago" se renderiza deshabilitado hasta que llega `/catalogos/medios-pago`
+ * (`medios === null`): esperar a que se habilite es esperar al DATO y no al elemento, que existe
+ * desde el primer render (web-test-data-gates, variante 1). */
+async function esperarMediosDePago() {
+  const selector = await screen.findByLabelText('Medio de pago')
+  await waitFor(() => expect(selector).toBeEnabled())
+}
+
 function campoDePorcentajeDeAjuste() {
   return screen.getByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' })
 }
@@ -5346,6 +5354,7 @@ describe('Pos — ajuste manual por línea', () => {
     await armarCarritoConCocaCola()
     await aplicarAjusteManual('Descuento', '10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
     await userEvent.type(importe, '85')
@@ -5356,6 +5365,7 @@ describe('Pos — ajuste manual por línea', () => {
     await armarCarritoConCocaCola()
     await aplicarAjusteManual('Recargo', '15')
     await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
 
@@ -5371,6 +5381,7 @@ describe('Pos — ajuste manual por línea', () => {
     await armarCarritoConCocaCola()
     await aplicarAjusteManual('Descuento', '10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '90')
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
@@ -5507,6 +5518,7 @@ describe('Pos — ajuste manual por línea', () => {
     await armarCarritoConCocaCola()
     await aplicarAjusteManual('Descuento', '10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '90')
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
@@ -5886,6 +5898,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
       await aplicarAjusteManual('Descuento', '10')
       await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+      await esperarMediosDePago()
       await cobrarConEfectivo('90')
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
