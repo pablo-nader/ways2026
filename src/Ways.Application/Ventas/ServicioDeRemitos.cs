@@ -14,6 +14,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ventas;
@@ -972,7 +973,11 @@ public class ServicioDeRemitos(
 
     // ---- proyección (task 5.19: rules 12b/12c — todo campo posicional, valores distintos) ---------
 
-    private static RemitoDetalle ProyectarDetalle(Remito remito, IReadOnlyList<ItemRemito> items) =>
+    /// <summary>El costo congelado es del back-office: vendedor y supervisor operan remitos desde el
+    /// POS bajo <c>OperacionDePos</c> y reciben <c>null</c>.</summary>
+    private bool PuedeVerCostos => contexto.Rol == RolConocido.Admin;
+
+    private RemitoDetalle ProyectarDetalle(Remito remito, IReadOnlyList<ItemRemito> items) =>
         new(
             remito.Id,
             remito.IdPuntoVenta,
@@ -993,7 +998,7 @@ public class ServicioDeRemitos(
                 .OrderBy(i => i.Orden)
                 .Select(i => new ItemDeRemito(
                     i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
-                    i.IdListaPrecio, i.IdOferta, i.IdAlicuotaIva, i.PorcentajeIva, i.CostoUnitario,
+                    i.IdListaPrecio, i.IdOferta, i.IdAlicuotaIva, i.PorcentajeIva, PuedeVerCostos ? i.CostoUnitario : null,
                     i.CostoEsEstimado, i.IdLote))
                 .ToList());
 
