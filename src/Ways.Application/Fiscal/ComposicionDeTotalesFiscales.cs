@@ -73,24 +73,13 @@ public static class ComposicionDeTotalesFiscales
 
         foreach (var linea in lineas.Where(l => l.CodigoAfip is null))
         {
-            switch (linea.NombreAlicuota)
+            if (Clasificar(linea.CodigoAfip, linea.NombreAlicuota) == ClaseDeAlicuota.Exento)
             {
-                case NombreExento:
-                    impOpEx += linea.Total;
-                    break;
-                case NombreNoGravado:
-                    impTotConc += linea.Total;
-                    break;
-                default:
-                    // Bucketing por nombre, no por adivinanza: una alícuota NULL-coded que no sea
-                    // Exento ni No gravado es un dato de catálogo sin mapeo AFIP conocido — facturar
-                    // igual produciría un comprobante aritméticamente válido y legalmente incorrecto
-                    // (decisión 11). Falla fuerte en vez de bucketearla en cualquiera de los dos.
-                    throw new ErrorDominio(
-                        "alicuota_sin_mapeo_afip",
-                        $"La alícuota '{linea.NombreAlicuota}' no tiene código AFIP y no es " +
-                        $"'{NombreExento}' ni '{NombreNoGravado}'.",
-                        409);
+                impOpEx += linea.Total;
+            }
+            else
+            {
+                impTotConc += linea.Total;
             }
         }
 
@@ -98,4 +87,38 @@ public static class ComposicionDeTotalesFiscales
 
         return new TotalesFiscales(impNeto, impIva, impOpEx, impTotConc, ImpTribSinPercepciones, impTotal, itemsIva);
     }
+
+    /// <summary>La única definición de qué es Exento y qué es No gravado: una alícuota con
+    /// <c>codigo_afip</c> es gravada (incluido el 0% real); sin código, el nombre decide. Una
+    /// alícuota sin código que no sea ninguna de las dos es un dato de catálogo sin mapeo AFIP
+    /// conocido: bucketearla en cualquiera de los dos produciría un comprobante aritméticamente
+    /// válido y legalmente incorrecto (decisión 11), así que falla fuerte. La comparten la emisión
+    /// y el libro IVA para clasificar igual.</summary>
+    public static ClaseDeAlicuota Clasificar(short? codigoAfip, string nombreAlicuota)
+    {
+        if (codigoAfip is not null)
+        {
+            return ClaseDeAlicuota.Gravada;
+        }
+
+        return nombreAlicuota switch
+        {
+            NombreExento => ClaseDeAlicuota.Exento,
+            NombreNoGravado => ClaseDeAlicuota.NoGravado,
+            _ => throw new ErrorDominio(
+                "alicuota_sin_mapeo_afip",
+                $"La alícuota '{nombreAlicuota}' no tiene código AFIP y no es " +
+                $"'{NombreExento}' ni '{NombreNoGravado}'.",
+                409)
+        };
+    }
+}
+
+/// <summary>Cómo se declara una alícuota en un comprobante fiscal (ver
+/// <see cref="ComposicionDeTotalesFiscales.Clasificar"/>).</summary>
+public enum ClaseDeAlicuota
+{
+    Gravada,
+    Exento,
+    NoGravado
 }
