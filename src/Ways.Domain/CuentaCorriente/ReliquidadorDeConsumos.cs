@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Ways.Domain.Ventas;
 
 namespace Ways.Domain.CuentaCorriente;
@@ -29,10 +30,20 @@ public sealed record ConsumoAReliquidar(
 
 /// <summary>Detalle auditable de una línea (design: "sufficient to reconstruct the calculation").
 /// <see cref="Motivo"/> no nulo ⇒ línea omitida (<see cref="PrecioActual"/>/<see cref="TotalDelDia"/>
-/// quedan <c>null</c>, <see cref="Delta"/> queda en <c>0</c>) — nunca fatal, nunca acredita.</summary>
+/// quedan <c>null</c>, <see cref="Delta"/> queda en <c>0</c>) — nunca fatal, nunca acredita.
+///
+/// <para>En una línea re-precificada, <see cref="TotalDelDia"/> se reconstruye con este mismo
+/// detalle: <c>neto = round(Cantidad × PrecioActual, 2)</c> y
+/// <c>TotalDelDia = neto + CalculadorDeTotales.AjusteManualSobre(neto, AjusteManualPorcentaje)</c>.
+/// <see cref="AjusteManualPorcentaje"/> es el porcentaje manual del item que la corrida conservó
+/// (<c>null</c> = el item no tenía ajuste, o la línea fue omitida y no se re-precificó); se omite
+/// del JSON cuando es <c>null</c>, así que el detalle de una línea sin ajuste es idéntico al previo a
+/// este campo. El monto del ajuste no se guarda aparte: se deriva del porcentaje y del neto.</para></summary>
 public sealed record DetalleDeLinea(
     int? IdArticulo, decimal Cantidad, decimal PrecioHistorico, decimal? PrecioActual, decimal TotalHistorico,
-    decimal? TotalDelDia, decimal Delta, string? Motivo);
+    decimal? TotalDelDia, decimal Delta, string? Motivo,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? AjusteManualPorcentaje = null);
 
 /// <summary>Detalle auditable de un consumo cubierto — <see cref="Delta"/> ya lleva aplicada la
 /// fracción financiada (design: "Only the financed money is re-indexed").</summary>
@@ -129,7 +140,7 @@ public static class ReliquidadorDeConsumos
 
             detallesDeLinea.Add(new DetalleDeLinea(
                 idArticulo, linea.Cantidad, linea.PrecioUnitario, precioActual, linea.TotalHistorico, totalDelDia,
-                deltaLinea, null));
+                deltaLinea, null, linea.AjusteManualPorcentaje));
         }
 
         // Fracción financiada (design: "Financed fraction", deviación declarada) — con
