@@ -248,7 +248,9 @@ describe('Gastos (administración) — fecha', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     await screen.findByLabelText('Concepto')
 
-    const manianaISO = fechaLocal(new Date(Date.now() + 24 * 60 * 60 * 1000))
+    const maniana = new Date()
+    maniana.setDate(maniana.getDate() + 1)
+    const manianaISO = fechaLocal(maniana)
     fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: manianaISO } })
     await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
