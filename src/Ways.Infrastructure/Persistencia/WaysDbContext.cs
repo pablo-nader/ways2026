@@ -119,6 +119,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // (ServicioDeCompras) es el primer consumidor de Application.
     public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
     public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();
+    public DbSet<AlicuotaComprobanteCompra> AlicuotasComprobanteCompra => Set<AlicuotaComprobanteCompra>();
 
     // stage-12-lotes-vencimientos, Slice 1 (schema + seed gate, DB CHANGE GATE aprobado con
     // enmiendas): modelo adelantado a la migración, mismo trámite que ComprobanteCompra/

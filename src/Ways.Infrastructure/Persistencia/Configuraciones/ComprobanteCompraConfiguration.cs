@@ -62,6 +62,7 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
+        builder.Property(c => c.DiscriminaIva).HasColumnName("discrimina_iva").IsRequired();
         builder.Property(c => c.IvaTotal).HasColumnName("iva_total").HasColumnType("numeric(14,2)");
 
         builder.Property(c => c.Observaciones).HasColumnName("observaciones").HasColumnType("text");

@@ -31,6 +31,7 @@ public static class EtiquetasDeTablas
     private static readonly FrozenDictionary<string, string> PorTabla =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            ["alicuotas_comprobante_compra"] = "compras",
             ["areas"] = "áreas",
             ["arqueos_turno"] = "arqueos de caja",
             ["articulos"] = "artículos",

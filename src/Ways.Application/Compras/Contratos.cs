@@ -26,6 +26,11 @@ public sealed record LineaDeCompraSolicitada(
     string? CodigoLote = null,
     DateOnly? FechaVencimiento = null);
 
+/// <summary>El IVA que el proveedor imprimió para una alícuota: cuando difiere del calculado por
+/// redondeo, gana el impreso mientras no se aleje más de <see cref="CalculadorDeCompra.
+/// ToleranciaDeIvaImpreso"/>. Solo tiene sentido en un comprobante que discrimina IVA.</summary>
+public sealed record IvaImpresoSolicitado(int IdAlicuotaIva, decimal Iva);
+
 /// <summary>Cuerpo de <c>POST /api/compras</c> (crea un borrador) y de <c>PUT
 /// /api/compras/{id}</c> (design decisión 2: replace-set completo del header + los items — un
 /// PUT reemplaza <see cref="Items"/> entero, nunca un CRUD incremental por item).
@@ -36,7 +41,11 @@ public sealed record LineaDeCompraSolicitada(
 /// posicional existente (`dto-contract-honesty` regla 3 — el campo se traza hasta
 /// <c>ServicioDeCompras.ExigirOrdenLigableAsync</c>/<c>ComprobanteCompra.IdOrdenCompra</c>, nunca
 /// solo declarado). Seteable/cambiable solo mientras el comprobante es <c>borrador</c>; congelado
-/// después (spec: "The link is frozen once the compra is confirmed").</summary>
+/// después (spec: "The link is frozen once the compra is confirmed").
+///
+/// <see cref="DiscriminaIva"/> nulo toma el valor del tipo. En una factura (tipo que registra libro
+/// IVA) lo fija el tipo y pedir lo contrario es 400; en un remito o comprobante no fiscal lo elige
+/// quien carga el documento. <see cref="IvaImpreso"/> es el override de redondeo por alícuota.</summary>
 public sealed record SolicitudDeCompra(
     int IdProveedor,
     int IdTipoComprobante,
@@ -45,7 +54,9 @@ public sealed record SolicitudDeCompra(
     DateOnly? FechaComprobante,
     string? Observaciones,
     IReadOnlyList<LineaDeCompraSolicitada> Items,
-    int? IdOrdenCompra = null);
+    int? IdOrdenCompra = null,
+    bool? DiscriminaIva = null,
+    IReadOnlyList<IvaImpresoSolicitado>? IvaImpreso = null);
 
 /// <summary>Un item ya persistido, con su <c>precioSugerido</c> (design: API Surface — "Header +
 /// items + precioSugerido per item"). Sin <c>unidades</c> propio: solo <see cref="Cantidad"/>
@@ -74,6 +85,10 @@ public sealed record ItemDeCompra(
     DateOnly? FechaVencimiento,
     int? IdLote);
 
+/// <summary>Una fila del desglose de IVA de una compra que discrimina IVA: neto gravado e IVA de
+/// una alícuota. Exento y no gravado salen con IVA cero.</summary>
+public sealed record AlicuotaDeCompra(int IdAlicuotaIva, decimal Porcentaje, decimal Neto, decimal Iva);
+
 /// <summary>Detalle completo de una compra — respuesta de <c>GET /api/compras/{id}</c>,
 /// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.
 ///
@@ -96,7 +111,9 @@ public sealed record CompraDetalle(
     string? Observaciones,
     EstadoCompra Estado,
     IReadOnlyList<ItemDeCompra> Items,
-    int? IdOrdenCompra);
+    int? IdOrdenCompra,
+    bool DiscriminaIva,
+    IReadOnlyList<AlicuotaDeCompra> Alicuotas);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve

@@ -189,6 +189,13 @@ public class ManejadorDeErrores(
                 when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
 
+            // Cada alícuota sale una sola vez porque el servidor agrupa las líneas por alícuota y
+            // reemplaza el desglose completo bajo el lock del borrador — exención documentada de
+            // prueba de carrera, misma familia que ux_items_comprobante_compra_orden.
+            { SqlState: "23505", ConstraintName: string uxAlicuotaCompra }
+                when string.Equals(uxAlicuotaCompra, "ux_alicuotas_comprobante_compra_alicuota", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe esa alícuota en el desglose de IVA de esta compra.", "alicuota_de_compra_duplicada"),
+
             // stage-16-ordenes-de-compra (Slice 1, task 1.19, db-error-backstops, design decisión
             // 10-11): ux_ordenes_compra_numero tiene que resolverse por nombre EXACTO, ANTES de
             // ClasificarUnicidad — su nombre contiene "_numero", así que la rama genérica de más
@@ -495,7 +502,8 @@ public class ManejadorDeErrores(
             // cruda/fuera de banda.
             { SqlState: "23514", ConstraintName: string ckCompra }
                 when (ckCompra.StartsWith("ck_comprobantes_compra_", StringComparison.Ordinal)
-                        || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal))
+                        || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal)
+                        || ckCompra.StartsWith("ck_alicuotas_comprobante_compra_", StringComparison.Ordinal))
                     && ClasificarCheckDeCompras(ckCompra) is { } checkCompra =>
                 (checkCompra.EstadoHttp, checkCompra.Titulo, checkCompra.Codigo),
 
@@ -1014,6 +1022,13 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "Un ítem con codigo_lote tiene que traer también fecha_vencimiento.",
                     "lote_input_incompleto"),
+
+            // El desglose lo deriva CalculadorDeCompra de líneas ya validadas y el override
+            // impreso se rechaza si es negativo; esta rama atrapa una escritura que esquive eso.
+            "ck_alicuotas_comprobante_compra_importes_no_negativos" =>
+                (StatusCodes.Status400BadRequest,
+                    "Los importes del desglose de IVA de la compra no pueden ser negativos.",
+                    "alicuota_de_compra_invalida"),
 
             // Backstop de ck_items_comprobante_compra_concepto_sin_efectos — el servicio y
             // CalculadorDeCompra ya rechazan antes lote, bultos y actualizaCosto en una línea por

@@ -33,6 +33,6 @@ public class ServicioDeCatalogosFiscales(IWaysDbContext db)
             .OrderBy(t => t.Codigo)
             .Select(t => new TipoComprobanteListado(
                 t.Id, t.Clase, t.Codigo, t.Nombre, t.Letra, t.Signo,
-                t.DiscriminaIva, t.EsFiscal, t.AfectaStock, t.CodigoAfip, t.Activo))
+                t.DiscriminaIva, t.EsFiscal, t.AfectaStock, t.CodigoAfip, t.Activo, t.RegistraLibroIva))
             .ToListAsync(ct);
 }

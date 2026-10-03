@@ -55,8 +55,11 @@ public class ServicioDeCompras(
             .Where(i => i.IdComprobanteCompra == id)
             .OrderBy(i => i.Orden)
             .ToListAsync(ct);
+        var alicuotas = await db.AlicuotasComprobanteCompra
+            .Where(a => a.IdComprobanteCompra == id)
+            .ToListAsync(ct);
 
-        return Proyectar(comprobante, items);
+        return Proyectar(comprobante, items, alicuotas);
     }
 
     public async Task<PaginaDeCompras> ListarAsync(
@@ -170,7 +173,9 @@ public class ServicioDeCompras(
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
-        var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
+        var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
+        var (lineas, calculada) = Calcular(
+            solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso));
 
         // stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
         // "Ligadura Invariant"): sin transacción propia acá (CrearBorradorAsync no abre una), así
@@ -194,6 +199,7 @@ public class ServicioDeCompras(
             IdEmpleado = idEmpleado,
             Subtotal = calculada.Subtotal,
             DescuentoTotal = calculada.DescuentoTotal,
+            DiscriminaIva = discriminaIva,
             IvaTotal = calculada.IvaTotal,
             Total = calculada.Total,
             Observaciones = NormalizarOpcional(solicitud.Observaciones),
@@ -207,9 +213,11 @@ public class ServicioDeCompras(
 
         var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, solicitud.Items, momento);
         db.ItemsComprobanteCompra.AddRange(itemsEntidad);
+        var alicuotasEntidad = MaterializarAlicuotas(comprobante.Id, idTenant, calculada, momento);
+        db.AlicuotasComprobanteCompra.AddRange(alicuotasEntidad);
         await db.SaveChangesAsync(ct);
 
-        return Proyectar(comprobante, itemsEntidad);
+        return Proyectar(comprobante, itemsEntidad, alicuotasEntidad);
     }
 
     /// <summary>Design decisión 2: replace-set completo bajo <c>SELECT … FOR UPDATE … WHERE
@@ -226,16 +234,18 @@ public class ServicioDeCompras(
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
-        var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
+        var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
+        var (lineas, calculada) = Calcular(
+            solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso));
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarActualizacionAsync(id, idTenant, solicitud, lineas, calculada, momento, ct));
+            await EjecutarActualizacionAsync(id, idTenant, solicitud, discriminaIva, lineas, calculada, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarActualizacionAsync(
-        int id, int idTenant, SolicitudDeCompra solicitud, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada,
-        DateTimeOffset momento, CancellationToken ct)
+        int id, int idTenant, SolicitudDeCompra solicitud, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
+        CompraCalculada calculada, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -272,6 +282,9 @@ public class ServicioDeCompras(
         var itemsExistentes = await db.ItemsComprobanteCompra.Where(i => i.IdComprobanteCompra == id).ToListAsync(ct);
         db.ItemsComprobanteCompra.RemoveRange(itemsExistentes);
 
+        var alicuotasExistentes = await db.AlicuotasComprobanteCompra.Where(a => a.IdComprobanteCompra == id).ToListAsync(ct);
+        db.AlicuotasComprobanteCompra.RemoveRange(alicuotasExistentes);
+
         comprobante.IdProveedor = solicitud.IdProveedor;
         comprobante.IdTipoComprobante = solicitud.IdTipoComprobante;
         comprobante.NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno);
@@ -281,17 +294,20 @@ public class ServicioDeCompras(
         comprobante.IdOrdenCompra = solicitud.IdOrdenCompra;
         comprobante.Subtotal = calculada.Subtotal;
         comprobante.DescuentoTotal = calculada.DescuentoTotal;
+        comprobante.DiscriminaIva = discriminaIva;
         comprobante.IvaTotal = calculada.IvaTotal;
         comprobante.Total = calculada.Total;
         comprobante.UpdatedAt = momento;
 
         var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, solicitud.Items, momento);
         db.ItemsComprobanteCompra.AddRange(itemsNuevos);
+        var alicuotasNuevas = MaterializarAlicuotas(id, idTenant, calculada, momento);
+        db.AlicuotasComprobanteCompra.AddRange(alicuotasNuevas);
 
         await db.SaveChangesAsync(ct);
         await transaccion.CommitAsync(ct);
 
-        return Proyectar(comprobante, itemsNuevos);
+        return Proyectar(comprobante, itemsNuevos, alicuotasNuevas);
     }
 
     // ---- confirmar (design: Transactions — CONFIRMAR COMPRA) --------------------------------------
@@ -419,12 +435,11 @@ public class ServicioDeCompras(
         // sobre las líneas con artículo.
         var items = todosLosItems.Where(i => i.IdArticulo is not null).ToList();
 
-        // discriminaIva del tipo QUE VIO este lock (encabezado.IdTipoComprobante), nunca el
-        // resuelto antes de entrar a la transacción — un PUT concurrente que cambia el tipo
-        // (p.ej. C-FB → C-FA) entre el pre-chequeo y este lock no puede corromper costo_nominal
+        // discriminaIva del comprobante QUE VIO este lock (viene en el RETURNING del paso 1), nunca
+        // el resuelto antes de entrar a la transacción — un PUT concurrente que cambia el tipo o el
+        // flag (p.ej. C-FB → C-FA) entre el pre-chequeo y este lock no puede corromper costo_nominal
         // con un discriminaIva stale (design: Transactions — CONFIRMAR COMPRA, paso 1).
-        var tipo = await db.TiposComprobante.FirstAsync(t => t.Id == encabezado.IdTipoComprobante, ct);
-        var discriminaIva = tipo.DiscriminaIva;
+        var discriminaIva = encabezado.DiscriminaIva;
 
         // 2.b Resolución de lotes (etapa 12, slice 5; design decisión 3: lotes ANTES que stock) —
         // bajo el MISMO lock del header que el paso 1 ya tomó, antes del primer lock de stock del
@@ -774,9 +789,12 @@ public class ServicioDeCompras(
     /// <see cref="IdOrdenCompra"/> ensancha el <c>RETURNING</c> otra vez (stage-16-ordenes-de-
     /// compra, Slice 3, mismo criterio que decisión 4 de la 15 — mutation target #20): leerlo de
     /// <c>preLectura</c> (fuera de la transacción) confiaría en un valor que un <c>PUT</c>
-    /// concurrente pudo cambiar entre esa lectura y ESTE lock.</summary>
+    /// concurrente pudo cambiar entre esa lectura y ESTE lock.
+    ///
+    /// <see cref="DiscriminaIva"/> es el del comprobante tal como lo dejó el último guardado
+    /// del borrador: con el costo efectivo de las líneas se calcula con él, no con el del tipo.</summary>
     private readonly record struct EncabezadoConfirmado(
-        int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total, int? IdOrdenCompra);
+        int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total, int? IdOrdenCompra, bool DiscriminaIva);
 
     /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
     /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
@@ -797,7 +815,7 @@ public class ServicioDeCompras(
             "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
-            "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total, id_orden_compra";
+            "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total, id_orden_compra, discrimina_iva";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
@@ -811,7 +829,7 @@ public class ServicioDeCompras(
 
         return new EncabezadoConfirmado(
             lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetDecimal(3),
-            lector.IsDBNull(4) ? null : lector.GetInt32(4));
+            lector.IsDBNull(4) ? null : lector.GetInt32(4), lector.GetBoolean(5));
     }
 
     /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="MarcarAnuladaAsync"/>.
@@ -1113,7 +1131,8 @@ public class ServicioDeCompras(
     private static (IReadOnlyList<LineaDeCompra> Lineas, CompraCalculada Calculada) Calcular(
         IReadOnlyList<LineaDeCompraSolicitada> items, bool discriminaIva,
         IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
-        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes)
+        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes,
+        IReadOnlyDictionary<int, decimal>? ivaImpreso)
     {
         var orden = 1;
         var lineas = items
@@ -1123,9 +1142,47 @@ public class ServicioDeCompras(
                 i.ActualizaCosto ?? i.IdArticulo is not null))
             .ToList();
 
-        var calculada = CalculadorDeCompra.Calcular(lineas, discriminaIva, margenes);
+        var calculada = CalculadorDeCompra.Calcular(lineas, discriminaIva, margenes, ivaImpreso);
         return (lineas, calculada);
     }
+
+    /// <summary>Una alícuota repetida en el override es ambigua: se rechaza en vez de quedarse con
+    /// una de las dos en silencio.</summary>
+    private static IReadOnlyDictionary<int, decimal>? ConvertirIvaImpreso(IReadOnlyList<IvaImpresoSolicitado>? ivaImpreso)
+    {
+        if (ivaImpreso is null)
+        {
+            return null;
+        }
+
+        var porAlicuota = new Dictionary<int, decimal>(ivaImpreso.Count);
+        foreach (var impreso in ivaImpreso)
+        {
+            if (!porAlicuota.TryAdd(impreso.IdAlicuotaIva, impreso.Iva))
+            {
+                throw new ErrorDominio(
+                    "iva_impreso_duplicado", $"La alícuota {impreso.IdAlicuotaIva} viene repetida en el IVA impreso.", 400);
+            }
+        }
+
+        return porAlicuota;
+    }
+
+    private static List<AlicuotaComprobanteCompra> MaterializarAlicuotas(
+        int idComprobante, int idTenant, CompraCalculada calculada, DateTimeOffset momento) =>
+        calculada.Alicuotas
+            .Select(a => new AlicuotaComprobanteCompra
+            {
+                IdTenant = idTenant,
+                IdComprobanteCompra = idComprobante,
+                IdAlicuotaIva = a.IdAlicuotaIva,
+                Porcentaje = a.Porcentaje,
+                Neto = a.Neto,
+                Iva = a.Iva,
+                CreatedAt = momento,
+                UpdatedAt = momento
+            })
+            .ToList();
 
     /// <summary>Etapa 12, slice 5 (design: Write site 2 — "codigo_lote y fecha_vencimiento pasan
     /// derecho por MaterializarItems, sin resolución"): <paramref name="solicitudItems"/> viaja en
@@ -1281,7 +1338,9 @@ public class ServicioDeCompras(
     /// sugerido. Los totales del encabezado se conservan.</summary>
     private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
 
-    private CompraDetalle Proyectar(ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items) => new(
+    private CompraDetalle Proyectar(
+        ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items,
+        IReadOnlyList<AlicuotaComprobanteCompra> alicuotas) => new(
         comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,
         comprobante.NumeroExterno, comprobante.FechaComprobante, comprobante.FechaRecepcion,
         comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.IvaTotal, comprobante.Total,
@@ -1294,5 +1353,10 @@ public class ServicioDeCompras(
                 i.PorcentajeIva, PuedeVerCostos ? i.Total : null, i.ActualizaCosto,
                 PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote))
             .ToList(),
-        comprobante.IdOrdenCompra);
+        comprobante.IdOrdenCompra,
+        comprobante.DiscriminaIva,
+        alicuotas
+            .OrderBy(a => a.IdAlicuotaIva)
+            .Select(a => new AlicuotaDeCompra(a.IdAlicuotaIva, a.Porcentaje, a.Neto, a.Iva))
+            .ToList());
 }

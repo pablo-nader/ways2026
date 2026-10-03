@@ -109,6 +109,7 @@ public interface IWaysDbContext
     // (design: Table Shapes A/B).
     DbSet<ComprobanteCompra> ComprobantesCompra { get; }
     DbSet<ItemComprobanteCompra> ItemsComprobanteCompra { get; }
+    DbSet<AlicuotaComprobanteCompra> AlicuotasComprobanteCompra { get; }
 
     // stage-12-lotes-vencimientos, Slice 3: ServicioDeLotes es el primer consumidor de
     // Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración (proposal gate

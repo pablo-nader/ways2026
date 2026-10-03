@@ -693,14 +693,21 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.AlicuotasIva.Add(alicuota);
         await db.SaveChangesAsync();
 
-        var tipoTx = new TipoComprobante
+        // SQL crudo: con el modelo HEAD, EF incluiría registra_libro_iva en el INSERT y rompería
+        // contra este esquema con 42703 (ComprasRemitoYAlicuotas todavía no corrió).
+        int idTipoTx;
+        await using (var crudaTipo = new NpgsqlConnection(cadenaConexion))
         {
-            Clase = ClaseComprobante.Venta, Codigo = $"{nombre}-TX", Nombre = "Ticket X", Letra = null,
-            Signo = 1, DiscriminaIva = false, EsFiscal = false, AfectaStock = true, Activo = true,
-            CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.TiposComprobante.Add(tipoTx);
-        await db.SaveChangesAsync();
+            await crudaTipo.OpenAsync();
+            await using var comando = crudaTipo.CreateCommand();
+            comando.CommandText =
+                "INSERT INTO tipos_comprobante (clase, codigo, nombre, letra, signo, discrimina_iva, es_fiscal, " +
+                "afecta_stock, activo, created_at, updated_at) " +
+                "VALUES ('venta'::clase_comprobante, $1, 'Ticket X', NULL, 1, false, false, true, true, now(), now()) " +
+                "RETURNING id_tipo_comprobante";
+            comando.Parameters.Add(new NpgsqlParameter { Value = $"{nombre}-TX" });
+            idTipoTx = (int)(await comando.ExecuteScalarAsync())!;
+        }
 
         var condicionFiscal = new CondicionFiscal { Codigo = $"{nombre}-CF", Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
         db.CondicionesFiscales.Add(condicionFiscal);
@@ -778,7 +785,7 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                 " 'emitido'::estado_comprobante, $3, $3, NULL) " +
                 "RETURNING id_comprobante_venta";
             comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
-            comando.Parameters.Add(new NpgsqlParameter { Value = tipoTx.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idTipoTx });
             comando.Parameters.Add(new NpgsqlParameter { Value = ahora });
             comando.Parameters.Add(new NpgsqlParameter { Value = puntoVenta.Id });
             comando.Parameters.Add(new NpgsqlParameter { Value = usuario.Id });

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Domain.Articulos;
@@ -17,6 +18,7 @@ using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
+using Ways.Infrastructure.Persistencia.Migraciones;
 
 namespace Ways.IntegrationTests;
 
@@ -59,10 +61,10 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static readonly string[] CodigosDeVentaEsperadosTrasRemitosEtapa17 =
         [.. CodigosDeVentaEsperados, "TXR"];
 
-    private static readonly string[] CodigosDeCompraEsperados = ["C-FA", "C-FB", "C-FC"];
+    private static readonly string[] CodigosDeCompraEsperados = ["C-FA", "C-FB", "C-FC", "C-RM"];
 
     [Fact]
-    public async Task UnaBaseFrescaSiembraLosTresTiposDeCompraSinTocarElCatalogoDeVenta()
+    public async Task UnaBaseFrescaSiembraLosTiposDeCompraSinTocarElCatalogoDeVenta()
     {
         using var cliente = fixture.CreateClient(); // arranca el host: siembra el catálogo completo
 
@@ -88,6 +90,13 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // no es cierta por diseño (auxiliary-catalogs/spec.md: "A freshly seeded database has
         // PRE inactive"). Todo lo demás sigue naciendo activo — esta prueba fija el alcance
         // EXACTO de la desactivación: solo PRE, ningún otro código de venta/compra.
+        var conLibroIva = await db.TiposComprobante
+            .Where(t => t.RegistraLibroIva)
+            .Select(t => t.Codigo)
+            .OrderBy(c => c)
+            .ToListAsync();
+        Assert.Equal(["C-FA", "C-FB", "C-FC"], conLibroIva);
+
         var codigosInactivos = await db.TiposComprobante
             .Where(t => !t.Activo)
             .Select(t => t.Codigo)
@@ -199,6 +208,20 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), await ListarCodigosAsync("compra"));
             Assert.Equal(CodigosDeVentaEsperadosTrasRemitosEtapa17.OrderBy(c => c), await ListarCodigosAsync("venta"));
 
+            // Las tres facturas ganan registra_libro_iva en la base migrada; el remito nace sin él.
+            await using (var comando = verificacion.CreateCommand())
+            {
+                comando.CommandText = "SELECT codigo FROM tipos_comprobante WHERE registra_libro_iva ORDER BY codigo";
+                var conLibroIva = new List<string>();
+                await using var lector = await comando.ExecuteReaderAsync();
+                while (await lector.ReadAsync())
+                {
+                    conLibroIva.Add(lector.GetString(0));
+                }
+
+                Assert.Equal(["C-FA", "C-FB", "C-FC"], conLibroIva);
+            }
+
             // Re-ejecuta a mano el mismo INSERT idempotente de la migración (simula un reintento
             // de arranque) y confirma que sigue sin duplicar.
             await using (var comando = verificacion.CreateCommand())
@@ -216,6 +239,17 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                       AND NOT EXISTS (SELECT 1 FROM tipos_comprobante WHERE codigo = v.codigo);
                     """;
                 await comando.ExecuteNonQueryAsync();
+            }
+
+            Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), await ListarCodigosAsync("compra"));
+
+            // Lo mismo con el INSERT idempotente de C-RM, tomado de la migración real.
+            var sqlRemito = new ComprasRemitoYAlicuotas().UpOperations.OfType<SqlOperation>()
+                .Single(o => o.Sql.Contains("INSERT INTO tipos_comprobante", StringComparison.Ordinal)).Sql;
+            await using (var comando = verificacion.CreateCommand())
+            {
+                comando.CommandText = sqlRemito;
+                Assert.Equal(0, await comando.ExecuteNonQueryAsync());
             }
 
             Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), await ListarCodigosAsync("compra"));

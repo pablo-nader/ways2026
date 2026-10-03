@@ -142,6 +142,9 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
     // stage-17-presupuestos-y-remitos (Slice 4, proposal §I): el total pasa de 14 a 15 — TXR se
     // agrega al mismo seed estático (TiposComprobanteBase), mismo mecanismo exacto que C-FA/C-FB/
     // C-FC en su momento.
+    //
+    // El total pasa de 15 a 16: C-RM (remito / comprobante no fiscal de compra) se agrega al mismo
+    // seed estático.
     [Fact]
     public async Task UnaBaseFrescaTerminaConElCatalogoCompletoDeTiposIncluidoRc()
     {
@@ -152,7 +155,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
 
         var codigos = await db.TiposComprobante.Select(t => t.Codigo).OrderBy(c => c).ToListAsync();
 
-        Assert.Equal(15, codigos.Count);
+        Assert.Equal(16, codigos.Count);
         Assert.Contains("RC", codigos);
         Assert.Contains("FA", codigos);
         Assert.Contains("TX", codigos);
@@ -160,6 +163,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
         Assert.Contains("C-FA", codigos);
         Assert.Contains("C-FB", codigos);
         Assert.Contains("C-FC", codigos);
+        Assert.Contains("C-RM", codigos);
     }
 
     // ---- RC idempotente en una base ya migrada desde stage 6 (task 1.9) ----------------------

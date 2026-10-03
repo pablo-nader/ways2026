@@ -48,8 +48,13 @@ public class ComprobanteCompra : EntidadTenant
     public decimal DescuentoTotal { get; set; }
     public decimal Total { get; set; }
 
-    /// <summary><c>NULL</c> cuando <c>tipos_comprobante.discrimina_iva = false</c> (design:
-    /// Compra Arithmetic) — misma postura que <c>ComprobanteVenta.IvaTotal</c>.</summary>
+    /// <summary>Snapshot por comprobante de si el documento discrimina IVA: lo fija el tipo en
+    /// las facturas (<see cref="ReglaDeDiscriminacionDeIva"/>) y lo elige quien carga un remito o
+    /// comprobante no fiscal. Es la fuente del cálculo y del costo efectivo, nunca el tipo.</summary>
+    public bool DiscriminaIva { get; set; }
+
+    /// <summary><c>NULL</c> cuando <see cref="DiscriminaIva"/> es <c>false</c> (design: Compra
+    /// Arithmetic) — misma postura que <c>ComprobanteVenta.IvaTotal</c>.</summary>
     public decimal? IvaTotal { get; set; }
 
     public string? Observaciones { get; set; }

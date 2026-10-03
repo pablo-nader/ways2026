@@ -22,13 +22,14 @@ public class BajasEstructuralesTests
 {
     /// <summary>
     /// Los únicos <c>RemoveRange</c> que el repositorio tiene derecho a tener hoy, congelados por
-    /// receptor. Los seis son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
+    /// receptor. Los siete son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
     /// de junction), no bajas de entidades: ninguno toca <c>tenants</c>, <c>empresas</c>,
     /// <c>puntos_venta</c> ni <c>usuarios</c>. La lista está congelada a propósito — un borrado
     /// físico nuevo, sea donde sea, pone esta prueba en rojo y obliga a justificarlo.
     /// </summary>
     private static readonly string[] RemoveRangePermitidos =
     [
+        "AlicuotasComprobanteCompra",
         "ArticulosEmpresas",
         "ItemsComprobanteCompra",
         "ItemsOrdenCompra",

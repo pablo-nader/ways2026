@@ -159,14 +159,19 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         db.Usuarios.Add(usuario);
         await db.SaveChangesAsync();
 
-        var tipoComprobanteCompra = new TipoComprobante
+        // SQL crudo, misma trampa que empresas/puntos_venta de arriba: con el modelo HEAD, EF
+        // incluiría registra_libro_iva en el INSERT y rompería contra este esquema con 42703.
+        int idTipoComprobanteCompra;
+        await using (var comandoTipo = conexionCruda.CreateCommand())
         {
-            Clase = ClaseComprobante.Compra, Codigo = $"{nombre}-CFA", Nombre = "Factura A de compra",
-            Letra = 'A', Signo = 1, DiscriminaIva = true, EsFiscal = false, AfectaStock = true,
-            CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.TiposComprobante.Add(tipoComprobanteCompra);
-        await db.SaveChangesAsync();
+            comandoTipo.CommandText =
+                "INSERT INTO tipos_comprobante (clase, codigo, nombre, letra, signo, discrimina_iva, es_fiscal, " +
+                "afecta_stock, activo, created_at, updated_at) " +
+                "VALUES ('compra'::clase_comprobante, $1, 'Factura A de compra', 'A', 1, true, false, true, true, now(), now()) " +
+                "RETURNING id_tipo_comprobante";
+            comandoTipo.Parameters.Add(new NpgsqlParameter { Value = $"{nombre}-CFA" });
+            idTipoComprobanteCompra = (int)(await comandoTipo.ExecuteScalarAsync())!;
+        }
 
         var medioPago = new MedioPago
         {
@@ -178,7 +183,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
 
         var idTurnoCaja = await SembrarTurnoPreMigracionAsync(conexionCruda, tenant.Id, puntoVenta.Id, usuario.Id, ahora);
 
-        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, tipoComprobanteCompra.Id, medioPago.Id, idTurnoCaja);
+        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, idTipoComprobanteCompra, medioPago.Id, idTurnoCaja);
     }
 
     /// <summary>Misma trampa ya documentada en <see cref="SembrarProveedorPreMigracionAsync"/> y
