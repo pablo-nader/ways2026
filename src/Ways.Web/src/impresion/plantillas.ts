@@ -179,6 +179,10 @@ export function reporteZ(datos: TurnoConArqueos | DetalleDeTurno, contexto: Cont
     }
   }
 
+  if ('fechaRecalculo' in datos && datos.fechaRecalculo) {
+    ticket.linea(`Arqueo recalculado el ${formatearFechaHora(datos.fechaRecalculo)}`)
+  }
+
   ticket.lineaDeGuiones().linea(`Cajero: ${contexto.cajero}`)
   ticket.avanzar(2).cortar()
 

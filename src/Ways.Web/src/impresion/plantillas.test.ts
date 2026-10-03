@@ -231,6 +231,37 @@ describe('reporteZ', () => {
     expect(texto).not.toContain('declarado')
   })
 
+  describe('marca de recálculo', () => {
+    function detalleConRecalculo(fechaRecalculo: string | null): DetalleDeTurno {
+      return {
+        resumen: {
+          idTurnoCaja: 8,
+          idMedioAncla: 1,
+          medios: [],
+          cantidadTickets: 0,
+          primerTicket: null,
+          ultimoTicket: null,
+          ingresosPorArea: [],
+          egresos: { porCategoria: [], porArea: [], retiros: 0 },
+        },
+        tickets: [],
+        gastos: [],
+        fechaRecalculo,
+        idEmpleadoRecalculo: fechaRecalculo ? 9 : null,
+      }
+    }
+
+    it('imprime la línea cuando el detalle trae fechaRecalculo', () => {
+      const iso = '2026-09-20T15:30:00Z'
+      const texto = textoPlano(reporteZ(detalleConRecalculo(iso), CONTEXTO))
+      expect(texto).toContain(`Arqueo recalculado el ${new Date(iso).toLocaleString('es-AR')}`)
+    })
+
+    it('no imprime la línea cuando fechaRecalculo es null', () => {
+      expect(textoPlano(reporteZ(detalleConRecalculo(null), CONTEXTO))).not.toContain('Arqueo recalculado')
+    })
+  })
+
   it('termina con el corte parcial (GS V 66 0)', () => {
     const bytes = reporteZ(turnoFixture(), CONTEXTO)
     expect(Array.from(bytes.slice(-4))).toEqual([0x1d, 0x56, 0x42, 0x00])

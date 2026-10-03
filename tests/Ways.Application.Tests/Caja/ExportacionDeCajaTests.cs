@@ -97,6 +97,30 @@ public class ExportacionDeCajaTests
     }
 
     [Fact]
+    public void DetalleConRecalculoEscribeLaMarcaComoPrimeraFilaEnLaZonaDelComercio()
+    {
+        var instante = new DateTimeOffset(2026, 9, 20, 15, 30, 0, TimeSpan.Zero);
+        var detalle = new DetalleDeTurno(ResumenVacio(), [], [], instante, 9);
+
+        var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
+
+        var fila = tabla.Filas[0];
+        Assert.Equal("Arqueo recalculado", fila[0].Valor);
+        Assert.Equal("Recalculado por empleado #9", fila[1].Valor);
+        Assert.Equal(new DateTime(2026, 9, 20, 12, 30, 0), fila[2].Valor);
+    }
+
+    [Fact]
+    public void DetalleSinRecalculoNoEscribeLaMarca()
+    {
+        var detalle = new DetalleDeTurno(ResumenVacio(), [], [], null, null);
+
+        var tabla = ExportacionDeCaja.De(detalle, Contexto, ZonaBuenosAires);
+
+        Assert.DoesNotContain(tabla.Filas, f => Equals(f[0].Valor, "Arqueo recalculado"));
+    }
+
+    [Fact]
     public void DetalleEscribeLosEgresosPorCategoriaYPorAreaMasElTotalDeRetiros()
     {
         var egresos = new EgresosDeTurno(
