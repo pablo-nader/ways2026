@@ -24,10 +24,17 @@ public sealed record ItemCalculado(
     int Orden, int? IdArticulo, decimal Cantidad, decimal Total,
     decimal CostoEfectivo, decimal? PrecioSugerido);
 
-/// <summary>Resultado completo de <see cref="CalculadorDeCompra.Calcular"/>.</summary>
+/// <summary>El desglose de una alícuota: <see cref="Neto"/> es la suma de los totales de línea con
+/// esa alícuota e <see cref="Iva"/> el importe que se guarda (el calculado, o el impreso por el
+/// proveedor cuando se lo informó). Exento y no gravado salen con IVA cero.</summary>
+public sealed record AlicuotaCalculada(int IdAlicuotaIva, decimal Porcentaje, decimal Neto, decimal Iva);
+
+/// <summary>Resultado completo de <see cref="CalculadorDeCompra.Calcular"/>. <see cref="Alicuotas"/>
+/// queda vacío cuando el comprobante no discrimina IVA; <see cref="IvaTotal"/> es entonces
+/// <c>null</c> y, si no, la suma de <see cref="AlicuotaCalculada.Iva"/>.</summary>
 public sealed record CompraCalculada(
     decimal Subtotal, decimal DescuentoTotal, decimal? IvaTotal, decimal Total,
-    IReadOnlyList<ItemCalculado> Items);
+    IReadOnlyList<ItemCalculado> Items, IReadOnlyList<AlicuotaCalculada> Alicuotas);
 
 /// <summary>
 /// Aritmética de una compra (design: Compra Arithmetic) — pura, sin acceso a base de datos, el
@@ -37,19 +44,38 @@ public sealed record CompraCalculada(
 /// </summary>
 public static class CalculadorDeCompra
 {
+    /// <summary>Diferencia máxima, en pesos, entre el IVA calculado y el impreso por el proveedor
+    /// para una alícuota: absorbe el redondeo por línea contra el redondeo por alícuota sin dejar
+    /// pasar un importe que ya no es una diferencia de centavos.</summary>
+    public const decimal ToleranciaDeIvaImpreso = 1.00m;
+
     /// <summary>
-    /// <paramref name="discriminaIva"/> viene de <c>tipos_comprobante.discrimina_iva</c> del tipo
-    /// de la compra; <paramref name="margenes"/> alimenta al <see cref="SugeridorDePrecio"/>
-    /// existente, que devuelve <c>null</c> cuando no hay margen configurado para ese artículo.
+    /// <paramref name="discriminaIva"/> viene del comprobante (<c>comprobantes_compra.
+    /// discrimina_iva</c>), no del tipo; <paramref name="margenes"/> alimenta al
+    /// <see cref="SugeridorDePrecio"/> existente, que devuelve <c>null</c> cuando no hay margen
+    /// configurado para ese artículo. <paramref name="ivaImpreso"/> es el IVA que el proveedor
+    /// imprimió por alícuota (id de alícuota → importe): se acepta si difiere del calculado en
+    /// hasta <see cref="ToleranciaDeIvaImpreso"/> y se rechaza con 400 si el comprobante no
+    /// discrimina IVA, si nombra una alícuota que no está en las líneas o si se pasa de la
+    /// tolerancia — nunca se acepta y se descarta.
     /// </summary>
     public static CompraCalculada Calcular(
         IReadOnlyList<LineaDeCompra> lineas, bool discriminaIva,
-        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes)
+        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes,
+        IReadOnlyDictionary<int, decimal>? ivaImpreso = null)
     {
+        if (!discriminaIva && ivaImpreso is { Count: > 0 })
+        {
+            throw new ErrorDominio(
+                "iva_impreso_sin_discriminar",
+                "El IVA impreso solo puede informarse en un comprobante que discrimina IVA.",
+                400);
+        }
+
         var items = new List<ItemCalculado>(lineas.Count);
         var subtotal = 0m;
         var descuentoTotal = 0m;
-        var ivaTotal = discriminaIva ? 0m : (decimal?)null;
+        var netoPorAlicuota = new SortedDictionary<int, (decimal Porcentaje, decimal Neto)>();
 
         foreach (var linea in lineas)
         {
@@ -91,8 +117,9 @@ public static class CalculadorDeCompra
             decimal costoEfectivo;
             if (discriminaIva)
             {
-                var ivaDeLinea = Redondear(total * linea.PorcentajeIva / 100m, 2);
-                ivaTotal += ivaDeLinea;
+                netoPorAlicuota[linea.IdAlicuotaIva] = netoPorAlicuota.TryGetValue(linea.IdAlicuotaIva, out var acumulado)
+                    ? (acumulado.Porcentaje, acumulado.Neto + total)
+                    : (linea.PorcentajeIva, total);
                 costoEfectivo = Redondear(total * (1 + linea.PorcentajeIva / 100m) / cantidad, 2);
             }
             else
@@ -115,9 +142,55 @@ public static class CalculadorDeCompra
             descuentoTotal += linea.Descuento;
         }
 
-        var total2 = discriminaIva ? subtotal - descuentoTotal + (ivaTotal ?? 0m) : subtotal - descuentoTotal;
+        var alicuotas = ArmarAlicuotas(netoPorAlicuota, ivaImpreso);
+        var ivaTotal = discriminaIva ? alicuotas.Sum(a => a.Iva) : (decimal?)null;
+        var totalComprobante = subtotal - descuentoTotal + (ivaTotal ?? 0m);
 
-        return new CompraCalculada(subtotal, descuentoTotal, ivaTotal, total2, items);
+        return new CompraCalculada(subtotal, descuentoTotal, ivaTotal, totalComprobante, items, alicuotas);
+    }
+
+    /// <summary>IVA por alícuota sobre el neto de cada una, redondeado una sola vez — la convención
+    /// de una factura —, y después el override del impreso con su tolerancia.</summary>
+    private static List<AlicuotaCalculada> ArmarAlicuotas(
+        SortedDictionary<int, (decimal Porcentaje, decimal Neto)> netoPorAlicuota,
+        IReadOnlyDictionary<int, decimal>? ivaImpreso)
+    {
+        foreach (var idImpreso in ivaImpreso?.Keys ?? Enumerable.Empty<int>())
+        {
+            if (!netoPorAlicuota.ContainsKey(idImpreso))
+            {
+                throw new ErrorDominio(
+                    "iva_impreso_alicuota_desconocida",
+                    $"La alícuota {idImpreso} no figura en las líneas del comprobante.",
+                    400);
+            }
+        }
+
+        var alicuotas = new List<AlicuotaCalculada>(netoPorAlicuota.Count);
+
+        foreach (var (idAlicuota, (porcentaje, neto)) in netoPorAlicuota)
+        {
+            var calculado = Redondear(neto * porcentaje / 100m, 2);
+            var iva = calculado;
+
+            if (ivaImpreso is not null && ivaImpreso.TryGetValue(idAlicuota, out var impreso))
+            {
+                if (impreso < 0m || Math.Abs(impreso - calculado) > ToleranciaDeIvaImpreso)
+                {
+                    throw new ErrorDominio(
+                        "iva_impreso_fuera_de_tolerancia",
+                        $"El IVA impreso ({impreso:0.00}) difiere del calculado ({calculado:0.00}) en más de " +
+                        $"{ToleranciaDeIvaImpreso:0.00}.",
+                        400);
+                }
+
+                iva = Redondear(impreso, 2);
+            }
+
+            alicuotas.Add(new AlicuotaCalculada(idAlicuota, porcentaje, neto, iva));
+        }
+
+        return alicuotas;
     }
 
     /// <summary>Un concepto no mueve stock ni toca <c>articulos.costo_nominal</c>, así que no admite
