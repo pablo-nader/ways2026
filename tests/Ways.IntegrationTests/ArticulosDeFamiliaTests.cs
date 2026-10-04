@@ -1,6 +1,9 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
@@ -579,15 +582,30 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     // =================================================================================================
 
     private (WaysDbContext Db, ServicioDeArticulos Servicio) CrearServicio(
-        Entorno e, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptores)
+        Entorno e, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptores) =>
+        CrearServicio(e, new RelojReal(), interceptores);
+
+    private (WaysDbContext Db, ServicioDeArticulos Servicio) CrearServicio(
+        Entorno e, IRelojDelSistema reloj, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptores)
     {
         var db = fixture.CrearContextoDeAplicacionConReintentos(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant), interceptores);
-        var reloj = new RelojReal();
         var contexto = new ContextoFijo(e.IdTenant, e.IdActorAdmin);
 
         return (db, new ServicioDeArticulos(
             db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto), new GuardaDeReferencias(db, new InspectorDeUso(db)),
             new ServicioDePrecios(db, reloj, contexto)));
+    }
+
+    /// <summary>Un reloj que devuelve un instante DISTINTO en cada lectura —un minuto después del anterior—: lo que
+    /// permite afirmar que una escritura lo lee una sola vez, porque cada lectura de más deja un valor
+    /// distinguible.</summary>
+    private sealed class RelojQueAvanza(DateTimeOffset desde) : IRelojDelSistema
+    {
+        private int lecturas;
+
+        public int Lecturas => Volatile.Read(ref lecturas);
+
+        public DateTimeOffset Ahora => desde.AddMinutes(Interlocked.Increment(ref lecturas));
     }
 
     /// <summary>Un contexto y un servicio, dos escrituras seguidas: lo que hace cualquier llamador que atrapa
@@ -610,6 +628,37 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var rechazo = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(
             f.A2, ConCompartidos(EdicionIgualA(antesDeA2) with { Nombre = "no se escribe" }, ValoresConUnCampoCambiado(e, "costo_lista"))));
         Assert.Equal("alcance_requerido", rechazo.Codigo);
+
+        Assert.DoesNotContain(
+            db.ChangeTracker.Entries(),
+            entrada => entrada.State is EntityState.Modified or EntityState.Added or EntityState.Deleted);
+
+        await servicio.ActualizarAsync(f.Suelto, EdicionIgualA(antesDelSuelto) with { Nombre = "suelto editado" });
+
+        Assert.Equal("suelto editado", (await apoyo.LeerAsync(f.Suelto)).Nombre);
+        await AfirmarSinCambiosAsync([f.A1, f.A2, f.A3], huellasDeLaFamilia);
+    }
+
+    /// <summary>Lo mismo con el OTRO rechazo que ocurre después de leer a los miembros: una referencia de catálogo
+    /// inexistente. La edición de la familia llega a la validación del catálogo con los miembros ya leídos y
+    /// rastreados; ninguno puede estar mutado cuando se rechaza, porque el guardado de la escritura siguiente
+    /// sobre el mismo contexto los escribiría por detrás.</summary>
+    [Fact]
+    public async Task UnRechazoPorReferenciaInvalidaNoDejaMutacionesRastreadasYLaSiguienteEscrituraDelMismoContextoNoLasGuarda()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnRechazoPorReferenciaInvalidaNoDejaMutacionesRastreadasYLaSiguienteEscrituraDelMismoContextoNoLasGuarda));
+        var f = await SembrarFamiliaConVecinosAsync(e);
+        var antesDeA2 = await apoyo.LeerAsync(f.A2);
+        var antesDelSuelto = await apoyo.LeerAsync(f.Suelto);
+        var huellasDeLaFamilia = await HuellasAsync(f.A1, f.A2, f.A3);
+
+        var (db, servicio) = CrearServicio(e);
+        await using var _ = db;
+
+        var conAreaInexistente = ValoresBase(e) with { IdArea = 987_654_321 };
+        var rechazo = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(
+            f.A2, ConCompartidos(EdicionIgualA(antesDeA2, AlcanceDeFamilia.Familia) with { Nombre = "no se escribe" }, conAreaInexistente)));
+        Assert.Equal("referencia_invalida", rechazo.Codigo);
 
         Assert.DoesNotContain(
             db.ChangeTracker.Entries(),
@@ -646,21 +695,24 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         await AfirmarSinCambiosAsync(todos, huellasAntes);
     }
 
-    /// <summary>Si el guardado falla, la transacción entera se revierte —ningún miembro queda cambiado— y la
-    /// edición no se reintenta: el contexto es el de la API, con <c>EnableRetryOnFailure</c>, y el
-    /// interceptor rompe solo el primer <c>UPDATE</c> de <c>articulos</c>. Con reintento el segundo intento
-    /// escribiría la familia y <see cref="InterceptorQueRompeLaPrimeraEscritura.Intentos"/> sería dos.</summary>
+    /// <summary>Si la escritura falla DESPUÉS de haber escrito, la transacción entera se revierte y ningún
+    /// miembro queda cambiado. El interceptor rompe el COMMIT, antes de que llegue al servidor: para entonces los
+    /// <c>UPDATE</c> de los tres miembros ya corrieron dentro de la transacción (se cuentan al ejecutarse, no al
+    /// intentarse) y es el rollback el que los deshace. La edición no se reintenta: el contexto es el de la API,
+    /// con <c>EnableRetryOnFailure</c>, y un reintento comitearía la familia entera en el segundo intento. Un
+    /// fallo ANTES del primer <c>UPDATE</c> no probaría el rollback —no habría nada escrito que deshacer—.</summary>
     [Fact]
-    public async Task UnFalloAlGuardarLaEdicionDeLaFamiliaNoDejaNingunMiembroCambiadoNiSeReintenta()
+    public async Task UnFalloAlComitearLaEdicionDeLaFamiliaRevierteLoEscritoEnLosMiembrosYNoSeReintenta()
     {
-        using var e = await apoyo.PrepararAsync(nameof(UnFalloAlGuardarLaEdicionDeLaFamiliaNoDejaNingunMiembroCambiadoNiSeReintenta));
+        using var e = await apoyo.PrepararAsync(nameof(UnFalloAlComitearLaEdicionDeLaFamiliaRevierteLoEscritoEnLosMiembrosYNoSeReintenta));
         var f = await SembrarFamiliaConVecinosAsync(e);
         var antes = await apoyo.LeerAsync(f.A2);
         var familia = new[] { f.A1, f.A2, f.A3 };
         var huellasAntes = await HuellasAsync(familia);
 
-        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", "40001", ClaseDeSentencia.Update);
-        var (db, servicio) = CrearServicio(e, interceptor);
+        var escrituras = new CuentaLasActualizacionesDeArticulos();
+        var commit = new RompeElPrimerCommit("40001");
+        var (db, servicio) = CrearServicio(e, escrituras, commit);
         await using var _ = db;
 
         var pedido = ConCompartidos(
@@ -669,8 +721,91 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.ActualizarAsync(f.A2, pedido));
 
         Assert.Equal("40001", ErrorDePostgres(error).SqlState);
-        Assert.Equal(1, interceptor.Intentos);
+        Assert.Equal(1, commit.Intentos);
+        Assert.Equal(3, escrituras.Ejecutadas);
         await AfirmarSinCambiosAsync(familia, huellasAntes);
+    }
+
+    /// <summary>Cuenta los <c>UPDATE</c> sobre <c>articulos</c> que llegaron a EJECUTARSE —un lote de EF lleva uno
+    /// por cada miembro—, no los que se intentaron.</summary>
+    private sealed class CuentaLasActualizacionesDeArticulos : DbCommandInterceptor
+    {
+        private static readonly Regex Marca = new(
+            @"UPDATE (?:""articulos""|articulos)(?![\w$])", RegexOptions.None, TimeSpan.FromSeconds(5));
+
+        private int ejecutadas;
+
+        public int Ejecutadas => Volatile.Read(ref ejecutadas);
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            Contar(command);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<int> NonQueryExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            Contar(command);
+            return base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void Contar(DbCommand comando) =>
+            Interlocked.Add(ref ejecutadas, Marca.Matches(comando.CommandText).Count);
+    }
+
+    /// <summary>Rompe el PRIMER commit con un error de Postgres, antes de que llegue al servidor
+    /// (<c>TransactionCommittingAsync</c>): la transacción no comitea nunca y se revierte al soltarse. Con
+    /// reintento el segundo intento comitearía, así que <see cref="Intentos"/> es dos. Es lo opuesto del commit
+    /// ambiguo de <c>InterceptorQueRompeElCommitAmbiguo</c>, que rompe DESPUÉS de comitear.</summary>
+    private sealed class RompeElPrimerCommit(string sqlState) : DbTransactionInterceptor
+    {
+        private int intentos;
+
+        public int Intentos => Volatile.Read(ref intentos);
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref intentos) == 1)
+            {
+                throw new PostgresException("commit roto por la prueba", "ERROR", "ERROR", sqlState);
+            }
+
+            return base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+        }
+    }
+
+    /// <summary>Un solo "ahora" para todos los artículos que una edición escribe: el reloj se lee UNA vez y los
+    /// tres miembros de la familia quedan con el mismo <c>updated_at</c>. El reloj de la prueba devuelve un
+    /// instante distinto en cada lectura, así que una lectura por miembro dejaría tres sellos distintos.</summary>
+    [Fact]
+    public async Task UnaEdicionDeFamiliaLeeElRelojUnaVezYEscribeElMismoUpdatedAtEnTodosLosMiembros()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnaEdicionDeFamiliaLeeElRelojUnaVezYEscribeElMismoUpdatedAtEnTodosLosMiembros));
+        var f = await SembrarFamiliaConVecinosAsync(e);
+        var antes = await apoyo.LeerAsync(f.A2);
+
+        var desde = new DateTimeOffset(2031, 5, 17, 9, 30, 0, TimeSpan.Zero);
+        var reloj = new RelojQueAvanza(desde);
+        var (db, servicio) = CrearServicio(e, reloj);
+        await using var _ = db;
+
+        await servicio.ActualizarAsync(
+            f.A2, ConCompartidos(EdicionIgualA(antes, AlcanceDeFamilia.Familia), ValoresConUnCampoCambiado(e, "costo_lista")));
+
+        Assert.Equal(1, reloj.Lecturas);
+        foreach (var id in new[] { f.A1, f.A2, f.A3 })
+        {
+            var miembro = await apoyo.LeerAsync(id);
+
+            Assert.Equal(60m, miembro.CostoLista);
+            Assert.Equal(desde.AddMinutes(1), miembro.UpdatedAt);
+        }
     }
 
     private static PostgresException ErrorDePostgres(Exception error)
@@ -702,8 +837,10 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
 
     /// <summary>El flip de <c>controla_lote</c> de <c>false</c> a <c>true</c> alcanza a toda la familia, y la
     /// reconciliación de lotes corre por CADA miembro con stock —no solo por el editado—: cada uno queda con
-    /// su par de movimientos de reclasificación y su stock en el lote sin identificar. El miembro sin stock no
-    /// escribe nada, y un artículo suelto con stock tampoco: no flipeó.</summary>
+    /// su par de movimientos de reclasificación y su stock en el lote sin identificar. Corren en orden ascendente
+    /// de id de artículo: los movimientos del de id más bajo se escriben antes —el artículo editado es el del
+    /// medio, así que tampoco es el que va primero—. El miembro sin stock no escribe nada, y un artículo suelto
+    /// con stock tampoco: no flipeó.</summary>
     [Fact]
     public async Task UnFlipDeControlaLoteDeUnaFamiliaReconciliaCadaMiembroQueFlipeo()
     {
@@ -741,6 +878,13 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == f.A3));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(
             m => m.IdArticulo == f.Suelto && m.Motivo == MotivoStock.Reclasificacion));
+
+        var idsDeA1 = await db.MovimientosStock.Where(m => m.IdArticulo == f.A1).Select(m => m.Id).ToListAsync();
+        var idsDeA2 = await db.MovimientosStock.Where(m => m.IdArticulo == f.A2).Select(m => m.Id).ToListAsync();
+        Assert.True(f.A1 < f.A2);
+        Assert.True(
+            idsDeA1.Max() < idsDeA2.Min(),
+            "La reconciliación del artículo de id más bajo tiene que escribir sus movimientos antes que la del de id más alto.");
     }
 
     // =================================================================================================
@@ -750,11 +894,13 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <summary>El detalle, el listado y la respuesta de la edición exponen la familia tal como está
     /// guardada. No se anula aunque la fila de la familia esté dada de baja: los escritores definen la
     /// pertenencia por <c>id_familia</c> y la baja del artículo, no por el estado de la familia, y un lector
-    /// que la anulara discreparía con ellos sobre quién es miembro.</summary>
+    /// que la anulara discreparía con ellos sobre quién es miembro. Con la fila de la familia dada de baja se
+    /// afirman las tres proyecciones —detalle, listado y respuesta de la edición—: cada una es su propio
+    /// mutante.</summary>
     [Fact]
-    public async Task ElDetalleYElListadoExponenElIdDeLaFamiliaTalComoEstaGuardado()
+    public async Task ElDetalleElListadoYLaRespuestaDeLaEdicionExponenElIdDeLaFamiliaTalComoEstaGuardado()
     {
-        using var e = await apoyo.PrepararAsync(nameof(ElDetalleYElListadoExponenElIdDeLaFamiliaTalComoEstaGuardado));
+        using var e = await apoyo.PrepararAsync(nameof(ElDetalleElListadoYLaRespuestaDeLaEdicionExponenElIdDeLaFamiliaTalComoEstaGuardado));
         var f = await SembrarFamiliaConVecinosAsync(e);
 
         var detalleDelMiembro = (await e.Admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{f.A1}", OpcionesJson))!;
@@ -762,8 +908,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(f.Familia, detalleDelMiembro.IdFamilia);
         Assert.Null(detalleDelSuelto.IdFamilia);
 
-        var pagina = (await e.Admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?tamanio=100", OpcionesJson))!;
-        var porId = pagina.Items.ToDictionary(a => a.Id);
+        var porId = await ListadoPorIdAsync(e);
         Assert.Equal(f.Familia, porId[f.A1].IdFamilia);
         Assert.Equal(f.Familia, porId[f.A3].IdFamilia);
         Assert.Equal(f.OtraFamilia, porId[f.DeOtraFamilia].IdFamilia);
@@ -777,6 +922,23 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var conLaFamiliaDadaDeBaja = (await e.Admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{f.A1}", OpcionesJson))!;
         Assert.Equal(f.Familia, conLaFamiliaDadaDeBaja.IdFamilia);
+
+        var listadoConLaFamiliaDadaDeBaja = await ListadoPorIdAsync(e);
+        Assert.Equal(f.Familia, listadoConLaFamiliaDadaDeBaja[f.A1].IdFamilia);
+        Assert.Equal(f.Familia, listadoConLaFamiliaDadaDeBaja[f.A3].IdFamilia);
+
+        var antes = await apoyo.LeerAsync(f.A1);
+        var respuesta = await PutArticuloAsync(e.Admin, f.A1, EdicionIgualA(antes) with { Nombre = "a1 editado" });
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(f.Familia, (await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.IdFamilia);
+        Assert.Equal(f.Familia, (await apoyo.LeerAsync(f.A1)).IdFamilia);
+    }
+
+    private static async Task<Dictionary<int, ArticuloListado>> ListadoPorIdAsync(Entorno e)
+    {
+        var pagina = (await e.Admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?tamanio=100", OpcionesJson))!;
+
+        return pagina.Items.ToDictionary(a => a.Id);
     }
 
     // =================================================================================================

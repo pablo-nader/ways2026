@@ -35,20 +35,26 @@ public record ProgramarPrecio(
     int IdListaPrecio, decimal Precio, DateTimeOffset VigenteDesde, bool ConfirmarReemplazo = false,
     AlcanceDeFamilia? Alcance = null);
 
-/// <summary>Lo que el cliente elige cuando el artículo cuyo precio cambia pertenece a una familia
-/// (doc 10 §3). La ausencia de valor es una tercera respuesta —"sin elección"— y la API la rechaza
-/// para un miembro: elegir por el cliente podría pisar el precio de artículos que no quería tocar.
+/// <summary>Lo que el cliente elige cuando el artículo que se escribe pertenece a una familia (doc 10 §3): en un
+/// cambio de precio (<see cref="AltaPrecio"/>, <see cref="ProgramarPrecio"/>) y en la edición de un artículo
+/// (<see cref="Articulos.EdicionArticulo"/>). La ausencia de valor es una tercera respuesta —"sin elección"— y
+/// la API la rechaza con <c>alcance_requerido</c> para un miembro cuando elegir cambia qué se escribe: en un
+/// cambio de precio y en una edición que cambia algún campo compartido. Elegir por el cliente podría pisar
+/// artículos que no quería tocar. No la rechaza cuando no hay nada que decidir: un artículo sin familia, o la
+/// edición de un miembro que no cambia ningún campo compartido, que escribe solo sus campos propios.
 ///
 /// <para>Los valores numéricos empiezan en 1 a propósito: <c>0</c> es el valor por defecto de un
 /// entero y no tiene que elegir un alcance —y menos el más amplio—, así que ningún miembro lo
 /// nombra y un <c>0</c> en el JSON se rechaza con <c>alcance_invalido</c>.</para></summary>
 public enum AlcanceDeFamilia
 {
-    /// <summary>El precio se aplica a todos los miembros vivos de la familia, en la misma
-    /// transacción.</summary>
+    /// <summary>Lo que se escribe llega a todos los miembros vivos de la familia, en la misma transacción: el
+    /// precio o, en una edición, los trece campos compartidos del pedido cuando cambia alguno (sin cambio
+    /// compartido la edición escribe solo los campos propios del artículo).</summary>
     Familia = 1,
 
-    /// <summary>El precio se aplica solo a este artículo, que sale de la familia.</summary>
+    /// <summary>Lo que se escribe es solo de este artículo, que sale de la familia: en un cambio de precio y
+    /// en una edición, haya o no cambio de campos compartidos.</summary>
     SoloEste = 2
 }
 

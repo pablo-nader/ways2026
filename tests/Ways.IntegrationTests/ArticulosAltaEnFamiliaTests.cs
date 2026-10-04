@@ -14,6 +14,7 @@ using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
+using Ways.Domain.Precios;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -29,9 +30,11 @@ namespace Ways.IntegrationTests;
 /// cada lista fija —el vigente y el pendiente— con una fila de auditoría <c>precio.cambio</c> por cada precio
 /// insertado.
 ///
-/// <para>Los tests de concurrencia son rendezvous determinísticos: una conexión cruda sostiene un lock o una
+/// <para>Los tests de locks son rendezvous determinísticos: una conexión cruda sostiene un lock o una
 /// escritura sin comitear, el alta queda observada esperando en <c>pg_locks</c> y recién ahí se libera
-/// (<c>mutation-proof-tests</c>, regla 13).</para>
+/// (<c>mutation-proof-tests</c>, regla 13). La excepción es
+/// <see cref="DosAltasSimultaneasEnLaMismaFamiliaEntranLasDosConElEstadoDePreciosCompleto"/>: lanza dos altas a
+/// la vez sin ningún punto de encuentro, así que prueba el resultado y no el orden.</para>
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -104,17 +107,20 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
     // Siembra: una familia de miembros con el mismo estado de precios
     // =================================================================================================
 
-    private sealed record FamiliaSembrada(int Id, int DeBaja, int M1, int M2, DateTimeOffset DesdeDelPendiente);
+    private sealed record FamiliaSembrada(
+        int Id, int DeBaja, int M1, int M2, DateTimeOffset DesdeDelPendiente, int ListaSinPrecios);
 
     /// <summary>La familia "Gaseosas": un miembro DADO DE BAJA con el id más bajo y valores y precios distintos
     /// (no es la referencia), y dos miembros vivos, idénticos entre sí. Lista general: precio vigente 100 y
     /// pendiente 130 dentro de tres días (el vigente se cierra donde empieza el pendiente). Lista mayorista:
-    /// solo el vigente, 80. Una tercera lista fija —la del tenant, sin precios para esta familia— no
-    /// aparece.</summary>
+    /// solo el vigente, 80. Una tercera lista fija, <see cref="FamiliaSembrada.ListaSinPrecios"/>, existe en el
+    /// tenant y ningún miembro tiene precios en ella: el artículo que entra no recibe filas ahí.
+    /// <paramref name="acumulaEnVenta"/> es el valor de <c>acumula_en_venta</c> de todos los miembros.</summary>
     private async Task<FamiliaSembrada> SembrarFamiliaConPreciosAsync(Entorno e, bool acumulaEnVenta = true)
     {
         var @base = ValoresBase(e) with { AcumulaEnVenta = acumulaEnVenta };
         var familia = await apoyo.SembrarFamiliaAsync(e, "Gaseosas");
+        var listaSinPrecios = await apoyo.SembrarListaFijaAsync(e, "Minorista");
 
         var deBaja = await apoyo.SembrarArticuloAsync(
             e, "de-baja", @base with { CostoLista = 999m }, familia, dadoDeBaja: true);
@@ -131,7 +137,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
             await apoyo.SembrarPrecioVigenteAsync(e, miembro, e.IdListaMayorista, 80m);
         }
 
-        return new FamiliaSembrada(familia, deBaja, m1, m2, AMicrosegundos(desdeDelPendiente));
+        return new FamiliaSembrada(familia, deBaja, m1, m2, AMicrosegundos(desdeDelPendiente), listaSinPrecios);
     }
 
     // =================================================================================================
@@ -172,8 +178,13 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         var mayorista = Assert.Single(await apoyo.FilasDePrecioAsync(nuevo.Id, e.IdListaMayorista));
         Assert.Equal((80m, AMicrosegundos(nuevo.CreatedAt), (DateTimeOffset?)null), (mayorista.Monto, mayorista.VigenteDesde, mayorista.VigenteHasta));
 
+        // Una lista fija en la que la familia no tiene precios: el miembro nuevo no recibe ninguna fila ahí.
+        Assert.Empty(await apoyo.FilasDePrecioAsync(nuevo.Id, f.ListaSinPrecios));
+
         // Una auditoría precio.cambio por cada fila insertada, sin estado anterior, y ninguna para los demás.
-        var auditoria = (await apoyo.AuditoriaDePreciosAsync(e.IdTenant)).Where(a => a.IdEntidad == nuevo.Id).ToList();
+        var toda = await apoyo.AuditoriaDePreciosAsync(e.IdTenant);
+        Assert.All(toda, a => Assert.Equal(nuevo.Id, a.IdEntidad));
+        var auditoria = toda.Where(a => a.IdEntidad == nuevo.Id).ToList();
         Assert.Equal(3, auditoria.Count);
         Assert.All(auditoria, a =>
         {
@@ -510,6 +521,47 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(articulos, await ContarArticulosAsync(e.IdTenant));
     }
 
+    /// <summary>Los 5 chequeos de catálogo corren ANTES que la validación de la familia: una referencia de
+    /// catálogo inexistente es un 400 <c>referencia_invalida</c> aunque el pedido además difiera de la familia
+    /// —que, evaluada primero, daría 409 <c>familia_valores_distintos</c>—. El pedido difiere de la familia en
+    /// <c>costo_lista</c> y lleva un id inexistente en UNO de los cinco catálogos. Un caso por catálogo: cada
+    /// chequeo es su propio mutante, porque la validación de la familia puesta entre dos de ellos solo se anticipa
+    /// a los que le siguen.</summary>
+    [Theory]
+    [InlineData("el área")]
+    [InlineData("la categoría")]
+    [InlineData("la marca")]
+    [InlineData("el grupo")]
+    [InlineData("el proveedor")]
+    public async Task UnaReferenciaDeCatalogoInexistenteDa400AunQueElPedidoDifieraDeLaFamilia(string catalogo)
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnaReferenciaDeCatalogoInexistenteDa400AunQueElPedidoDifieraDeLaFamilia));
+        var f = await SembrarFamiliaConPreciosAsync(e);
+        var articulos = await ContarArticulosAsync(e.IdTenant);
+        var precios = await ContarPreciosAsync(e.IdTenant);
+        var auditoria = (await apoyo.AuditoriaDePreciosAsync(e.IdTenant)).Count;
+
+        const int inexistente = 987_654_321;
+        var distintos = ValoresBase(e) with { CostoLista = 60m };
+        var pedido = catalogo switch
+        {
+            "el área" => Alta(distintos with { IdArea = inexistente }, f.Id),
+            "la categoría" => Alta(distintos with { IdCategoria = inexistente }, f.Id),
+            "la marca" => Alta(distintos, f.Id, idMarca: inexistente),
+            "el grupo" => Alta(distintos with { IdGrupo = inexistente }, f.Id),
+            "el proveedor" => Alta(distintos with { IdProveedorHabitual = inexistente }, f.Id),
+            _ => throw new ArgumentOutOfRangeException(nameof(catalogo), catalogo, "Catálogo desconocido.")
+        };
+
+        var respuesta = await PostArticuloAsync(e.Admin, pedido);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+        Assert.Equal("referencia_invalida", codigo);
+        Assert.Contains($"No existe {catalogo} {inexistente}", mensaje, StringComparison.Ordinal);
+        await AfirmarQueNoSeEscribioNadaAsync(e, articulos, precios, auditoria);
+    }
+
     // =================================================================================================
     // Todo o nada
     // =================================================================================================
@@ -548,6 +600,53 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal("40001", ErrorDePostgres(error).SqlState);
         Assert.Equal(1, interceptor.Intentos);
         await AfirmarQueNoSeEscribioNadaAsync(e, articulos, precios, auditoria);
+    }
+
+    /// <summary>Un fallo al guardar revierte la transacción, pero las entidades que el alta agregó seguirían
+    /// rastreadas por el contexto —el artículo ya insertado, las filas de precio y de auditoría encoladas— y el
+    /// guardado de la escritura siguiente sobre el MISMO contexto las escribiría por detrás: filas de precio de un
+    /// artículo que no existe. El interceptor rompe el primer <c>INSERT INTO precios</c> con un <c>40001</c>; el
+    /// alta no reintenta, así que el error llega tal cual. Se sueltan solo las entidades que la operación agregó:
+    /// una que el llamador ya tenía rastreada antes de llamar sigue rastreada y sin cambios, a diferencia de lo que
+    /// haría <c>ChangeTracker.Clear()</c>.</summary>
+    [Fact]
+    public async Task UnFalloAlGuardarSueltaLasEntidadesAgregadasYLaSiguienteAltaDelMismoContextoEntraUnaSolaVez()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnFalloAlGuardarSueltaLasEntidadesAgregadasYLaSiguienteAltaDelMismoContextoEntraUnaSolaVez));
+        var f = await SembrarFamiliaConPreciosAsync(e);
+        var articulos = await ContarArticulosAsync(e.IdTenant);
+        var precios = await ContarPreciosAsync(e.IdTenant);
+        var auditoria = (await apoyo.AuditoriaDePreciosAsync(e.IdTenant)).Count;
+
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("precios", "40001");
+        var (db, servicio) = CrearServicio(e, interceptor);
+        await using var _ = db;
+
+        var rastreadaDeAntes = await db.Familias.SingleAsync(familia => familia.Id == f.Id);
+        Assert.Equal(EntityState.Unchanged, db.Entry(rastreadaDeAntes).State);
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.CrearAsync(Alta(ValoresBase(e), f.Id, nombre: "falla")));
+
+        Assert.Equal("40001", ErrorDePostgres(error).SqlState);
+        Assert.Equal(1, interceptor.Intentos);
+        Assert.DoesNotContain(
+            db.ChangeTracker.Entries(),
+            entrada => entrada.Entity is Articulo or Precio or Ways.Domain.Auditoria.Auditoria);
+        Assert.Equal(EntityState.Unchanged, db.Entry(rastreadaDeAntes).State);
+        await AfirmarQueNoSeEscribioNadaAsync(e, articulos, precios, auditoria);
+
+        // El interceptor ya no rompe nada: la misma alta sobre el MISMO contexto entra una sola vez, con sus tres
+        // filas de precio y sus tres auditorías, y no arrastra las de la que falló.
+        var creado = await servicio.CrearAsync(Alta(ValoresBase(e), f.Id, nombre: "entra"));
+
+        Assert.Equal(articulos + 1, await ContarArticulosAsync(e.IdTenant));
+        Assert.Equal(precios + 3, await ContarPreciosAsync(e.IdTenant));
+        Assert.Equal(2, (await apoyo.FilasDePrecioAsync(creado.Id, e.IdListaGeneral)).Count);
+        Assert.Single(await apoyo.FilasDePrecioAsync(creado.Id, e.IdListaMayorista));
+
+        var auditoriaNueva = (await apoyo.AuditoriaDePreciosAsync(e.IdTenant)).Skip(auditoria).ToList();
+        Assert.Equal(3, auditoriaNueva.Count);
+        Assert.All(auditoriaNueva, a => Assert.Equal(creado.Id, a.IdEntidad));
     }
 
     private static PostgresException ErrorDePostgres(Exception error)
@@ -768,12 +867,15 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(articulos, await ContarArticulosAsync(e.IdTenant));
     }
 
-    /// <summary>Dos altas simultáneas en la misma familia se serializan por el lock exclusivo: ninguna se
-    /// cuelga, las dos entran y las dos copian el estado de precios de la familia.</summary>
+    /// <summary>Dos altas lanzadas a la vez en la misma familia terminan las dos con 201, ninguna se cuelga, las
+    /// dos son miembros y cada una copió el estado de precios completo de la familia. No distingue si se
+    /// serializaron o corrieron una después de la otra: ningún punto de encuentro fuerza que se solapen. Que el alta
+    /// pide el lock de membresía en modo exclusivo —lo que hace que dos altas no convivan— lo prueba
+    /// <see cref="UnAltaConFamiliaPideElLockExclusivoYEsperaAUnCompartidoAjenoAntesDeTomarNingunOtroLock"/>.</summary>
     [Fact]
-    public async Task DosAltasSimultaneasEnLaMismaFamiliaSeSerializanYEntranAmbas()
+    public async Task DosAltasSimultaneasEnLaMismaFamiliaEntranLasDosConElEstadoDePreciosCompleto()
     {
-        using var e = await apoyo.PrepararAsync(nameof(DosAltasSimultaneasEnLaMismaFamiliaSeSerializanYEntranAmbas));
+        using var e = await apoyo.PrepararAsync(nameof(DosAltasSimultaneasEnLaMismaFamiliaEntranLasDosConElEstadoDePreciosCompleto));
         var f = await SembrarFamiliaConPreciosAsync(e);
 
         using var segundo = fixture.CreateClient();
@@ -787,11 +889,16 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         var respuestas = await Task.WhenAll(primera, segunda).WaitAsync(EsperaMaxima);
 
         Assert.All(respuestas, r => Assert.Equal(HttpStatusCode.Created, r.StatusCode));
+        var auditoria = await apoyo.AuditoriaDePreciosAsync(e.IdTenant);
+
         foreach (var respuesta in respuestas)
         {
             var creado = (await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;
             Assert.Equal(f.Id, creado.IdFamilia);
-            Assert.Equal(2, (await apoyo.FilasDePrecioAsync(creado.Id, e.IdListaGeneral)).Count);
+            Assert.Equal([100m, 130m], (await apoyo.FilasDePrecioAsync(creado.Id, e.IdListaGeneral)).Select(p => p.Monto));
+            Assert.Equal([80m], (await apoyo.FilasDePrecioAsync(creado.Id, e.IdListaMayorista)).Select(p => p.Monto));
+            Assert.Empty(await apoyo.FilasDePrecioAsync(creado.Id, f.ListaSinPrecios));
+            Assert.Equal(3, auditoria.Count(a => a.IdEntidad == creado.Id));
         }
     }
 }

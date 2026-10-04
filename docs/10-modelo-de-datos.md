@@ -414,7 +414,9 @@ artículo, y un lector que lo anulara discreparía con ellos sobre quién es mie
 
 **Alta dentro de una familia.** `POST /api/articulos` acepta un `idFamilia` opcional: el artículo nace como
 miembro de esa familia. Entrar es un cambio de pertenencia: el alta toma el lock de membresía **exclusivo**
-como primera sentencia de su transacción —antes que los locks de los catálogos del pedido—, y bajo él:
+como primera sentencia de su transacción —antes que los locks de los catálogos del pedido—, y bajo él, después de
+los chequeos de catálogo del pedido (una referencia inexistente es `400 referencia_invalida` aunque el pedido además
+difiera de la familia):
 
 1. la familia tiene que existir y estar viva (si no, `404`; también la de otro tenant) y estar **activa**
    (`409 familia_inactiva`). Se lee y se bloquea `FOR SHARE`, que serializa el alta con cualquier `UPDATE` de la

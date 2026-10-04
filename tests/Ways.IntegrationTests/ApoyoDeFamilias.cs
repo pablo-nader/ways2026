@@ -277,6 +277,23 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         return desdePendiente;
     }
 
+    /// <summary>Una lista de precios <c>fija</c> más del tenant, sin ningún precio.</summary>
+    public async Task<int> SembrarListaFijaAsync(Entorno e, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var lista = new ListaPrecio
+        {
+            IdTenant = e.IdTenant, Nombre = nombre, EsDefault = false, Modo = ModoLista.Fija,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+
+        return lista.Id;
+    }
+
     public async Task SembrarPrecioAsync(
         Entorno e, int idArticulo, int idLista, decimal monto, DateTimeOffset desde, DateTimeOffset? hasta)
     {

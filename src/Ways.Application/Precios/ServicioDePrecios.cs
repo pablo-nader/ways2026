@@ -160,7 +160,7 @@ public class ServicioDePrecios(
     /// fase 2 aborta la transacción entera, incluida la salida de la familia de "solo este". Se
     /// confirma con un solo <c>SaveChangesAsync</c>. Si la fase 2 falla, además se sueltan del
     /// <c>ChangeTracker</c> las entidades que esta operación agregó
-    /// (<see cref="DesacoplarLoAgregadoDesde"/>): el contexto vive todo el request, y un llamador que
+    /// (<see cref="RastreoDeEntidades.SoltarLoAgregadoDesde"/>): el contexto vive todo el request, y un llamador que
     /// sigue con otro artículo después de un rechazo (<c>ServicioDeCompras.AplicarPrecioSugeridoAsync</c>)
     /// no puede terminar guardando por detrás las filas de una escritura revertida. El resultado es el
     /// <see cref="PrecioVigente"/> del artículo pedido.
@@ -224,9 +224,7 @@ public class ServicioDePrecios(
 
             // Desde acá todo es escritura. Cualquier fallo, incluido el del guardado, deja las entidades
             // agregadas rastreadas por el contexto: se sueltan antes de propagar el error.
-            var yaRastreadas = db.ChangeTracker.Entries()
-                .Select(entrada => entrada.Entity)
-                .ToHashSet(ReferenceEqualityComparer.Instance);
+            var yaRastreadas = RastreoDeEntidades.Instantanea(db);
 
             try
             {
@@ -250,7 +248,7 @@ public class ServicioDePrecios(
             }
             catch
             {
-                DesacoplarLoAgregadoDesde(yaRastreadas);
+                RastreoDeEntidades.SoltarLoAgregadoDesde(db, yaRastreadas);
                 throw;
             }
 
@@ -538,23 +536,6 @@ public class ServicioDePrecios(
             CreatedAt = ahora,
             UpdatedAt = ahora
         });
-    }
-
-    /// <summary>Suelta del <c>ChangeTracker</c> todo lo que esta operación le agregó —lo rastreado ahora
-    /// que no estaba en <paramref name="yaRastreadas"/>, en el estado en que esté— y nada más: lo que el
-    /// llamador ya tenía rastreado queda como estaba, a diferencia de <c>ChangeTracker.Clear()</c>. Así un
-    /// <c>SaveChangesAsync</c> posterior sobre el mismo contexto no vuelve a ver las filas de una escritura
-    /// que se revirtió.</summary>
-    private void DesacoplarLoAgregadoDesde(IReadOnlySet<object> yaRastreadas)
-    {
-        var agregadas = db.ChangeTracker.Entries()
-            .Where(entrada => !yaRastreadas.Contains(entrada.Entity))
-            .ToList();
-
-        foreach (var entrada in agregadas)
-        {
-            entrada.State = EntityState.Detached;
-        }
     }
 
     /// <summary>Precio vigente de UN artículo en UNA lista a una fecha (spec: Current-Price
