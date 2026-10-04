@@ -6,18 +6,30 @@ import {
   aSolicitudDeVenta,
   calcularAjustesManualesPrevia,
   calcularSubtotalPrevia,
-  indexarResolucionPorArticulo,
+  indexarResolucionPorLinea,
   opcionDeLote,
   previaDeLinea,
 } from './ventas'
 import type { ArticuloEscaneado, LoteListado, PagoDeVenta, ResultadoDeResolucion } from './tipos'
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, acumulaEnVenta: true, ...sobrescribir }
 }
 
+/** `idLinea` por defecto = el `idArticulo` como texto: en los casos de una línea por artículo los
+ * índices `{ 1: … }` siguen leyéndose igual. Los casos de dos líneas del mismo artículo pasan
+ * `idLinea` explícito. */
 function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 2, ...sobrescribir }
+  return {
+    idLinea: String(sobrescribir.idArticulo ?? 1),
+    idArticulo: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Coca Cola 1L',
+    codigoBarra: '7790001234567',
+    acumulaEnVenta: true,
+    cantidad: 2,
+    ...sobrescribir,
+  }
 }
 
 function resultadoFixture(sobrescribir: Partial<ResultadoDeResolucion> = {}): ResultadoDeResolucion {
@@ -29,9 +41,18 @@ describe('aLineaDeCarritoDesdeEscaneo', () => {
     const resultado = aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ cantidad: 3 }))
 
     expect(resultado).toEqual({
-      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567' },
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', acumulaEnVenta: true },
       cantidad: 3,
     })
+  })
+
+  it('lleva acumulaEnVenta: false del artículo escaneado', () => {
+    expect(aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ acumulaEnVenta: false })).linea.acumulaEnVenta).toBe(false)
+  })
+
+  it('una respuesta sin acumulaEnVenta (servidor anterior al campo) acumula', () => {
+    const { acumulaEnVenta: _omitido, ...sinCampo } = articuloEscaneadoFixture()
+    expect(aLineaDeCarritoDesdeEscaneo(sinCampo as ArticuloEscaneado).linea.acumulaEnVenta).toBe(true)
   })
 
   it('preserva codigoBarra null cuando el escaneo resolvió por codigo_interno', () => {
@@ -64,18 +85,35 @@ describe('aLineasDeResolucion', () => {
   })
 })
 
-describe('indexarResolucionPorArticulo', () => {
-  it('indexa por idArticulo para lookup O(1)', () => {
+describe('indexarResolucionPorLinea', () => {
+  it('indexa por idLinea según la posición de cada línea en el request', () => {
+    const lineas = [lineaFixture({ idLinea: 'x', idArticulo: 1 }), lineaFixture({ idLinea: 'y', idArticulo: 2 })]
     const resultados = [resultadoFixture({ idArticulo: 1 }), resultadoFixture({ idArticulo: 2, precioFinal: 50 })]
 
-    const indice = indexarResolucionPorArticulo(resultados)
+    const indice = indexarResolucionPorLinea(lineas, resultados)
 
-    expect(indice[1]).toEqual(resultados[0])
-    expect(indice[2].precioFinal).toBe(50)
+    expect(indice).toEqual({ x: resultados[0], y: resultados[1] })
+  })
+
+  it('dos líneas del mismo artículo conservan cada una su propio resultado', () => {
+    const lineas = [lineaFixture({ idLinea: 'a', cantidad: 1 }), lineaFixture({ idLinea: 'b', cantidad: 6 })]
+    const resultados = [resultadoFixture({ precioFinal: 100, descuentoUnitario: 0 }), resultadoFixture({ precioFinal: 80, descuentoUnitario: 20 })]
+
+    const indice = indexarResolucionPorLinea(lineas, resultados)
+
+    expect(indice.a.precioFinal).toBe(100)
+    expect(indice.b.precioFinal).toBe(80)
+  })
+
+  it('una posición cuyo idArticulo no coincide con la línea queda sin precio', () => {
+    const lineas = [lineaFixture({ idLinea: 'x', idArticulo: 1 }), lineaFixture({ idLinea: 'y', idArticulo: 2 })]
+    const resultados = [resultadoFixture({ idArticulo: 2 }), resultadoFixture({ idArticulo: 2 })]
+
+    expect(indexarResolucionPorLinea(lineas, resultados)).toEqual({ y: resultados[1] })
   })
 
   it('un lote vacío produce un índice vacío', () => {
-    expect(indexarResolucionPorArticulo([])).toEqual({})
+    expect(indexarResolucionPorLinea([], [])).toEqual({})
   })
 })
 
@@ -198,6 +236,17 @@ describe('calcularSubtotalPrevia', () => {
     expect(calcularSubtotalPrevia(lineas, precios)).toBe(0.3)
   })
 
+  it('lee el precio de cada línea por idLinea: dos líneas del mismo artículo suman cada una el suyo', () => {
+    const lineas = [lineaFixture({ idLinea: 'a', cantidad: 1 }), lineaFixture({ idLinea: 'b', cantidad: 6 })]
+    const precios = {
+      a: resultadoFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 }),
+      b: resultadoFixture({ precioOriginal: 100, precioFinal: 80, descuentoUnitario: 20 }),
+    }
+
+    // 1 × 100 + 6 × 80
+    expect(calcularSubtotalPrevia(lineas, precios)).toBe(580)
+  })
+
   it('una línea sin precio propio dentro de un lote parcial contribuye 0, no rompe la suma', () => {
     const lineas = [lineaFixture({ idArticulo: 1, cantidad: 2 }), lineaFixture({ idArticulo: 2, cantidad: 1 })]
     const precios = { 1: resultadoFixture({ idArticulo: 1, precioFinal: 90 }) }
@@ -235,6 +284,19 @@ describe('calcularAjustesManualesPrevia', () => {
     ]
 
     expect(calcularAjustesManualesPrevia(lineas, precios)).toEqual({ descuentoManualTotal: 15, recargoManualTotal: 0 })
+  })
+
+  it('el ajuste de cada línea se calcula con el precio de ESA línea', () => {
+    const lineas = [
+      lineaFixture({ idLinea: 'a', cantidad: 1, ajusteManualPorcentaje: -10 }),
+      lineaFixture({ idLinea: 'b', cantidad: 1, ajusteManualPorcentaje: -10 }),
+    ]
+    const porLinea = {
+      a: resultadoFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0 }),
+      b: resultadoFixture({ precioOriginal: 300, precioFinal: 300, descuentoUnitario: 0 }),
+    }
+
+    expect(calcularAjustesManualesPrevia(lineas, porLinea)).toEqual({ descuentoManualTotal: 40, recargoManualTotal: 0 })
   })
 
   it('una línea sin precio resuelto no aporta ajuste', () => {
@@ -356,8 +418,8 @@ describe('aSolicitudDeVenta', () => {
       idCliente: 1,
       codigoTipoComprobante: 'TX',
       idComprobanteAsociado: null,
-      lineas: [lineaFixture({ idArticulo: 1 }), lineaFixture({ idArticulo: 2 })],
-      lotesSeleccionados: { 1: 55 },
+      lineas: [lineaFixture({ idLinea: 'a', idArticulo: 1 }), lineaFixture({ idLinea: 'b', idArticulo: 1 })],
+      lotesSeleccionados: { a: 55 },
       pagos: [],
       direccionEntrega: null,
       observaciones: null,

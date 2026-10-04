@@ -46,6 +46,7 @@ function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): Ar
     idsEmpresas: [],
     activo: true,
     controlaLote: false,
+    acumulaEnVenta: true,
     ...sobrescribir,
   }
 }
@@ -155,7 +156,27 @@ describe('ModalDeBusquedaDeArticulos — errores y reentrancia', () => {
     fireEvent.click(boton)
 
     expect(onAgregar).toHaveBeenCalledTimes(1)
-    expect(onAgregar).toHaveBeenCalledWith({ idArticulo: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L', codigoBarra: null }, 1)
+    expect(onAgregar).toHaveBeenCalledWith({ idArticulo: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L', codigoBarra: null, acumulaEnVenta: true }, 1)
+  })
+
+  it.each([true, false])('"Agregar" de un artículo con acumulaEnVenta = %s lo pasa tal cual a onAgregar', async (acumula) => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa')
+        ? Promise.resolve(paginaDe([articuloListadoFixture({ acumulaEnVenta: acumula })]))
+        : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(ruta)),
+    )
+    const onAgregar = vi.fn()
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    expect(onAgregar).toHaveBeenCalledWith(expect.objectContaining({ idArticulo: 9, acumulaEnVenta: acumula }), 1)
   })
 
   it('Escape invoca a onCerrar', () => {

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BorradorDeTicketContext, ProveedorDeBorradoresDeTicket, claveIndexedDbDeBorrador } from './BorradorDeTicketContext'
+import { BorradorDeTicketContext, ProveedorDeBorradoresDeTicket, claveIndexedDbDeBorrador, hidratarBorradorPersistido } from './BorradorDeTicketContext'
 import type { BorradorDeTicket } from './BorradorDeTicketContext'
 import type { AlmacenDeClavesMultiples, EntradaDeAlmacen } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
@@ -494,9 +494,10 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
 
   function lineasDeEjemplo(): LineaCarrito[] {
     return [
-      { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Cigarrillos', codigoBarra: null, cantidad: 2, ajusteManualPorcentaje: 15 },
-      { idArticulo: 2, codigoInterno: 'A0002', nombre: 'Maple de huevos', codigoBarra: '7790002222222', cantidad: 1, ajusteManualPorcentaje: -10 },
-      { idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, cantidad: 3 },
+      { idLinea: 'l-1', idArticulo: 1, codigoInterno: 'A0001', nombre: 'Cigarrillos', codigoBarra: null, acumulaEnVenta: true, cantidad: 2, ajusteManualPorcentaje: 15 },
+      { idLinea: 'l-2', idArticulo: 2, codigoInterno: 'A0002', nombre: 'Maple de huevos', codigoBarra: '7790002222222', acumulaEnVenta: false, cantidad: 1, ajusteManualPorcentaje: -10 },
+      { idLinea: 'l-3', idArticulo: 2, codigoInterno: 'A0002', nombre: 'Maple de huevos', codigoBarra: '7790002222222', acumulaEnVenta: false, cantidad: 1 },
+      { idLinea: 'l-4', idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, acumulaEnVenta: true, cantidad: 3 },
     ]
   }
 
@@ -537,7 +538,7 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
     }
   })
 
-  it('un borrador guardado antes de existir el ajuste manual (líneas sin el campo) sigue restaurando, sin ajuste', async () => {
+  it('un borrador guardado antes de existir el ajuste manual, idLinea y acumulaEnVenta sigue restaurando: sin ajuste, con id y acumulando', async () => {
     const almacen = crearAlmacenIndexedDb()
     const usuario = usuarioFixture()
     const lineasViejas = [{ idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, cantidad: 3 }]
@@ -554,8 +555,33 @@ describe('BorradorDeTicketContext — persistencia en IndexedDB (stage-pos-borra
       </ConAuth>,
     )
 
-    await waitFor(() => expect(JSON.parse(screen.getByTestId('lineas').textContent ?? '')).toEqual(lineasViejas))
+    await waitFor(() => expect(screen.getByTestId('lineas')).not.toHaveTextContent('vacio'))
+    const restauradas = JSON.parse(screen.getByTestId('lineas').textContent ?? '') as LineaCarrito[]
+    expect(restauradas).toEqual([{ ...lineasViejas[0], idLinea: expect.any(String), acumulaEnVenta: true }])
+    expect(restauradas[0].idLinea).not.toBe('')
     expect(screen.getByTestId('lineas').textContent).not.toContain('ajusteManualPorcentaje')
+  })
+
+  it('hidratarBorradorPersistido migra un borrador viejo: ids nuevos por línea y la edición de cantidad pasa de idArticulo a idLinea', () => {
+    const viejo = {
+      ...borradorDeEjemplo,
+      lineas: [
+        { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Cigarrillos', codigoBarra: null, cantidad: 2 },
+        { idArticulo: 3, codigoInterno: 'A0003', nombre: 'Agua 500ml', codigoBarra: null, cantidad: 3 },
+      ],
+      cantidadesEnEdicion: { 3: '3.' },
+    } as unknown as Omit<BorradorDeTicket, 'precios'>
+
+    const hidratado = hidratarBorradorPersistido(viejo)
+
+    const [primera, segunda] = hidratado.lineas
+    expect(new Set([primera.idLinea, segunda.idLinea]).size).toBe(2)
+    expect(hidratado.lineas.map((l) => [l.idArticulo, l.acumulaEnVenta])).toEqual([
+      [1, true],
+      [3, true],
+    ])
+    expect(hidratado.cantidadesEnEdicion).toEqual({ [segunda.idLinea]: '3.' })
+    expect(hidratado.precios).toEqual({})
   })
 
   it('desmontar el Provider con una escritura pendiente la vuelca igual (flush en el cleanup)', async () => {

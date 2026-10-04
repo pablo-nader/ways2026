@@ -1,8 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { migrarLineasDeBorrador } from '../api/carrito'
 import type { LineaCarrito } from '../api/carrito'
 import type { FilaPago } from '../api/pagos'
-import type { ClienteListado, ResultadoDeResolucion, UsuarioAutenticado } from '../api/tipos'
+import type { ClienteListado, UsuarioAutenticado } from '../api/tipos'
+import type { PreciosPorLinea } from '../api/ventas'
 import { AuthContext } from '../auth/AuthContext'
 import type { AlmacenDeClavesMultiples } from './almacenPos'
 import { crearAlmacenIndexedDb } from './almacenPos'
@@ -17,8 +19,9 @@ import { crearAlmacenIndexedDb } from './almacenPos'
  */
 export type BorradorDeTicket = {
   lineas: LineaCarrito[]
-  precios: Record<number, ResultadoDeResolucion>
-  cantidadesEnEdicion: Record<number, string>
+  precios: PreciosPorLinea
+  /** Texto en edición del input de cantidad, indexado por `idLinea`. */
+  cantidadesEnEdicion: Record<string, string>
   filasPago: FilaPago[]
   /** Próximo valor de `proximaFilaPagoIdRef` — restaurado así en vez de derivarlo de
    * `filasPago` para que una fila agregada después de restaurar nunca reutilice el id de una
@@ -82,6 +85,17 @@ function esPayloadValido(valor: unknown): valor is PayloadPersistido {
   if (!valor || typeof valor !== 'object') return false
   const v = valor as Partial<PayloadPersistido>
   return v.version === VERSION_BORRADORES && typeof v.borrador === 'object' && v.borrador !== null
+}
+
+/** Borrador persistido → `BorradorDeTicket` en memoria. Un borrador guardado antes de
+ * `idLinea`/`acumulaEnVenta` se migra acá (`migrarLineasDeBorrador`) en vez de descartarse, así
+ * que `VERSION_BORRADORES` no cambia. */
+export function hidratarBorradorPersistido(borrador: BorradorPersistido): BorradorDeTicket {
+  const { lineas, cantidadesEnEdicion } = migrarLineasDeBorrador(
+    Array.isArray(borrador.lineas) ? borrador.lineas : [],
+    borrador.cantidadesEnEdicion ?? {},
+  )
+  return { ...borrador, lineas, cantidadesEnEdicion, precios: {} }
 }
 
 /** Scoping por usuario (y tenant, si aplica) — mismo criterio que
@@ -220,7 +234,7 @@ export function ProveedorDeBorradoresDeTicket({ children, almacen: almacenInyect
         for (const { clave, valor } of entradas) {
           if (!esPayloadValido(valor)) continue
           const claveLogica = clave.slice(prefijo.length)
-          mapaRef.current.set(claveLogica, { ...valor.borrador, precios: {} })
+          mapaRef.current.set(claveLogica, hidratarBorradorPersistido(valor.borrador))
         }
         hidratacionResueltaRef.current = true
         setHidratado(true)

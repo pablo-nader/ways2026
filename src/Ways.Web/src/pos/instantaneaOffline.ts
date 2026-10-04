@@ -17,9 +17,9 @@ import type {
   MedioPagoListado,
   OfertaAplicada,
   PrecioDeListaDeInstantanea,
-  ResultadoDeResolucion,
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
+import type { PreciosPorLinea } from '../api/ventas'
 import { normalizarParaBuscar } from '../formato/texto'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
@@ -82,7 +82,9 @@ function esArticulo(valor: unknown): boolean {
     Array.isArray(valor.codigosBarra) &&
     typeof valor.porcentajeIva === 'number' &&
     Array.isArray(valor.preciosPorLista) &&
-    valor.preciosPorLista.every(esPrecioDeLista)
+    valor.preciosPorLista.every(esPrecioDeLista) &&
+    // Una instantánea guardada antes de `acumulaEnVenta` no lo trae y sigue siendo válida.
+    (valor.acumulaEnVenta == null || typeof valor.acumulaEnVenta === 'boolean')
   )
 }
 
@@ -171,6 +173,7 @@ export function buscarArticuloOffline(instantanea: InstantaneaDePos, entradaCrud
     nombre: articulo.nombre,
     codigoBarra: entrada.objetivo === 'CodigoBarra' ? entrada.codigo : null,
     cantidad: entrada.cantidad,
+    acumulaEnVenta: articulo.acumulaEnVenta ?? true,
   }
 }
 
@@ -228,8 +231,8 @@ function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloD
 
 /**
  * Resuelve el precio de cada línea del carrito contra la instantánea local, en la lista del
- * cliente de la venta — mismo shape de salida que `indexarResolucionPorArticulo` (indexado por
- * `idArticulo`), así que `previaDeLinea`/`calcularSubtotalPrevia` siguen funcionando sin cambios
+ * cliente de la venta — mismo shape de salida que `indexarResolucionPorLinea` (indexado por
+ * `idLinea`), así que `previaDeLinea`/`calcularSubtotalPrevia` siguen funcionando sin cambios
  * vengan los precios de la red o de la instantánea. Una línea cuyo artículo no está en la
  * instantánea o no tiene precio en esa lista queda ausente del índice — el mismo tratamiento que
  * un artículo sin precio en la resolución online.
@@ -240,13 +243,13 @@ export function resolverPreciosOffline(
   lineas: LineaCarrito[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
-): Record<number, ResultadoDeResolucion> {
+): PreciosPorLinea {
   const porId = indicePorArticulo(instantanea)
-  const indice: Record<number, ResultadoDeResolucion> = {}
+  const indice: PreciosPorLinea = {}
   for (const linea of lineas) {
     const articulo = porId.get(linea.idArticulo)
     const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
-    if (precio) indice[linea.idArticulo] = { idArticulo: linea.idArticulo, idListaPrecio, ...preciosVigentesOffline(precio, linea.cantidad) }
+    if (precio) indice[linea.idLinea] = { idArticulo: linea.idArticulo, idListaPrecio, ...preciosVigentesOffline(precio, linea.cantidad) }
   }
   return indice
 }

@@ -595,6 +595,9 @@ export type ArticuloListado = {
    * edición vive en el editor de `Articulos.tsx`; el picker del POS no necesita este flag
    * porque `GET /api/stock/lotes` ya resuelve todo server-side. */
   controlaLote: boolean
+  /** `true`: volver a agregarlo en el carrito del POS suma cantidad a su línea; `false`: cada
+   * agregado es una línea nueva. */
+  acumulaEnVenta: boolean
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
@@ -623,6 +626,8 @@ export type AltaArticulo = {
   idsEmpresas: number[] | null
   activo: boolean
   controlaLote: boolean
+  /** Ausente: en el alta el servidor asume `true`; en la edición conserva el valor guardado. */
+  acumulaEnVenta?: boolean
   /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
   codigoProveedor?: string | null
 }
@@ -799,6 +804,7 @@ export type ArticuloEscaneado = {
   nombre: string
   codigoBarra: string | null
   cantidad: number
+  acumulaEnVenta: boolean
 }
 
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
@@ -865,6 +871,8 @@ export type ArticuloDeInstantanea = {
   idAlicuotaIva: number
   porcentajeIva: number
   preciosPorLista: PrecioDeListaDeInstantanea[]
+  /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
+  acumulaEnVenta?: boolean
 }
 
 /** Un cliente visible para el punto de venta — espejo de `ClienteDeInstantanea`. `idListaPrecio`

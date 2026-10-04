@@ -178,7 +178,7 @@ function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteList
 }
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, acumulaEnVenta: true, ...sobrescribir }
 }
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
@@ -203,6 +203,7 @@ function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): Ar
     idsEmpresas: [],
     activo: true,
     controlaLote: false,
+    acumulaEnVenta: true,
     ...sobrescribir,
   }
 }
@@ -692,6 +693,67 @@ describe('Pos — escaneo', () => {
 
     await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
     expect(screen.getAllByText('Coca Cola 1L')).toHaveLength(1)
+  })
+
+  /** Un artículo con `acumulaEnVenta: false` abre una línea por escaneo, y cada línea tiene su
+   * propio precio (resuelto por posición, según SU cantidad), su propia cantidad, su propio ajuste
+   * manual y su propio "Quitar". El mock de `/ofertas/resolver` responde por línea: 3 o más unidades a $ 80. */
+  it('escanear dos veces un artículo que no acumula deja dos filas independientes', async () => {
+    mockearApiGet((ruta) =>
+      ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloEscaneadoFixture({ acumulaEnVenta: false })) : undefined,
+    )
+    apiPostMock.mockImplementation((ruta: string, cuerpo: { lineas: { idArticulo: number; cantidad: number }[] }) => {
+      if (ruta !== '/ofertas/resolver') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      const resultados: ResultadoDeResolucion[] = cuerpo.lineas.map((l) => ({
+        idArticulo: l.idArticulo,
+        idListaPrecio: 1,
+        precioOriginal: 100,
+        precioFinal: l.cantidad >= 3 ? 80 : 100,
+        descuentoUnitario: l.cantidad >= 3 ? 20 : 0,
+        aplicadas: [],
+      }))
+      return Promise.resolve(resultados)
+    })
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+
+    await waitFor(() => expect(screen.getAllByLabelText('Cantidad de Coca Cola 1L')).toHaveLength(2))
+    const cantidades = () => screen.getAllByLabelText('Cantidad de Coca Cola 1L').map((input) => (input as HTMLInputElement).value)
+    expect(cantidades()).toEqual(['1', '1'])
+
+    const segunda = screen.getAllByLabelText('Cantidad de Coca Cola 1L')[1]
+    await userEvent.clear(segunda)
+    await userEvent.type(segunda, '3')
+    await userEvent.tab()
+    expect(cantidades()).toEqual(['1', '3'])
+
+    const filas = () => screen.getAllByLabelText('Cantidad de Coca Cola 1L').map((input) => input.closest('tr') as HTMLElement)
+    await waitFor(() => expect(within(filas()[1]).getByText('$ 240,00')).toBeInTheDocument())
+    expect(within(filas()[1]).getByText('$ 80,00')).toBeInTheDocument()
+    expect(within(filas()[0]).getAllByText('$ 100,00')).toHaveLength(2)
+    expect(screen.getByText('$ 340,00', { selector: 'strong' })).toBeInTheDocument()
+
+    await userEvent.click(within(filas()[1]).getByRole('button', { name: 'Ajuste manual de Coca Cola 1L' }))
+    expect(screen.getAllByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' })).toHaveLength(1)
+    await userEvent.click(screen.getByRole('radio', { name: 'Descuento' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' }), '10')
+    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(within(filas()[1]).getByText('Desc. manual 10% -$ 24,00')).toBeInTheDocument())
+    expect(within(filas()[0]).queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+
+    await userEvent.click(within(filas()[0]).getByRole('button', { name: 'Quitar' }))
+
+    await waitFor(() => expect(cantidades()).toEqual(['3']))
+    expect(within(filas()[0]).getByText('Desc. manual 10% -$ 24,00')).toBeInTheDocument()
   })
 
   it('el input de escaneo se limpia después de un escaneo exitoso', async () => {

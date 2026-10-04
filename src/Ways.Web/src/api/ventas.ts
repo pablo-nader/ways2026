@@ -6,7 +6,7 @@
  */
 import { api } from './cliente'
 import { calcularTotalesDeLinea, totalesDeAjusteManual } from './ajusteManual'
-import type { LineaCarrito } from './carrito'
+import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearImporte } from '../formato/importes'
 import type {
   ArticuloEscaneado,
@@ -49,16 +49,17 @@ export const clienteDeVentas = {
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:
  * codigos-barra / Scan Resolution Rule) — separa la cantidad parseada por el servidor
- * (`N*codigo`) de los datos de identidad de la línea, tal como espera `AccionCarrito`. */
-export function aLineaDeCarritoDesdeEscaneo(
-  articulo: ArticuloEscaneado,
-): { linea: Omit<LineaCarrito, 'cantidad'>; cantidad: number } {
+ * (`N*codigo`) de los datos del artículo, tal como espera `AccionCarrito`. Solo un
+ * `acumulaEnVenta: false` explícito abre líneas separadas: un valor ausente (servidor anterior al
+ * campo) conserva el comportamiento de siempre, acumular. */
+export function aLineaDeCarritoDesdeEscaneo(articulo: ArticuloEscaneado): { linea: ArticuloParaCarrito; cantidad: number } {
   return {
     linea: {
       idArticulo: articulo.idArticulo,
       codigoInterno: articulo.codigoInterno,
       nombre: articulo.nombre,
       codigoBarra: articulo.codigoBarra,
+      acumulaEnVenta: articulo.acumulaEnVenta !== false,
     },
     cantidad: articulo.cantidad,
   }
@@ -75,11 +76,21 @@ export function aLineasDeResolucion(
   return lineas.map((l) => ({ idArticulo: l.idArticulo, idEmpresa, idListaPrecio, cantidad: l.cantidad }))
 }
 
-/** Indexa el resultado del lote por `idArticulo` para lookup O(1) por línea al renderizar la
- * tabla del carrito — el servidor no garantiza el mismo orden que el request. */
-export function indexarResolucionPorArticulo(resultados: ResultadoDeResolucion[]): Record<number, ResultadoDeResolucion> {
-  const indice: Record<number, ResultadoDeResolucion> = {}
-  for (const r of resultados) indice[r.idArticulo] = r
+/** Precio resuelto de cada línea del carrito, indexado por `idLinea`. */
+export type PreciosPorLinea = Record<string, ResultadoDeResolucion>
+
+/** Indexa el resultado del lote por `idLinea` de las MISMAS `lineas` con las que se armó el
+ * request: `ServicioDeOfertas.ResolverAsync` devuelve un resultado por línea pedida, en el mismo
+ * orden. La resolución depende de la cantidad de cada línea (tramos, ofertas por cantidad), así
+ * que dos líneas del mismo artículo pueden resolver distinto y no se indexan por artículo. Una
+ * posición cuyo `idArticulo` no coincide con el de la línea queda sin precio, igual que un
+ * artículo sin precio en la lista. */
+export function indexarResolucionPorLinea(lineas: readonly LineaCarrito[], resultados: readonly ResultadoDeResolucion[]): PreciosPorLinea {
+  const indice: PreciosPorLinea = {}
+  lineas.forEach((l, posicion) => {
+    const resultado = resultados[posicion]
+    if (resultado !== undefined && resultado.idArticulo === l.idArticulo) indice[l.idLinea] = resultado
+  })
   return indice
 }
 
@@ -114,11 +125,11 @@ export function previaDeLinea(
 /** Total previsualizado del carrito completo, ya con los ajustes manuales — `null` mientras no haya
  * ningún precio resuelto todavía (primera carga, o el lote de `/resolver` falló); una línea sin
  * precio propio dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
-export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: Record<number, ResultadoDeResolucion>): number | null {
+export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: PreciosPorLinea): number | null {
   if (Object.keys(precios).length === 0) return null
   return redondearImporte(
     lineas.reduce((acumulado, l) => {
-      const previa = previaDeLinea(l, precios[l.idArticulo])
+      const previa = previaDeLinea(l, precios[l.idLinea])
       return acumulado + (previa.total ?? 0)
     }, 0),
   )
@@ -128,18 +139,18 @@ export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: Record<n
  * cada línea (`totalesDeAjusteManual`). Una línea sin precio resuelto no aporta ajuste. */
 export function calcularAjustesManualesPrevia(
   lineas: LineaCarrito[],
-  precios: Record<number, ResultadoDeResolucion>,
+  precios: PreciosPorLinea,
 ): { descuentoManualTotal: number; recargoManualTotal: number } {
   return totalesDeAjusteManual(
-    lineas.map((l) => ({ porcentaje: l.ajusteManualPorcentaje, ajuste: previaDeLinea(l, precios[l.idArticulo]).ajusteManual })),
+    lineas.map((l) => ({ porcentaje: l.ajusteManualPorcentaje, ajuste: previaDeLinea(l, precios[l.idLinea]).ajusteManual })),
   )
 }
 
-/** Selección explícita de lote por línea del carrito, indexada por `idArticulo`
+/** Selección explícita de lote por línea del carrito, indexada por `idLinea`
  * (stage-12-lotes-vencimientos, Slice 14) — una línea AUSENTE acá viaja con `idLote: null`, el
  * camino feliz de cero tecleo (design decisión 19): mostrar el `sugerido` resaltado en el picker
  * no cuenta como elección, solo tocar el select la registra. */
-export type LotesSeleccionados = Record<number, number>
+export type LotesSeleccionados = Record<string, number>
 
 /**
  * Carrito confirmado → `SolicitudDeVenta` (design: Checkout Contract), invocado por `Pos.tsx`
@@ -162,7 +173,7 @@ export function aSolicitudDeVenta(params: {
     idArticulo: l.idArticulo,
     cantidad: l.cantidad,
     codigoBarra: l.codigoBarra,
-    idLote: params.lotesSeleccionados[l.idArticulo] ?? null,
+    idLote: params.lotesSeleccionados[l.idLinea] ?? null,
     ...(l.ajusteManualPorcentaje != null ? { ajusteManualPorcentaje: l.ajusteManualPorcentaje } : {}),
   }))
 

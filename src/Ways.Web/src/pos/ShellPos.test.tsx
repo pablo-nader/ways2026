@@ -203,7 +203,7 @@ function movimientoRegistradoFixture(cuerpo: unknown) {
 }
 
 function articuloEscaneadoFixture(): ArticuloEscaneado {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1 }
+  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, acumulaEnVenta: true }
 }
 
 /** Fila de "Ventas del turno" para un `comprobante` ya emitido — mismos datos, la forma que

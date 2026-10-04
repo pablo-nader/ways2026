@@ -902,8 +902,8 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       })
     })
 
-    const lineaCarrito = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad }
-    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)[1])
+    const lineaCarrito = { idLinea: 'l-1', idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', acumulaEnVenta: true, cantidad }
+    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)['l-1'])
 
     const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
     const cobrado = cantidad * ((encolada?.precioUnitario ?? 0) - (encolada?.descuentoUnitario ?? 0))
@@ -1006,8 +1006,17 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
       })
     })
 
-    const lineaCarrito = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad, ajusteManualPorcentaje: porcentaje }
-    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)[1])
+    const lineaCarrito = {
+      idLinea: 'l-1',
+      idArticulo: 1,
+      codigoInterno: 'A0001',
+      nombre: 'Coca Cola 1L',
+      codigoBarra: '7790001234567',
+      acumulaEnVenta: true,
+      cantidad,
+      ajusteManualPorcentaje: porcentaje,
+    }
+    const previa = previaDeLinea(lineaCarrito, resolverPreciosOffline([lineaCarrito], instantanea, LISTA_CF)['l-1'])
 
     const encolada = (await leerOutbox(almacen))[0].solicitud.lineas?.[0]
     const cobrado = calcularTotalesDeLinea({

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOfertas } from '../api/ofertas'
-import type { LineaCarrito } from '../api/carrito'
+import type { ArticuloParaCarrito } from '../api/carrito'
 import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 import { Modal } from './Modal'
@@ -36,7 +36,7 @@ export type PropsModalDeBusquedaDeArticulos = {
    * el servidor tampoco manda el costo al vendedor. Solo lo enciende un llamador de
    * back-office. */
   mostrarCosto?: boolean
-  onAgregar: (linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) => void
+  onAgregar: (linea: ArticuloParaCarrito, cantidad: number) => void
   onCerrar: () => void
 }
 
@@ -158,7 +158,13 @@ export function ModalDeBusquedaDeArticulos({
     if (agregadoRef.current) return
     agregadoRef.current = true
     onAgregar(
-      { idArticulo: articulo.id, codigoInterno: articulo.codigoInterno, nombre: articulo.nombre, codigoBarra: null },
+      {
+        idArticulo: articulo.id,
+        codigoInterno: articulo.codigoInterno,
+        nombre: articulo.nombre,
+        codigoBarra: null,
+        acumulaEnVenta: articulo.acumulaEnVenta !== false,
+      },
       CANTIDAD_POR_DEFECTO,
     )
   }

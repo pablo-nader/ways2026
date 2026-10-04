@@ -44,6 +44,7 @@ export type Formulario = {
   idsEmpresas: number[]
   activo: boolean
   controlaLote: boolean
+  acumulaEnVenta: boolean
 }
 
 export function formularioVacio(): Formulario {
@@ -68,6 +69,7 @@ export function formularioVacio(): Formulario {
     idsEmpresas: [],
     activo: true,
     controlaLote: false,
+    acumulaEnVenta: true,
   }
 }
 
@@ -93,6 +95,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     idsEmpresas: a.idsEmpresas,
     activo: a.activo,
     controlaLote: a.controlaLote,
+    acumulaEnVenta: a.acumulaEnVenta,
   }
 }
 
@@ -126,6 +129,7 @@ function camposComunes(f: Formulario) {
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
     controlaLote: f.controlaLote,
+    acumulaEnVenta: f.acumulaEnVenta,
   }
 }
 
@@ -625,6 +629,25 @@ export function FormularioArticulo({
               <label className="form-check-label" htmlFor="art-controla-lote">
                 Controla lote / vencimiento
               </label>
+            </div>
+          </div>
+
+          <div className="col-md-6 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="art-acumula-en-venta"
+                type="checkbox"
+                className="form-check-input"
+                aria-describedby="art-acumula-en-venta-ayuda"
+                checked={valor.acumulaEnVenta}
+                onChange={(e) => onCambio({ ...valor, acumulaEnVenta: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="art-acumula-en-venta">
+                Acumula en una sola línea al vender
+              </label>
+              <div id="art-acumula-en-venta-ayuda" className="form-text">
+                Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket.
+              </div>
             </div>
           </div>
 

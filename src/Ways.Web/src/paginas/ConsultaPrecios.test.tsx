@@ -51,7 +51,7 @@ function listaFixture(sobrescribir: Partial<ListaPrecioAsignable> = {}): ListaPr
 }
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, acumulaEnVenta: true, ...sobrescribir }
 }
 
 function resolucionFixture(sobrescribir: Partial<ResultadoDeResolucion> = {}): ResultadoDeResolucion {

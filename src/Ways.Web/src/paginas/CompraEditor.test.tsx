@@ -164,6 +164,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     idsEmpresas: [],
     activo: true,
     controlaLote: true,
+    acumulaEnVenta: true,
     ...sobrescribir,
   }
 }
