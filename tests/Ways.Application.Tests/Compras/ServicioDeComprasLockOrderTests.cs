@@ -108,4 +108,80 @@ public class ServicioDeComprasLockOrderTests
             indiceCommit > indiceLedgerInsert,
             "El commit de anular debe ser posterior al INSERT del ledger de proveedor.");
     }
+
+    // =================================================================================================
+    // Familias de artículos (doc 10 §3): el protocolo de locks de la confirmación
+    // =================================================================================================
+
+    private static string EjecutarConfirmar() =>
+        ExtraerMetodo(
+            LeerFuente(), "private async Task<CompraDetalle> EjecutarConfirmarAsync(",
+            "public async Task<ResultadoAnulacion> AnularAsync(");
+
+    /// <summary>El lock de membresía de familias es lo PRIMERO que hace la transacción de la confirmación: entre
+    /// el <c>BeginTransactionAsync</c> y él solo se arma la conexión, y viene antes del <c>UPDATE</c> del
+    /// encabezado. Que además espere ahí, sin haber escrito ni tomado ningún otro lock, lo prueba contra
+    /// <c>pg_locks</c> <c>ComprasConFamiliasTests</c>.</summary>
+    [Fact]
+    public void ElLockDeMembresiaCompartidoEsLaPrimeraSentenciaDeEjecutarConfirmarAsync()
+    {
+        var metodo = EjecutarConfirmar();
+
+        const string apertura = "db.Database.BeginTransactionAsync(ct);";
+        var indiceApertura = metodo.IndexOf(apertura, StringComparison.Ordinal);
+        var indiceLock = metodo.IndexOf("LockDeMembresiaDeFamilias.TomarCompartidoAsync(", StringComparison.Ordinal);
+        var indiceEncabezado = metodo.IndexOf("ConfirmarHeaderAsync(", StringComparison.Ordinal);
+
+        Assert.True(indiceApertura >= 0, "No se encontró la apertura de la transacción.");
+        Assert.True(indiceLock > indiceApertura, "El lock de membresía tiene que venir después de abrir la transacción.");
+        Assert.True(indiceEncabezado > indiceLock, "El UPDATE del encabezado tiene que venir DESPUÉS del lock de membresía.");
+
+        var entre = metodo[(indiceApertura + apertura.Length)..indiceLock];
+
+        foreach (var sentencia in new[]
+        {
+            "ExecuteReaderAsync", "ExecuteNonQueryAsync", "ExecuteScalarAsync", "ToListAsync", "AnyAsync", "FirstAsync",
+            "SaveChangesAsync", "ConfirmarHeaderAsync"
+        })
+        {
+            Assert.DoesNotContain(sentencia, entre, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>El costo de las familias se escribe en el orden del protocolo: la pertenencia se lee y las filas
+    /// de los artículos con costo se bloquean DESPUÉS del último movimiento de stock, antes de escribir el costo y
+    /// antes del lock de proveedores, que sigue siendo el último lock de fila de la transacción.</summary>
+    [Fact]
+    public void LasFilasConCostoSeBloqueanDespuesDelStockYAntesDeEscribirElCostoYDelLockDeProveedores()
+    {
+        var metodo = EjecutarConfirmar();
+
+        var indiceStock = metodo.LastIndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
+        var indiceFamilias = metodo.IndexOf("LeerFamiliasDeLosArticulosAsync(", StringComparison.Ordinal);
+        var indiceBloqueo = metodo.IndexOf("BloquearArticulosConCostoAsync(", StringComparison.Ordinal);
+        var indiceCosto = metodo.LastIndexOf("ActualizarCostoNominalAsync(", StringComparison.Ordinal);
+        var indiceProveedores = metodo.IndexOf(
+            "EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
+
+        Assert.True(indiceStock >= 0 && indiceFamilias >= 0 && indiceBloqueo >= 0 && indiceCosto >= 0 && indiceProveedores >= 0);
+        Assert.True(indiceStock < indiceFamilias, "La pertenencia se lee después del stock.");
+        Assert.True(indiceFamilias < indiceBloqueo, "Las filas se bloquean con la pertenencia ya leída.");
+        Assert.True(indiceBloqueo < indiceCosto, "El costo se escribe con las filas ya bloqueadas.");
+        Assert.True(indiceCosto < indiceProveedores, "El lock de proveedores sigue siendo el último.");
+    }
+
+    /// <summary>Las filas a las que se escribe el costo se bloquean en UN statement ordenado por id y con
+    /// <c>FOR NO KEY UPDATE</c>: es el orden en que PostgreSQL toma los locks, el que evita el ciclo con otro
+    /// escritor de la misma familia, y nunca <c>FOR UPDATE</c>, que chocaría con el <c>FOR KEY SHARE</c> de las
+    /// ventas. Lo prueban, contra la base, <c>ComprasConFamiliasTests</c>.</summary>
+    [Fact]
+    public void ElBloqueoDeLasFilasConCostoEsAscendentePorIdYConForNoKeyUpdate()
+    {
+        var cuerpo = ExtraerMetodo(
+            LeerFuente(), "private static async Task<List<(int IdArticulo, decimal Costo)>> BloquearArticulosConCostoAsync(",
+            "private static async Task ActualizarCostoNominalAsync(");
+
+        Assert.Contains("ORDER BY id_articulo FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
+        Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);
+    }
 }

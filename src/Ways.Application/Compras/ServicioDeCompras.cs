@@ -7,6 +7,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
+using Ways.Application.Familias;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
@@ -42,6 +43,11 @@ namespace Ways.Application.Compras;
 /// 3.1 — no requiere una instancia inyectada) bajo la misma <c>conexion</c>/<c>transaccionCruda</c>
 /// que ya sostiene el lock del header (design decisión 3: lotes antes que stock). <c>ServicioDeLotes</c>
 /// NO se modifica desde acá — API pública tal como quedó en Slice 3.
+///
+/// Familias de artículos (doc 10 §3): <see cref="ConfirmarAsync"/> toma el lock de membresía de familias
+/// compartido como primera sentencia de su transacción y replica el costo de cada línea que lo actualiza a todos
+/// los miembros vivos de la familia de su artículo; <see cref="AplicarPrecioSugeridoAsync"/> aplica, de las
+/// líneas de una misma familia, solo la de mayor orden.
 /// </summary>
 public class ServicioDeCompras(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
@@ -405,6 +411,15 @@ public class ServicioDeCompras(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
+        // 0. Lock de membresía de familias, COMPARTIDO y PRIMERA sentencia de la transacción (doc 10 §3): el
+        // paso 4 replica el costo a todos los miembros vivos de la familia de cada línea, y ningún alta ni salida
+        // de una familia puede intercalarse hasta el commit. Compartido porque confirmar no cambia ninguna
+        // pertenencia: convive con otras confirmaciones y con las escrituras de precios y de campos compartidos
+        // de las familias, y solo espera a quien entra o sale de una familia. Va ANTES del UPDATE del
+        // encabezado: el orden global de locks de las familias es membresía → filas de articulos → pares de
+        // precios, y la membresía no puede tomarse después de haber tomado ningún otro lock de la transacción.
+        await LockDeMembresiaDeFamilias.TomarCompartidoAsync(conexion, transaccionCruda, idTenant, ct);
+
         // 1. UPDATE ... RETURNING — autoridad única de la transición (design decisión 1). El
         // lock de fila serializa dos confirmar concurrentes: el que pierde re-evalúa el WHERE
         // contra el estado YA COMITEADO por el ganador, 0 filas, nunca un 500 ni una doble
@@ -559,8 +574,12 @@ public class ServicioDeCompras(
             }
         }
 
-        // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el
-        // mayor orden ganando (design decisión 4; CalculadorDeCompra.ResolverActualizacionesDeCosto).
+        // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el mayor orden
+        // ganando (design decisión 4; CalculadorDeCompra.ResolverActualizacionesDeCosto) y POR FAMILIA (doc 10
+        // §3): los artículos de una familia son idénticos en costo_nominal, así que de las líneas de una misma
+        // familia gana una sola y su costo se escribe en TODOS los miembros vivos, que se bloquean ascendentes
+        // por id —paso (2) del protocolo de locks de las familias— antes de escribir. Con el lock de membresía
+        // compartido ya tomado, ningún alta ni salida de una familia cambia la pertenencia que se lee acá.
         var itemsParaCosto = items
             .Select(i => (
                 i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario,
@@ -568,9 +587,12 @@ public class ServicioDeCompras(
                     i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva)))
             .ToList();
 
-        var costosAActualizar = CalculadorDeCompra.ResolverActualizacionesDeCosto(itemsParaCosto);
+        var familiaPorArticulo = await LeerFamiliasDeLosArticulosAsync(
+            conexion, transaccionCruda, idTenant, idsArticulo, ct);
+        var costosAActualizar = CalculadorDeCompra.ResolverActualizacionesDeCosto(itemsParaCosto, familiaPorArticulo);
 
-        foreach (var (idArticulo, costo) in costosAActualizar.OrderBy(kv => kv.Key))
+        foreach (var (idArticulo, costo) in await BloquearArticulosConCostoAsync(
+            conexion, transaccionCruda, idTenant, costosAActualizar, ct))
         {
             await ActualizarCostoNominalAsync(conexion, transaccionCruda, idTenant, idArticulo, costo, momento, ct);
         }
@@ -778,9 +800,17 @@ public class ServicioDeCompras(
     ///
     /// <para>Cada llamada pide <see cref="ModoDeAlcanceDeFamilia.FamiliaSiCorresponde"/>: si el
     /// artículo de la línea es miembro de una familia, el precio sugerido se aplica a toda la
-    /// familia; si no, solo a él. No hay a quién preguntar el alcance. Dos líneas de la misma compra
-    /// que pertenezcan a la misma familia aplican, cada una, a toda la familia: la segunda pisa a la
-    /// primera si sus precios sugeridos difieren.</para></summary>
+    /// familia; si no, solo a él. No hay a quién preguntar el alcance. Como aplicar una línea de una
+    /// familia ya llega a todos sus miembros, de las líneas de una misma familia SOLO se aplica la de mayor
+    /// <c>orden</c> (<see cref="CalculadorDeCompra.ResolverLineasSuperadasDePrecio"/>): las demás no se
+    /// intentan y salen en el resultado como no aplicadas, con la línea que las supera. Las líneas de
+    /// artículos sueltos se aplican todas, en orden.</para>
+    ///
+    /// <para>La pertenencia con que se arma ese plan es una lectura previa a las escrituras, sin lock: cada
+    /// escritura de una línea es su propia transacción y resuelve la pertenencia de nuevo bajo el lock de
+    /// membresía. Si un artículo entra o sale de una familia entre esa lectura y su escritura, el único efecto es
+    /// que el precio de la compra puede no llegar a alguno de esos artículos; las escrituras mantienen a la
+    /// familia idéntica en cualquier caso.</para></summary>
     public async Task<IReadOnlyList<ResultadoAplicarPrecio>> AplicarPrecioSugeridoAsync(
         int id, SolicitudDeAplicarPrecios solicitud, CancellationToken ct = default)
     {
@@ -796,10 +826,30 @@ public class ServicioDeCompras(
             .OrderBy(i => i.Orden)
             .ToListAsync(ct);
 
+        var idsArticulo = items.Select(i => i.IdArticulo!.Value).Distinct().ToList();
+        var familiaPorArticulo = await db.Articulos
+            .Where(a => idsArticulo.Contains(a.Id) && a.IdFamilia != null)
+            .Select(a => new { a.Id, IdFamilia = a.IdFamilia!.Value })
+            .ToDictionaryAsync(a => a.Id, a => a.IdFamilia, ct);
+        var superadas = CalculadorDeCompra.ResolverLineasSuperadasDePrecio(
+            [.. items.Select(i => (i.Orden, i.IdArticulo!.Value))], familiaPorArticulo);
+
         var resultados = new List<ResultadoAplicarPrecio>(items.Count);
 
         foreach (var item in items)
         {
+            if (superadas.TryGetValue(item.Orden, out var ordenQueLaSupera))
+            {
+                var articuloQueLaSupera = items.First(i => i.Orden == ordenQueLaSupera).IdArticulo!.Value;
+
+                resultados.Add(new ResultadoAplicarPrecio(
+                    item.IdArticulo!.Value, false, null,
+                    $"Superada por la línea {ordenQueLaSupera} (artículo #{articuloQueLaSupera}): pertenece a la " +
+                    "misma familia y el precio sugerido de esa línea es el que se aplica a toda la familia " +
+                    "(ver el resultado de esa línea)."));
+                continue;
+            }
+
             try
             {
                 var precio = await servicioDePrecios.AbrirNuevoPrecioAsync(
@@ -1085,6 +1135,86 @@ public class ServicioDeCompras(
             ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
 
         return Convert.ToDecimal(resultado);
+    }
+
+    /// <summary>La familia de cada artículo de <paramref name="idsArticulo"/> que ES miembro (id de artículo →
+    /// id de familia); los demás no aparecen. Un artículo dado de baja no es miembro. Es una lectura plana, sin
+    /// lock de fila, DENTRO de la transacción de la confirmación y bajo el lock de membresía compartido: mientras
+    /// la transacción corre ningún alta ni salida de una familia puede intercalarse, porque toman ese lock
+    /// exclusivo. La baja lógica de un artículo no lo toma —se serializa por el lock de su fila—, así que puede
+    /// comitear entre esta lectura y el bloqueo de <see cref="BloquearArticulosConCostoAsync"/>: el artículo
+    /// dado de baja entonces ya no se bloquea ni recibe el costo de la familia, y los miembros que quedan siguen
+    /// idénticos.</summary>
+    private static async Task<IReadOnlyDictionary<int, int>> LeerFamiliasDeLosArticulosAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, IReadOnlyList<int> idsArticulo,
+        CancellationToken ct)
+    {
+        var familiaPorArticulo = new Dictionary<int, int>();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_articulo, id_familia FROM articulos " +
+            "WHERE id_tenant = $1 AND id_articulo = ANY($2) AND id_familia IS NOT NULL AND deleted_at IS NULL";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idsArticulo.ToArray());
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            familiaPorArticulo[lector.GetInt32(0)] = lector.GetInt32(1);
+        }
+
+        return familiaPorArticulo;
+    }
+
+    /// <summary>Paso (2) del protocolo de locks de familias aplicado al costo: bloquea <c>FOR NO KEY
+    /// UPDATE</c>, en UN statement ordenado por <c>id_articulo</c>, las filas de todos los artículos a los que
+    /// la confirmación les escribe el costo —los miembros vivos de cada familia ganadora y los artículos
+    /// sueltos ganadores— y devuelve cada uno con el costo que le toca, ascendentes por id. El orden del
+    /// <c>ORDER BY</c> es el orden en que PostgreSQL toma los locks de fila, que es el que evita el ciclo con
+    /// otro escritor de la misma familia; <c>NO KEY UPDATE</c> y no <c>UPDATE</c>, porque este último choca con
+    /// el <c>FOR KEY SHARE</c> que toman las ventas por sus FK. Un artículo suelto ganador se escribe aunque
+    /// esté dado de baja, como siempre —también uno dado de baja que conserva su <c>id_familia</c>, que ya no es
+    /// miembro y entra por la segunda condición del <c>WHERE</c>—; los miembros de una familia, solo los
+    /// vivos.</summary>
+    private static async Task<List<(int IdArticulo, decimal Costo)>> BloquearArticulosConCostoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant,
+        IReadOnlyList<ActualizacionDeCosto> actualizaciones, CancellationToken ct)
+    {
+        var costoPorFamilia = actualizaciones
+            .Where(a => a.IdFamilia is not null)
+            .ToDictionary(a => a.IdFamilia!.Value, a => a.Costo);
+        var costoPorArticuloSuelto = actualizaciones
+            .Where(a => a.IdFamilia is null)
+            .ToDictionary(a => a.IdArticulo, a => a.Costo);
+
+        var articulos = new List<(int IdArticulo, decimal Costo)>();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_articulo, id_familia FROM articulos " +
+            "WHERE id_tenant = $1 AND ((id_familia = ANY($2) AND deleted_at IS NULL) OR id_articulo = ANY($3)) " +
+            "ORDER BY id_articulo FOR NO KEY UPDATE";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, costoPorFamilia.Keys.ToArray());
+        ParametrosDeComando.Agregar(comando, costoPorArticuloSuelto.Keys.ToArray());
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        while (await lector.ReadAsync(ct))
+        {
+            var idArticulo = lector.GetInt32(0);
+            var costo = costoPorArticuloSuelto.TryGetValue(idArticulo, out var propio)
+                ? propio
+                : costoPorFamilia[lector.GetInt32(1)];
+
+            articulos.Add((idArticulo, costo));
+        }
+
+        return articulos;
     }
 
     private static async Task ActualizarCostoNominalAsync(

@@ -218,10 +218,9 @@ public class CalculadorDeCompraTests
             (2, 7, true, 200m, 200m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
-        Assert.Single(resultado);
-        Assert.Equal(200m, resultado[7]);
+        Assert.Equal([new ActualizacionDeCosto(IdFamilia: null, IdArticulo: 7, Costo: 200m)], resultado);
     }
 
     [Fact]
@@ -232,7 +231,7 @@ public class CalculadorDeCompraTests
             (1, 7, false, 100m, 100m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
         Assert.Empty(resultado);
     }
@@ -247,7 +246,7 @@ public class CalculadorDeCompraTests
             (1, 7, true, 0m, 0m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
         Assert.Empty(resultado);
     }
@@ -335,10 +334,9 @@ public class CalculadorDeCompraTests
             (2, 7, true, 50m, 50m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
-        Assert.Single(resultado);
-        Assert.Equal(50m, resultado[7]);
+        Assert.Equal([new ActualizacionDeCosto(IdFamilia: null, IdArticulo: 7, Costo: 50m)], resultado);
     }
 
     // ---- header: varias líneas ------------------------------------------------------------------
