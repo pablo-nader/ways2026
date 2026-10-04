@@ -93,7 +93,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     private async Task<Articulo> SembrarArticuloAsync(
         int idTenant, int idArea, int idAlicuotaIva, string nombre,
-        string codigoInterno, bool activo = true, string? codigoBarra = null)
+        string codigoInterno, bool activo = true, string? codigoBarra = null, bool acumulaEnVenta = true)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
@@ -108,6 +108,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             UnidadVenta = UnidadVenta.Unidad,
             EsProducto = true,
             Activo = activo,
+            AcumulaEnVenta = acumulaEnVenta,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
@@ -125,6 +126,22 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         }
 
         return articulo;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ElEscaneoDevuelveAcumulaEnVentaDelArticulo(bool acumulaEnVenta)
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync($"{nameof(ElEscaneoDevuelveAcumulaEnVentaDelArticulo)}{acumulaEnVenta}");
+        await SembrarArticuloAsync(
+            idTenant, idArea, idAlicuotaIva, "Cafe", "55", acumulaEnVenta: acumulaEnVenta);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=55");
+
+        Assert.Equal(acumulaEnVenta, respuesta!.AcumulaEnVenta);
     }
 
     [Fact]

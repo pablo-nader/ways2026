@@ -1020,6 +1020,94 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Null(sugerencia!.PrecioSugerido);
     }
 
+    // ---- acumula_en_venta ---------------------------------------------------------------------
+
+    private async Task<bool> LeerAcumulaEnVentaPersistidoAsync(int idTenant, int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return await db.Articulos.Where(a => a.Id == idArticulo).Select(a => a.AcumulaEnVenta).SingleAsync();
+    }
+
+    /// <summary>LA CLÁUSULA es el default <c>true</c> de <c>AltaArticulo.AcumulaEnVenta</c>: el cuerpo
+    /// se manda SIN el campo (un cliente que no lo conoce) y tanto la respuesta, como el listado y la
+    /// fila guardada tienen que decir <c>true</c>. Con el default del record cambiado a <c>false</c>
+    /// esta prueba falla.</summary>
+    [Fact]
+    public async Task CrearSinAcumulaEnVentaGuardaTrue()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearSinAcumulaEnVentaGuardaTrue));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/articulos", new
+        {
+            nombre = "Sin el campo",
+            idArea,
+            idAlicuotaIva,
+            unidadVenta = "Unidad",
+            esProducto = true
+        });
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var creado = (await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;
+
+        Assert.True(creado.AcumulaEnVenta);
+        Assert.True(await LeerAcumulaEnVentaPersistidoAsync(idTenant, creado.Id));
+        var listado = await admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?busqueda=Sin+el+campo", OpcionesJson);
+        Assert.True(Assert.Single(listado!.Items, a => a.Id == creado.Id).AcumulaEnVenta);
+    }
+
+    [Fact]
+    public async Task CrearConAcumulaEnVentaFalseLoGuardaYLoDevuelveEnElListadoSinTocarAlHermano()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearConAcumulaEnVentaFalseLoGuardaYLoDevuelveEnElListadoSinTocarAlHermano));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.PostAsJsonAsync(
+            "/api/articulos", AltaValida(idArea, idAlicuotaIva) with { Nombre = "No acumula", AcumulaEnVenta = false });
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var noAcumula = (await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;
+        var acumula = await CrearArticuloAsync(admin, idArea, idAlicuotaIva, "Si acumula");
+
+        Assert.False(noAcumula.AcumulaEnVenta);
+        Assert.False(await LeerAcumulaEnVentaPersistidoAsync(idTenant, noAcumula.Id));
+        Assert.True(await LeerAcumulaEnVentaPersistidoAsync(idTenant, acumula.Id));
+
+        var listado = await admin.GetFromJsonAsync<PaginaDe<ArticuloListado>>("/api/articulos?tamanio=100", OpcionesJson);
+        Assert.False(Assert.Single(listado!.Items, a => a.Id == noAcumula.Id).AcumulaEnVenta);
+        Assert.True(Assert.Single(listado.Items, a => a.Id == acumula.Id).AcumulaEnVenta);
+    }
+
+    /// <summary>La edición apaga y vuelve a prender el campo, y un PUT que no lo manda (<c>null</c>)
+    /// deja el valor guardado como estaba: no lo pisa con el default.</summary>
+    [Fact]
+    public async Task EditarCambiaAcumulaEnVentaYUnPutSinElCampoLoConserva()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarCambiaAcumulaEnVentaYUnPutSinElCampoLoConserva));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        Assert.True(creado.AcumulaEnVenta);
+
+        var apagado = await admin.PutAsJsonAsync(
+            $"/api/articulos/{creado.Id}", EdicionDesde(creado) with { AcumulaEnVenta = false });
+        Assert.Equal(HttpStatusCode.OK, apagado.StatusCode);
+        Assert.False((await apagado.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.AcumulaEnVenta);
+        Assert.False(await LeerAcumulaEnVentaPersistidoAsync(idTenant, creado.Id));
+
+        var sinElCampo = await admin.PutAsJsonAsync(
+            $"/api/articulos/{creado.Id}", EdicionDesde(creado) with { Nombre = "Renombrado", AcumulaEnVenta = null });
+        Assert.Equal(HttpStatusCode.OK, sinElCampo.StatusCode);
+        Assert.False((await sinElCampo.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.AcumulaEnVenta);
+        Assert.False(await LeerAcumulaEnVentaPersistidoAsync(idTenant, creado.Id));
+
+        var prendido = await admin.PutAsJsonAsync(
+            $"/api/articulos/{creado.Id}", EdicionDesde(creado) with { AcumulaEnVenta = true });
+        Assert.Equal(HttpStatusCode.OK, prendido.StatusCode);
+        Assert.True((await prendido.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!.AcumulaEnVenta);
+        Assert.True(await LeerAcumulaEnVentaPersistidoAsync(idTenant, creado.Id));
+    }
+
     // ---- helpers ----------------------------------------------------------------------------
 
     private static async Task<ArticuloListado> CrearArticuloAsync(
@@ -1056,5 +1144,6 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         DisponibleParaTodas: articulo.DisponibleParaTodas,
         IdsEmpresas: null,
         Activo: articulo.Activo,
-        ControlaLote: articulo.ControlaLote);
+        ControlaLote: articulo.ControlaLote,
+        AcumulaEnVenta: articulo.AcumulaEnVenta);
 }

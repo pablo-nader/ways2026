@@ -97,6 +97,11 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDefaultValue(false)
             .IsRequired();
 
+        builder.Property(a => a.AcumulaEnVenta)
+            .HasColumnName("acumula_en_venta")
+            .HasDefaultValue(true)
+            .IsRequired();
+
         builder.Property(a => a.IdFamilia).HasColumnName("id_familia");
 
         builder.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();

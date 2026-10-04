@@ -5,15 +5,15 @@ namespace Ways.Domain.Tests.Articulos;
 
 /// <summary>
 /// Regla pura de qué campos de <see cref="Articulo"/> comparten los miembros de una
-/// <see cref="Familia"/>. Cada una de las doce columnas compartidas tiene su propio caso: sacar una
+/// <see cref="Familia"/>. Cada una de las trece columnas compartidas tiene su propio caso: sacar una
 /// del registro, de <see cref="ValoresCompartidosDeFamilia.AplicarA"/> o de
 /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> pone en rojo exactamente el caso de esa
-/// columna (un caso representativo no probaría las otras once). Los campos propios se prueban
+/// columna (un caso representativo no probaría las otras doce). Los campos propios se prueban
 /// aparte: ni se detectan ni se copian.
 /// </summary>
 public class ValoresCompartidosDeFamiliaTests
 {
-    /// <summary>Las doce columnas de <c>articulos</c> compartidas por la familia, en el orden en que
+    /// <summary>Las trece columnas de <c>articulos</c> compartidas por la familia, en el orden en que
     /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> las informa. Escritas a mano a
     /// propósito: pinean los nombres que <c>CamposDistintos</c> devuelve. Que cada uno sea una columna
     /// real de <c>articulos</c> lo comprueba <c>ModeloDeArticulosYPreciosTests</c> contra el modelo de EF.</summary>
@@ -28,6 +28,7 @@ public class ValoresCompartidosDeFamiliaTests
         "unidades_por_bulto",
         "es_producto",
         "controla_lote",
+        "acumula_en_venta",
         "costo_lista",
         "descuento_proveedor",
         "costo_nominal"
@@ -67,6 +68,7 @@ public class ValoresCompartidosDeFamiliaTests
             ["unidades_por_bulto"] = a => a.UnidadesPorBulto = 24m,
             ["es_producto"] = a => a.EsProducto = false,
             ["controla_lote"] = a => a.ControlaLote = true,
+            ["acumula_en_venta"] = a => a.AcumulaEnVenta = false,
             ["costo_lista"] = a => a.CostoLista = 150m,
             ["descuento_proveedor"] = a => a.DescuentoProveedor = 15m,
             ["costo_nominal"] = a => a.CostoNominal = 130m
@@ -134,6 +136,7 @@ public class ValoresCompartidosDeFamiliaTests
         UnidadesPorBulto = 12m,
         EsProducto = true,
         ControlaLote = false,
+        AcumulaEnVenta = true,
         CostoLista = 100m,
         DescuentoProveedor = 10m,
         CostoNominal = 90m,
@@ -144,14 +147,14 @@ public class ValoresCompartidosDeFamiliaTests
         UpdatedAt = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero)
     };
 
-    /// <summary>Con los doce campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
+    /// <summary>Con los trece campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
     /// informa exactamente los nombres de <see cref="ColumnasCompartidas"/>, en el orden de
     /// declaración, y hay un cambio por cada nombre. Compara contra la lista escrita en esta clase: no
     /// consulta la tabla ni el modelo de EF.</summary>
     [Fact]
-    public void CamposDistintosInformaLasDoceColumnasDeLaPruebaEnOrdenDeDeclaracion()
+    public void CamposDistintosInformaLasTreceColumnasDeLaPruebaEnOrdenDeDeclaracion()
     {
-        Assert.Equal(12, ColumnasCompartidas.Length);
+        Assert.Equal(13, ColumnasCompartidas.Length);
         Assert.Equal(ColumnasCompartidas.Order(), CambiosCompartidos.Keys.Order());
 
         var todosDistintos = CrearArticulo();
@@ -250,11 +253,11 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Empty(distintos);
     }
 
-    /// <summary>Origen y destino difieren en TODO (los doce compartidos y los seis propios, más la
-    /// familia): después de aplicar, el destino tiene los doce del origen y conserva intactos sus
+    /// <summary>Origen y destino difieren en TODO (los trece compartidos y los seis propios, más la
+    /// familia): después de aplicar, el destino tiene los trece del origen y conserva intactos sus
     /// propios, su familia, su identidad y sus sellos de auditoría.</summary>
     [Fact]
-    public void AplicarACopiaSoloLosDoceCamposCompartidosYNoTocaLosPropios()
+    public void AplicarACopiaSoloLosTreceCamposCompartidosYNoTocaLosPropios()
     {
         var origen = CrearArticulo();
         foreach (var cambio in CambiosCompartidos.Values.Concat(CambiosPropios.Values))
@@ -306,6 +309,7 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.UnidadesPorBulto),
             nameof(Articulo.EsProducto),
             nameof(Articulo.ControlaLote),
+            nameof(Articulo.AcumulaEnVenta),
             nameof(Articulo.CostoLista),
             nameof(Articulo.DescuentoProveedor),
             nameof(Articulo.CostoNominal)

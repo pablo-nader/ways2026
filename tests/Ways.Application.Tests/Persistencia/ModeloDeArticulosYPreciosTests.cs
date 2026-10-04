@@ -55,6 +55,7 @@ public class ModeloDeArticulosYPreciosTests
             [nameof(Articulo.UnidadesPorBulto)] = a => a.UnidadesPorBulto = 24m,
             [nameof(Articulo.EsProducto)] = a => a.EsProducto = false,
             [nameof(Articulo.ControlaLote)] = a => a.ControlaLote = true,
+            [nameof(Articulo.AcumulaEnVenta)] = a => a.AcumulaEnVenta = false,
             [nameof(Articulo.CostoLista)] = a => a.CostoLista = 150m,
             [nameof(Articulo.DescuentoProveedor)] = a => a.DescuentoProveedor = 15m,
             [nameof(Articulo.CostoNominal)] = a => a.CostoNominal = 130m
@@ -85,6 +86,7 @@ public class ModeloDeArticulosYPreciosTests
         UnidadesPorBulto = 12m,
         EsProducto = true,
         ControlaLote = false,
+        AcumulaEnVenta = true,
         CostoLista = 100m,
         DescuentoProveedor = 10m,
         CostoNominal = 90m

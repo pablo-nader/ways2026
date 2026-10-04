@@ -115,8 +115,12 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
 
     /// <summary>Artículo con precio vigente en la lista default y dos códigos de barra — la forma
     /// mínima que <see cref="ArticuloDeInstantaneaLegada"/> tiene que reflejar completa.</summary>
+    private Task<int> SembrarArticuloConPrecioYBarrasAsync(
+        int idTenant, string sufijo, decimal precio, params string[] codigosBarra) =>
+        SembrarArticuloConPrecioYBarrasAsync(idTenant, sufijo, precio, acumulaEnVenta: true, codigosBarra);
+
     private async Task<int> SembrarArticuloConPrecioYBarrasAsync(
-        int idTenant, string sufijo, decimal precio, params string[] codigosBarra)
+        int idTenant, string sufijo, decimal precio, bool acumulaEnVenta, params string[] codigosBarra)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -141,6 +145,7 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
             UnidadVenta = UnidadVenta.Unidad,
             EsProducto = true,
             Activo = true,
+            AcumulaEnVenta = acumulaEnVenta,
             CreatedAt = ahora,
             UpdatedAt = ahora
         };
@@ -529,6 +534,29 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         return await db.ListasPrecio.Where(l => l.EsDefault).Select(l => l.Id).FirstAsync();
+    }
+
+
+    /// <summary>La versión 2 lleva <c>AcumulaEnVenta</c> tal cual está guardado: un artículo en
+    /// <c>false</c> y otro en <c>true</c> en la misma instantánea, para que ni un valor fijo ni uno
+    /// invertido pasen.</summary>
+    [Fact]
+    public async Task LaVersion2TraeAcumulaEnVentaDeCadaArticulo()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2TraeAcumulaEnVentaDeCadaArticulo));
+        var idNoAcumula = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "no-acumula", 10m, acumulaEnVenta: false);
+        var idAcumula = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "acumula", 20m, acumulaEnVenta: true);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "acumula");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        Assert.False(Assert.Single(instantanea.Articulos, a => a.IdArticulo == idNoAcumula).AcumulaEnVenta);
+        Assert.True(Assert.Single(instantanea.Articulos, a => a.IdArticulo == idAcumula).AcumulaEnVenta);
     }
 
     [Fact]
