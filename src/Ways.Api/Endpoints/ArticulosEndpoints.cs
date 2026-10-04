@@ -77,7 +77,9 @@ public static class ArticulosEndpoints
             return Results.Created($"/api/articulos/{creado.Id}", creado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Crea un artículo. El código interno se autogenera si se omite.");
+        .WithSummary(
+            "Crea un artículo. El código interno se autogenera si se omite. Con idFamilia, el artículo entra "
+                + "a esa familia: sus campos compartidos tienen que coincidir con los de la familia y copia sus precios.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeArticulos servicio, int id, EdicionArticulo datos, CancellationToken ct) =>
