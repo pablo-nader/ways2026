@@ -407,6 +407,22 @@ export type PuntoVentaEdicion = {
   web: string | null
 }
 
+/** Cuerpo de `POST /api/puntos-venta` — espejo de `Ways.Application.Organizacion.PuntoVentaAlta`.
+ * `modo` y `idEmpresa` son obligatorios y no tienen valor por defecto: el servidor responde 400 si
+ * faltan (docs/10 §9.1: el modo nunca se infiere). Los seis datos descriptivos son los mismos de
+ * `PuntoVentaEdicion`. */
+export type PuntoVentaAlta = {
+  idEmpresa: number
+  nombre: string
+  modo: ModoPuntoVenta
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
 /** Cuerpo de `POST /api/puntos-venta/{id}/modo` — espejo de
  * `Ways.Application.Organizacion.PuntoVentaModoEdicion`. */
 export type PuntoVentaModoEdicion = { modo: ModoPuntoVenta }

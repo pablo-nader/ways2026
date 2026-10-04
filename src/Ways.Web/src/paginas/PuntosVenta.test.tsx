@@ -824,3 +824,313 @@ describe('PuntosVenta — flip de modo', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 })
+
+describe('PuntosVenta — alta', () => {
+  const empresaSur = {
+    id: 20,
+    idTenant: 2,
+    razonSocial: 'Sur SRL',
+    nombreFantasia: null,
+    cuit: null,
+    nombreTenant: 'Comercio Sur',
+    alicuotaPercepcionIibb: null,
+    alicuotaPercepcionIva: null,
+  }
+  const empresaEste = { ...empresaSur, id: 30, idTenant: 3, razonSocial: 'Este SRL', nombreTenant: 'Almacén Este' }
+
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    usuarioActual = usuarioFixture()
+  })
+
+  function montarConEmpresas(
+    items: PuntoVentaListado[] = [pvSurCentro],
+    empresas: unknown[] = [empresaSur, empresaEste],
+  ) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve(items)
+      if (ruta === '/empresas') return Promise.resolve(empresas)
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    return render(<PuntosVenta />)
+  }
+
+  /** Abre el formulario y espera al DATO (las empresas), no al elemento: el select se renderiza
+   * antes y queda deshabilitado hasta que la lectura aterriza (`web-test-data-gates`). */
+  async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>, opcionEsperada = 'Sur SRL (Comercio Sur)') {
+    await screen.findByLabelText('Empresa')
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await waitFor(() => expect(opcionesDe('Empresa destino')).toContain(opcionEsperada))
+    await waitFor(() => expect(screen.getByLabelText('Empresa destino')).toBeEnabled())
+  }
+
+  async function completarAlta(usuario: ReturnType<typeof userEvent.setup>, idEmpresa = '20') {
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), idEmpresa)
+    await usuario.type(screen.getByLabelText('Nombre'), 'PV Norte')
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Web')
+  }
+
+  it('Root ve el botón de alta', async () => {
+    montarConEmpresas()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toBeInTheDocument()
+  })
+
+  it('Admin ve el botón de alta', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montarConEmpresas()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toBeInTheDocument()
+  })
+
+  it('un rol sin gestión de organización no ve el botón de alta', async () => {
+    usuarioActual = usuarioFixture({ id: 5, usuario: 'vendedor', rolId: ROL.Vendedor, rol: 'Vendedor', idTenant: 2 })
+    montarConEmpresas()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    expect(screen.queryByRole('button', { name: 'Nuevo punto de venta' })).not.toBeInTheDocument()
+  })
+
+  it('el formulario no elige ni la empresa ni el modo por el usuario', async () => {
+    const usuario = userEvent.setup()
+    montarConEmpresas()
+    await abrirAlta(usuario)
+
+    expect(screen.getByLabelText('Empresa destino')).toHaveValue('')
+    expect(screen.getByLabelText('Modo')).toHaveValue('')
+    expect(opcionesDe('Modo')).toEqual(['Elegí un modo…', 'Escritorio', 'Web'])
+    expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/empresas')).toHaveLength(1)
+  })
+
+  it('un admin de tenant ve las empresas sin el nombre del tenant', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montarConEmpresas([pvSurCentro], [empresaSur])
+    await abrirAlta(usuario, 'Sur SRL')
+
+    expect(opcionesDe('Empresa destino')).toEqual(['Elegí una empresa…', 'Sur SRL'])
+  })
+
+  it('crea el punto de venta con todos los campos, refresca el listado y recarga la sesión una vez', async () => {
+    const usuario = userEvent.setup()
+    const creado = pvFixture({ id: 200, nombre: 'PV Norte', modo: 'Escritorio' })
+    apiPostMock.mockResolvedValue(creado)
+    let listados = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur, empresaEste])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      listados += 1
+
+      return Promise.resolve(listados === 1 ? [pvSurCentro] : [pvSurCentro, creado])
+    })
+    render(<PuntosVenta />)
+    await abrirAlta(usuario)
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '30')
+    await usuario.type(screen.getByLabelText('Nombre'), '  PV Norte  ')
+    await usuario.selectOptions(screen.getByLabelText('Modo'), 'Escritorio')
+    await usuario.type(screen.getByLabelText('Domicilio'), 'Calle 1')
+    await usuario.type(screen.getByLabelText('WhatsApp'), '1155550000')
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/puntos-venta', {
+        idEmpresa: 30,
+        nombre: 'PV Norte',
+        modo: 'Escritorio',
+        domicilio: 'Calle 1',
+        horario: null,
+        whatsapp: '1155550000',
+        instagram: null,
+        facebook: null,
+        web: null,
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('Se creó el punto de venta "PV Norte".')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('PV Norte')).toBeInTheDocument())
+    expect(screen.queryByLabelText('Empresa destino')).not.toBeInTheDocument()
+    await waitFor(() => expect(estadoDePuntoVenta.recargar).toHaveBeenCalledTimes(1))
+  })
+
+  it('tras crear se limpian los filtros para que la fila nueva se vea', async () => {
+    const usuario = userEvent.setup()
+    const creado = pvFixture({ id: 200, nombre: 'PV Norte', modo: 'Web' })
+    apiPostMock.mockResolvedValue(creado)
+    let listados = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur, empresaEste])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      listados += 1
+
+      return Promise.resolve(listados === 1 ? [pvSurCentro, pvEste] : [pvSurCentro, pvEste, creado])
+    })
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Este')).toBeInTheDocument())
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '3')
+    expect(screen.queryByText('PV Centro')).not.toBeInTheDocument()
+
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(screen.getByText('PV Norte')).toBeInTheDocument())
+    expect(screen.getByLabelText('Tenant')).toHaveValue('')
+    expect(screen.getByText('PV Centro')).toBeInTheDocument()
+  })
+
+  it('con el modo sin elegir no llama a la API y lo dice', async () => {
+    const usuario = userEvent.setup()
+    montarConEmpresas()
+    await abrirAlta(usuario)
+
+    await usuario.selectOptions(screen.getByLabelText('Empresa destino'), '20')
+    await usuario.type(screen.getByLabelText('Nombre'), 'PV Norte')
+    // `fireEvent.submit` esquiva la validación nativa de `required`: lo que se prueba es la guarda del handler.
+    fireEvent.submit(screen.getByLabelText('Nombre').closest('form')!)
+
+    expect(await screen.findByText('Elegí la empresa y el modo, y completá el nombre.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  /** `ocupadoRef`, la guarda de re-entrancia (`react-async-state`): dos clicks del MISMO tick leen el
+   * mismo render y el estado `ocupado` los dejaría pasar a los dos. */
+  it('un segundo click sobre "Crear" en vuelo se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montarConEmpresas()
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+
+    const crear = screen.getByRole('button', { name: 'Crear' })
+    await act(async () => {
+      crear.click()
+      crear.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('durante la escritura no queda ningún control alcanzable', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    montarConEmpresas()
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByLabelText('Empresa destino')).toBeDisabled()
+    expect(screen.getByLabelText('Nombre')).toBeDisabled()
+    expect(screen.getByLabelText('Modo')).toBeDisabled()
+    expect(screen.getByLabelText('Sitio web')).toBeDisabled()
+  })
+
+  it('un rechazo del servidor rinde su mensaje, deja el formulario abierto y no recarga la sesión', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la empresa 20.'))
+    montarConEmpresas()
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    expect(await screen.findByText('No existe la empresa 20.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('PV Norte')
+    expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
+    expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/puntos-venta')).toHaveLength(1)
+  })
+
+  it('un refresco fallido después de crear no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    apiPostMock.mockResolvedValue(pvFixture({ id: 200, nombre: 'PV Norte' }))
+    let listados = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur])
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      listados += 1
+
+      return listados === 1 ? Promise.resolve([pvSurCentro]) : Promise.reject(new Error('sin red'))
+    })
+    render(<PuntosVenta />)
+    await abrirAlta(usuario)
+    await completarAlta(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Crear' }))
+
+    expect(
+      await screen.findByText(
+        'Se creó el punto de venta "PV Norte". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No se pudo crear el punto de venta.')).not.toBeInTheDocument()
+  })
+
+  it('si no cargan las empresas lo dice y no deja crear', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([pvSurCentro])
+      if (ruta === '/empresas') return Promise.reject(new ErrorApi(500, 'error', 'Falló la lectura de empresas.'))
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+
+    expect(await screen.findByText('Falló la lectura de empresas.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Crear' })).toBeDisabled()
+  })
+
+  /** La lectura de empresas del alta lleva su propia generación: cerrar el formulario descarta la
+   * respuesta en vuelo, y una respuesta tardía de la primera apertura no puede pisar la segunda. */
+  it('la respuesta tardía de una apertura anterior no pisa la de la apertura vigente', async () => {
+    const usuario = userEvent.setup()
+    const pendientes: Array<(empresas: unknown[]) => void> = []
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([pvSurCentro])
+      if (ruta !== '/empresas') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+
+      return new Promise<unknown[]>((resolver) => {
+        pendientes.push(resolver)
+      })
+    })
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await waitFor(() => expect(pendientes).toHaveLength(1))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo punto de venta' }))
+    await waitFor(() => expect(pendientes).toHaveLength(2))
+
+    await act(async () => {
+      pendientes[0]([empresaSur])
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('option', { name: 'Sur SRL (Comercio Sur)' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Empresa destino')).toBeDisabled()
+
+    await act(async () => {
+      pendientes[1]([empresaEste])
+      await Promise.resolve()
+    })
+    expect(await screen.findByRole('option', { name: 'Este SRL (Almacén Este)' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Sur SRL (Comercio Sur)' })).not.toBeInTheDocument()
+  })
+
+  it('cancelar cierra el formulario sin llamar a la API de escritura', async () => {
+    const usuario = userEvent.setup()
+    montarConEmpresas()
+    await abrirAlta(usuario)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByLabelText('Empresa destino')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+})

@@ -23,8 +23,9 @@ public record ResultadoAprovisionamiento(
     int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdUsuarioAdmin, string PasswordTemporal);
 
 // --- Lectura/edición de organización (ServicioDeOrganizacion) ---
-// Alta y baja siguen siendo plataforma-only vía ServicioDeAprovisionamiento (ADR-16); estos
-// contratos son solo listado/detalle/edición de datos descriptivos + suspensión de tenants.
+// El alta de tenants sigue siendo plataforma-only vía ServicioDeAprovisionamiento (ADR-16); estos
+// contratos cubren listado/detalle/edición de datos descriptivos, suspensión de tenants y el alta
+// de puntos de venta sobre una empresa existente.
 
 /// <summary>Los tres contadores son hijos VIVOS del tenant (el filtro <c>"BajaLogica"</c> corre
 /// dentro de las subconsultas correlacionadas de <see cref="ServicioDeOrganizacion"/>) y
@@ -92,6 +93,23 @@ public record PuntoVentaListado(
 /// un body que omite el campo ligaria el parametro a <see cref="ModoPuntoVenta.Escritorio"/>
 /// (valor 0 del CLR) y el flip mutaria el punto de venta en silencio en vez de rechazar el pedido.
 public record PuntoVentaModoEdicion(ModoPuntoVenta? Modo);
+
+/// <summary>Cuerpo de <c>POST /api/puntos-venta</c>: alta de un punto de venta sobre una empresa
+/// EXISTENTE. <paramref name="IdEmpresa"/> y <paramref name="Modo"/> son <c>nullable</c> a propósito,
+/// por la misma razón que en <see cref="SolicitudDeAprovisionamiento"/>: un body que los omite
+/// ligaría el valor al default del CLR (<c>0</c> y <see cref="ModoPuntoVenta.Escritorio"/>) en vez
+/// de rechazarse con <c>400</c>. El resto es la misma lista descriptiva de
+/// <see cref="PuntoVentaEdicion"/>, con las mismas validaciones.</summary>
+public record PuntoVentaAlta(
+    int? IdEmpresa,
+    string Nombre,
+    ModoPuntoVenta? Modo,
+    string? Domicilio = null,
+    string? Horario = null,
+    string? Whatsapp = null,
+    string? Instagram = null,
+    string? Facebook = null,
+    string? Web = null);
 
 /// <summary><see cref="PuntoVentaListado.IdEmpresa"/> no es editable acá: es estructural
 /// (a qué empresa pertenece), no descriptivo — moverlo de empresa queda fuera de esta

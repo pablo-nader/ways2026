@@ -251,6 +251,37 @@ public class BajasEstructuralesTests
     }
 
     /// <summary>
+    /// Cláusula del alta de puntos de venta (estructural, y se dice que lo es): corre bajo la
+    /// estrategia SIN reintento y toma el lock de baja ANTES de leer la empresa. Las dos
+    /// propiedades se rompen con un cambio de una línea cuyo daño no se ve en la fila que el alta
+    /// escribe: sin el reintento desactivado un commit ambiguo duplica el punto de venta y su
+    /// rastro, y con la lectura antes del lock el alta puede insertar bajo una empresa que una baja
+    /// concurrente acaba de dar de baja. La mitad conductual (reintento inducido y carrera con la
+    /// baja de la empresa) vive en <c>AltaDePuntoVentaTests</c>.
+    /// </summary>
+    [Fact]
+    public void ElAltaDePuntoVentaCorreSinReintentoYTomaElLockAntesDeLeerLaEmpresa()
+    {
+        var servicio = File.ReadAllText(Path.Combine(
+            RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Organizacion", "ServicioDeOrganizacion.cs"));
+
+        var inicio = servicio.IndexOf("public async Task<PuntoVentaListado> CrearPuntoVentaAsync(", StringComparison.Ordinal);
+        Assert.True(inicio >= 0, "No se encontró CrearPuntoVentaAsync.");
+
+        var fin = servicio.IndexOf("/// <summary>", inicio, StringComparison.Ordinal);
+        var cuerpo = servicio[inicio..fin];
+
+        Assert.Contains("EnUnaTransaccionDeBajaAsync(", cuerpo, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnUnaTransaccionAsync(", cuerpo, StringComparison.Ordinal);
+
+        var posicionDelLock = cuerpo.IndexOf("TomarLockDeBajaAsync(", StringComparison.Ordinal);
+        var posicionDeLaLectura = cuerpo.IndexOf("BuscarEmpresaAsync(", StringComparison.Ordinal);
+
+        Assert.True(posicionDelLock >= 0 && posicionDeLaLectura >= 0, "Faltan el lock o la lectura de la empresa.");
+        Assert.True(posicionDelLock < posicionDeLaLectura, "La empresa se lee ANTES de tomar el lock.");
+    }
+
+    /// <summary>
     /// Cláusula (judgment-day ronda 1, hallazgo C2): en <c>ServicioDeUsuarios.EliminarAsync</c> el
     /// guard de uso corre BAJO el lock y DENTRO de la transacción, nunca como un SELECT suelto
     /// antes de abrirla. Es estructural y se dice que lo es (<c>mutation-proof-tests</c> regla 13):
@@ -288,7 +319,7 @@ public class BajasEstructuralesTests
         var estrategia = Posicion(cuerpo, "FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db)");
         var ejecucion = Posicion(cuerpo, "estrategia.ExecuteAsync(");
         var transaccion = Posicion(cuerpo, "BeginTransactionAsync(");
-        var lock_ = Posicion(cuerpo, "TomarLockDeBajaAsync(");
+        var posicionDelLock = Posicion(cuerpo, "TomarLockDeBajaAsync(");
         var relectura = Posicion(cuerpo, "var sujeto = await BuscarAsync(id, ct);");
         var guard = Posicion(cuerpo, "inspector.PrimeraDependenciaEnUsoAsync(");
         var estampado = Posicion(cuerpo, "sujeto.DeletedAt = momento;");
@@ -297,8 +328,8 @@ public class BajasEstructuralesTests
         Assert.True(politica < estrategia, "PoliticaDeRoles tiene que decidir antes de abrir nada.");
         Assert.True(estrategia < ejecucion, "La unidad corre bajo la estrategia SIN reintento (R2-1).");
         Assert.True(ejecucion < transaccion, "La transacción vive DENTRO de la estrategia de ejecución.");
-        Assert.True(transaccion < lock_, "El lock se toma con la transacción ya abierta (xact scope).");
-        Assert.True(lock_ < relectura, "El sujeto se relee BAJO el lock, nunca antes (R2-2).");
+        Assert.True(transaccion < posicionDelLock, "El lock se toma con la transacción ya abierta (xact scope).");
+        Assert.True(posicionDelLock < relectura, "El sujeto se relee BAJO el lock, nunca antes (R2-2).");
         Assert.True(relectura < guard, "El guard pregunta por el sujeto ya releído.");
         Assert.True(guard < estampado, "El estampado va después del guard.");
         Assert.True(estampado < guardado, "El SaveChanges cierra la unidad completa.");

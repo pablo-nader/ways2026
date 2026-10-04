@@ -12,7 +12,7 @@ import {
   seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
-import type { ModoPuntoVenta, PuntoVentaListado } from '../api/tipos'
+import type { EmpresaListado, ModoPuntoVenta, PuntoVentaListado } from '../api/tipos'
 import { MODOS_PUNTO_VENTA } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -33,13 +33,49 @@ type Formulario = {
   web: string
 }
 
+/** Alta de un punto de venta. `idEmpresa` y `modo` arrancan en '' (sin elegir) a propósito: el
+ * modo nunca se infiere (docs/10 §9.1) y la empresa no tiene un valor razonable por defecto. */
+type FormularioAlta = {
+  idEmpresa: string
+  nombre: string
+  modo: ModoPuntoVenta | ''
+  domicilio: string
+  horario: string
+  whatsapp: string
+  instagram: string
+  facebook: string
+  web: string
+}
+
+const ALTA_VACIA: FormularioAlta = {
+  idEmpresa: '',
+  nombre: '',
+  modo: '',
+  domicilio: '',
+  horario: '',
+  whatsapp: '',
+  instagram: '',
+  facebook: '',
+  web: '',
+}
+
+const CAMPOS_DESCRIPTIVOS_DE_ALTA = [
+  { clave: 'domicilio', etiqueta: 'Domicilio', max: 255, columnas: 'col-md-4' },
+  { clave: 'horario', etiqueta: 'Horario', max: 255, columnas: 'col-md-3' },
+  { clave: 'whatsapp', etiqueta: 'WhatsApp', max: 30, columnas: 'col-md-2' },
+  { clave: 'instagram', etiqueta: 'Instagram', max: 150, columnas: 'col-md-3' },
+  { clave: 'facebook', etiqueta: 'Facebook', max: 150, columnas: 'col-md-3' },
+  { clave: 'web', etiqueta: 'Sitio web', max: 255, columnas: 'col-md-3' },
+] as const
+
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA =
   'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /**
- * Lectura/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>: el alta sigue
- * siendo plataforma-only vía aprovisionamiento y el backend ya filtra por alcance. La baja
+ * Lectura/alta/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>. El alta
+ * crea un punto de venta sobre una empresa YA existente (la del tenant se crea por
+ * aprovisionamiento) y el backend ya filtra por alcance. La baja
  * (etapa 20) es <c>Politicas.GestionDeOrganizacion</c>, no <c>LecturaDePuntosVenta</c>: el
  * selector de PV del POS lee este listado, pero un vendedor no llega a esta pantalla.
  * <c>idEmpresa</c> no se edita acá: es estructural (a qué empresa pertenece), no descriptivo.
@@ -50,6 +86,9 @@ export function PuntosVenta() {
   const { usuario } = useAuth()
   const { recargar } = usePuntoVenta()
   const esPlataforma = usuario?.rolId === ROL.Root
+  /** Misma policy que el backend (`GestionDeOrganizacion`: Root y Admin). La ruta ya exige esos dos
+   * roles; esto evita ofrecer el alta si la pantalla llegara a abrirse con otro. */
+  const puedeCrear = usuario?.rolId === ROL.Root || usuario?.rolId === ROL.Admin
 
   const [items, setItems] = useState<PuntoVentaListado[]>([])
   const [cargando, setCargando] = useState(true)
@@ -61,6 +100,12 @@ export function PuntosVenta() {
   const [formularioModo, setFormularioModo] = useState<{ id: number; nombre: string; modo: ModoPuntoVenta } | null>(
     null,
   )
+  /** Formulario de alta y las empresas que ofrece. Las empresas se piden al abrirlo (no al montar):
+   * cambian desde otra pantalla y un listado viejo ofrecería una empresa dada de baja. */
+  const [alta, setAlta] = useState<FormularioAlta | null>(null)
+  const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
+  const [errorEmpresas, setErrorEmpresas] = useState('')
+  /** `ocupado` es el id de la fila en escritura; el alta no tiene fila todavía y usa 0. */
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   const [filtroEmpresa, setFiltroEmpresa] = useState(SIN_FILTRO)
@@ -80,6 +125,11 @@ export function PuntosVenta() {
    * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
    */
   const ocupadoRef = useRef(false)
+  /** Generación PROPIA de la lectura de empresas del alta: abrir o cerrar el formulario no es una
+   * escritura y no puede compartir token con `generacion` (una escritura invalida el listado, no
+   * la lectura de empresas, y viceversa). Cerrar el formulario la acuña para descartar la respuesta
+   * en vuelo. */
+  const generacionEmpresas = useRef(0)
   /** Espejo SIEMPRE al día de `filtroTenant`. `cargar` es un `useCallback` sin dependencias, así
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
@@ -165,6 +215,80 @@ export function PuntosVenta() {
 
       setFormulario(null)
       await refrescarTrasEscribir(token, `Se actualizó "${datos.nombre}".`, AVISO_REFRESCO_FALLIDO)
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
+  async function abrirAlta() {
+    if (ocupadoRef.current) return
+
+    const token = ++generacionEmpresas.current
+    setAlta(ALTA_VACIA)
+    setEmpresas(null)
+    setErrorEmpresas('')
+    setError('')
+    setAviso('')
+    try {
+      const filas = await clienteDeOrganizacion.listarEmpresas()
+      if (generacionEmpresas.current !== token) return
+      setEmpresas(filas)
+    } catch (e) {
+      if (generacionEmpresas.current !== token) return
+      setErrorEmpresas(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las empresas.')
+    }
+  }
+
+  function cerrarAlta() {
+    generacionEmpresas.current++
+    setAlta(null)
+  }
+
+  async function guardarAlta() {
+    if (!alta || ocupadoRef.current) return
+
+    const datos = alta
+    const nombre = datos.nombre.trim()
+    if (datos.idEmpresa === '' || datos.modo === '' || nombre === '') {
+      setError('Elegí la empresa y el modo, y completá el nombre.')
+
+      return
+    }
+
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(0)
+    setError('')
+    setAviso('')
+    try {
+      try {
+        await clienteDeOrganizacion.crearPuntoVenta({
+          idEmpresa: Number(datos.idEmpresa),
+          nombre,
+          modo: datos.modo,
+          domicilio: datos.domicilio || null,
+          horario: datos.horario || null,
+          whatsapp: datos.whatsapp || null,
+          instagram: datos.instagram || null,
+          facebook: datos.facebook || null,
+          web: datos.web || null,
+        })
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo crear el punto de venta.')
+
+        return
+      }
+
+      if (generacion.current !== token) return
+
+      cerrarAlta()
+      // El punto de venta nuevo puede caer fuera de los filtros vigentes: se limpian para que la
+      // fila creada se vea en el listado que se refresca a continuación.
+      filtroTenantVigente.current = SIN_FILTRO
+      setFiltroTenant(SIN_FILTRO)
+      setFiltroEmpresa(SIN_FILTRO)
+      await refrescarTrasEscribir(token, `Se creó el punto de venta "${nombre}".`, AVISO_REFRESCO_FALLIDO)
     } finally {
       ocupadoRef.current = false
       setOcupado(null)
@@ -300,6 +424,110 @@ export function PuntosVenta() {
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
+        )}
+
+        {puedeCrear && !alta && (
+          <div className="mb-3">
+            <button type="button" className="btn btn-primary" onClick={() => void abrirAlta()} disabled={bloqueado}>
+              Nuevo punto de venta
+            </button>
+          </div>
+        )}
+
+        {alta && (
+          <form
+            className="row g-3 border p-3 mb-4 bg-body"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void guardarAlta()
+            }}
+          >
+            <div className="col-12">
+              <strong>Nuevo punto de venta</strong>
+              <p className="text-muted mb-0">
+                Se crea sobre una empresa existente. El modo no tiene valor por defecto: Escritorio exige un
+                dispositivo vinculado para vender; Web vende desde el navegador.
+              </p>
+            </div>
+            {errorEmpresas && <div className="col-12 alert alert-danger mb-0">{errorEmpresas}</div>}
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pv-alta-empresa">
+                Empresa destino
+              </label>
+              <select
+                id="pv-alta-empresa"
+                className="form-select"
+                value={alta.idEmpresa}
+                onChange={(e) => setAlta({ ...alta, idEmpresa: e.target.value })}
+                disabled={bloqueado || empresas === null}
+                required
+              >
+                <option value="">{empresas === null && !errorEmpresas ? 'Cargando…' : 'Elegí una empresa…'}</option>
+                {(empresas ?? []).map((e) => (
+                  <option key={e.id} value={String(e.id)}>
+                    {esPlataforma ? `${e.razonSocial} (${e.nombreTenant ?? ETIQUETA_SIN_DUENIO})` : e.razonSocial}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="pv-alta-nombre">
+                Nombre
+              </label>
+              <input
+                id="pv-alta-nombre"
+                className="form-control"
+                maxLength={150}
+                value={alta.nombre}
+                onChange={(e) => setAlta({ ...alta, nombre: e.target.value })}
+                disabled={bloqueado}
+                required
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="pv-alta-modo">
+                Modo
+              </label>
+              <select
+                id="pv-alta-modo"
+                className="form-select"
+                value={alta.modo}
+                onChange={(e) => setAlta({ ...alta, modo: e.target.value as ModoPuntoVenta | '' })}
+                disabled={bloqueado}
+                required
+              >
+                <option value="">Elegí un modo…</option>
+                {MODOS_PUNTO_VENTA.map((modo) => (
+                  <option key={modo} value={modo}>
+                    {modo}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {CAMPOS_DESCRIPTIVOS_DE_ALTA.map((campo) => (
+              <div key={campo.clave} className={campo.columnas}>
+                <label className="form-label" htmlFor={`pv-alta-${campo.clave}`}>
+                  {campo.etiqueta}
+                </label>
+                <input
+                  id={`pv-alta-${campo.clave}`}
+                  className="form-control"
+                  maxLength={campo.max}
+                  value={alta[campo.clave]}
+                  onChange={(e) => setAlta({ ...alta, [campo.clave]: e.target.value })}
+                  disabled={bloqueado}
+                />
+              </div>
+            ))}
+            <div className="col-12 d-flex gap-2">
+              <button type="submit" className="btn btn-success" disabled={bloqueado || empresas === null}>
+                {ocupado !== null ? 'Guardando…' : 'Crear'}
+              </button>
+              <button type="button" className="btn btn-outline-secondary" onClick={cerrarAlta} disabled={bloqueado}>
+                Cancelar
+              </button>
+            </div>
+          </form>
         )}
 
         {formulario && (

@@ -155,6 +155,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Vendedor).
         ("PUT", "/api/empresas/{id:int}"),
         ("PUT", "/api/puntos-venta/{id:int}"),
+        // Alta de un punto de venta sobre una empresa existente: la declara la ruta y no el grupo,
+        // igual que el PUT. Ver RutasSinPolicyDeGrupo más abajo.
+        ("POST", "/api/puntos-venta/"),
         // stage-20 slice 4 (task 4.9): las dos bajas lógicas, bajo la MISMA
         // GestionDeOrganizacion que sus PUT. La del punto de venta la declara la ruta y no el
         // grupo, por la asimetría deliberada del grupo (leer sigue siendo
@@ -256,7 +259,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion),
         // stage-desktop-pos (DB CHANGE GATE aprobado): mismo punto ciego que el PUT/DELETE de
         // arriba — el flip de modo vive en el mismo grupo sin policy y declara la suya por ruta.
-        ("POST", "/api/puntos-venta/{id:int}/modo", Politicas.GestionDeOrganizacion)
+        ("POST", "/api/puntos-venta/{id:int}/modo", Politicas.GestionDeOrganizacion),
+        // Alta de punto de venta: mismo punto ciego, la policy se declara por ruta.
+        ("POST", "/api/puntos-venta/", Politicas.GestionDeOrganizacion)
     ];
 
     [Fact]

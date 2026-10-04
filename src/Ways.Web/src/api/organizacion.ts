@@ -2,14 +2,16 @@
  * Cliente de organización (etapa 4B): tenants (plataforma-only), empresas y puntos de venta
  * (plataforma ve/edita cualquiera, un admin de tenant ve/edita solo los propios — lo
  * garantiza `OrganizacionEndpoints`/`ServicioDeOrganizacion` del lado del servidor, acá no
- * hay lógica de alcance). El alta sigue siendo plataforma-only vía aprovisionamiento
- * (`NuevoTenant.tsx`); la BAJA (etapa 20) es lógica y vive en los tres `eliminar*` de abajo.
+ * hay lógica de alcance). El alta de tenants y empresas sigue siendo plataforma-only vía
+ * aprovisionamiento (`NuevoTenant.tsx`); la de puntos de venta sobre una empresa existente es
+ * `crearPuntoVenta`; la BAJA (etapa 20) es lógica y vive en los tres `eliminar*` de abajo.
  */
 import { api } from './cliente'
 import type {
   EmpresaEdicion,
   EmpresaListado,
   EstadoTenant,
+  PuntoVentaAlta,
   PuntoVentaEdicion,
   PuntoVentaListado,
   PuntoVentaModoEdicion,
@@ -32,6 +34,8 @@ export const clienteDeOrganizacion = {
   eliminarEmpresa: (id: number) => api.delete<void>(`/empresas/${id}`),
 
   listarPuntosVenta: () => api.get<PuntoVentaListado[]>('/puntos-venta'),
+  // Alta sobre una empresa existente: responde 201 con la fila creada, en la forma del listado.
+  crearPuntoVenta: (datos: PuntoVentaAlta) => api.post<PuntoVentaListado>('/puntos-venta', datos),
   editarPuntoVenta: (id: number, datos: PuntoVentaEdicion) =>
     api.put<PuntoVentaListado>(`/puntos-venta/${id}`, datos),
   eliminarPuntoVenta: (id: number) => api.delete<void>(`/puntos-venta/${id}`),
