@@ -1,5 +1,6 @@
 using Ways.Application.Ofertas;
 using Ways.Application.Pos;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using static Ways.Application.Pos.ArmadorDeInstantanea;
@@ -70,7 +71,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void LasLineasVanArticuloPorArticuloYListaPorListaACantidadUno()
     {
-        var articulos = new[] { new ArticuloAResolver(11, "a", "A", 1, true), new ArticuloAResolver(12, "b", "B", 1, true) };
+        var articulos = new[] { new ArticuloAResolver(11, "a", "A", 1, true, UnidadVenta.Unidad), new ArticuloAResolver(12, "b", "B", 1, true, UnidadVenta.Unidad) };
 
         var lineas = LineasDeResolucion(articulos, [3, 5], IdEmpresa);
 
@@ -94,9 +95,9 @@ public class ArmadorDeInstantaneaTests
     {
         var articulos = new[]
         {
-            new ArticuloAResolver(11, "A11", "Arroz", 21, false),
-            new ArticuloAResolver(12, "A12", "Fideos", 22, true),
-            new ArticuloAResolver(13, "A13", "Sin precio", 21, true),
+            new ArticuloAResolver(11, "A11", "Arroz", 21, false, UnidadVenta.Unidad),
+            new ArticuloAResolver(12, "A12", "Fideos", 22, true, UnidadVenta.Peso),
+            new ArticuloAResolver(13, "A13", "Sin precio", 21, true, UnidadVenta.Unidad),
         };
         var aplicadaEnB = new OfertaAplicadaDto(70, "Promo B", 15m);
         var escalonEnA = new EscalonDeCantidad(6m, 90m, 10m, [new OfertaAplicadaDto(71, "Seis", 10m)]);
@@ -125,6 +126,7 @@ public class ArmadorDeInstantaneaTests
         Assert.Equal(21m, arroz.PorcentajeIva);
         Assert.False(arroz.AcumulaEnVenta);
         Assert.True(resultado[1].AcumulaEnVenta);
+        Assert.Equal(UnidadVenta.Unidad, arroz.UnidadVenta);
         Assert.Equal(2, arroz.PreciosPorLista.Count);
 
         var arrozEnA = arroz.PreciosPorLista[0];
@@ -148,6 +150,7 @@ public class ArmadorDeInstantaneaTests
         Assert.Empty(fideos.CodigosBarra);
         Assert.Equal(22, fideos.IdAlicuotaIva);
         Assert.Equal(10.5m, fideos.PorcentajeIva);
+        Assert.Equal(UnidadVenta.Peso, fideos.UnidadVenta);
         var fideosEnB = Assert.Single(fideos.PreciosPorLista);
         Assert.Equal(5, fideosEnB.IdListaPrecio);
         Assert.Equal(40m, fideosEnB.PrecioOriginal);
@@ -157,7 +160,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void ArmarArticulosRechazaUnaResolucionDeOtroTamanio()
     {
-        var articulos = new[] { new ArticuloAResolver(11, "A11", "Arroz", 21, true) };
+        var articulos = new[] { new ArticuloAResolver(11, "A11", "Arroz", 21, true, UnidadVenta.Unidad) };
 
         Assert.Throws<InvalidOperationException>(() => ArmarArticulos(
             articulos, [3, 5], [Resuelto(11, 3, 1m, 1m, 0m)],
@@ -198,8 +201,8 @@ public class ArmadorDeInstantaneaTests
         var articulos = new[]
         {
             new ArticuloDeInstantanea(11, "A11", "Arroz", ["7790011"], 21, 21m,
-                true, [Precio(3, 100m, 95m, 5m), new PrecioDeListaDeInstantanea(5, 150m, 120m, 30m, [], [escalon])]),
-            new ArticuloDeInstantanea(12, "A12", "Fideos", [], 22, 10.5m, true, [Precio(3, 40m, 40m, 0m)]),
+                true, UnidadVenta.Unidad, [Precio(3, 100m, 95m, 5m), new PrecioDeListaDeInstantanea(5, 150m, 120m, 30m, [], [escalon])]),
+            new ArticuloDeInstantanea(12, "A12", "Fideos", [], 22, 10.5m, true, UnidadVenta.Peso, [Precio(3, 40m, 40m, 0m)]),
         };
         var instantanea = Instantanea(articulos, [Cliente(1, 1, idLista: 5), Cliente(2, 2, idLista: 3)]);
 
@@ -224,9 +227,25 @@ public class ArmadorDeInstantaneaTests
     }
 
     [Fact]
+    public void ElFormatoOriginalNoExponeLaUnidadDeVentaALosPosYaInstalados()
+    {
+        var articulos = new[]
+        {
+            new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, UnidadVenta.Peso, [Precio(5, 100m, 100m, 0m)])
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            ProyectarLegada(Instantanea(articulos, [Cliente(1, 1, idLista: 5)])),
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        Assert.Contains("\"idArticulo\":11", json);
+        Assert.DoesNotContain("unidadVenta", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SinListaEfectivaDelConsumidorFinalElFormatoOriginalNoOfreceArticulos()
     {
-        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 1m, 1m, 0m)]) };
+        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, UnidadVenta.Unidad, [Precio(3, 1m, 1m, 0m)]) };
 
         var legada = ProyectarLegada(Instantanea(articulos, [Cliente(1, 1, idLista: null)]));
 
@@ -236,7 +255,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void LaEtiquetaIgnoraElMomentoYCambiaConElContenido()
     {
-        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 100m, 100m, 0m)]) };
+        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, UnidadVenta.Unidad, [Precio(3, 100m, 100m, 0m)]) };
         var base_ = Instantanea(articulos, [Cliente(1, 1, idLista: 3), Cliente(2, 2, idLista: 3, saldo: 50m)]);
 
         var etiqueta = EtiquetaDeInstantanea.Calcular(base_);
@@ -249,9 +268,12 @@ public class ArmadorDeInstantaneaTests
 
         var otroPrecio = base_ with
         {
-            Articulos = [new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 100m, 99m, 1m)])]
+            Articulos = [new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, UnidadVenta.Unidad, [Precio(3, 100m, 99m, 1m)])]
         };
         Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(otroPrecio));
+
+        var otraUnidad = base_ with { Articulos = [base_.Articulos[0] with { UnidadVenta = UnidadVenta.Peso }] };
+        Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(otraUnidad));
 
         Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(base_ with { ToleranciaPago = 11m }));
     }

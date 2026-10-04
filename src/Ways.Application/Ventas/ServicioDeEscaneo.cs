@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Articulos;
 using Ways.Domain.Common;
 using Ways.Domain.Ventas;
 
@@ -10,14 +11,16 @@ namespace Ways.Application.Ventas;
 /// precio queda en el único camino existente, <c>POST /api/ofertas/resolver</c>).
 /// <see cref="CodigoBarra"/> es <c>null</c> cuando la entrada resolvió por
 /// <c>codigo_interno</c> — el llamador (carrito del POS) usa <see cref="Cantidad"/> tal cual la
-/// devolvió <see cref="Ways.Domain.Ventas.ParserDeEscaneo"/>.</summary>
+/// devolvió <see cref="Ways.Domain.Ventas.ParserDeEscaneo"/>. <see cref="UnidadVenta"/> le dice al
+/// carrito si la línea admite fracciones (<see cref="ReglaDeCantidadDeVenta"/>).</summary>
 public record ArticuloEscaneado(
     int IdArticulo,
     string CodigoInterno,
     string Nombre,
     string? CodigoBarra,
     decimal Cantidad,
-    bool AcumulaEnVenta);
+    bool AcumulaEnVenta,
+    UnidadVenta UnidadVenta);
 
 /// <summary>
 /// Resolución de escaneo del POS (design decisiones 7 y 10) — servicio de Application dedicado,
@@ -60,6 +63,7 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             articulo.Nombre,
             parseado.Objetivo == ObjetivoDeEscaneo.CodigoBarra ? parseado.Codigo : null,
             parseado.Cantidad,
-            articulo.AcumulaEnVenta);
+            articulo.AcumulaEnVenta,
+            articulo.UnidadVenta);
     }
 }

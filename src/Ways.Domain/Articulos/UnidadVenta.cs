@@ -2,8 +2,11 @@ namespace Ways.Domain.Articulos;
 
 /// <summary>
 /// Unidad de venta de un artículo (doc 10 §3). Enum nativo de Postgres (<c>unidad_venta</c>).
-/// <see cref="Peso"/> habilita cantidad con decimales (p.ej. <c>12,3</c> kg) en el futuro
-/// motor de venta (stage 5) — sin uso propio en esta etapa más allá de declarar el valor.
+/// Decide la granularidad de las cantidades (<see cref="ReglaDeCantidadDeVenta"/>):
+/// <see cref="Unidad"/> se vende de a unidades enteras y <see cref="Peso"/> admite decimales
+/// (p.ej. <c>12,3</c> kg). <c>ServicioDeVentas</c> la exige en las líneas de una venta online (no en
+/// la ya cobrada offline, en la conversión de un presupuesto ni en una devolución) y las pantallas
+/// la usan para el paso y el mínimo de los campos de cantidad.
 /// </summary>
 public enum UnidadVenta
 {

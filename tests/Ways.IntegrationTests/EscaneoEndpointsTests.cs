@@ -29,6 +29,11 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     private const string MailRoot = "test@test.com";
     private const string PasswordVendedor = "una-contraseña-larga";
 
+    private static readonly JsonSerializerOptions OpcionesJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     private async Task<(int IdTenant, int IdArea, int IdAlicuotaIva, string MailAdmin, string PasswordAdmin)>
         AprovisionarTenantAsync(string nombre)
     {
@@ -93,7 +98,8 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     private async Task<Articulo> SembrarArticuloAsync(
         int idTenant, int idArea, int idAlicuotaIva, string nombre,
-        string codigoInterno, bool activo = true, string? codigoBarra = null, bool acumulaEnVenta = true)
+        string codigoInterno, bool activo = true, string? codigoBarra = null, bool acumulaEnVenta = true,
+        UnidadVenta unidadVenta = UnidadVenta.Unidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
@@ -105,7 +111,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Nombre = nombre,
             IdArea = idArea,
             IdAlicuotaIva = idAlicuotaIva,
-            UnidadVenta = UnidadVenta.Unidad,
+            UnidadVenta = unidadVenta,
             EsProducto = true,
             Activo = activo,
             AcumulaEnVenta = acumulaEnVenta,
@@ -139,7 +145,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             idTenant, idArea, idAlicuotaIva, "Cafe", "55", acumulaEnVenta: acumulaEnVenta);
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
-        var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=55");
+        var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=55", OpcionesJson);
 
         Assert.Equal(acumulaEnVenta, respuesta!.AcumulaEnVenta);
     }
@@ -152,12 +158,27 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Café", "42");
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
-        var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=42");
+        var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=42", OpcionesJson);
 
         Assert.NotNull(respuesta);
         Assert.Equal("42", respuesta!.CodigoInterno);
         Assert.Equal(1m, respuesta.Cantidad);
         Assert.Null(respuesta.CodigoBarra);
+        Assert.Equal(UnidadVenta.Unidad, respuesta.UnidadVenta);
+    }
+
+    [Fact]
+    public async Task ElEscaneoDevuelveLaUnidadDeVentaDelArticulo()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ElEscaneoDevuelveLaUnidadDeVentaDelArticulo));
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Queso", "77", unidadVenta: UnidadVenta.Peso);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.GetAsync("/api/articulos/escaneo?entrada=77");
+        var cuerpo = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("Peso", cuerpo.GetProperty("unidadVenta").GetString());
     }
 
     [Fact]
@@ -170,7 +191,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>(
-            "/api/articulos/escaneo?entrada=7790001234567");
+            "/api/articulos/escaneo?entrada=7790001234567", OpcionesJson);
 
         Assert.NotNull(respuesta);
         Assert.Equal("COD-1", respuesta!.CodigoInterno);
@@ -187,7 +208,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         var respuesta = await admin.GetFromJsonAsync<ArticuloEscaneado>(
-            "/api/articulos/escaneo?entrada=3*7790007654321");
+            "/api/articulos/escaneo?entrada=3*7790007654321", OpcionesJson);
 
         Assert.NotNull(respuesta);
         Assert.Equal(3m, respuesta!.Cantidad);
@@ -232,7 +253,7 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeEscanear));
         using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
 
-        var respuesta = await vendedor.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=42");
+        var respuesta = await vendedor.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=42", OpcionesJson);
 
         Assert.NotNull(respuesta);
         Assert.Equal("42", respuesta!.CodigoInterno);

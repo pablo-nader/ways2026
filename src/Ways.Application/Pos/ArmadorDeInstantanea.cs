@@ -1,4 +1,5 @@
 using Ways.Application.Ofertas;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 
 namespace Ways.Application.Pos;
@@ -14,7 +15,7 @@ public static class ArmadorDeInstantanea
     public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase, decimal? Porcentaje);
 
     /// <summary>Un artículo activo, antes de resolverle precios.</summary>
-    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta);
+    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta);
 
     /// <summary>
     /// Listas a resolver, ascendentes por id: las activas compartidas o de la empresa del punto de
@@ -130,6 +131,7 @@ public static class ArmadorDeInstantanea
                 articulo.IdAlicuotaIva,
                 porcentajePorAlicuota[articulo.IdAlicuotaIva],
                 articulo.AcumulaEnVenta,
+                articulo.UnidadVenta,
                 precios));
         }
 
