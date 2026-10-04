@@ -32,7 +32,16 @@ function construir(params: Omit<ParametrosDeComprobanteOfflineSintetico, 'idList
 }
 
 function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+  return {
+    idLinea: `l-${sobrescribir.idArticulo ?? 1}`,
+    idArticulo: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Coca Cola 1L',
+    codigoBarra: '7790001234567',
+    acumulaEnVenta: true,
+    cantidad: 1,
+    ...sobrescribir,
+  }
 }
 
 /** Tramos con valores todos distintos entre sí y del precio plano — mismo criterio que

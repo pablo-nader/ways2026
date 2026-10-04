@@ -11,7 +11,14 @@ import {
 } from '../api/ajusteManual'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
-import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/carrito'
+import {
+  idLineaDestinoDeEscaneo,
+  nuevoIdLinea,
+  reducirCarrito,
+  type AccionCarrito,
+  type ArticuloParaCarrito,
+  type LineaCarrito,
+} from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
@@ -49,7 +56,6 @@ import type {
   ParametroResuelto,
   PresupuestoParaVenta,
   PuntoVentaListado,
-  ResultadoDeResolucion,
   ResumenDeCierrePorRetiro,
   SolicitudDeCierrePorRetiro,
   TurnoResumen,
@@ -61,8 +67,9 @@ import {
   calcularAjustesManualesPrevia,
   calcularSubtotalPrevia,
   clienteDeVentas,
-  indexarResolucionPorArticulo,
+  indexarResolucionPorLinea,
   previaDeLinea,
+  type PreciosPorLinea,
 } from '../api/ventas'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
@@ -125,7 +132,7 @@ function formatearMoneda(valor: number): string {
 
 /** Editor inline del ajuste manual de una línea. `texto` es la magnitud tipeada, sin signo (el
  * signo lo da `tipo`); `error` es el mensaje de la última validación fallida, vacío si no hay. */
-type EdicionDeAjusteManual = { idArticulo: number; tipo: TipoDeAjusteManual; texto: string; error: string }
+type EdicionDeAjusteManual = { idLinea: string; tipo: TipoDeAjusteManual; texto: string; error: string }
 
 /** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
  * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
@@ -983,7 +990,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   }, [])
 
   const [lineas, setLineas] = useState<LineaCarrito[]>(() => borradorInicial?.lineas ?? [])
-  const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>(() => borradorInicial?.precios ?? {})
+  // Espejo de `lineas` para `mutarCarrito` (estable, sin deps): solo lo lee para saber sobre qué
+  // línea va a sumar un escaneo y limpiarle la edición de cantidad en curso.
+  const lineasRef = useRef(lineas)
+  useEffect(() => {
+    lineasRef.current = lineas
+  }, [lineas])
+  const [precios, setPrecios] = useState<PreciosPorLinea>(() => borradorInicial?.precios ?? {})
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const [reintentoPrecios, setReintentoPrecios] = useState(0)
@@ -1004,7 +1017,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     instantaneaDeLaVistaPreviaRef.current = instantanea
     setPreviaLocal(instantanea !== null)
   }
-  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
+  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<string, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
   // Una sola línea a la vez tiene abierto el editor de ajuste manual. `disparadorDeAjusteRef` guarda
   // el botón que lo abrió: se captura en el handler del click, nunca en un efecto posterior
   // (react-async-state regla 12), para devolverle el foco al cerrar.
@@ -2132,10 +2145,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // de una resolución anterior nunca puede pisar la de la más reciente (design: POS Screen
   // Composition, regla 2 — "generacionResolucionRef gates every /resolver response").
   //
-  // La resolución depende solo de QUÉ artículos hay y CUÁNTOS: fijar o quitar un ajuste manual
-  // cambia `lineas` pero no esta clave, así que no vuelve a pegarle a `/ofertas/resolver` ni
-  // enciende "Calculando…" (el ajuste se aplica en pantalla sobre los precios ya resueltos).
-  const claveDeResolucion = lineas.map((l) => `${l.idArticulo}:${l.cantidad}`).join('|')
+  // La resolución depende solo de QUÉ líneas hay, de qué artículo y CUÁNTOS: fijar o quitar un
+  // ajuste manual cambia `lineas` pero no esta clave, así que no vuelve a pegarle a
+  // `/ofertas/resolver` ni enciende "Calculando…" (el ajuste se aplica en pantalla sobre los precios
+  // ya resueltos). `idLinea` entra en la clave porque `precios` se indexa por línea: cualquier
+  // cambio en la identidad de las líneas vuelve a resolver.
+  const claveDeResolucion = lineas.map((l) => `${l.idLinea}:${l.idArticulo}:${l.cantidad}`).join('|')
   useEffect(() => {
     const generacion = (generacionResolucionRef.current += 1)
 
@@ -2204,7 +2219,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
         .then((resultados) => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
-          setPrecios(indexarResolucionPorArticulo(resultados))
+          setPrecios(indexarResolucionPorLinea(lineas, resultados))
           // Vista previa ONLINE: ninguna instantánea queda congelada, así que `cobrar()` va por
           // el camino online.
           congelarInstantaneaDeLaPrevia(null)
@@ -2315,20 +2330,22 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // vaciar) o su cantidad se recalcula por fuera de la edición manual (un escaneo que suma
     // sobre la línea existente), el override queda desactualizado y debe limpiarse acá mismo
     // — no puede depender de que el blur del input dispare antes que la próxima mutación.
-    const limpiarFila = (idArticulo: number) =>
+    const limpiarFila = (idLinea: string) =>
       setCantidadesEnEdicion((prev) => {
-        if (!(idArticulo in prev)) return prev
-        const { [idArticulo]: _omitido, ...resto } = prev
+        if (!(idLinea in prev)) return prev
+        const { [idLinea]: _omitido, ...resto } = prev
         return resto
       })
 
     switch (accion.tipo) {
       case 'quitarLinea':
-        limpiarFila(accion.idArticulo)
+        limpiarFila(accion.idLinea)
         break
-      case 'escanear':
-        limpiarFila(accion.linea.idArticulo)
+      case 'escanear': {
+        const destino = idLineaDestinoDeEscaneo(lineasRef.current, accion.linea)
+        if (destino !== null) limpiarFila(destino)
         break
+      }
       case 'vaciar':
         setCantidadesEnEdicion({})
         break
@@ -2348,12 +2365,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * completo (ej. "1." antes del dígito decimal) — spec: no perder el punto decimal a mitad de
    * tipeo. */
   function textoCantidad(l: LineaCarrito): string {
-    return cantidadesEnEdicion[l.idArticulo] ?? String(l.cantidad)
+    return cantidadesEnEdicion[l.idLinea] ?? String(l.cantidad)
   }
 
-  function cambiarCantidad(idArticulo: number, texto: string) {
+  function cambiarCantidad(idLinea: string, texto: string) {
     if (cobrandoRef.current) return
-    setCantidadesEnEdicion((prev) => ({ ...prev, [idArticulo]: texto }))
+    setCantidadesEnEdicion((prev) => ({ ...prev, [idLinea]: texto }))
     const cantidad = Number(texto)
     if (texto.trim() === '' || !Number.isFinite(cantidad) || cantidad < CANTIDAD_MINIMA) return
 
@@ -2361,35 +2378,35 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // valor ya comprometido en la línea (Number("1.") === 1) — despachar en ese caso dispara
     // una resolución de precios redundante. Solo se despacha cuando el valor parseado difiere
     // de la cantidad comprometida.
-    const lineaActual = lineas.find((l) => l.idArticulo === idArticulo)
+    const lineaActual = lineas.find((l) => l.idLinea === idLinea)
     if (lineaActual && lineaActual.cantidad === cantidad) return
 
-    mutarCarrito({ tipo: 'editarCantidad', idArticulo, cantidad })
+    mutarCarrito({ tipo: 'editarCantidad', idLinea, cantidad })
   }
 
-  function confirmarCantidad(idArticulo: number) {
+  function confirmarCantidad(idLinea: string) {
     if (cobrandoRef.current) return
     setCantidadesEnEdicion((prev) => {
-      const { [idArticulo]: _omitido, ...resto } = prev
+      const { [idLinea]: _omitido, ...resto } = prev
       return resto
     })
   }
 
-  const idArticuloEnEdicionDeAjuste = ajusteEnEdicion?.idArticulo ?? null
+  const idLineaEnEdicionDeAjuste = ajusteEnEdicion?.idLinea ?? null
 
   // Un editor abierto sobre una línea que ya no está (quitada, carrito vaciado o venta cobrada) se
   // cierra: si el mismo artículo volviera a escanearse, no debe reaparecer un editor viejo.
   useEffect(() => {
-    if (idArticuloEnEdicionDeAjuste !== null && !lineas.some((l) => l.idArticulo === idArticuloEnEdicionDeAjuste)) {
+    if (idLineaEnEdicionDeAjuste !== null && !lineas.some((l) => l.idLinea === idLineaEnEdicionDeAjuste)) {
       disparadorDeAjusteRef.current = null
       setAjusteEnEdicion(null)
     }
-  }, [lineas, idArticuloEnEdicionDeAjuste])
+  }, [lineas, idLineaEnEdicionDeAjuste])
 
   // Al abrir el editor (o pasar de una línea a otra) el foco va al campo del porcentaje.
   useEffect(() => {
-    if (idArticuloEnEdicionDeAjuste !== null) inputDeAjusteRef.current?.focus()
-  }, [idArticuloEnEdicionDeAjuste])
+    if (idLineaEnEdicionDeAjuste !== null) inputDeAjusteRef.current?.focus()
+  }, [idLineaEnEdicionDeAjuste])
 
   /** Cierra el editor. Cancelar (Escape, "Cancelar", tocar de nuevo el botón) devuelve el foco al
    * botón que lo abrió. Tras aplicar o quitar el ajuste el foco va al input de código: lo que sigue
@@ -2411,14 +2428,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   function alternarEditorDeAjuste(linea: LineaCarrito, disparador: HTMLElement) {
     if (cobrandoRef.current) return
-    if (ajusteEnEdicion?.idArticulo === linea.idArticulo) {
+    if (ajusteEnEdicion?.idLinea === linea.idLinea) {
       cerrarEditorDeAjuste()
       return
     }
     const porcentaje = linea.ajusteManualPorcentaje ?? null
     disparadorDeAjusteRef.current = disparador
     setAjusteEnEdicion({
-      idArticulo: linea.idArticulo,
+      idLinea: linea.idLinea,
       tipo: porcentaje === null ? 'descuento' : tipoDeAjuste(porcentaje),
       texto: porcentaje === null ? '' : formatearPorcentajeDeAjuste(porcentaje),
       error: '',
@@ -2441,13 +2458,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, error: validacion.mensaje }))
       return
     }
-    mutarCarrito({ tipo: 'fijarAjusteManual', idArticulo: ajusteEnEdicion.idArticulo, porcentaje: validacion.porcentaje })
+    mutarCarrito({ tipo: 'fijarAjusteManual', idLinea: ajusteEnEdicion.idLinea, porcentaje: validacion.porcentaje })
     cerrarEditorDeAjuste('codigo')
   }
 
   function quitarAjusteDeLinea() {
     if (cobrandoRef.current || ajusteEnEdicion === null) return
-    mutarCarrito({ tipo: 'quitarAjusteManual', idArticulo: ajusteEnEdicion.idArticulo })
+    mutarCarrito({ tipo: 'quitarAjusteManual', idLinea: ajusteEnEdicion.idLinea })
     cerrarEditorDeAjuste('codigo')
   }
 
@@ -2473,7 +2490,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
       if (desdeInstantanea) {
         const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(desdeInstantanea)
-        mutarCarrito({ tipo: 'escanear', linea, cantidad })
+        mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
         setEntradaEscaneo('')
         setErrorEscaneo('')
         focoPendienteRef.current = true
@@ -2488,7 +2505,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       const articulo = await clienteDeArticulos.escanear(entrada)
       if (tokenEscaneoRef.current !== token) return
       const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
-      mutarCarrito({ tipo: 'escanear', linea, cantidad })
+      mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
       setEntradaEscaneo('')
       focoPendienteRef.current = true
     } catch (e) {
@@ -2503,7 +2520,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         const desdeInstantanea = buscarArticuloOffline(sincronizacionOffline.instantanea, entrada)
         if (desdeInstantanea) {
           const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(desdeInstantanea)
-          mutarCarrito({ tipo: 'escanear', linea, cantidad })
+          mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
           setEntradaEscaneo('')
           focoPendienteRef.current = true
           return
@@ -2557,8 +2574,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   /** "Agregar" de una fila del buscador — mismo camino que un código escaneado (`AccionCarrito`
    * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
    * siempre, nunca este handler. */
-  function agregarDesdeBusqueda(linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) {
-    mutarCarrito({ tipo: 'escanear', linea, cantidad })
+  function agregarDesdeBusqueda(linea: ArticuloParaCarrito, cantidad: number) {
+    mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
     setBuscadorAbierto(false)
     focoPendienteRef.current = true
   }
@@ -3609,12 +3626,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         </tr>
                       ))
                     : lineas.map((l) => {
-                        const resultado = precios[l.idArticulo]
+                        const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
                         const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
-                        const edicionDeAjuste = ajusteEnEdicion?.idArticulo === l.idArticulo ? ajusteEnEdicion : null
-                        const idEditorDeAjuste = `pos-ajuste-${l.idArticulo}`
+                        const edicionDeAjuste = ajusteEnEdicion?.idLinea === l.idLinea ? ajusteEnEdicion : null
+                        const idEditorDeAjuste = `pos-ajuste-${l.idLinea}`
                         const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
                         const textoDelAjuste =
                           ajusteDeLinea === null
@@ -3626,7 +3643,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 .filter(Boolean)
                                 .join(' ')
                         return (
-                          <tr key={l.idArticulo}>
+                          <tr key={l.idLinea}>
                             <td>{l.codigoBarra ?? l.codigoInterno}</td>
                             <td>
                               {l.nombre}
@@ -3721,8 +3738,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 value={textoCantidad(l)}
                                 disabled={pantallaCobroInerte || bloqueadoPorTurno}
-                                onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
-                                onBlur={() => confirmarCantidad(l.idArticulo)}
+                                onChange={(e) => cambiarCantidad(l.idLinea, e.target.value)}
+                                onBlur={() => confirmarCantidad(l.idLinea)}
                               />
                             </td>
                             <td className="text-end">
@@ -3766,7 +3783,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                   type="button"
                                   className="btn btn-sm btn-outline-danger"
                                   disabled={lineaInerte}
-                                  onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
+                                  onClick={() => mutarCarrito({ tipo: 'quitarLinea', idLinea: l.idLinea })}
                                 >
                                   Quitar
                                 </button>

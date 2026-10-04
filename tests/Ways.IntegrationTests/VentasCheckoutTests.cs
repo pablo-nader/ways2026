@@ -232,6 +232,47 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(emitido.Items.Count, reimpreso.Items.Count);
     }
 
+    /// <summary>Un artículo con <c>acumula_en_venta = false</c> se agrega al carrito en líneas
+    /// separadas: el servidor acepta dos líneas del MISMO artículo (cantidad 1 cada una), las persiste
+    /// como dos ítems y descuenta el stock de ambas. Lo que decide si un carrito junta o separa vive
+    /// en la web; acá se prueba que el backend no lo impide ni lo fusiona.</summary>
+    [Fact]
+    public async Task DosLineasSeparadasDelMismoArticuloSePersistenComoDosItemsYDescuentanAmbas()
+    {
+        var ctx = await PrepararAsync(nameof(DosLineasSeparadasDelMismoArticuloSePersistenComoDosItemsYDescuentanAmbas));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-repetido", 100m);
+        var idOtro = await SembrarArticuloConPrecioAsync(ctx, "articulo-otro", 30m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Dos Lineas", limiteCredito: 1000m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null), new LineaDeVenta(idOtro, 1m, null), new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 230m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        Assert.Equal(230m, emitido.Total);
+        Assert.Equal([idArticulo, idOtro, idArticulo], emitido.Items.Select(i => i.IdArticulo!.Value).ToList());
+        Assert.All(emitido.Items, i => Assert.Equal(1m, i.Cantidad));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var persistidos = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id)
+            .OrderBy(i => i.Orden)
+            .Select(i => new { i.IdArticulo, i.Cantidad })
+            .ToListAsync();
+        Assert.Equal(3, persistidos.Count);
+        Assert.Equal([idArticulo, idOtro, idArticulo], persistidos.Select(i => i.IdArticulo!.Value).ToList());
+
+        var (cantidadRepetido, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        var (cantidadOtro, _) = await LeerStockYSaldoAsync(ctx, idOtro, idCliente);
+        Assert.Equal(-2m, cantidadRepetido);
+        Assert.Equal(-1m, cantidadOtro);
+    }
+
     // ---- doc 10 §3: EsProducto = false (servicio) no toca stock -------------------------------
 
     [Fact]

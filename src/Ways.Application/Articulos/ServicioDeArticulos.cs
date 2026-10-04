@@ -171,7 +171,8 @@ public class ServicioDeArticulos(
                 x.Articulo.IdProveedorHabitual, x.Articulo.IdAlicuotaIva, x.Articulo.UnidadVenta,
                 x.Articulo.UnidadesPorBulto, x.Articulo.EsProducto, x.Articulo.CostoLista,
                 x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
-                Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote, x.CodigoProveedor))
+                Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
+                x.Articulo.AcumulaEnVenta, x.CodigoProveedor))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -300,6 +301,7 @@ public class ServicioDeArticulos(
                 DisponibleParaTodas = datos.DisponibleParaTodas,
                 Activo = datos.Activo,
                 ControlaLote = datos.ControlaLote,
+                AcumulaEnVenta = datos.AcumulaEnVenta,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };
@@ -472,6 +474,7 @@ public class ServicioDeArticulos(
             articulo.DisponibleParaTodas = datos.DisponibleParaTodas;
             articulo.Activo = datos.Activo;
             articulo.ControlaLote = datos.ControlaLote;
+            articulo.AcumulaEnVenta = datos.AcumulaEnVenta ?? articulo.AcumulaEnVenta;
             articulo.UpdatedAt = reloj.Ahora;
 
             // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar —
@@ -1022,5 +1025,5 @@ public class ServicioDeArticulos(
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca, a.IdGrupo,
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
         a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo,
-        a.ControlaLote);
+        a.ControlaLote, a.AcumulaEnVenta);
 }

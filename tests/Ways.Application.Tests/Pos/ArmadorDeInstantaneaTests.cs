@@ -70,7 +70,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void LasLineasVanArticuloPorArticuloYListaPorListaACantidadUno()
     {
-        var articulos = new[] { new ArticuloAResolver(11, "a", "A", 1), new ArticuloAResolver(12, "b", "B", 1) };
+        var articulos = new[] { new ArticuloAResolver(11, "a", "A", 1, true), new ArticuloAResolver(12, "b", "B", 1, true) };
 
         var lineas = LineasDeResolucion(articulos, [3, 5], IdEmpresa);
 
@@ -94,9 +94,9 @@ public class ArmadorDeInstantaneaTests
     {
         var articulos = new[]
         {
-            new ArticuloAResolver(11, "A11", "Arroz", 21),
-            new ArticuloAResolver(12, "A12", "Fideos", 22),
-            new ArticuloAResolver(13, "A13", "Sin precio", 21),
+            new ArticuloAResolver(11, "A11", "Arroz", 21, false),
+            new ArticuloAResolver(12, "A12", "Fideos", 22, true),
+            new ArticuloAResolver(13, "A13", "Sin precio", 21, true),
         };
         var aplicadaEnB = new OfertaAplicadaDto(70, "Promo B", 15m);
         var escalonEnA = new EscalonDeCantidad(6m, 90m, 10m, [new OfertaAplicadaDto(71, "Seis", 10m)]);
@@ -123,6 +123,8 @@ public class ArmadorDeInstantaneaTests
         Assert.Equal(["7790011"], arroz.CodigosBarra);
         Assert.Equal(21, arroz.IdAlicuotaIva);
         Assert.Equal(21m, arroz.PorcentajeIva);
+        Assert.False(arroz.AcumulaEnVenta);
+        Assert.True(resultado[1].AcumulaEnVenta);
         Assert.Equal(2, arroz.PreciosPorLista.Count);
 
         var arrozEnA = arroz.PreciosPorLista[0];
@@ -155,7 +157,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void ArmarArticulosRechazaUnaResolucionDeOtroTamanio()
     {
-        var articulos = new[] { new ArticuloAResolver(11, "A11", "Arroz", 21) };
+        var articulos = new[] { new ArticuloAResolver(11, "A11", "Arroz", 21, true) };
 
         Assert.Throws<InvalidOperationException>(() => ArmarArticulos(
             articulos, [3, 5], [Resuelto(11, 3, 1m, 1m, 0m)],
@@ -196,8 +198,8 @@ public class ArmadorDeInstantaneaTests
         var articulos = new[]
         {
             new ArticuloDeInstantanea(11, "A11", "Arroz", ["7790011"], 21, 21m,
-                [Precio(3, 100m, 95m, 5m), new PrecioDeListaDeInstantanea(5, 150m, 120m, 30m, [], [escalon])]),
-            new ArticuloDeInstantanea(12, "A12", "Fideos", [], 22, 10.5m, [Precio(3, 40m, 40m, 0m)]),
+                true, [Precio(3, 100m, 95m, 5m), new PrecioDeListaDeInstantanea(5, 150m, 120m, 30m, [], [escalon])]),
+            new ArticuloDeInstantanea(12, "A12", "Fideos", [], 22, 10.5m, true, [Precio(3, 40m, 40m, 0m)]),
         };
         var instantanea = Instantanea(articulos, [Cliente(1, 1, idLista: 5), Cliente(2, 2, idLista: 3)]);
 
@@ -224,7 +226,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void SinListaEfectivaDelConsumidorFinalElFormatoOriginalNoOfreceArticulos()
     {
-        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, [Precio(3, 1m, 1m, 0m)]) };
+        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 1m, 1m, 0m)]) };
 
         var legada = ProyectarLegada(Instantanea(articulos, [Cliente(1, 1, idLista: null)]));
 
@@ -234,7 +236,7 @@ public class ArmadorDeInstantaneaTests
     [Fact]
     public void LaEtiquetaIgnoraElMomentoYCambiaConElContenido()
     {
-        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, [Precio(3, 100m, 100m, 0m)]) };
+        var articulos = new[] { new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 100m, 100m, 0m)]) };
         var base_ = Instantanea(articulos, [Cliente(1, 1, idLista: 3), Cliente(2, 2, idLista: 3, saldo: 50m)]);
 
         var etiqueta = EtiquetaDeInstantanea.Calcular(base_);
@@ -247,7 +249,7 @@ public class ArmadorDeInstantaneaTests
 
         var otroPrecio = base_ with
         {
-            Articulos = [new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, [Precio(3, 100m, 99m, 1m)])]
+            Articulos = [new ArticuloDeInstantanea(11, "A11", "Arroz", [], 21, 21m, true, [Precio(3, 100m, 99m, 1m)])]
         };
         Assert.NotEqual(etiqueta, EtiquetaDeInstantanea.Calcular(otroPrecio));
 

@@ -287,6 +287,9 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     unidad_venta     unidad_venta,           -- enum: unidad | peso  (pesables: cantidad 12,3)
     unidades_por_bulto numeric(10,2) NULL,
     es_producto      boolean,                -- false = servicio: no toca stock
+    controla_lote    boolean NOT NULL DEFAULT false, -- exige lote en todo movimiento de stock (§ lotes)
+    acumula_en_venta boolean NOT NULL DEFAULT true,  -- true: agregar de nuevo suma cantidad en una línea;
+                                             -- false: cada alta es una línea nueva (lo aplica el carrito)
     costo_lista      numeric(14,2) NULL,     -- lista del proveedor
     descuento_proveedor numeric(5,2) NULL,
     costo_nominal    numeric(14,2) NULL,     -- costo real de reposición (lo actualiza la compra)
@@ -345,7 +348,7 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 
 | | Campos |
 |---|---|
-| **Compartidos** (doce columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `costo_lista`, `descuento_proveedor`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
+| **Compartidos** (trece columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `acumula_en_venta`, `costo_lista`, `descuento_proveedor`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
 | **Propios** de cada artículo | `nombre`, `descripcion`, `codigo_interno`, códigos de barra, `id_marca`, `activo`, `disponible_para_todas` (con `articulos_empresas`) |
 
 - **"Solo este"** significa que el artículo **sale de la familia** (`id_familia = NULL`) con el

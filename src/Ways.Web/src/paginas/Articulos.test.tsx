@@ -64,6 +64,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     idsEmpresas: [],
     activo: true,
     controlaLote: false,
+    acumulaEnVenta: true,
     ...sobrescribir,
   }
 }
@@ -405,6 +406,41 @@ describe('Articulos — toggle controlaLote (coerción boolean, dto-contract-hon
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
     expect(cuerpo.controlaLote).toBe(false)
+  })
+})
+
+describe('Articulos — toggle acumulaEnVenta', () => {
+  async function abrirEdicionDelUno() {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+  }
+
+  it('un artículo nuevo arranca acumulando (checkbox tildado)', async () => {
+    await abrirFormularioNuevo()
+
+    expect(screen.getByLabelText('Acumula en una sola línea al vender')).toBeChecked()
+  })
+
+  it('un artículo con acumulaEnVenta:false arranca con el checkbox destildado', async () => {
+    mockearApiGet({ articulos: [articuloFixture({ id: 1, acumulaEnVenta: false })] })
+    await abrirEdicionDelUno()
+
+    expect(screen.getByLabelText('Acumula en una sola línea al vender')).not.toBeChecked()
+  })
+
+  it('destildar el checkbox y guardar manda acumulaEnVenta:false (booleano)', async () => {
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, acumulaEnVenta: false }))
+    await abrirEdicionDelUno()
+
+    await userEvent.click(screen.getByLabelText('Acumula en una sola línea al vender'))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.acumulaEnVenta).toBe(false)
   })
 })
 

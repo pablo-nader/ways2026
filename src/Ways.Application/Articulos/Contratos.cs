@@ -32,6 +32,7 @@ public record ArticuloListado(
     IReadOnlyList<int> IdsEmpresas,
     bool Activo,
     bool ControlaLote,
+    bool AcumulaEnVenta,
     string? CodigoProveedor = null);
 
 /// <summary><see cref="CodigoInterno"/> es opcional a propósito (spec: codigo_interno
@@ -62,7 +63,8 @@ public record AltaArticulo(
     IReadOnlyList<int>? IdsEmpresas = null,
     bool Activo = true,
     bool ControlaLote = false,
-    string? CodigoProveedor = null);
+    string? CodigoProveedor = null,
+    bool AcumulaEnVenta = true);
 
 /// <summary><c>CodigoInterno</c> no aparece a propósito: no es editable por este ABM (mismo
 /// criterio que <see cref="Ways.Application.Clientes.ClienteListado.Numero"/> — un valor
@@ -70,7 +72,9 @@ public record AltaArticulo(
 /// mismo criterio que <see cref="AltaArticulo"/>. <see cref="ControlaLote"/> (stage-12-lotes-
 /// vencimientos, Slice 4, design: Reconciliation triggers): un flip <c>false → true</c>
 /// dispara <c>ServicioDeLotes.ReconciliarAsync</c>; <c>ServicioDeArticulos.ActualizarAsync</c>
-/// captura el valor previo ANTES de sobrescribir el campo para poder detectarlo.</summary>
+/// captura el valor previo ANTES de sobrescribir el campo para poder detectarlo.
+/// <see cref="AcumulaEnVenta"/> <c>null</c> deja el valor guardado como está: un cliente que no conoce
+/// el campo no debe pisar un <c>false</c> con el default.</summary>
 public record EdicionArticulo(
     string Nombre,
     string? Descripcion,
@@ -89,7 +93,8 @@ public record EdicionArticulo(
     bool DisponibleParaTodas,
     IReadOnlyList<int>? IdsEmpresas,
     bool Activo,
-    bool ControlaLote);
+    bool ControlaLote,
+    bool? AcumulaEnVenta = null);
 
 public record AltaCodigoBarra(string Codigo);
 

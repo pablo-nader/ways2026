@@ -16,7 +16,8 @@ public record ArticuloEscaneado(
     string CodigoInterno,
     string Nombre,
     string? CodigoBarra,
-    decimal Cantidad);
+    decimal Cantidad,
+    bool AcumulaEnVenta);
 
 /// <summary>
 /// Resolución de escaneo del POS (design decisiones 7 y 10) — servicio de Application dedicado,
@@ -58,6 +59,7 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             articulo.CodigoInterno,
             articulo.Nombre,
             parseado.Objetivo == ObjetivoDeEscaneo.CodigoBarra ? parseado.Codigo : null,
-            parseado.Cantidad);
+            parseado.Cantidad,
+            articulo.AcumulaEnVenta);
     }
 }

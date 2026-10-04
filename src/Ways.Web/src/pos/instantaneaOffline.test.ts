@@ -58,6 +58,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloDeInstantanea> = {}): Art
     idAlicuotaIva: 1,
     porcentajeIva: 21,
     preciosPorLista: [precioFixture()],
+    acumulaEnVenta: true,
     ...sobrescribir,
   }
 }
@@ -95,7 +96,16 @@ function instantaneaFixture(sobrescribir: Partial<InstantaneaDePos> = {}): Insta
 }
 
 function lineaFixture(sobrescribir: Partial<LineaCarrito> = {}): LineaCarrito {
-  return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+  return {
+    idLinea: `l-${sobrescribir.idArticulo ?? 1}`,
+    idArticulo: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Coca Cola 1L',
+    codigoBarra: '7790001234567',
+    acumulaEnVenta: true,
+    cantidad: 1,
+    ...sobrescribir,
+  }
 }
 
 /** Tres tramos con valores TODOS distintos entre sí y distintos del precio plano: cualquier
@@ -159,6 +169,7 @@ describe('buscarArticuloOffline', () => {
       nombre: 'Coca Cola 1L',
       codigoBarra: '7790001234567',
       cantidad: 1,
+      acumulaEnVenta: true,
     })
   })
 
@@ -169,7 +180,18 @@ describe('buscarArticuloOffline', () => {
       nombre: 'Coca Cola 1L',
       codigoBarra: null,
       cantidad: 1,
+      acumulaEnVenta: true,
     })
+  })
+
+  it('lleva acumulaEnVenta del artículo de la instantánea', () => {
+    const instantanea = instantaneaFixture({ articulos: [articuloFixture({ acumulaEnVenta: false })] })
+    expect(buscarArticuloOffline(instantanea, 'A0001')?.acumulaEnVenta).toBe(false)
+  })
+
+  it('un artículo de una instantánea guardada antes del campo acumula (true)', () => {
+    const { acumulaEnVenta: _omitido, ...sinCampo } = articuloFixture()
+    expect(buscarArticuloOffline(instantaneaFixture({ articulos: [sinCampo] }), 'A0001')?.acumulaEnVenta).toBe(true)
   })
 
   it('respeta la sintaxis "cantidad*codigo"', () => {
@@ -294,8 +316,8 @@ describe('resolverPreciosOffline', () => {
       ],
     })
 
-  it('resuelve con el precio de la lista del cliente, indexado por idArticulo', () => {
-    expect(resolverPreciosOffline([lineaFixture()], dosListas(), OTRA_LISTA)[1]).toEqual({
+  it('resuelve con el precio de la lista del cliente, indexado por idLinea', () => {
+    expect(resolverPreciosOffline([lineaFixture()], dosListas(), OTRA_LISTA)['l-1']).toEqual({
       idArticulo: 1,
       idListaPrecio: OTRA_LISTA,
       precioOriginal: 110,
@@ -303,20 +325,20 @@ describe('resolverPreciosOffline', () => {
       descuentoUnitario: 11,
       aplicadas: [{ idOferta: 4, nombre: 'Mayorista', descuentoUnitario: 11 }],
     })
-    expect(resolverPreciosOffline([lineaFixture()], dosListas(), LISTA)[1]).toMatchObject({ idListaPrecio: LISTA, precioOriginal: 150, precioFinal: 120 })
+    expect(resolverPreciosOffline([lineaFixture()], dosListas(), LISTA)['l-1']).toMatchObject({ idListaPrecio: LISTA, precioOriginal: 150, precioFinal: 120 })
   })
 
   it('una línea sin precio en la lista del cliente queda ausente del índice, aunque tenga precio en otra', () => {
-    expect(resolverPreciosOffline([lineaFixture()], dosListas(), 99)[1]).toBeUndefined()
+    expect(resolverPreciosOffline([lineaFixture()], dosListas(), 99)['l-1']).toBeUndefined()
   })
 
   it('una línea sin artículo en la instantánea queda ausente del índice (nunca un precio inventado)', () => {
-    expect(resolverPreciosOffline([lineaFixture({ idArticulo: 999 })], instantaneaFixture(), LISTA)[999]).toBeUndefined()
+    expect(resolverPreciosOffline([lineaFixture({ idArticulo: 999 })], instantaneaFixture(), LISTA)['l-999']).toBeUndefined()
   })
 
   it('la cantidad de la línea elige el tramo de esa lista, y precioOriginal queda el de lista', () => {
     const instantanea = instantaneaFixture({ articulos: [articuloFixture({ preciosPorLista: [precioConEscalonesFixture()] })] })
-    expect(resolverPreciosOffline([lineaFixture({ cantidad: 6 })], instantanea, LISTA)[1]).toEqual({
+    expect(resolverPreciosOffline([lineaFixture({ cantidad: 6 })], instantanea, LISTA)['l-1']).toEqual({
       idArticulo: 1,
       idListaPrecio: LISTA,
       precioOriginal: 100,
@@ -324,7 +346,7 @@ describe('resolverPreciosOffline', () => {
       descuentoUnitario: 20,
       aplicadas: [{ idOferta: 61, nombre: '6 o más', descuentoUnitario: 20 }],
     })
-    expect(resolverPreciosOffline([lineaFixture({ cantidad: 2 })], instantanea, LISTA)[1]).toMatchObject({ precioFinal: 100, descuentoUnitario: 0 })
+    expect(resolverPreciosOffline([lineaFixture({ cantidad: 2 })], instantanea, LISTA)['l-1']).toMatchObject({ precioFinal: 100, descuentoUnitario: 0 })
   })
 
   it('cada línea cae en el tramo de SU cantidad, nunca en el de la otra línea', () => {
@@ -335,8 +357,20 @@ describe('resolverPreciosOffline', () => {
       ],
     })
     const indice = resolverPreciosOffline([lineaFixture({ idArticulo: 1, cantidad: 3 }), lineaFixture({ idArticulo: 2, cantidad: 12 })], instantanea, LISTA)
-    expect(indice[1]).toMatchObject({ precioFinal: 90, descuentoUnitario: 10 })
-    expect(indice[2]).toMatchObject({ precioFinal: 70, descuentoUnitario: 30 })
+    expect(indice['l-1']).toMatchObject({ precioFinal: 90, descuentoUnitario: 10 })
+    expect(indice['l-2']).toMatchObject({ precioFinal: 70, descuentoUnitario: 30 })
+  })
+
+  it('dos líneas del MISMO artículo resuelven cada una con el tramo de su propia cantidad', () => {
+    const instantanea = instantaneaFixture({ articulos: [articuloFixture({ preciosPorLista: [precioConEscalonesFixture()] })] })
+    const indice = resolverPreciosOffline(
+      [lineaFixture({ idLinea: 'a', cantidad: 3 }), lineaFixture({ idLinea: 'b', cantidad: 12 })],
+      instantanea,
+      LISTA,
+    )
+    expect(Object.keys(indice).sort()).toEqual(['a', 'b'])
+    expect(indice.a).toMatchObject({ precioFinal: 90, descuentoUnitario: 10 })
+    expect(indice.b).toMatchObject({ precioFinal: 70, descuentoUnitario: 30 })
   })
 })
 
@@ -395,6 +429,29 @@ describe('instantánea persistida', () => {
     const delServidorViejo = { momento: '2026-09-20T10:00:00.000Z', idPuntoVenta: 7, articulos: [{ idArticulo: 1, codigoInterno: 'A', codigosBarra: [], porcentajeIva: 21, precioOriginal: 100 }], mediosDePago: [], toleranciaPago: 0 }
     expect(esInstantaneaValida(delServidorViejo)).toBe(false)
     expect(esInstantaneaValida(instantaneaFixture())).toBe(true)
+  })
+
+  it('esInstantaneaValida acepta artículos sin acumulaEnVenta (instantánea guardada antes del campo)', () => {
+    const { acumulaEnVenta: _omitido, ...sinCampo } = articuloFixture()
+    expect(esInstantaneaValida(instantaneaFixture({ articulos: [sinCampo] }))).toBe(true)
+  })
+
+  it.each([
+    ['true', true],
+    ['false', false],
+  ])('esInstantaneaValida acepta acumulaEnVenta = %s', (_titulo, valor) => {
+    expect(esInstantaneaValida(instantaneaFixture({ articulos: [articuloFixture({ acumulaEnVenta: valor })] }))).toBe(true)
+  })
+
+  it('esInstantaneaValida rechaza un acumulaEnVenta que no es booleano', () => {
+    const conTexto = { ...articuloFixture(), acumulaEnVenta: 'si' }
+    expect(esInstantaneaValida({ ...instantaneaFixture(), articulos: [conTexto] })).toBe(false)
+  })
+
+  it('una instantánea guardada sin acumulaEnVenta en sus artículos se sigue leyendo', async () => {
+    const { acumulaEnVenta: _omitido, ...sinCampo } = articuloFixture()
+    const guardada = { version: 2, instantanea: instantaneaFixture({ articulos: [sinCampo] }), etag: null, verificadaEn: '2026-09-20T11:00:00.000Z' }
+    await expect(leerInstantaneaLocal(almacenFake({ 'instantanea.v2': guardada }))).resolves.not.toBeNull()
   })
 })
 

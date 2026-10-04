@@ -67,6 +67,11 @@ public class Articulo : EntidadTenant
     /// existente.</summary>
     public bool ControlaLote { get; set; }
 
+    /// <summary><c>true</c> ⇒ agregar de nuevo el mismo artículo a una venta acumula la cantidad en una
+    /// sola línea; <c>false</c> ⇒ cada alta crea una línea nueva. Lo aplica el carrito; el servidor
+    /// solo lo guarda y lo expone. Compartido por la familia.</summary>
+    public bool AcumulaEnVenta { get; set; } = true;
+
     /// <summary>Familia a la que pertenece el artículo (<see cref="Familia"/>), o <c>null</c> si no
     /// pertenece a ninguna. FK compuesta <c>(id_familia, id_tenant)</c>, mismo estilo que
     /// <see cref="IdCategoria"/>. Los miembros de una misma familia tienen que ser idénticos en sus

@@ -45,6 +45,7 @@ public sealed record ArticuloDeInstantanea(
     IReadOnlyList<string> CodigosBarra,
     int IdAlicuotaIva,
     decimal PorcentajeIva,
+    bool AcumulaEnVenta,
     IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista);
 
 /// <summary>
