@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,8 +10,9 @@ using Ways.Domain.Common;
 namespace Ways.Api.Seguridad;
 
 /// <summary>
-/// Traduce los <see cref="ErrorDominio"/> a ProblemDetails con su código de negocio,
-/// y cualquier otra excepción a un 500 genérico sin filtrar detalles internos.
+/// Traduce a ProblemDetails con un código estable los <see cref="ErrorDominio"/>, los rechazos del
+/// binding de la solicitud y las excepciones de base de datos que tienen clasificación; cualquier otra
+/// excepción sale como un 500 genérico sin filtrar detalles internos.
 /// </summary>
 public class ManejadorDeErrores(
     IProblemDetailsService problemDetails,
@@ -22,6 +24,17 @@ public class ManejadorDeErrores(
         var (estado, titulo, codigo) = excepcion switch
         {
             ErrorDominio e => (e.EstadoHttp, e.Message, e.Codigo),
+
+            // El binding del endpoint rechazó la solicitud antes de llegar al servicio (Program.cs fija
+            // ThrowOnBadRequest para que la excepción llegue acá en todos los entornos). El mensaje de la
+            // excepción no se expone porque nombra tipos y parámetros internos. Una JsonException que no
+            // viene envuelta por el binding es un error del servidor (por ejemplo, un parámetro guardado
+            // que no deserializa) y sigue en el 500.
+            BadHttpRequestException { InnerException: JsonException } =>
+                (StatusCodes.Status400BadRequest, "Los datos enviados no tienen el formato esperado.", "cuerpo_invalido"),
+
+            BadHttpRequestException rechazo =>
+                (rechazo.StatusCode, "La solicitud no tiene el formato esperado.", "solicitud_invalida"),
 
             // Camino EF SaveChangesAsync: Npgsql envuelve la excepción en DbUpdateException.
             // ClasificarPostgresException (helper compartido, más abajo) es la ÚNICA fuente de
