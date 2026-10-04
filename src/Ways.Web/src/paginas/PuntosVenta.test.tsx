@@ -873,7 +873,14 @@ describe('PuntosVenta — alta', () => {
     await usuario.selectOptions(screen.getByLabelText('Modo'), 'Web')
   }
 
-  it('Root y Admin ven el botón de alta', async () => {
+  it('Root ve el botón de alta', async () => {
+    montarConEmpresas()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toBeInTheDocument()
+  })
+
+  it('Admin ve el botón de alta', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
     montarConEmpresas()
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: 'Nuevo punto de venta' })).toBeInTheDocument()

@@ -451,12 +451,13 @@ public class AltaDePuntoVentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     // ---- carrera contra la baja de la empresa (single-read-under-lock) --------------------------
 
     /// <summary>
-    /// LA CLÁUSULA del lock: la lectura de la empresa nace BAJO el mismo lock que la baja de la
-    /// empresa. El alta (perdedor) abre su transacción y se pausa antes de tomar el lock — o sea
-    /// DESPUÉS del pre-chequeo de 404, que vio la empresa viva—; mientras tanto la baja de la empresa
-    /// (ganador) corre completa y comitea. Con la lectura bajo el lock, el alta ve la empresa dada de
-    /// baja y es un 404. Sin ella inserta un punto de venta VIVO bajo una empresa muerta: la FK
-    /// compuesta no mira <c>deleted_at</c>, así que nada más lo frenaría.
+    /// La lectura de la empresa nace DENTRO de la transacción, después del pre-chequeo de 404. El
+    /// alta (perdedor) abre su transacción y se pausa antes de tomar el lock; mientras tanto la baja
+    /// de la empresa (ganador) corre completa y comitea. Con la lectura dentro de la transacción, el
+    /// alta ve la empresa dada de baja y es un 404. Sin ella inserta un punto de venta VIVO bajo una
+    /// empresa muerta: la FK compuesta no mira <c>deleted_at</c>, así que nada más lo frenaría. La
+    /// baja comitea antes de que el alta llegue al lock, así que este test no ejercita la contención
+    /// del lock: su presencia y su orden los fija el test estructural de <c>BajasEstructuralesTests</c>.
     /// </summary>
     [Fact]
     public async Task UnAltaQuePierdeLaCarreraContraLaBajaDeLaEmpresaEs404YNoDejaUnPuntoDeVentaHuerfano()

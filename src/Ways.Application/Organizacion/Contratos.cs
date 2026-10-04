@@ -23,8 +23,9 @@ public record ResultadoAprovisionamiento(
     int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdUsuarioAdmin, string PasswordTemporal);
 
 // --- Lectura/edición de organización (ServicioDeOrganizacion) ---
-// Alta y baja siguen siendo plataforma-only vía ServicioDeAprovisionamiento (ADR-16); estos
-// contratos son solo listado/detalle/edición de datos descriptivos + suspensión de tenants.
+// El alta de tenants sigue siendo plataforma-only vía ServicioDeAprovisionamiento (ADR-16); estos
+// contratos cubren listado/detalle/edición de datos descriptivos, suspensión de tenants y el alta
+// de puntos de venta sobre una empresa existente.
 
 /// <summary>Los tres contadores son hijos VIVOS del tenant (el filtro <c>"BajaLogica"</c> corre
 /// dentro de las subconsultas correlacionadas de <see cref="ServicioDeOrganizacion"/>) y
