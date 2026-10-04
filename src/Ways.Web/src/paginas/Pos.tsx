@@ -12,6 +12,13 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
 import {
+  esCantidadValida,
+  esTextoDeCantidadValido,
+  fraccionaUnaUnidad,
+  MENSAJE_DE_CANTIDAD_ENTERA,
+  restriccionDeCantidad,
+} from '../api/cantidadPorUnidad'
+import {
   idLineaDestinoDeEscaneo,
   nuevoIdLinea,
   reducirCarrito,
@@ -47,6 +54,7 @@ import {
 import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api/presupuestos'
 import { puedeForzarCierreSinRendicion } from '../api/tipos'
 import type {
+  ArticuloEscaneado,
   ClienteListado,
   ComprobanteEmitido,
   EstadoDeCuenta,
@@ -108,11 +116,6 @@ import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
-
-/** Piso de cantidad por línea, compartido entre el guard de edición y los atributos
- * `min`/`step` del input — evita que ambos se desincronicen (ej. el guard aceptando
- * cantidades que el input ya no permite tipear). */
-const CANTIDAD_MINIMA = 0.001
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -2368,20 +2371,41 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     return cantidadesEnEdicion[l.idLinea] ?? String(l.cantidad)
   }
 
+  /** Marca el texto en edición que no se va a comprometer a la línea y también la cantidad ya
+   * comprometida que no respeta la unidad del artículo (p.ej. una línea restaurada con 1,5 a la
+   * que un reescaneo le completó la unidad "por unidad"). */
+  function cantidadInvalida(l: LineaCarrito): boolean {
+    const enEdicion = cantidadesEnEdicion[l.idLinea]
+    const textoInvalido = enEdicion !== undefined && enEdicion.trim() !== '' && !esTextoDeCantidadValido(l.unidadVenta, enEdicion)
+    return textoInvalido || !esCantidadValida(l.unidadVenta, l.cantidad)
+  }
+
   function cambiarCantidad(idLinea: string, texto: string) {
     if (cobrandoRef.current) return
     setCantidadesEnEdicion((prev) => ({ ...prev, [idLinea]: texto }))
     const cantidad = Number(texto)
-    if (texto.trim() === '' || !Number.isFinite(cantidad) || cantidad < CANTIDAD_MINIMA) return
+    const lineaActual = lineas.find((l) => l.idLinea === idLinea)
+    if (!esTextoDeCantidadValido(lineaActual?.unidadVenta, texto)) return
 
     // Un estado intermedio del input (ej. "1." tipeando hacia "1.5") puede parsear al mismo
     // valor ya comprometido en la línea (Number("1.") === 1) — despachar en ese caso dispara
     // una resolución de precios redundante. Solo se despacha cuando el valor parseado difiere
     // de la cantidad comprometida.
-    const lineaActual = lineas.find((l) => l.idLinea === idLinea)
     if (lineaActual && lineaActual.cantidad === cantidad) return
 
     mutarCarrito({ tipo: 'editarCantidad', idLinea, cantidad })
+  }
+
+  /** Suma al carrito lo que resolvió un escaneo. Una fracción de un artículo que se vende por
+   * unidad no entra: se avisa donde se avisan los demás errores de escaneo. */
+  function agregarEscaneado(articulo: ArticuloEscaneado): boolean {
+    const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
+    if (fraccionaUnaUnidad(linea.unidadVenta, cantidad)) {
+      setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
+      return false
+    }
+    mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
+    return true
   }
 
   function confirmarCantidad(idLinea: string) {
@@ -2489,10 +2513,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     if (instantaneaDelPuntoVenta) {
       const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
       if (desdeInstantanea) {
-        const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(desdeInstantanea)
-        mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
-        setEntradaEscaneo('')
-        setErrorEscaneo('')
+        if (agregarEscaneado(desdeInstantanea)) {
+          setEntradaEscaneo('')
+          setErrorEscaneo('')
+        }
         focoPendienteRef.current = true
         return
       }
@@ -2504,9 +2528,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     try {
       const articulo = await clienteDeArticulos.escanear(entrada)
       if (tokenEscaneoRef.current !== token) return
-      const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
-      mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
-      setEntradaEscaneo('')
+      if (agregarEscaneado(articulo)) setEntradaEscaneo('')
       focoPendienteRef.current = true
     } catch (e) {
       if (tokenEscaneoRef.current !== token) return
@@ -2519,9 +2541,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea) {
         const desdeInstantanea = buscarArticuloOffline(sincronizacionOffline.instantanea, entrada)
         if (desdeInstantanea) {
-          const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(desdeInstantanea)
-          mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
-          setEntradaEscaneo('')
+          if (agregarEscaneado(desdeInstantanea)) setEntradaEscaneo('')
           focoPendienteRef.current = true
           return
         }
@@ -2789,6 +2809,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // "Cobrar" y el atajo quedan inertes hasta que se aplica o se cancela.
       ajusteEnEdicion === null &&
       lineas.length > 0 &&
+      lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
       puntoVentaSeleccionada !== null &&
       medios !== null &&
@@ -3732,10 +3753,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             <td>
                               <input
                                 type="number"
-                                step={CANTIDAD_MINIMA}
-                                min={CANTIDAD_MINIMA}
-                                className="form-control form-control-sm"
+                                step={restriccionDeCantidad(l.unidadVenta).step}
+                                min={restriccionDeCantidad(l.unidadVenta).min}
+                                className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
+                                aria-invalid={cantidadInvalida(l) || undefined}
+                                title={fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l))) ? MENSAJE_DE_CANTIDAD_ENTERA : undefined}
                                 value={textoCantidad(l)}
                                 disabled={pantallaCobroInerte || bloqueadoPorTurno}
                                 onChange={(e) => cambiarCantidad(l.idLinea, e.target.value)}

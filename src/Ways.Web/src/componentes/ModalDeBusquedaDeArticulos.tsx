@@ -164,6 +164,7 @@ export function ModalDeBusquedaDeArticulos({
         nombre: articulo.nombre,
         codigoBarra: null,
         acumulaEnVenta: articulo.acumulaEnVenta !== false,
+        unidadVenta: articulo.unidadVenta,
       },
       CANTIDAD_POR_DEFECTO,
     )

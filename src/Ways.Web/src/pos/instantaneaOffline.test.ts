@@ -215,6 +215,40 @@ describe('buscarArticuloOffline', () => {
   })
 })
 
+describe('buscarArticuloOffline — unidad de venta', () => {
+  it('propaga la unidad de venta del artículo, por código de barra y por código interno', () => {
+    const instantanea = instantaneaFixture({ articulos: [articuloFixture({ unidadVenta: 'Peso' })] })
+
+    expect(buscarArticuloOffline(instantanea, '7790001234567')?.unidadVenta).toBe('Peso')
+    expect(buscarArticuloOffline(instantanea, 'A0001')?.unidadVenta).toBe('Peso')
+    expect(
+      buscarArticuloOffline(instantaneaFixture({ articulos: [articuloFixture({ unidadVenta: 'Unidad' })] }), 'A0001')?.unidadVenta,
+    ).toBe('Unidad')
+  })
+
+  it('una instantánea guardada antes de que existiera el dato sigue siendo válida y no declara unidad (permisivo)', async () => {
+    const antigua = instantaneaFixture({ articulos: [articuloFixture()] })
+    expect('unidadVenta' in antigua.articulos[0]).toBe(false)
+    expect(esInstantaneaValida(antigua)).toBe(true)
+
+    const almacen = almacenFake()
+    await guardarInstantaneaLocal(almacen, { instantanea: antigua, etag: '"viejo"', verificadaEn: '2026-10-02T12:00:00.000Z' })
+    const leida = await leerInstantaneaLocal(almacen)
+
+    expect(leida).not.toBeNull()
+    expect(buscarArticuloOffline(leida!.instantanea, 'A0001')?.unidadVenta).toBeUndefined()
+  })
+
+  it('la unidad de venta sobrevive al guardado y a la lectura del almacén local', async () => {
+    const instantanea = instantaneaFixture({ articulos: [articuloFixture({ unidadVenta: 'Unidad' })] })
+    const almacen = almacenFake()
+
+    await guardarInstantaneaLocal(almacen, { instantanea, etag: '"nuevo"', verificadaEn: '2026-10-02T12:00:00.000Z' })
+
+    expect(buscarArticuloOffline((await leerInstantaneaLocal(almacen))!.instantanea, 'A0001')?.unidadVenta).toBe('Unidad')
+  })
+})
+
 describe('precioEnLista', () => {
   it('devuelve el precio de la lista pedida y null si el artículo no tiene precio ahí', () => {
     const enOtra = precioFixture({ idListaPrecio: OTRA_LISTA, precioOriginal: 140 })
