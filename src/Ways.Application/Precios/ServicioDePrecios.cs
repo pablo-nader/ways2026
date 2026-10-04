@@ -14,12 +14,13 @@ using Ways.Domain.Precios;
 namespace Ways.Application.Precios;
 
 /// <summary>
-/// Motor de historial de precios (design decisions 3/4, tasks 3.2/3.3): el único punto de
-/// escritura de <c>precios</c> es <see cref="AbrirNuevoPrecioAsync"/> — por cada artículo objetivo
-/// (el artículo pedido o, si pertenece a una familia y el alcance lo pide, todos los miembros vivos
-/// de su familia) cierra la fila actualmente abierta (si hay una) e inserta una nueva, siempre en la
-/// MISMA transacción, nunca hay un <c>Update</c> sobre <see cref="Precio.Monto"/> de una fila
-/// existente. La lectura
+/// Motor de historial de precios (design decisions 3/4, tasks 3.2/3.3): el único escritor de
+/// <c>precios</c> es esta clase. <see cref="AbrirNuevoPrecioAsync"/> es el camino de un artículo que ya
+/// existe — por cada artículo objetivo (el artículo pedido o, si pertenece a una familia y el alcance lo
+/// pide, todos los miembros vivos de su familia) cierra la fila actualmente abierta (si hay una) e inserta
+/// una nueva, siempre en la MISMA transacción, nunca hay un <c>Update</c> sobre <see cref="Precio.Monto"/>
+/// de una fila existente. El otro es <see cref="CopiarEstadoDePreciosAlNuevoMiembroAsync"/>, que solo inserta
+/// las filas de un artículo recién creado que entra a una familia. La lectura
 /// (<see cref="PrecioVigenteAsync"/>) resuelve <c>fija</c> por consulta filtrada por fecha y
 /// <c>derivada</c> en el momento, sin persistir nunca una fila para una lista derivada (spec:
 /// Derived List Price Resolution At Read Time).
@@ -117,8 +118,8 @@ public class ServicioDePrecios(
     };
 
     /// <summary>
-    /// Design decision 3/4 (revisado en judgment-day, items 1-3) — única fila de escritura de
-    /// <c>precios</c>. Todo ocurre en UNA transacción, sin reintento, en este orden:
+    /// Design decision 3/4 (revisado en judgment-day, items 1-3) — el camino de escritura de <c>precios</c> de
+    /// un artículo que ya existe. Todo ocurre en UNA transacción, sin reintento, en este orden:
     ///
     /// <list type="number">
     /// <item>El lock de MEMBRESÍA de familias (<see cref="LockDeMembresiaDeFamilias"/>) como
@@ -255,6 +256,63 @@ public class ServicioDePrecios(
 
             return new PrecioVigente(idArticulo, idListaPrecio, precio, vigenteDesdeEfectivo);
         });
+    }
+
+    /// <summary>
+    /// La escritura de <c>precios</c> de un artículo RECIÉN CREADO que entra a una familia (doc 10 §3): copia,
+    /// para cada lista fija, el estado de precios de <paramref name="idArticuloReferencia"/> —un miembro vivo de
+    /// la familia—, de modo que el miembro nuevo nace idéntico a los demás (<see cref="ReglaDeCopiaDePrecios"/>:
+    /// el precio vigente a <paramref name="ahora"/>, que arranca en ese instante, y el pendiente si lo hay, con
+    /// su fecha). Cada fila insertada lleva su fila de auditoría <c>precio.cambio</c>, sin estado anterior.
+    ///
+    /// <para>Es <c>internal</c> y solo la llama <c>ServicioDeArticulos.CrearAsync</c>, DENTRO de su transacción
+    /// y con ese mismo "ahora": no abre transacción, no guarda y no lee el reloj —el llamador guarda las filas
+    /// con su <c>SaveChangesAsync</c>, junto con el artículo—. Solo INSERTA: el artículo nuevo no tiene ninguna
+    /// fila que cerrar. Tiene que correr bajo el lock de membresía EXCLUSIVO del llamador: es lo que impide que
+    /// una escritura de precios de la familia esté a mitad de camino mientras se lee la referencia. Con él
+    /// tomado, ninguna escritura que respete el protocolo puede estar tomando los pares de un artículo que
+    /// todavía no existe, así que los locks de par de acá (por clave ascendente, después de las filas, como en
+    /// <see cref="AbrirNuevoPrecioAsync"/>) no esperan a nadie: están para que TODA escritura de un par de
+    /// <c>precios</c> tome su lock.</para>
+    /// </summary>
+    internal async Task CopiarEstadoDePreciosAlNuevoMiembroAsync(
+        int idArticuloNuevo, int idArticuloReferencia, int idTenant, DateTimeOffset ahora, CancellationToken ct)
+    {
+        // Solo las filas que pueden ser vigentes o pendientes (abiertas, o cerradas a futuro): la historia
+        // cerrada no se copia. La regla descarta lo demás (las filas muertas de un reemplazo con la misma fecha).
+        var filasDeLaReferencia = await db.Precios
+            .AsNoTracking()
+            .Where(p => p.IdArticulo == idArticuloReferencia && (p.VigenteHasta == null || p.VigenteHasta > ahora))
+            .Select(p => new { p.IdListaPrecio, p.Monto, p.VigenteDesde, p.VigenteHasta })
+            .ToListAsync(ct);
+
+        var filasPorLista = new SortedDictionary<int, IReadOnlyList<FilaDePrecio>>();
+
+        foreach (var lista in filasDeLaReferencia.GroupBy(f => f.IdListaPrecio))
+        {
+            var filas = ReglaDeCopiaDePrecios.FilasParaElNuevoMiembro(
+                [.. lista.Select(f => new FilaDePrecio(f.Monto, f.VigenteDesde, f.VigenteHasta))], ahora);
+
+            if (filas.Count > 0)
+            {
+                filasPorLista[lista.Key] = filas;
+            }
+        }
+
+        foreach (var idLista in OrdenDeLocksDeParesDeUnArticulo(idTenant, idArticuloNuevo, filasPorLista.Keys))
+        {
+            await TomarLockDelParAsync(idTenant, idArticuloNuevo, idLista, ct);
+        }
+
+        foreach (var (idLista, filas) in filasPorLista)
+        {
+            foreach (var fila in filas)
+            {
+                EncolarFilaDePrecio(
+                    idArticuloNuevo, idLista, montoAnterior: null, vigenteDesdeAnterior: null, fila.Monto,
+                    fila.VigenteDesde, fila.VigenteHasta, ahora, idTenant);
+            }
+        }
     }
 
     /// <summary>Lock de membresía de familias del tenant (<see cref="LockDeMembresiaDeFamilias"/>),
@@ -451,21 +509,32 @@ public class ServicioDePrecios(
     /// </summary>
     private void EncolarPrecioNuevo(
         PlanDeUnArticulo plan, int idListaPrecio, decimal precio, DateTimeOffset vigenteDesdeEfectivo,
-        DateTimeOffset ahora, int idTenant)
+        DateTimeOffset ahora, int idTenant) =>
+        EncolarFilaDePrecio(
+            plan.IdArticulo, idListaPrecio, plan.FilaAbierta?.Monto, plan.FilaAbierta?.VigenteDesde, precio,
+            vigenteDesdeEfectivo, vigenteHasta: null, ahora, idTenant);
+
+    /// <summary>La pareja que toda fila nueva de <c>precios</c> tiene que ser: la fila de auditoría
+    /// <c>precio.cambio</c> y la fila de precio, encoladas las dos en el MISMO <c>SaveChangesAsync</c> del
+    /// llamador, sin I/O. <paramref name="montoAnterior"/> y <paramref name="vigenteDesdeAnterior"/> son el
+    /// estado previo del par (ambos <c>null</c> ⇒ primer precio).</summary>
+    private void EncolarFilaDePrecio(
+        int idArticulo, int idListaPrecio, decimal? montoAnterior, DateTimeOffset? vigenteDesdeAnterior,
+        decimal monto, DateTimeOffset vigenteDesde, DateTimeOffset? vigenteHasta, DateTimeOffset ahora, int idTenant)
     {
         var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDePrecio(
-            idListaPrecio, plan.FilaAbierta?.Monto, plan.FilaAbierta?.VigenteDesde, precio, vigenteDesdeEfectivo);
+            idListaPrecio, montoAnterior, vigenteDesdeAnterior, monto, vigenteDesde);
 
         Auditoria.Registrar(new RegistroDeAuditoria(
-            idTenant, idPuntoVenta: null, AccionAuditada.PrecioCambio, plan.IdArticulo, valorAnterior, valorNuevo));
+            idTenant, idPuntoVenta: null, AccionAuditada.PrecioCambio, idArticulo, valorAnterior, valorNuevo));
 
         db.Precios.Add(new Precio
         {
-            IdArticulo = plan.IdArticulo,
+            IdArticulo = idArticulo,
             IdListaPrecio = idListaPrecio,
-            Monto = precio,
-            VigenteDesde = vigenteDesdeEfectivo,
-            VigenteHasta = null,
+            Monto = monto,
+            VigenteDesde = vigenteDesde,
+            VigenteHasta = vigenteHasta,
             CreatedAt = ahora,
             UpdatedAt = ahora
         });
@@ -846,6 +915,15 @@ public class ServicioDePrecios(
     /// lista.</summary>
     public static IReadOnlyList<int> OrdenDeLocksDePares(int idTenant, int idListaPrecio, IEnumerable<int> idsArticulo) =>
         [.. idsArticulo.OrderBy(idArticulo => ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio))];
+
+    /// <summary>Las listas en el orden en que se toman los locks de par de UN artículo que escribe en varias:
+    /// ascendente por la CLAVE del lock (<see cref="ClaveDeLockDePar"/>), la misma regla que
+    /// <see cref="OrdenDeLocksDePares"/> aplica a varios artículos de UNA lista. Para un mismo artículo la
+    /// clave no sigue el orden de <c>id_lista_precio</c> (es un XOR con el id de la lista), así que ordenar por
+    /// id de lista tomaría los locks en un orden que otra escritura de pares cruzados no comparte.</summary>
+    public static IReadOnlyList<int> OrdenDeLocksDeParesDeUnArticulo(
+        int idTenant, int idArticulo, IEnumerable<int> idsListaPrecio) =>
+        [.. idsListaPrecio.OrderBy(idListaPrecio => ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio))];
 
     /// <summary><c>pg_advisory_xact_lock</c> con alcance de TRANSACCIÓN (se libera solo al
     /// COMMIT/ROLLBACK) tomado ANTES de leer nada de precios (judgment-day, item 2) — a diferencia del

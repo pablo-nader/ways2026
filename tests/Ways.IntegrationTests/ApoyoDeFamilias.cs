@@ -54,7 +54,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdActorAdmin, int IdListaGeneral, int IdListaMayorista,
         IReadOnlyList<int> Areas, IReadOnlyList<int> Categorias, IReadOnlyList<int> Grupos,
         IReadOnlyList<int> Proveedores, IReadOnlyList<int> Marcas, IReadOnlyList<int> Alicuotas,
-        HttpClient Admin) : IDisposable
+        HttpClient Admin, string MailAdmin, string PasswordAdmin) : IDisposable
     {
         public void Dispose() => Admin.Dispose();
     }
@@ -151,7 +151,8 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         return new Entorno(
             idTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, idListaGeneral, mayorista.Id,
             [.. areas.Select(a => a.Id)], [.. categorias.Select(c => c.Id)], [.. grupos.Select(g => g.Id)],
-            [.. proveedores.Select(p => p.Id)], [.. marcas.Select(m => m.Id)], alicuotas, admin);
+            [.. proveedores.Select(p => p.Id)], [.. marcas.Select(m => m.Id)], alicuotas, admin, mailAdmin,
+            resultado.PasswordTemporal);
     }
 
     /// <summary>Los trece campos compartidos de partida: todos con un valor (los nulleables también), para
@@ -263,11 +264,13 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         SembrarPrecioAsync(e, idArticulo, idLista, monto, DateTimeOffset.UtcNow.AddDays(-2), null);
 
     /// <summary>El estado que deja programar un precio: el vigente hasta la fecha del pendiente y el pendiente
-    /// a partir de ahí (<c>vigente_hasta</c> nulo, <c>vigente_desde</c> a futuro).</summary>
+    /// a partir de ahí (<c>vigente_hasta</c> nulo, <c>vigente_desde</c> a futuro). Para sembrar varios artículos
+    /// con la MISMA fecha de pendiente se pasa <paramref name="desdeDelPendiente"/>.</summary>
     public async Task<DateTimeOffset> SembrarPrecioPendienteAsync(
-        Entorno e, int idArticulo, int idLista, decimal montoVigente, decimal montoPendiente)
+        Entorno e, int idArticulo, int idLista, decimal montoVigente, decimal montoPendiente,
+        DateTimeOffset? desdeDelPendiente = null)
     {
-        var desdePendiente = DateTimeOffset.UtcNow.AddDays(3);
+        var desdePendiente = desdeDelPendiente ?? DateTimeOffset.UtcNow.AddDays(3);
         await SembrarPrecioAsync(e, idArticulo, idLista, montoVigente, DateTimeOffset.UtcNow.AddDays(-2), desdePendiente);
         await SembrarPrecioAsync(e, idArticulo, idLista, montoPendiente, desdePendiente, null);
 

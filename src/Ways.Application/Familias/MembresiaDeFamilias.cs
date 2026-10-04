@@ -102,6 +102,38 @@ internal static class MembresiaDeFamilias
         }
     }
 
+    /// <summary>Lo que el alta de un artículo dentro de una familia necesita saber de ella: su nombre, para los
+    /// mensajes, y si está activa.</summary>
+    public sealed record FamiliaParaIngresar(string Nombre, bool Activa);
+
+    /// <summary>La familia a la que va a entrar un artículo nuevo: VIVA (<c>deleted_at IS NULL</c>) y de este
+    /// tenant, leída y bloqueada <c>FOR SHARE</c> en un solo statement, bajo el lock de membresía exclusivo;
+    /// <c>null</c> si no existe, es de otro tenant o está dada de baja. El <c>FOR SHARE</c> —y no el
+    /// <c>FOR KEY SHARE</c> de los chequeos de catálogo, que solo choca con quien borra o cambia la clave— es
+    /// lo que serializa el alta con cualquier <c>UPDATE</c> de la fila de la familia, sea una baja lógica o un
+    /// cambio de <c>activo</c>: todo <c>UPDATE</c> toma al menos <c>FOR NO KEY UPDATE</c>, que choca con
+    /// <c>FOR SHARE</c>. Si la fila cambió mientras se esperaba su lock, PostgreSQL reevalúa el <c>WHERE</c>
+    /// sobre la versión nueva y la descarta si ya no está viva.</summary>
+    public static async Task<FamiliaParaIngresar?> LeerFamiliaParaIngresarAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT nombre, activo FROM familias " +
+            "WHERE id_familia = $1 AND id_tenant = $2 AND deleted_at IS NULL " +
+            "FOR SHARE";
+
+        ParametrosDeComando.Agregar(comando, idFamilia);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+
+        return await lector.ReadAsync(ct)
+            ? new FamiliaParaIngresar(lector.GetString(0), lector.GetBoolean(1))
+            : null;
+    }
+
     /// <summary>409 <c>alcance_requerido</c>: el artículo es miembro y el cliente no eligió.
     /// <paramref name="queHayQueIndicar"/> completa la oración que nombra la familia y la cantidad de
     /// artículos vivos (<see cref="ErrorDominio"/> no lleva datos estructurados): lo que cada escritor

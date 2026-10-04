@@ -586,7 +586,8 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var contexto = new ContextoFijo(e.IdTenant, e.IdActorAdmin);
 
         return (db, new ServicioDeArticulos(
-            db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto), new GuardaDeReferencias(db, new InspectorDeUso(db))));
+            db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto), new GuardaDeReferencias(db, new InspectorDeUso(db)),
+            new ServicioDePrecios(db, reloj, contexto)));
     }
 
     /// <summary>Un contexto y un servicio, dos escrituras seguidas: lo que hace cualquier llamador que atrapa

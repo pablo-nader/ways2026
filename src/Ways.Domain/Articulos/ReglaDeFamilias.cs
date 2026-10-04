@@ -74,6 +74,41 @@ public static class ReglaDeFamilias
     }
 
     /// <summary>
+    /// La decisión del ALTA de un artículo dentro de una familia (doc 10 §3), con la precedencia de los
+    /// rechazos: familia inactiva, después familia sin miembros vivos y después campos compartidos distintos.
+    /// <paramref name="referencia"/> son los trece valores compartidos del miembro vivo de menor id (<c>null</c>
+    /// ⇒ la familia no tiene ninguno), y <paramref name="pedidos"/> los del artículo que entra; los dos tienen
+    /// que salir de lecturas hechas bajo el lock de membresía exclusivo. Un artículo no entra a una familia con
+    /// valores propios: tienen que ser idénticos a los del resto, porque la familia no guarda ninguno y sus
+    /// miembros son la fuente de verdad.
+    ///
+    /// <code>
+    /// familia   | miembros vivos | valores compartidos | resolución
+    /// inactiva  | (cualquiera)   | (cualquiera)        | FamiliaInactiva
+    /// activa    | ninguno        | (no se comparan)    | FamiliaSinArticulos
+    /// activa    | alguno         | distintos           | ValoresDistintos
+    /// activa    | alguno         | idénticos           | Permitido
+    /// </code>
+    /// </summary>
+    public static ResolucionDeIngresoAFamilia ResolverIngreso(
+        bool familiaActiva, ValoresCompartidosDeFamilia? referencia, ValoresCompartidosDeFamilia pedidos)
+    {
+        if (!familiaActiva)
+        {
+            return ResolucionDeIngresoAFamilia.FamiliaInactiva;
+        }
+
+        if (referencia is null)
+        {
+            return ResolucionDeIngresoAFamilia.FamiliaSinArticulos;
+        }
+
+        return referencia.CamposDistintos(pedidos).Count > 0
+            ? ResolucionDeIngresoAFamilia.ValoresDistintos
+            : ResolucionDeIngresoAFamilia.Permitido;
+    }
+
+    /// <summary>
     /// <c>true</c> si el escritor puede cambiar la PERTENENCIA y por eso toma el lock de membresía
     /// en modo exclusivo; <c>false</c> si solo necesita que la pertenencia no cambie mientras
     /// escribe (modo compartido). Se decide por el modo pedido, antes de leer nada: un lock

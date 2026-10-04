@@ -61,11 +61,15 @@ namespace Ways.Application.Articulos;
 /// familias — lock de membresía como primera sentencia (exclusivo solo con el alcance <c>SoloEste</c>),
 /// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los trece campos
 /// compartidos a TODOS los miembros vivos solo cuando el pedido cambia alguno y el cliente eligió el alcance
-/// <c>Familia</c>; los campos propios son siempre del artículo editado.
+/// <c>Familia</c>; los campos propios son siempre del artículo editado. <see cref="CrearAsync"/> con
+/// <see cref="AltaArticulo.IdFamilia"/> es un cambio de pertenencia: toma el lock de membresía exclusivo,
+/// exige que los trece campos compartidos del pedido sean idénticos a los del miembro vivo de menor id y copia
+/// su estado de precios con <see cref="ServicioDePrecios"/>, que sigue siendo el único escritor de
+/// <c>precios</c>.
 /// </summary>
 public class ServicioDeArticulos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
-    GuardaDeReferencias guarda)
+    GuardaDeReferencias guarda, ServicioDePrecios servicioDePrecios)
 {
     /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.4; design.md:60, decisión 9): el
     /// tope de paginado/selección — YA existía como el literal <c>200</c> del clamp de abajo, la
@@ -222,7 +226,16 @@ public class ServicioDeArticulos(
     /// omite, dentro de la misma transacción que el INSERT — igual criterio que
     /// <see cref="Clientes.ServicioDeClientes.CrearAsync"/>. Cuando se provee, se valida único
     /// por tenant antes de abrir la transacción (pre-chequeo best-effort, db-error-backstops:
-    /// el backstop real es <c>ux_articulos_codigo_interno</c>).</summary>
+    /// el backstop real es <c>ux_articulos_codigo_interno</c>).
+    ///
+    /// <para>Con <see cref="AltaArticulo.IdFamilia"/> el artículo entra a una familia (doc 10 §3), en este orden
+    /// dentro de la transacción: lock de membresía EXCLUSIVO como primera sentencia, los 5 chequeos de
+    /// catálogo, la familia viva y activa leída y bloqueada <c>FOR SHARE</c>, la referencia —el miembro vivo
+    /// de menor id, una sola lectura bajo esos locks— y la comparación de los trece campos compartidos del
+    /// pedido; recién entonces el INSERT del artículo y la copia de su estado de precios
+    /// (<see cref="ServicioDePrecios.CopiarEstadoDePreciosAlNuevoMiembroAsync"/>), todo en la misma
+    /// transacción y con el mismo "ahora". Todo rechazo ocurre antes de insertar. Sin <c>IdFamilia</c> no toma
+    /// el lock de membresía y nada de esto corre.</para></summary>
     public async Task<ArticuloListado> CrearAsync(AltaArticulo datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
@@ -273,15 +286,39 @@ public class ServicioDeArticulos(
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            // fix/articulos-lock-referencias: primeras sentencias del lambda — bajo el lock de
-            // GuardaDeReferencias.BloquearSiEstaVivaAsync, no el pre-chequeo AnyAsync filtrado de
-            // antes (ver el doc-comment de la clase). Mismo orden área → categoría → marca →
-            // grupo → proveedor que tenían los pre-chequeos, mismo código/mensaje de error.
+            var conexion = await ObtenerConexionAbiertaAsync(ct);
+            var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+            // Entrar a una familia es un cambio de PERTENENCIA: el lock de membresía EXCLUSIVO es la primera
+            // sentencia de la transacción, antes que los locks de los catálogos. Excluye a toda escritura
+            // de familias, que toma el compartido —precios, edición de artículos, confirmación de compras—, así
+            // que ninguna está a mitad de camino mientras se lee la referencia y se copian sus precios. Un alta
+            // sin familia no cambia ninguna pertenencia y no lo toma.
+            if (datos.IdFamilia is not null)
+            {
+                await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
+            }
+
+            // fix/articulos-lock-referencias: primeras sentencias del lambda —después del lock de membresía,
+            // si hay familia— bajo el lock de GuardaDeReferencias.BloquearSiEstaVivaAsync, no el pre-chequeo
+            // AnyAsync filtrado de antes (ver el doc-comment de la clase). Mismo orden área → categoría →
+            // marca → grupo → proveedor que tenían los pre-chequeos, mismo código/mensaje de error.
             await ExigirAreaValidaAsync(datos.IdArea, ct);
             await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
             await ExigirMarcaValidaAsync(datos.IdMarca, ct);
             await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
             await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
+
+            // La familia se valida DESPUÉS de los catálogos del pedido —una referencia inexistente es un 400
+            // aunque además el pedido difiera de la familia— y ANTES de asignar el código interno y de insertar
+            // nada: un rechazo no deja ni el artículo ni el contador consumido.
+            int? idDeLaReferencia = null;
+
+            if (datos.IdFamilia is { } idFamilia)
+            {
+                idDeLaReferencia = await ExigirIngresoALaFamiliaAsync(
+                    conexion, transaccionCruda, idFamilia, idTenant, datos, ct);
+            }
 
             var codigoFinal = codigoInterno;
             if (codigoFinal is null)
@@ -313,6 +350,7 @@ public class ServicioDeArticulos(
                 Activo = datos.Activo,
                 ControlaLote = datos.ControlaLote,
                 AcumulaEnVenta = datos.AcumulaEnVenta,
+                IdFamilia = datos.IdFamilia,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };
@@ -333,6 +371,16 @@ public class ServicioDeArticulos(
                 await ExigirCodigoProveedorDisponibleAsync(datos.IdProveedorHabitual!.Value, codigoProveedor, ct);
                 db.CodigosProveedor.Add(NuevoCodigoProveedor(
                     articulo.Id, datos.IdProveedorHabitual.Value, codigoProveedor));
+                await db.SaveChangesAsync(ct);
+            }
+
+            // El miembro nuevo nace con el estado de precios de la referencia, en esta misma transacción y con
+            // el mismo "ahora" que el artículo. ServicioDePrecios es el único escritor de precios: acá solo se
+            // le pide la copia, y las filas se guardan con este SaveChangesAsync.
+            if (idDeLaReferencia is { } idArticuloDeReferencia)
+            {
+                await servicioDePrecios.CopiarEstadoDePreciosAlNuevoMiembroAsync(
+                    articulo.Id, idArticuloDeReferencia, idTenant, ahora, ct);
                 await db.SaveChangesAsync(ct);
             }
 
@@ -633,6 +681,65 @@ public class ServicioDeArticulos(
 
         return new ArticulosBloqueados(filas.Single(a => a.Id == id), filas, familia);
     }
+
+    /// <summary>Las validaciones del alta dentro de una familia, bajo el lock de membresía exclusivo que el
+    /// llamador ya tomó: la familia —viva, de este tenant, activa— leída y bloqueada <c>FOR SHARE</c>
+    /// (<see cref="MembresiaDeFamilias.LeerFamiliaParaIngresarAsync"/>), la referencia —el miembro vivo de menor
+    /// id, UNA lectura sin rastreo: no se muta— y la decisión de <see cref="ReglaDeFamilias.ResolverIngreso"/>.
+    /// Devuelve el id de la referencia, de la que se copian los precios.
+    ///
+    /// <para>Los rechazos son <c>404</c> si la familia no existe o está dada de baja (también la de otro
+    /// tenant), <c>familia_inactiva</c>, <c>familia_sin_articulos</c> y <c>familia_valores_distintos</c>, que
+    /// nombra las columnas que difieren, todos 409.</para></summary>
+    private async Task<int> ExigirIngresoALaFamiliaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, AltaArticulo datos,
+        CancellationToken ct)
+    {
+        var familia = await MembresiaDeFamilias.LeerFamiliaParaIngresarAsync(conexion, transaccion, idFamilia, idTenant, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la familia {idFamilia}.");
+
+        var referencia = await db.Articulos
+            .AsNoTracking()
+            .Where(a => a.IdFamilia == idFamilia)
+            .OrderBy(a => a.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var valoresDeLaReferencia = referencia is null ? null : ValoresCompartidosDeFamilia.De(referencia);
+        var pedidos = ValoresCompartidosDe(datos);
+
+        switch (ReglaDeFamilias.ResolverIngreso(familia.Activa, valoresDeLaReferencia, pedidos))
+        {
+            case ResolucionDeIngresoAFamilia.Permitido:
+                return referencia!.Id;
+
+            case ResolucionDeIngresoAFamilia.FamiliaInactiva:
+                throw ErrorDominio.Conflicto(
+                    "familia_inactiva",
+                    $"La familia \"{familia.Nombre}\" está inactiva: no se le pueden agregar artículos.");
+
+            case ResolucionDeIngresoAFamilia.FamiliaSinArticulos:
+                throw ErrorDominio.Conflicto(
+                    "familia_sin_articulos",
+                    $"La familia \"{familia.Nombre}\" no tiene artículos vivos: no hay valores de referencia " +
+                    "ni precios que copiar.");
+
+            case ResolucionDeIngresoAFamilia.ValoresDistintos:
+                throw ErrorDominio.Conflicto(
+                    "familia_valores_distintos",
+                    $"Los campos compartidos del artículo tienen que ser idénticos a los de la familia \"{familia.Nombre}\": " +
+                    $"difieren {string.Join(", ", valoresDeLaReferencia!.CamposDistintos(pedidos))}.");
+
+            default:
+                throw new InvalidOperationException("Resolución de ingreso a la familia desconocida.");
+        }
+    }
+
+    /// <summary>Los trece campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// alta. Un campo compartido nuevo no compila hasta que se lo pasa acá: el record es posicional.</summary>
+    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(AltaArticulo datos) => new(
+        datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
+        datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, datos.AcumulaEnVenta,
+        datos.CostoLista, datos.DescuentoProveedor, datos.CostoNominal);
 
     /// <summary>Los trece campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// edición. <see cref="EdicionArticulo.AcumulaEnVenta"/> puede venir <c>null</c> (conservar el valor

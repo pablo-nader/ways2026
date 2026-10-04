@@ -48,7 +48,17 @@ public record ArticuloListado(
 /// <see cref="DisponibleParaTodas"/> es <c>false</c> (spec: Availability Model,
 /// articulos_empresas Junction Schema) — se ignora en caso contrario. <see cref="CodigoProveedor"/>
 /// es el código que <see cref="IdProveedorHabitual"/> imprime en su factura: si viene no vacío
-/// exige proveedor habitual y se persiste en la misma transacción que el artículo.</summary>
+/// exige proveedor habitual y se persiste en la misma transacción que el artículo.
+///
+/// <para><see cref="IdFamilia"/> hace que el artículo nazca como miembro de esa familia (doc 10 §3). Entrar es un
+/// cambio de pertenencia: el alta toma el lock de membresía exclusivo y, bajo él, exige que la familia
+/// exista y esté viva (<c>404</c>), esté activa (<c>409 familia_inactiva</c>) y tenga al menos un artículo vivo
+/// (<c>409 familia_sin_articulos</c>), y que los trece campos compartidos del pedido sean idénticos a los del
+/// miembro vivo de menor id (<c>409 familia_valores_distintos</c>, que nombra las columnas que difieren). Entre
+/// esos campos está <see cref="AcumulaEnVenta"/>: un pedido que no lo trae lleva su valor por defecto,
+/// <c>true</c>, y se compara como cualquier otro. El artículo nace con el mismo estado de precios que ese
+/// miembro en cada lista fija. Sin <see cref="IdFamilia"/> el artículo no pertenece a ninguna familia y el alta
+/// no cambia.</para></summary>
 public record AltaArticulo(
     string? CodigoInterno,
     string Nombre,
@@ -70,7 +80,8 @@ public record AltaArticulo(
     bool Activo = true,
     bool ControlaLote = false,
     string? CodigoProveedor = null,
-    bool AcumulaEnVenta = true);
+    bool AcumulaEnVenta = true,
+    int? IdFamilia = null);
 
 /// <summary><c>CodigoInterno</c> no aparece a propósito: no es editable por este ABM (mismo
 /// criterio que <see cref="Ways.Application.Clientes.ClienteListado.Numero"/> — un valor

@@ -169,4 +169,98 @@ public class ReglaDeFamiliasTests
 
         Assert.Equal("modo", error.ParamName);
     }
+
+    // =================================================================================================
+    // Alta dentro de una familia: la tabla estado de la familia × valores compartidos
+    // =================================================================================================
+
+    private static readonly ValoresCompartidosDeFamilia ValoresDeReferencia = new(
+        IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
+        UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true, ControlaLote: false,
+        AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
+
+    private static readonly ValoresCompartidosDeFamilia ValoresQueDifieren = ValoresDeReferencia with { CostoLista = 51m };
+
+    public static TheoryData<bool, bool, bool, ResolucionDeIngresoAFamilia> TablaDeIngreso() => new()
+    {
+        // La familia inactiva se informa primero, sin importar lo que siga.
+        { false, false, true, ResolucionDeIngresoAFamilia.FamiliaInactiva },
+        { false, true, true, ResolucionDeIngresoAFamilia.FamiliaInactiva },
+        { false, true, false, ResolucionDeIngresoAFamilia.FamiliaInactiva },
+
+        // Activa y sin ningún miembro vivo: no hay con qué comparar ni qué copiar.
+        { true, false, true, ResolucionDeIngresoAFamilia.FamiliaSinArticulos },
+
+        // Activa y con referencia: lo que decide es si los trece valores coinciden.
+        { true, true, false, ResolucionDeIngresoAFamilia.ValoresDistintos },
+        { true, true, true, ResolucionDeIngresoAFamilia.Permitido }
+    };
+
+    [Theory]
+    [MemberData(nameof(TablaDeIngreso))]
+    public void CadaCeldaDeLaTablaDeIngresoDaSuResolucion(
+        bool familiaActiva, bool hayReferencia, bool valoresIdenticos, ResolucionDeIngresoAFamilia esperada)
+    {
+        var referencia = hayReferencia ? ValoresDeReferencia : null;
+        var pedidos = valoresIdenticos ? ValoresDeReferencia : ValoresQueDifieren;
+
+        Assert.Equal(esperada, ReglaDeFamilias.ResolverIngreso(familiaActiva, referencia, pedidos));
+    }
+
+    /// <summary>Una familia inactiva y sin miembros, con valores distintos a la vez: gana la inactiva. Es la
+    /// precedencia de los tres rechazos, afirmada en el caso que los tiene a los tres.</summary>
+    [Fact]
+    public void LaPrecedenciaDeLosRechazosEsInactivaLuegoSinArticulosLuegoValoresDistintos()
+    {
+        Assert.Equal(
+            ResolucionDeIngresoAFamilia.FamiliaInactiva,
+            ReglaDeFamilias.ResolverIngreso(familiaActiva: false, referencia: null, ValoresQueDifieren));
+        Assert.Equal(
+            ResolucionDeIngresoAFamilia.FamiliaSinArticulos,
+            ReglaDeFamilias.ResolverIngreso(familiaActiva: true, referencia: null, ValoresQueDifieren));
+        Assert.Equal(
+            ResolucionDeIngresoAFamilia.ValoresDistintos,
+            ReglaDeFamilias.ResolverIngreso(familiaActiva: true, ValoresDeReferencia, ValoresQueDifieren));
+    }
+
+    /// <summary>Cada uno de los trece campos compartidos, solo, alcanza para que el ingreso sea
+    /// <c>ValoresDistintos</c>: la regla no deja pasar una diferencia en ninguno.</summary>
+    [Theory]
+    [InlineData("id_area")]
+    [InlineData("id_categoria")]
+    [InlineData("id_grupo")]
+    [InlineData("id_proveedor_habitual")]
+    [InlineData("id_alicuota_iva")]
+    [InlineData("unidad_venta")]
+    [InlineData("unidades_por_bulto")]
+    [InlineData("es_producto")]
+    [InlineData("controla_lote")]
+    [InlineData("acumula_en_venta")]
+    [InlineData("costo_lista")]
+    [InlineData("descuento_proveedor")]
+    [InlineData("costo_nominal")]
+    public void UnaDiferenciaEnCualquieraDeLosTreceCamposImpideElIngreso(string columna)
+    {
+        var distinto = columna switch
+        {
+            "id_area" => ValoresDeReferencia with { IdArea = 21 },
+            "id_categoria" => ValoresDeReferencia with { IdCategoria = 22 },
+            "id_grupo" => ValoresDeReferencia with { IdGrupo = 23 },
+            "id_proveedor_habitual" => ValoresDeReferencia with { IdProveedorHabitual = 24 },
+            "id_alicuota_iva" => ValoresDeReferencia with { IdAlicuotaIva = 25 },
+            "unidad_venta" => ValoresDeReferencia with { UnidadVenta = UnidadVenta.Peso },
+            "unidades_por_bulto" => ValoresDeReferencia with { UnidadesPorBulto = 12m },
+            "es_producto" => ValoresDeReferencia with { EsProducto = false },
+            "controla_lote" => ValoresDeReferencia with { ControlaLote = true },
+            "acumula_en_venta" => ValoresDeReferencia with { AcumulaEnVenta = false },
+            "costo_lista" => ValoresDeReferencia with { CostoLista = 60m },
+            "descuento_proveedor" => ValoresDeReferencia with { DescuentoProveedor = 15m },
+            "costo_nominal" => ValoresDeReferencia with { CostoNominal = 45m },
+            _ => throw new ArgumentOutOfRangeException(nameof(columna), columna, "Columna compartida desconocida.")
+        };
+
+        Assert.Equal(
+            ResolucionDeIngresoAFamilia.ValoresDistintos,
+            ReglaDeFamilias.ResolverIngreso(familiaActiva: true, ValoresDeReferencia, distinto));
+    }
 }

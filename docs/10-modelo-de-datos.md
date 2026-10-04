@@ -342,13 +342,15 @@ familia no guarda ningún valor: sus miembros son la fuente de verdad, así que 
 miembros en la misma transacción. El esquema no fuerza la igualdad; la sostienen los escritores.
 
 > **Estado (familias de artículos):** implementados el modelo (tabla `familias`, columna
-> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y dos de los escritores que
-> sostienen la invariante: el de **precios** ("Precios con alcance de familia", abajo) y la **edición de
-> artículos** ("Edición con alcance de familia"). Los escritores de campos compartidos de `articulos`
-> son tres y los dos que faltan todavía **no replican a la familia**: el alta de un artículo
-> (`ServicioDeArticulos.CrearAsync`) y la confirmación de una compra, que actualiza `costo_nominal`
-> solo en el artículo de la línea (`ServicioDeCompras`). Todavía no hay endpoint de alta ni de membresía
-> de familias: la pertenencia se siembra por base.
+> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y tres de los escritores que
+> sostienen la invariante: el de **precios** ("Precios con alcance de familia", abajo), la **edición de
+> artículos** ("Edición con alcance de familia") y el **alta de un artículo dentro de una familia**
+> ("Alta dentro de una familia"). Los escritores de campos compartidos de `articulos` son tres —la edición,
+> el alta y la confirmación de una compra— y el que falta todavía **no replica a la familia**: la
+> confirmación de una compra actualiza `costo_nominal` solo en el artículo de la línea
+> (`ServicioDeCompras`). Todavía no hay endpoint para crear una familia ni para mover un artículo de una
+> familia a otra: la pertenencia se siembra por base, y el alta de un artículo con `idFamilia` es el único
+> camino de la API que agrega un miembro a una familia que ya existe.
 
 | | Campos |
 |---|---|
@@ -410,6 +412,31 @@ respuesta de la edición) exponen `idFamilia` tal como está guardado, sin trata
 de la familia está dada de baja: los escritores definen la pertenencia por `id_familia` y la baja del propio
 artículo, y un lector que lo anulara discreparía con ellos sobre quién es miembro.
 
+**Alta dentro de una familia.** `POST /api/articulos` acepta un `idFamilia` opcional: el artículo nace como
+miembro de esa familia. Entrar es un cambio de pertenencia: el alta toma el lock de membresía **exclusivo**
+como primera sentencia de su transacción —antes que los locks de los catálogos del pedido—, y bajo él:
+
+1. la familia tiene que existir y estar viva (si no, `404`; también la de otro tenant) y estar **activa**
+   (`409 familia_inactiva`). Se lee y se bloquea `FOR SHARE`, que serializa el alta con cualquier `UPDATE` de la
+   fila de la familia, sea una baja lógica o un cambio de `activo`;
+2. tiene que tener al menos un artículo vivo (`409 familia_sin_articulos`); la **referencia** es el miembro vivo
+   de menor `id_articulo`, leído una sola vez bajo esos locks;
+3. los trece campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
+   `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
+   `acumula_en_venta` lleva su valor por defecto, `true`, y se compara como cualquier otro. Los rechazos se evalúan en ese orden
+   (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
+4. se inserta el artículo con `id_familia = F` y, en la misma transacción y con el mismo "ahora", se copia el
+   estado de precios de la referencia en cada lista fija: el precio vigente a ese instante (la fila nueva
+   arranca en el "ahora" del alta) y, si la referencia tiene un precio pendiente, el vigente se cierra donde
+   empieza el pendiente y se abre una fila pendiente con su misma fecha. La historia cerrada de la referencia no
+   se copia. Cada fila insertada lleva su fila de auditoría `precio.cambio`, sin valor anterior.
+
+`ServicioDePrecios` sigue siendo el único escritor de `precios`: la copia es
+`CopiarEstadoDePreciosAlNuevoMiembroAsync`, que corre dentro de la transacción del alta, toma los locks de par
+del artículo nuevo en orden ascendente de su clave después de las filas y solo inserta. Los campos propios del
+artículo son los del pedido. Un fallo al guardar —también el de las filas de precio— revierte el artículo entero,
+y el alta no se reintenta. Sin `idFamilia` el alta no cambia: no toma el lock de membresía y no copia nada.
+
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
 orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
@@ -426,7 +453,10 @@ conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membres
 precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
 (`ServicioDeArticulos.ActualizarAsync`: exclusivo solo con `SoloEste`, compartido en cualquier otro caso; en
 "solo este" bloquea solo la fila propia y en los demás casos todos los miembros, los 5 chequeos de catálogo
-`FOR KEY SHARE` van después de las filas); todo escritor de campos compartidos tiene que respetarlo.
+`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` (`ServicioDeArticulos.CrearAsync`:
+exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
+artículo todavía no existe, y los locks de par del artículo nuevo al final); todo escritor de campos
+compartidos tiene que respetarlo.
 
 ### Listas de precio, con historia
 
