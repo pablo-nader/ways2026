@@ -20,8 +20,9 @@ namespace Ways.Application.Organizacion;
 /// <see cref="PoliticaDeRoles.ValidarAlcanceDeTenant"/> es la capa explícita de dominio
 /// (ADR-8), mismo patrón que <c>ServicioDeUsuarios.BuscarAsync</c>.
 ///
-/// El ALTA sigue siendo plataforma-only vía <see cref="ServicioDeAprovisionamiento"/> (ADR-16).
-/// La BAJA vive acá desde la etapa 20 (slice 4): es lógica (nunca borra la fila), pasa por
+/// El ALTA de tenants y empresas sigue siendo plataforma-only vía
+/// <see cref="ServicioDeAprovisionamiento"/> (ADR-16); la de puntos de venta sobre una empresa
+/// existente vive acá (<see cref="CrearPuntoVentaAsync"/>). La BAJA vive acá desde la etapa 20 (slice 4): es lógica (nunca borra la fila), pasa por
 /// <see cref="InspectorDeUso"/> —que es la única línea de defensa, porque ninguna constraint de
 /// Postgres puede dispararse contra un <c>UPDATE ... SET deleted_at</c>— y arrastra en cascada
 /// la proyección de organización compartiendo UN solo instante.
@@ -533,6 +534,108 @@ public class ServicioDeOrganizacion(
                 .Select(ProyeccionDePuntoVenta(db))
                 .FirstOrDefaultAsync(ct)
                 ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
+        }, ct);
+    }
+
+    /// <summary>
+    /// Alta de un punto de venta sobre una empresa EXISTENTE (cierra la latencia OD5 de la etapa 20
+    /// para puntos de venta: sin esto, <c>punto_venta_en_uso</c> y el mínimo estructural solo se
+    /// podían ejercitar por debajo de la API).
+    ///
+    /// <b>Alcance.</b> Plataforma crea bajo cualquier empresa; un admin solo bajo las de su tenant.
+    /// El filtro de EF (+ RLS) deja invisible la empresa de otro tenant, así que cruzar de tenant es
+    /// el mismo 404 que una empresa inexistente. El <c>IdTenant</c> del punto de venta sale SIEMPRE
+    /// de la empresa y nunca del llamador: en modo plataforma <c>EstamparTenant</c> exige que se
+    /// setee explícito, y en modo tenant lo pisa con el mismo valor. No hace falta suplantar al
+    /// tenant (a diferencia del aprovisionamiento, que además crea el propio tenant): el flip de
+    /// modo ya escribe filas de un tenant ajeno desde plataforma sin hacerlo.
+    ///
+    /// <b>Carrera con la baja de la empresa.</b> Toma el MISMO advisory lock que la baja de la
+    /// empresa y la del tenant (<see cref="TomarLockDeBajaAsync"/>, clave = tenant dueño) y recién
+    /// después lee la empresa, UNA sola vez (<c>single-read-under-lock</c>): si la baja ganó, la
+    /// empresa ya no es visible y esto es un 404; si el alta ganó, la baja relee los puntos de venta
+    /// bajo SU lock y arrastra el nuevo en la cascada. El <c>id_tenant</c> necesario para tomar el
+    /// lock se obtiene antes con una proyección escalar de una columna inmutable
+    /// (<c>single-read-under-lock</c> regla 6), que además da el 404 sin pagar transacción.
+    ///
+    /// <b>Sin reintento</b> (<c>ef-retry-safe-writes</c>, forma (b), por
+    /// <see cref="EnUnaTransaccionDeBajaAsync{T}"/>): el alta hace <c>Add</c> de un punto de venta
+    /// y de una fila de auditoría sin ninguna clave de idempotencia — ni siquiera un índice único
+    /// por nombre—, así que un reintento sobre un commit ambiguo crearía un SEGUNDO punto de venta
+    /// con su segundo rastro. El residual (fallo transitorio con commit ya hecho) lo traduce
+    /// <c>ManejadorDeErrores</c> a <c>503 resultado_incierto</c>.
+    ///
+    /// <c>db-error-backstops</c>: <c>fk_puntos_venta_empresa</c> está cubierta por la lectura de la
+    /// empresa bajo el lock — la fila nunca se borra físicamente, así que el <c>23503</c> no es
+    /// alcanzable; no hay índice único nuevo (el nombre no es único, igual que en el aprovisionamiento
+    /// y la edición).
+    ///
+    /// El punto de venta se inserta ANTES de encolar el rastro porque este necesita el id generado;
+    /// los dos <c>SaveChangesAsync</c> corren en la misma transacción, así que son atómicos.
+    /// </summary>
+    public async Task<PuntoVentaListado> CrearPuntoVentaAsync(
+        PuntoVentaAlta datos, CancellationToken ct = default)
+    {
+        var idEmpresa = datos.IdEmpresa
+            ?? throw new ErrorDominio("empresa_requerida", "El campo empresa es obligatorio.", 400);
+        var modo = datos.Modo
+            ?? throw new ErrorDominio("modo_requerido", "El campo modo es obligatorio.", 400);
+
+        if (!Enum.IsDefined(modo))
+        {
+            throw new ErrorDominio("modo_invalido", "El modo del punto de venta no es válido.", 400);
+        }
+
+        var nombre = Normalizar(datos.Nombre, "nombre_punto_venta", "nombre del punto de venta", 150);
+        var domicilio = NormalizarOpcional(datos.Domicilio, "domicilio", "domicilio", 255);
+        var horario = NormalizarOpcional(datos.Horario, "horario", "horario", 255);
+        var whatsapp = NormalizarOpcional(datos.Whatsapp, "whatsapp", "WhatsApp", 30);
+        var instagram = NormalizarOpcional(datos.Instagram, "instagram", "Instagram", 150);
+        var facebook = NormalizarOpcional(datos.Facebook, "facebook", "Facebook", 150);
+        var web = NormalizarOpcional(datos.Web, "sitio_web", "sitio web", 255);
+
+        var idTenant = await db.Empresas
+            .Where(e => e.Id == idEmpresa)
+            .Select(e => (int?)e.IdTenant)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la empresa {idEmpresa}.");
+
+        return await EnUnaTransaccionDeBajaAsync(async () =>
+        {
+            await TomarLockDeBajaAsync(idTenant, ct);
+
+            var empresa = await BuscarEmpresaAsync(idEmpresa, ct);
+
+            var ahora = reloj.Ahora;
+            var puntoVenta = new PuntoVenta
+            {
+                IdTenant = empresa.IdTenant,
+                IdEmpresa = empresa.Id,
+                Nombre = nombre,
+                Domicilio = domicilio,
+                Horario = horario,
+                Whatsapp = whatsapp,
+                Instagram = instagram,
+                Facebook = facebook,
+                Web = web,
+                Modo = modo,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            };
+            db.PuntosVenta.Add(puntoVenta);
+            await db.SaveChangesAsync(ct);
+
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.AltaDePuntoVenta(empresa.Id, nombre, modo);
+            auditoria.Registrar(new RegistroDeAuditoria(
+                puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaAlta, puntoVenta.Id,
+                valorAnterior, valorNuevo));
+            await db.SaveChangesAsync(ct);
+
+            return await db.PuntosVenta
+                .Where(p => p.Id == puntoVenta.Id)
+                .Select(ProyeccionDePuntoVenta(db))
+                .FirstOrDefaultAsync(ct)
+                ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {puntoVenta.Id}.");
         }, ct);
     }
 

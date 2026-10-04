@@ -93,6 +93,23 @@ public record PuntoVentaListado(
 /// (valor 0 del CLR) y el flip mutaria el punto de venta en silencio en vez de rechazar el pedido.
 public record PuntoVentaModoEdicion(ModoPuntoVenta? Modo);
 
+/// <summary>Cuerpo de <c>POST /api/puntos-venta</c>: alta de un punto de venta sobre una empresa
+/// EXISTENTE. <paramref name="IdEmpresa"/> y <paramref name="Modo"/> son <c>nullable</c> a propósito,
+/// por la misma razón que en <see cref="SolicitudDeAprovisionamiento"/>: un body que los omite
+/// ligaría el valor al default del CLR (<c>0</c> y <see cref="ModoPuntoVenta.Escritorio"/>) en vez
+/// de rechazarse con <c>400</c>. El resto es la misma lista descriptiva de
+/// <see cref="PuntoVentaEdicion"/>, con las mismas validaciones.</summary>
+public record PuntoVentaAlta(
+    int? IdEmpresa,
+    string Nombre,
+    ModoPuntoVenta? Modo,
+    string? Domicilio = null,
+    string? Horario = null,
+    string? Whatsapp = null,
+    string? Instagram = null,
+    string? Facebook = null,
+    string? Web = null);
+
 /// <summary><see cref="PuntoVentaListado.IdEmpresa"/> no es editable acá: es estructural
 /// (a qué empresa pertenece), no descriptivo — moverlo de empresa queda fuera de esta
 /// edición.</summary>

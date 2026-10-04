@@ -103,4 +103,17 @@ public class PayloadDeAuditoriaTests
             AccionAuditada.CcReliquidacion,
             PayloadDeAuditoria.ReliquidacionDeCc(
                 saldoAnterior: 1000m, saldoNuevo: 1200m, idMovimiento: 77, consumosActualizados: 3, diferencia: 200m));
+
+    [Fact]
+    public void AltaDePuntoVentaEsConstruibleYNoTieneEstadoPrevio()
+    {
+        var payload = PayloadDeAuditoria.AltaDePuntoVenta(7, "Sucursal Centro", Ways.Domain.Organizacion.ModoPuntoVenta.Web);
+
+        AsumirConstruible(AccionAuditada.PuntoVentaAlta, payload);
+
+        Assert.Null(payload.Anterior);
+        Assert.Equal(7, payload.Nuevo["id_empresa"]);
+        Assert.Equal("Sucursal Centro", payload.Nuevo["nombre"]);
+        Assert.Equal(Ways.Domain.Organizacion.ModoPuntoVenta.Web, payload.Nuevo["modo"]);
+    }
 }

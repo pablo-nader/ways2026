@@ -229,4 +229,17 @@ public static class PayloadDeAuditoria
         CambioDeModoPuntoVenta(ModoPuntoVenta modoAnterior, ModoPuntoVenta modoNuevo) => (
             new Dictionary<string, object?> { ["modo"] = modoAnterior },
             new Dictionary<string, object?> { ["modo"] = modoNuevo });
+
+    /// <summary><c>pv.alta</c>. Sin estado previo por definición; <c>{id_empresa, nombre, modo}</c>
+    /// es la identidad estructural del punto de venta — los datos descriptivos opcionales se
+    /// leen de la propia fila.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        AltaDePuntoVenta(int idEmpresa, string nombre, ModoPuntoVenta modo) => (
+            null,
+            new Dictionary<string, object?>
+            {
+                ["id_empresa"] = idEmpresa,
+                ["nombre"] = nombre,
+                ["modo"] = modo
+            });
 }

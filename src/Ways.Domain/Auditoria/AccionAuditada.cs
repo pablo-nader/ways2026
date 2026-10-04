@@ -119,11 +119,17 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// campos que <see cref="GastoEdicion"/> más <c>deleted_at</c> en <c>valor_nuevo</c>.</summary>
     public static readonly AccionAuditada GastoBaja = new("gasto.baja", "gasto");
 
-    /// <summary>Las 21 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
+    /// <summary>Alta de un punto de venta sobre una empresa existente —
+    /// <c>Organizacion/ServicioDeOrganizacion.cs</c>, <c>CrearPuntoVentaAsync</c>. Mismo dominio
+    /// abreviado <c>pv</c> que <see cref="PuntoVentaBaja"/>. El aprovisionamiento de un tenant
+    /// crea su primer punto de venta sin pasar por acá.</summary>
+    public static readonly AccionAuditada PuntoVentaAlta = new("pv.alta", "punto_venta");
+
+    /// <summary>Las 22 acciones del catálogo (12 de la primera pasada, proposal decisión 5, las
     /// tres bajas de organización de la etapa 20 slice 4, el flip de modo de stage-desktop-pos, la
     /// discrepancia de precio offline de stage-pos-venta-offline-backend, el cierre forzado
     /// sobre la guarda de rendición, más la venta local que superó el límite de crédito sin
-    /// validarlo y la edición/baja de gastos) — usada por el catálogo genérico de tests (naming
+    /// validarlo y la edición/baja de gastos y el alta de puntos de venta) — usada por el catálogo genérico de tests (naming
     /// <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier consumidor que
     /// necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
@@ -148,6 +154,7 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         CierreForzadoSinRendicion,
         VentaExcedioLimiteSinValidar,
         GastoEdicion,
-        GastoBaja
+        GastoBaja,
+        PuntoVentaAlta
     ];
 }

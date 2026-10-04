@@ -9,7 +9,9 @@ namespace Ways.Api.Endpoints;
 /// varios <c>MapGroup</c> sobre el mismo prefijo), empresas y puntos de venta (plataforma
 /// ve/edita cualquiera, un admin de tenant ve/edita solo los propios —
 /// <see cref="Politicas.GestionDeOrganizacion"/>). El ALTA sigue siendo plataforma-only vía
-/// <see cref="ServicioDeAprovisionamiento"/> (ADR-16) — acá no hay <c>POST</c> a propósito.
+/// <see cref="ServicioDeAprovisionamiento"/> (ADR-16) — acá no hay <c>POST</c> de tenants ni de
+/// empresas a propósito. La única excepción es el alta de un punto de venta sobre una empresa
+/// existente (<c>POST /api/puntos-venta</c>).
 ///
 /// La BAJA (etapa 20, slice 4) sí vive acá, y es LÓGICA: los tres <c>MapDelete</c> reusan la
 /// policy del grupo al que ya pertenecen, sin agregar ni una policy nueva. La asimetría del
@@ -92,6 +94,17 @@ public static class OrganizacionEndpoints
             servicio.ObtenerPuntoVentaAsync(id, ct))
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Obtiene un punto de venta.");
+
+        // Alta sobre una empresa existente (cierra OD5 para puntos de venta): misma policy que la
+        // edición y la baja. El aprovisionamiento sigue creando el primer punto de venta de un tenant.
+        puntosVenta.MapPost("/", async (
+            ServicioDeOrganizacion servicio, PuntoVentaAlta datos, CancellationToken ct) =>
+        {
+            var creado = await servicio.CrearPuntoVentaAsync(datos, ct);
+            return Results.Created($"/api/puntos-venta/{creado.Id}", creado);
+        })
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Crea un punto de venta sobre una empresa existente.");
 
         puntosVenta.MapPut("/{id:int}", (
             ServicioDeOrganizacion servicio, int id, PuntoVentaEdicion datos, CancellationToken ct) =>
