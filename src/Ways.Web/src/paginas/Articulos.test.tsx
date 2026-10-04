@@ -2546,7 +2546,7 @@ describe('Articulos — advertencia de código de barras que no parece un GTIN (
   })
 
   /**
-   * Cláusula bajo prueba: `setError('')` al inicio de `intentarAgregar`. Mutation-proof-tests: sacarlo
+   * Cláusula bajo prueba: `setError('')` en `intentarAgregar`, antes de evaluar el código. Mutation-proof-tests: sacarlo
    * deja el aviso rojo del POST fallido junto a la advertencia del código nuevo.
    */
   it('un intento nuevo que termina en advertencia retira el error de un POST anterior', async () => {
