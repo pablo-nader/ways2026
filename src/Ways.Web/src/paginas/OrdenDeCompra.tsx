@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
+import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { api, ErrorApi } from '../api/cliente'
 import {
   aSolicitudDeOrdenDeCompra,
@@ -30,6 +31,7 @@ import type {
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('es-AR') : '—'
@@ -133,6 +135,8 @@ type PropsFilaDeItem = {
 
 function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
   const incompleta = !lineaDeOrdenCompletaParaEnvio(linea)
+  const restriccion = restriccionDeCantidad(linea.unidadVenta)
+  const fraccionEnUnidad = esFraccionDeArticuloPorUnidad(linea.unidadVenta, linea.cantidadPedida)
 
   return (
     <tr className={incompleta ? 'table-warning text-muted' : undefined}>
@@ -140,16 +144,20 @@ function FilaDeItem({ linea, disabled, onCambio, onQuitar }: PropsFilaDeItem) {
         <SelectorDeArticulo
           descripcion={linea.descripcion}
           disabled={disabled}
-          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre })}
+          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre, unidadVenta: a.unidadVenta })}
         />
-        {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
+        {incompleta && (
+          <div className="small text-warning-emphasis">
+            {fraccionEnUnidad ? `${MENSAJE_DE_CANTIDAD_ENTERA} No se va a guardar.` : 'Línea incompleta — no se va a guardar.'}
+          </div>
+        )}
       </td>
       <td style={{ width: 120 }}>
         <input
           type="number"
-          step="0.001"
-          min="0"
-          className="form-control form-control-sm"
+          step={restriccion.step}
+          min={restriccion.min}
+          className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Cantidad pedida"
           value={linea.cantidadPedida}
           disabled={disabled}
@@ -321,6 +329,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
         }))
       : [],
   )
+  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || detalle?.estado === 'Borrador')
 
   useEffect(() => {
     if (detalle === null) return

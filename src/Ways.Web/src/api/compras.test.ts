@@ -231,6 +231,24 @@ describe('lineaCompletaParaEnvio', () => {
     expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: true, codigoLote: '', fechaVencimiento: '2026-12-01' }))).toBe(true)
   })
 
+  it('unidades fraccionarias: incompleta para un artículo por unidad, completa para uno por peso o sin unidad conocida', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5', unidadVenta: 'Unidad' }))).toBe(false)
+    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5', unidadVenta: 'Peso' }))).toBe(true)
+    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5' }))).toBe(true)
+  })
+
+  it('cero unidades sueltas sigue siendo válido para un artículo por unidad (el resto vienen en bultos)', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '0', bultos: '3', unidadesPorBulto: '12', unidadVenta: 'Unidad' }))).toBe(true)
+  })
+
+  it('unidadesPorBulto fraccionario no se juzga por la unidad de venta: es el tamaño del bulto, no una cantidad de la línea', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '2', bultos: '1', unidadesPorBulto: '0.5', unidadVenta: 'Unidad' }))).toBe(true)
+  })
+
+  it('una línea por concepto no se juzga por unidad de venta', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ tipo: 'concepto', idArticulo: '', descripcion: 'Flete', unidades: '1.5' }))).toBe(true)
+  })
+
   it('un artículo que no controla lote nunca exige fecha de vencimiento', () => {
     expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: false, fechaVencimiento: '' }))).toBe(true)
   })

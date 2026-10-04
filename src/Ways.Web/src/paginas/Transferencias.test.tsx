@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -665,5 +665,50 @@ describe('Transferencias — repetidos por lote (judgment-day fix, Slice 15)', (
     await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
 
     expect(await screen.findByText('El artículo 10 aparece más de una vez en la transferencia.')).toBeInTheDocument()
+  })
+})
+
+describe('Transferencias — cantidad según la unidad de venta', () => {
+  function mockearConArticulo(unidadVenta: 'Unidad' | 'Peso') {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture({ id: 1 }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })])
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ unidadVenta })], total: 1, pagina: 1, tamanio: 25 })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  async function elegirArticulo(usuario: ReturnType<typeof userEvent.setup>) {
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'fideos')
+    await usuario.click(await screen.findByText('ART-10 — Fideos 500g'))
+    return screen.getByLabelText('Cantidad')
+  }
+
+  it('un artículo por unidad fija paso y mínimo 1 y marca una fracción como línea que no se transfiere', async () => {
+    mockearConArticulo('Unidad')
+    const cantidad = await elegirArticulo(userEvent.setup())
+
+    expect(cantidad).toHaveAttribute('step', '1')
+    expect(cantidad).toHaveAttribute('min', '1')
+
+    fireEvent.change(cantidad, { target: { value: '1.5' } })
+
+    expect(cantidad).toHaveClass('is-invalid')
+    expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera. No se va a transferir.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a transferir.')).toBeInTheDocument()
+  })
+
+  it('un artículo por peso conserva el paso de 0.001 y acepta fracciones', async () => {
+    mockearConArticulo('Peso')
+    const cantidad = await elegirArticulo(userEvent.setup())
+
+    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).toHaveAttribute('min', '0.001')
+
+    fireEvent.change(cantidad, { target: { value: '1.5' } })
+
+    expect(cantidad).not.toHaveClass('is-invalid')
+    expect(screen.queryByText(/incompleta/)).not.toBeInTheDocument()
   })
 })

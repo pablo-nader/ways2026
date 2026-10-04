@@ -5,6 +5,7 @@
  * (design.md: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { esTextoDeCantidadValido } from './cantidadPorUnidad'
 import type {
   ComprobanteEmitido,
   EstadoRemito,
@@ -15,6 +16,7 @@ import type {
   RemitoDetalle,
   SolicitudDeFacturacionDeRemitos,
   SolicitudDeRemito,
+  UnidadVenta,
 } from './tipos'
 
 // ---- Offset local para desde/hasta — mismo criterio que presupuestos.ts/compras.ts/
@@ -111,6 +113,10 @@ export type LineaDeRemitoFormulario = {
   descripcion: string
   cantidad: string
   idLote: number | null
+  /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso del campo de
+   * cantidad y si una fracción se acepta. Se toma del artículo al elegirlo; en un documento
+   * reabierto la completa `useUnidadesDeVentaDeLineas`. Ausente se trata como `Peso` (permisivo). */
+  unidadVenta?: UnidadVenta
 }
 
 export function lineaDeRemitoVacia(clave: number): LineaDeRemitoFormulario {
@@ -122,11 +128,10 @@ export function itemDeRemitoAFormulario(clave: number, item: ItemDeRemito): Line
   return { clave, idArticulo: item.idArticulo, descripcion: item.descripcion, cantidad: String(item.cantidad), idLote: item.idLote }
 }
 
-/** Una línea sin artículo o sin cantidad > 0 nunca viaja al servidor — mismo criterio que
- * `lineaDePresupuestoCompletaParaEnvio`. */
+/** Una línea sin artículo o sin cantidad válida para su unidad de venta (positiva y, por unidad,
+ * entera) nunca viaja al servidor — mismo criterio que `lineaDePresupuestoCompletaParaEnvio`. */
 export function lineaDeRemitoCompletaParaEnvio(l: LineaDeRemitoFormulario): boolean {
-  const cantidad = Number(l.cantidad)
-  return l.idArticulo !== '' && l.cantidad.trim() !== '' && Number.isFinite(cantidad) && cantidad > 0
+  return l.idArticulo !== '' && esTextoDeCantidadValido(l.unidadVenta, l.cantidad)
 }
 
 function numeroDeCantidad(valor: string): number {
