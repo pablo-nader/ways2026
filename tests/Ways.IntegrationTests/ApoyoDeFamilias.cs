@@ -1,0 +1,482 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using Ways.Application.Abstracciones;
+using Ways.Application.Articulos;
+using Ways.Application.Familias;
+using Ways.Application.Organizacion;
+using Ways.Application.Precios;
+using Ways.Application.Usuarios;
+using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
+using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
+using Ways.Domain.Proveedores;
+using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
+
+namespace Ways.IntegrationTests;
+
+/// <summary>
+/// Siembra y observación compartidas por las pruebas de los escritores de familias de artículos (doc 10
+/// §3): el tenant con sus catálogos —dos de cada uno, para poder cambiar un campo compartido a otro valor
+/// válido—, las familias y sus miembros con valores compartidos explícitos, y las lecturas de la base
+/// (siempre sobre un contexto nuevo, nunca sobre el que escribió) y los observadores de <c>pg_locks</c>
+/// que usan las pruebas de concurrencia. Una prueba de concurrencia de familias es un rendezvous
+/// determinístico: una conexión cruda sostiene un lock, la escritura queda observada esperando en
+/// <c>pg_locks</c> y recién ahí se libera (<c>mutation-proof-tests</c>, regla 13).
+/// </summary>
+internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
+{
+    public const string MailRoot = "test@test.com";
+    public const string PasswordRoot = "root";
+
+    public static readonly TimeSpan EsperaMaxima = TimeSpan.FromSeconds(30);
+
+    /// <summary>Cada tenant sembrado reserva un bloque de ids para sus catálogos. Los ids de un catálogo se
+    /// escriben explícitos y DISTINTOS entre catálogos (área, categoría, grupo, proveedor, marca): con el
+    /// identity de cada tabla avanzando en paralelo, el área 7 y la categoría 7 coincidirían, y un escritor
+    /// que cruzara dos campos compartidos del pedido (el área en la categoría) pasaría todas las pruebas.</summary>
+    private static int siguienteBloqueDeIds = 20_000_000;
+
+    /// <summary>Opciones del cliente HTTP de las pruebas: como el navegador, el enum viaja como TEXTO
+    /// (<c>"Familia"</c>, <c>"Peso"</c>), no como su ordinal.</summary>
+    public static readonly JsonSerializerOptions OpcionesJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
+    public sealed record Entorno(
+        int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdActorAdmin, int IdListaGeneral, int IdListaMayorista,
+        IReadOnlyList<int> Areas, IReadOnlyList<int> Categorias, IReadOnlyList<int> Grupos,
+        IReadOnlyList<int> Proveedores, IReadOnlyList<int> Marcas, IReadOnlyList<int> Alicuotas,
+        HttpClient Admin) : IDisposable
+    {
+        public void Dispose() => Admin.Dispose();
+    }
+
+    // =================================================================================================
+    // Siembra
+    // =================================================================================================
+
+    public async Task<Entorno> PrepararAsync(string nombre)
+    {
+        var unico = $"{nombre}-{Guid.NewGuid().ToString("N")[..8]}".ToLowerInvariant();
+        var mailAdmin = $"{unico}@ways.test";
+
+        using var root = fixture.CreateClient();
+        var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
+        Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
+
+        var respuesta = await root.PostAsJsonAsync(
+            "/api/plataforma/tenants",
+            new SolicitudDeAprovisionamiento(unico, $"{unico} SA", "Local 1", mailAdmin, ModoPuntoVenta.Web));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
+        var idTenant = resultado.IdTenant;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var bloque = Interlocked.Add(ref siguienteBloqueDeIds, 100);
+
+        var areas = new[]
+        {
+            new Area { Id = bloque + 1, IdTenant = idTenant, Nombre = $"{unico}-area-1", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora },
+            new Area { Id = bloque + 2, IdTenant = idTenant, Nombre = $"{unico}-area-2", Orden = 2, CreatedAt = ahora, UpdatedAt = ahora }
+        };
+        var categorias = new[]
+        {
+            new Categoria { Id = bloque + 11, IdTenant = idTenant, Nombre = $"{unico}-cat-1", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora },
+            new Categoria { Id = bloque + 12, IdTenant = idTenant, Nombre = $"{unico}-cat-2", Orden = 2, CreatedAt = ahora, UpdatedAt = ahora }
+        };
+        var grupos = new[]
+        {
+            new Grupo { Id = bloque + 21, IdTenant = idTenant, Nombre = $"{unico}-grupo-1", CreatedAt = ahora, UpdatedAt = ahora },
+            new Grupo { Id = bloque + 22, IdTenant = idTenant, Nombre = $"{unico}-grupo-2", CreatedAt = ahora, UpdatedAt = ahora }
+        };
+        var marcas = new[]
+        {
+            new Marca { Id = bloque + 41, IdTenant = idTenant, Nombre = $"{unico}-marca-1", CreatedAt = ahora, UpdatedAt = ahora },
+            new Marca { Id = bloque + 42, IdTenant = idTenant, Nombre = $"{unico}-marca-2", CreatedAt = ahora, UpdatedAt = ahora }
+        };
+
+        db.Areas.AddRange(areas);
+        db.Categorias.AddRange(categorias);
+        db.Grupos.AddRange(grupos);
+        db.Marcas.AddRange(marcas);
+        await db.SaveChangesAsync();
+
+        var idCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync();
+        var proveedores = new[]
+        {
+            new Proveedor
+            {
+                Id = bloque + 31, IdTenant = idTenant, RazonSocial = $"{unico}-prov-1",
+                IdCondicionFiscal = idCondicionFiscal, CreatedAt = ahora, UpdatedAt = ahora
+            },
+            new Proveedor
+            {
+                Id = bloque + 32, IdTenant = idTenant, RazonSocial = $"{unico}-prov-2",
+                IdCondicionFiscal = idCondicionFiscal, CreatedAt = ahora, UpdatedAt = ahora
+            }
+        };
+        db.Proveedores.AddRange(proveedores);
+
+        var mayorista = new ListaPrecio
+        {
+            IdTenant = idTenant, Nombre = "Mayorista", EsDefault = false, Modo = ModoLista.Fija,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(mayorista);
+        await db.SaveChangesAsync();
+
+        var alicuotas = await db.AlicuotasIva.OrderBy(a => a.Id).Select(a => a.Id).Take(2).ToListAsync();
+        Assert.Equal(2, alicuotas.Count);
+
+        var idListaGeneral = await db.ListasPrecio
+            .Where(l => l.IdTenant == idTenant && l.EsDefault)
+            .Select(l => l.Id)
+            .SingleAsync();
+
+        var admin = fixture.CreateClient();
+        var loginAdmin = await admin.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
+        Assert.Equal(HttpStatusCode.OK, loginAdmin.StatusCode);
+
+        return new Entorno(
+            idTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, idListaGeneral, mayorista.Id,
+            [.. areas.Select(a => a.Id)], [.. categorias.Select(c => c.Id)], [.. grupos.Select(g => g.Id)],
+            [.. proveedores.Select(p => p.Id)], [.. marcas.Select(m => m.Id)], alicuotas, admin);
+    }
+
+    /// <summary>Los trece campos compartidos de partida: todos con un valor (los nulleables también), para
+    /// que cada cambio de <see cref="ValoresConUnCampoCambiado"/> sea de un valor a OTRO y no de nulo a
+    /// valor.</summary>
+    public static ValoresCompartidosDeFamilia ValoresBase(Entorno e) => new(
+        IdArea: e.Areas[0], IdCategoria: e.Categorias[0], IdGrupo: e.Grupos[0], IdProveedorHabitual: e.Proveedores[0],
+        IdAlicuotaIva: e.Alicuotas[0], UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true,
+        ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
+
+    /// <summary>Los valores de <see cref="ValoresBase"/> con UN solo campo (el que nombra
+    /// <paramref name="columna"/>, con el nombre de la columna de <c>articulos</c>) cambiado a otro valor
+    /// válido.</summary>
+    public static ValoresCompartidosDeFamilia ValoresConUnCampoCambiado(Entorno e, string columna)
+    {
+        var @base = ValoresBase(e);
+
+        return columna switch
+        {
+            "id_area" => @base with { IdArea = e.Areas[1] },
+            "id_categoria" => @base with { IdCategoria = e.Categorias[1] },
+            "id_grupo" => @base with { IdGrupo = e.Grupos[1] },
+            "id_proveedor_habitual" => @base with { IdProveedorHabitual = e.Proveedores[1] },
+            "id_alicuota_iva" => @base with { IdAlicuotaIva = e.Alicuotas[1] },
+            "unidad_venta" => @base with { UnidadVenta = UnidadVenta.Peso },
+            "unidades_por_bulto" => @base with { UnidadesPorBulto = 12m },
+            "es_producto" => @base with { EsProducto = false },
+            "controla_lote" => @base with { ControlaLote = true },
+            "acumula_en_venta" => @base with { AcumulaEnVenta = false },
+            "costo_lista" => @base with { CostoLista = 60m },
+            "descuento_proveedor" => @base with { DescuentoProveedor = 15m },
+            "costo_nominal" => @base with { CostoNominal = 45m },
+            _ => throw new ArgumentOutOfRangeException(nameof(columna), columna, "Columna compartida desconocida.")
+        };
+    }
+
+    /// <summary>Las trece columnas compartidas de <c>articulos</c>, en el orden de declaración del record.</summary>
+    public static readonly string[] ColumnasCompartidas =
+    [
+        "id_area", "id_categoria", "id_grupo", "id_proveedor_habitual", "id_alicuota_iva", "unidad_venta",
+        "unidades_por_bulto", "es_producto", "controla_lote", "acumula_en_venta", "costo_lista",
+        "descuento_proveedor", "costo_nominal"
+    ];
+
+    public async Task<int> SembrarFamiliaAsync(Entorno e, string nombre, bool activa = true, bool dadaDeBaja = false)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var familia = new Familia
+        {
+            IdTenant = e.IdTenant, Nombre = nombre, Activo = activa, CreatedAt = ahora, UpdatedAt = ahora,
+            DeletedAt = dadaDeBaja ? ahora : null
+        };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    /// <summary>Un artículo con los campos compartidos de <paramref name="compartidos"/> escritos uno por uno
+    /// (la siembra no usa <see cref="ValoresCompartidosDeFamilia.AplicarA"/>: es parte de lo que se prueba).
+    /// Un artículo "dado de baja" lleva <c>DeletedAt</c> y sigue apuntando a su familia: no cuenta como
+    /// miembro. <paramref name="id"/> fija el id en vez de dejarlo al identity.</summary>
+    public async Task<int> SembrarArticuloAsync(
+        Entorno e, string nombre, ValoresCompartidosDeFamilia compartidos, int? idFamilia = null,
+        bool dadoDeBaja = false, int? idMarca = null, string? descripcion = null, bool activo = true,
+        bool disponibleParaTodas = true, int? id = null)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        var articulo = new Articulo
+        {
+            Id = id ?? 0,
+            IdTenant = e.IdTenant,
+            CodigoInterno = $"{nombre}-{Guid.NewGuid().ToString("N")[..8]}",
+            Nombre = nombre,
+            Descripcion = descripcion,
+            IdMarca = idMarca,
+            Activo = activo,
+            DisponibleParaTodas = disponibleParaTodas,
+            IdFamilia = idFamilia,
+            IdArea = compartidos.IdArea,
+            IdCategoria = compartidos.IdCategoria,
+            IdGrupo = compartidos.IdGrupo,
+            IdProveedorHabitual = compartidos.IdProveedorHabitual,
+            IdAlicuotaIva = compartidos.IdAlicuotaIva,
+            UnidadVenta = compartidos.UnidadVenta,
+            UnidadesPorBulto = compartidos.UnidadesPorBulto,
+            EsProducto = compartidos.EsProducto,
+            ControlaLote = compartidos.ControlaLote,
+            AcumulaEnVenta = compartidos.AcumulaEnVenta,
+            CostoLista = compartidos.CostoLista,
+            DescuentoProveedor = compartidos.DescuentoProveedor,
+            CostoNominal = compartidos.CostoNominal,
+            CreatedAt = ahora,
+            UpdatedAt = ahora,
+            DeletedAt = dadoDeBaja ? ahora : null
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+
+        return articulo.Id;
+    }
+
+    /// <summary>Un precio abierto (<c>vigente_hasta</c> nulo) que arrancó hace dos días.</summary>
+    public Task SembrarPrecioVigenteAsync(Entorno e, int idArticulo, int idLista, decimal monto) =>
+        SembrarPrecioAsync(e, idArticulo, idLista, monto, DateTimeOffset.UtcNow.AddDays(-2), null);
+
+    /// <summary>El estado que deja programar un precio: el vigente hasta la fecha del pendiente y el pendiente
+    /// a partir de ahí (<c>vigente_hasta</c> nulo, <c>vigente_desde</c> a futuro).</summary>
+    public async Task<DateTimeOffset> SembrarPrecioPendienteAsync(
+        Entorno e, int idArticulo, int idLista, decimal montoVigente, decimal montoPendiente)
+    {
+        var desdePendiente = DateTimeOffset.UtcNow.AddDays(3);
+        await SembrarPrecioAsync(e, idArticulo, idLista, montoVigente, DateTimeOffset.UtcNow.AddDays(-2), desdePendiente);
+        await SembrarPrecioAsync(e, idArticulo, idLista, montoPendiente, desdePendiente, null);
+
+        return desdePendiente;
+    }
+
+    public async Task SembrarPrecioAsync(
+        Entorno e, int idArticulo, int idLista, decimal monto, DateTimeOffset desde, DateTimeOffset? hasta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        db.Precios.Add(new Precio
+        {
+            IdTenant = e.IdTenant, IdArticulo = idArticulo, IdListaPrecio = idLista, Monto = monto,
+            VigenteDesde = desde, VigenteHasta = hasta, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
+
+    // =================================================================================================
+    // Lectura de la base (contexto nuevo, nunca el que escribió)
+    // =================================================================================================
+
+    public async Task<Articulo> LeerAsync(int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.Articulos.IgnoreQueryFilters().AsNoTracking().SingleAsync(a => a.Id == idArticulo);
+    }
+
+    public async Task<List<Precio>> FilasDePrecioAsync(int idArticulo, int idLista)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.Precios.IgnoreQueryFilters()
+            .Where(p => p.IdArticulo == idArticulo && p.IdListaPrecio == idLista)
+            .OrderBy(p => p.VigenteDesde)
+            .ThenBy(p => p.Id)
+            .ToListAsync();
+    }
+
+    public async Task<List<Ways.Domain.Auditoria.Auditoria>> AuditoriaDePreciosAsync(int idTenant)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.Auditoria.IgnoreQueryFilters()
+            .Where(a => a.IdTenant == idTenant && a.Accion == "precio.cambio")
+            .OrderBy(a => a.Id)
+            .ToListAsync();
+    }
+
+    public WaysDbContext ContextoDelTenant(Entorno e, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptores) =>
+        fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant), interceptores);
+
+    // =================================================================================================
+    // Pedidos HTTP
+    // =================================================================================================
+
+    /// <summary>El pedido de edición que no cambia nada: los valores guardados de <paramref name="a"/> tal cual.</summary>
+    public static EdicionArticulo EdicionIgualA(Articulo a, AlcanceDeFamilia? alcance = null) => new(
+        Nombre: a.Nombre, Descripcion: a.Descripcion, IdArea: a.IdArea, IdCategoria: a.IdCategoria,
+        IdMarca: a.IdMarca, IdGrupo: a.IdGrupo, IdProveedorHabitual: a.IdProveedorHabitual,
+        IdAlicuotaIva: a.IdAlicuotaIva, UnidadVenta: a.UnidadVenta, UnidadesPorBulto: a.UnidadesPorBulto,
+        EsProducto: a.EsProducto, CostoLista: a.CostoLista, DescuentoProveedor: a.DescuentoProveedor,
+        CostoNominal: a.CostoNominal, DisponibleParaTodas: a.DisponibleParaTodas, IdsEmpresas: null, Activo: a.Activo,
+        ControlaLote: a.ControlaLote, AcumulaEnVenta: a.AcumulaEnVenta, Alcance: alcance);
+
+    /// <summary>Los trece campos compartidos de <paramref name="valores"/> puestos en el pedido de
+    /// edición.</summary>
+    public static EdicionArticulo ConCompartidos(EdicionArticulo edicion, ValoresCompartidosDeFamilia valores) =>
+        edicion with
+        {
+            IdArea = valores.IdArea, IdCategoria = valores.IdCategoria, IdGrupo = valores.IdGrupo,
+            IdProveedorHabitual = valores.IdProveedorHabitual, IdAlicuotaIva = valores.IdAlicuotaIva,
+            UnidadVenta = valores.UnidadVenta, UnidadesPorBulto = valores.UnidadesPorBulto,
+            EsProducto = valores.EsProducto, ControlaLote = valores.ControlaLote,
+            AcumulaEnVenta = valores.AcumulaEnVenta, CostoLista = valores.CostoLista,
+            DescuentoProveedor = valores.DescuentoProveedor, CostoNominal = valores.CostoNominal
+        };
+
+    public static Task<HttpResponseMessage> PutArticuloAsync(HttpClient admin, int id, EdicionArticulo edicion) =>
+        admin.PutAsJsonAsync($"/api/articulos/{id}", edicion, OpcionesJson);
+
+    public static async Task<(string? Codigo, string? Mensaje)> ProblemaAsync(HttpResponseMessage respuesta)
+    {
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+
+        return (
+            problema.GetProperty("codigo").GetString(),
+            problema.TryGetProperty("title", out var titulo) ? titulo.GetString() : null);
+    }
+
+    // =================================================================================================
+    // Observadores de pg_locks
+    // =================================================================================================
+
+    public sealed record Pid(int Valor);
+
+    public sealed record Candado(int Pid, long ClassId, long ObjId, int ObjSubId, string Modo, bool Concedido);
+
+    public static async Task EjecutarAsync(
+        NpgsqlConnection conexion, NpgsqlTransaction transaccion, string sql, params object[] parametros)
+    {
+        await using var comando = new NpgsqlCommand(sql, conexion, transaccion);
+        foreach (var parametro in parametros)
+        {
+            comando.Parameters.Add(new NpgsqlParameter { Value = parametro });
+        }
+
+        await comando.ExecuteNonQueryAsync();
+    }
+
+    public static async Task<T> EsperarAsync<T>(Func<Task<T?>> buscar, string mensaje)
+        where T : class
+    {
+        var limite = DateTime.UtcNow.Add(EsperaMaxima);
+
+        while (DateTime.UtcNow < limite)
+        {
+            if (await buscar() is { } encontrado)
+            {
+                return encontrado;
+            }
+
+            await Task.Delay(25);
+        }
+
+        throw new Xunit.Sdk.XunitException(mensaje);
+    }
+
+    /// <summary>El pid del backend que espera la fila de otra transacción (un <c>transactionid</c> sin
+    /// conceder), o <c>null</c> si ninguno.</summary>
+    public static async Task<Pid?> EsperandoUnaFilaAsync(NpgsqlConnection poll)
+    {
+        await using var comando = new NpgsqlCommand(
+            "SELECT pid FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted", poll);
+
+        return await comando.ExecuteScalarAsync() is int pid ? new Pid(pid) : null;
+    }
+
+    public static async Task<List<Candado>> CandadosAdvisoryAsync(
+        NpgsqlConnection poll, string filtro, params object[] parametros)
+    {
+        await using var comando = new NpgsqlCommand(
+            "SELECT pid, classid::bigint, objid::bigint, objsubid, mode, granted FROM pg_locks " +
+            $"WHERE locktype = 'advisory' AND {filtro}",
+            poll);
+        foreach (var parametro in parametros)
+        {
+            comando.Parameters.Add(new NpgsqlParameter { Value = parametro });
+        }
+
+        var candados = new List<Candado>();
+        await using var lector = await comando.ExecuteReaderAsync();
+        while (await lector.ReadAsync())
+        {
+            candados.Add(new Candado(
+                lector.GetInt32(0), lector.GetInt64(1), lector.GetInt64(2), lector.GetInt32(3),
+                lector.GetString(4), lector.GetBoolean(5)));
+        }
+
+        return candados;
+    }
+
+    public static (long Alto, long Bajo) PartesDeLaClave(long clave) => (clave >> 32, clave & 0xFFFFFFFFL);
+
+    /// <summary>El candado sin conceder (con el pid del backend que espera) del lock de membresía del
+    /// tenant, o <c>null</c> si nadie lo espera. Una clave <c>bigint</c> se ve en <c>pg_locks</c> con
+    /// <c>objsubid = 1</c>, la mitad alta en <c>classid</c> y la baja en <c>objid</c>.</summary>
+    public static async Task<Candado?> EsperandoLaMembresiaAsync(NpgsqlConnection poll, int idTenant)
+    {
+        var (alto, bajo) = PartesDeLaClave(LockDeMembresiaDeFamilias.ClaveDe(idTenant));
+
+        var esperando = await CandadosAdvisoryAsync(
+            poll, "NOT granted AND objsubid = 1 AND classid::bigint = $1 AND objid::bigint = $2", alto, bajo);
+
+        return esperando.SingleOrDefault();
+    }
+
+    /// <summary>Los locks advisory CONCEDIDOS al backend <paramref name="pid"/>.</summary>
+    public static Task<List<Candado>> CandadosConcedidosAsync(NpgsqlConnection poll, int pid) =>
+        CandadosAdvisoryAsync(poll, "granted AND pid = $1", pid);
+
+    /// <summary>Cuántos locks de tipo <c>transactionid</c> (el de la transacción propia: se toma al escribir
+    /// por primera vez) tiene el backend <paramref name="pid"/>. Cero ⇒ todavía no escribió nada.</summary>
+    public static async Task<long> TransactionIdsConcedidosAsync(NpgsqlConnection poll, int pid)
+    {
+        await using var comando = new NpgsqlCommand(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND granted AND pid = $1", poll);
+        comando.Parameters.Add(new NpgsqlParameter { Value = pid });
+
+        return (long)(await comando.ExecuteScalarAsync())!;
+    }
+
+    public static (long ClassId, long ObjId) ClaveDelPar(int idTenant, int idArticulo, int idLista)
+    {
+        var (clave1, clave2) = ServicioDePrecios.ClaveDeLockDePar(idTenant, idArticulo, idLista);
+
+        return (clave1, unchecked((uint)clave2));
+    }
+
+    public async Task<(NpgsqlConnection Poll, NpgsqlConnection Sostenedor, NpgsqlTransaction Transaccion)> AbrirSostenedorAsync(
+        int idTenant)
+    {
+        var sostenedor = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+        var transaccion = await sostenedor.BeginTransactionAsync();
+        var poll = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+
+        return (poll, sostenedor, transaccion);
+    }
+}

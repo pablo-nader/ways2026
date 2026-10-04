@@ -83,7 +83,9 @@ public static class ArticulosEndpoints
             ServicioDeArticulos servicio, int id, EdicionArticulo datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Actualiza un artículo, incluida su disponibilidad por empresa.");
+        .WithSummary(
+            "Actualiza un artículo, incluida su disponibilidad por empresa. En un miembro de una familia, "
+                + "un cambio de campos compartidos exige el alcance (Familia o SoloEste).");
 
         grupo.MapDelete("/{id:int}", async (
             ServicioDeArticulos servicio, int id, CancellationToken ct) =>

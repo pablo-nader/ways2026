@@ -2,8 +2,9 @@ namespace Ways.Domain.Articulos;
 
 /// <summary>
 /// Reglas puras de familias de artículos (doc 10 §3), sin base de datos — mismo criterio que
-/// <see cref="ReglaDeArticulos"/>. Las usa el escritor de precios
-/// (<c>ServicioDePrecios.AbrirNuevoPrecioAsync</c>).
+/// <see cref="ReglaDeArticulos"/>. Las usan los escritores que respetan la invariante de la familia: el de
+/// precios (<c>ServicioDePrecios.AbrirNuevoPrecioAsync</c>) y el de artículos
+/// (<c>ServicioDeArticulos.ActualizarAsync</c> y <c>ServicioDeArticulos.CrearAsync</c>).
 /// </summary>
 public static class ReglaDeFamilias
 {
@@ -35,6 +36,42 @@ public static class ReglaDeFamilias
             (ModoDeAlcanceDeFamilia.FamiliaSiCorresponde, true) => ResolucionDeAlcanceDeFamilia.TodaLaFamilia,
             _ => throw new ArgumentOutOfRangeException(nameof(modo), modo, "Modo de alcance de familia desconocido.")
         };
+
+    /// <summary>
+    /// La decisión de la EDICIÓN de un artículo que ES miembro (<see cref="ResolverAlcance"/> con
+    /// <c>esMiembro: true</c>, afinada por lo que la edición toca). Quien edita un artículo no siempre
+    /// cambia un campo compartido: <paramref name="cambiaCamposCompartidos"/> es el resultado de comparar
+    /// los trece valores del pedido con los ACTUALES del artículo (<see cref="ValoresCompartidosDeFamilia"/>),
+    /// y tiene que salir de la lectura hecha bajo el lock de membresía y las filas de los miembros. Cuando el
+    /// pedido deja <c>acumula_en_venta</c> en <c>null</c> para conservar el valor guardado, ese campo entra a la
+    /// comparación con el valor guardado del artículo —leído en esa misma lectura— como valor del pedido, así
+    /// que no cuenta como cambio.
+    ///
+    /// <code>
+    /// modo                 | cambia compartidos | no cambia compartidos
+    /// ExigirDecision       | AlcanceRequerido   | SoloElArticulo
+    /// Familia              | TodaLaFamilia      | SoloElArticulo
+    /// SoloEste             | SalirDeLaFamilia   | SalirDeLaFamilia
+    /// FamiliaSiCorresponde | TodaLaFamilia      | SoloElArticulo
+    /// </code>
+    ///
+    /// Sin cambio de campos compartidos no hay nada que replicar —los demás miembros ya son idénticos al
+    /// artículo— ni nada que decidir, así que no se exige alcance y se escriben solo los campos propios del
+    /// artículo. "Solo este" es la excepción: es una decisión explícita de salir de la familia y se respeta
+    /// aunque el cambio no toque ningún campo compartido. <see cref="ResolucionDeAlcanceDeFamilia.FamiliaCambio"/>
+    /// no sale nunca de acá: es el rechazo de quien NO es miembro, que se decide antes de leer ningún valor
+    /// con <see cref="ResolverAlcance"/>.
+    /// </summary>
+    public static ResolucionDeAlcanceDeFamilia ResolverEdicionDeMiembro(
+        ModoDeAlcanceDeFamilia modo, bool cambiaCamposCompartidos)
+    {
+        var resolucion = ResolverAlcance(modo, esMiembro: true);
+
+        return !cambiaCamposCompartidos
+            && (resolucion is ResolucionDeAlcanceDeFamilia.AlcanceRequerido or ResolucionDeAlcanceDeFamilia.TodaLaFamilia)
+            ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
+            : resolucion;
+    }
 
     /// <summary>
     /// <c>true</c> si el escritor puede cambiar la PERTENENCIA y por eso toma el lock de membresía

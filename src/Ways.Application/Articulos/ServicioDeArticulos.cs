@@ -1,7 +1,12 @@
+using System.Data;
+using System.Data.Common;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Application.Familias;
+using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
@@ -51,6 +56,12 @@ namespace Ways.Application.Articulos;
 /// stock que hace un ABM de catálogo (flagged for the owner, no bloqueante, design: Open
 /// Questions). Sigue corriendo DESPUÉS del commit de la transacción de edición, nunca adentro
 /// (contrato de fallo parcial documentado en <see cref="ActualizarAsync"/>).
+///
+/// Familias de artículos (doc 10 §3): <see cref="ActualizarAsync"/> respeta el protocolo de locks de las
+/// familias — lock de membresía como primera sentencia (exclusivo solo con el alcance <c>SoloEste</c>),
+/// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los trece campos
+/// compartidos a TODOS los miembros vivos solo cuando el pedido cambia alguno y el cliente eligió el alcance
+/// <c>Familia</c>; los campos propios son siempre del artículo editado.
 /// </summary>
 public class ServicioDeArticulos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
@@ -172,7 +183,7 @@ public class ServicioDeArticulos(
                 x.Articulo.UnidadesPorBulto, x.Articulo.EsProducto, x.Articulo.CostoLista,
                 x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
-                x.Articulo.AcumulaEnVenta, x.CodigoProveedor))
+                x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -361,6 +372,10 @@ public class ServicioDeArticulos(
             throw ErrorDominio.NoEncontrado($"No existe el artículo {id}.");
         }
 
+        // alcance_invalido (400): un ordinal fuera del enum no cae en silencio en ningún destino. Es una
+        // validación del payload como las de abajo: no abre transacción ni lee nada.
+        var modo = ServicioDePrecios.ModoDeLaSolicitud(datos.Alcance);
+
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
 
@@ -404,52 +419,39 @@ public class ServicioDeArticulos(
         // reintento, así que el lambda corre exactamente una vez y cualquier fallo se propaga en
         // vez de dejarlas a medio asignar. Con una estrategia reintentable esto sería una trampa.
         Articulo? articulo = null;
-        var controlaLoteAnterior = false;
+        List<int> idsConControlDeLoteActivado = [];
 
         await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            // EL LOCK QUE FALTABA, y es el PRIMER statement de la transacción: FOR UPDATE sobre la
-            // fila del propio artículo. Los 5 BloquearSiEstaVivaAsync de abajo son FOR KEY SHARE
-            // sobre los catálogos REFERENCIADOS, nunca sobre articulos.
-            //
-            // Lo que este lock agrega NO es la serialización: dos ediciones del mismo artículo ya
-            // se serializaban entre sí, porque el UPDATE de SaveChangesAsync toma su propio lock de
-            // fila y espera. Lo que agrega es serializar ANTES DE LEER. Sin él, el perdedor leía su
-            // foto primero, esperaba recién al escribir, y terminaba escribiendo valores derivados
-            // de un estado ya pisado: un campo cuyo valor pedido coincidía con esa foto quedaba
-            // FUERA del UPDATE (EF no detecta cambio contra su valor ORIGINAL) y se perdía en
-            // silencio con un 200. Verificado con el mutante: borrando esta línea la edición SIGUE
-            // observándose bloqueada —el lock implícito del UPDATE alcanza para eso— y lo que muere
-            // es la aserción sobre la fila final. Ver la skill single-read-under-lock, regla 4.
-            //
-            // ORDEN, y por qué no abre un ciclo: artículo (FOR UPDATE) y DESPUÉS los catálogos
-            // (FOR KEY SHARE). La baja de un catálogo toma el orden inverso —FOR UPDATE sobre el
-            // catálogo y después LEE articulos— pero lo lee SIN lock (InspectorDeUso es
-            // read-only), así que nunca espera por esta fila y no hay ciclo. Ningún otro escritor
-            // del repo tomaba un lock explícito sobre articulos antes de este fix.
-            await guarda.BloquearFilaAsync<Articulo>(id, ct);
+            var conexion = await ObtenerConexionAbiertaAsync(ct);
+            var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-            // La ÚNICA lectura del artículo, nacida bajo el lock. Una segunda no arreglaría nada:
-            // con la entidad ya trackeada, la relectura resuelve contra el identity map y devuelve
-            // la MISMA instancia vieja.
-            articulo = await BuscarAsync(id, ct);
-
-            // Task 4.2 (design: Reconciliation triggers): capturado ANTES de sobrescribir el campo
-            // — es el único momento en que "antes" y "después" conviven en memoria. Ahora sale de
-            // la lectura bajo el lock: leído de la foto pre-lock, una edición concurrente que
-            // flipeara controla_lote entre esa foto y el commit hacía que esta detección de
-            // transición viera el "antes" equivocado y saltara (o disparara de más) la
-            // reconciliación de lotes.
+            // PRIMERA sentencia de la transacción: el lock de membresía de familias, exclusivo solo cuando
+            // el modo puede sacar al artículo de su familia ("solo este") y compartido en cualquier otro
+            // caso, incluido el artículo sin familia. Se elige antes de leer nada y no se promueve después.
             //
-            // Honestidad sobre la cobertura (judgment-day, los dos jueces): esta mitad NO tiene test
-            // de carrera propio. Sale de la MISMA lectura única que sí está probada por la carrera
-            // de `activo`, así que el mecanismo está cubierto; lo que no está afirmado por ningún
-            // test es la consecuencia observable —que la reconciliación de lotes dispare o no—,
-            // porque el andamiaje de lotes vive en ReconciliacionTests y el de carreras en
-            // ArticulosReferenciasVivasTests, sin colocar. Es deuda declarada, no cobertura supuesta.
-            controlaLoteAnterior = articulo.ControlaLote;
+            // Orden global de locks de las familias: membresía → filas de articulos ascendentes → pares de
+            // precios. Los 5 chequeos de catálogo de más abajo (FOR KEY SHARE) van DESPUÉS de las filas de
+            // articulos, como siempre: la baja de un catálogo toma el orden inverso —FOR UPDATE sobre el
+            // catálogo y después LEE articulos— pero lo lee SIN lock (InspectorDeUso es read-only), así que
+            // nunca espera por estas filas y no hay ciclo.
+            if (ReglaDeFamilias.RequiereLockExclusivo(modo))
+            {
+                await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
+            }
+            else
+            {
+                await LockDeMembresiaDeFamilias.TomarCompartidoAsync(conexion, transaccionCruda, idTenant, ct);
+            }
+
+            // Pertenencia bajo el lock, filas bloqueadas y LA ÚNICA lectura de las entidades, en ese orden
+            // (ver BloquearYLeerAsync). Una segunda lectura no arreglaría nada: con la entidad ya
+            // trackeada, la relectura resuelve contra el identity map y devuelve la MISMA instancia vieja.
+            var bloqueados = await BloquearYLeerAsync(conexion, transaccionCruda, id, idTenant, modo, ct);
+            var editado = bloqueados.Editado;
+            articulo = editado;
 
             await ExigirAreaValidaAsync(datos.IdArea, ct);
             await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
@@ -457,25 +459,69 @@ public class ServicioDeArticulos(
             await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
             await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
 
-            articulo.Nombre = nombre;
-            articulo.Descripcion = descripcion;
-            articulo.IdArea = datos.IdArea;
-            articulo.IdCategoria = datos.IdCategoria;
-            articulo.IdMarca = datos.IdMarca;
-            articulo.IdGrupo = datos.IdGrupo;
-            articulo.IdProveedorHabitual = datos.IdProveedorHabitual;
-            articulo.IdAlicuotaIva = datos.IdAlicuotaIva;
-            articulo.UnidadVenta = datos.UnidadVenta;
-            articulo.UnidadesPorBulto = datos.UnidadesPorBulto;
-            articulo.EsProducto = datos.EsProducto;
-            articulo.CostoLista = datos.CostoLista;
-            articulo.DescuentoProveedor = datos.DescuentoProveedor;
-            articulo.CostoNominal = datos.CostoNominal;
-            articulo.DisponibleParaTodas = datos.DisponibleParaTodas;
-            articulo.Activo = datos.Activo;
-            articulo.ControlaLote = datos.ControlaLote;
-            articulo.AcumulaEnVenta = datos.AcumulaEnVenta ?? articulo.AcumulaEnVenta;
-            articulo.UpdatedAt = reloj.Ahora;
+            // Hasta acá todo fue validar (los 5 chequeos de catálogo) y desde acá se decide: ninguna entidad se
+            // muta antes de la última validación, porque un rechazo no puede dejar una mutación rastreada en
+            // el contexto del request — un guardado posterior sobre ese mismo contexto la escribiría por
+            // detrás. Los trece campos compartidos del pedido se comparan con los ACTUALES del artículo,
+            // leídos bajo los locks: leídos antes, la comparación sería sobre un estado que otro escritor
+            // puede haber cambiado. Lo mismo vale para acumula_en_venta, el único campo compartido cuyo nulo en
+            // el pedido significa "conservar el guardado": su valor sale de esa misma lectura, no de otra.
+            var pedido = ValoresCompartidosDe(datos, editado.AcumulaEnVenta);
+            var resolucion = bloqueados.IdFamilia is null
+                ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
+                : ReglaDeFamilias.ResolverEdicionDeMiembro(
+                    modo, cambiaCamposCompartidos: ValoresCompartidosDeFamilia.De(editado).CamposDistintos(pedido).Count > 0);
+
+            if (resolucion == ResolucionDeAlcanceDeFamilia.AlcanceRequerido)
+            {
+                throw await MembresiaDeFamilias.ErrorDeAlcanceRequeridoAsync(
+                    conexion, transaccionCruda, bloqueados.IdFamilia!.Value, idTenant,
+                    "la edición cambia campos compartidos y tiene que indicar si se aplican a toda la familia o solo a este artículo.",
+                    ct);
+            }
+
+            // Desde acá solo se escribe. Un solo "ahora" para todos los artículos que se escriben.
+            var ahora = reloj.Ahora;
+
+            // Task 4.2 (design: Reconciliation triggers): el valor de controla_lote de cada artículo se
+            // captura ANTES de sobrescribirlo —es el único momento en que "antes" y "después" conviven en
+            // memoria— y sale de la lectura bajo el lock: leído de una foto pre-lock, una edición
+            // concurrente que flipeara controla_lote entre esa foto y el commit hacía que esta detección
+            // de transición viera el "antes" equivocado y saltara (o disparara de más) la reconciliación
+            // de lotes. Con una familia pueden ser varios los artículos que cambian.
+            //
+            // Honestidad sobre la cobertura (judgment-day, los dos jueces): esta detección NO tiene test
+            // de carrera propio. Sale de la MISMA lectura única que sí está probada por la carrera de
+            // `activo`, así que el mecanismo está cubierto; lo que no está afirmado por ningún test de
+            // carrera es la consecuencia observable —que la reconciliación de lotes dispare o no—, porque
+            // el andamiaje de lotes vive en ReconciliacionTests y el de carreras en
+            // ArticulosReferenciasVivasTests, sin colocar. Es deuda declarada, no cobertura supuesta.
+            var conCamposCompartidos = resolucion == ResolucionDeAlcanceDeFamilia.TodaLaFamilia
+                ? bloqueados.Miembros
+                : [editado];
+
+            foreach (var objetivo in conCamposCompartidos)
+            {
+                if (!objetivo.ControlaLote && pedido.ControlaLote)
+                {
+                    idsConControlDeLoteActivado.Add(objetivo.Id);
+                }
+
+                pedido.AplicarA(objetivo);
+                objetivo.UpdatedAt = ahora;
+            }
+
+            // Los campos propios son siempre del artículo editado: los demás miembros no los tocan.
+            editado.Nombre = nombre;
+            editado.Descripcion = descripcion;
+            editado.IdMarca = datos.IdMarca;
+            editado.DisponibleParaTodas = datos.DisponibleParaTodas;
+            editado.Activo = datos.Activo;
+
+            if (resolucion == ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia)
+            {
+                editado.IdFamilia = null;
+            }
 
             // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar —
             // ArticuloEmpresa es PK-only, task 1.4): más simple que calcular un delta, y el
@@ -493,25 +539,122 @@ public class ServicioDeArticulos(
         });
 
         // Task 4.2 (design: Reconciliation triggers — "articulos.controla_lote flipped false →
-        // true"): alcance = ese artículo, todas las PV (ReconciliarAsync ya filtra a las de
+        // true"): alcance = cada artículo que flipeó, todas las PV (ReconciliarAsync ya filtra a las de
         // empresas con lotes_habilitado efectivo). Un flip a false no reconcilia nada (spec: "the
         // false → true transition... a flip to false reconciles nothing").
         //
         // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el commit de
-        // arriba y este ReconciliarAsync): el flip de controla_lote ya quedó COMMITEADO antes de
+        // arriba y estas reconciliaciones): el flip de controla_lote ya quedó COMMITEADO antes de
         // este punto. Si ReconciliarAsync falla a mitad de camino (algunos pares (artículo, PV) ya
         // reconciliados, otros no), el request devuelve un 500 genérico y el flip queda commiteado
         // con reconciliación incompleta. No hay rollback del flip ni señal adicional que distinga
         // "reconciliación completa" de "parcial" — la recuperación es el self-healing por
         // construcción de ReconciliarParAsync (residuo recomputado desde el estado actual en la
         // próxima corrida) o un POST manual a /api/stock/lotes/reconciliacion sobre el mismo
-        // alcance.
-        if (!controlaLoteAnterior && datos.ControlaLote)
+        // alcance. Cuando el flip alcanza a una familia entera hay una reconciliación por miembro, en
+        // orden ascendente de id: si una falla, los miembros que le siguen quedan con el flip commiteado y
+        // sin reconciliar, con la misma recuperación.
+        foreach (var idConControlDeLote in idsConControlDeLoteActivado)
         {
-            await servicioDeLotes.ReconciliarAsync(articulo!.Id, idPuntoVenta: null, ct);
+            await servicioDeLotes.ReconciliarAsync(idConControlDeLote, idPuntoVenta: null, ct);
         }
 
         return Proyectar(articulo!, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
+    }
+
+    /// <summary>Los artículos que una edición tiene bloqueados y leídos: el editado, todos los que ese
+    /// pedido puede escribir (<see cref="Miembros"/>, ascendentes por id; es solo el editado cuando no se
+    /// escribe a la familia) y la familia de la que es miembro (<c>null</c> ⇒ sin familia).</summary>
+    private sealed record ArticulosBloqueados(Articulo Editado, IReadOnlyList<Articulo> Miembros, int? IdFamilia);
+
+    /// <summary>
+    /// Pasos (2) y (3) del protocolo de locks de familias, que siguen al lock de membresía: lee la
+    /// pertenencia del artículo (una sola lectura, ya bajo ese lock), bloquea las filas de <c>articulos</c>
+    /// que corresponden y recién entonces lee las entidades, UNA sola vez.
+    ///
+    /// <list type="bullet">
+    /// <item>Sin familia: la decisión sobre un alcance explícito se toma ya (<c>familia_cambio</c>, sin
+    /// bloquear ninguna fila) y la fila se bloquea como siempre, <c>FOR UPDATE</c> sobre la fila del propio
+    /// artículo (<see cref="GuardaDeReferencias.BloquearFilaAsync{T}"/>), el lock que serializa dos
+    /// ediciones del mismo artículo ANTES de leer. Ver la skill <c>single-read-under-lock</c>, regla 4.</item>
+    /// <item>Miembro y "solo este": solo la fila del propio artículo, <c>FOR NO KEY UPDATE</c> guardada por la
+    /// familia leída y por la baja lógica.</item>
+    /// <item>Miembro con cualquier otro modo: todos los miembros vivos, ascendentes por id y
+    /// <c>FOR NO KEY UPDATE</c>, el editado incluido. Se bloquean todos —y no solo el editado— porque el
+    /// pedido puede terminar escribiendo a la familia entera, y la decisión depende de valores que solo se
+    /// pueden leer DESPUÉS de bloquear: tomar primero la fila propia y recién después las de los demás
+    /// rompería el orden ascendente que evita el ciclo entre dos escritores de la misma familia.</item>
+    /// </list>
+    /// </summary>
+    private async Task<ArticulosBloqueados> BloquearYLeerAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, ModoDeAlcanceDeFamilia modo,
+        CancellationToken ct)
+    {
+        var idFamilia = await MembresiaDeFamilias.LeerIdFamiliaAsync(conexion, transaccion, id, idTenant, ct);
+
+        if (idFamilia is not { } familia)
+        {
+            if (ReglaDeFamilias.ResolverAlcance(modo, esMiembro: false) == ResolucionDeAlcanceDeFamilia.FamiliaCambio)
+            {
+                throw MembresiaDeFamilias.ErrorDeFamiliaCambio();
+            }
+
+            await guarda.BloquearFilaAsync<Articulo>(id, ct);
+
+            // La ÚNICA lectura del artículo, nacida bajo el lock.
+            var suelto = await BuscarAsync(id, ct);
+
+            return new ArticulosBloqueados(suelto, [suelto], IdFamilia: null);
+        }
+
+        List<int> idsBloqueados;
+
+        if (ReglaDeFamilias.ResolverAlcance(modo, esMiembro: true) == ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia)
+        {
+            await MembresiaDeFamilias.BloquearFilaDelArticuloAsync(conexion, transaccion, id, familia, idTenant, ct);
+            idsBloqueados = [id];
+        }
+        else
+        {
+            idsBloqueados = await MembresiaDeFamilias.BloquearMiembrosAsync(conexion, transaccion, familia, idTenant, ct);
+
+            // Los escritores de pertenencia toman el lock de membresía exclusivo, así que bajo el lock este
+            // artículo es miembro. Si no aparece, alguien cambió su pertenencia (o lo dio de baja) sin
+            // respetar el protocolo: se rechaza en vez de escribirle a la familia un pedido que no lo incluye.
+            if (!idsBloqueados.Contains(id))
+            {
+                throw MembresiaDeFamilias.ErrorDeFamiliaCambio();
+            }
+        }
+
+        // La ÚNICA lectura de las entidades, nacida bajo los locks. Las filas que devuelve son exactamente
+        // las que quedaron bloqueadas: la baja lógica no pudo comitear después de ese bloqueo.
+        var filas = await db.Articulos.Where(a => idsBloqueados.Contains(a.Id)).OrderBy(a => a.Id).ToListAsync(ct);
+
+        return new ArticulosBloqueados(filas.Single(a => a.Id == id), filas, familia);
+    }
+
+    /// <summary>Los trece campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// edición. <see cref="EdicionArticulo.AcumulaEnVenta"/> puede venir <c>null</c> (conservar el valor
+    /// guardado): <paramref name="acumulaEnVentaGuardado"/> es el del artículo editado, leído bajo los locks, y
+    /// es el valor que ese campo toma en el pedido. Un campo compartido nuevo no compila hasta que se lo pasa
+    /// acá: el record es posicional.</summary>
+    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(EdicionArticulo datos, bool acumulaEnVentaGuardado) => new(
+        datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
+        datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote,
+        datos.AcumulaEnVenta ?? acumulaEnVentaGuardado, datos.CostoLista, datos.DescuentoProveedor,
+        datos.CostoNominal);
+
+    private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        return conexion;
     }
 
     /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila. Los
@@ -1025,5 +1168,5 @@ public class ServicioDeArticulos(
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca, a.IdGrupo,
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
         a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo,
-        a.ControlaLote, a.AcumulaEnVenta);
+        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia);
 }

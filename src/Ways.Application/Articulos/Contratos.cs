@@ -1,3 +1,4 @@
+using Ways.Application.Precios;
 using Ways.Domain.Articulos;
 
 namespace Ways.Application.Articulos;
@@ -10,7 +11,11 @@ namespace Ways.Application.Articulos;
 /// completa en <c>ObtenerAsync</c>/<c>CrearAsync</c>/<c>ActualizarAsync</c>, que ya conocen o
 /// resuelven el subset como parte de la operación. <see cref="CodigoProveedor"/> solo lo completa
 /// <c>ListarAsync</c> cuando la búsqueda llegó con <c>idProveedor</c> y el artículo coincidió por
-/// ese código; en cualquier otro caso (incluido el detalle) es <c>null</c>.</summary>
+/// ese código; en cualquier otro caso (incluido el detalle) es <c>null</c>. <see cref="IdFamilia"/> es la
+/// familia a la que pertenece el artículo (<c>null</c> = sin familia), tal como está guardada: no se anula
+/// aunque la fila de la familia esté dada de baja, porque los escritores definen la pertenencia por esa
+/// columna y por la baja del propio artículo (doc 10 §3, "Familias de artículos") — un lector que la
+/// anulara y un escritor que la respetara discreparían sobre quién es miembro.</summary>
 public record ArticuloListado(
     int Id,
     string CodigoInterno,
@@ -33,6 +38,7 @@ public record ArticuloListado(
     bool Activo,
     bool ControlaLote,
     bool AcumulaEnVenta,
+    int? IdFamilia = null,
     string? CodigoProveedor = null);
 
 /// <summary><see cref="CodigoInterno"/> es opcional a propósito (spec: codigo_interno
@@ -74,7 +80,24 @@ public record AltaArticulo(
 /// dispara <c>ServicioDeLotes.ReconciliarAsync</c>; <c>ServicioDeArticulos.ActualizarAsync</c>
 /// captura el valor previo ANTES de sobrescribir el campo para poder detectarlo.
 /// <see cref="AcumulaEnVenta"/> <c>null</c> deja el valor guardado como está: un cliente que no conoce
-/// el campo no debe pisar un <c>false</c> con el default.</summary>
+/// el campo no debe pisar un <c>false</c> con el default.
+///
+/// <para><see cref="Alcance"/> es la decisión del cliente cuando el artículo pertenece a una familia
+/// (doc 10 §3) y la edición cambia alguno de sus trece campos compartidos
+/// (<see cref="ValoresCompartidosDeFamilia"/>); cada valor tiene un destino. Sobre un artículo sin familia,
+/// <c>null</c> lo edita solo. Sobre un miembro, <c>null</c> con un cambio compartido se rechaza con
+/// <c>alcance_requerido</c> (409) sin escribir nada, y <c>null</c> sin cambio compartido escribe solo los
+/// campos propios del artículo (no hay nada que replicar).
+/// <see cref="AlcanceDeFamilia.Familia"/> aplica los trece campos compartidos del pedido a todos los miembros
+/// vivos y los campos propios solo al artículo editado (sin cambio compartido no hay nada que replicar y se
+/// escriben solo los propios). <see cref="AlcanceDeFamilia.SoloEste"/> saca al artículo de la familia, haya o
+/// no cambio compartido, y escribe todo solo en él. Un <see cref="Alcance"/> explícito sobre un artículo que
+/// no es miembro se rechaza con <c>familia_cambio</c> (409). Un ordinal que no es el de ninguno de los dos
+/// valores (el JSON del servidor acepta el ordinal además del nombre; <c>0</c> incluido) llega al servicio y
+/// se rechaza con <c>alcance_invalido</c> (400); un texto que no se lee ni como nombre ni como ordinal no
+/// llega al servicio y lo rechaza el binding JSON del framework. Con <see cref="AcumulaEnVenta"/>
+/// <c>null</c> el valor del pedido para ese campo compartido es el guardado en el artículo editado: no
+/// cuenta como cambio y, con <c>Familia</c>, es el que se aplica a todos los miembros vivos.</para></summary>
 public record EdicionArticulo(
     string Nombre,
     string? Descripcion,
@@ -94,7 +117,8 @@ public record EdicionArticulo(
     IReadOnlyList<int>? IdsEmpresas,
     bool Activo,
     bool ControlaLote,
-    bool? AcumulaEnVenta = null);
+    bool? AcumulaEnVenta = null,
+    AlcanceDeFamilia? Alcance = null);
 
 public record AltaCodigoBarra(string Codigo);
 
