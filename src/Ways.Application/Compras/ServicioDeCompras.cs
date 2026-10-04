@@ -1155,8 +1155,8 @@ public class ServicioDeCompras(
     /// la transacción corre ningún alta ni salida de una familia puede intercalarse, porque toman ese lock
     /// exclusivo. La baja lógica de un artículo no lo toma —se serializa por el lock de su fila—, así que puede
     /// comitear entre esta lectura y el bloqueo de <see cref="BloquearArticulosConCostoAsync"/>: el artículo
-    /// dado de baja entonces ya no se bloquea ni recibe el costo de la familia, y los miembros que quedan siguen
-    /// idénticos.</summary>
+    /// dado de baja entonces no se devuelve en ese bloqueo ni recibe el costo de la familia, y los miembros que
+    /// quedan siguen idénticos.</summary>
     private static async Task<IReadOnlyDictionary<int, int>> LeerFamiliasDeLosArticulosAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, IReadOnlyList<int> idsArticulo,
         CancellationToken ct)

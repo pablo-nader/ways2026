@@ -455,9 +455,9 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <c>UPDATE deleted_at</c> sin comitear sobre un miembro; la confirmación lee la pertenencia, toma sus
     /// locks y queda esperando la fila de ese miembro —observada en <c>pg_locks</c>— y recién entonces la baja
     /// comitea. Al retomar, el bloqueo reevalúa <c>deleted_at IS NULL</c> sobre la versión nueva de la fila y
-    /// descarta al miembro: no se bloquea ni recibe el costo, que sí llega a los demás miembros vivos, y quien
-    /// quedó dado de baja conserva su costo y su <c>id_familia</c>. Un caso con el dado de baja SIN línea y otro
-    /// con el dado de baja siendo el artículo de la línea que define el costo de la familia.</summary>
+    /// descarta al miembro: no se devuelve en ese bloqueo ni recibe el costo, que sí llega a los demás miembros
+    /// vivos, y quien quedó dado de baja conserva su costo y su <c>id_familia</c>. Un caso con el dado de baja
+    /// SIN línea y otro con el dado de baja siendo el artículo de la línea que define el costo de la familia.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -146,6 +146,88 @@ public class ServicioDeComprasLockOrderTests
         throw new InvalidOperationException("Las llaves no cierran.");
     }
 
+    private static string Normalizado(string texto) => Regex.Replace(texto, @"\s+", " ").Trim();
+
+    private static readonly Regex CabeceraDeCiclo = new(
+        @"\b(?:foreach|for|while)\s*\(|\bdo\s*\{", RegexOptions.None, TimeSpan.FromSeconds(5));
+
+    /// <summary>El índice del <c>)</c> que cierra el <c>(</c> que está en <paramref name="apertura"/>.</summary>
+    private static int CierreDelParentesis(string texto, int apertura)
+    {
+        var profundidad = 0;
+
+        for (var i = apertura; i < texto.Length; i++)
+        {
+            profundidad += texto[i] switch { '(' => 1, ')' => -1, _ => 0 };
+
+            if (profundidad == 0)
+            {
+                return i;
+            }
+        }
+
+        throw new InvalidOperationException("Los paréntesis no cierran.");
+    }
+
+    /// <summary>Si <paramref name="indice"/> cae dentro del cuerpo de alguna instrucción de ciclo (<c>foreach</c>,
+    /// <c>for</c>, <c>while</c> o <c>do</c>) de <paramref name="texto"/>: el bloque entre llaves o, sin llaves, la
+    /// sentencia única que sigue a la cabecera. Solo ve instrucciones de ciclo: una repetición hecha de otra
+    /// manera, con LINQ o con recursión, no la marca.</summary>
+    private static bool EstaDentroDeUnCiclo(string texto, int indice)
+    {
+        foreach (Match cabecera in CabeceraDeCiclo.Matches(texto))
+        {
+            int inicioDelCuerpo;
+
+            if (cabecera.Value.StartsWith("do", StringComparison.Ordinal))
+            {
+                inicioDelCuerpo = cabecera.Index + cabecera.Length - 1;
+            }
+            else
+            {
+                inicioDelCuerpo = CierreDelParentesis(texto, cabecera.Index + cabecera.Length - 1) + 1;
+
+                while (char.IsWhiteSpace(texto[inicioDelCuerpo]))
+                {
+                    inicioDelCuerpo++;
+                }
+            }
+
+            var finDelCuerpo = texto[inicioDelCuerpo] == '{'
+                ? inicioDelCuerpo + CuerpoDeLlaves(texto, inicioDelCuerpo).Length - 1
+                : texto.IndexOf(';', inicioDelCuerpo);
+
+            if (indice >= inicioDelCuerpo && indice <= finDelCuerpo)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>La detección de ciclos que usan las pruebas de abajo ve el cuerpo de cada una de las cuatro
+    /// instrucciones, con llaves o con una sola sentencia, y no marca lo que está fuera de ellos ni dentro de un
+    /// <c>if</c>.</summary>
+    [Theory]
+    [InlineData("foreach (var x in xs) { Llamar(x); }", true)]
+    [InlineData("foreach (var x in xs) { Otra(x); Llamar(x); }", true)]
+    [InlineData("foreach (var x in xs) { if (y) { Llamar(x); } }", true)]
+    [InlineData("foreach (var x in xs) Llamar(x);", true)]
+    [InlineData("for (var i = 0; i < n; i++) { Llamar(i); }", true)]
+    [InlineData("while (hay) { Llamar(); }", true)]
+    [InlineData("do { Llamar(); } while (hay);", true)]
+    [InlineData("Llamar(); foreach (var x in xs) { Otra(x); }", false)]
+    [InlineData("foreach (var x in xs) { Otra(x); } Llamar();", false)]
+    [InlineData("if (hay) { Llamar(); }", false)]
+    public void LaDeteccionDeCiclosVeElCuerpoDeCadaInstruccionDeCiclo(string fuente, bool dentro)
+    {
+        var indice = fuente.IndexOf("Llamar(", StringComparison.Ordinal);
+
+        Assert.True(indice >= 0);
+        Assert.Equal(dentro, EstaDentroDeUnCiclo(fuente, indice));
+    }
+
     /// <summary>El lock de membresía de familias es lo PRIMERO que hace la transacción de la confirmación: lo
     /// único que hay entre el <c>BeginTransactionAsync</c> y él es armar la conexión y tomar la transacción cruda,
     /// sin ningún statement, y el <c>UPDATE</c> del encabezado viene después. Se afirma el texto EXACTO de ese
@@ -227,14 +309,27 @@ public class ServicioDeComprasLockOrderTests
     }
 
     /// <summary>El costo se escribe con UN solo <c>UPDATE … FROM unnest</c> para todas las filas ya bloqueadas, y
-    /// no con uno por artículo: el escritor se llama una vez desde la confirmación, no tiene ningún ciclo y emite un
-    /// único <c>ExecuteNonQueryAsync</c>; el escritor por fila ya no existe.</summary>
+    /// no con uno por artículo. Sobre el texto fuente: la confirmación llama al escritor en una única llamada,
+    /// escrita fuera de cualquier instrucción de ciclo (<c>foreach</c>, <c>for</c>, <c>while</c> o <c>do</c>) y con
+    /// la lista completa que devolvió el bloqueo; el escritor no tiene ningún ciclo y emite un único
+    /// <c>ExecuteNonQueryAsync</c>; y el escritor por fila ya no existe.</summary>
     [Fact]
     public void ElCostoSeEscribeConUnSoloUpdateParaTodasLasFilasBloqueadas()
     {
         var metodo = SinComentarios(EjecutarConfirmar());
 
-        Assert.Equal(1, Contar(metodo, "ActualizarCostosNominalesAsync("));
+        const string llamada = "ActualizarCostosNominalesAsync(";
+        Assert.Equal(1, Contar(metodo, llamada));
+        Assert.False(
+            EstaDentroDeUnCiclo(metodo, metodo.IndexOf(llamada, StringComparison.Ordinal)),
+            "El escritor del costo se llama dentro de un ciclo: escribiría con un UPDATE por vuelta.");
+
+        var normalizado = Normalizado(metodo);
+        Assert.Contains("var articulosConCosto = await BloquearArticulosConCostoAsync(", normalizado, StringComparison.Ordinal);
+        Assert.Contains(
+            "ActualizarCostosNominalesAsync(conexion, transaccionCruda, idTenant, articulosConCosto, momento, ct);",
+            normalizado, StringComparison.Ordinal);
+
         Assert.DoesNotContain("ActualizarCostoNominalAsync(", LeerFuente(), StringComparison.Ordinal);
 
         var escritor = SinComentarios(ExtraerMetodo(
@@ -248,6 +343,31 @@ public class ServicioDeComprasLockOrderTests
         {
             Assert.DoesNotContain(ciclo, escritor, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>El escritor del costo no ejecuta ningún statement si no recibe artículos: la guarda
+    /// <c>articulos.Count == 0</c> sale con un <c>return</c> antes de crear el comando. Llega a ella un bloqueo sin
+    /// filas, por ejemplo si el único artículo con costo es el único miembro vivo de su familia y se da de baja
+    /// entre la lectura de la pertenencia y el bloqueo. Sin la guarda correría un <c>UPDATE</c> sobre arreglos
+    /// vacíos que no escribe nada: no cambia ningún resultado y solo ahorra una ida a la base, y como el comando es
+    /// crudo y un interceptor de EF no lo ve, el texto fuente es la única red. Se afirma que la guarda aparece una
+    /// vez, que su cuerpo es solo el <c>return</c> y que viene antes de <c>CreateCommand</c>.</summary>
+    [Fact]
+    public void ElEscritorDelCostoNoCreaNingunComandoSiNoRecibeArticulos()
+    {
+        var escritor = SinComentarios(ExtraerMetodo(
+            LeerFuente(), "private static async Task ActualizarCostosNominalesAsync(",
+            "private async Task<DbConnection> ObtenerConexionAbiertaAsync("));
+
+        const string guarda = "if (articulos.Count == 0)";
+        Assert.Equal(1, Contar(escritor, guarda));
+
+        var indiceGuarda = escritor.IndexOf(guarda, StringComparison.Ordinal);
+        var indiceComando = escritor.IndexOf("CreateCommand(", StringComparison.Ordinal);
+
+        Assert.Equal("{ return; }", Normalizado(CuerpoDeLlaves(escritor, indiceGuarda)));
+        Assert.True(indiceComando >= 0, "No se encontró la creación del comando.");
+        Assert.True(indiceGuarda < indiceComando, "La guarda tiene que salir ANTES de crear el comando.");
     }
 
     /// <summary>Las filas a las que se escribe el costo se bloquean en UN statement ordenado por id y con

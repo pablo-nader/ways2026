@@ -457,9 +457,9 @@ escribe con un solo `UPDATE` para todas ellas. Si ninguna línea actualiza el co
 pertenencia ni bloquea ni escribe nada de este paso. La baja lógica de un artículo no toma el lock de
 membresía sino el de su fila, así que puede comitear entre la lectura de la pertenencia y el bloqueo de las
 filas: el bloqueo reevalúa `deleted_at IS NULL` cuando obtiene el lock de cada fila, de modo que el artículo
-dado de baja no se bloquea ni recibe el costo de la familia y los miembros vivos quedan idénticos entre sí; uno
-dado de baja antes de confirmar, aunque conserve su `id_familia`, es un artículo suelto y su línea solo lo
-escribe a él. Anular una compra nunca revierte el costo, tampoco el de una familia.
+dado de baja no se devuelve en ese bloqueo ni recibe el costo de la familia, y los miembros vivos quedan
+idénticos entre sí; uno dado de baja antes de confirmar, aunque conserve su `id_familia`, es un artículo
+suelto y su línea solo lo escribe a él. Anular una compra nunca revierte el costo, tampoco el de una familia.
 
 Aplicar el precio sugerido (`POST /api/compras/{id}/precios`) pide "familia si corresponde" para cada línea y,
 como aplicar una línea de una familia llega a todos sus miembros, intenta **solo la de mayor `orden`** de cada
@@ -1598,9 +1598,10 @@ que hoy, pero auditable.
 > saldada). Saldo pendiente = `total − pagado` (piso en cero), con `pagado` por la fórmula OD7
 > (`LectorDePagadoPorCompra`, la única fuente: el estado de pago, el detalle, el listado y la cuenta
 > corriente leen de ahí). Concurrencia: la compra se toma `FOR UPDATE` como primer lock (los demás
-> escritores que la tocan la toman `FOR SHARE` o exclusiva primero, sin ciclo) y el pagado se lee
-> después del lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin
-> reintento automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
+> escritores que la tocan la toman `FOR SHARE` o exclusiva, la confirmación después del lock de
+> membresía de familias compartido, que el pago no pide; sin ciclo) y el pagado se lee después del
+> lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin reintento
+> automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
 > arriba o dado de baja después de imputarse no toma el lock de la compra: puede dejarla sobrepagada
 > o con saldo distinto, que queda en cero y nunca negativo. Lecturas: `GET /api/compras/{id}` suma
 > `pagado` y `saldoPendiente` (cero fuera de una compra confirmada), `GET /api/compras` suma
