@@ -813,7 +813,9 @@ export type ResultadoAprovisionamiento = {
 
 /** Respuesta de `GET /api/articulos/escaneo` — identidad y snapshot únicamente, nunca precio ni
  * oferta (design decisión 7: la resolución de precio queda en `POST /api/ofertas/resolver`).
- * `codigoBarra` es `null` cuando la entrada resolvió por `codigoInterno`. */
+ * `codigoBarra` es `null` cuando la entrada resolvió por `codigoInterno`. `unidadVenta` decide si
+ * la línea admite fracciones (`cantidadPorUnidad.ts`); ausente (una instantánea offline guardada
+ * antes de que el dato existiera) se trata como `Peso`, el comportamiento de siempre. */
 export type ArticuloEscaneado = {
   idArticulo: number
   codigoInterno: string
@@ -821,6 +823,7 @@ export type ArticuloEscaneado = {
   codigoBarra: string | null
   cantidad: number
   acumulaEnVenta: boolean
+  unidadVenta?: UnidadVenta
 }
 
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
@@ -886,6 +889,9 @@ export type ArticuloDeInstantanea = {
   codigosBarra: string[]
   idAlicuotaIva: number
   porcentajeIva: number
+  /** Ausente en una instantánea guardada antes de que el servidor la enviara: se trata como
+   * `Peso`, sin bloquear ninguna venta. El servidor siempre la manda. */
+  unidadVenta?: UnidadVenta
   preciosPorLista: PrecioDeListaDeInstantanea[]
   /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
   acumulaEnVenta?: boolean

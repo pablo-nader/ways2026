@@ -156,7 +156,10 @@ describe('ModalDeBusquedaDeArticulos — errores y reentrancia', () => {
     fireEvent.click(boton)
 
     expect(onAgregar).toHaveBeenCalledTimes(1)
-    expect(onAgregar).toHaveBeenCalledWith({ idArticulo: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L', codigoBarra: null, acumulaEnVenta: true }, 1)
+    expect(onAgregar).toHaveBeenCalledWith(
+      { idArticulo: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Unidad' },
+      1,
+    )
   })
 
   it.each([true, false])('"Agregar" de un artículo con acumulaEnVenta = %s lo pasa tal cual a onAgregar', async (acumula) => {
@@ -177,6 +180,26 @@ describe('ModalDeBusquedaDeArticulos — errores y reentrancia', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
 
     expect(onAgregar).toHaveBeenCalledWith(expect.objectContaining({ idArticulo: 9, acumulaEnVenta: acumula }), 1)
+  })
+
+  it('"Agregar" le pasa a onAgregar la unidad de venta del artículo elegido', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=qu')
+        ? Promise.resolve(paginaDe([articuloListadoFixture({ id: 10, codigoInterno: 'A0010', nombre: 'Queso', unidadVenta: 'Peso' })]))
+        : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(ruta)),
+    )
+    const onAgregar = vi.fn()
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'qu' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    expect(onAgregar).toHaveBeenCalledWith(expect.objectContaining({ idArticulo: 10, unidadVenta: 'Peso' }), 1)
   })
 
   it('Escape invoca a onCerrar', () => {
