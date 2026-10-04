@@ -2428,3 +2428,208 @@ describe('Articulos — el formulario nunca clasifica una referencia como colgan
     expect(cuerpo.idProveedorHabitual).toBe(555)
   })
 })
+
+describe('Articulos — advertencia de código de barras que no parece un GTIN (GestorDeCodigosBarra)', () => {
+  const RUTA_CODIGOS = '/articulos/1/codigos-barra'
+  // El dígito verificador correcto de 779000123456x es 8: este código es un tipeo típico.
+  const CODIGO_CON_VERIFICADOR_MALO = '7790001234567'
+  const CODIGO_VALIDO = '7790001234568'
+  const MOTIVO_VERIFICADOR = 'El dígito verificador no coincide: puede haber un error de tipeo.'
+
+  function llamadasDeAlta() {
+    return apiPostMock.mock.calls.filter(([ruta]) => ruta === RUTA_CODIGOS)
+  }
+
+  /** Abre la edición 1 y espera a que `GestorDeCodigosBarra` termine de hidratar: el input se
+   * renderiza antes que el dato, y "Sin códigos…" solo aparece cuando la lista ya llegó. */
+  async function abrirGestor() {
+    apiPostMock.mockImplementation((ruta: string, cuerpo: { codigo: string }) => {
+      if (ruta === RUTA_CODIGOS) return Promise.resolve({ id: 70, idArticulo: 1, codigo: cuerpo.codigo, activo: true })
+      return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+    })
+    renderArticulos('/articulos/edit/1')
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await within(dialogo).findByText('Sin códigos de barra cargados.')
+    return {
+      entrada: within(dialogo).getByPlaceholderText('Código de barras'),
+      botonAgregar: within(dialogo).getByRole('button', { name: 'Agregar' }),
+      dialogo,
+    }
+  }
+
+  /**
+   * Cláusula bajo prueba: la llamada a `advertenciaDeCodigoBarra` en `intentarAgregar`. Mutation-
+   * proof-tests: enviar siempre (sin consultar al helper) deja el POST emitido y esta prueba falla.
+   */
+  it('un código con el verificador equivocado muestra la advertencia y no llama a la API', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+
+    expect(within(dialogo).getByText(MOTIVO_VERIFICADOR)).toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Agregar igual' })).toBeEnabled()
+    expect(llamadasDeAlta()).toHaveLength(0)
+    expect(entrada).toHaveValue(CODIGO_CON_VERIFICADOR_MALO)
+  })
+
+  it('"Agregar igual" envía el código recortado, lo agrega a la lista y retira la advertencia', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, '  ABC-123  ')
+    await userEvent.click(botonAgregar)
+    expect(within(dialogo).getByText(/no son dígitos/)).toBeInTheDocument()
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar igual' }))
+
+    expect(await within(dialogo).findByText('ABC-123')).toBeInTheDocument()
+    expect(llamadasDeAlta()).toEqual([[RUTA_CODIGOS, { codigo: 'ABC-123' }]])
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+    expect(entrada).toHaveValue('')
+  })
+
+  /**
+   * Cláusula bajo prueba: `setPendiente(null)` en el `onChange` del input. Mutation-proof-tests:
+   * sacarlo deja la advertencia (y "Agregar igual") visible sobre un código ya distinto.
+   */
+  it('editar el código retira la advertencia pendiente', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+    expect(within(dialogo).getByRole('button', { name: 'Agregar igual' })).toBeInTheDocument()
+
+    await userEvent.type(entrada, '0')
+
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByText(MOTIVO_VERIFICADOR)).not.toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(0)
+  })
+
+  /**
+   * Cláusula bajo prueba: Enter solo llama a `intentarAgregar` y nunca a `enviar` (onKeyDown del
+   * input). Mutation-proof-tests: hacer que, con una advertencia pendiente, Enter llame a
+   * `enviar(pendiente.codigo)` emite el POST en el segundo Enter y esta prueba falla.
+   */
+  it('Enter con un código dudoso solo advierte, y un segundo Enter no lo confirma', async () => {
+    const { entrada, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, `${CODIGO_CON_VERIFICADOR_MALO}{Enter}`)
+    expect(within(dialogo).getByText(MOTIVO_VERIFICADOR)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(0)
+
+    await userEvent.type(entrada, '{Enter}')
+    await userEvent.type(entrada, '{Enter}')
+
+    expect(within(dialogo).getByText(MOTIVO_VERIFICADOR)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(0)
+  })
+
+  it('un código válido se envía directo con el botón, sin advertencia', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, CODIGO_VALIDO)
+    await userEvent.click(botonAgregar)
+
+    expect(await within(dialogo).findByText(CODIGO_VALIDO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toEqual([[RUTA_CODIGOS, { codigo: CODIGO_VALIDO }]])
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('un código válido se envía directo con Enter, sin advertencia', async () => {
+    const { entrada, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, `${CODIGO_VALIDO}{Enter}`)
+
+    expect(await within(dialogo).findByText(CODIGO_VALIDO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(1)
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `setError('')` en `intentarAgregar`, antes de evaluar el código. Mutation-proof-tests: sacarlo
+   * deja el aviso rojo del POST fallido junto a la advertencia del código nuevo.
+   */
+  it('un intento nuevo que termina en advertencia retira el error de un POST anterior', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'codigo_duplicado', 'El código ya existe.'))
+    await userEvent.type(entrada, CODIGO_VALIDO)
+    await userEvent.click(botonAgregar)
+    expect(await within(dialogo).findByText('El código ya existe.')).toBeInTheDocument()
+
+    await userEvent.clear(entrada)
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+
+    expect(within(dialogo).getByText(MOTIVO_VERIFICADOR)).toBeInTheDocument()
+    expect(within(dialogo).queryByText('El código ya existe.')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `trim()` previo a `advertenciaDeCodigoBarra` en `intentarAgregar`.
+   * Mutation-proof-tests: validar el valor sin recortar hace que los espacios cuenten como
+   * caracteres no numéricos y aparezca la advertencia.
+   */
+  it('un GTIN válido con espacios alrededor se envía recortado y sin advertencia', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, `  ${CODIGO_VALIDO}  `)
+    await userEvent.click(botonAgregar)
+
+    expect(await within(dialogo).findByText(CODIGO_VALIDO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toEqual([[RUTA_CODIGOS, { codigo: CODIGO_VALIDO }]])
+    expect(within(dialogo).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('si el POST de "Agregar igual" falla: muestra el error, conserva el código, retira la advertencia y un intento posterior funciona', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(500, 'error', 'No se pudo guardar.'))
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar igual' }))
+
+    expect(await within(dialogo).findByText('No se pudo guardar.')).toBeInTheDocument()
+    expect(entrada).toHaveValue(CODIGO_CON_VERIFICADOR_MALO)
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByText(MOTIVO_VERIFICADOR)).not.toBeInTheDocument()
+
+    await userEvent.click(botonAgregar)
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar igual' }))
+
+    expect(await within(dialogo).findByText(CODIGO_CON_VERIFICADOR_MALO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(2)
+    expect(within(dialogo).queryByText('No se pudo guardar.')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `bloqueadoPorPadre` en el `disabled` de "Agregar igual". Se bloquea al
+   * padre con un PUT de guardado que no resuelve.
+   */
+  it('"Agregar igual" queda deshabilitado mientras el formulario padre está guardando', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPutMock.mockReturnValue(new Promise(() => {}))
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+    const confirmar = within(dialogo).getByRole('button', { name: 'Agregar igual' })
+    expect(confirmar).toBeEnabled()
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(confirmar).toBeDisabled())
+    expect(llamadasDeAlta()).toHaveLength(0)
+  })
+
+  it('dos clics sincrónicos en "Agregar igual" emiten un solo POST', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+    const confirmar = within(dialogo).getByRole('button', { name: 'Agregar igual' })
+
+    await act(async () => {
+      confirmar.click()
+      confirmar.click()
+    })
+
+    expect(llamadasDeAlta()).toHaveLength(1)
+  })
+})
