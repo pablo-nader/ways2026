@@ -125,14 +125,15 @@ public class ServicioDePrecios(
     /// PRIMERA sentencia: exclusivo si <paramref name="modo"/> puede sacar al artículo de su familia
     /// (<see cref="ReglaDeFamilias.RequiereLockExclusivo"/>), compartido en cualquier otro caso. La
     /// pertenencia que se lee después no puede cambiar hasta el commit.</item>
-    /// <item>La lectura de la pertenencia del artículo (<see cref="LeerIdFamiliaAsync"/>, una sola, ya
-    /// bajo ese lock) y la decisión de <see cref="ReglaDeFamilias.ResolverAlcance"/>: escribir solo
-    /// el artículo, escribir toda su familia —las filas de <c>articulos</c> de los miembros vivos
-    /// quedan bloqueadas en orden ascendente de id, <see cref="BloquearMiembrosAsync"/>—, o sacarlo de
-    /// la familia y escribir solo él —su fila queda bloqueada
-    /// (<see cref="BloquearFilaDelArticuloAsync"/>) y la salida misma se escribe más abajo—; o un
-    /// rechazo 409 sin escribir nada (<c>alcance_requerido</c>, <c>familia_cambio</c>). Quien no es
-    /// miembro no toma ningún lock de fila: solo el lock de membresía compartido.</item>
+    /// <item>La lectura de la pertenencia del artículo
+    /// (<see cref="MembresiaDeFamilias.LeerIdFamiliaAsync"/>, una sola, ya bajo ese lock) y la decisión de
+    /// <see cref="ReglaDeFamilias.ResolverAlcance"/>: escribir solo el artículo, escribir toda su familia
+    /// —las filas de <c>articulos</c> de los miembros vivos quedan bloqueadas en orden ascendente de id,
+    /// <see cref="MembresiaDeFamilias.BloquearMiembrosAsync"/>—, o sacarlo de la familia y escribir solo él
+    /// —su fila queda bloqueada (<see cref="MembresiaDeFamilias.BloquearFilaDelArticuloAsync"/>) y la
+    /// salida misma se escribe más abajo—; o un rechazo 409 sin escribir nada (<c>alcance_requerido</c>,
+    /// <c>familia_cambio</c>). Quien no es miembro no toma ningún lock de fila: solo el lock de membresía
+    /// compartido.</item>
     /// <item>Un <c>pg_advisory_xact_lock</c> determinístico sobre el par <c>(artículo, lista)</c> de
     /// este tenant por CADA artículo objetivo, en orden ascendente de la CLAVE del lock
     /// (<see cref="OrdenDeLocksDePares"/>, <see cref="TomarLockDelParAsync"/>) — serializa CUALQUIER
@@ -285,7 +286,10 @@ public class ServicioDePrecios(
     private async Task<ObjetivosDeLaEscritura> ResolverObjetivosAsync(
         int idArticulo, int idTenant, ModoDeAlcanceDeFamilia modo, CancellationToken ct)
     {
-        var idFamilia = await LeerIdFamiliaAsync(idArticulo, idTenant, ct);
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var idFamilia = await MembresiaDeFamilias.LeerIdFamiliaAsync(conexion, transaccionCruda, idArticulo, idTenant, ct);
 
         switch (ReglaDeFamilias.ResolverAlcance(modo, esMiembro: idFamilia is not null))
         {
@@ -293,7 +297,8 @@ public class ServicioDePrecios(
                 return new ObjetivosDeLaEscritura([idArticulo], IdFamiliaDeLaQueSale: null);
 
             case ResolucionDeAlcanceDeFamilia.TodaLaFamilia:
-                var miembros = await BloquearMiembrosAsync(idFamilia!.Value, idTenant, ct);
+                var miembros = await MembresiaDeFamilias.BloquearMiembrosAsync(
+                    conexion, transaccionCruda, idFamilia!.Value, idTenant, ct);
 
                 // Los escritores de pertenencia toman el lock de membresía exclusivo, así que bajo
                 // el lock este artículo es miembro. Si no aparece, alguien cambió su pertenencia
@@ -301,20 +306,23 @@ public class ServicioDePrecios(
                 // al cliente un precio aplicado a la familia que no lo incluye.
                 if (!miembros.Contains(idArticulo))
                 {
-                    throw ErrorDeFamiliaCambio();
+                    throw MembresiaDeFamilias.ErrorDeFamiliaCambio();
                 }
 
                 return new ObjetivosDeLaEscritura(miembros, IdFamiliaDeLaQueSale: null);
 
             case ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia:
-                await BloquearFilaDelArticuloAsync(idArticulo, idFamilia!.Value, idTenant, ct);
+                await MembresiaDeFamilias.BloquearFilaDelArticuloAsync(
+                    conexion, transaccionCruda, idArticulo, idFamilia!.Value, idTenant, ct);
                 return new ObjetivosDeLaEscritura([idArticulo], IdFamiliaDeLaQueSale: idFamilia);
 
             case ResolucionDeAlcanceDeFamilia.AlcanceRequerido:
-                throw await ErrorDeAlcanceRequeridoAsync(idFamilia!.Value, idTenant, ct);
+                throw await MembresiaDeFamilias.ErrorDeAlcanceRequeridoAsync(
+                    conexion, transaccionCruda, idFamilia!.Value, idTenant,
+                    "el cambio de precio tiene que indicar si se aplica a toda la familia o solo a este artículo.", ct);
 
             case ResolucionDeAlcanceDeFamilia.FamiliaCambio:
-                throw ErrorDeFamiliaCambio();
+                throw MembresiaDeFamilias.ErrorDeFamiliaCambio();
 
             default:
                 throw new InvalidOperationException("Resolución de alcance de familia desconocida.");
@@ -863,98 +871,10 @@ public class ServicioDePrecios(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>La familia del artículo (<c>null</c> ⇒ no es miembro) leída DENTRO de la transacción
-    /// y DESPUÉS del lock de membresía — la única lectura de la pertenencia de esta operación
-    /// (<c>single-read-under-lock</c>). Una proyección escalar con <c>deleted_at IS NULL</c>, nunca
-    /// una entidad rastreada: la salida de la familia es un <c>UPDATE</c> crudo
-    /// (<see cref="SacarDeLaFamiliaAsync"/>) sobre una fila que se bloqueó guardada por este valor
-    /// (<see cref="BloquearFilaDelArticuloAsync"/>). Si la fila ya no existe (la dieron de baja entre
-    /// el pre-chequeo y el lock) es el mismo 404 que el pre-chequeo.</summary>
-    private async Task<int?> LeerIdFamiliaAsync(int idArticulo, int idTenant, CancellationToken ct)
-    {
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "SELECT id_familia FROM articulos WHERE id_articulo = $1 AND id_tenant = $2 AND deleted_at IS NULL";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idTenant);
-
-        await using var lector = await comando.ExecuteReaderAsync(ct);
-
-        if (!await lector.ReadAsync(ct))
-        {
-            throw ErrorDominio.NoEncontrado($"No existe el artículo {idArticulo}.");
-        }
-
-        return lector.IsDBNull(0) ? null : lector.GetInt32(0);
-    }
-
-    /// <summary>Los miembros vivos de la familia, ascendentes por <c>id_articulo</c>, con sus filas de
-    /// <c>articulos</c> bloqueadas <c>FOR NO KEY UPDATE</c> — paso (2) del orden global de locks. Un
-    /// solo statement con <c>ORDER BY</c>: PostgreSQL toma los locks de fila en el orden del sort, que
-    /// es el orden que evita el ciclo entre dos escritores de la misma familia. Nunca <c>FOR UPDATE</c>
-    /// sobre varias filas: choca con el <c>FOR KEY SHARE</c> que toman las ventas por sus FK y puede
-    /// formar un deadlock. Si una fila cambió mientras se esperaba su lock, PostgreSQL reevalúa el
-    /// <c>WHERE</c> sobre la versión nueva y la descarta si ya no es miembro vivo.</summary>
-    private async Task<List<int>> BloquearMiembrosAsync(int idFamilia, int idTenant, CancellationToken ct)
-    {
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "SELECT id_articulo FROM articulos " +
-            "WHERE id_familia = $1 AND id_tenant = $2 AND deleted_at IS NULL " +
-            "ORDER BY id_articulo FOR NO KEY UPDATE";
-
-        ParametrosDeComando.Agregar(comando, idFamilia);
-        ParametrosDeComando.Agregar(comando, idTenant);
-
-        var miembros = new List<int>();
-        await using var lector = await comando.ExecuteReaderAsync(ct);
-
-        while (await lector.ReadAsync(ct))
-        {
-            miembros.Add(lector.GetInt32(0));
-        }
-
-        return miembros;
-    }
-
-    /// <summary>"Solo este", paso (2) del orden de locks: bloquea la fila del artículo
-    /// <c>FOR NO KEY UPDATE</c> —el mismo modo que <see cref="BloquearMiembrosAsync"/>— guardada por la
-    /// familia que se leyó bajo el lock de membresía y por la baja lógica. La salida de la familia se
-    /// escribe después, con el "ahora" de la operación (<see cref="SacarDeLaFamiliaAsync"/>). Si la fila
-    /// no cumple el <c>WHERE</c> —otro escritor cambió su pertenencia o la dio de baja sin respetar el
-    /// lock de membresía, también mientras se esperaba el lock de la fila— se rechaza como
-    /// <c>familia_cambio</c>.</summary>
-    private async Task BloquearFilaDelArticuloAsync(int idArticulo, int idFamilia, int idTenant, CancellationToken ct)
-    {
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "SELECT 1 FROM articulos " +
-            "WHERE id_articulo = $1 AND id_tenant = $2 AND id_familia = $3 AND deleted_at IS NULL " +
-            "FOR NO KEY UPDATE";
-
-        ParametrosDeComando.Agregar(comando, idArticulo);
-        ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idFamilia);
-
-        if (await comando.ExecuteScalarAsync(ct) is null)
-        {
-            throw ErrorDeFamiliaCambio();
-        }
-    }
-
     /// <summary>"Solo este": el artículo sale de la familia, con el "ahora" de la operación (FASE 2,
     /// después de resolverlo). <c>UPDATE</c> crudo por clave sobre la fila que
-    /// <see cref="BloquearFilaDelArticuloAsync"/> ya dejó bloqueada, viva y en esa familia.</summary>
+    /// <see cref="MembresiaDeFamilias.BloquearFilaDelArticuloAsync"/> ya dejó bloqueada, viva y en esa
+    /// familia.</summary>
     private async Task SacarDeLaFamiliaAsync(int idArticulo, int idTenant, DateTimeOffset ahora, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -972,47 +892,6 @@ public class ServicioDePrecios(
 
         await comando.ExecuteNonQueryAsync(ct);
     }
-
-    /// <summary>409 <c>alcance_requerido</c>: el artículo es miembro y el cliente no eligió. El mensaje
-    /// nombra la familia y la cantidad de artículos vivos (ErrorDominio no lleva datos estructurados);
-    /// se lee acá, solo en el camino de error, bajo el mismo lock de membresía.</summary>
-    private async Task<ErrorDominio> ErrorDeAlcanceRequeridoAsync(int idFamilia, int idTenant, CancellationToken ct)
-    {
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
-        comando.CommandText =
-            "SELECT f.nombre, " +
-            "(SELECT count(*) FROM articulos a WHERE a.id_familia = f.id_familia AND a.id_tenant = f.id_tenant " +
-            "AND a.deleted_at IS NULL) " +
-            "FROM familias f WHERE f.id_familia = $1 AND f.id_tenant = $2";
-
-        ParametrosDeComando.Agregar(comando, idFamilia);
-        ParametrosDeComando.Agregar(comando, idTenant);
-
-        await using var lector = await comando.ExecuteReaderAsync(ct);
-
-        // La FK compuesta de articulos garantiza que la familia de un miembro existe: sin fila,
-        // GetString falla fuerte en vez de inventar un nombre.
-        await lector.ReadAsync(ct);
-        var nombre = lector.GetString(0);
-        var cantidad = lector.GetInt64(1);
-        var articulos = cantidad == 1 ? "1 artículo" : $"{cantidad} artículos";
-
-        return ErrorDominio.Conflicto(
-            "alcance_requerido",
-            $"El artículo pertenece a la familia \"{nombre}\" ({articulos}): el cambio de precio tiene que indicar " +
-            "si se aplica a toda la familia o solo a este artículo.");
-    }
-
-    /// <summary>409 <c>familia_cambio</c>: la pertenencia que el cliente daba por cierta ya no lo es
-    /// (eligió un alcance sobre un artículo que dejó de ser miembro, o que dejó de existir mientras
-    /// esta escritura esperaba el lock de su fila).</summary>
-    private static ErrorDominio ErrorDeFamiliaCambio() =>
-        ErrorDominio.Conflicto(
-            "familia_cambio",
-            "La pertenencia del artículo a su familia cambió desde que se cargó la pantalla; hay que recargar y volver a intentar.");
 
     /// <summary>SELECT plano (sin <c>FOR UPDATE</c>) vía ADO.NET crudo sobre la
     /// conexión/transacción activa del <see cref="IWaysDbContext"/> inyectado — mismo criterio

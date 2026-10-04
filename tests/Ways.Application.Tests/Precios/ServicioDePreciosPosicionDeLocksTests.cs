@@ -19,6 +19,12 @@ public class ServicioDePreciosPosicionDeLocksTests
         File.ReadAllText(Path.Combine(
             RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Precios", "ServicioDePrecios.cs"));
 
+    /// <summary>Los bloqueos de fila de la pertenencia viven en <c>MembresiaDeFamilias</c>, compartidos con los
+    /// demás escritores de familias: el texto de sus statements se afirma sobre ese archivo.</summary>
+    private static string LeerFuenteDeMembresia() =>
+        File.ReadAllText(Path.Combine(
+            RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Familias", "MembresiaDeFamilias.cs"));
+
     /// <summary>Del primer <c>{</c> después de la firma hasta su llave de cierre.</summary>
     private static string CuerpoDe(string fuente, string firma)
     {
@@ -193,7 +199,7 @@ public class ServicioDePreciosPosicionDeLocksTests
     [Fact]
     public void LosMiembrosSeBloqueanAscendentesYConForNoKeyUpdate()
     {
-        var cuerpo = CuerpoDe(LeerFuente(), "private async Task<List<int>> BloquearMiembrosAsync(");
+        var cuerpo = CuerpoDe(LeerFuenteDeMembresia(), "public static async Task<List<int>> BloquearMiembrosAsync(");
 
         Assert.Contains("ORDER BY id_articulo FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
         Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);
@@ -205,7 +211,7 @@ public class ServicioDePreciosPosicionDeLocksTests
     [Fact]
     public void LaFilaDeSoloEsteSeBloqueaConForNoKeyUpdate()
     {
-        var cuerpo = CuerpoDe(LeerFuente(), "private async Task BloquearFilaDelArticuloAsync(");
+        var cuerpo = CuerpoDe(LeerFuenteDeMembresia(), "public static async Task BloquearFilaDelArticuloAsync(");
 
         Assert.Contains("FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
         Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);
