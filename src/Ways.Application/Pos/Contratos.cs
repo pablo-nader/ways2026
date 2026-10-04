@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Ways.Application.Ofertas;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 
@@ -34,7 +35,10 @@ public sealed record PrecioDeListaDeInstantanea(
 /// Un artículo dentro de <see cref="InstantaneaDePos"/>: identidad, códigos, IVA y su precio en
 /// cada lista resuelta (<see cref="PreciosPorLista"/>, ascendente por lista). Un artículo sin
 /// precio vigente en una lista no tiene entrada para esa lista; sin precio en ninguna, el artículo
-/// no viaja (online ya rechazaría <c>articulo_sin_precio_vigente</c>). <c>IdArea</c>,
+/// no viaja (online ya rechazaría <c>articulo_sin_precio_vigente</c>). <see cref="UnidadVenta"/>
+/// le dice al carrito offline si la línea admite fracciones; es parte del contenido de la
+/// etiqueta de <see cref="InstantaneaDePos"/>, así que un dispositivo con una instantánea anterior
+/// recibe el cambio como contenido nuevo. <c>IdArea</c>,
 /// <c>EsProducto</c> y <c>ControlaLote</c> quedan afuera: el servidor los resuelve del artículo
 /// fresco al sincronizar (<c>ServicioDeVentas.MaterializarItems</c>), nunca del request.
 /// </summary>
@@ -46,6 +50,7 @@ public sealed record ArticuloDeInstantanea(
     int IdAlicuotaIva,
     decimal PorcentajeIva,
     bool AcumulaEnVenta,
+    UnidadVenta UnidadVenta,
     IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista);
 
 /// <summary>

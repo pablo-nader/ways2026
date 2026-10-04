@@ -623,6 +623,51 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.DoesNotContain(instantanea.Clientes, c => c.IdCliente == deOtraEmpresa.Id);
     }
 
+    /// <summary>La unidad de venta viaja en cada artículo de la versión 2 y es parte del contenido
+    /// de la etiqueta: un dispositivo con una instantánea guardada antes de este campo manda su
+    /// etiqueta vieja y recibe 200, no 304. El formato original (sin <c>version</c>) no la expone.</summary>
+    [Fact]
+    public async Task LaUnidadDeVentaViajaEnLaVersion2CambiaLaEtiquetaYNoApareceEnElFormatoOriginal()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaUnidadDeVentaViajaEnLaVersion2CambiaLaEtiquetaYNoApareceEnElFormatoOriginal));
+        var idPorUnidad = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "por-unidad", 100m, "7794440000001");
+        var idPorPeso = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "por-peso", 200m, "7794440000002");
+        await CambiarUnidadDeVentaAsync(idTenant, idPorPeso, UnidadVenta.Peso);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "unidad-venta");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var legado = await cajero.GetAsync("/api/pos/instantanea");
+        Assert.Equal(HttpStatusCode.OK, legado.StatusCode);
+        Assert.DoesNotContain("unidadVenta", await legado.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+
+        var primera = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, primera.StatusCode);
+        var etiqueta = primera.Headers.ETag;
+        Assert.NotNull(etiqueta);
+        var instantanea = (await primera.Content.ReadFromJsonAsync<InstantaneaDePos>(OpcionesJson))!;
+        Assert.Equal(UnidadVenta.Unidad, Assert.Single(instantanea.Articulos, a => a.IdArticulo == idPorUnidad).UnidadVenta);
+        Assert.Equal(UnidadVenta.Peso, Assert.Single(instantanea.Articulos, a => a.IdArticulo == idPorPeso).UnidadVenta);
+
+        await CambiarUnidadDeVentaAsync(idTenant, idPorPeso, UnidadVenta.Unidad);
+        VaciarCacheDeInstantaneas();
+
+        using var conEtiquetaVieja = new HttpRequestMessage(HttpMethod.Get, RutaV2);
+        conEtiquetaVieja.Headers.IfNoneMatch.Add(etiqueta);
+        var segunda = await cajero.SendAsync(conEtiquetaVieja);
+        Assert.Equal(HttpStatusCode.OK, segunda.StatusCode);
+        Assert.NotEqual(etiqueta, segunda.Headers.ETag);
+    }
+
+    private async Task CambiarUnidadDeVentaAsync(int idTenant, int idArticulo, UnidadVenta unidadVenta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var articulo = await db.Articulos.FirstAsync(a => a.Id == idArticulo);
+        articulo.UnidadVenta = unidadVenta;
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>dangling-fk-read-models: la lista del cliente se da de baja estampando
     /// <c>DeletedAt</c> sobre la fila real (la baja por API la rechazaría por estar en uso). La FK
     /// sigue apuntando ahí, pero se proyecta <c>null</c> y ningún artículo trae precio en esa

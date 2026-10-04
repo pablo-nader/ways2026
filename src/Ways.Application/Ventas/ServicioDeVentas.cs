@@ -178,6 +178,14 @@ public class ServicioDeVentas(
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
 
+        // Quedan fuera la venta que un dispositivo ya cobró offline (con número pre-asignado), la
+        // que sale de un presupuesto ya emitido y la devolución (signo negativo): las tres registran
+        // cantidades que se aceptaron antes de esta regla.
+        if (solicitud.NumeroPreasignado is null && presupuestoOrigen is null && tipo.Signo > 0)
+        {
+            ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
+        }
+
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
         var porcentajePorAlicuota = await db.AlicuotasIva
             .Where(a => idsAlicuota.Contains(a.Id))
@@ -2073,6 +2081,25 @@ public class ServicioDeVentas(
         }
 
         return lineas;
+    }
+
+    /// <summary>Un artículo que se vende por <see cref="UnidadVenta.Unidad"/> no admite fracciones
+    /// (400 <c>cantidad_entera_requerida</c>). Usa el artículo que <see cref="EmitirAsync"/> ya leyó;
+    /// no agrega una lectura.</summary>
+    private static void ExigirCantidadesAdmitidasPorUnidadDeVenta(
+        IReadOnlyList<LineaDeVenta> lineas, IReadOnlyDictionary<int, Articulo> articuloPorId)
+    {
+        foreach (var linea in lineas)
+        {
+            var articulo = articuloPorId[linea.IdArticulo];
+            if (!ReglaDeCantidadDeVenta.EsCantidadAdmitida(articulo.UnidadVenta, linea.Cantidad))
+            {
+                throw new ErrorDominio(
+                    "cantidad_entera_requerida",
+                    $"El artículo {articulo.CodigoInterno} se vende por unidad: la cantidad tiene que ser entera.",
+                    400);
+            }
+        }
     }
 
     /// <summary>stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59", mutation

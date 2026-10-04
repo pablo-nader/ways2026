@@ -546,6 +546,57 @@ public class VentaOfflinePrecioTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(120m, persistido.Total);
     }
 
+    /// <summary>Una venta que el dispositivo ya cobró offline se registra como llegó: la cantidad
+    /// fraccionaria de un artículo por unidad no la rechaza la regla de <c>cantidad_entera_requerida</c>,
+    /// que solo rige para la venta online (<see cref="UnDispositivoSinNumeroPreasignadoNoPuedeVenderUnaFraccionDeUnArticuloPorUnidad"/>
+    /// es su contraparte sobre el mismo artículo y el mismo dispositivo).</summary>
+    [Fact]
+    public async Task LaVentaOfflineRegistraLaCantidadFraccionariaDeUnArticuloPorUnidad()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVentaOfflineRegistraLaCantidadFraccionariaDeUnArticuloPorUnidad));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "fraccion-offline");
+        using var _cajero = cajero;
+        await ReservarBloqueAsync(cajero, idPuntoVenta);
+        admin.Dispose();
+
+        var solicitud = new SolicitudDeVenta(
+            idPuntoVenta, null, "TX", null,
+            [new LineaDeVenta(idArticulo, 1.5m, null, IdLote: null, PrecioUnitario: 100m)],
+            [new PagoDeVenta(idMedio, 150m, null, 0m)], null, null,
+            IdPresupuestoOrigen: null, NumeroPreasignado: 1);
+
+        var respuesta = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(1.5m, Assert.Single(emitido.Items).Cantidad);
+    }
+
+    [Fact]
+    public async Task UnDispositivoSinNumeroPreasignadoNoPuedeVenderUnaFraccionDeUnArticuloPorUnidad()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoSinNumeroPreasignadoNoPuedeVenderUnaFraccionDeUnArticuloPorUnidad));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedio) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "fraccion-online");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var solicitud = new SolicitudDeVenta(
+            idPuntoVenta, null, "TX", null, [new LineaDeVenta(idArticulo, 1.5m, null)],
+            [new PagoDeVenta(idMedio, 150m, null, 0m)], null, null);
+
+        var respuesta = await cajero.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_entera_requerida", problema.GetProperty("codigo").GetString());
+    }
+
     /// <summary>judgment-day ronda 2 (SUGGESTION): un carrito offline multi-línea con descuentos
     /// MIXTOS (una línea sin descuento, otra con) — cada línea persiste su propio total
     /// independiente y el total general es la suma exacta, igual que el comprobante sintético que

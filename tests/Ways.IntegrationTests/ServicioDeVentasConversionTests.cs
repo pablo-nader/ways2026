@@ -405,6 +405,22 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(95m, itemPersistido.CostoUnitario);
     }
 
+    /// <summary>La cantidad de un presupuesto ya emitido se convierte tal como se cotizó: la regla de
+    /// <c>cantidad_entera_requerida</c> solo mira las líneas que trae la solicitud de venta.</summary>
+    [Fact]
+    public async Task LaConversionRespetaLaCantidadFraccionariaYaCotizadaDeUnArticuloPorUnidad()
+    {
+        var ctx = await PrepararAsync(nameof(LaConversionRespetaLaCantidadFraccionariaYaCotizadaDeUnArticuloPorUnidad));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx, cantidad: 1.5m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudDeConversion(ctx, enviado.Id, importe: 150m));
+
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+        Assert.Equal(1.5m, Assert.Single(emitido.Items).Cantidad);
+    }
+
     // ---- task 3.16: vencido rechazado, con el borde -03:00 -----------------------------------------
 
     [Fact]

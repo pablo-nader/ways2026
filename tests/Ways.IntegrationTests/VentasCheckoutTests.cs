@@ -134,7 +134,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     private async Task<int> SembrarArticuloConPrecioAsync(
-        Contexto ctx, string nombre, decimal precio, int? idListaPrecio = null, bool esProducto = true)
+        Contexto ctx, string nombre, decimal precio, int? idListaPrecio = null, bool esProducto = true,
+        UnidadVenta unidadVenta = UnidadVenta.Unidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -142,7 +143,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var articulo = new Articulo
         {
             IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
-            IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+            IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = unidadVenta,
             EsProducto = esProducto, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.Articulos.Add(articulo);
@@ -395,7 +396,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     public async Task UnaCantidadConHastaTresDecimalesEsAceptada()
     {
         var ctx = await PrepararAsync(nameof(UnaCantidadConHastaTresDecimalesEsAceptada));
-        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-cantidad-precision-ok", 10m);
+        var idArticulo = await SembrarArticuloConPrecioAsync(
+            ctx, "articulo-cantidad-precision-ok", 10m, unidadVenta: UnidadVenta.Peso);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Cantidad Precisión Ok");
 
         var solicitud = new SolicitudDeVenta(
@@ -407,6 +409,67 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+    }
+
+    [Fact]
+    public async Task UnArticuloPorUnidadRechazaUnaCantidadFraccionaria()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloPorUnidadRechazaUnaCantidadFraccionaria));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-por-unidad", 10m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Por Unidad");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1.5m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 15m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_entera_requerida", problema.GetProperty("codigo").GetString());
+
+        var (cantidad, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        Assert.Equal(0m, cantidad);
+    }
+
+    [Fact]
+    public async Task UnaFraccionDeUnArticuloPorUnidadEsRechazadaAunqueOtraLineaSeaPorPeso()
+    {
+        var ctx = await PrepararAsync(nameof(UnaFraccionDeUnArticuloPorUnidadEsRechazadaAunqueOtraLineaSeaPorPeso));
+        var idPorPeso = await SembrarArticuloConPrecioAsync(ctx, "articulo-por-peso", 10m, unidadVenta: UnidadVenta.Peso);
+        var idPorUnidad = await SembrarArticuloConPrecioAsync(ctx, "articulo-por-unidad-mixto", 10m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, null, "TX", null,
+            [new LineaDeVenta(idPorPeso, 1.5m, null), new LineaDeVenta(idPorUnidad, 2.5m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 40m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_entera_requerida", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnaDevolucionDeUnArticuloPorUnidadNoExigeCantidadEntera()
+    {
+        var ctx = await PrepararAsync(nameof(UnaDevolucionDeUnArticuloPorUnidadNoExigeCantidadEntera));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-fraccion", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Fracción");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", null,
+            [new LineaDeVenta(idArticulo, 1.5m, null)],
+            [],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
     [Fact]
