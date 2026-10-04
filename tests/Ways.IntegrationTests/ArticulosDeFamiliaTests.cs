@@ -640,11 +640,19 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     /// <summary>Lo mismo con el OTRO rechazo que ocurre después de leer a los miembros: una referencia de catálogo
-    /// inexistente. La edición de la familia llega a la validación del catálogo con los miembros ya leídos y
+    /// inexistente. La edición de la familia llega a los chequeos de catálogo con los miembros ya leídos y
     /// rastreados; ninguno puede estar mutado cuando se rechaza, porque el guardado de la escritura siguiente
-    /// sobre el mismo contexto los escribiría por detrás.</summary>
-    [Fact]
-    public async Task UnRechazoPorReferenciaInvalidaNoDejaMutacionesRastreadasYLaSiguienteEscrituraDelMismoContextoNoLasGuarda()
+    /// sobre el mismo contexto los escribiría por detrás. Un caso por catálogo, en el orden de los chequeos de la
+    /// edición: cada uno rechaza en su propio chequeo, y una mutación de las entidades puesta entre dos chequeos
+    /// solo la ven los casos de los chequeos que le siguen.</summary>
+    [Theory]
+    [InlineData("el área")]
+    [InlineData("la categoría")]
+    [InlineData("la marca")]
+    [InlineData("el grupo")]
+    [InlineData("el proveedor")]
+    public async Task UnRechazoPorReferenciaInvalidaNoDejaMutacionesRastreadasYLaSiguienteEscrituraDelMismoContextoNoLasGuarda(
+        string catalogo)
     {
         using var e = await apoyo.PrepararAsync(nameof(UnRechazoPorReferenciaInvalidaNoDejaMutacionesRastreadasYLaSiguienteEscrituraDelMismoContextoNoLasGuarda));
         var f = await SembrarFamiliaConVecinosAsync(e);
@@ -655,10 +663,21 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var (db, servicio) = CrearServicio(e);
         await using var _ = db;
 
-        var conAreaInexistente = ValoresBase(e) with { IdArea = 987_654_321 };
-        var rechazo = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(
-            f.A2, ConCompartidos(EdicionIgualA(antesDeA2, AlcanceDeFamilia.Familia) with { Nombre = "no se escribe" }, conAreaInexistente)));
+        const int inexistente = 987_654_321;
+        var edicion = EdicionIgualA(antesDeA2, AlcanceDeFamilia.Familia) with { Nombre = "no se escribe" };
+        var pedido = catalogo switch
+        {
+            "el área" => edicion with { IdArea = inexistente },
+            "la categoría" => edicion with { IdCategoria = inexistente },
+            "la marca" => edicion with { IdMarca = inexistente },
+            "el grupo" => edicion with { IdGrupo = inexistente },
+            "el proveedor" => edicion with { IdProveedorHabitual = inexistente },
+            _ => throw new ArgumentOutOfRangeException(nameof(catalogo), catalogo, "Catálogo desconocido.")
+        };
+
+        var rechazo = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(f.A2, pedido));
         Assert.Equal("referencia_invalida", rechazo.Codigo);
+        Assert.Contains($"No existe {catalogo} {inexistente}", rechazo.Message, StringComparison.Ordinal);
 
         Assert.DoesNotContain(
             db.ChangeTracker.Entries(),

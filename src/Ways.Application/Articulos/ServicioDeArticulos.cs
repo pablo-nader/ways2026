@@ -238,7 +238,10 @@ public class ServicioDeArticulos(
     /// antes de insertar. El 409 <c>codigo_proveedor_duplicado</c> y los respaldos de la base (índices únicos y
     /// claves foráneas) ocurren al insertar o después de haber insertado el artículo: la transacción se revierte
     /// entera y el contexto suelta lo que esta operación le agregó (<see cref="RastreoDeEntidades"/>). Sin
-    /// <c>IdFamilia</c> no toma el lock de membresía y nada de esto corre.</para></summary>
+    /// <c>IdFamilia</c> no corren los pasos propios de la familia —el lock de membresía, la lectura y el bloqueo de
+    /// la familia, la referencia, la comparación de los campos compartidos y la copia de precios—; los 5 chequeos
+    /// de catálogo, el 409 <c>codigo_proveedor_duplicado</c> cuando el pedido trae <c>codigo_proveedor</c>, los
+    /// respaldos de la base y el rollback con la suelta del contexto son los mismos en todo alta.</para></summary>
     public async Task<ArticuloListado> CrearAsync(AltaArticulo datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);

@@ -32,8 +32,10 @@ namespace Ways.IntegrationTests;
 ///
 /// <para>Los tests de locks son rendezvous determinísticos: una conexión cruda sostiene un lock o una
 /// escritura sin comitear, el alta queda observada esperando en <c>pg_locks</c> y recién ahí se libera
-/// (<c>mutation-proof-tests</c>, regla 13). La excepción es
-/// <see cref="DosAltasSimultaneasEnLaMismaFamiliaEntranLasDosConElEstadoDePreciosCompleto"/>: lanza dos altas a
+/// (<c>mutation-proof-tests</c>, regla 13). Dos no observan ninguna espera.
+/// <see cref="UnAltaSinFamiliaNoEsperaAlLockDeMembresiaAjeno"/> prueba que no espera: el lock exclusivo ajeno
+/// sigue sostenido hasta el final de la prueba y el alta tiene que terminar dentro de 15 segundos.
+/// <see cref="DosAltasSimultaneasEnLaMismaFamiliaEntranLasDosConElEstadoDePreciosCompleto"/> lanza dos altas a
 /// la vez sin ningún punto de encuentro, así que prueba el resultado y no el orden.</para>
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -701,17 +703,17 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(HttpStatusCode.Created, (await alta.WaitAsync(EsperaMaxima)).StatusCode);
     }
 
-    /// <summary>Un alta SIN familia no toma el lock de membresía: con el exclusivo sostenido por otro, termina
-    /// sin esperarlo.</summary>
+    /// <summary>Un alta SIN familia no toma el lock de membresía: con el exclusivo sostenido por otra conexión
+    /// hasta el final de la prueba, termina con 201 antes de 15 segundos. Si lo pidiera, en el modo que fuera,
+    /// quedaría esperando a un lock que nadie libera y la prueba fallaría por tiempo. No observa nada en
+    /// <c>pg_locks</c>: lo que prueba es que el alta terminó con el lock todavía sostenido.</summary>
     [Fact]
     public async Task UnAltaSinFamiliaNoEsperaAlLockDeMembresiaAjeno()
     {
         using var e = await apoyo.PrepararAsync(nameof(UnAltaSinFamiliaNoEsperaAlLockDeMembresiaAjeno));
 
-        var (poll, sostenedor, transaccion) = await apoyo.AbrirSostenedorAsync(e.IdTenant);
-        await using var _poll = poll;
-        await using var _sostenedor = sostenedor;
-        await using var _transaccion = transaccion;
+        await using var sostenedor = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
+        await using var transaccion = await sostenedor.BeginTransactionAsync();
 
         await EjecutarAsync(sostenedor, transaccion, "SELECT pg_advisory_xact_lock($1)", LockDeMembresiaDeFamilias.ClaveDe(e.IdTenant));
 

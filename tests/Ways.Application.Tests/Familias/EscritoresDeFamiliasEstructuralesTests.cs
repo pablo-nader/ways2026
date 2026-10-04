@@ -17,9 +17,10 @@ namespace Ways.Application.Tests.Familias;
 /// <item>sentencias SQL <c>INSERT INTO</c>, <c>UPDATE</c> y <c>DELETE FROM</c> sobre <c>articulos</c> o
 /// <c>precios</c>, con cualquier combinación de mayúsculas y con el nombre entre comillas;</item>
 /// <item>las operaciones de escritura de <c>DbSet</c> sobre <c>Articulos</c> y <c>Precios</c> (<c>Add</c>,
-/// <c>Remove</c>, <c>Update</c>, <c>Attach</c> y sus variantes <c>Range</c>), <c>Set&lt;Articulo&gt;()</c>,
-/// <c>Set&lt;Precio&gt;()</c>, <c>new Articulo</c> y <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> encadenados a esos
-/// <c>DbSet</c> en la misma sentencia;</item>
+/// <c>Remove</c>, <c>Update</c>, <c>Attach</c>, sus variantes <c>Range</c> y la forma con sufijo <c>Async</c> de
+/// cada una, como <c>AddAsync</c> y <c>AddRangeAsync</c>), <c>Set&lt;Articulo&gt;()</c> y
+/// <c>Set&lt;Precio&gt;()</c> con un receptor delante (<c>db.Set&lt;Articulo&gt;()</c>), <c>new Articulo</c> y
+/// <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> encadenados a esos <c>DbSet</c> en la misma sentencia;</item>
 /// <item>un <c>SetProperty</c> sobre un campo compartido de <c>articulos</c>;</item>
 /// <item>la asignación de <c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>,
 /// <c>UnidadesPorBulto</c>, <c>IdProveedorHabitual</c>, <c>IdAlicuotaIva</c>, <c>UnidadVenta</c>,
@@ -30,12 +31,17 @@ namespace Ways.Application.Tests.Familias;
 ///
 /// <para><b>Qué NO ve.</b> Una escritura armada de otra manera: SQL cuyo nombre de tabla se compone por
 /// concatenación o interpolación, <c>new()</c> con el tipo inferido, <c>ExecuteUpdate</c> sobre una consulta
-/// guardada antes en una variable, un recurso que no sea un <c>.cs</c> de <c>src/</c> y cualquier código fuera de
-/// <c>src/</c>. Tampoco ve la baja lógica de un artículo (<c>DeletedAt</c>), que cambia quién es miembro y no usa
-/// ninguna de estas formas, ni la asignación suelta de <c>IdArea</c>, <c>IdCategoria</c> e <c>IdGrupo</c>: son
-/// nombres que comparten ofertas y gastos, y las pruebas de <c>ValoresCompartidosDeFamilia</c> son las que
-/// anclan el mapeo de las trece columnas. Un <c>//</c> dentro de un literal de cadena le quita a la red el resto de
-/// esa línea.</para>
+/// guardada antes en una variable, <c>Set&lt;Articulo&gt;()</c> o <c>Set&lt;Precio&gt;()</c> sin receptor, un
+/// recurso que no sea un <c>.cs</c> de <c>src/</c> y cualquier código fuera de <c>src/</c>. La llamada sin receptor
+/// es la forma con la que <c>WaysDbContext</c> define sus propiedades <c>Articulos</c> y <c>Precios</c>: los
+/// patrones de <c>Set</c> piden un <c>.</c> delante, así que el contexto no figura como escritor y tampoco se vería
+/// una escritura hecha con esa forma dentro de una clase derivada de él. Tampoco ve la baja lógica de un
+/// artículo (<c>DeletedAt</c>), que cambia quién es miembro y no usa ninguna de estas formas, ni la asignación
+/// suelta de <c>IdArea</c>, <c>IdCategoria</c> e <c>IdGrupo</c>: son nombres que comparten ofertas y gastos, y las
+/// pruebas de <c>ValoresCompartidosDeFamilia</c> son las que anclan el mapeo de las trece columnas. El quitador de
+/// comentarios no distingue los literales de cadena: un <c>//</c> dentro de uno le quita a la red el resto de esa
+/// línea, y un <c>/*</c>, todo el código hasta el siguiente <c>*/</c> —si lo hay—, aunque esté en otras
+/// líneas.</para>
 /// </summary>
 public class EscritoresDeFamiliasEstructuralesTests
 {
@@ -60,7 +66,7 @@ public class EscritoresDeFamiliasEstructuralesTests
         $@"(?i:\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+[\\""]*{tabla}\b)";
 
     private static string OperacionDeDbSet(string conjunto) =>
-        $@"\.{conjunto}\.(?:{OperacionesDeEscrituraDeDbSet})\(";
+        $@"\.{conjunto}\.(?:{OperacionesDeEscrituraDeDbSet})(?:Async)?\(";
 
     private static string ConjuntoGenerico(string entidad) =>
         $@"\.Set<\s*{entidad}\s*>\s*\(";
@@ -164,6 +170,8 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("comando.CommandText = \"INSERT INTO \\\"precios\\\" (precio) VALUES ($1)\";")]
     [InlineData("comando.CommandText = @\"INSERT INTO \"\"precios\"\" (precio) VALUES ($1)\";")]
     [InlineData("db.Precios.Add(precio);")]
+    [InlineData("await db.Precios.AddAsync(precio, ct);")]
+    [InlineData("await db.Precios.AddRangeAsync(filas, ct);")]
     [InlineData("db.Precios.RemoveRange(filas);")]
     [InlineData("db.Precios.UpdateRange(filas);")]
     [InlineData("db.Set<Precio>().Add(precio);")]
@@ -191,6 +199,8 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("comando.CommandText = \"DELETE FROM \\\"articulos\\\" WHERE id_articulo = $1\";")]
     [InlineData("comando.CommandText = @\"UPDATE \"\"articulos\"\" SET id_familia = NULL\";")]
     [InlineData("db.Articulos.Add(articulo);")]
+    [InlineData("await db.Articulos.AddAsync(articulo, ct);")]
+    [InlineData("await db.Articulos.AddRangeAsync(filas, ct);")]
     [InlineData("db.Articulos.Attach(articulo);")]
     [InlineData("db.Articulos.RemoveRange(filas);")]
     [InlineData("db.Set<Articulo>().Add(articulo);")]
@@ -217,6 +227,21 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("var fila = new ArticuloEmpresa { IdArticulo = id };")]
     public void ElPatronDeArticulosNoVeLecturasNiOtrasTablas(string fuente)
     {
+        Assert.DoesNotMatch(EscritoresDeArticulos, fuente);
+    }
+
+    /// <summary>Una llamada a <c>Set&lt;T&gt;()</c> sin receptor no coincide con ningún patrón: es la forma con la
+    /// que <c>WaysDbContext</c> define sus propiedades <c>Articulos</c> y <c>Precios</c>, y los patrones piden un
+    /// <c>.</c> delante. Las filas con <c>Add</c> fijan lo que la documentación de la clase declara que no se ve:
+    /// una escritura hecha con esa forma.</summary>
+    [Theory]
+    [InlineData("public DbSet<Articulo> Articulos => Set<Articulo>();")]
+    [InlineData("public DbSet<Precio> Precios => Set<Precio>();")]
+    [InlineData("Set<Articulo>().Add(articulo);")]
+    [InlineData("Set<Precio>().Add(precio);")]
+    public void LosPatronesNoVenUnaLlamadaASetSinReceptor(string fuente)
+    {
+        Assert.DoesNotMatch(EscritoresDePrecios, fuente);
         Assert.DoesNotMatch(EscritoresDeArticulos, fuente);
     }
 
@@ -259,6 +284,22 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("/*\n   UPDATE precios SET precio = 1\n*/")]
     public void LosComentariosNoCuentanComoEscrituras(string fuente)
     {
+        Assert.DoesNotMatch(EscritoresDePrecios, SinComentarios(fuente));
+    }
+
+    /// <summary>El quitador de comentarios no distingue los literales de cadena: un <c>//</c> dentro de uno le quita
+    /// a la red el resto de la línea, y un <c>/*</c>, todo hasta el siguiente <c>*/</c>, también el código de
+    /// otras líneas. Es la limitación que declara la documentación de la clase: cada fila tiene una escritura
+    /// que el patrón ve en el texto original y no ve una vez quitados los comentarios, y fija esa limitación tal
+    /// como es; si el quitador pasa a distinguir literales, las filas tienen que cambiar junto con la
+    /// documentación.</summary>
+    [Theory]
+    [InlineData("var url = \"http://servidor\"; db.Precios.Add(precio);")]
+    [InlineData("var patron = \"/*\"; db.Precios.Add(precio); /* cierre */")]
+    [InlineData("var patron = \"/*\";\ndb.Precios.Add(precio);\n/* cierre */")]
+    public void UnaAperturaDeComentarioDentroDeUnLiteralOcultaElCodigoQueLeSigue(string fuente)
+    {
+        Assert.Matches(EscritoresDePrecios, fuente);
         Assert.DoesNotMatch(EscritoresDePrecios, SinComentarios(fuente));
     }
 }

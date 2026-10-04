@@ -10,8 +10,11 @@ namespace Ways.Domain.Articulos;
 public enum ModoDeAlcanceDeFamilia
 {
     /// <summary>El llamador no decidió (la solicitud de la API sin <c>alcance</c>). Un artículo
-    /// que no es miembro se escribe solo; uno que SÍ es miembro obliga a decidir: el escritor
-    /// rechaza con <c>alcance_requerido</c> sin escribir nada.</summary>
+    /// que no es miembro se escribe solo. Un miembro obliga a decidir cuando elegir cambia qué se
+    /// escribe —un cambio de precio y una edición que cambia algún campo compartido—: el escritor
+    /// rechaza con <c>alcance_requerido</c> sin escribir nada. La edición de un miembro que no cambia
+    /// ningún campo compartido no tiene nada que decidir y escribe solo los campos propios del
+    /// artículo (<see cref="ReglaDeFamilias.ResolverEdicionDeMiembro"/>).</summary>
     ExigirDecision,
 
     /// <summary>El llamador pidió explícitamente toda la familia. Solo vale para un miembro: si el

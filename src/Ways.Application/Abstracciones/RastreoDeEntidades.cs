@@ -5,8 +5,10 @@ namespace Ways.Application.Abstracciones;
 /// <summary>
 /// Qué rastrea el <c>ChangeTracker</c> antes de una escritura y cómo soltar solo lo que la escritura agregó
 /// si falla. El contexto vive todo el request: una transacción revertida deja rastreadas las entidades que
-/// agregó —en el estado en que hayan quedado, también <c>Unchanged</c> si su guardado ya había corrido—, y
-/// un <c>SaveChangesAsync</c> posterior sobre el mismo contexto las volvería a escribir por detrás.
+/// agregó, en el estado en que hayan quedado. Un <c>SaveChangesAsync</c> posterior sobre el mismo contexto
+/// vuelve a escribir, por detrás de quien lo llama, las que quedaron <c>Added</c>, <c>Modified</c> o
+/// <c>Deleted</c>. Las que quedaron <c>Unchanged</c> porque su guardado ya había corrido no se reescriben:
+/// son estado rastreado desactualizado, porque la transacción que las guardó se revirtió.
 /// <c>ChangeTracker.Clear()</c> no sirve para esto: también suelta lo que el llamador ya tenía rastreado.
 /// </summary>
 internal static class RastreoDeEntidades
