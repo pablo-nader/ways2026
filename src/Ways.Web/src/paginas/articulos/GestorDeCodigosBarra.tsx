@@ -52,9 +52,9 @@ export function GestorDeCodigosBarra({
   }, [idArticulo])
 
   function intentarAgregar() {
-    if (ocupadoRef.current || bloqueadoPorPadre) return
     const codigo = nuevoCodigo.trim()
     if (!codigo) return
+    setError('')
 
     const motivo = advertenciaDeCodigoBarra(codigo)
     if (motivo) {

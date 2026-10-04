@@ -16,7 +16,7 @@ export function advertenciaDeCodigoBarra(codigo: string): string | null {
   }
 
   if (!LARGOS_GTIN.includes(codigo.length)) {
-    return `El código tiene ${codigo.length} dígitos y los códigos GTIN estándar tienen 8, 12, 13 o 14.`
+    return `El código tiene ${codigo.length} ${codigo.length === 1 ? 'dígito' : 'dígitos'} y los códigos GTIN estándar tienen 8, 12, 13 o 14.`
   }
 
   if (digitoVerificadorEsperado(codigo) !== Number(codigo[codigo.length - 1])) {

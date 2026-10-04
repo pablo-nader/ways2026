@@ -34,10 +34,14 @@ describe('advertenciaDeCodigoBarra — caracteres que no son dígitos', () => {
 })
 
 describe('advertenciaDeCodigoBarra — largo', () => {
-  it.each([1, 7, 9, 10, 11, 15])('%i dígitos advierte con el largo real y los esperados', (largo) => {
+  it.each([2, 7, 9, 10, 11, 15])('%i dígitos advierte con el largo real (plural) y los esperados', (largo) => {
     expect(advertenciaDeCodigoBarra('1'.repeat(largo))).toBe(
       `El código tiene ${largo} dígitos y los códigos GTIN estándar tienen 8, 12, 13 o 14.`,
     )
+  })
+
+  it('un solo dígito usa el singular', () => {
+    expect(advertenciaDeCodigoBarra('1')).toBe('El código tiene 1 dígito y los códigos GTIN estándar tienen 8, 12, 13 o 14.')
   })
 })
 

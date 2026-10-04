@@ -2545,6 +2545,80 @@ describe('Articulos — advertencia de código de barras que no parece un GTIN (
     expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
   })
 
+  /**
+   * Cláusula bajo prueba: `setError('')` al inicio de `intentarAgregar`. Mutation-proof-tests: sacarlo
+   * deja el aviso rojo del POST fallido junto a la advertencia del código nuevo.
+   */
+  it('un intento nuevo que termina en advertencia retira el error de un POST anterior', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'codigo_duplicado', 'El código ya existe.'))
+    await userEvent.type(entrada, CODIGO_VALIDO)
+    await userEvent.click(botonAgregar)
+    expect(await within(dialogo).findByText('El código ya existe.')).toBeInTheDocument()
+
+    await userEvent.clear(entrada)
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+
+    expect(within(dialogo).getByText(MOTIVO_VERIFICADOR)).toBeInTheDocument()
+    expect(within(dialogo).queryByText('El código ya existe.')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `trim()` previo a `advertenciaDeCodigoBarra` en `intentarAgregar`.
+   * Mutation-proof-tests: validar el valor sin recortar hace que los espacios cuenten como
+   * caracteres no numéricos y aparezca la advertencia.
+   */
+  it('un GTIN válido con espacios alrededor se envía recortado y sin advertencia', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+
+    await userEvent.type(entrada, `  ${CODIGO_VALIDO}  `)
+    await userEvent.click(botonAgregar)
+
+    expect(await within(dialogo).findByText(CODIGO_VALIDO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toEqual([[RUTA_CODIGOS, { codigo: CODIGO_VALIDO }]])
+    expect(within(dialogo).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('si el POST de "Agregar igual" falla: muestra el error, conserva el código, retira la advertencia y un intento posterior funciona', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(500, 'error', 'No se pudo guardar.'))
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar igual' }))
+
+    expect(await within(dialogo).findByText('No se pudo guardar.')).toBeInTheDocument()
+    expect(entrada).toHaveValue(CODIGO_CON_VERIFICADOR_MALO)
+    expect(within(dialogo).queryByRole('button', { name: 'Agregar igual' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByText(MOTIVO_VERIFICADOR)).not.toBeInTheDocument()
+
+    await userEvent.click(botonAgregar)
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar igual' }))
+
+    expect(await within(dialogo).findByText(CODIGO_CON_VERIFICADOR_MALO)).toBeInTheDocument()
+    expect(llamadasDeAlta()).toHaveLength(2)
+    expect(within(dialogo).queryByText('No se pudo guardar.')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `bloqueadoPorPadre` en el `disabled` de "Agregar igual". Se bloquea al
+   * padre con un PUT de guardado que no resuelve.
+   */
+  it('"Agregar igual" queda deshabilitado mientras el formulario padre está guardando', async () => {
+    const { entrada, botonAgregar, dialogo } = await abrirGestor()
+    apiPutMock.mockReturnValue(new Promise(() => {}))
+    await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
+    await userEvent.click(botonAgregar)
+    const confirmar = within(dialogo).getByRole('button', { name: 'Agregar igual' })
+    expect(confirmar).toBeEnabled()
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(confirmar).toBeDisabled())
+    expect(llamadasDeAlta()).toHaveLength(0)
+  })
+
   it('dos clics sincrónicos en "Agregar igual" emiten un solo POST', async () => {
     const { entrada, botonAgregar, dialogo } = await abrirGestor()
     await userEvent.type(entrada, CODIGO_CON_VERIFICADOR_MALO)
