@@ -174,6 +174,7 @@ public sealed record SolicitudDeAplicarPrecios(int IdListaPrecio, bool Confirmar
 /// <summary>Resultado por línea de aplicar <c>precio_sugerido</c> — partial success es el
 /// contrato honesto (design decisión 8): una línea rechazada (p.ej. un precio pendiente sin
 /// confirmar) no aborta las demás. <see cref="Error"/> es el motivo por el que la línea no se aplicó: un
-/// rechazo, o que la supera otra línea de la misma familia (doc 10 §3), que es la que aplica el precio de toda
-/// la familia — en ese caso la línea no se intentó y su motivo nombra a la que la supera.</summary>
+/// rechazo, o que la supera otra línea de la misma familia (doc 10 §3), de la que se intenta aplicar el precio a
+/// toda la familia — en ese caso la línea no se intentó y su motivo nombra a la que la supera; si esa otra línea
+/// se aplicó lo dice su propio resultado.</summary>
 public sealed record ResultadoAplicarPrecio(int IdArticulo, bool Aplicado, decimal? Precio, string? Error);

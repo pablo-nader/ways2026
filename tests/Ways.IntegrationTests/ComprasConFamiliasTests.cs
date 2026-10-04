@@ -14,7 +14,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// Compras frente a las familias de artículos (doc 10 §3) contra Postgres real: confirmar una compra replica el
 /// costo (<c>costo_nominal</c>) de las líneas que lo actualizan a TODOS los miembros vivos de la familia de cada
-/// una —de las líneas de una misma familia gana la de mayor <c>orden</c>— y aplicar el precio sugerido aplica,
+/// una —de las líneas de una misma familia gana la de mayor <c>orden</c>— y aplicar el precio sugerido intenta aplicar,
 /// por familia, solo el de la línea de mayor <c>orden</c>. La confirmación toma el lock de membresía compartido
 /// como primera sentencia y bloquea las filas de los artículos a los que escribe el costo en orden ascendente.
 ///
@@ -54,8 +54,8 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
     private static decimal Sugerido(decimal costoUnitario) => Math.Round(Costo(costoUnitario) * 1.5m, 2, MidpointRounding.AwayFromZero);
 
     private static LineaDeCompraSolicitada Linea(
-        Contexto c, int idArticulo, decimal costoUnitario, bool? actualizaCosto = null) =>
-        new(idArticulo, "Línea de prueba", 10m, null, null, costoUnitario, 0m, c.IdAlicuotaIva21, actualizaCosto);
+        Contexto c, int idArticulo, decimal costoUnitario, bool? actualizaCosto = null, decimal descuento = 0m) =>
+        new(idArticulo, "Línea de prueba", 10m, null, null, costoUnitario, descuento, c.IdAlicuotaIva21, actualizaCosto);
 
     private static async Task<CompraDetalle> CrearBorradorAsync(Contexto c, params LineaDeCompraSolicitada[] lineas)
     {
@@ -205,6 +205,30 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         {
             Assert.Equal(Costo(100m), await CostoNominalAsync(id));
         }
+    }
+
+    /// <summary>Una bonificación total —costo unitario positivo y un descuento igual al importe bruto— deja el
+    /// costo efectivo en cero, y escribirlo pondría en cero el costo de toda la familia. No cuenta: se descarta
+    /// ANTES de elegir la ganadora, así que gana la línea de menor orden que sí cuenta (la de mayor orden de la
+    /// familia es la bonificada), y un artículo suelto con una bonificación total conserva su costo.</summary>
+    [Fact]
+    public async Task UnaBonificacionTotalNoPoneEnCeroElCostoDeLaFamiliaNiElDeUnArticuloSuelto()
+    {
+        using var c = await PrepararAsync(nameof(UnaBonificacionTotalNoPoneEnCeroElCostoDeLaFamiliaNiElDeUnArticuloSuelto));
+        var f = await SembrarAsync(c.E);
+
+        // 10 unidades × 100 = 1000 de importe bruto: un descuento de 1000 deja la línea en cero.
+        var borrador = await CrearBorradorAsync(
+            c, Linea(c, f.M1, 100m), Linea(c, f.M2, 100m, descuento: 1000m), Linea(c, f.Suelto, 100m, descuento: 1000m));
+
+        await ConfirmarYLeerAsync(c, borrador.Id);
+
+        foreach (var id in new[] { f.M1, f.M2, f.M3 })
+        {
+            Assert.Equal(Costo(100m), await CostoNominalAsync(id));
+        }
+
+        Assert.Equal(40m, await CostoNominalAsync(f.Suelto));
     }
 
     [Fact]
@@ -426,6 +450,56 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
+    /// <summary>La baja lógica de un artículo no toma el lock de membresía sino el de su fila, así que puede
+    /// comitear con la confirmación a mitad de camino. Un tercero (stand-in de esa baja) sostiene el
+    /// <c>UPDATE deleted_at</c> sin comitear sobre un miembro; la confirmación lee la pertenencia, toma sus
+    /// locks y queda esperando la fila de ese miembro —observada en <c>pg_locks</c>— y recién entonces la baja
+    /// comitea. Al retomar, el bloqueo reevalúa <c>deleted_at IS NULL</c> sobre la versión nueva de la fila y
+    /// descarta al miembro: no se bloquea ni recibe el costo, que sí llega a los demás miembros vivos, y quien
+    /// quedó dado de baja conserva su costo y su <c>id_familia</c>. Un caso con el dado de baja SIN línea y otro
+    /// con el dado de baja siendo el artículo de la línea que define el costo de la familia.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnMiembroDadoDeBajaMientrasLaConfirmacionEsperaSuFilaQuedaFueraDelCosto(bool conLinea)
+    {
+        using var c = await PrepararAsync(nameof(UnMiembroDadoDeBajaMientrasLaConfirmacionEsperaSuFilaQuedaFueraDelCosto));
+        var f = await SembrarAsync(c.E);
+
+        // El dado de baja es M3 (sin línea) o M2 (la línea de la compra); el resto de la familia son miembros vivos.
+        var idDelDadoDeBaja = conLinea ? f.M2 : f.M3;
+        var borrador = await CrearBorradorAsync(c, Linea(c, conLinea ? f.M2 : f.M1, 100m));
+
+        var (poll, sostenedor, transaccion) = await apoyo.AbrirSostenedorAsync(c.E.IdTenant);
+        await using var _poll = poll;
+        await using var _sostenedor = sostenedor;
+        await using var _transaccion = transaccion;
+
+        await EjecutarAsync(
+            sostenedor, transaccion, "UPDATE articulos SET deleted_at = now() WHERE id_articulo = $1", idDelDadoDeBaja);
+
+        var confirmacion = ConfirmarAsync(c, borrador.Id);
+
+        await EsperarAsync(
+            () => EsperandoUnaFilaAsync(poll),
+            "La confirmación nunca se observó esperando la fila del miembro que se está dando de baja.");
+        Assert.False(confirmacion.IsCompleted);
+
+        await transaccion.CommitAsync();
+
+        Assert.Equal(HttpStatusCode.OK, (await confirmacion.WaitAsync(EsperaMaxima)).StatusCode);
+
+        foreach (var id in new[] { f.M1, f.M2, f.M3 }.Where(id => id != idDelDadoDeBaja))
+        {
+            Assert.Equal(Costo(100m), await CostoNominalAsync(id));
+        }
+
+        var dadoDeBaja = await apoyo.LeerAsync(idDelDadoDeBaja);
+        Assert.Equal(40m, dadoDeBaja.CostoNominal);
+        Assert.NotNull(dadoDeBaja.DeletedAt);
+        Assert.Equal(f.Familia, dadoDeBaja.IdFamilia);
+    }
+
     /// <summary>La razón del lock compartido de la confirmación: una confirmación en curso —ya escribió el costo de
     /// la familia y está por comitear— hace esperar a un alta dentro de esa familia, que pide el lock exclusivo.
     /// Cuando la confirmación comitea, el alta lee la referencia con el costo NUEVO y entra con él. Sin el lock
@@ -523,12 +597,14 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         // Una entrada por línea, en orden de línea.
         Assert.Equal([f.M1, f.M3, f.M2, f.Suelto], resultados.Select(r => r.IdArticulo));
 
-        // Las líneas 1 y 2 las supera la 3.
+        // Las líneas 1 y 2 las supera la 3, cuyo artículo es M2: el motivo nombra la línea Y el artículo.
         foreach (var superada in new[] { resultados[0], resultados[1] })
         {
             Assert.False(superada.Aplicado);
             Assert.Null(superada.Precio);
+            Assert.Contains("No se intentó", superada.Error, StringComparison.Ordinal);
             Assert.Contains("línea 3", superada.Error, StringComparison.Ordinal);
+            Assert.Contains($"artículo #{f.M2})", superada.Error, StringComparison.Ordinal);
         }
 
         Assert.True(resultados[2].Aplicado);
@@ -572,6 +648,7 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
 
         Assert.False(resultados[0].Aplicado);
         Assert.Contains("línea 2", resultados[0].Error, StringComparison.Ordinal);
+        Assert.Contains($"artículo #{f.M2})", resultados[0].Error, StringComparison.Ordinal);
 
         Assert.False(resultados[1].Aplicado);
         Assert.NotNull(resultados[1].Error);

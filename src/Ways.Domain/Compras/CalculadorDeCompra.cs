@@ -295,10 +295,19 @@ public static class CalculadorDeCompra
             ? Redondear(total * (1 + porcentajeIva / 100m) / cantidad, 2)
             : Redondear(total / cantidad, 2);
 
+    /// <summary>Si la línea cuenta para escribir <c>articulos.costo_nominal</c> (design decisión 4, el guard
+    /// anti-bonificación): tiene artículo, pide actualizar el costo y su costo unitario es positivo, y su costo
+    /// EFECTIVO también lo es. Una línea con costo unitario positivo y un descuento que iguala a su importe bruto
+    /// deja un costo efectivo de cero —una bonificación total—: escribirlo pondría en cero el costo del artículo
+    /// o, con familias, el de todos sus miembros.</summary>
+    public static bool ActualizaElCosto(
+        (int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo) item) =>
+        item.IdArticulo is not null && item.ActualizaCosto && item.CostoUnitario > 0m && item.CostoEfectivo > 0m;
+
     /// <summary>Design: Compra Arithmetic — "dos líneas del mismo artículo... el costo_nominal se
     /// deduplica en memoria con el mayor orden ganando, así que se emite exactamente un UPDATE
-    /// por artículo". Filtra por <c>actualizaCosto AND costoUnitario &gt; 0</c> (design decisión
-    /// 4, el guard anti-bonificación) antes de dedupear. Un concepto (sin artículo) nunca entra.
+    /// por artículo". Filtra con <see cref="ActualizaElCosto"/> antes de dedupear. Un concepto (sin artículo)
+    /// nunca entra.
     ///
     /// <para>Con familias (doc 10 §3) el dedupe es por FAMILIA: los artículos de una misma familia son
     /// idénticos en <c>costo_nominal</c>, así que de todas las líneas filtradas de una familia gana la de
@@ -316,7 +325,7 @@ public static class CalculadorDeCompra
 
         foreach (var item in items)
         {
-            if (item.IdArticulo is not { } idArticulo || !item.ActualizaCosto || item.CostoUnitario <= 0m)
+            if (!ActualizaElCosto(item) || item.IdArticulo is not { } idArticulo)
             {
                 continue;
             }

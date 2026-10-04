@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Ways.Application.Tests.Compras;
 
 /// <summary>
@@ -55,13 +57,13 @@ public class ServicioDeComprasLockOrderTests
             "public async Task<ResultadoAnulacion> AnularAsync(");
 
         var indiceStockInsert = metodo.LastIndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
-        var indiceCostoUpdate = metodo.LastIndexOf("ActualizarCostoNominalAsync(", StringComparison.Ordinal);
+        var indiceCostoUpdate = metodo.LastIndexOf("ActualizarCostosNominalesAsync(", StringComparison.Ordinal);
         var indiceLockProveedor = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
         var indiceLedgerInsert = metodo.IndexOf("EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(", StringComparison.Ordinal);
         var indiceCommit = metodo.IndexOf("transaccion.CommitAsync(ct);", StringComparison.Ordinal);
 
         Assert.True(indiceStockInsert >= 0, "No se encontró la última llamada a InsertarMovimientoStockAsync.");
-        Assert.True(indiceCostoUpdate >= 0, "No se encontró la llamada a ActualizarCostoNominalAsync.");
+        Assert.True(indiceCostoUpdate >= 0, "No se encontró la llamada a ActualizarCostosNominalesAsync.");
         Assert.True(indiceLockProveedor >= 0, "No se encontró la llamada a ActualizarSaldoProveedorAsync.");
         Assert.True(indiceLedgerInsert >= 0, "No se encontró la llamada a InsertarMovimientoCcProveedorAsync.");
         Assert.True(indiceCommit >= 0, "No se encontró el commit de EjecutarConfirmarAsync.");
@@ -71,7 +73,7 @@ public class ServicioDeComprasLockOrderTests
             "El lock de proveedores debe aparecer DESPUÉS del último InsertarMovimientoStockAsync (mutation target #19).");
         Assert.True(
             indiceLockProveedor > indiceCostoUpdate,
-            "El lock de proveedores debe aparecer DESPUÉS de ActualizarCostoNominalAsync (mutation target #19).");
+            "El lock de proveedores debe aparecer DESPUÉS de ActualizarCostosNominalesAsync (mutation target #19).");
         Assert.True(
             indiceLedgerInsert > indiceLockProveedor,
             "El INSERT del ledger de proveedor debe seguir inmediatamente al lock de saldo.");
@@ -118,10 +120,38 @@ public class ServicioDeComprasLockOrderTests
             LeerFuente(), "private async Task<CompraDetalle> EjecutarConfirmarAsync(",
             "public async Task<ResultadoAnulacion> AnularAsync(");
 
-    /// <summary>El lock de membresía de familias es lo PRIMERO que hace la transacción de la confirmación: entre
-    /// el <c>BeginTransactionAsync</c> y él solo se arma la conexión, y viene antes del <c>UPDATE</c> del
-    /// encabezado. Que además espere ahí, sin haber escrito ni tomado ningún otro lock, lo prueba contra
-    /// <c>pg_locks</c> <c>ComprasConFamiliasTests</c>.</summary>
+    private static string SinComentarios(string fuente) => Regex.Replace(fuente, @"//[^\r\n]*", string.Empty);
+
+    private static int Contar(string texto, string marca) =>
+        Regex.Matches(texto, Regex.Escape(marca)).Count;
+
+    /// <summary>De la primera <c>{</c> que sigue a <paramref name="inicio"/> hasta su llave de cierre.</summary>
+    private static string CuerpoDeLlaves(string fuente, int inicio)
+    {
+        var apertura = fuente.IndexOf('{', inicio);
+        Assert.True(apertura >= 0, "No se encontró la llave de apertura.");
+
+        var profundidad = 0;
+
+        for (var i = apertura; i < fuente.Length; i++)
+        {
+            profundidad += fuente[i] switch { '{' => 1, '}' => -1, _ => 0 };
+
+            if (profundidad == 0)
+            {
+                return fuente[apertura..(i + 1)];
+            }
+        }
+
+        throw new InvalidOperationException("Las llaves no cierran.");
+    }
+
+    /// <summary>El lock de membresía de familias es lo PRIMERO que hace la transacción de la confirmación: lo
+    /// único que hay entre el <c>BeginTransactionAsync</c> y él es armar la conexión y tomar la transacción cruda,
+    /// sin ningún statement, y el <c>UPDATE</c> del encabezado viene después. Se afirma el texto EXACTO de ese
+    /// tramo, sin comentarios y con los espacios normalizados: cualquier otra sentencia que se intercale —una
+    /// lectura, un lock, una escritura— lo rompe. Que además espere ahí, sin haber escrito ni tomado ningún otro
+    /// lock, lo prueba contra <c>pg_locks</c> <c>ComprasConFamiliasTests</c>.</summary>
     [Fact]
     public void ElLockDeMembresiaCompartidoEsLaPrimeraSentenciaDeEjecutarConfirmarAsync()
     {
@@ -136,16 +166,13 @@ public class ServicioDeComprasLockOrderTests
         Assert.True(indiceLock > indiceApertura, "El lock de membresía tiene que venir después de abrir la transacción.");
         Assert.True(indiceEncabezado > indiceLock, "El UPDATE del encabezado tiene que venir DESPUÉS del lock de membresía.");
 
-        var entre = metodo[(indiceApertura + apertura.Length)..indiceLock];
+        var entre = Regex.Replace(
+            SinComentarios(metodo[(indiceApertura + apertura.Length)..indiceLock]), @"\s+", " ").Trim();
 
-        foreach (var sentencia in new[]
-        {
-            "ExecuteReaderAsync", "ExecuteNonQueryAsync", "ExecuteScalarAsync", "ToListAsync", "AnyAsync", "FirstAsync",
-            "SaveChangesAsync", "ConfirmarHeaderAsync"
-        })
-        {
-            Assert.DoesNotContain(sentencia, entre, StringComparison.Ordinal);
-        }
+        Assert.Equal(
+            "var conexion = await ObtenerConexionAbiertaAsync(ct); " +
+            "var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction(); await",
+            entre);
     }
 
     /// <summary>El costo de las familias se escribe en el orden del protocolo: la pertenencia se lee y las filas
@@ -159,7 +186,7 @@ public class ServicioDeComprasLockOrderTests
         var indiceStock = metodo.LastIndexOf("InsertarMovimientoStockAsync(", StringComparison.Ordinal);
         var indiceFamilias = metodo.IndexOf("LeerFamiliasDeLosArticulosAsync(", StringComparison.Ordinal);
         var indiceBloqueo = metodo.IndexOf("BloquearArticulosConCostoAsync(", StringComparison.Ordinal);
-        var indiceCosto = metodo.LastIndexOf("ActualizarCostoNominalAsync(", StringComparison.Ordinal);
+        var indiceCosto = metodo.LastIndexOf("ActualizarCostosNominalesAsync(", StringComparison.Ordinal);
         var indiceProveedores = metodo.IndexOf(
             "EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(", StringComparison.Ordinal);
 
@@ -168,6 +195,59 @@ public class ServicioDeComprasLockOrderTests
         Assert.True(indiceFamilias < indiceBloqueo, "Las filas se bloquean con la pertenencia ya leída.");
         Assert.True(indiceBloqueo < indiceCosto, "El costo se escribe con las filas ya bloqueadas.");
         Assert.True(indiceCosto < indiceProveedores, "El lock de proveedores sigue siendo el último.");
+    }
+
+    /// <summary>Si ninguna línea actualiza el costo el paso entero se salta: la lectura de la pertenencia, el
+    /// bloqueo de las filas y la escritura del costo están dentro de UN <c>if</c> sobre las líneas que cuentan según
+    /// <c>CalculadorDeCompra.ActualizaElCosto</c>, y ninguna de las tres llamadas aparece fuera de él. Son
+    /// statements crudos que un interceptor de EF no ve —y que no cambian ningún resultado visible: sin líneas
+    /// que cuenten tampoco habría filas que bloquear—, así que el texto fuente es la única red de que no se
+    /// paguen esas idas a la base.</summary>
+    [Fact]
+    public void ElPasoDelCostoSeSaltaEnteroSiNingunaLineaActualizaElCosto()
+    {
+        var metodo = SinComentarios(EjecutarConfirmar());
+
+        const string guarda = "if (idsConCosto.Count > 0)";
+        var indiceGuarda = metodo.IndexOf(guarda, StringComparison.Ordinal);
+        Assert.True(indiceGuarda >= 0, "No se encontró la guarda del paso del costo.");
+        Assert.Equal(1, Contar(metodo, guarda));
+        Assert.Contains(".Where(CalculadorDeCompra.ActualizaElCosto)", metodo, StringComparison.Ordinal);
+
+        var cuerpo = CuerpoDeLlaves(metodo, indiceGuarda);
+
+        foreach (var llamada in new[]
+        {
+            "LeerFamiliasDeLosArticulosAsync(", "BloquearArticulosConCostoAsync(", "ActualizarCostosNominalesAsync("
+        })
+        {
+            Assert.Equal(1, Contar(cuerpo, llamada));
+            Assert.Equal(1, Contar(metodo, llamada));
+        }
+    }
+
+    /// <summary>El costo se escribe con UN solo <c>UPDATE … FROM unnest</c> para todas las filas ya bloqueadas, y
+    /// no con uno por artículo: el escritor se llama una vez desde la confirmación, no tiene ningún ciclo y emite un
+    /// único <c>ExecuteNonQueryAsync</c>; el escritor por fila ya no existe.</summary>
+    [Fact]
+    public void ElCostoSeEscribeConUnSoloUpdateParaTodasLasFilasBloqueadas()
+    {
+        var metodo = SinComentarios(EjecutarConfirmar());
+
+        Assert.Equal(1, Contar(metodo, "ActualizarCostosNominalesAsync("));
+        Assert.DoesNotContain("ActualizarCostoNominalAsync(", LeerFuente(), StringComparison.Ordinal);
+
+        var escritor = SinComentarios(ExtraerMetodo(
+            LeerFuente(), "private static async Task ActualizarCostosNominalesAsync(",
+            "private async Task<DbConnection> ObtenerConexionAbiertaAsync("));
+
+        Assert.Contains("FROM unnest($2::int[], $3::numeric[])", escritor, StringComparison.Ordinal);
+        Assert.Equal(1, Contar(escritor, "ExecuteNonQueryAsync("));
+
+        foreach (var ciclo in new[] { "foreach", "for (", "while" })
+        {
+            Assert.DoesNotContain(ciclo, escritor, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Las filas a las que se escribe el costo se bloquean en UN statement ordenado por id y con
@@ -179,7 +259,7 @@ public class ServicioDeComprasLockOrderTests
     {
         var cuerpo = ExtraerMetodo(
             LeerFuente(), "private static async Task<List<(int IdArticulo, decimal Costo)>> BloquearArticulosConCostoAsync(",
-            "private static async Task ActualizarCostoNominalAsync(");
+            "/// <summary>Escribe <c>costo_nominal</c>");
 
         Assert.Contains("ORDER BY id_articulo FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
         Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);

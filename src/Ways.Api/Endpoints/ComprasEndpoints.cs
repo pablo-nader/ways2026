@@ -130,7 +130,7 @@ public static class ComprasEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Aplica precio_sugerido por item vía ServicioDePrecios, per-line results. De las líneas de una misma "
-                + "familia solo se aplica la de mayor orden, a toda la familia.");
+                + "familia solo se intenta la de mayor orden, a toda la familia si su artículo es miembro.");
 
         return app;
     }

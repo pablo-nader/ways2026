@@ -46,8 +46,8 @@ namespace Ways.Application.Compras;
 ///
 /// Familias de artículos (doc 10 §3): <see cref="ConfirmarAsync"/> toma el lock de membresía de familias
 /// compartido como primera sentencia de su transacción y replica el costo de cada línea que lo actualiza a todos
-/// los miembros vivos de la familia de su artículo; <see cref="AplicarPrecioSugeridoAsync"/> aplica, de las
-/// líneas de una misma familia, solo la de mayor orden.
+/// los miembros vivos de la familia de su artículo; <see cref="AplicarPrecioSugeridoAsync"/> intenta aplicar, de
+/// las líneas de una misma familia, solo la de mayor orden.
 /// </summary>
 public class ServicioDeCompras(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
@@ -574,27 +574,36 @@ public class ServicioDeCompras(
             }
         }
 
-        // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el mayor orden
-        // ganando (design decisión 4; CalculadorDeCompra.ResolverActualizacionesDeCosto) y POR FAMILIA (doc 10
-        // §3): los artículos de una familia son idénticos en costo_nominal, así que de las líneas de una misma
-        // familia gana una sola y su costo se escribe en TODOS los miembros vivos, que se bloquean ascendentes
-        // por id —paso (2) del protocolo de locks de las familias— antes de escribir. Con el lock de membresía
-        // compartido ya tomado, ningún alta ni salida de una familia cambia la pertenencia que se lee acá.
+        // 4. costo_nominal — solo las líneas que CalculadorDeCompra.ActualizaElCosto admite (actualiza_costo,
+        // costo_unitario > 0 y costo efectivo > 0), deduplicado con el mayor orden ganando (design decisión 4;
+        // CalculadorDeCompra.ResolverActualizacionesDeCosto) y POR FAMILIA (doc 10 §3): los artículos de una
+        // familia son idénticos en costo_nominal, así que de las líneas de una misma familia gana una sola y su
+        // costo se escribe en TODOS los miembros vivos, que se bloquean ascendentes por id —paso (2) del
+        // protocolo de locks de las familias— y recién entonces se escriben, con UN solo UPDATE. Con el lock de
+        // membresía compartido ya tomado, ningún alta ni salida de una familia cambia la pertenencia que se lee
+        // acá. Si ninguna línea actualiza el costo no hay pertenencia que leer, filas que bloquear ni costo que
+        // escribir: el paso entero se salta, sin ninguna ida a la base.
         var itemsParaCosto = items
             .Select(i => (
                 i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario,
                 CostoEfectivo: CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
                     i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva, preciosIncluyenIva)))
             .ToList();
+        var idsConCosto = itemsParaCosto
+            .Where(CalculadorDeCompra.ActualizaElCosto)
+            .Select(i => i.IdArticulo!.Value)
+            .Distinct()
+            .ToList();
 
-        var familiaPorArticulo = await LeerFamiliasDeLosArticulosAsync(
-            conexion, transaccionCruda, idTenant, idsArticulo, ct);
-        var costosAActualizar = CalculadorDeCompra.ResolverActualizacionesDeCosto(itemsParaCosto, familiaPorArticulo);
-
-        foreach (var (idArticulo, costo) in await BloquearArticulosConCostoAsync(
-            conexion, transaccionCruda, idTenant, costosAActualizar, ct))
+        if (idsConCosto.Count > 0)
         {
-            await ActualizarCostoNominalAsync(conexion, transaccionCruda, idTenant, idArticulo, costo, momento, ct);
+            var familiaPorArticulo = await LeerFamiliasDeLosArticulosAsync(
+                conexion, transaccionCruda, idTenant, idsConCosto, ct);
+            var costosAActualizar = CalculadorDeCompra.ResolverActualizacionesDeCosto(itemsParaCosto, familiaPorArticulo);
+
+            var articulosConCosto = await BloquearArticulosConCostoAsync(
+                conexion, transaccionCruda, idTenant, costosAActualizar, ct);
+            await ActualizarCostosNominalesAsync(conexion, transaccionCruda, idTenant, articulosConCosto, momento, ct);
         }
 
         // 5. proveedores — ÚLTIMO lock de fila for update de esta transacción (stage-15-cc-
@@ -808,9 +817,11 @@ public class ServicioDeCompras(
     ///
     /// <para>La pertenencia con que se arma ese plan es una lectura previa a las escrituras, sin lock: cada
     /// escritura de una línea es su propia transacción y resuelve la pertenencia de nuevo bajo el lock de
-    /// membresía. Si un artículo entra o sale de una familia entre esa lectura y su escritura, el único efecto es
-    /// que el precio de la compra puede no llegar a alguno de esos artículos; las escrituras mantienen a la
-    /// familia idéntica en cualquier caso.</para></summary>
+    /// membresía. Si la pertenencia cambia entre esa lectura y la escritura, el plan puede no coincidir con ella.
+    /// Una línea superada nunca se intenta: si la que la supera se rechaza, o su artículo salió de la familia, el
+    /// precio de la compra no llega al artículo de la superada. Y una línea que se intenta se aplica con el alcance
+    /// que su artículo tenga AL ESCRIBIRLA —a toda su familia si ya es miembro, aunque fuera suelto al armar el
+    /// plan, o solo a él si dejó de serlo—. Cada escritura deja a la familia idéntica en cualquier caso.</para></summary>
     public async Task<IReadOnlyList<ResultadoAplicarPrecio>> AplicarPrecioSugeridoAsync(
         int id, SolicitudDeAplicarPrecios solicitud, CancellationToken ct = default)
     {
@@ -844,9 +855,10 @@ public class ServicioDeCompras(
 
                 resultados.Add(new ResultadoAplicarPrecio(
                     item.IdArticulo!.Value, false, null,
-                    $"Superada por la línea {ordenQueLaSupera} (artículo #{articuloQueLaSupera}): pertenece a la " +
-                    "misma familia y el precio sugerido de esa línea es el que se aplica a toda la familia " +
-                    "(ver el resultado de esa línea)."));
+                    $"No se intentó: la línea {ordenQueLaSupera} (artículo #{articuloQueLaSupera}) es de la misma " +
+                    "familia y de las líneas de una familia solo se intenta la de mayor orden. Si esa línea se " +
+                    "aplica y su artículo sigue siendo miembro, su precio llega a toda la familia; ver el " +
+                    "resultado de esa línea."));
                 continue;
             }
 
@@ -1217,18 +1229,31 @@ public class ServicioDeCompras(
         return articulos;
     }
 
-    private static async Task ActualizarCostoNominalAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, decimal costoNominal,
-        DateTimeOffset momento, CancellationToken ct)
+    /// <summary>Escribe <c>costo_nominal</c> (y <c>updated_at</c>) de todos los artículos de
+    /// <paramref name="articulos"/> con UN solo <c>UPDATE … FROM unnest(ids, costos)</c>, que empareja cada id con
+    /// su costo por posición. Corre DESPUÉS de <see cref="BloquearArticulosConCostoAsync"/>, que ya dejó esas filas
+    /// bloqueadas por esta transacción en orden ascendente: el <c>UPDATE</c> no espera a nadie y el orden en que
+    /// recorre las filas no cambia el de los locks. Solo escribe los artículos que ese bloqueo devolvió —un miembro
+    /// dado de baja en el medio no está—. Sin artículos no ejecuta ningún statement.</summary>
+    private static async Task ActualizarCostosNominalesAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant,
+        IReadOnlyList<(int IdArticulo, decimal Costo)> articulos, DateTimeOffset momento, CancellationToken ct)
     {
+        if (articulos.Count == 0)
+        {
+            return;
+        }
+
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "UPDATE articulos SET costo_nominal = $1, updated_at = $2 WHERE id_articulo = $3 AND id_tenant = $4";
+            "UPDATE articulos SET costo_nominal = v.costo, updated_at = $1 " +
+            "FROM unnest($2::int[], $3::numeric[]) AS v(id_articulo, costo) " +
+            "WHERE articulos.id_articulo = v.id_articulo AND articulos.id_tenant = $4";
 
-        ParametrosDeComando.Agregar(comando, costoNominal);
         ParametrosDeComando.Agregar(comando, momento);
-        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, articulos.Select(a => a.IdArticulo).ToArray());
+        ParametrosDeComando.Agregar(comando, articulos.Select(a => a.Costo).ToArray());
         ParametrosDeComando.Agregar(comando, idTenant);
 
         await comando.ExecuteNonQueryAsync(ct);

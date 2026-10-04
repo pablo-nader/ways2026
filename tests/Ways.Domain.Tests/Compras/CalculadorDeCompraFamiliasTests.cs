@@ -103,13 +103,13 @@ public class CalculadorDeCompraFamiliasTests
             resultado);
     }
 
-    /// <summary>Las líneas que no actualizan el costo, o con costo unitario cero o negativo (el guard
-    /// anti-bonificación), o por concepto, se descartan ANTES de elegir la ganadora: una línea de mayor orden
-    /// que no cuenta no le gana a una de menor orden que sí.</summary>
+    /// <summary>Las líneas que no actualizan el costo, o con costo unitario cero o negativo, o con costo efectivo
+    /// cero (una bonificación total: el guard anti-bonificación), o por concepto, se descartan ANTES de elegir la
+    /// ganadora: una línea de mayor orden que no cuenta no le gana a una de menor orden que sí.</summary>
     [Fact]
     public void LasLineasQueNoCuentanSeDescartanAntesDeElegirLaGanadoraDeLaFamilia()
     {
-        var familias = new Dictionary<int, int> { [101] = 5, [102] = 5, [103] = 5, [104] = 5 };
+        var familias = new Dictionary<int, int> { [101] = 5, [102] = 5, [103] = 5, [104] = 5, [105] = 5 };
 
         var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(
             [
@@ -117,8 +117,24 @@ public class CalculadorDeCompraFamiliasTests
                 Linea(2, 102, 500m, actualizaCosto: false),
                 Linea(3, 103, 0m, costoUnitario: 0m),
                 Linea(4, null, 900m),
-                Linea(5, 104, 700m, costoUnitario: -1m)
+                Linea(5, 104, 700m, costoUnitario: -1m),
+                Linea(6, 105, 0m, costoUnitario: 100m)
             ],
+            familias);
+
+        Assert.Equal([new ActualizacionDeCosto(5, 101, 100m)], resultado);
+    }
+
+    /// <summary>Una bonificación total en la línea de mayor orden de la familia —costo unitario positivo, costo
+    /// efectivo cero— no pone en cero el costo de todos sus miembros: no cuenta, y gana la de menor orden que sí.
+    /// Un artículo suelto en la misma situación tampoco aparece en el resultado.</summary>
+    [Fact]
+    public void UnaBonificacionTotalNoPisaElCostoDeLaFamiliaNiElDeUnArticuloSuelto()
+    {
+        var familias = new Dictionary<int, int> { [101] = 5, [102] = 5 };
+
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(
+            [Linea(1, 101, 100m), Linea(2, 102, 0m, costoUnitario: 100m), Linea(3, 900, 0m, costoUnitario: 100m)],
             familias);
 
         Assert.Equal([new ActualizacionDeCosto(5, 101, 100m)], resultado);
