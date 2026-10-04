@@ -383,6 +383,15 @@ public class ManejadorDeErrores(
                     "Este gasto ya tiene un movimiento de tesorería vinculado.",
                     "movimiento_de_tesoreria_de_gasto_duplicado"),
 
+            // Familias de artículos (db-error-backstops): ux_familias_nombre — nombre único por
+            // tenant entre las familias vivas. Tiene que resolverse por nombre EXACTO ANTES del
+            // brazo genérico de ClasificarUnicidad: "ux_familias_nombre" contiene "_nombre" y caería
+            // en nombre_duplicado ("un registro con ese nombre"), sin decir de qué se trata — el
+            // mismo "ordering trap" que ux_comprobantes_venta_numero.
+            { SqlState: "23505", ConstraintName: string uxFamiliaNombre }
+                when string.Equals(uxFamiliaNombre, "ux_familias_nombre", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una familia con ese nombre.", "familia_nombre_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,

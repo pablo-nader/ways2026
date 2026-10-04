@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -40,6 +41,55 @@ public class ModeloDeArticulosYPreciosTests
         return new WaysDbContext(opciones, TenantActualFijo.Plataforma);
     }
 
+    /// <summary>Cambia UNA sola propiedad compartida de <see cref="Articulo"/> (clave: nombre de la
+    /// propiedad) a un valor distinto del de <see cref="CrearArticuloBase"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, Action<Articulo>> CambiosCompartidos =
+        new Dictionary<string, Action<Articulo>>
+        {
+            [nameof(Articulo.IdArea)] = a => a.IdArea = 91,
+            [nameof(Articulo.IdCategoria)] = a => a.IdCategoria = 92,
+            [nameof(Articulo.IdGrupo)] = a => a.IdGrupo = 94,
+            [nameof(Articulo.IdProveedorHabitual)] = a => a.IdProveedorHabitual = 95,
+            [nameof(Articulo.IdAlicuotaIva)] = a => a.IdAlicuotaIva = 96,
+            [nameof(Articulo.UnidadVenta)] = a => a.UnidadVenta = UnidadVenta.Peso,
+            [nameof(Articulo.UnidadesPorBulto)] = a => a.UnidadesPorBulto = 24m,
+            [nameof(Articulo.EsProducto)] = a => a.EsProducto = false,
+            [nameof(Articulo.ControlaLote)] = a => a.ControlaLote = true,
+            [nameof(Articulo.CostoLista)] = a => a.CostoLista = 150m,
+            [nameof(Articulo.DescuentoProveedor)] = a => a.DescuentoProveedor = 15m,
+            [nameof(Articulo.CostoNominal)] = a => a.CostoNominal = 130m
+        };
+
+    public static TheoryData<string> PropiedadesCompartidas()
+    {
+        var datos = new TheoryData<string>();
+
+        foreach (var propiedad in CambiosCompartidos.Keys)
+        {
+            datos.Add(propiedad);
+        }
+
+        return datos;
+    }
+
+    private static Articulo CrearArticuloBase() => new()
+    {
+        CodigoInterno = "ART-1",
+        Nombre = "Gaseosa cola 500 cc",
+        IdArea = 1,
+        IdCategoria = 2,
+        IdGrupo = 4,
+        IdProveedorHabitual = 5,
+        IdAlicuotaIva = 6,
+        UnidadVenta = UnidadVenta.Unidad,
+        UnidadesPorBulto = 12m,
+        EsProducto = true,
+        ControlaLote = false,
+        CostoLista = 100m,
+        DescuentoProveedor = 10m,
+        CostoNominal = 90m
+    };
+
     [Fact]
     public void ArticulosTieneElIndiceUnicoDeCodigoInternoYLaClaveAlterna()
     {
@@ -61,7 +111,7 @@ public class ModeloDeArticulosYPreciosTests
     }
 
     [Fact]
-    public void ArticulosTieneLasSieteFksEsperadas()
+    public void ArticulosTieneLasOchoFksEsperadas()
     {
         using var db = CrearContexto();
 
@@ -75,7 +125,101 @@ public class ModeloDeArticulosYPreciosTests
         Assert.Contains("fk_articulos_grupo", nombresDeFk);
         Assert.Contains("fk_articulos_proveedor_habitual", nombresDeFk);
         Assert.Contains("fk_articulos_alicuota_iva", nombresDeFk);
-        Assert.Equal(7, nombresDeFk.Count);
+        Assert.Contains("fk_articulos_familia", nombresDeFk);
+        Assert.Equal(8, nombresDeFk.Count);
+    }
+
+    [Fact]
+    public void ArticulosTieneLaFkCompuestaOpcionalAFamiliasYSuIndiceParcial()
+    {
+        using var db = CrearContexto();
+
+        var entidad = db.Model.FindEntityType(typeof(Articulo))!;
+
+        var idFamilia = entidad.FindProperty(nameof(Articulo.IdFamilia))!;
+        Assert.True(idFamilia.IsNullable);
+        Assert.Equal("id_familia", idFamilia.GetColumnName());
+
+        var fk = entidad.GetForeignKeys().Single(f => f.GetConstraintName() == "fk_articulos_familia");
+        Assert.Equal(typeof(Familia), fk.PrincipalEntityType.ClrType);
+        Assert.Equal([nameof(Articulo.IdFamilia), nameof(Articulo.IdTenant)], fk.Properties.Select(p => p.Name));
+        Assert.Equal([nameof(Familia.Id), nameof(Familia.IdTenant)], fk.PrincipalKey.Properties.Select(p => p.Name));
+        Assert.Equal(DeleteBehavior.Restrict, fk.DeleteBehavior);
+        Assert.False(fk.IsRequired);
+
+        var indice = entidad.GetIndexes().Single(i => i.GetDatabaseName() == "ix_articulos_familia");
+        Assert.False(indice.IsUnique);
+        Assert.Equal("id_familia IS NOT NULL", indice.GetFilter());
+        Assert.Equal(
+            [nameof(Articulo.IdFamilia), nameof(Articulo.IdTenant)],
+            indice.Properties.Select(p => p.Name));
+    }
+
+    /// <summary>El nombre con que <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> informa un
+    /// campo es la columna que el modelo de EF mapea para esa propiedad de <see cref="Articulo"/>. Un
+    /// nombre mal escrito en la regla y repetido en <c>ValoresCompartidosDeFamiliaTests</c> —que compara
+    /// contra su propia lista— pasaría allá y falla acá.</summary>
+    [Theory]
+    [MemberData(nameof(PropiedadesCompartidas))]
+    public void ElNombreDeColumnaQueInformaLaReglaEsElQueElModeloMapeaParaEsaPropiedad(string propiedad)
+    {
+        using var db = CrearContexto();
+        var entidad = db.Model.FindEntityType(typeof(Articulo))!;
+
+        var otro = CrearArticuloBase();
+        CambiosCompartidos[propiedad](otro);
+
+        var distintos = ValoresCompartidosDeFamilia.De(CrearArticuloBase())
+            .CamposDistintos(ValoresCompartidosDeFamilia.De(otro));
+
+        Assert.Equal([entidad.FindProperty(propiedad)!.GetColumnName()!], distintos);
+    }
+
+    /// <summary>Completitud de la prueba anterior: tiene un caso por cada propiedad del registro de la
+    /// regla.</summary>
+    [Fact]
+    public void LaPruebaDeNombresDeColumnaCubreExactamenteLasPropiedadesDeLaRegla()
+    {
+        var delRegistro = typeof(ValoresCompartidosDeFamilia)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.Name);
+
+        Assert.Equal(delRegistro.Order(), CambiosCompartidos.Keys.Order());
+    }
+
+    [Fact]
+    public void FamiliasTieneLaClaveAlternaElIndiceUnicoParcialDeNombreYLaFkAlTenant()
+    {
+        using var db = CrearContexto();
+
+        var entidad = db.Model.FindEntityType(typeof(Familia))!;
+        Assert.Equal("familias", entidad.GetTableName());
+
+        var pk = entidad.FindPrimaryKey()!;
+        Assert.Equal("pk_familias", pk.GetName());
+        Assert.Equal([nameof(Familia.Id)], pk.Properties.Select(p => p.Name));
+        Assert.Equal("id_familia", entidad.FindProperty(nameof(Familia.Id))!.GetColumnName());
+
+        var claveAlterna = entidad.GetKeys().Single(k => k.GetName() == "ak_familias_id_familia_id_tenant");
+        Assert.Equal(
+            [nameof(Familia.Id), nameof(Familia.IdTenant)],
+            claveAlterna.Properties.Select(p => p.Name));
+
+        var nombre = entidad.FindProperty(nameof(Familia.Nombre))!;
+        Assert.Equal("citext", nombre.GetColumnType());
+        Assert.Equal(150, nombre.GetMaxLength());
+        Assert.False(nombre.IsNullable);
+
+        var indice = entidad.GetIndexes().Single(i => i.GetDatabaseName() == "ux_familias_nombre");
+        Assert.True(indice.IsUnique);
+        Assert.Equal("deleted_at IS NULL", indice.GetFilter());
+        Assert.Equal(
+            [nameof(Familia.IdTenant), nameof(Familia.Nombre)],
+            indice.Properties.Select(p => p.Name));
+
+        var fk = Assert.Single(entidad.GetForeignKeys());
+        Assert.Equal("fk_familias_tenant", fk.GetConstraintName());
+        Assert.Equal(typeof(Tenant), fk.PrincipalEntityType.ClrType);
     }
 
     [Fact]

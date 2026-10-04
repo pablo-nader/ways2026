@@ -44,6 +44,7 @@ public static class EtiquetasDeTablas
             ["comprobantes_venta"] = "ventas",
             ["dispositivos"] = "dispositivos vinculados",
             ["empresas"] = "empresas",
+            ["familias"] = "familias de artículos",
             ["gastos"] = "gastos",
             ["grupos"] = "grupos",
             ["items_comprobante_compra"] = "compras",

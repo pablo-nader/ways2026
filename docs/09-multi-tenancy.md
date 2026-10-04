@@ -101,6 +101,13 @@ puntos_venta (
 > `id_dispositivo` (FK compuesta hacia `dispositivos`, que gana la alternate key
 > `ak_dispositivos_id_dispositivo_id_tenant` en esta misma migración). Detalle completo en doc 10
 > §9.1 ("Reserva de numeración para venta offline").
+>
+> **Estado (familias de artículos — implementada, modelo):** `familias` (migración
+> `FamiliasDeArticulos`) — scoping **tenant-wide** estándar (`id_tenant`, SIN `id_empresa`), mismo
+> criterio que `articulos`, con RLS estándar (`HabilitarRlsDeTenant`: `ENABLE` + `FORCE` + policy
+> `familias_tenant`) activada en la misma migración que la crea. `articulos` gana `id_familia`, FK
+> compuesta `(id_familia, id_tenant)` (`NULL` = sin familia), así que un artículo no puede quedar en
+> la familia de otro tenant. Detalle completo en doc 10 §3 ("Familias de artículos").
 
 ## Regla de scoping por tipo de tabla
 
@@ -110,7 +117,7 @@ lo primero es decidir en cuál está:
 | Categoría | Scope | Tablas |
 |---|---|---|
 | **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas` |
-| **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios` |
+| **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios`, `familias` |
 | **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante`, `reservas_numeracion` |
 | **Global** | sin tenant | `roles`, `permisos`, planes/facturación del SaaS |
 
@@ -120,7 +127,8 @@ nullable en la fila del artículo, `disponible_para_todas` (default `true`) más
 puente `articulos_empresas` acotan el subconjunto de empresas cuando hace falta — sin
 backfill al crear una empresa nueva, porque la ausencia de fila en la puente ya significa
 "disponible". `precios` sigue al artículo: es `id_tenant` sin `id_empresa`, igual que
-`articulos`. Detalle completo del modelo en doc 10 §3.
+`articulos`; `familias` agrupa artículos del tenant y tiene el mismo alcance. Detalle completo
+del modelo en doc 10 §3.
 
 ### Catálogo: compartir o no compartir entre empresas
 

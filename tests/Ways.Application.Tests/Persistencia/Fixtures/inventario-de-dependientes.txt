@@ -93,6 +93,7 @@ Tenant | comprobantes_compra | id_tenant | marcado
 Tenant | comprobantes_venta | id_tenant | marcado
 Tenant | dispositivos | id_tenant | marcado
 Tenant | empresas | id_tenant | marcado
+Tenant | familias | id_tenant | marcado
 Tenant | gastos | id_tenant | marcado
 Tenant | grupos | id_tenant | marcado
 Tenant | items_comprobante_compra | id_tenant | marcado

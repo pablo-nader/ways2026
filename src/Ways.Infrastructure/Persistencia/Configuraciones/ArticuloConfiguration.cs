@@ -97,6 +97,8 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDefaultValue(false)
             .IsRequired();
 
+        builder.Property(a => a.IdFamilia).HasColumnName("id_familia");
+
         builder.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(a => a.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(a => a.DeletedAt).HasColumnName("deleted_at");
@@ -132,6 +134,13 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
         builder.HasIndex(a => new { a.IdGrupo, a.IdTenant }).HasDatabaseName("ix_articulos_grupo");
         builder.HasIndex(a => new { a.IdProveedorHabitual, a.IdTenant }).HasDatabaseName("ix_articulos_proveedor_habitual");
         builder.HasIndex(a => a.IdAlicuotaIva).HasDatabaseName("ix_articulos_alicuota_iva");
+
+        // Parcial a propósito: sin backfill, casi todos los artículos tienen id_familia NULL, y lo
+        // que se busca con este índice —los miembros de una familia, el chequeo de la FK al tocar
+        // una familia— es siempre por un valor no nulo.
+        builder.HasIndex(a => new { a.IdFamilia, a.IdTenant })
+            .HasDatabaseName("ix_articulos_familia")
+            .HasFilter("id_familia IS NOT NULL");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -176,6 +185,16 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasForeignKey(a => new { a.IdProveedorHabitual, a.IdTenant })
             .HasPrincipalKey(x => new { x.Id, x.IdTenant })
             .HasConstraintName("fk_articulos_proveedor_habitual")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // FK compuesta opcional a familias: MATCH SIMPLE salta el chequeo cuando id_familia es NULL
+        // (mismo mecanismo que categoria/marca/grupo). Sin esto un artículo podría quedar en la
+        // familia de otro tenant.
+        builder.HasOne<Familia>()
+            .WithMany()
+            .HasForeignKey(a => new { a.IdFamilia, a.IdTenant })
+            .HasPrincipalKey(f => new { f.Id, f.IdTenant })
+            .HasConstraintName("fk_articulos_familia")
             .OnDelete(DeleteBehavior.Restrict);
 
         // Simple (no compuesta): alicuotas_iva es un catálogo [global] sin id_tenant

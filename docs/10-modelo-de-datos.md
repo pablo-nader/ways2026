@@ -291,7 +291,9 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     descuento_proveedor numeric(5,2) NULL,
     costo_nominal    numeric(14,2) NULL,     -- costo real de reposición (lo actualiza la compra)
     disponible_para_todas boolean NOT NULL DEFAULT true,
-    activo
+    activo,
+    id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
+                                             -- FK compuesta (id_familia, id_tenant), NULL = sin familia
 );
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
@@ -311,10 +313,47 @@ codigos_proveedor (id_codigo_proveedor, id_articulo, id_proveedor, codigo citext
 -- apunta a un único artículo vivo.
 -- CHECK codigo = btrim(codigo) AND codigo <> ''
 -- FKs compuestas con id_tenant a articulos y proveedores. Baja lógica (deleted_at).
+
+familias (                    -- [tenant-wide: id_tenant, SIN id_empresa]
+    id_familia,
+    nombre citext NOT NULL,                  -- hasta 150 caracteres, como articulos.nombre
+    activo boolean NOT NULL DEFAULT true
+);
+-- ux_familias_nombre UNIQUE (id_tenant, nombre) WHERE deleted_at IS NULL.
+-- ak_familias_id_familia_id_tenant UNIQUE (id_familia, id_tenant): destino de la FK compuesta.
+-- articulos.fk_articulos_familia (id_familia, id_tenant) → familias, MATCH SIMPLE (NULL = sin
+-- familia), RESTRICT. ix_articulos_familia (id_familia, id_tenant) WHERE id_familia IS NOT NULL.
+-- RLS estándar (HabilitarRlsDeTenant) — sin desvío. Sin backfill: todo artículo existente
+-- queda con id_familia NULL.
 ```
 
 El artículo **no tiene precio de venta**: el precio vive en las listas. Se acabaron
 `precio`, `precioEmp`, `precioOferta` y `precioCant` como columnas.
+
+### Familias de artículos
+
+Una **familia** agrupa artículos que son **siempre idénticos** en sus campos compartidos. La
+familia no guarda ningún valor: sus miembros son la fuente de verdad, así que los lectores
+(listados, POS, ventas, reportes) siguen leyendo cada artículo tal cual. La carga es de los
+**escritores**: todo cambio de un campo compartido o de un precio debe replicarse a todos los
+miembros en la misma transacción. El esquema no fuerza la igualdad; la sostienen los escritores.
+
+> **Estado (familias de artículos — modelo):** implementados la tabla `familias`, la columna
+> `articulos.id_familia` y la regla pura `ValoresCompartidosDeFamilia`. Todavía no hay endpoint
+> de alta ni de membresía de familias, y ningún escritor replica a los miembros.
+
+| | Campos |
+|---|---|
+| **Compartidos** (doce columnas de `articulos`) | `id_area`, `id_categoria`, `id_grupo`, `id_proveedor_habitual`, `id_alicuota_iva`, `unidad_venta`, `unidades_por_bulto`, `es_producto`, `controla_lote`, `costo_lista`, `descuento_proveedor`, `costo_nominal` — más el estado de precios de **cada lista fija** (precio vigente y precio pendiente o programado) |
+| **Propios** de cada artículo | `nombre`, `descripcion`, `codigo_interno`, códigos de barra, `id_marca`, `activo`, `disponible_para_todas` (con `articulos_empresas`) |
+
+- **"Solo este"** significa que el artículo **sale de la familia** (`id_familia = NULL`) con el
+  valor nuevo. No hay excepciones dentro de una familia: o es idéntico a sus miembros, o no es
+  miembro.
+- **Miembro** es todo artículo con `id_familia = F` y `deleted_at IS NULL`. Un artículo dado de
+  baja no cuenta como miembro para ningún efecto.
+- La regla pura de qué es compartido y qué es propio vive en `ValoresCompartidosDeFamilia`
+  (Domain): una columna nueva en `articulos` obliga a clasificarla.
 
 ### Listas de precio, con historia
 
@@ -1567,6 +1606,7 @@ erDiagram
     articulos }o--o| grupos : ""
     articulos }o--|| areas : ""
     articulos }o--|| alicuotas_iva : ""
+    articulos }o--o| familias : ""
     articulos ||--o{ codigos_barra : ""
     articulos ||--o{ codigos_proveedor : ""
     proveedores ||--o{ codigos_proveedor : ""
