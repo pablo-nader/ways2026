@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import type { CodigoBarraListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
+import { advertenciaDeCodigoBarra } from './validacionCodigoBarra'
 
 /**
  * Códigos de barra: alta/baja independientes de editar el resto del artículo (spec: Barcode
  * Add/Remove Management). Hidrata desde `GET /api/articulos/{id}/codigos-barra` al montar, así
  * que también refleja los códigos cargados en altas anteriores, no solo los de esta sesión.
+ *
+ * Un código que no parece un GTIN estándar no se envía de inmediato: se advierte y recién se agrega
+ * con la confirmación explícita "Agregar igual". Es solo una advertencia; el servidor no cambia.
  */
 export function GestorDeCodigosBarra({
   idArticulo,
@@ -23,6 +27,10 @@ export function GestorDeCodigosBarra({
   const [error, setError] = useState('')
   const [ocupado, setOcupado] = useState(false)
   const [cargando, setCargando] = useState(true)
+  // Código ya recortado que quedó a la espera de confirmación, con el motivo de la advertencia.
+  const [pendiente, setPendiente] = useState<{ codigo: string; motivo: string } | null>(null)
+  // Espejo sincrónico de `ocupado`: dos clics en el mismo tick pasan ambos la guarda de estado.
+  const ocupadoRef = useRef(false)
 
   useEffect(() => {
     let cancelado = false
@@ -43,13 +51,25 @@ export function GestorDeCodigosBarra({
     }
   }, [idArticulo])
 
-  async function agregar() {
-    if (ocupado || bloqueadoPorPadre) return
+  function intentarAgregar() {
+    if (ocupadoRef.current || bloqueadoPorPadre) return
     const codigo = nuevoCodigo.trim()
     if (!codigo) return
 
+    const motivo = advertenciaDeCodigoBarra(codigo)
+    if (motivo) {
+      setPendiente({ codigo, motivo })
+      return
+    }
+    void enviar(codigo)
+  }
+
+  async function enviar(codigo: string) {
+    if (ocupadoRef.current || bloqueadoPorPadre) return
+    ocupadoRef.current = true
     setOcupado(true)
     setError('')
+    setPendiente(null)
     alDeEscribir(true)
     try {
       const creado = await clienteDeArticulos.agregarCodigoBarra(idArticulo, { codigo })
@@ -58,13 +78,15 @@ export function GestorDeCodigosBarra({
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo agregar el código de barras.')
     } finally {
+      ocupadoRef.current = false
       setOcupado(false)
       alDeEscribir(false)
     }
   }
 
   async function quitar(codigoBarra: CodigoBarraListado) {
-    if (ocupado || bloqueadoPorPadre) return
+    if (ocupadoRef.current || bloqueadoPorPadre) return
+    ocupadoRef.current = true
     setOcupado(true)
     setError('')
     alDeEscribir(true)
@@ -74,6 +96,7 @@ export function GestorDeCodigosBarra({
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo quitar el código de barras.')
     } finally {
+      ocupadoRef.current = false
       setOcupado(false)
       alDeEscribir(false)
     }
@@ -113,18 +136,40 @@ export function GestorDeCodigosBarra({
           placeholder="Código de barras"
           value={nuevoCodigo}
           disabled={ocupado || bloqueadoPorPadre}
-          onChange={(e) => setNuevoCodigo(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), agregar())}
+          onChange={(e) => {
+            setNuevoCodigo(e.target.value)
+            setPendiente(null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            // Enter nunca confirma una advertencia: solo lo hace el botón "Agregar igual".
+            intentarAgregar()
+          }}
         />
         <button
           type="button"
           className="btn btn-outline-primary"
           disabled={ocupado || bloqueadoPorPadre}
-          onClick={agregar}
+          onClick={intentarAgregar}
         >
           Agregar
         </button>
       </div>
+
+      {pendiente && (
+        <div className="alert alert-warning py-1 px-2 small mt-2 d-flex flex-wrap align-items-center gap-2" role="alert">
+          <span>{pendiente.motivo}</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-warning py-0 px-2"
+            disabled={ocupado || bloqueadoPorPadre}
+            onClick={() => enviar(pendiente.codigo)}
+          >
+            Agregar igual
+          </button>
+        </div>
+      )}
     </div>
   )
 }
