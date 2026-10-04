@@ -774,7 +774,13 @@ public class ServicioDeCompras(
 
     /// <summary>Loop de <c>AbrirNuevoPrecioAsync</c>, cada llamada su PROPIA transacción — un
     /// rechazo de una línea (p.ej. <c>precio_pendiente_existe</c>) no aborta las demás (design
-    /// decisión 8: partial success es el contrato honesto).</summary>
+    /// decisión 8: partial success es el contrato honesto).
+    ///
+    /// <para>Cada llamada pide <see cref="ModoDeAlcanceDeFamilia.FamiliaSiCorresponde"/>: si el
+    /// artículo de la línea es miembro de una familia, el precio sugerido se aplica a toda la
+    /// familia; si no, solo a él. No hay a quién preguntar el alcance. Dos líneas de la misma compra
+    /// que pertenezcan a la misma familia aplican, cada una, a toda la familia: la segunda pisa a la
+    /// primera si sus precios sugeridos difieren.</para></summary>
     public async Task<IReadOnlyList<ResultadoAplicarPrecio>> AplicarPrecioSugeridoAsync(
         int id, SolicitudDeAplicarPrecios solicitud, CancellationToken ct = default)
     {
@@ -796,9 +802,13 @@ public class ServicioDeCompras(
         {
             try
             {
-                var precio = await servicioDePrecios.EstablecerPrecioAsync(
+                var precio = await servicioDePrecios.AbrirNuevoPrecioAsync(
                     item.IdArticulo!.Value,
-                    new AltaPrecio(solicitud.IdListaPrecio, item.PrecioSugerido!.Value, solicitud.ConfirmarReemplazo),
+                    solicitud.IdListaPrecio,
+                    item.PrecioSugerido!.Value,
+                    vigenteDesde: null,
+                    solicitud.ConfirmarReemplazo,
+                    ModoDeAlcanceDeFamilia.FamiliaSiCorresponde,
                     ct);
 
                 resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo.Value, true, precio.Precio, null));

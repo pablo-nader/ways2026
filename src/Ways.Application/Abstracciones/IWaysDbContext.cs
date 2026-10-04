@@ -190,7 +190,9 @@ public interface IWaysDbContext
     /// <c>SaveChangesAsync</c> final inserta un solo set y no dos. Mismo criterio que
     /// <c>Database</c>/<c>Model</c> arriba: <c>ChangeTracker</c> es la misma abstracción de EF
     /// Core que ya expone la superficie pública de cualquier <c>DbContext</c>, no un tipo de
-    /// Infrastructure. Único consumidor hoy: <c>ServicioDeVentas.EmitirAsync</c>.</summary>
+    /// Infrastructure. También sirve para dejar de rastrear solo lo que una operación revertida
+    /// agregó (<c>Entries()</c> y <c>State = Detached</c>), sin tocar lo que el llamador ya tenía
+    /// rastreado.</summary>
     ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
