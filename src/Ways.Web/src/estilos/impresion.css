@@ -48,24 +48,16 @@
 }
 
 @media print {
-  body.imprimiendo-ticket * {
-    visibility: hidden;
+  body.imprimiendo-ticket > :not(.vista-de-ticket) {
+    display: none !important;
   }
 
-  body.imprimiendo-ticket .vista-de-ticket {
+  body.imprimiendo-ticket > .vista-de-ticket {
     display: block;
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 48ch;
     font-family: 'Courier New', monospace;
     font-size: 12px;
     color: #000;
-  }
-
-  body.imprimiendo-ticket .vista-de-ticket,
-  body.imprimiendo-ticket .vista-de-ticket * {
-    visibility: visible;
   }
 
   .vista-de-ticket__linea {
