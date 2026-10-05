@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -423,5 +423,125 @@ describe('Remito — role gating (mismo gate que /presupuestos: Politicas.Operac
     await screen.findByText('Borrador')
     expect(screen.getByRole('button', { name: 'Emitir' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anular' })).toBeInTheDocument()
+  })
+})
+
+describe('Remito — cantidad según la unidad de venta', () => {
+  function articuloConUnidad(unidadVenta: 'Unidad' | 'Peso') {
+    return { id: 10, codigoInterno: 'ART-10', nombre: 'Yerba mate 1kg', unidadVenta }
+  }
+
+  it('un borrador reabierto resuelve la unidad de su artículo: por unidad pide enteros, marca una fracción y no la guarda', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/remitos/30') return Promise.resolve(borradorFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloConUnidad('Unidad'))
+      return undefined
+    })
+    renderPantalla()
+
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
+    expect(cantidad).toHaveAttribute('min', '1')
+    expect(cantidad).not.toHaveClass('is-invalid')
+
+    fireEvent.change(cantidad, { target: { value: '1.5' } })
+
+    expect(cantidad).toHaveClass('is-invalid')
+    expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera. No se va a guardar.')).toBeInTheDocument()
+  })
+
+  it('guardar el borrador reconstruye las líneas desde la respuesta y la unidad ya resuelta se conserva (paso 1, sin otra consulta)', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/remitos/30') return Promise.resolve(borradorFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloConUnidad('Unidad'))
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(borradorFixture())
+    renderPantalla()
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    await screen.findByText('Borrador guardado.')
+    await waitFor(() => expect(apiGetMock.mock.calls.filter((c) => c[0] === '/remitos/30')).toHaveLength(2))
+    await act(async () => {})
+
+    const despues = screen.getByLabelText('Cantidad')
+    await waitFor(() => expect(despues).toHaveAttribute('step', '1'))
+    fireEvent.change(despues, { target: { value: '1.5' } })
+    expect(despues).toHaveClass('is-invalid')
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/articulos/10')).toHaveLength(1)
+  })
+
+  it('un remito que no es borrador no consulta ningún artículo', async () => {
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(detalleFixture()) : undefined))
+    renderPantalla()
+
+    await screen.findByText('Emitido')
+    await act(async () => {})
+    expect(apiGetMock.mock.calls.filter((c) => String(c[0]).startsWith('/articulos/'))).toHaveLength(0)
+  })
+
+  it('un artículo por peso conserva el paso de 0.001 y acepta fracciones sin marcarlas', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/remitos/30') return Promise.resolve(borradorFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloConUnidad('Peso'))
+      return undefined
+    })
+    renderPantalla()
+
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
+    fireEvent.change(cantidad, { target: { value: '1.5' } })
+
+    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).not.toHaveClass('is-invalid')
+  })
+
+  it('si no se puede resolver la unidad, la línea queda permisiva: nunca bloquea', async () => {
+    mockearReferencia((ruta) => (ruta === '/remitos/30' ? Promise.resolve(borradorFixture()) : undefined))
+    renderPantalla()
+
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
+    fireEvent.change(cantidad, { target: { value: '1.5' } })
+
+    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).not.toHaveClass('is-invalid')
+  })
+
+  it('elegir un artículo por unidad en una línea nueva fija paso 1 y no manda una fracción tipeada', async () => {
+    mockearReferencia((ruta) =>
+      ruta.startsWith('/articulos?busqueda=')
+        ? Promise.resolve({ items: [articuloConUnidad('Unidad')], total: 1, pagina: 1, tamanio: 25 })
+        : undefined,
+    )
+    apiPostMock.mockResolvedValue(borradorFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+
+    render(
+      <MemoryRouter initialEntries={['/remitos/nuevo']}>
+        <Routes>
+          <Route path="/remitos/nuevo" element={<Remito />} />
+          <Route path="/remitos/:id" element={<Remito />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await waitFor(() => expect(puntoVenta).toBeEnabled())
+    await usuario.selectOptions(puntoVenta, '9')
+
+    await usuario.click(screen.getByRole('button', { name: /Agregar línea/ }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
+    await usuario.click(await screen.findByText('ART-10 — Yerba mate 1kg'))
+    const cantidad = screen.getByLabelText('Cantidad')
+    expect(cantidad).toHaveAttribute('step', '1')
+
+    fireEvent.change(cantidad, { target: { value: '2.5' } })
+    expect(cantidad).toHaveClass('is-invalid')
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/remitos', expect.objectContaining({ lineas: [] })))
   })
 })

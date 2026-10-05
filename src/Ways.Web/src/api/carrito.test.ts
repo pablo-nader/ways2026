@@ -43,6 +43,68 @@ describe('reducirCarrito — escanear', () => {
     expect(resultado[0].cantidad).toBe(3)
   })
 
+  it('la línea nueva conserva la unidad de venta del escaneo', () => {
+    const resultado = reducirCarrito([], {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Unidad' },
+      cantidad: 1,
+      idLinea: 'l1',
+    })
+
+    expect(resultado[0].unidadVenta).toBe('Unidad')
+  })
+
+  it('re-escanear completa la unidad de una línea que no la tenía (borrador anterior) y no pisa la que ya tiene', () => {
+    const articulo = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Unidad' as const }
+    const sinUnidad = reducirCarrito([lineaFixture()], { tipo: 'escanear', linea: articulo, cantidad: 1, idLinea: 'nueva' })
+    expect(sinUnidad[0].unidadVenta).toBe('Unidad')
+
+    const conUnidad = reducirCarrito([lineaFixture({ unidadVenta: 'Peso' })], { tipo: 'escanear', linea: articulo, cantidad: 1, idLinea: 'nueva' })
+    expect(conUnidad[0].unidadVenta).toBe('Peso')
+  })
+
+  it('re-escanear con un escaneo sin unidad no inventa una unidad en la línea existente', () => {
+    const resultado = reducirCarrito([lineaFixture()], {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: null, acumulaEnVenta: true },
+      cantidad: 1,
+      idLinea: 'nueva',
+    })
+
+    expect('unidadVenta' in resultado[0]).toBe(false)
+  })
+
+  it('con varias líneas del mismo artículo, la unidad se completa solo en la línea destino (la última) y las demás no se tocan', () => {
+    const lineas = [
+      lineaFixture({ idLinea: 'a', cantidad: 1.5, acumulaEnVenta: false }),
+      lineaFixture({ idLinea: 'b', cantidad: 2, acumulaEnVenta: false }),
+    ]
+
+    const resultado = reducirCarrito(lineas, {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Unidad' },
+      cantidad: 1,
+      idLinea: 'nueva',
+    })
+
+    expect(resultado).toHaveLength(2)
+    expect('unidadVenta' in resultado[0]).toBe(false)
+    expect(resultado[1]).toMatchObject({ idLinea: 'b', cantidad: 3, unidadVenta: 'Unidad' })
+  })
+
+  it('un artículo que no acumula abre una línea nueva con su unidad y no toca la unidad de las existentes', () => {
+    const resultado = reducirCarrito([lineaFixture({ idLinea: 'a', acumulaEnVenta: false })], {
+      tipo: 'escanear',
+      linea: { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: null, acumulaEnVenta: false, unidadVenta: 'Unidad' },
+      cantidad: 1,
+      idLinea: 'b',
+    })
+
+    expect(resultado).toHaveLength(2)
+    expect('unidadVenta' in resultado[0]).toBe(false)
+    expect(resultado[1]).toMatchObject({ idLinea: 'b', unidadVenta: 'Unidad' })
+  })
+
   it('escanear el prefijo N*codigo pasa la cantidad indicada tal cual, sin transformarla', () => {
     const resultado = reducirCarrito([], {
       tipo: 'escanear',

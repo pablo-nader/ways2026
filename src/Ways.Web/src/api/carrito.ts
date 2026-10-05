@@ -11,6 +11,8 @@
  * resuelto, edición en curso, `key` de React) se indexa por `idLinea`.
  */
 
+import type { UnidadVenta } from './tipos'
+
 export type LineaCarrito = {
   /** Identidad estable de la línea dentro del ticket. La genera quien despacha el escaneo
    * (`nuevoIdLinea`), nunca el reducer, para que este siga siendo puro. */
@@ -21,6 +23,10 @@ export type LineaCarrito = {
   codigoBarra: string | null
   /** `true`: volver a agregar el artículo suma cantidad a su línea; `false`: abre otra línea. */
   acumulaEnVenta: boolean
+  /** Decide si la cantidad admite fracciones (`cantidadPorUnidad.ts`). Ausente — un borrador
+   * guardado antes de que existiera el campo, o un escaneo sin el dato — se trata como `Peso`: el
+   * comportamiento de siempre, nunca un bloqueo. */
+  unidadVenta?: UnidadVenta
   /** Con signo: positivo en una venta normal (TX); negativo cuando la línea es de una
    * devolución (NCX, design decisión 4) — el reducer no impone el signo, solo lo preserva; la
    * pantalla que arma el carrito de una NCX (Slice 7) es quien decide sumar con signo negativo. */
@@ -76,7 +82,17 @@ export function reducirCarrito(lineas: LineaCarrito[], accion: AccionCarrito): L
     case 'escanear': {
       const destino = idLineaDestinoDeEscaneo(lineas, accion.linea)
       if (destino !== null) {
-        return lineas.map((l) => (l.idLinea === destino ? { ...l, cantidad: l.cantidad + accion.cantidad } : l))
+        return lineas.map((l) =>
+          l.idLinea === destino
+            ? {
+                ...l,
+                cantidad: l.cantidad + accion.cantidad,
+                ...(l.unidadVenta === undefined && accion.linea.unidadVenta !== undefined
+                  ? { unidadVenta: accion.linea.unidadVenta }
+                  : {}),
+              }
+            : l,
+        )
       }
       return [...lineas, { ...accion.linea, idLinea: accion.idLinea, cantidad: accion.cantidad }]
     }

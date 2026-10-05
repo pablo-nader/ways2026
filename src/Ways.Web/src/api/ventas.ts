@@ -60,6 +60,7 @@ export function aLineaDeCarritoDesdeEscaneo(articulo: ArticuloEscaneado): { line
       nombre: articulo.nombre,
       codigoBarra: articulo.codigoBarra,
       acumulaEnVenta: articulo.acumulaEnVenta !== false,
+      unidadVenta: articulo.unidadVenta,
     },
     cantidad: articulo.cantidad,
   }

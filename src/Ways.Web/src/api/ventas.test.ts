@@ -55,6 +55,15 @@ describe('aLineaDeCarritoDesdeEscaneo', () => {
     expect(aLineaDeCarritoDesdeEscaneo(sinCampo as ArticuloEscaneado).linea.acumulaEnVenta).toBe(true)
   })
 
+  it('lleva la unidad de venta del escaneo a la línea del carrito', () => {
+    expect(aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ unidadVenta: 'Unidad' })).linea.unidadVenta).toBe('Unidad')
+    expect(aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ unidadVenta: 'Peso' })).linea.unidadVenta).toBe('Peso')
+  })
+
+  it('un escaneo sin unidad de venta (instantánea anterior) deja la línea sin unidad: permisivo', () => {
+    expect(aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture()).linea.unidadVenta).toBeUndefined()
+  })
+
   it('preserva codigoBarra null cuando el escaneo resolvió por codigo_interno', () => {
     const resultado = aLineaDeCarritoDesdeEscaneo(articuloEscaneadoFixture({ codigoBarra: null }))
 

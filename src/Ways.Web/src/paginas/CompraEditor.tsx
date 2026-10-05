@@ -21,6 +21,7 @@ import {
   type LineaDeCompraFormulario,
 } from '../api/compras'
 import { clienteDeArticulos } from '../api/articulos'
+import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeGastos, clienteDeGastosDeAdministracion } from '../api/gastos'
@@ -64,6 +65,7 @@ import {
   type ReferenciaDePercepciones,
 } from './sugerenciasDePercepcion'
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
+import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
 
 function formatearMoneda(valor: number | null): string {
@@ -366,6 +368,8 @@ function FilaDeItem({
   const descuentoInvalido = lineaConDescuentoInvalido(calculo)
   const incompleta = !lineaCompletaParaEnvio(linea)
   const esConcepto = linea.tipo === 'concepto'
+  const restriccionDeUnidades = restriccionDeCantidad(linea.unidadVenta, { permiteCero: true })
+  const fraccionEnUnidad = !esConcepto && esFraccionDeArticuloPorUnidad(linea.unidadVenta, linea.unidades)
 
   return (
     <tr className={incompleta ? 'table-warning text-muted' : undefined}>
@@ -403,6 +407,7 @@ function FilaDeItem({
                 idArticulo: a.id,
                 descripcion: a.nombre,
                 controlaLote: a.controlaLote,
+                unidadVenta: a.unidadVenta,
                 ...(cambioDeArticulo ? { codigoLote: '', fechaVencimiento: '' } : {}),
               })
             }}
@@ -443,14 +448,15 @@ function FilaDeItem({
       <td style={{ width: 90 }}>
         <input
           type="number"
-          step="0.001"
-          min="0"
-          className="form-control form-control-sm"
+          step={restriccionDeUnidades.step}
+          min={restriccionDeUnidades.min}
+          className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Unidades"
           value={linea.unidades}
           disabled={disabled}
           onChange={(e) => onCambio(linea.clave, { unidades: e.target.value })}
         />
+        {fraccionEnUnidad && <div className="invalid-feedback">{MENSAJE_DE_CANTIDAD_ENTERA}</div>}
       </td>
       <td style={{ width: 80 }}>
         {esConcepto ? (
@@ -702,6 +708,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
         <table className="table table-sm table-bordered mt-3 mb-0">
           <thead>
             <tr>
+              <th>Línea</th>
               <th>Artículo</th>
               <th>Resultado</th>
               <th className="text-end">Precio</th>
@@ -709,7 +716,8 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
           </thead>
           <tbody>
             {resultados.map((r) => (
-              <tr key={r.idArticulo}>
+              <tr key={r.orden}>
+                <td>{r.orden}</td>
                 <td>#{r.idArticulo}</td>
                 <td>{r.aplicado ? 'Aplicado' : (r.error ?? 'No aplicado')}</td>
                 <td className="text-end">{r.precio === null ? '—' : formatearMoneda(r.precio)}</td>
@@ -910,6 +918,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
   const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>([])
+  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador')
 
   useEffect(() => {
     if (ordenParaPrecargar === null) return

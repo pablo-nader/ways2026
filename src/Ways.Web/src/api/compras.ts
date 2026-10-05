@@ -7,6 +7,7 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
+import { respetaGranularidad } from './cantidadPorUnidad'
 import type {
   CoberturaDeArticulo,
   CompraDetalle,
@@ -26,6 +27,7 @@ import type {
   SolicitudDePagoDeCompra,
   TipoComprobanteListado,
   TipoDePercepcion,
+  UnidadVenta,
 } from './tipos'
 
 function redondear(valor: number, decimales: number): number {
@@ -168,6 +170,11 @@ export type LineaDeCompraFormulario = {
   controlaLote: boolean
   codigoLote: string
   fechaVencimiento: string
+  /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso de `unidades` y
+   * si una fracción se acepta. Se toma del artículo al elegirlo; en un borrador reabierto la
+   * completa `useUnidadesDeVentaDeLineas`. Ausente se trata como `Peso` (permisivo). Solo aplica a
+   * `unidades`: `unidadesPorBulto` es el tamaño del bulto, no una cantidad de la línea. */
+  unidadVenta?: UnidadVenta
 }
 
 export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
@@ -270,6 +277,7 @@ export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
     l.idArticulo !== '' &&
     l.idAlicuotaIva !== '' &&
     l.unidades.trim() !== '' &&
+    respetaGranularidad(l.unidadVenta, Number(l.unidades)) &&
     l.costoUnitario !== null &&
     (!l.controlaLote || l.fechaVencimiento.trim() !== '')
   )

@@ -5,6 +5,7 @@
  * (design.md: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { esTextoDeCantidadValido } from './cantidadPorUnidad'
 import type {
   EstadoPresupuesto,
   ItemDePresupuesto,
@@ -16,6 +17,7 @@ import type {
   SolicitudDeEnvio,
   SolicitudDePresupuesto,
   SolicitudDeVenta,
+  UnidadVenta,
 } from './tipos'
 
 // ---- Offset local para desde/hasta — mismo criterio que ordenesDeCompra.ts/compras.ts: el
@@ -131,6 +133,10 @@ export type LineaDePresupuestoFormulario = {
   idArticulo: number | ''
   descripcion: string
   cantidad: string
+  /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso del campo de
+   * cantidad y si una fracción se acepta. Se toma del artículo al elegirlo; en un documento
+   * reabierto la completa `useUnidadesDeVentaDeLineas`. Ausente se trata como `Peso` (permisivo). */
+  unidadVenta?: UnidadVenta
 }
 
 export function lineaDePresupuestoVacia(clave: number): LineaDePresupuestoFormulario {
@@ -142,11 +148,11 @@ export function itemDePresupuestoAFormulario(clave: number, item: ItemDePresupue
   return { clave, idArticulo: item.idArticulo, descripcion: item.descripcion, cantidad: String(item.cantidad) }
 }
 
-/** Una línea sin artículo o sin cantidad > 0 nunca viaja al servidor — mismo criterio que
- * `lineaDeOrdenCompletaParaEnvio` de ordenesDeCompra.ts. */
+/** Una línea sin artículo o sin cantidad válida para su unidad de venta (positiva y, por unidad,
+ * entera) nunca viaja al servidor — mismo criterio que `lineaDeOrdenCompletaParaEnvio` de
+ * ordenesDeCompra.ts. */
 export function lineaDePresupuestoCompletaParaEnvio(l: LineaDePresupuestoFormulario): boolean {
-  const cantidad = Number(l.cantidad)
-  return l.idArticulo !== '' && l.cantidad.trim() !== '' && Number.isFinite(cantidad) && cantidad > 0
+  return l.idArticulo !== '' && esTextoDeCantidadValido(l.unidadVenta, l.cantidad)
 }
 
 function numeroDeCantidad(valor: string): number {

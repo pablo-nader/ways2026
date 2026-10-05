@@ -12,6 +12,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -274,6 +275,74 @@ public class ComprasLineasPorConceptoTests(WaysApiFixture fixture) : IClassFixtu
         var resultado = Assert.Single(resultados);
         Assert.Equal(ctx.IdArticulo, resultado.IdArticulo);
         Assert.True(resultado.Aplicado);
+    }
+
+    /// <summary>Una compra admite dos líneas del mismo artículo, así que <c>IdArticulo</c> no identifica un
+    /// resultado de aplicar precios: <c>Orden</c> sí. La línea por concepto va ANTES de ellas y no figura en
+    /// la respuesta, de modo que el <c>Orden</c> de cada resultado (2 y 3) difiere de su posición en la
+    /// lista (1 y 2). Las dos ramas que arman un resultado se ejercitan por separado: el rechazo (hay un
+    /// precio pendiente y no se confirmó el reemplazo) y la aplicación (se confirmó).</summary>
+    [Fact]
+    public async Task AplicarPreciosConDosLineasDelMismoArticuloIdentificaCadaResultadoPorElOrdenDeSuLinea()
+    {
+        var ctx = await PrepararAsync(nameof(AplicarPreciosConDosLineasDelMismoArticuloIdentificaCadaResultadoPorElOrdenDeSuLinea));
+        var creada = await CrearBorradorAsync(
+            ctx, Solicitud(ctx, ctx.IdTipoCFA, [Concepto(ctx, "Flete", 500m), DeArticulo(ctx), DeArticulo(ctx, costo: 200m)]));
+        var confirmada = await ConfirmarAsync(ctx, creada.Id);
+
+        Assert.Equal([1, 2, 3], confirmada.Items.Select(i => i.Orden));
+        Assert.Null(confirmada.Items[0].IdArticulo);
+        Assert.Equal(ctx.IdArticulo, confirmada.Items[1].IdArticulo);
+        Assert.Equal(ctx.IdArticulo, confirmada.Items[2].IdArticulo);
+        Assert.NotNull(confirmada.Items[1].PrecioSugerido);
+        Assert.NotNull(confirmada.Items[2].PrecioSugerido);
+        Assert.NotEqual(confirmada.Items[1].PrecioSugerido, confirmada.Items[2].PrecioSugerido);
+
+        int idLista;
+        await using (var h = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var lista = new ListaPrecio
+            {
+                IdTenant = ctx.IdTenant, Nombre = "Lista de prueba", EsDefault = false, Modo = ModoLista.Fija,
+                Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            h.ListasPrecio.Add(lista);
+            await h.SaveChangesAsync();
+
+            h.Precios.Add(new Precio
+            {
+                IdTenant = ctx.IdTenant, IdArticulo = ctx.IdArticulo, IdListaPrecio = lista.Id, Monto = 120m,
+                VigenteDesde = ahora.AddDays(3), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await h.SaveChangesAsync();
+            idLista = lista.Id;
+        }
+
+        async Task<List<ResultadoAplicarPrecio>> AplicarAsync(bool confirmarReemplazo)
+        {
+            var respuesta = await ctx.Admin.PostAsJsonAsync(
+                $"/api/compras/{creada.Id}/precios", new SolicitudDeAplicarPrecios(idLista, confirmarReemplazo));
+            var cuerpo = await respuesta.Content.ReadAsStringAsync();
+            Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+            return JsonSerializer.Deserialize<List<ResultadoAplicarPrecio>>(cuerpo, OpcionesJson)!;
+        }
+
+        var rechazados = await AplicarAsync(confirmarReemplazo: false);
+
+        Assert.Equal([2, 3], rechazados.Select(r => r.Orden));
+        Assert.All(rechazados, r => Assert.Equal(ctx.IdArticulo, r.IdArticulo));
+        Assert.All(rechazados, r => Assert.False(r.Aplicado, r.Error));
+        Assert.All(rechazados, r => Assert.Null(r.Precio));
+        Assert.All(rechazados, r => Assert.Contains("precio pendiente", r.Error, StringComparison.Ordinal));
+
+        var aplicados = await AplicarAsync(confirmarReemplazo: true);
+
+        Assert.Equal([2, 3], aplicados.Select(r => r.Orden));
+        Assert.All(aplicados, r => Assert.Equal(ctx.IdArticulo, r.IdArticulo));
+        Assert.All(aplicados, r => Assert.True(r.Aplicado, r.Error));
+        Assert.All(aplicados, r => Assert.Null(r.Error));
+        Assert.All(aplicados, r => Assert.Equal(confirmada.Items.Single(i => i.Orden == r.Orden).PrecioSugerido, r.Precio));
     }
 
     [Fact]
