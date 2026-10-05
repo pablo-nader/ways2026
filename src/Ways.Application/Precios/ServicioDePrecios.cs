@@ -19,8 +19,10 @@ namespace Ways.Application.Precios;
 /// existe — por cada artículo objetivo (el artículo pedido o, si pertenece a una familia y el alcance lo
 /// pide, todos los miembros vivos de su familia) cierra la fila actualmente abierta (si hay una) e inserta
 /// una nueva, siempre en la MISMA transacción, nunca hay un <c>Update</c> sobre <see cref="Precio.Monto"/>
-/// de una fila existente. El otro es <see cref="CopiarEstadoDePreciosAlNuevoMiembroAsync"/>, que solo inserta
-/// las filas de un artículo recién creado que entra a una familia. La lectura
+/// de una fila existente. Los otros dos son <see cref="CopiarEstadoDePreciosAlNuevoMiembroAsync"/>, que solo inserta
+/// las filas de un artículo recién creado que entra a una familia, y la alineación de los artículos que se agrupan
+/// con uno de referencia (<see cref="PlanificarAlineacionAsync"/> y <see cref="EscribirAlineacionAsync"/>), que cierra
+/// las filas abiertas del artículo e inserta las del estado de la referencia. La lectura
 /// (<see cref="PrecioVigenteAsync"/>) resuelve <c>fija</c> por consulta filtrada por fecha y
 /// <c>derivada</c> en el momento, sin persistir nunca una fila para una lista derivada (spec:
 /// Derived List Price Resolution At Read Time).
@@ -408,6 +410,69 @@ public class ServicioDePrecios(
         }
 
         return estados;
+    }
+
+    /// <summary>
+    /// Los locks de par (artículo, lista) de TODOS los pares del producto cartesiano de los artículos y las listas
+    /// pedidos, en orden ascendente de su CLAVE (<see cref="OrdenDeLocksDeParesDeVariosArticulosYListas"/>), paso (3) del
+    /// orden global de locks de las familias. Es el superconjunto de los pares que la alineación puede escribir: se toma
+    /// ANTES de leer ningún estado de precios, así que no hace falta leer para saber cuáles escribir. Tiene que correr
+    /// dentro de la transacción del llamador, después del lock de membresía y de las filas de los artículos.
+    /// </summary>
+    internal async Task TomarLocksDeParesAsync(
+        int idTenant, IReadOnlyList<int> idsArticulo, IReadOnlyList<int> idsLista, CancellationToken ct)
+    {
+        var pares = idsArticulo.SelectMany(idArticulo => idsLista.Select(idLista => (idArticulo, idLista)));
+
+        foreach (var (idArticulo, idLista) in OrdenDeLocksDeParesDeVariosArticulosYListas(idTenant, pares))
+        {
+            await TomarLockDelParAsync(idTenant, idArticulo, idLista, ct);
+        }
+    }
+
+    /// <summary>
+    /// FASE 2 de la alineación de precios de una familia: escribe lo que <see cref="PlanificarAlineacionAsync"/>
+    /// planificó, sin volver a leer nada. Es una precondición del llamador que el plan no tenga rechazos
+    /// (<see cref="PlanDeAlineacionDePrecios.PrimerRechazo"/> es <c>null</c>), que "ahora" sea el mismo con que se
+    /// planificó y que tenga tomados los locks de los pares: dentro de SU transacción y con SU
+    /// <c>SaveChangesAsync</c>, que guarda las filas y su auditoría juntas.
+    ///
+    /// <para>Mismas reglas de cierre que un cambio de precio, par por par y solo para los que se alinean: se cierra la fila
+    /// abierta del destino y, si era pendiente, se re-cierra su predecesor
+    /// (<see cref="CerrarFilasDelPlanAsync"/>, con "ahora" como inicio del precio nuevo: el reemplazo de un pendiente lo
+    /// cierra en su propio inicio). Después se encolan las filas del estado de la referencia
+    /// (<see cref="ReglaDeCopiaDePrecios.FilasDelEstado"/>: la vigente desde "ahora", cerrada donde empieza el pendiente, y
+    /// el pendiente con su fecha), cada una con su fila de auditoría <c>precio.cambio</c> por
+    /// <see cref="EncolarFilaDePrecio"/>. El valor anterior de la primera fila es la fila abierta que tenía el destino
+    /// (ninguno si no tenía) y el de la segunda, la primera: cada fila registra el paso desde el estado inmediato
+    /// anterior.</para>
+    /// </summary>
+    internal async Task EscribirAlineacionAsync(
+        PlanDeAlineacionDePrecios plan, int idTenant, DateTimeOffset ahora, CancellationToken ct)
+    {
+        var aAlinear = plan.Pares.Where(par => par.Resolucion == ResolucionDeAlineacionDePrecios.Alinear).ToList();
+
+        foreach (var par in aAlinear)
+        {
+            await CerrarFilasDelPlanAsync(plan.Cierres[(par.IdArticulo, par.IdListaPrecio)], ahora, ahora, ct);
+        }
+
+        foreach (var par in aAlinear)
+        {
+            var cierre = plan.Cierres[(par.IdArticulo, par.IdListaPrecio)];
+            var montoAnterior = cierre.FilaAbierta?.Monto;
+            var vigenteDesdeAnterior = cierre.FilaAbierta?.VigenteDesde;
+
+            foreach (var fila in ReglaDeCopiaDePrecios.FilasDelEstado(par.Referencia, ahora))
+            {
+                EncolarFilaDePrecio(
+                    par.IdArticulo, par.IdListaPrecio, montoAnterior, vigenteDesdeAnterior, fila.Monto, fila.VigenteDesde,
+                    fila.VigenteHasta, ahora, idTenant);
+
+                montoAnterior = fila.Monto;
+                vigenteDesdeAnterior = fila.VigenteDesde;
+            }
+        }
     }
 
     /// <summary>Lock de membresía de familias del tenant (<see cref="LockDeMembresiaDeFamilias"/>),
@@ -1002,6 +1067,16 @@ public class ServicioDePrecios(
     public static IReadOnlyList<int> OrdenDeLocksDeParesDeUnArticulo(
         int idTenant, int idArticulo, IEnumerable<int> idsListaPrecio) =>
         [.. idsListaPrecio.OrderBy(idListaPrecio => ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio))];
+
+    /// <summary>Los pares (artículo, lista) en el orden en que se toman sus locks cuando una escritura toma VARIOS de
+    /// ambos: ascendente por la CLAVE del lock (<see cref="ClaveDeLockDePar"/>), la misma regla que
+    /// <see cref="OrdenDeLocksDePares"/> aplica a varios artículos de UNA lista y
+    /// <see cref="OrdenDeLocksDeParesDeUnArticulo"/> a varias listas de UN artículo —las dos son casos particulares de
+    /// ésta—. Ordenar por artículo y después por lista, o por lista y después por artículo, tomaría los locks en un
+    /// orden que otra escritura de pares cruzados no comparte, y las dos podrían esperarse en ciclo.</summary>
+    public static IReadOnlyList<(int IdArticulo, int IdListaPrecio)> OrdenDeLocksDeParesDeVariosArticulosYListas(
+        int idTenant, IEnumerable<(int IdArticulo, int IdListaPrecio)> pares) =>
+        [.. pares.OrderBy(par => ClaveDeLockDePar(idTenant, par.IdArticulo, par.IdListaPrecio))];
 
     /// <summary><c>pg_advisory_xact_lock</c> con alcance de TRANSACCIÓN (se libera solo al
     /// COMMIT/ROLLBACK) tomado ANTES de leer nada de precios (judgment-day, item 2) — a diferencia del
