@@ -1883,8 +1883,15 @@ export type ResultadoAnulacion = { compra: CompraDetalle; gastosLigados: number 
 export type SolicitudDeAplicarPrecios = { idListaPrecio: number; confirmarReemplazo: boolean }
 
 /** Resultado por línea de aplicar `precioSugerido` — partial success es el contrato honesto
- * (espejo de `ResultadoAplicarPrecio`). */
-export type ResultadoAplicarPrecio = { idArticulo: number; aplicado: boolean; precio: number | null; error: string | null }
+ * (espejo de `ResultadoAplicarPrecio`). `orden` identifica la línea (su `orden` en la compra, único
+ * dentro de ella); `idArticulo` por sí solo puede repetirse entre líneas. */
+export type ResultadoAplicarPrecio = {
+  orden: number
+  idArticulo: number
+  aplicado: boolean
+  precio: number | null
+  error: string | null
+}
 
 // --- Saldo de proveedor (stage-8, Slice 4 backend / Slice 5 web) ----------------------------
 // `GET /api/proveedores/{id}/saldo` — mapeado top-level, no dentro de `/api/proveedores`

@@ -173,5 +173,6 @@ public sealed record SolicitudDeAplicarPrecios(int IdListaPrecio, bool Confirmar
 
 /// <summary>Resultado por línea de aplicar <c>precio_sugerido</c> — partial success es el
 /// contrato honesto (design decisión 8): una línea rechazada (p.ej. un precio pendiente sin
-/// confirmar) no aborta las demás.</summary>
-public sealed record ResultadoAplicarPrecio(int IdArticulo, bool Aplicado, decimal? Precio, string? Error);
+/// confirmar) no aborta las demás. <see cref="Orden"/> identifica la línea (su <c>orden</c> en la
+/// compra, único dentro de ella); <see cref="IdArticulo"/> por sí solo puede repetirse entre líneas.</summary>
+public sealed record ResultadoAplicarPrecio(int Orden, int IdArticulo, bool Aplicado, decimal? Precio, string? Error);

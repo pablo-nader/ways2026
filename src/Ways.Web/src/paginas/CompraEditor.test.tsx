@@ -412,6 +412,7 @@ describe('CompraEditor — compra confirmada', () => {
 
     renderEditor()
     await screen.findByRole('button', { name: 'Anular compra' })
+    await screen.findByRole('button', { name: 'Aplicar' })
     await usuario.click(screen.getByRole('button', { name: 'Anular compra' }))
     await usuario.click(screen.getByLabelText(/Confirmo que quiero anular esta compra/))
 
@@ -452,7 +453,7 @@ describe('CompraEditor — compra confirmada', () => {
 
   it('aplicar precio sugerido: éxito parcial por línea, un 2xx nunca se reporta como fallo', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
-    const resultados: ResultadoAplicarPrecio[] = [{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }]
+    const resultados: ResultadoAplicarPrecio[] = [{ orden: 1, idArticulo: 10, aplicado: true, precio: 114.95, error: null }]
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras/1/precios') return Promise.resolve(resultados)
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -471,6 +472,69 @@ describe('CompraEditor — compra confirmada', () => {
     expect(cuerpo).toEqual({ idListaPrecio: 1, confirmarReemplazo: false })
   })
 
+  it('aplicar precio sugerido: dos líneas del mismo artículo se listan cada una con su línea y su resultado, sin claves de React repetidas', async () => {
+    // Una compra admite dos líneas del mismo artículo, así que `idArticulo` no identifica la fila del
+    // resultado: la clave es `orden`. Con `key={r.idArticulo}` las dos filas igualmente se renderizan
+    // con su propio contenido y lo único que cambia es el aviso de React por claves repetidas, que es
+    // lo que se espía.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      mockearReferencia((ruta) =>
+        ruta === '/compras/1'
+          ? Promise.resolve(
+              compraFixture({
+                estado: 'Confirmada',
+                items: [
+                  itemFixture({ orden: 1, idArticulo: null, descripcion: 'Flete', actualizaCosto: false, precioSugerido: null }),
+                  itemFixture({ orden: 2, precioSugerido: 114.95 }),
+                  itemFixture({ orden: 3, precioSugerido: 229.9 }),
+                ],
+              }),
+            )
+          : undefined,
+      )
+      const resultados: ResultadoAplicarPrecio[] = [
+        { orden: 2, idArticulo: 10, aplicado: true, precio: 114.95, error: null },
+        {
+          orden: 3,
+          idArticulo: 10,
+          aplicado: false,
+          precio: null,
+          error: 'Ya existe un precio pendiente para este artículo en esta lista; confirmá el reemplazo.',
+        },
+      ]
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === '/compras/1/precios') return Promise.resolve(resultados)
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+      const usuario = userEvent.setup()
+
+      renderEditor()
+      const lista = await screen.findByLabelText('Lista de precios')
+      await within(lista).findByRole('option', { name: 'Lista General' })
+      await usuario.selectOptions(lista, '1')
+      await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+      const encabezadoDeLinea = await screen.findByRole('columnheader', { name: 'Línea' })
+      const [, cuerpo] = within(encabezadoDeLinea.closest('table') as HTMLElement).getAllByRole('rowgroup')
+      const filas = within(cuerpo).getAllByRole('row')
+      expect(filas).toHaveLength(2)
+
+      const celdasPorFila = filas.map((fila) => within(fila).getAllByRole('cell').map((celda) => celda.textContent))
+      expect(celdasPorFila).toEqual([
+        ['2', '#10', 'Aplicado', '$ 114,95'],
+        ['3', '#10', 'Ya existe un precio pendiente para este artículo en esta lista; confirmá el reemplazo.', '—'],
+      ])
+
+      const avisosDeClaveRepetida = errorSpy.mock.calls.filter((llamada) =>
+        llamada.some((argumento) => typeof argumento === 'string' && argumento.includes('Encountered two children with the same key')),
+      )
+      expect(avisosDeClaveRepetida).toEqual([])
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it('aplicar precio sugerido en vuelo bloquea "Anular compra" (regla 9, gate simétrico con anulando)', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
     let resolverAplicar: (valor: ResultadoAplicarPrecio[]) => void = () => {}
@@ -487,7 +551,7 @@ describe('CompraEditor — compra confirmada', () => {
 
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeDisabled()
 
-    resolverAplicar([{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
+    resolverAplicar([{ orden: 1, idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Anular compra' })).toBeEnabled())
   })
 
@@ -508,12 +572,13 @@ describe('CompraEditor — compra confirmada', () => {
     const botonAnularFinal = screen.getByRole('button', { name: 'Anular' })
     expect(botonAnularFinal).toBeEnabled()
 
+    await screen.findByLabelText('Lista de precios')
     await usuario.selectOptions(screen.getByLabelText('Lista de precios'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     expect(botonAnularFinal).toBeDisabled()
 
-    resolverAplicar([{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
+    resolverAplicar([{ orden: 1, idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
     await waitFor(() => expect(botonAnularFinal).toBeEnabled())
 
     const llamadasAnular = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/anular')

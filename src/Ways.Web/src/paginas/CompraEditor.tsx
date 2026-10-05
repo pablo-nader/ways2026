@@ -708,6 +708,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
         <table className="table table-sm table-bordered mt-3 mb-0">
           <thead>
             <tr>
+              <th>Línea</th>
               <th>Artículo</th>
               <th>Resultado</th>
               <th className="text-end">Precio</th>
@@ -715,7 +716,8 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
           </thead>
           <tbody>
             {resultados.map((r) => (
-              <tr key={r.idArticulo}>
+              <tr key={r.orden}>
+                <td>{r.orden}</td>
                 <td>#{r.idArticulo}</td>
                 <td>{r.aplicado ? 'Aplicado' : (r.error ?? 'No aplicado')}</td>
                 <td className="text-end">{r.precio === null ? '—' : formatearMoneda(r.precio)}</td>
