@@ -99,6 +99,19 @@ public class ReglaDeAlineacionDePreciosTests
             celdas.Select(celda => celda.Item1).Distinct().Order(StringComparer.Ordinal));
     }
 
+    /// <summary>El rechazo por el predecesor lo decide quien lee las filas del destino, no la regla: ninguna celda de la
+    /// tabla lo devuelve.</summary>
+    [Fact]
+    public void LaReglaNuncaDevuelveElRechazoQueDecideQuienLeeLasFilas()
+    {
+        foreach (var fila in TablaDeDecision())
+        {
+            Assert.NotEqual(
+                ResolucionDeAlineacionDePrecios.InalineablePorPrecioPredecesorPosterior,
+                ReglaDeAlineacionDePrecios.Resolver(Estado((string)fila[0]), Estado((string)fila[1])));
+        }
+    }
+
     /// <summary>Un estado es siempre igual a sí mismo: cualquiera de los diez, como referencia y como destino, no
     /// escribe nada.</summary>
     [Fact]

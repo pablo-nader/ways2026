@@ -24,6 +24,13 @@ public static class FamiliasEndpoints
             "Obtiene una familia con sus artículos vivos, los valores compartidos y el estado de precios de su "
                 + "artículo de referencia (el de menor id), que es lo que prellena el alta dentro de la familia.");
 
+        grupo.MapPost("/previsualizacion", (
+            ServicioDeAgrupacionDeFamilias servicio, SolicitudDePrevisualizacion datos, CancellationToken ct) =>
+            servicio.PrevisualizarAsync(datos, ct))
+        .WithSummary(
+            "Previsualiza agrupar artículos con un artículo de referencia: por artículo, las columnas compartidas y "
+                + "los precios que cambiarían, y los problemas que impedirían agrupar. No escribe nada.");
+
         grupo.MapPut("/{id:int}", (
             ServicioDeFamilias servicio, int id, EdicionFamilia datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))

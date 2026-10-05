@@ -29,6 +29,7 @@ public class FamiliasAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     [
         new(HttpMethod.Get, "/api/familias", null, HttpStatusCode.OK),
         new(HttpMethod.Get, $"/api/familias/{idFamilia}", null, HttpStatusCode.OK),
+        new(HttpMethod.Post, "/api/familias/previsualizacion", new SolicitudDePrevisualizacion(1, null), HttpStatusCode.OK),
         new(HttpMethod.Put, $"/api/familias/{idFamilia}", new EdicionFamilia("Con otro nombre", true), HttpStatusCode.OK),
         new(HttpMethod.Delete, $"/api/familias/{idFamilia}/articulos/1", null, null),
         new(HttpMethod.Delete, $"/api/familias/{idFamilia}", null, null)

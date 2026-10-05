@@ -313,6 +313,103 @@ public class ServicioDePrecios(
         }
     }
 
+    /// <summary>Las listas de precios fijas del tenant, ascendentes por id: las únicas con filas propias en
+    /// <c>precios</c>, y por lo tanto las únicas en las que un artículo tiene un estado de precios que alinear.</summary>
+    internal async Task<IReadOnlyList<ListaFija>> ListasFijasAsync(CancellationToken ct) =>
+        await db.ListasPrecio
+            .AsNoTracking()
+            .Where(l => l.Modo == ModoLista.Fija)
+            .OrderBy(l => l.Id)
+            .Select(l => new ListaFija(l.Id, l.Nombre))
+            .ToListAsync(ct);
+
+    /// <summary>
+    /// FASE 1 de la alineación de precios de una familia (doc 10 §3), solo lecturas: decide, para cada par (artículo
+    /// destino, lista fija), qué hace falta para que el estado de precios del destino quede igual al del artículo de
+    /// referencia (<see cref="ReglaDeAlineacionDePrecios"/>), y para los pares que se alinean lee y valida las filas que
+    /// la escritura va a cerrar con la MISMA planificación que usa un cambio de precio
+    /// (<see cref="PlanificarPrecioDeUnArticuloAsync"/>, con "ahora" como inicio del precio nuevo y el reemplazo del
+    /// pendiente confirmado). Un conflicto de esa planificación (<c>vigente_desde_invalido</c>) no se propaga: el par
+    /// queda como rechazo (<see cref="ResolucionDeAlineacionDePrecios.InalineablePorPrecioPredecesorPosterior"/>) y
+    /// decide el llamador. Con un par que se alinea, ese conflicto solo puede ser el del predecesor: la otra comprobación
+    /// de <c>vigente_desde_invalido</c> exige una fila vigente que empiece después de "ahora", y una fila que empieza
+    /// después de "ahora" es pendiente, no vigente.
+    ///
+    /// <para>No lee el reloj ni escribe nada ni toma locks: el llamador pasa su "ahora". Sirve igual sin transacción,
+    /// para previsualizar.
+    /// <paramref name="idsDestino"/> y <paramref name="idsListasFijas"/> no incluyen a la referencia, y el plan recorre los
+    /// pares en el orden en que los recibe: los llamadores los pasan ascendentes por id, así que el plan sale ascendente
+    /// por id de artículo y después por id de lista.</para>
+    /// </summary>
+    internal async Task<PlanDeAlineacionDePrecios> PlanificarAlineacionAsync(
+        int idArticuloReferencia, IReadOnlyList<int> idsDestino, IReadOnlyList<int> idsListasFijas, int idTenant,
+        DateTimeOffset ahora, CancellationToken ct)
+    {
+        var estados = await LeerEstadosAsync([idArticuloReferencia, .. idsDestino], idsListasFijas, ahora, ct);
+
+        var pares = new List<AlineacionDeUnPar>(idsDestino.Count * idsListasFijas.Count);
+        var cierres = new Dictionary<(int IdArticulo, int IdListaPrecio), PlanDeUnArticulo>();
+
+        foreach (var idDestino in idsDestino)
+        {
+            foreach (var idLista in idsListasFijas)
+            {
+                var referencia = estados[(idArticuloReferencia, idLista)];
+                var actual = estados[(idDestino, idLista)];
+                var resolucion = ReglaDeAlineacionDePrecios.Resolver(referencia, actual);
+
+                if (resolucion == ResolucionDeAlineacionDePrecios.Alinear)
+                {
+                    try
+                    {
+                        cierres[(idDestino, idLista)] = await PlanificarPrecioDeUnArticuloAsync(
+                            idDestino, idLista, vigenteDesdeEfectivo: ahora, ahora, confirmarReemplazo: true, idTenant,
+                            esDeFamilia: true, ct);
+                    }
+                    catch (ErrorDominio error) when (error.Codigo == "vigente_desde_invalido")
+                    {
+                        resolucion = ResolucionDeAlineacionDePrecios.InalineablePorPrecioPredecesorPosterior;
+                    }
+                }
+
+                pares.Add(new AlineacionDeUnPar(idDestino, idLista, actual, referencia, resolucion));
+            }
+        }
+
+        return new PlanDeAlineacionDePrecios(pares, cierres);
+    }
+
+    /// <summary>El estado de precios a <paramref name="ahora"/> (<see cref="EstadoDePrecios.De"/>) de cada par
+    /// (artículo, lista) del producto cartesiano de los ids pedidos, en UNA consulta. Un par sin ninguna fila tiene el
+    /// estado vacío. Solo lectura, sin rastreo.</summary>
+    private async Task<Dictionary<(int IdArticulo, int IdListaPrecio), EstadoDePrecios>> LeerEstadosAsync(
+        IReadOnlyList<int> idsArticulo, IReadOnlyList<int> idsLista, DateTimeOffset ahora, CancellationToken ct)
+    {
+        var articulos = idsArticulo.ToArray();
+        var listas = idsLista.ToArray();
+
+        var filas = await db.Precios
+            .AsNoTracking()
+            .Where(p => articulos.Contains(p.IdArticulo) && listas.Contains(p.IdListaPrecio))
+            .Select(p => new { p.IdArticulo, p.IdListaPrecio, p.Monto, p.VigenteDesde, p.VigenteHasta })
+            .ToListAsync(ct);
+
+        var filasPorPar = filas.ToLookup(f => (f.IdArticulo, f.IdListaPrecio));
+        var estados = new Dictionary<(int IdArticulo, int IdListaPrecio), EstadoDePrecios>(articulos.Length * listas.Length);
+
+        foreach (var idArticulo in articulos)
+        {
+            foreach (var idLista in listas)
+            {
+                estados[(idArticulo, idLista)] = EstadoDePrecios.De(
+                    [.. filasPorPar[(idArticulo, idLista)].Select(f => new FilaDePrecio(f.Monto, f.VigenteDesde, f.VigenteHasta))],
+                    ahora);
+            }
+        }
+
+        return estados;
+    }
+
     /// <summary>Lock de membresía de familias del tenant (<see cref="LockDeMembresiaDeFamilias"/>),
     /// PRIMERA sentencia de la transacción: exclusivo solo cuando el modo puede cambiar la pertenencia
     /// (<see cref="ReglaDeFamilias.RequiereLockExclusivo"/>), compartido en los demás. La elección es
@@ -1088,7 +1185,7 @@ public class ServicioDePrecios(
     /// <summary><c>Monto</c> es el before-image de <c>precio.cambio</c> (task 2.2) — solo
     /// significativo cuando la fila viene de <see cref="BuscarFilaAbiertaAsync"/>; el predecesor
     /// (<see cref="BuscarPredecesorAsync"/>) nunca lo lee.</summary>
-    private readonly record struct FilaVigente(int Id, DateTimeOffset VigenteDesde, decimal Monto);
+    internal readonly record struct FilaVigente(int Id, DateTimeOffset VigenteDesde, decimal Monto);
 
     /// <summary>Lo que resolvió la lectura de pertenencia bajo el lock de membresía: los artículos que
     /// hay que escribir, ascendentes por <c>id_articulo</c>, y —solo en "solo este"— la familia de la
@@ -1098,6 +1195,6 @@ public class ServicioDePrecios(
     /// <summary>Lo que la fase 1 leyó y validó de UN objetivo y la fase 2 necesita para escribirlo: la
     /// fila abierta (<c>null</c> si el par todavía no tiene precio), si era pendiente y, entonces, su
     /// predecesor.</summary>
-    private readonly record struct PlanDeUnArticulo(
+    internal readonly record struct PlanDeUnArticulo(
         int IdArticulo, FilaVigente? FilaAbierta, bool EsPendiente, FilaVigente? Predecesor);
 }

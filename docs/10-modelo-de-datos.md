@@ -492,6 +492,20 @@ no toman locks.
   está dada de baja o es de otro tenant. Un id de catálogo que apunta a una fila dada de baja viaja como `null`, igual
   que en la grilla de artículos: la `idMarca` de un miembro y el área, la categoría, el grupo y el proveedor
   habitual de la referencia.
+- `POST /api/familias/previsualizacion` `{ idArticuloReferencia, idsArticulos }`: dice qué cambiaría si se agruparan
+  esos artículos con la referencia como modelo, sin escribir nada, sin locks y sin transacción: es una foto. Los
+  **destinos** son los ids pedidos sin repetir y sin la propia referencia, como máximo 100 (`400
+  demasiados_articulos`: cada destino sostendría un lock por lista fija hasta el commit y la tabla de locks de Postgres
+  es compartida); `400 id_articulo_referencia_requerido` si la referencia no es un id posible. Si la referencia ya es
+  miembro de una familia, agrupar sería sumar a esa familia (`idFamilia`); si no, crear una nueva (`idFamilia: null`).
+  Por cada destino que se puede alinear —no los inexistentes, ni los dados de baja, ni los que están en otra
+  familia— trae las columnas compartidas que difieren, con los trece valores actuales y los de la referencia tal cual
+  están guardados, y por cada lista fija en la que su estado de precios cambia, el estado actual y el de la referencia;
+  un destino ya idéntico trae todo vacío. Los `problemas` llevan el código de error de la API, en este orden: los
+  de la familia de la referencia (`no_encontrado` si está dada de baja, `familia_inactiva`), `referencia_invalida` por
+  cada artículo inexistente o dado de baja, `articulo_en_otra_familia` y `familia_precio_inalineable` por cada par
+  artículo-lista que no se puede alinear. Si la referencia no existe no hay con qué comparar: solo informa los
+  artículos inexistentes.
 - `PUT /api/familias/{id}`: el nombre y el estado `activo`, los dos obligatorios (`400 nombre_requerido`,
   `400 nombre_muy_largo` —hasta 150 caracteres, sin espacios en los extremos— y `400 activo_requerido`: un `activo`
   ausente se rechaza, no se lee como `false`). El nombre es único entre las familias vivas del tenant sin distinguir
@@ -516,6 +530,22 @@ no toman locks.
   de otro tenant). Toma, en este orden, el lock de membresía exclusivo, la fila de la familia `FOR UPDATE` y las
   filas de los miembros vivos, ascendentes y `FOR NO KEY UPDATE`; el nombre de la familia disuelta se puede
   reutilizar.
+
+**Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los trece campos compartidos (los
+propios no se tocan) y en el **estado de precios** de cada lista fija —el precio vigente y, si lo hay, el pendiente con su
+fecha—. Dos estados se comparan por valor: vigente, y monto y fecha del pendiente. Un precio nunca se quita, así que hay
+estados que no se pueden alinear:
+
+| Referencia | Destino | Resolución |
+|---|---|---|
+| estado igual al del destino | — | sin cambios |
+| vigente (con o sin pendiente) | cualquier otro estado | alinear |
+| solo un pendiente | sin precio vigente | alinear (el pendiente propio, si lo hay, se reemplaza) |
+| solo un pendiente | con precio vigente | rechazo: `familia_precio_inalineable` |
+| sin ningún precio | con algún precio | rechazo: `familia_precio_inalineable` |
+
+Un tercer rechazo del mismo código es un dato que la API no produce: un pendiente del destino que reemplaza a una fila
+vigente que empieza en o después de "ahora". La regla es pura (`ReglaDeAlineacionDePrecios`).
 
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios, o que cambia la
 pertenencia, toma, en este orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una

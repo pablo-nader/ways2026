@@ -1,7 +1,7 @@
 namespace Ways.Domain.Precios;
 
 /// <summary>Lo que hay que hacer con el estado de precios de un artículo —el destino— en UNA lista fija para que
-/// quede alineado con el de la referencia (<see cref="ReglaDeAlineacionDePrecios"/>). Los dos últimos valores son
+/// quede alineado con el de la referencia (<see cref="ReglaDeAlineacionDePrecios"/>). Los tres últimos valores son
 /// los rechazos: un precio nunca se quita, así que hay estados que no se pueden alinear.</summary>
 public enum ResolucionDeAlineacionDePrecios
 {
@@ -18,7 +18,12 @@ public enum ResolucionDeAlineacionDePrecios
 
     /// <summary>La referencia solo tiene un precio programado, sin vigente, y el destino tiene un precio vigente: el
     /// destino no puede quedarse sin vigente hasta que llegue la fecha del programado.</summary>
-    InalineablePorReferenciaSoloProgramada
+    InalineablePorReferenciaSoloProgramada,
+
+    /// <summary>El pendiente del destino reemplaza a una fila vigente que empieza en o después de "ahora" (un dato que la
+    /// API no produce): cerrarla en "ahora" invertiría su ventana. Lo decide quien lee las FILAS del destino y no
+    /// <see cref="ReglaDeAlineacionDePrecios.Resolver"/>, que solo ve el estado: <c>Resolver</c> nunca lo devuelve.</summary>
+    InalineablePorPrecioPredecesorPosterior
 }
 
 /// <summary>

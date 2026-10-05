@@ -434,6 +434,31 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     public static ServicioDeFamilias ServicioDe(WaysDbContext db, Entorno e) =>
         new(db, new RelojDelSistema(), new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
+    /// <summary>El servicio de agrupación armado a mano sobre <paramref name="db"/>, con el reloj que pida la prueba
+    /// (por defecto el real).</summary>
+    public static ServicioDeAgrupacionDeFamilias ServicioDeAgrupacionDe(
+        WaysDbContext db, Entorno e, IRelojDelSistema? reloj = null)
+    {
+        reloj ??= new RelojDelSistema();
+        var contexto = new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin);
+
+        return new ServicioDeAgrupacionDeFamilias(
+            db, reloj, contexto,
+            new ServicioDePrecios(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto)));
+    }
+
+    /// <summary>Un reloj que cuenta cuántas veces se lo lee y devuelve un instante distinto en cada lectura (un segundo
+    /// más que la anterior): dos lecturas del reloj en una misma operación dan instantes distintos y se pueden
+    /// distinguir.</summary>
+    public sealed class RelojContador(DateTimeOffset inicio) : IRelojDelSistema
+    {
+        private long lecturas;
+
+        public long Lecturas => Interlocked.Read(ref lecturas);
+
+        public DateTimeOffset Ahora => inicio.AddSeconds(Interlocked.Increment(ref lecturas));
+    }
+
     /// <summary>El actor de las pruebas que arman un servicio a mano: el administrador del tenant.</summary>
     private sealed class ContextoDeAdmin(int idTenant, int idUsuario) : IContextoDeUsuario
     {
