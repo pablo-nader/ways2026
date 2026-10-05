@@ -123,14 +123,20 @@ public class ManejadorDeErroresBindingTests
     }
 
     /// <summary>El brazo de <c>cuerpo_invalido</c> exige las dos cosas: la envoltura del binding y una
-    /// <see cref="JsonException"/> como causa. Una <see cref="JsonException"/> suelta es un error del
-    /// servidor —por ejemplo, un parámetro guardado que no deserializa—, no del cliente, y sigue siendo un
-    /// error interno.</summary>
-    [Fact]
-    public async Task UnaJsonExceptionQueNoVieneDelBindingSigueSiendoErrorInterno()
+    /// <see cref="JsonException"/> como causa. Una <see cref="JsonException"/> que no viene del binding
+    /// —suelta, o envuelta por otra excepción, por ejemplo al leer un parámetro guardado— es un error del
+    /// servidor, no del cliente, y sigue siendo un error interno.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnaJsonExceptionQueNoVieneDelBindingSigueSiendoErrorInterno(bool envuelta)
     {
-        var (estado, codigo, _, _) = await ManejarAsync(
-            new JsonException("'q' is an invalid start of a value. Path: $ | LineNumber: 0 | BytePositionInLine: 0."));
+        var json = new JsonException("'q' is an invalid start of a value. Path: $ | LineNumber: 0 | BytePositionInLine: 0.");
+        Exception excepcion = envuelta
+            ? new InvalidOperationException("No se pudo leer el parámetro guardado.", json)
+            : json;
+
+        var (estado, codigo, _, _) = await ManejarAsync(excepcion);
 
         Assert.Equal(StatusCodes.Status500InternalServerError, estado);
         Assert.Equal("error_interno", codigo);
@@ -153,10 +159,10 @@ public class ManejadorDeErroresBindingTests
         Assert.Same(rechazo, entrada.Excepcion);
     }
 
-    /// <summary>El log es propio del rechazo del binding: un <see cref="ErrorDominio"/> 4xx sigue sin dejar
-    /// entrada, como antes.</summary>
+    /// <summary>El log en Information es propio del rechazo del binding: un <see cref="ErrorDominio"/> 4xx no
+    /// deja entrada.</summary>
     [Fact]
-    public async Task UnErrorDeDominioNoDejaEntradaEnElLog()
+    public async Task UnErrorDeDominio4xxNoDejaEntradaEnElLog()
     {
         var log = new LogCapturado();
 
