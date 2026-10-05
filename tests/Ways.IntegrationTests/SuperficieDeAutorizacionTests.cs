@@ -474,7 +474,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Registrado a nivel de prefijo de GRUPO ("/api/fiscal"), no de ruta puntual, para que un
         // GET nuevo bajo /api/fiscal/empresas/... o /api/fiscal/puntos-venta/... (sin GET hoy)
         // caiga bajo este guard sin edición.
-        ("/api/fiscal", Politicas.AdministracionFiscal)
+        ("/api/fiscal", Politicas.AdministracionFiscal),
+        // Familias de artículos (doc 10 §3): todo el grupo es de admin, también las lecturas, porque el detalle trae los
+        // costos de la referencia de la familia. Registrado por prefijo de GRUPO para que un GET nuevo caiga bajo este
+        // guard sin edición. Las rutas de escritura no necesitan entrada en el allowlist de arriba: apilan
+        // GestionDeCatalogo desde el grupo, y el guard de las rutas que no son GET lo comprueba.
+        ("/api/familias", Politicas.GestionDeCatalogo)
     ];
 
     [Fact]
