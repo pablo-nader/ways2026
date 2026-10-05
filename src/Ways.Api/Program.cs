@@ -243,6 +243,8 @@ app.MapearDispositivos();
 app.MapearClientes();
 app.MapearProveedores();
 app.MapearArticulos();
+// Familias de artículos (doc 10 §3): gestión, solo admin.
+app.MapearFamilias();
 app.MapearOfertas();
 app.MapearEtiquetas();
 app.MapearVentas();

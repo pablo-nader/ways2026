@@ -10,6 +10,7 @@ using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Dispositivos;
 using Ways.Application.Etiquetas;
+using Ways.Application.Familias;
 using Ways.Application.Fiscal;
 using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
@@ -60,6 +61,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeProveedores>();
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
+        services.AddScoped<ServicioDeFamilias>();
         services.AddScoped<ServicioDeOfertas>();
 
         // stage-articulos-grilla-api: GET /api/articulos/grilla — compone ServicioDePrecios

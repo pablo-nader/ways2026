@@ -475,6 +475,21 @@ se intenta se aplica con el alcance que su artículo tenga al escribirla —a to
 aunque fuera suelto al armar el plan, o solo a él si dejó de serlo—. Cada escritura deja a la familia idéntica
 en cualquier caso.
 
+**Gestión de familias.** Las rutas de `/api/familias` son solo de admin (`GestionDeCatalogo`, la puerta del
+alta y la edición de artículos), también las lecturas: el detalle trae los costos de la referencia. Las lecturas
+no toman locks.
+
+- `GET /api/familias`: las familias vivas del tenant, por nombre, cada una con `id`, `nombre`, `activo` y
+  `cantidadArticulos`, que cuenta solo los miembros vivos.
+- `GET /api/familias/{id}`: la familia, sus miembros vivos ascendentes por id (`id`, `codigoInterno`, `nombre`,
+  `idMarca`, `activo`), los trece valores compartidos de la **referencia** (el miembro vivo de menor id) y su
+  estado de precios —el precio vigente y, si lo hay, el pendiente con su fecha— en cada lista fija del tenant,
+  también las que no tiene precios. Es lo que prellena el alta de un artículo dentro de la familia. Una familia sin
+  miembros vivos no tiene referencia: `valores` es `null` y `precios` viene vacío. `404` si la familia no existe,
+  está dada de baja o es de otro tenant. Un id de catálogo que apunta a una fila dada de baja viaja como `null`, igual
+  que en la grilla de artículos: la `idMarca` de un miembro y el área, la categoría, el grupo y el proveedor
+  habitual de la referencia.
+
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
 orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),

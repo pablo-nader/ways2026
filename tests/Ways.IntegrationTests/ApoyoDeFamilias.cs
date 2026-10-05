@@ -16,8 +16,10 @@ using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
+using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
+using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
 
@@ -216,11 +218,13 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     /// <summary>Un artículo con los campos compartidos de <paramref name="compartidos"/> escritos uno por uno
     /// (la siembra no usa <see cref="ValoresCompartidosDeFamilia.AplicarA"/>: es parte de lo que se prueba).
     /// Un artículo "dado de baja" lleva <c>DeletedAt</c> y sigue apuntando a su familia: no cuenta como
-    /// miembro. <paramref name="id"/> fija el id en vez de dejarlo al identity.</summary>
+    /// miembro. <paramref name="id"/> fija el id en vez de dejarlo al identity. <paramref name="prefijoDelCodigo"/>
+    /// reemplaza al nombre como prefijo del código interno: el índice único del código (que el planificador puede
+    /// recorrer en su orden) deja de coincidir con el orden de los nombres o de los ids cuando una prueba lo necesita.</summary>
     public async Task<int> SembrarArticuloAsync(
         Entorno e, string nombre, ValoresCompartidosDeFamilia compartidos, int? idFamilia = null,
         bool dadoDeBaja = false, int? idMarca = null, string? descripcion = null, bool activo = true,
-        bool disponibleParaTodas = true, int? id = null)
+        bool disponibleParaTodas = true, int? id = null, string? prefijoDelCodigo = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow.AddMinutes(-10);
@@ -229,7 +233,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         {
             Id = id ?? 0,
             IdTenant = e.IdTenant,
-            CodigoInterno = $"{nombre}-{Guid.NewGuid().ToString("N")[..8]}",
+            CodigoInterno = $"{prefijoDelCodigo ?? nombre}-{Guid.NewGuid().ToString("N")[..8]}",
             Nombre = nombre,
             Descripcion = descripcion,
             IdMarca = idMarca,
@@ -257,6 +261,20 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         await db.SaveChangesAsync();
 
         return articulo.Id;
+    }
+
+    /// <summary>La baja lógica de una fila de catálogo que algún artículo todavía referencia: el DELETE de la API la
+    /// rechazaría con 409 (<c>GuardaDeReferencias</c>), así que se estampa <c>deleted_at</c> directo sobre la fila
+    /// existente, que es el dato heredado que las lecturas tienen que sobrevivir. <paramref name="tabla"/> y
+    /// <paramref name="columnaId"/> son literales de la prueba.</summary>
+    public async Task DarDeBajaAsync(string tabla, string columnaId, int id)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = new NpgsqlCommand(
+            $"UPDATE {tabla} SET deleted_at = now() WHERE {columnaId} = $1 AND deleted_at IS NULL", cruda);
+        comando.Parameters.Add(new NpgsqlParameter { Value = id });
+
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
     }
 
     /// <summary>Un precio abierto (<c>vigente_hasta</c> nulo) que arrancó hace dos días.</summary>
@@ -292,6 +310,65 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         await db.SaveChangesAsync();
 
         return lista.Id;
+    }
+
+    /// <summary>Una lista de precios <c>derivada</c> (un porcentaje sobre <paramref name="idListaBase"/>): no
+    /// guarda filas en <c>precios</c> y no forma parte del estado de precios de una familia.</summary>
+    public async Task<int> SembrarListaDerivadaAsync(Entorno e, string nombre, int idListaBase)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var lista = new ListaPrecio
+        {
+            IdTenant = e.IdTenant, Nombre = nombre, EsDefault = false, Modo = ModoLista.Derivada,
+            IdListaBase = idListaBase, Porcentaje = -10m, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+
+        return lista.Id;
+    }
+
+    /// <summary>Un cliente HTTP con la sesión abierta de un usuario del tenant con el rol dado (el
+    /// <see cref="Entorno.Admin"/> ya es el administrador). <paramref name="sufijo"/> distingue al usuario
+    /// cuando una prueba necesita más de uno con el mismo rol.</summary>
+    public async Task<HttpClient> ClienteConRolAsync(Entorno e, RolConocido rol, string sufijo = "")
+    {
+        const string password = "una-contraseña-larga";
+
+        var hasheador = new HasheadorPbkdf2();
+        var nombre = $"{rol}{sufijo}".ToLowerInvariant();
+        var mail = $"{nombre}-{Guid.NewGuid().ToString("N")[..8]}@ways.test";
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+
+            db.Usuarios.Add(new Usuario
+            {
+                IdTenant = e.IdTenant, NombreUsuario = nombre, Mail = mail, RolId = (int)rol,
+                PasswordHash = hasheador.Hashear(password), PasswordAlgoritmo = hasheador.Algoritmo,
+                PasswordActualizadoEl = ahora, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        return cliente;
+    }
+
+    /// <summary>Un cliente HTTP con la sesión del usuario root de la plataforma (que no opera ningún tenant).</summary>
+    public async Task<HttpClient> ClienteRootAsync()
+    {
+        var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        return cliente;
     }
 
     public async Task SembrarPrecioAsync(
