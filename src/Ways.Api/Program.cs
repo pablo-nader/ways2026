@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Options;
+using Ways.Api.ConectorMcp;
 using Ways.Api.Endpoints;
 using Ways.Api.Seguridad;
 using Ways.Application;
@@ -199,6 +200,10 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ManejadorDeErrores>();
 builder.Services.AddOpenApi();
 
+// Conector MCP (experimental, ver ConectorMcp/): con Mcp:Habilitado apagado no registra, mapea ni
+// loguea nada; con una configuración inválida queda deshabilitado sin impedir el arranque.
+var conectorMcp = builder.AgregarConectorMcp();
+
 // Con la política de ruteo por Content-Type, un endpoint con cuerpo JSON queda descartado ante un
 // Content-Type que no es JSON o ante ninguno, y la ruta de respaldo, que acepta cualquier tipo, responde 404.
 // Sin ella el endpoint se selecciona igual y es el binding el que rechaza la solicitud (415 si el cuerpo no
@@ -214,6 +219,10 @@ var app = builder.Build();
 
 // Tiene que ir primero: todo lo que sigue depende de saber el esquema real.
 app.UseForwardedHeaders();
+
+// Antes de UseExceptionHandler: la línea de diagnóstico del conector registra el estado que deja el
+// manejador de errores, no el 200 que tiene la respuesta mientras la excepción sube.
+app.UsarConectorMcp(conectorMcp);
 
 app.UseExceptionHandler();
 
@@ -287,6 +296,8 @@ app.MapearAuditoria();
 // stage-19a-slice4: ABM de certificados fiscales + condición fiscal de empresa / número fiscal de
 // PV, bajo Politicas.AdministracionFiscal. La emisión fiscal en sí llega en Slice 5.
 app.MapearFiscal();
+
+await app.MapearConectorMcpAsync(conectorMcp);
 
 // Cualquier ruta que no sea /api la resuelve el router de React.
 // Una /api/... inexistente tiene que dar 404, no devolver el index.html.
