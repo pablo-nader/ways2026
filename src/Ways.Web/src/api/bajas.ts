@@ -23,7 +23,9 @@ import { ErrorApi } from './cliente'
 /** El sujeto de la baja, tal como entra en la copia ("No se pudo dar de baja **el tenant**").
  * Los siete últimos son los de `fix/web-bajas-catalogos`: catálogos de tenant + proveedores,
  * mismo texto que `SujetoDeBaja` del lado del servidor (`ServicioDeAreas`, `ServicioDeMarcas`,
- * etc.) para que la copia del 409 y la puerta de confirmación nombren la entidad igual. */
+ * etc.) para que la copia del 409 y la puerta de confirmación nombren la entidad igual. `el equipo`
+ * (se revoca) y `la familia` (se disuelve) no son una baja de catálogo: la acción propia de cada una
+ * viaja en el parámetro `accion` de `copiaDeFalloDeBaja`. */
 export type SujetoDeBaja =
   | 'el tenant'
   | 'la empresa'
@@ -37,6 +39,7 @@ export type SujetoDeBaja =
   | 'la lista de precios'
   | 'el proveedor'
   | 'el equipo'
+  | 'la familia'
 
 /**
  * Los códigos de conflicto de baja, cada uno con su propia guía. Nace con los SEIS de la etapa 20

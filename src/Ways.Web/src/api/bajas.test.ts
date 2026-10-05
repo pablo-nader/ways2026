@@ -303,6 +303,18 @@ describe('copiaDeFalloDeBaja — acción con otro nombre', () => {
       'No se pudo dar de baja el equipo. No se pudo confirmar el resultado: verificá el listado antes de reintentar.',
     )
   })
+
+  it('un 404 al disolver una familia nombra la acción y el sujeto, con la copia neutra', () => {
+    const copia = copiaDeFalloDeBaja(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'), 'la familia', 'disolver')
+
+    expect(copia).toBe('No se pudo disolver la familia. Ya no existe o no está a tu alcance. Actualizá el listado.')
+  })
+
+  it('un fallo de red al disolver una familia no confirma el resultado', () => {
+    expect(copiaDeFalloDeBaja(new Error('red caída'), 'la familia', 'disolver')).toBe(
+      'No se pudo disolver la familia. No se pudo confirmar el resultado: verificá el listado antes de reintentar.',
+    )
+  })
 })
 
 describe('arrastreDeTenant', () => {
