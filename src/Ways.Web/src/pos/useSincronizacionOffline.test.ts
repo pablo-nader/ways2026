@@ -1220,13 +1220,15 @@ describe('useSincronizacionOffline — rendición de la cola local', () => {
   })
 })
 
-/** Promesa controlable desde el test — el ciclo queda en vuelo hasta que se la resuelve. */
+/** Promesa controlable desde el test — el ciclo queda en vuelo hasta que se la resuelve o rechaza. */
 function promesaControlada<T>() {
   let resolver!: (valor: T) => void
-  const promesa = new Promise<T>((r) => {
+  let rechazar!: (error: unknown) => void
+  const promesa = new Promise<T>((r, f) => {
     resolver = r
+    rechazar = f
   })
-  return { promesa, resolver }
+  return { promesa, resolver, rechazar }
 }
 
 function ventaEnColaFixture(numero: number, idLocal = `v-${numero}`): VentaEnCola {
@@ -1844,6 +1846,130 @@ describe('useSincronizacionOffline — fin de sesión', () => {
     })
 
     await expect(leerInstantaneaLocal(almacen)).resolves.toBeNull()
+  })
+})
+
+/**
+ * Cláusulas bajo prueba: los `montadoRef.current` de `drenarUnaPasada`, `refrescarInstantaneaSiHaySenal`,
+ * `reponerBloque` (antes de rendir y antes de reservar) y `rendirColaLocal`. Una pantalla desmontada
+ * asienta en el almacén el envío que ya tenía en vuelo, pero no arranca otro envío, refresco,
+ * rendición ni reserva. Cada escenario corre dos veces: montada es el control positivo (el paso corre
+ * y llega a la red) y desmontada, la afirmación — sin el control, un paso que nunca corre dejaría
+ * verde el caso negativo.
+ */
+describe('useSincronizacionOffline — una instancia desmontada no arranca trabajo de red nuevo', () => {
+  /** Lo que `Pos` hace al encolar una venta: `drenarAhora` en segundo plano, con el envío colgado. */
+  async function drenarConEnvioEnVuelo(result: { current: ReturnType<typeof useSincronizacionOffline> }) {
+    const envio = promesaControlada<{ id: number }>()
+    emitirMock.mockReturnValueOnce(envio.promesa)
+    let drenado: Promise<unknown> = Promise.resolve()
+    act(() => {
+      drenado = result.current.drenarAhora()
+    })
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+    return { envio, drenado }
+  }
+
+  it.each([
+    { caso: 'montada, rinde la venta que quedó pendiente', desmontar: false, rendiciones: [{ codigoTipoComprobante: 'TX', entregadoHasta: 100, pendientes: 1 }] },
+    { caso: 'desmontada, no rinde con su bloque en memoria', desmontar: true, rendiciones: [] },
+  ])('drenarAhora con el envío en vuelo que vuelve sin señal: $caso', async ({ desmontar, rendiciones }) => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ proximo: 101 }))
+    const hook = await montarListo(almacen)
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    const { envio, drenado } = await drenarConEnvioEnVuelo(hook.result)
+
+    if (desmontar) hook.unmount()
+    rendirColaMock.mockClear()
+    await act(async () => {
+      envio.rechazar(new ErrorDeRed(new TypeError('Failed to fetch')))
+      await drenado
+    })
+
+    expect(rendirColaMock.mock.calls.map((c) => c[0])).toEqual(rendiciones)
+  })
+
+  it.each([
+    {
+      caso: 'montada, rinde y pide un bloque nuevo',
+      desmontar: false,
+      rendiciones: [{ codigoTipoComprobante: 'TX', entregadoHasta: 194, pendientes: 0 }, { codigoTipoComprobante: 'TX', entregadoHasta: 194, pendientes: 0 }],
+      reservas: 1,
+    },
+    { caso: 'desmontada, saca la venta entregada del outbox pero no rinde ni pide un bloque', desmontar: true, rendiciones: [], reservas: 0 },
+  ])('drenarAhora con el envío en vuelo que llega y el bloque bajo el umbral: $caso', async ({ desmontar, rendiciones, reservas }) => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const hook = await montarListo(almacen)
+    await agregarAOutbox(almacen, ventaEnColaFixture(194))
+    const { envio, drenado } = await drenarConEnvioEnVuelo(hook.result)
+
+    if (desmontar) hook.unmount()
+    rendirColaMock.mockClear()
+    await act(async () => {
+      envio.resolver({ id: 1 })
+      await drenado
+    })
+
+    expect(rendirColaMock.mock.calls.map((c) => c[0])).toEqual(rendiciones)
+    expect(reservarNumeracionMock).toHaveBeenCalledTimes(reservas)
+    await expect(leerOutbox(almacen)).resolves.toEqual([])
+  })
+
+  it.each([
+    { caso: 'montada, reserva y guarda el bloque nuevo', desmontar: false, reservas: 1, bloqueGuardado: { ...BLOQUE_RESERVADO, proximo: 300 } },
+    { caso: 'desmontada, no reserva y el almacén conserva el bloque en uso', desmontar: true, reservas: 0, bloqueGuardado: BLOQUE_BAJO },
+  ])('con la rendición previa a rotar el bloque en vuelo: $caso', async ({ desmontar, reservas, bloqueGuardado }) => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const hook = await montarListo(almacen)
+    rendirColaMock.mockClear()
+    const rendicion = promesaControlada<undefined>()
+    rendirColaMock.mockReturnValueOnce(rendicion.promesa)
+    reservarNumeracionMock.mockResolvedValue(BLOQUE_RESERVADO)
+    let drenado: Promise<unknown> = Promise.resolve()
+    act(() => {
+      drenado = hook.result.current.drenarAhora()
+    })
+    await waitFor(() => expect(rendirColaMock).toHaveBeenCalledTimes(1))
+
+    if (desmontar) hook.unmount()
+    await act(async () => {
+      rendicion.resolver(undefined)
+      await drenado
+    })
+
+    expect(reservarNumeracionMock).toHaveBeenCalledTimes(reservas)
+    await expect(leerBloque(almacen)).resolves.toEqual(bloqueGuardado)
+  })
+
+  it.each([
+    { caso: 'montada, envía la venta siguiente y refresca la instantánea', desmontar: false, enviadas: [100, 101], instantaneasPedidas: 1 },
+    { caso: 'desmontada, termina la venta en vuelo pero no envía la siguiente ni refresca', desmontar: true, enviadas: [100], instantaneasPedidas: 0 },
+  ])('con el drenado del ciclo de arranque en vuelo: $caso', async ({ desmontar, enviadas, instantaneasPedidas }) => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, bloqueFixture({ proximo: 102 }))
+    await agregarAOutbox(almacen, ventaEnColaFixture(100))
+    await agregarAOutbox(almacen, ventaEnColaFixture(101))
+    const envio = promesaControlada<{ id: number }>()
+    emitirMock.mockReturnValueOnce(envio.promesa)
+    const hook = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(emitirMock).toHaveBeenCalledTimes(1))
+    let ciclo: Promise<void> = Promise.resolve()
+    act(() => {
+      ciclo = hook.result.current.sincronizarAhora()
+    })
+
+    if (desmontar) hook.unmount()
+    await act(async () => {
+      envio.resolver({ id: 1 })
+      await ciclo
+    })
+
+    expect(emitirMock.mock.calls.map((c) => (c[0] as SolicitudDeVenta).numeroPreasignado)).toEqual(enviadas)
+    expect(obtenerInstantaneaMock).toHaveBeenCalledTimes(instantaneasPedidas)
+    expect((await leerOutbox(almacen)).map((v) => v.numeroPreasignado)).toEqual([101])
   })
 })
 
