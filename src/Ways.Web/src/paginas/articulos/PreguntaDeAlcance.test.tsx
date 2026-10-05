@@ -1,3 +1,4 @@
+import { createRef } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -53,6 +54,17 @@ describe('PreguntaDeAlcance', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Solo este artículo (sale de la familia)' }))
 
     expect(onElegir.mock.calls).toEqual([['Familia'], ['SoloEste']])
+  })
+
+  /** Cláusula bajo prueba: `ref={refDeCancelar}` del botón "Cancelar": quien aloja la pregunta lo enfoca al abrirla.
+   * Evidencia de mutación (mutation-proof-tests): sacar el `ref` hace fallar este test y la prueba de foco al abrir de
+   * `EditorDePrecios.test.tsx`; revertido, vuelven a verde. */
+  it('expone su botón "Cancelar" por refDeCancelar', () => {
+    const refDeCancelar = createRef<HTMLButtonElement>()
+
+    montar({ refDeCancelar })
+
+    expect(refDeCancelar.current).toBe(screen.getByRole('button', { name: 'Cancelar' }))
   })
 
   it('"Cancelar" cancela y no elige nada', async () => {

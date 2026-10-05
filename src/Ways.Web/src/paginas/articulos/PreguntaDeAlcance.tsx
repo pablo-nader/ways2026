@@ -1,3 +1,4 @@
+import type { Ref } from 'react'
 import type { AlcanceDeFamilia } from '../../api/tipos'
 import { CAMPOS_PROPIOS, PREGUNTA_DE_ALCANCE } from './familia'
 
@@ -8,6 +9,8 @@ type Props = {
   cambios?: string[]
   /** `true` mientras la escritura está en vuelo: las tres respuestas quedan inertes. */
   ocupado: boolean
+  /** El botón "Cancelar", la respuesta que no escribe nada: a quien aloja la pregunta le sirve para enfocarlo al abrirla. */
+  refDeCancelar?: Ref<HTMLButtonElement>
   onElegir: (alcance: AlcanceDeFamilia) => void
   onCancelar: () => void
 }
@@ -21,7 +24,7 @@ const EXPLICACION =
  * contenido: el formulario de artículo lo aloja en un `Modal` y el editor de precios en el panel de la
  * lista, así que la pregunta y sus tres respuestas son las mismas en los dos.
  */
-export function PreguntaDeAlcance({ contexto, cambios = [], ocupado, onElegir, onCancelar }: Props) {
+export function PreguntaDeAlcance({ contexto, cambios = [], ocupado, refDeCancelar, onElegir, onCancelar }: Props) {
   return (
     <div>
       <p className="mb-2">
@@ -38,7 +41,7 @@ export function PreguntaDeAlcance({ contexto, cambios = [], ocupado, onElegir, o
         <button type="button" className="btn btn-outline-warning" disabled={ocupado} onClick={() => onElegir('SoloEste')}>
           Solo este artículo (sale de la familia)
         </button>
-        <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={onCancelar}>
+        <button ref={refDeCancelar} type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={onCancelar}>
           Cancelar
         </button>
       </div>

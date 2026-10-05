@@ -16,6 +16,7 @@ import {
   formatearFechaHora,
   mensajeDeAlta,
   mensajeDeEdicion,
+  mensajeDePrecioParaToda,
   opcionesDeFamilia,
   valoresDeFamiliaAFormulario,
   type CampoCompartido,
@@ -439,6 +440,18 @@ describe('mensajes de un guardado con familia', () => {
       'Artículo "Vainilla" actualizado. Salió de la familia "Sabores" y el cambio quedó solo en él.',
     )
     expect(mensajeDeEdicion('Vainilla', 'SoloEste', null)).toContain('Salió de la familia y')
+  })
+
+  /** Cláusula bajo prueba: la rama `programado` de `mensajeDePrecioParaToda`: el aviso de un precio programado no dice
+   * que se aplicó. */
+  it('un precio inmediato para toda la familia "se aplicó"; uno programado "se programó"', () => {
+    expect(mensajeDePrecioParaToda(false, 'Sabores')).toBe('El precio se aplicó a toda la familia "Sabores".')
+    expect(mensajeDePrecioParaToda(true, 'Sabores')).toBe('El precio se programó para toda la familia "Sabores".')
+  })
+
+  it('sin nombre de familia conocido, el aviso de un precio para toda la familia no la nombra', () => {
+    expect(mensajeDePrecioParaToda(false, null)).toBe('El precio se aplicó a toda la familia.')
+    expect(mensajeDePrecioParaToda(true, null)).toBe('El precio se programó para toda la familia.')
   })
 
   it('avisoDeValoresDistintos nombra los campos que difieren, o no los nombra si no se conocen', () => {

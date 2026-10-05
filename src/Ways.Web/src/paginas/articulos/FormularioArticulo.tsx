@@ -173,6 +173,7 @@ export function FormularioArticulo({
   bloqueadoPorCatalogos,
   familia,
   accionesDeFamilia,
+  preguntaDeAlcanceAbierta,
   onCambio,
   actualizarFormulario,
   onGuardar,
@@ -199,6 +200,8 @@ export function FormularioArticulo({
   /** La familia del artículo (la elegida en un alta o la del miembro que se edita) y qué hacer con ella. */
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  /** La pregunta de alcance (un modal hermano de este, no hijo) está abierta: al cerrarse, si el foco se perdió, vuelve acá. */
+  preguntaDeAlcanceAbierta: boolean
   onCambio: (f: Formulario) => void
   /** Actualización funcional, para el completado de las altas rápidas (react-async-state regla
    * 1): esos `onCreado` corren después de un `await` propio del mini-modal, así que un `valor`
@@ -226,17 +229,32 @@ export function FormularioArticulo({
   // del formulario queda inerte, así que nada puede cambiar lo que se está por confirmar.
   const [salida, setSalida] = useState<{ disparador: HTMLElement } | null>(null)
   const focoDeSalidaRef = useRef<HTMLElement | null>(null)
+  const refNombre = useRef<HTMLInputElement>(null)
   const confirmandoSalida = salida !== null
   const bloqueado = ocupado || confirmandoSalida
 
   // El disparador de la confirmación se captura en el click (react-async-state regla 12) y recién recupera el
-  // foco una vez cerrada la confirmación, cuando el botón ya volvió a estar habilitado.
+  // foco una vez cerrada la confirmación, cuando el botón ya volvió a estar habilitado. Si salió bien, el botón ya no
+  // existe (el artículo dejó de ser miembro) y el foco va al primer campo editable.
   useEffect(() => {
     if (salida !== null) return
     const destino = focoDeSalidaRef.current
     focoDeSalidaRef.current = null
-    if (destino !== null && destino.isConnected && !destino.matches(':disabled')) destino.focus()
+    if (destino === null) return
+    if (destino.isConnected && !destino.matches(':disabled')) destino.focus()
+    else refNombre.current?.focus()
   }, [salida])
+
+  // La pregunta de alcance vive en un modal hermano de este. Tras una respuesta, su cierre llega junto con el fin de la
+  // escritura: el botón que la abrió todavía está deshabilitado cuando `Modal` intenta devolverle el foco, que queda en
+  // `<body>`. Este cleanup corre después de ese commit.
+  useEffect(() => {
+    if (!preguntaDeAlcanceAbierta) return
+    const nombre = refNombre.current
+    return () => {
+      if (document.activeElement === document.body) nombre?.focus()
+    }
+  }, [preguntaDeAlcanceAbierta])
 
   function cancelarSalida() {
     focoDeSalidaRef.current = salida?.disparador ?? null
@@ -244,8 +262,12 @@ export function FormularioArticulo({
   }
 
   async function confirmarSalida() {
+    const disparador = salida?.disparador ?? null
     // Si la escritura no llegó a empezar (otra ya estaba en curso), la confirmación sigue abierta.
-    if (await accionesDeFamilia.sacar()) setSalida(null)
+    if (await accionesDeFamilia.sacar()) {
+      focoDeSalidaRef.current = disparador
+      setSalida(null)
+    }
   }
 
   // Alta rápida de padrones (Categoría/Marca/Grupo/Proveedor habitual): un solo estado porque solo
@@ -295,7 +317,6 @@ export function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bloqueadoPorCatalogos || bloqueado || !altaLista) return
           onGuardar()
         }}
       >
@@ -329,6 +350,7 @@ export function FormularioArticulo({
             </label>
             <input
               id="art-nombre"
+              ref={refNombre}
               className="form-control"
               maxLength={150}
               value={valor.nombre}

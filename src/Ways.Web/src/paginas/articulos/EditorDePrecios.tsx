@@ -6,7 +6,7 @@ import type { AlcanceDeFamilia, HistorialDePrecio, ListaPrecioListado, PrecioVig
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { formatearImporte } from '../../formato/importes'
-import { contextoDeAlcance, descripcionDeFamilia, type FamiliaDelArticulo } from './familia'
+import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
 import { PreguntaDeAlcance } from './PreguntaDeAlcance'
 
 type EstadoDeLista = {
@@ -187,9 +187,8 @@ export function EditorDePrecios({
   /** Un clic en "Establecer ahora" o "Programar": valida el borrador y, si el artículo es miembro de una
    * familia, pregunta el alcance en vez de escribir. Quien no es miembro escribe directo. */
   function iniciarGuardado(idLista: number) {
+    setAviso('')
     const estado = estadoDe(idLista)
-    if (estado.guardando || estado.refrescando || bloqueadoPorPadre) return
-
     const error = errorDelBorrador(estado)
     if (error) {
       actualizarEstado(idLista, { error })
@@ -268,13 +267,7 @@ export function EditorDePrecios({
 
       const nombreDeLaFamilia = familia?.nombre ?? null
       if (alcance === 'SoloEste') alSalirDeLaFamilia(nombreDeLaFamilia)
-      if (alcance === 'Familia') {
-        setAviso(
-          nombreDeLaFamilia === null
-            ? 'El precio se aplicó a toda la familia.'
-            : `El precio se aplicó a toda la familia "${nombreDeLaFamilia}".`,
-        )
-      }
+      if (alcance === 'Familia') setAviso(mensajeDePrecioParaToda(estado.programado, nombreDeLaFamilia))
 
       // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
       // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
@@ -453,7 +446,29 @@ function PanelDeLista({
   // de alcance; la pregunta abierta, además, deja inerte el resto del panel: el borrador sobre el que se
   // pregunta no puede cambiar mientras se decide.
   const enVuelo = estado.guardando || estado.refrescando || bloqueadoPorPadre
-  const bloqueado = enVuelo || estado.preguntaDeAlcance !== null
+  const preguntaAbierta = estado.preguntaDeAlcance !== null
+  const bloqueado = enVuelo || preguntaAbierta
+  const disparadorRef = useRef<HTMLButtonElement>(null)
+  const cancelarPreguntaRef = useRef<HTMLButtonElement>(null)
+  const devolverElFocoRef = useRef(false)
+
+  // Al abrirse la pregunta el foco va a "Cancelar", la respuesta que no escribe nada.
+  useEffect(() => {
+    if (preguntaAbierta) cancelarPreguntaRef.current?.focus()
+  }, [preguntaAbierta])
+
+  // Al cerrarse la pregunta el foco vuelve al botón que la abrió, recién cuando el panel vuelve a ser operable: tras una
+  // respuesta, cuando terminaron la escritura y su refresco (antes, el botón sigue deshabilitado y no recibe el foco).
+  useEffect(() => {
+    if (preguntaAbierta) {
+      devolverElFocoRef.current = true
+      return
+    }
+    if (devolverElFocoRef.current && !enVuelo) {
+      devolverElFocoRef.current = false
+      disparadorRef.current?.focus()
+    }
+  }, [preguntaAbierta, enVuelo])
 
   if (lista.modo !== 'Fija') {
     return (
@@ -503,10 +518,11 @@ function PanelDeLista({
       )}
 
       {estado.preguntaDeAlcance && (
-        <div className="alert alert-warning py-2 px-2 small" role="group" aria-label="Alcance del precio">
+        <div className="alert alert-warning py-2 px-2 small" role="alertdialog" aria-label="Alcance del precio">
           <PreguntaDeAlcance
             contexto={estado.preguntaDeAlcance.contexto}
             ocupado={enVuelo}
+            refDeCancelar={cancelarPreguntaRef}
             onElegir={onElegirAlcance}
             onCancelar={() => onCambio({ preguntaDeAlcance: null })}
           />
@@ -575,6 +591,7 @@ function PanelDeLista({
 
         <div className="col-auto">
           <button
+            ref={disparadorRef}
             type="button"
             className="btn btn-sm btn-success"
             disabled={bloqueado}

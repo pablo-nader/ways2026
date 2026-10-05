@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorApi } from '../../api/cliente'
 import { clienteDeFamilias } from '../../api/familias'
 import type { FamiliaDetalle, FamiliaListado } from '../../api/tipos'
+import { opcionesDeFamilia } from './familia'
+
+const ERROR_SIN_FAMILIAS = 'No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.'
+const ERROR_FAMILIAS_DESACTUALIZADAS = 'No se pudieron actualizar las familias: las que se ofrecen pueden estar desactualizadas.'
 
 /**
  * Lo que el formulario de artículo necesita saber de familias (doc 10 §3): las familias que admiten
@@ -11,26 +15,27 @@ import type { FamiliaDetalle, FamiliaListado } from '../../api/tipos'
  */
 export function useFamiliasDelFormulario() {
   const [opciones, setOpciones] = useState<FamiliaListado[]>([])
-  const [errorOpciones, setErrorOpciones] = useState('')
+  const [falloLaCarga, setFalloLaCarga] = useState(false)
   const [detalle, setDetalle] = useState<FamiliaDetalle | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const generacionOpcionesRef = useRef(0)
   const generacionDetalleRef = useRef(0)
 
-  /** La última lectura iniciada gana, no la última resuelta. Un fallo deja el listado como estaba y
-   * avisa: sin familias para elegir, el alta no puede ofrecer el selector. */
+  // Un fallo conserva las familias de la última lectura que salió bien; el aviso distingue si quedó alguna para ofrecer.
+  const errorOpciones = !falloLaCarga ? '' : opcionesDeFamilia(opciones).length > 0 ? ERROR_FAMILIAS_DESACTUALIZADAS : ERROR_SIN_FAMILIAS
+
+  /** La última lectura iniciada gana, no la última resuelta. */
   const recargarOpciones = useCallback(async () => {
     const generacion = (generacionOpcionesRef.current += 1)
     try {
       const familias = await clienteDeFamilias.listar()
       if (generacionOpcionesRef.current !== generacion) return
       setOpciones(familias)
-      setErrorOpciones('')
+      setFalloLaCarga(false)
     } catch {
       if (generacionOpcionesRef.current !== generacion) return
-      setOpciones([])
-      setErrorOpciones('No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.')
+      setFalloLaCarga(true)
     }
   }, [])
 

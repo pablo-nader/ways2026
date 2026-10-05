@@ -488,12 +488,16 @@ describe('Articulos — alta: elegir una familia', () => {
   it('muestra los precios de la familia por lista, de solo lectura, con lo que es propio del artículo', async () => {
     await abrirAltaEnLaFamilia()
 
+    // Los nombres de las listas vienen de otra lectura (`/catalogos/listas-precio`): la tabla ya existe cuando llega la
+    // familia, pero con "Lista 2" y "Lista 3" hasta que llegan, así que se espera el dato y no la tabla.
     const tabla = await screen.findByRole('table', { name: 'Precios que se copian de la familia' })
-    expect(within(tabla).getAllByRole('row').map((fila) => within(fila).queryAllByRole('cell').map((c) => c.textContent))).toEqual([
-      [],
-      ['General', '$ 1.200,00'],
-      ['Mayorista', '—'],
-    ])
+    await waitFor(() =>
+      expect(within(tabla).getAllByRole('row').map((fila) => within(fila).queryAllByRole('cell').map((c) => c.textContent))).toEqual([
+        [],
+        ['General', '$ 1.200,00'],
+        ['Mayorista', '—'],
+      ]),
+    )
     expect(within(tabla).queryAllByRole('textbox')).toHaveLength(0)
     expect(screen.getByText(/Son propios del artículo: nombre, descripción, códigos, marca, activo y disponibilidad por empresa/)).toBeInTheDocument()
   })
@@ -532,20 +536,19 @@ describe('Articulos — alta: elegir una familia', () => {
     expect(screen.queryByText('Cargando la familia…')).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `!altaLista` en la guarda del submit del formulario: Enter en un campo envía el
-   * formulario aunque el botón esté deshabilitado, y la familia que todavía no llegó no puede guardarse. Evidencia
-   * de mutación (mutation-proof-tests): sacar `|| !altaLista` de esa guarda hace fallar este test (se emite el POST
-   * sin los valores de la familia); revertido, vuelve a verde. */
-  it('un submit con la familia todavía cargando (Enter en un campo) tampoco guarda', async () => {
+  /** Cláusula bajo prueba: `!altaLista` en el `disabled` de "Guardar". Enter en un campo envía el formulario haciendo
+   * clic en su botón por defecto, y con ese botón deshabilitado no se envía nada: el teclado no llega a ninguna guarda
+   * del submit, así que la que cuenta es la del botón. Evidencia de mutación (mutation-proof-tests): sacar
+   * `|| !altaLista` del `disabled` de "Guardar" hace fallar este test (se emite el POST sin los valores de la
+   * familia); revertido, vuelve a verde. */
+  it('Enter en un campo con la familia todavía cargando tampoco guarda', async () => {
     const lectura = diferida<FamiliaDetalle>()
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
     await abrirAlta()
     await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
     await screen.findByText('Cargando la familia…')
 
-    const formulario = screen.getByRole('button', { name: 'Guardar' }).closest('form')
-    if (!formulario) throw new Error('No se encontró el formulario')
-    fireEvent.submit(formulario)
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla{Enter}')
 
     expect(apiPostMock).not.toHaveBeenCalled()
   })
@@ -851,6 +854,48 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
   })
 
+  /** Cláusula bajo prueba: `setErrorGuardado('')` de `elegirFamilia`: el rechazo del guardado anterior no se queda en
+   * pantalla mientras se carga la familia que se acaba de elegir. Evidencia de mutación (mutation-proof-tests): sacar esa
+   * línea hace fallar este test; revertido, vuelve a verde. */
+  it('elegir otra familia saca de pantalla el rechazo del guardado anterior mientras se la carga', async () => {
+    const lectura = diferida<FamiliaDetalle>()
+    mockearApi({
+      familias: [familiaListado(), familiaListado({ id: 8, nombre: 'Talles' })],
+      detalleDeFamiliaImpl: (id) => (id === 8 ? lectura.promesa : Promise.resolve(detalleSabores())),
+    })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'referencia_invalida', 'No existe el área 1.'))
+    await guardarAltaEnLaFamilia()
+    await screen.findByText('No existe el área 1.')
+
+    await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '8')
+
+    expect(await screen.findByText('Cargando la familia…')).toBeInTheDocument()
+    expect(screen.queryByText('No existe el área 1.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `setErrorGuardado('')` de `reintentarFamilia`: el rechazo del guardado anterior no se queda
+   * en pantalla mientras se vuelve a pedir la familia. Evidencia de mutación (mutation-proof-tests): sacar esa línea
+   * hace fallar este test; revertido, vuelve a verde. */
+  it('"Reintentar" la carga de la familia saca de pantalla el rechazo del guardado anterior mientras se la vuelve a pedir', async () => {
+    const tercera = diferida<FamiliaDetalle>()
+    mockearApi({
+      familias: [familiaListado()],
+      detalleDeFamiliaImpl: (_id, llamada) => {
+        if (llamada === 1) return Promise.resolve(detalleSabores())
+        if (llamada === 2) return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó la relectura.'))
+        return tercera.promesa
+      },
+    })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_valores_distintos', MENSAJE_DISTINTOS))
+    await guardarAltaEnLaFamilia()
+    await screen.findByText(MENSAJE_DISTINTOS)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reintentar' }))
+
+    expect(await screen.findByText('Cargando la familia…')).toBeInTheDocument()
+    expect(screen.queryByText(MENSAJE_DISTINTOS)).not.toBeInTheDocument()
+  })
+
   it('familia_valores_distintos cuando la familia ya no admite artículos: sale de la selección y lo dice', async () => {
     mockearApi({
       familias: [familiaListado()],
@@ -905,6 +950,31 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
       expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia', 'Talles (3 artículos)'])
       expect(selector).toHaveValue('')
     })
+  })
+
+  /** Cláusula bajo prueba: un fallo de `recargarOpciones` no vacía el listado. Evidencia de mutación (mutation-proof-tests):
+   * volver a `setOpciones([])` en el `catch` del hook hace fallar este test (el selector desaparece y el aviso dice que
+   * no se puede elegir una familia); revertido, vuelve a verde. */
+  it('409 de una familia con la relectura de las familias fallida: conserva las que se ofrecían y avisa que pueden estar desactualizadas', async () => {
+    let lecturasDeFamilias = 0
+    mockearApi({
+      familiasImpl: () =>
+        ++lecturasDeFamilias === 1
+          ? Promise.resolve([familiaListado(), familiaListado({ id: 8, nombre: 'Talles' })])
+          : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.')),
+      detalles: { 7: detalleSabores() },
+    })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_inactiva', 'La familia "Sabores" está inactiva: no se le pueden agregar artículos.'))
+
+    await guardarAltaEnLaFamilia()
+
+    expect(
+      await screen.findByText('No se pudieron actualizar las familias: las que se ofrecen pueden estar desactualizadas.'),
+    ).toBeInTheDocument()
+    const selector = screen.getByLabelText('Familia (opcional)')
+    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia', 'Sabores (3 artículos)', 'Talles (3 artículos)'])
+    expect(selector).toHaveValue('')
+    expect(screen.queryByText(/No se puede elegir una familia/)).not.toBeInTheDocument()
   })
 
   it('404 de la familia: la saca de la selección con el mensaje del servidor', async () => {
@@ -1258,6 +1328,86 @@ describe('Articulos — edición de un miembro: el alcance de un cambio', () => 
     expect(apiPutMock).toHaveBeenCalledTimes(1)
   })
 
+  /** Cláusula bajo prueba: `setAvisoGuardado('')` de `pedirGuardado`. Abrir la pregunta no pasa por `guardar`, que ya
+   * limpia el aviso: esa línea es la única que saca el del guardado anterior. Evidencia de mutación
+   * (mutation-proof-tests): sacarla hace fallar este test; revertido, vuelve a verde. */
+  it('abrir la pregunta saca de pantalla el aviso del guardado anterior', async () => {
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: 'Toda la familia' }))
+    await screen.findByText('Artículo "Vainilla" actualizado. Los cambios en los campos compartidos se aplicaron a toda la familia "Sabores".')
+
+    await cambiarCostoDeLista('180')
+    await guardar()
+
+    expect(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).toBeInTheDocument()
+    expect(screen.queryByText(/actualizado\./)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `setErrorGuardado('')` de `pedirGuardado`, la hermana de la anterior para el rechazo.
+   * Evidencia de mutación (mutation-proof-tests): sacarla hace fallar este test; revertido, vuelve a verde. */
+  it('abrir la pregunta saca de pantalla el rechazo del guardado anterior', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'referencia_invalida', 'No existe el área 1.'))
+    await abrirEdicion()
+    await userEvent.type(screen.getByLabelText('Nombre'), ' 2')
+    await guardar()
+    await screen.findByText('No existe el área 1.')
+
+    await cambiarCostoDeLista('175')
+    await guardar()
+
+    expect(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).toBeInTheDocument()
+    expect(screen.queryByText('No existe el área 1.')).not.toBeInTheDocument()
+  })
+
+  /** Advertencia (react-async-state regla 12): jsdom no implementa la regla de "focus fixup" del navegador, así que las
+   * pruebas de foco ejercitan la restauración explícita, no el comportamiento de un navegador real. Cláusula bajo
+   * prueba: el cleanup de `FormularioArticulo` que enfoca "Nombre" cuando la pregunta se cierra con el foco perdido: tras
+   * una respuesta el botón "Guardar" todavía está deshabilitado cuando `Modal` intenta devolverle el foco. Evidencia de
+   * mutación (mutation-proof-tests): sacar ese efecto hace fallar las tres pruebas de foco de la respuesta; revertido,
+   * vuelven a verde. */
+  it.each([
+    ['Toda la familia', () => miembro({ costoLista: 175 })],
+    ['Solo este artículo (sale de la familia)', () => miembro({ costoLista: 175, idFamilia: null })],
+  ])('al responder "%s" y cerrarse la pregunta, el foco queda en "Nombre" y no en el <body>', async (respuesta, guardado) => {
+    apiPutMock.mockResolvedValue(guardado())
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: respuesta }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByLabelText('Nombre')).toHaveFocus())
+  })
+
+  it('si el PUT se rechaza, al cerrarse la pregunta el foco también queda en "Nombre"', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'referencia_invalida', 'No existe el área 1.'))
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: 'Toda la familia' }))
+
+    await screen.findByText('No existe el área 1.')
+    await waitFor(() => expect(screen.getByLabelText('Nombre')).toHaveFocus())
+  })
+
+  /** Cláusula bajo prueba: `document.activeElement === document.body` del cleanup anterior: con "Cancelar" el foco no se
+   * perdió (`Modal` se lo devuelve a "Guardar") y no se le saca. Evidencia de mutación (mutation-proof-tests): enfocar
+   * "Nombre" siempre hace fallar este test; revertido, vuelve a verde. */
+  it('"Cancelar" deja el foco en "Guardar", el botón que abrió la pregunta, y no lo lleva a "Nombre"', async () => {
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: 'Cancelar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Guardar' })).toHaveFocus()
+  })
+
   it('cualquier otro rechazo del PUT se muestra en el formulario, cierra la pregunta y deja volver a intentar', async () => {
     apiPutMock.mockRejectedValueOnce(new ErrorApi(400, 'referencia_invalida', 'No existe el área 1.'))
     await abrirEdicion()
@@ -1351,6 +1501,35 @@ describe('Articulos — edición de un miembro: lo que el servidor dice de la fa
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Artículo' })).not.toBeInTheDocument())
   })
 
+  /** Cláusula bajo prueba: la rama `campos.length === 0` del `alcance_requerido` de `tratarFalloDeGuardado`: el servidor
+   * ve un cambio compartido que la pantalla no ve, así que lo que ella muestra está desactualizado y preguntar el
+   * alcance ofrecería escribir esos valores viejos. Evidencia de mutación (mutation-proof-tests): sacar la rama hace
+   * fallar este test (se abre la pregunta, sin campos y con el texto del servidor); revertido, vuelve a verde. */
+  it('409 alcance_requerido sin ningún campo compartido cambiado a la vista: recarga el artículo y lo explica, en vez de preguntar', async () => {
+    const mensaje =
+      'El artículo pertenece a la familia "Sabores" (3 artículos): la edición cambia campos compartidos y tiene que indicar si se aplican a toda la familia o solo a este artículo.'
+    escenarioDelMiembro({
+      articuloImpl: (_id, llamada) => (llamada === 1 ? miembro({ idFamilia: null }) : miembro({ costoLista: 175 })),
+    })
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'alcance_requerido', mensaje))
+    await abrirEdicion()
+
+    await userEvent.type(screen.getByLabelText('Nombre'), ' 2')
+    await guardar()
+
+    expect(
+      await screen.findByText(
+        'Los campos compartidos del artículo cambiaron desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
+    expect(lecturasDelArticulo(31)).toBe(2)
+    expect(screen.getByLabelText('Costo de lista')).toHaveValue('175,00')
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Vainilla')
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+    expect(botonNuevo()).toBeEnabled()
+  })
+
   it('409 familia_cambio porque el artículo dejó de ser miembro: tras recargar ya no muestra familia', async () => {
     escenarioDelMiembro({ articuloImpl: (_id, llamada) => (llamada === 1 ? miembro() : miembro({ idFamilia: null })) })
     apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
@@ -1373,7 +1552,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
   })
 
   function confirmacionDeSalida() {
-    return screen.getByRole('group', { name: 'Confirmar salida de la familia' })
+    return screen.getByRole('alertdialog', { name: 'Confirmar salida de la familia' })
   }
 
   it('"Sacar de la familia" no escribe: pide confirmar, nombrando al artículo y a la familia, y enfoca "Cancelar"', async () => {
@@ -1417,7 +1596,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1437,7 +1616,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/^Familia "/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
   })
 
@@ -1494,7 +1673,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await act(async () => {
       resolverDelete()
     })
-    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument())
     expect(botonNuevo()).toBeEnabled()
   })
 
@@ -1522,7 +1701,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar\./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(botonNuevo()).toBeEnabled()
   })
@@ -1536,8 +1715,37 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(botonNuevo()).toBeEnabled()
+  })
+
+  /** Advertencia (react-async-state regla 12): jsdom no implementa la regla de "focus fixup" del navegador, así que las
+   * dos pruebas de foco de la confirmación ejercitan la restauración explícita, no el comportamiento de un navegador
+   * real. Cláusula bajo prueba: `focoDeSalidaRef.current = disparador` de `confirmarSalida`. Evidencia de mutación
+   * (mutation-proof-tests): sacarla hace fallar las dos (el foco queda en `<body>`); revertido, vuelven a verde. */
+  it('si la salida falla, el foco vuelve al botón "Sacar de la familia", que sigue ahí', async () => {
+    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó el servidor.'))
+    await abrirEdicion()
+    const disparador = screen.getByRole('button', { name: 'Sacar de la familia' })
+    await userEvent.click(disparador)
+
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
+
+    await screen.findByText('Se cayó el servidor.')
+    await waitFor(() => expect(disparador).toHaveFocus())
+  })
+
+  /** Cláusula bajo prueba: el `else refNombre.current?.focus()` del efecto de `FormularioArticulo`: si salió bien, el
+   * botón ya no existe y el foco va al primer campo editable. Evidencia de mutación (mutation-proof-tests): sacar ese
+   * `else` hace fallar este test; revertido, vuelve a verde. */
+  it('si la salida sale bien, el botón ya no existe y el foco va a "Nombre"', async () => {
+    await abrirEdicion()
+    await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+
+    await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
+
+    await screen.findByText(/salió de la familia "Sabores"/)
+    await waitFor(() => expect(screen.getByLabelText('Nombre')).toHaveFocus())
   })
 
   it('cualquier otro rechazo se muestra en el formulario, cierra la confirmación y el artículo sigue en su familia', async () => {
@@ -1548,7 +1756,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
 
     expect(await screen.findByText('Se cayó el servidor.')).toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1564,8 +1772,9 @@ describe('Articulos — lo que el editor de precios de un artículo ya cerrado l
   async function dejarElArticuloConUnPrecioEnVuelo(
     respuestaDelPrecio: { promesa: Promise<unknown> },
     alcance: 'Toda la familia' | 'Solo este artículo (sale de la familia)',
+    escenarioExtra: Escenario = {},
   ) {
-    escenarioDelMiembro({ articulos: { 31: miembro(), 5: otro } })
+    escenarioDelMiembro({ articulos: { 31: miembro(), 5: otro }, ...escenarioExtra })
     apiPostMock.mockImplementation(() => respuestaDelPrecio.promesa)
     renderArticulosConHistorial(['/articulos/edit/5', '/articulos/edit/31'], 1)
     await screen.findByText('Editando artículo A0031')
@@ -1580,7 +1789,7 @@ describe('Articulos — lo que el editor de precios de un artículo ya cerrado l
     await screen.findByText('Editando artículo A0005')
   }
 
-  /** Cláusula bajo prueba: `destinoModalRef.current !== idArticulo` de `recargarPorCambioDeFamilia`. Evidencia de
+  /** Cláusula bajo prueba: `destinoModalRef.current !== idArticulo` de `recargarArticuloDesactualizado`. Evidencia de
    * mutación (mutation-proof-tests): sacar esa guarda hace fallar este test (el modal vuelve a abrir el artículo 31
    * encima del 5); revertido, vuelve a verde. */
   it('un familia_cambio que llega tarde no recarga el artículo anterior encima del que se abrió después', async () => {
@@ -1610,5 +1819,236 @@ describe('Articulos — lo que el editor de precios de un artículo ya cerrado l
 
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0005' })).toBeInTheDocument()
     expect(screen.queryByText(/salió de la familia/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `void familias.recargarOpciones()` ANTES de la guarda de `alSalirDeLaFamiliaPorUnPrecio`: el
+   * artículo salió de su familia en el servidor aunque la pantalla ya muestre otro, así que las familias que se ofrecen
+   * se vuelven a leer igual. Evidencia de mutación (mutation-proof-tests): pasar esa llamada después de la guarda hace
+   * fallar este test; revertido, vuelve a verde. */
+  it('un precio escrito con "solo este" que se confirma tarde igual actualiza las familias que se ofrecen', async () => {
+    const respuesta = diferida<unknown>()
+    let lecturasDeFamilias = 0
+    await dejarElArticuloConUnPrecioEnVuelo(respuesta, 'Solo este artículo (sale de la familia)', {
+      familiasImpl: () => Promise.resolve(++lecturasDeFamilias === 1 ? [familiaListado()] : [familiaListado({ cantidadArticulos: 2 })]),
+    })
+
+    await act(async () => {
+      respuesta.resolver({ idArticulo: 31, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' })
+    })
+
+    await waitFor(() => expect(lecturasDeFamilias).toBe(2))
+  })
+})
+
+describe('Articulos — lo que el editor de precios le avisa a la pantalla del artículo abierto', () => {
+  async function escribirUnPrecioConAlcance(respuesta: 'Toda la familia' | 'Solo este artículo (sale de la familia)') {
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Gestionar' }))[0])
+    await userEvent.type(await screen.findByLabelText('Precio'), '1500')
+    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+    await userEvent.click(screen.getByRole('button', { name: respuesta }))
+  }
+
+  /** Cláusula bajo prueba: el cableado `alSalirDeLaFamilia` → `alSalirDeLaFamiliaPorUnPrecio` de `Articulos`: un precio
+   * escrito con "solo este" saca al artículo de su familia en el formulario, lo avisa y no lo deja como cambio sin
+   * guardar. Evidencia de mutación (mutation-proof-tests): dejar `alSalirDeLaFamilia` como una función vacía hace
+   * fallar este test (no aparece el aviso); revertido, vuelve a verde. */
+  it('un precio escrito con "solo este" saca al artículo de su familia en el formulario, lo avisa y no deja cambios sin guardar', async () => {
+    escenarioDelMiembro()
+    apiPostMock.mockResolvedValue({ idArticulo: 31, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' })
+    const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await abrirEdicion()
+
+    await escribirUnPrecioConAlcance('Solo este artículo (sale de la familia)')
+
+    expect(await screen.findByText('El artículo salió de la familia "Sabores": el precio se guardó solo en él.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Familia "/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Editando artículo A0031' })).not.toBeInTheDocument())
+    expect(confirmar).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: el cableado `alCambiarLaFamilia` → `recargarArticuloDesactualizado` de `Articulos`: un
+   * `familia_cambio` del editor de precios del artículo que sigue abierto lo recarga con el aviso. Evidencia de mutación
+   * (mutation-proof-tests): dejar `alCambiarLaFamilia` como una función vacía hace fallar este test (el artículo no se
+   * vuelve a leer); revertido, vuelve a verde. */
+  it('un familia_cambio del editor de precios recarga el artículo con el aviso y deja el formulario operable', async () => {
+    escenarioDelMiembro({ articuloImpl: (_id, llamada) => (llamada === 1 ? miembro() : miembro({ idFamilia: null })) })
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
+    await abrirEdicion()
+
+    await escribirUnPrecioConAlcance('Toda la familia')
+
+    expect(
+      await screen.findByText(
+        'La pertenencia del artículo a su familia cambió desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.',
+      ),
+    ).toBeInTheDocument()
+    expect(lecturasDelArticulo(31)).toBe(2)
+    expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+    expect(botonNuevo()).toBeEnabled()
+  })
+})
+
+describe('Articulos — las familias que se ofrecen en un alta se mantienen al día', () => {
+  /** La primera lectura de las familias devuelve `antes`; las siguientes, `despues`. */
+  function familiasAntesYDespues(antes: FamiliaListado[], despues: FamiliaListado[]) {
+    let lecturas = 0
+    return () => Promise.resolve(++lecturas === 1 ? antes : despues)
+  }
+
+  /** Cierra el modal del artículo que se estaba editando y abre un alta nueva: ahí se ve lo que la pantalla ofrece. */
+  async function abrirUnAltaNueva() {
+    await userEvent.click(within(screen.getByRole('dialog', { name: /^Editando artículo/ })).getByRole('button', { name: 'Cancelar' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Editando artículo/ })).not.toBeInTheDocument())
+    await userEvent.click(botonNuevo())
+    await screen.findByText('Nuevo artículo')
+  }
+
+  function opcionesDelSelector() {
+    return within(screen.getByLabelText('Familia (opcional)'))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+  }
+
+  /** Cláusula bajo prueba: `void familias.recargarOpciones()` del alta dentro de una familia de `guardar`: la familia
+   * ahora tiene un miembro más. Evidencia de mutación (mutation-proof-tests): sacar esa línea hace fallar este test (el
+   * próximo alta sigue ofreciendo "Sabores (3 artículos)"); revertido, vuelve a verde. */
+  it('crear un artículo dentro de una familia: el próximo alta la ofrece con un artículo más', async () => {
+    const creado = articuloFixture({ id: 40, codigoInterno: 'A0040', nombre: 'Frutilla', idFamilia: 7, ...compartidosDelArticulo })
+    mockearApi({
+      familiasImpl: familiasAntesYDespues([familiaListado({ cantidadArticulos: 3 })], [familiaListado({ cantidadArticulos: 4 })]),
+      detalles: { 7: detalleSabores() },
+      articulos: { 40: creado },
+    })
+    apiPostMock.mockResolvedValue(creado)
+    await abrirAltaEnLaFamilia()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Editando artículo A0040')
+
+    await abrirUnAltaNueva()
+
+    await waitFor(() => expect(opcionesDelSelector()).toEqual(['Sin familia', 'Sabores (4 artículos)']))
+  })
+
+  /** Cláusula bajo prueba: `void familias.recargarOpciones()` de `sacarDeLaFamilia`: una familia que se quedó sin
+   * miembros deja de ofrecerse. Evidencia de mutación (mutation-proof-tests): sacar esa línea hace fallar este test (el
+   * próximo alta sigue ofreciendo la familia vacía); revertido, vuelve a verde. */
+  it('sacar al último miembro de una familia: el próximo alta ya no la ofrece', async () => {
+    escenarioDelMiembro({
+      familiasImpl: familiasAntesYDespues([familiaListado({ cantidadArticulos: 1 })], [familiaListado({ cantidadArticulos: 0 })]),
+    })
+    apiDeleteMock.mockResolvedValue(undefined)
+    await abrirEdicion()
+    await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+    await userEvent.click(within(screen.getByRole('alertdialog', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }))
+    await screen.findByText(/salió de la familia "Sabores"/)
+
+    await abrirUnAltaNueva()
+
+    await waitFor(() => expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument())
+  })
+
+  /** Cláusula bajo prueba: `if (alcance === 'SoloEste') void familias.recargarOpciones()` de `guardar`. Evidencia de
+   * mutación (mutation-proof-tests): sacar esa línea hace fallar este test (el próximo alta sigue ofreciendo
+   * "Sabores (3 artículos)"); revertido, vuelve a verde. */
+  it('guardar con "solo este": el próximo alta ofrece la familia con un artículo menos', async () => {
+    escenarioDelMiembro({
+      familiasImpl: familiasAntesYDespues([familiaListado({ cantidadArticulos: 3 })], [familiaListado({ cantidadArticulos: 2 })]),
+    })
+    apiPutMock.mockResolvedValue(miembro({ costoLista: 175, idFamilia: null }))
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+    await userEvent.click(
+      within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', {
+        name: 'Solo este artículo (sale de la familia)',
+      }),
+    )
+    await screen.findByText(/Salió de la familia "Sabores"/)
+
+    await abrirUnAltaNueva()
+
+    await waitFor(() => expect(opcionesDelSelector()).toEqual(['Sin familia', 'Sabores (2 artículos)']))
+  })
+
+  /** Cláusula bajo prueba: `void familias.recargarOpciones()` de `alSalirDeLaFamiliaPorUnPrecio`. Evidencia de mutación
+   * (mutation-proof-tests): sacar esa línea hace fallar este test; revertido, vuelve a verde. */
+  it('un precio escrito con "solo este": el próximo alta ofrece la familia con un artículo menos', async () => {
+    escenarioDelMiembro({
+      familiasImpl: familiasAntesYDespues([familiaListado({ cantidadArticulos: 3 })], [familiaListado({ cantidadArticulos: 2 })]),
+    })
+    apiPostMock.mockResolvedValue({ idArticulo: 31, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' })
+    await abrirEdicion()
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Gestionar' }))[0])
+    await userEvent.type(await screen.findByLabelText('Precio'), '1500')
+    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Solo este artículo (sale de la familia)' }))
+    await screen.findByText(/el precio se guardó solo en él/)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled())
+
+    await abrirUnAltaNueva()
+
+    await waitFor(() => expect(opcionesDelSelector()).toEqual(['Sin familia', 'Sabores (2 artículos)']))
+  })
+})
+
+describe('Articulos — abrir un artículo mientras el anterior todavía espera su familia', () => {
+  /** Cláusula bajo prueba: el segundo `if (tokenEdicionRef.current !== token) return` de `abrirEdicion`, el que sigue a la
+   * espera de la familia del miembro. Evidencia de mutación (mutation-proof-tests): sacarlo hace fallar este test (cuando
+   * llega la familia del 31 el formulario del 31 se muestra encima del 5); revertido, vuelve a verde. */
+  it('el miembro que espera su familia no pisa al artículo que se abrió después', async () => {
+    const familiaDelMiembro = diferida<FamiliaDetalle>()
+    escenarioDelMiembro({
+      articulos: { 31: miembro(), 5: articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Otro' }) },
+      grilla: {
+        items: [filaGrilla({ id: 5, codigoInterno: 'A0005', nombre: 'Otro' })],
+        total: 1,
+        pagina: 1,
+        tamanio: 25,
+        nombreListaPrecio: 'General',
+      },
+      detalleDeFamiliaImpl: () => familiaDelMiembro.promesa,
+    })
+    renderArticulos('/articulos/edit/31')
+    await waitFor(() => expect(unaFamiliaPidioSuDetalle()).toHaveLength(1))
+    const filaOtro = (await screen.findByText('Otro')).closest('tr')
+    if (!filaOtro) throw new Error('No se encontró la fila del artículo 5')
+
+    await userEvent.click(within(filaOtro).getByRole('link', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0005')
+    await act(async () => {
+      familiaDelMiembro.resolver(detalleSabores())
+    })
+
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0005' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Otro')
+    expect(screen.queryByText('Editando artículo A0031')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Familia "/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Articulos — la URL cambia a un id inválido con la pregunta de alcance abierta', () => {
+  /** Cláusula bajo prueba: `setDecisionDeAlcance(null)` de la rama de id inválido del efecto de apertura. Evidencia de
+   * mutación (mutation-proof-tests): sacarla hace fallar este test (la pregunta sigue abierta sobre un formulario que ya
+   * no existe); revertido, vuelve a verde. */
+  it('cierra la pregunta: ya no hay artículo sobre el que preguntar', async () => {
+    escenarioDelMiembro()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderArticulosConHistorial(['/articulos/edit/31', '/articulos/edit/abc'], 0)
+    await screen.findByText('Editando artículo A0031')
+    await cambiarCostoDeLista('175')
+    await guardar()
+    await screen.findByRole('dialog', { name: 'Cambio en una familia' })
+
+    act(() => navegar(1))
+
+    expect(await screen.findByText('No se especificó un artículo válido.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
   })
 })

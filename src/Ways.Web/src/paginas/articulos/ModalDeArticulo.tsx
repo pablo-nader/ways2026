@@ -44,6 +44,7 @@ type Props = {
   listasPrecio: ListaPrecioListado[]
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  preguntaDeAlcanceAbierta: boolean
   focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   actualizarFormulario: (actualizar: (previo: Formulario) => Formulario) => void
@@ -89,6 +90,7 @@ export function ModalDeArticulo({
   listasPrecio,
   familia,
   accionesDeFamilia,
+  preguntaDeAlcanceAbierta,
   focoDeReserva,
   onCambio,
   actualizarFormulario,
@@ -147,6 +149,7 @@ export function ModalDeArticulo({
             bloqueadoPorCatalogos={bloqueadoPorCatalogos}
             familia={familia}
             accionesDeFamilia={accionesDeFamilia}
+            preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
             onCambio={onCambio}
             actualizarFormulario={actualizarFormulario}
             onGuardar={onGuardar}

@@ -26,6 +26,7 @@ import type {
 import { Box } from '../componentes/Box'
 import { Modal } from '../componentes/Modal'
 import {
+  AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON,
   AVISO_DE_FAMILIA_CAMBIO,
   avisoDeValoresDistintos,
   camposCompartidosModificados,
@@ -64,7 +65,7 @@ type DestinoModal = 'nuevo' | number | 'invalido' | null
 
 /** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
  * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
- * compartidos que cambian. Mientras está abierta, la escritura todavía no empezó. */
+ * compartidos que cambian. Mientras está abierta no hay ninguna escritura en vuelo y lo que se pregunta no se escribió. */
 type DecisionDeAlcance = { contexto: string; campos: string[] }
 
 function destinoDeRuta(modo: ModoModalDeArticulo | null, idParam: string | null): DestinoModal {
@@ -397,6 +398,7 @@ export function Articulos() {
       const idNumerico = idParam !== null && /^\d+$/.test(idParam) ? Number(idParam) : null
       if (idNumerico === null) {
         invalidarEdicionEnCurso()
+        setDecisionDeAlcance(null)
         setFormulario(null)
         formularioOriginalRef.current = null
         setErrorDetalle(MENSAJE_ID_INVALIDO)
@@ -435,12 +437,14 @@ export function Articulos() {
    * pregunta el alcance (doc 10 §3). Todo lo demás —el alta, la edición de quien no es miembro y la que solo cambia
    * campos propios, que no tiene nada que replicar— guarda directo. */
   function pedirGuardado() {
-    if (ocupado || !formulario) return
+    if (!formulario) return
 
     const original = formularioOriginalRef.current
     if (formulario.id !== null && formulario.idFamilia !== '' && original !== null) {
       const campos = camposCompartidosModificados(original, formulario)
       if (campos.length > 0) {
+        setErrorGuardado('')
+        setAvisoGuardado('')
         setDecisionDeAlcance({
           contexto: contextoDeAlcance(familiaDelArticulo(formulario.idFamilia, familias.detalle)),
           campos: campos.map((campo) => campo.etiqueta),
@@ -462,7 +466,7 @@ export function Articulos() {
   }
 
   async function guardar(alcance?: AlcanceDeFamilia) {
-    if (escrituraEnCursoRef.current || ocupado) return
+    if (escrituraEnCursoRef.current) return
     if (!formulario) return
     escrituraEnCursoRef.current = true
 
@@ -478,6 +482,8 @@ export function Articulos() {
     try {
       if (formulario.id === null) {
         const creado = await clienteDeArticulos.crear(aAlta(formulario))
+        // La familia tiene un miembro más: las que se ofrecen en un alta se vuelven a leer, también si el modal ya cambió de artículo.
+        if (creado.idFamilia !== null) void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(creado)
           setAvisoGuardado(
@@ -494,6 +500,8 @@ export function Articulos() {
         }
       } else {
         const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario, alcance))
+        // El artículo salió de su familia: se vuelven a leer las que se ofrecen en un alta.
+        if (alcance === 'SoloEste') void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(actualizado)
           setAvisoGuardado(
@@ -541,15 +549,15 @@ export function Articulos() {
         const idArticulo = enviado.id
         if (e.codigo === 'alcance_requerido') {
           // El artículo es miembro de una familia que la pantalla no conocía: se pregunta ahora, con el texto del
-          // servidor, que nombra la familia y cuántos artículos tiene.
-          const original = formularioOriginalRef.current
-          setDecisionDeAlcance({
-            contexto: e.message,
-            campos: original === null ? [] : camposCompartidosModificados(original, enviado).map((campo) => campo.etiqueta),
-          })
+          // servidor, que nombra la familia y cuántos artículos tiene. Si la pantalla no ve ningún campo compartido
+          // cambiado, lo que el servidor ve distinto es lo que ella tiene desactualizado: preguntar ofrecería escribir
+          // esos valores viejos en toda la familia, así que se recarga el artículo.
+          const campos = camposCompartidosModificados(formularioOriginalRef.current ?? enviado, enviado)
+          if (campos.length === 0) return () => recargarArticuloDesactualizado(idArticulo, AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON)
+          setDecisionDeAlcance({ contexto: e.message, campos: campos.map((campo) => campo.etiqueta) })
           return null
         }
-        if (e.codigo === 'familia_cambio') return () => recargarPorCambioDeFamilia(idArticulo)
+        if (e.codigo === 'familia_cambio') return () => recargarArticuloDesactualizado(idArticulo)
       }
     }
 
@@ -591,12 +599,13 @@ export function Articulos() {
     setErrorGuardado(`${mensaje} Elegí otra familia o creá el artículo sin familia.`)
   }
 
-  /** `familia_cambio`: la pertenencia del artículo ya no es la que la pantalla creía. Se vuelve a leer el artículo
-   * con su familia y el aviso explica por qué se perdió lo tipeado. Solo si el modal sigue en ese artículo: la
-   * llamada puede venir del editor de precios de uno que ya se cerró. */
-  function recargarPorCambioDeFamilia(idArticulo: number) {
+  /** Lo que la pantalla muestra del artículo ya no es lo que hay en el servidor (`familia_cambio`: su pertenencia; o
+   * `alcance_requerido` sin cambios compartidos a la vista: sus campos compartidos). Se vuelve a leer el artículo con su
+   * familia y el aviso explica por qué se perdió lo tipeado. Solo si el modal sigue en ese artículo: la llamada puede
+   * venir del editor de precios de uno que ya se cerró. */
+  function recargarArticuloDesactualizado(idArticulo: number, aviso = AVISO_DE_FAMILIA_CAMBIO) {
     if (destinoModalRef.current !== idArticulo) return
-    void abrirEdicion(idArticulo, AVISO_DE_FAMILIA_CAMBIO)
+    void abrirEdicion(idArticulo, aviso)
   }
 
   /** El artículo ya no es miembro: el formulario y su base de comparación dejan de tener familia, así que sacarlo
@@ -608,8 +617,10 @@ export function Articulos() {
     }
   }
 
-  /** El editor de precios escribió con "solo este": el precio quedó únicamente en este artículo, que salió. */
+  /** El editor de precios escribió con "solo este": el precio quedó únicamente en este artículo, que salió. Las familias
+   * que se ofrecen en un alta se vuelven a leer aunque el modal ya muestre otro artículo: la salida ocurrió en el servidor. */
   function alSalirDeLaFamiliaPorUnPrecio(idArticulo: number | null, nombre: string | null) {
+    void familias.recargarOpciones()
     if (idArticulo === null || destinoModalRef.current !== idArticulo) return
     aplicarSalidaDeFamilia(idArticulo)
     setAvisoGuardado(`El artículo salió de la familia${nombre === null ? '' : ` "${nombre}"`}: el precio se guardó solo en él.`)
@@ -618,7 +629,7 @@ export function Articulos() {
   /** "Sacar de la familia": una escritura propia (DELETE), con su ventana inerte y su token. Resuelve `false`
    * si no llegó a empezar. */
   async function sacarDeLaFamilia(): Promise<boolean> {
-    if (escrituraEnCursoRef.current || ocupado) return false
+    if (escrituraEnCursoRef.current) return false
     if (!formulario || formulario.id === null || formulario.idFamilia === '') return false
     const idArticulo = formulario.id
     const idFamilia = formulario.idFamilia
@@ -633,6 +644,8 @@ export function Articulos() {
 
     try {
       await clienteDeFamilias.sacarArticulo(idFamilia, idArticulo)
+      // La familia tiene un miembro menos, y si era el último deja de ofrecerse en un alta.
+      void familias.recargarOpciones()
       if (tokenEdicionRef.current === token) {
         aplicarSalidaDeFamilia(idArticulo)
         setAvisoGuardado(
@@ -643,7 +656,7 @@ export function Articulos() {
       if (tokenEdicionRef.current === token) {
         // La familia ya no existe o el artículo ya no es de ella: lo que la pantalla muestra dejó de ser cierto.
         if (e instanceof ErrorApi && ((e.estado === 409 && e.codigo === 'familia_cambio') || e.estado === 404)) {
-          recargarPorCambioDeFamilia(idArticulo)
+          recargarArticuloDesactualizado(idArticulo)
         } else {
           setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo sacar el artículo de la familia.')
         }
@@ -664,6 +677,7 @@ export function Articulos() {
     // Elegir otra familia supera todo lo que estaba en vuelo sobre la anterior, incluido el seguimiento de un
     // guardado rechazado que todavía está releyendo su familia.
     invalidarEdicionEnCurso()
+    setErrorGuardado('')
     familias.descartarDetalle()
     actualizarFormulario((previo) => ({ ...previo, idFamilia }))
     if (idFamilia !== '') void cargarFamiliaDelAlta(idFamilia)
@@ -681,6 +695,7 @@ export function Articulos() {
 
   function reintentarFamilia() {
     if (!formulario || formulario.id !== null || formulario.idFamilia === '') return
+    setErrorGuardado('')
     void cargarFamiliaDelAlta(formulario.idFamilia)
   }
 
@@ -776,7 +791,7 @@ export function Articulos() {
     sacar: sacarDeLaFamilia,
     alSalirDeLaFamilia: (nombre) => alSalirDeLaFamiliaPorUnPrecio(idDelFormulario, nombre),
     alCambiarLaFamilia: () => {
-      if (idDelFormulario !== null) recargarPorCambioDeFamilia(idDelFormulario)
+      if (idDelFormulario !== null) recargarArticuloDesactualizado(idDelFormulario)
     },
   }
 
@@ -820,6 +835,7 @@ export function Articulos() {
           listasPrecio={listasPrecio}
           familia={familias}
           accionesDeFamilia={accionesDeFamilia}
+          preguntaDeAlcanceAbierta={decisionDeAlcance !== null}
           focoDeReserva={refBotonNuevo}
           onCambio={setFormulario}
           actualizarFormulario={actualizarFormulario}

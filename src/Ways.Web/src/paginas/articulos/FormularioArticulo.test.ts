@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { CAMPOS_COMPARTIDOS } from './familia'
 import { aAlta, aEdicion, aFormulario, formularioVacio } from './FormularioArticulo'
 import type { ArticuloListado } from '../../api/tipos'
 
@@ -87,10 +88,28 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
     expect(aEdicion(formulario, 'Familia')).toEqual({ ...aEdicion(formulario), alcance: 'Familia' })
   })
 
+  /** Los trece valores son pares distintos entre sí, así que una columna cruzada con otra se nota. */
   it('ida y vuelta: editar un miembro conserva sus trece campos compartidos y no manda su familia', () => {
-    const edicion = aEdicion(aFormulario(articuloFixture({ idFamilia: 7, costoLista: 250, idGrupo: 4 })))
+    const compartidos = {
+      idArea: 11,
+      idCategoria: 12,
+      idGrupo: 13,
+      idProveedorHabitual: 14,
+      idAlicuotaIva: 15,
+      unidadVenta: 'Peso',
+      unidadesPorBulto: 6,
+      esProducto: false,
+      controlaLote: true,
+      acumulaEnVenta: false,
+      costoLista: 250,
+      descuentoProveedor: 7,
+      costoNominal: 200,
+    } satisfies Partial<ArticuloListado>
 
-    expect(edicion).toMatchObject({ costoLista: 250, idGrupo: 4, idArea: 1, idAlicuotaIva: 1, esProducto: true })
+    const edicion = aEdicion(aFormulario(articuloFixture({ idFamilia: 7, ...compartidos })))
+
+    expect(Object.keys(compartidos).sort()).toEqual(CAMPOS_COMPARTIDOS.map((campo) => campo.clave).sort())
+    expect(edicion).toMatchObject(compartidos)
     expect('idFamilia' in edicion).toBe(false)
   })
 })

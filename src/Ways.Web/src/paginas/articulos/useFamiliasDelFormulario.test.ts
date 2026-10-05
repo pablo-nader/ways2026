@@ -65,6 +65,61 @@ describe('useFamiliasDelFormulario — familias que se ofrecen', () => {
     expect(result.current.opciones).toEqual([])
   })
 
+  /** Cláusula bajo prueba: un fallo de `recargarOpciones` conserva las familias de la última lectura que salió bien y el
+   * aviso dice que pueden estar desactualizadas (no que no se pueda elegir). Evidencia de mutación (mutation-proof-tests):
+   * agregar `setOpciones([])` al `catch` hace fallar este test; revertido, vuelve a verde. */
+  it('si una recarga falla, conserva las familias que ya tenía y avisa que pueden estar desactualizadas', async () => {
+    listarMock.mockResolvedValueOnce([listado(1), listado(2)]).mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    const { result } = renderHook(() => useFamiliasDelFormulario())
+    await waitFor(() => expect(result.current.opciones).toEqual([listado(1), listado(2)]))
+
+    await act(async () => {
+      await result.current.recargarOpciones()
+    })
+
+    expect(result.current.opciones).toEqual([listado(1), listado(2)])
+    expect(result.current.errorOpciones).toBe('No se pudieron actualizar las familias: las que se ofrecen pueden estar desactualizadas.')
+  })
+
+  /** Cláusula bajo prueba: `opcionesDeFamilia` en el aviso: lo que cuenta es lo que el selector ofrece, no lo que quedó en
+   * el listado. Evidencia de mutación (mutation-proof-tests): contar `opciones.length` en vez de las ofrecidas hace
+   * fallar este test; revertido, vuelve a verde. */
+  it('si una recarga falla y ninguna de las que tenía se puede elegir, el aviso es el de que no se puede elegir una familia', async () => {
+    listarMock
+      .mockResolvedValueOnce([{ ...listado(1), activo: false }, { ...listado(2), cantidadArticulos: 0 }])
+      .mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    const { result } = renderHook(() => useFamiliasDelFormulario())
+    await waitFor(() => expect(result.current.opciones).toHaveLength(2))
+
+    await act(async () => {
+      await result.current.recargarOpciones()
+    })
+
+    expect(result.current.errorOpciones).toBe(
+      'No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.',
+    )
+  })
+
+  it('una recarga que sale bien después de un fallo reemplaza las familias y limpia el aviso', async () => {
+    listarMock
+      .mockResolvedValueOnce([listado(1)])
+      .mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      .mockResolvedValueOnce([listado(3)])
+    const { result } = renderHook(() => useFamiliasDelFormulario())
+    await waitFor(() => expect(result.current.opciones).toEqual([listado(1)]))
+    await act(async () => {
+      await result.current.recargarOpciones()
+    })
+    expect(result.current.errorOpciones).not.toBe('')
+
+    await act(async () => {
+      await result.current.recargarOpciones()
+    })
+
+    expect(result.current.opciones).toEqual([listado(3)])
+    expect(result.current.errorOpciones).toBe('')
+  })
+
   /** Cláusula bajo prueba: la generación de `recargarOpciones` (la última INICIADA gana, no la última resuelta).
    * Evidencia de mutación (mutation-proof-tests): sacar el `if (generacionOpcionesRef.current !== generacion)
    * return` de la rama de éxito hace fallar este test; revertido, vuelve a verde. */

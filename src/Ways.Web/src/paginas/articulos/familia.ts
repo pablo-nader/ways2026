@@ -182,6 +182,11 @@ export const CODIGOS_DE_CONFLICTO_DE_ALTA = ['familia_valores_distintos', 'famil
 export const AVISO_DE_FAMILIA_CAMBIO =
   'La pertenencia del artículo a su familia cambió desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.'
 
+/** El servidor pidió el alcance de un cambio compartido que la pantalla no ve: los campos compartidos del artículo ya
+ * no son los que se cargaron. */
+export const AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON =
+  'Los campos compartidos del artículo cambiaron desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.'
+
 /** El aviso de un alta que el servidor rechazó por `familia_valores_distintos`, con los campos que el texto del
  * servidor nombra. La familia ya se volvió a cargar y sus valores quedaron en el formulario. */
 export function avisoDeValoresDistintos(campos: CampoCompartido[]): string {
@@ -204,6 +209,12 @@ export function mensajeDeEdicion(nombre: string, alcance: AlcanceDeFamilia | und
   if (alcance === 'Familia') return `${base} Los cambios en los campos compartidos se aplicaron a toda ${familia}.`
   if (alcance === 'SoloEste') return `${base} Salió de ${familia} y el cambio quedó solo en él.`
   return base
+}
+
+/** El aviso de un precio escrito con alcance "toda la familia": el inmediato se aplicó, el programado se programó. */
+export function mensajeDePrecioParaToda(programado: boolean, nombreDeFamilia: string | null): string {
+  const familia = nombreDeFamilia === null ? 'la familia' : `la familia "${nombreDeFamilia}"`
+  return programado ? `El precio se programó para toda ${familia}.` : `El precio se aplicó a toda ${familia}.`
 }
 
 /** El estado de precios de una lista, en una línea: `$ 1.200,00`, `$ 1.200,00 · programado $ 1.300,00 desde
