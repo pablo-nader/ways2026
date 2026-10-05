@@ -6,36 +6,19 @@ using Microsoft.AspNetCore.Hosting;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// La ruta de respaldo de <c>Program.cs</c>: una ruta <c>/api</c> que no existe responde 404 y cualquier otra
-/// ruta sirve el <c>index.html</c> de la SPA. Es el borde del 415 que prueba
+/// La ruta de respaldo de <c>Program.cs</c>: una ruta <c>/api</c> que no existe responde 404 y una ruta sin
+/// extensión fuera de <c>/api</c> sirve el <c>index.html</c> de la SPA. Es el borde del 415 que prueba
 /// <see cref="SolicitudesMalFormadasTests"/>: el tipo de contenido solo se rechaza en un endpoint que existe.
+/// Cada prueba corre contra un host con un <c>index.html</c> en su web root: sin él, la ruta de respaldo
+/// también responde 404 fuera de <c>/api</c>, y un 404 en <c>/api</c> no probaría la guarda.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class RutaDeRespaldoTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
-    [Theory]
-    [InlineData("GET", null)]
-    [InlineData("POST", "application/json")]
-    [InlineData("POST", "text/plain")]
-    public async Task UnaRutaApiInexistenteDa404(string metodo, string? contentType)
+    private const string Indice = "<!doctype html><title>RutaDeRespaldoTests</title>";
+
+    private async Task ConIndiceDeLaSpaAsync(Func<HttpClient, Task> prueba)
     {
-        using var cliente = fixture.CreateClient();
-        using var solicitud = new HttpRequestMessage(new HttpMethod(metodo), "/api/no-existe");
-        if (contentType is not null)
-        {
-            solicitud.Content = new ByteArrayContent(Encoding.UTF8.GetBytes("{}"));
-            solicitud.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        }
-
-        var respuesta = await cliente.SendAsync(solicitud);
-
-        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
-    }
-
-    [Fact]
-    public async Task UnaRutaFueraDeApiSirveElIndexDeLaSpa()
-    {
-        const string Indice = "<!doctype html><title>RutaDeRespaldoTests</title>";
         var raiz = Directory.CreateTempSubdirectory("ways-wwwroot-");
         try
         {
@@ -43,15 +26,41 @@ public class RutaDeRespaldoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             await using var conSpa = fixture.WithWebHostBuilder(builder => builder.UseWebRoot(raiz.FullName));
             using var cliente = conSpa.CreateClient();
 
-            var respuesta = await cliente.GetAsync("/ventas/123");
-
-            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-            Assert.Equal("text/html", respuesta.Content.Headers.ContentType?.MediaType);
-            Assert.Equal(Indice, await respuesta.Content.ReadAsStringAsync());
+            await prueba(cliente);
         }
         finally
         {
             raiz.Delete(recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData("GET", null)]
+    [InlineData("POST", "application/json")]
+    [InlineData("POST", "text/plain")]
+    public Task UnaRutaApiInexistenteDa404YNoElIndexDeLaSpa(string metodo, string? contentType) =>
+        ConIndiceDeLaSpaAsync(async cliente =>
+        {
+            using var solicitud = new HttpRequestMessage(new HttpMethod(metodo), "/api/no-existe");
+            if (contentType is not null)
+            {
+                solicitud.Content = new ByteArrayContent(Encoding.UTF8.GetBytes("{}"));
+                solicitud.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            }
+
+            var respuesta = await cliente.SendAsync(solicitud);
+
+            Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        });
+
+    [Fact]
+    public Task UnaRutaFueraDeApiSirveElIndexDeLaSpa() =>
+        ConIndiceDeLaSpaAsync(async cliente =>
+        {
+            var respuesta = await cliente.GetAsync("/ventas/123");
+
+            Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+            Assert.Equal("text/html", respuesta.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(Indice, await respuesta.Content.ReadAsStringAsync());
+        });
 }
