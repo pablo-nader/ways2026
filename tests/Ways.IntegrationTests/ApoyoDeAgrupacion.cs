@@ -133,6 +133,340 @@ internal static class ApoyoDeAgrupacion
     }
 
     // =================================================================================================
+    // Una referencia sin precio vigente: solo un precio programado
+    // =================================================================================================
+
+    /// <param name="Referencia">En la lista general, SOLO un precio programado (130 desde <c>V</c>): ningún vigente.</param>
+    /// <param name="SinPrecios">Nada en la general.</param>
+    /// <param name="ConPendientePropio">Solo un programado propio (85 desde <c>W</c>, antes que <c>V</c>).</param>
+    /// <param name="Identico">El mismo estado que la referencia.</param>
+    /// <param name="ConVigente">Un vigente (100): con una referencia sin vigente no se puede alinear.</param>
+    /// <param name="ConPredecesorPosterior">Un programado (60) que reemplaza a una fila vigente que empieza DESPUÉS de "ahora"
+    /// (50, de mañana a pasado): alinear la cerraría con el cierre antes que el inicio.</param>
+    /// <param name="Familia">La familia de la referencia, o <c>null</c> en un escenario sin familia.</param>
+    public sealed record EscenarioDeProgramados(
+        Entorno E, int Referencia, int? Familia, int SinPrecios, int ConPendientePropio, int Identico, int ConVigente,
+        int ConPredecesorPosterior, DateTimeOffset V, DateTimeOffset W)
+    {
+        public int[] TodosLosArticulos =>
+            [Referencia, SinPrecios, ConPendientePropio, Identico, ConVigente, ConPredecesorPosterior];
+
+        public int[] ListasFijas => [E.IdListaGeneral, E.IdListaMayorista];
+    }
+
+    public static async Task<EscenarioDeProgramados> SembrarProgramadosAsync(
+        ApoyoDeFamilias apoyo, string nombre, bool enFamilia = false)
+    {
+        var e = await apoyo.PrepararAsync(nombre);
+        int? familia = enFamilia ? await apoyo.SembrarFamiliaAsync(e, "Gaseosas") : null;
+        var @base = ValoresBase(e);
+        var ids = IdsAscendentes(6);
+        var (referencia, sinPrecios, conPendientePropio, identico, conVigente, conPredecesorPosterior) =
+            (ids[0], ids[1], ids[2], ids[3], ids[4], ids[5]);
+
+        await apoyo.SembrarArticuloAsync(e, "ref", @base, familia, id: referencia);
+        await apoyo.SembrarArticuloAsync(e, "sin-precios", @base, id: sinPrecios);
+        await apoyo.SembrarArticuloAsync(e, "con-pendiente-propio", @base, id: conPendientePropio);
+        await apoyo.SembrarArticuloAsync(e, "identico", @base, id: identico);
+        await apoyo.SembrarArticuloAsync(e, "con-vigente", @base, id: conVigente);
+        await apoyo.SembrarArticuloAsync(e, "con-predecesor-posterior", @base, id: conPredecesorPosterior);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var w = ahora.AddDays(2);
+        var v = ahora.AddDays(4);
+
+        await apoyo.SembrarPrecioAsync(e, referencia, e.IdListaGeneral, 130m, v, null);
+        await apoyo.SembrarPrecioAsync(e, conPendientePropio, e.IdListaGeneral, 85m, w, null);
+        await apoyo.SembrarPrecioAsync(e, identico, e.IdListaGeneral, 130m, v, null);
+        await apoyo.SembrarPrecioVigenteAsync(e, conVigente, e.IdListaGeneral, 100m);
+        await apoyo.SembrarPrecioAsync(e, conPredecesorPosterior, e.IdListaGeneral, 50m, ahora.AddDays(1), ahora.AddDays(2));
+        await apoyo.SembrarPrecioAsync(e, conPredecesorPosterior, e.IdListaGeneral, 60m, ahora.AddDays(2), null);
+
+        return new EscenarioDeProgramados(
+            e, referencia, familia, sinPrecios, conPendientePropio, identico, conVigente, conPredecesorPosterior,
+            AMicrosegundos(v), AMicrosegundos(w));
+    }
+
+    private static List<(int Id, decimal Monto, DateTimeOffset Desde, DateTimeOffset? Hasta, DateTimeOffset UpdatedAt)> Completas(
+        IEnumerable<Precio> precios) =>
+        [.. precios.Select(p => (p.Id, p.Monto, p.VigenteDesde, p.VigenteHasta, p.UpdatedAt))];
+
+    /// <summary>Agrupar con una referencia que solo tiene un precio PROGRAMADO escribe: al que no tiene precios, el
+    /// programado de la referencia; al que tiene un programado propio, lo reemplaza (su fila queda cerrada en su propio
+    /// inicio y se abre la de la referencia); y al que ya está idéntico, nada. Cada fila nueva lleva su auditoría con el
+    /// estado anterior, y todo con un solo "ahora". <paramref name="pedir"/> hace el pedido de la operación con los ids
+    /// que recibe.</summary>
+    public static async Task AfirmarLaEscrituraDeUnaReferenciaSoloProgramadaAsync(
+        ApoyoDeFamilias apoyo, EscenarioDeProgramados s, Func<int[], Task<HttpResponseMessage>> pedir, HttpStatusCode esperado)
+    {
+        var e = s.E;
+        var general = e.IdListaGeneral;
+        var antesDeSinPrecios = await apoyo.FilasDePrecioAsync(s.SinPrecios, general);
+        var antesDeConPendientePropio = await apoyo.FilasDePrecioAsync(s.ConPendientePropio, general);
+        var antesDeIdentico = Completas(await apoyo.FilasDePrecioAsync(s.Identico, general));
+        var antesDeLaReferencia = Completas(await apoyo.FilasDePrecioAsync(s.Referencia, general));
+        Assert.Empty(antesDeSinPrecios);
+
+        var resultado = await LeerResultadoAsync(
+            await pedir([s.Identico, s.SinPrecios, s.ConPendientePropio]), esperado);
+
+        Assert.Equal([s.SinPrecios, s.ConPendientePropio, s.Identico], resultado.Articulos.Select(a => a.IdArticulo));
+        var programadoDeLaReferencia = new EstadoDePrecios(null, new PrecioPendiente(130m, s.V));
+        Assert.Equal(
+            [new CambioDePreciosDeLista(general, EstadoDePrecios.Vacio, programadoDeLaReferencia)],
+            resultado.Articulos[0].Precios);
+        Assert.Equal(
+            [
+                new CambioDePreciosDeLista(
+                    general, new EstadoDePrecios(null, new PrecioPendiente(85m, s.W)), programadoDeLaReferencia)
+            ],
+            resultado.Articulos[1].Precios);
+        Assert.Empty(resultado.Articulos[2].Precios);
+
+        var ahora = (await apoyo.LeerAsync(s.SinPrecios)).UpdatedAt;
+
+        var sinPrecios = await apoyo.FilasDePrecioAsync(s.SinPrecios, general);
+        Assert.Equal([(130m, s.V, (DateTimeOffset?)null)], Filas(sinPrecios));
+        AfirmarUnSoloAhora([], sinPrecios, ahora);
+
+        var conPendientePropio = await apoyo.FilasDePrecioAsync(s.ConPendientePropio, general);
+        Assert.Equal(
+            [(85m, s.W, (DateTimeOffset?)s.W), (130m, s.V, (DateTimeOffset?)null)], Filas(conPendientePropio));
+        AfirmarUnSoloAhora(antesDeConPendientePropio, conPendientePropio, ahora);
+
+        Assert.Equal(antesDeIdentico, Completas(await apoyo.FilasDePrecioAsync(s.Identico, general)));
+        Assert.Equal(antesDeLaReferencia, Completas(await apoyo.FilasDePrecioAsync(s.Referencia, general)));
+
+        foreach (var id in s.TodosLosArticulos)
+        {
+            Assert.Empty(await apoyo.FilasDePrecioAsync(id, e.IdListaMayorista));
+        }
+
+        var auditoria = (await apoyo.AuditoriaDePreciosAsync(e.IdTenant))
+            .Select(a => (a.IdEntidad, Anterior: LeerValorDeAuditoria(a.ValorAnterior), Nuevo: LeerValorDeAuditoria(a.ValorNuevo)))
+            .OrderBy(a => a.IdEntidad)
+            .ToList();
+
+        Assert.Equal(
+            [
+                (s.SinPrecios, (ValorDeAuditoria?)null, new ValorDeAuditoria(general, 130m, s.V)),
+                (s.ConPendientePropio, new ValorDeAuditoria(general, 85m, s.W), new ValorDeAuditoria(general, 130m, s.V))
+            ],
+            auditoria);
+    }
+
+    /// <summary>Con una referencia que solo tiene un precio programado, los dos pares que no se pueden alinear dan 422
+    /// <c>familia_precio_inalineable</c> con su mensaje —el destino con un vigente, y el programado que reemplaza a una fila
+    /// que empieza después de "ahora"— y NO escriben nada, tampoco lo de un destino anterior que sí se alinearía.
+    /// <paramref name="pedir"/> hace el pedido de la operación con los ids que recibe.</summary>
+    public static async Task AfirmarLosRechazosDeLaAlineacionDeUnaReferenciaSoloProgramadaAsync(
+        WaysApiFixture fixture, ApoyoDeFamilias apoyo, EscenarioDeProgramados s, Func<int[], Task<HttpResponseMessage>> pedir)
+    {
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, s.E, s.TodosLosArticulos, s.ListasFijas);
+        var lista = await apoyo.NombreDeListaAsync(s.E.IdListaGeneral);
+        var conVigente = (await apoyo.LeerAsync(s.ConVigente)).CodigoInterno;
+        var conPredecesorPosterior = (await apoyo.LeerAsync(s.ConPredecesorPosterior)).CodigoInterno;
+
+        var casos = new (string Descripcion, int[] Ids, string Mensaje)[]
+        {
+            (
+                "el destino tiene un vigente y la referencia solo un programado", [s.ConVigente],
+                $"No se puede alinear el artículo {conVigente} en la lista \"{lista}\": el artículo de referencia solo tiene un " +
+                "precio programado y este ya tiene un precio vigente, que no se puede quitar."
+            ),
+            (
+                "el programado del destino reemplaza a una fila que empieza después de ahora", [s.ConPredecesorPosterior],
+                $"No se puede alinear el artículo {conPredecesorPosterior} en la lista \"{lista}\": su precio programado " +
+                "reemplaza a uno que empieza después de este momento, y ese no se puede cerrar."
+            ),
+            (
+                "un destino que se alinearía antes del rechazado", [s.SinPrecios, s.ConVigente],
+                $"No se puede alinear el artículo {conVigente} en la lista \"{lista}\": el artículo de referencia solo tiene un " +
+                "precio programado y este ya tiene un precio vigente, que no se puede quitar."
+            )
+        };
+
+        foreach (var (descripcion, ids, mensaje) in casos)
+        {
+            var respuesta = await pedir(ids);
+
+            Assert.True(
+                respuesta.StatusCode == HttpStatusCode.UnprocessableEntity,
+                $"{descripcion}: esperaba 422 y recibió {(int)respuesta.StatusCode}.");
+            Assert.Equal(("familia_precio_inalineable", mensaje), await ProblemaAsync(respuesta));
+            Assert.True(antes == await FotoDeLaBaseAsync(fixture, apoyo, s.E, s.TodosLosArticulos, s.ListasFijas), $"{descripcion}: escribió algo en la base.");
+        }
+    }
+
+    // =================================================================================================
+    // Los catálogos de la referencia
+    // =================================================================================================
+
+    /// <summary>Los cinco catálogos que se copian, en el orden en que los chequean la edición de artículos y agrupar.</summary>
+    public static readonly string[] Catalogos = ["alicuota", "area", "categoria", "grupo", "proveedor"];
+
+    /// <param name="Alicuota">Una alícuota de IVA propia de la prueba, para poder darla de baja.</param>
+    /// <param name="Familia">La familia de la referencia, que es su único miembro, o <c>null</c>.</param>
+    public sealed record EscenarioDeCatalogos(Entorno E, int Referencia, int Destino, int? Familia, int Alicuota)
+    {
+        /// <summary>El id del catálogo que la referencia tiene en esa dimensión.</summary>
+        public int IdDeLaReferencia(string catalogo) => catalogo switch
+        {
+            "alicuota" => Alicuota,
+            "area" => E.Areas[0],
+            "categoria" => E.Categorias[0],
+            "grupo" => E.Grupos[0],
+            "proveedor" => E.Proveedores[0],
+            _ => throw new ArgumentOutOfRangeException(nameof(catalogo), catalogo, "Catálogo desconocido.")
+        };
+
+        public int IdDelDestino(string catalogo) => catalogo switch
+        {
+            "alicuota" => E.Alicuotas[1],
+            "area" => E.Areas[1],
+            "categoria" => E.Categorias[1],
+            "grupo" => E.Grupos[1],
+            "proveedor" => E.Proveedores[1],
+            _ => throw new ArgumentOutOfRangeException(nameof(catalogo), catalogo, "Catálogo desconocido.")
+        };
+
+        public int[] TodosLosArticulos => [Referencia, Destino];
+    }
+
+    /// <summary>Una referencia y un destino con los cinco catálogos distintos entre sí: la referencia con los primeros de
+    /// cada catálogo (y una alícuota propia) y el destino con los segundos. Todo vivo.</summary>
+    public static async Task<EscenarioDeCatalogos> SembrarCatalogosAsync(
+        ApoyoDeFamilias apoyo, string nombre, bool enFamilia = false)
+    {
+        var e = await apoyo.PrepararAsync(nombre);
+        var alicuota = await apoyo.SembrarAlicuotaAsync("referencia");
+        int? familia = enFamilia ? await apoyo.SembrarFamiliaAsync(e, "Gaseosas") : null;
+        var ids = IdsAscendentes(2);
+        var (referencia, destino) = (ids[0], ids[1]);
+
+        await apoyo.SembrarArticuloAsync(e, "ref", ValoresBase(e) with { IdAlicuotaIva = alicuota }, familia, id: referencia);
+        await apoyo.SembrarArticuloAsync(
+            e, "destino",
+            ValoresBase(e) with
+            {
+                IdArea = e.Areas[1], IdCategoria = e.Categorias[1], IdGrupo = e.Grupos[1], IdProveedorHabitual = e.Proveedores[1],
+                IdAlicuotaIva = e.Alicuotas[1]
+            },
+            id: destino);
+
+        return new EscenarioDeCatalogos(e, referencia, destino, familia, alicuota);
+    }
+
+    private static (string Tabla, string Columna) TablaDelCatalogo(string catalogo) => catalogo switch
+    {
+        "alicuota" => ("alicuotas_iva", "id_alicuota_iva"),
+        "area" => ("areas", "id_area"),
+        "categoria" => ("categorias", "id_categoria"),
+        "grupo" => ("grupos", "id_grupo"),
+        _ => ("proveedores", "id_proveedor")
+    };
+
+    /// <summary>Da de baja, con una baja REAL de la fila que los artículos todavía referencian, los catálogos de la
+    /// referencia que nombra <paramref name="catalogos"/> (<see cref="Catalogos"/>) y los del destino que nombra
+    /// <paramref name="delDestino"/> (ninguno por defecto; la alícuota del destino es una de todos los tenants y no se
+    /// da de baja).</summary>
+    public static async Task DarDeBajaLosCatalogosAsync(
+        ApoyoDeFamilias apoyo, EscenarioDeCatalogos s, IEnumerable<string> catalogos, IEnumerable<string>? delDestino = null)
+    {
+        foreach (var catalogo in catalogos)
+        {
+            var (tabla, columna) = TablaDelCatalogo(catalogo);
+
+            await apoyo.DarDeBajaAsync(tabla, columna, s.IdDeLaReferencia(catalogo));
+        }
+
+        foreach (var catalogo in delDestino ?? [])
+        {
+            Assert.NotEqual("alicuota", catalogo);
+            var (tabla, columna) = TablaDelCatalogo(catalogo);
+
+            await apoyo.DarDeBajaAsync(tabla, columna, s.IdDelDestino(catalogo));
+        }
+    }
+
+    /// <summary>El mensaje que da un catálogo que no existe, que es el de la edición de artículos.</summary>
+    public static string MensajeDeCatalogoInexistente(string catalogo, int id) => catalogo switch
+    {
+        "alicuota" => $"No existe la alícuota de IVA {id}.",
+        "area" => $"No existe el área {id}.",
+        "categoria" => $"No existe la categoría {id}.",
+        "grupo" => $"No existe el grupo {id}.",
+        _ => $"No existe el proveedor {id}."
+    };
+
+    /// <summary>El mensaje que da la edición de un artículo sin familia cuando se le pide el catálogo
+    /// <paramref name="catalogo"/> con el id <paramref name="idMuerto"/>, dado de baja: el pedido real de la edición, con
+    /// todo lo demás igual al artículo.</summary>
+    public static async Task<(HttpStatusCode Estado, string? Codigo, string? Mensaje)> LoQueDiceLaEdicionAsync(
+        ApoyoDeFamilias apoyo, Entorno e, int idArticulo, string catalogo, int idMuerto)
+    {
+        var articulo = await apoyo.LeerAsync(idArticulo);
+        var edicion = EdicionIgualA(articulo);
+        edicion = catalogo switch
+        {
+            "alicuota" => edicion with { IdAlicuotaIva = idMuerto },
+            "area" => edicion with { IdArea = idMuerto },
+            "categoria" => edicion with { IdCategoria = idMuerto },
+            "grupo" => edicion with { IdGrupo = idMuerto },
+            _ => edicion with { IdProveedorHabitual = idMuerto }
+        };
+
+        var respuesta = await PutArticuloAsync(e.Admin, idArticulo, edicion);
+        var (codigo, mensaje) = await ProblemaAsync(respuesta);
+
+        return (respuesta.StatusCode, codigo, mensaje);
+    }
+
+    // =================================================================================================
+    // El tope de pares
+    // =================================================================================================
+
+    /// <summary>Un tenant con cincuenta listas fijas, una referencia y veintiún destinos: veintiún destinos son 1050 pares,
+    /// más que el tope de 1000, y veinte son exactamente mil. Ningún destino tiene precios (todos los estados quedan
+    /// vacíos): el pedido que pasa el tope escribe solo la pertenencia.</summary>
+    /// <param name="Familia">La familia de la referencia, que es su único miembro, o <c>null</c>.</param>
+    public sealed record EscenarioDeLosPares(
+        Entorno E, int Referencia, int? Familia, IReadOnlyList<int> Destinos, IReadOnlyList<int> ListasFijas)
+    {
+        public int[] TodosLosArticulos => [Referencia, .. Destinos];
+
+        /// <summary>Los destinos que, con las listas de este tenant, hacen exactamente mil pares.</summary>
+        public const int DestinosEnElTope = 20;
+
+        public string MensajeDeLosParesExcedidos =>
+            "Un pedido admite como máximo 1000 pares de artículo y lista de precios fija, y este tiene 1050 " +
+            $"({Destinos.Count} artículos × {ListasFijas.Count} listas fijas). Hay que agrupar los artículos en varios pedidos.";
+    }
+
+    public static async Task<EscenarioDeLosPares> SembrarParesAsync(
+        ApoyoDeFamilias apoyo, string nombre, bool enFamilia = false)
+    {
+        var e = await apoyo.PrepararAsync(nombre);
+        var listas = new List<int> { e.IdListaGeneral, e.IdListaMayorista };
+
+        for (var numero = 3; numero <= 50; numero++)
+        {
+            listas.Add(await apoyo.SembrarListaFijaAsync(e, $"Lista {numero}"));
+        }
+
+        int? familia = enFamilia ? await apoyo.SembrarFamiliaAsync(e, "Gaseosas") : null;
+        var ids = IdsAscendentes(22);
+        await apoyo.SembrarArticuloAsync(e, "ref", ValoresBase(e), familia, id: ids[0]);
+
+        foreach (var id in ids.Skip(1))
+        {
+            await apoyo.SembrarArticuloAsync(e, $"destino-{id}", ValoresBase(e), id: id);
+        }
+
+        return new EscenarioDeLosPares(e, ids[0], familia, [.. ids.Skip(1)], listas);
+    }
+
+    // =================================================================================================
     // Pedidos
     // =================================================================================================
 

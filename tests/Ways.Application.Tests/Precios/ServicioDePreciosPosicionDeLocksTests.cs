@@ -356,4 +356,31 @@ public class ServicioDePreciosPosicionDeLocksTests
             Assert.DoesNotContain(ajeno, cuerpo, StringComparison.Ordinal);
         }
     }
+
+    /// <summary>La escritura de la alineación exige que el plan no tenga rechazos y falla fuerte
+    /// (<see cref="InvalidOperationException"/>) ANTES de escribir nada: sin esa guarda, un plan con un par rechazado
+    /// escribiría solo los pares que se alinean y dejaría el otro sin avisar. El pedido real rechaza antes con 422 y
+    /// la guarda no es alcanzable por ningún pedido HTTP, ni la ve ninguna prueba contra la base: el texto fuente es la
+    /// única red. Se afirma que la guarda aparece una vez, que es la PRIMERA sentencia del método, que su cuerpo es solo el
+    /// <c>throw</c> de esa excepción y que viene antes de cerrar o encolar cualquier fila.</summary>
+    [Fact]
+    public void LaEscrituraDeLaAlineacionFallaFuerteSiElPlanTieneRechazosAntesDeEscribirNada()
+    {
+        var cuerpo = CuerpoDe(FuenteSinComentarios(), "internal async Task EscribirAlineacionAsync(");
+
+        const string guarda = "if (plan.PrimerRechazo is not null)";
+        Assert.Single(Regex.Matches(cuerpo, Regex.Escape(guarda)));
+
+        var normalizado = Regex.Replace(cuerpo, @"\s+", " ").Trim();
+        var cuerpoDeLaGuarda = Regex.Replace(CuerpoDe(cuerpo, guarda), @"\s+", " ").Trim();
+
+        Assert.StartsWith("{ " + guarda + " {", normalizado, StringComparison.Ordinal);
+        Assert.StartsWith("{ throw new InvalidOperationException(", cuerpoDeLaGuarda, StringComparison.Ordinal);
+        Assert.EndsWith("); }", cuerpoDeLaGuarda, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(cuerpoDeLaGuarda, @"\bthrow\b"));
+        Assert.True(
+            Posicion(cuerpo, guarda) < Posicion(cuerpo, "CerrarFilasDelPlanAsync(") &&
+            Posicion(cuerpo, guarda) < Posicion(cuerpo, "EncolarFilaDePrecio("),
+            "La guarda tiene que ir antes de escribir.");
+    }
 }

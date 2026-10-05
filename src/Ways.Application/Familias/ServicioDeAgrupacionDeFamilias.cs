@@ -3,11 +3,14 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Precios;
+using Ways.Domain.Proveedores;
 
 namespace Ways.Application.Familias;
 
@@ -20,17 +23,21 @@ namespace Ways.Application.Familias;
 /// <para>Agrupar ALINEA: los artículos que entran quedan idénticos al de referencia en los trece campos compartidos
 /// (<see cref="ValoresCompartidosDeFamilia"/>) y en el estado de precios de cada lista fija
 /// (<see cref="EstadoDePrecios"/>, reglas en <see cref="ReglaDeAlineacionDePrecios"/>); los campos propios no se tocan.
-/// Es todo o nada: un artículo inexistente, en otra familia o con un precio que no se puede alinear rechaza el pedido
-/// entero y no se escribe nada. La previsualización es solo lectura, sin locks y sin transacción: una foto.</para>
+/// Es todo o nada: un artículo inexistente o en otra familia, un catálogo del artículo de referencia que no existe, un
+/// pedido de más pares artículo-lista de los que admite <see cref="ReglaDeAgrupacion.MaximoDeParesPorPedido"/> o un
+/// precio que no se puede alinear rechaza el pedido entero y no se escribe nada. La previsualización es solo lectura,
+/// sin locks y sin transacción: una foto.</para>
 ///
 /// <para>Los pedidos que escriben cambian la pertenencia, así que siguen el protocolo de locks de las familias
 /// (<see cref="LockDeMembresiaDeFamilias"/>): el lock de membresía EXCLUSIVO como primera sentencia; la fila de la
-/// familia, si ya existe; las filas de los artículos ascendentes; y los locks de par artículo-lista por clave
-/// ascendente. "Ahora" se lee una sola vez, después de todos los locks.</para>
+/// familia, si ya existe; las filas de los artículos ascendentes; los chequeos de catálogo de la referencia (el área, la
+/// categoría, el grupo y el proveedor habitual <c>FOR KEY SHARE</c>, después de las filas, como en la edición de
+/// artículos); y los locks de par artículo-lista por clave ascendente. "Ahora" se lee una sola vez, después de todos los
+/// locks.</para>
 /// </summary>
 public class ServicioDeAgrupacionDeFamilias(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios,
-    ServicioDeLotes servicioDeLotes)
+    ServicioDeLotes servicioDeLotes, GuardaDeReferencias guarda)
 {
     /// <summary>
     /// Qué cambiaría si se agruparan los artículos pedidos con la referencia (<see cref="SolicitudDePrevisualizacion"/>):
@@ -107,11 +114,21 @@ public class ServicioDeAgrupacionDeFamilias(
             .Where(id => articulos.TryGetValue(id, out var a) && (a.IdFamilia is null || a.IdFamilia == referencia.IdFamilia))
             .ToList();
 
+        var valoresDeLaReferencia = ValoresCompartidosDeFamilia.De(referencia);
+        var visibles = await CatalogosVisibles.LeerAsync(
+            db, [valoresDeLaReferencia, .. alineables.Select(id => ValoresCompartidosDeFamilia.De(articulos[id]))], ct);
+
+        problemas.AddRange(await CatalogosInexistentesDeLaReferenciaAsync(referencia, visibles, ct));
+
         var listas = await servicioDePrecios.ListasFijasAsync(ct);
+
+        if (ReglaDeAgrupacion.MensajeSiExcedeLosPares(destinosPedidos.Count, listas.Count) is { } mensajeDePares)
+        {
+            problemas.Add(new ProblemaDeAgrupacion("demasiados_articulos", mensajeDePares, null, null));
+        }
+
         var plan = await servicioDePrecios.PlanificarAlineacionAsync(
             referencia.Id, alineables, [.. listas.Select(l => l.Id)], idTenant, ahora, ct);
-
-        var valoresDeLaReferencia = ValoresCompartidosDeFamilia.De(referencia);
 
         problemas.AddRange(plan.Pares.Where(par => par.EsInalineable).Select(par => new ProblemaDeAgrupacion(
             "familia_precio_inalineable",
@@ -125,7 +142,8 @@ public class ServicioDeAgrupacionDeFamilias(
                 var actuales = ValoresCompartidosDeFamilia.De(articulos[id]);
 
                 return CambiosDe(
-                    articulos[id], actuales, valoresDeLaReferencia, valoresDeLaReferencia.CamposDistintos(actuales), plan);
+                    articulos[id], actuales, valoresDeLaReferencia, valoresDeLaReferencia.CamposDistintos(actuales), plan,
+                    visibles);
             })
             .ToList();
 
@@ -135,10 +153,14 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <summary>
     /// Crea la familia <see cref="AltaDeFamilia.Nombre"/> y la agrupa: el artículo de referencia y los pedidos quedan como
     /// sus miembros, y los pedidos, alineados con la referencia (<see cref="ResultadoDeAgrupacion"/>). Rechaza, sin
-    /// escribir nada: <c>400</c> por el nombre, la referencia o el tope; <c>409 familia_nombre_duplicado</c>;
+    /// escribir nada: <c>400</c> por el nombre, la referencia o el tope de artículos; <c>409 familia_nombre_duplicado</c>;
     /// <c>400 referencia_invalida</c> por un artículo que no existe o está dado de baja; <c>409
     /// articulo_en_otra_familia</c> por uno que ya es miembro de una familia —la referencia incluida: agrupar no mueve a
-    /// nadie—; y <c>422 familia_precio_inalineable</c> por un par que no se puede alinear.
+    /// nadie—; <c>400 referencia_invalida</c> por un catálogo del artículo de referencia (el área, la categoría, el
+    /// grupo, el proveedor habitual o la alícuota de IVA) que no existe o está dado de baja, con el código y el mensaje
+    /// de la edición de artículos; <c>400 demasiados_articulos</c> por más pares artículo-lista fija que
+    /// <see cref="ReglaDeAgrupacion.MaximoDeParesPorPedido"/>; y <c>422 familia_precio_inalineable</c> por un par que no se
+    /// puede alinear.
     ///
     /// <para>El chequeo del nombre es best-effort y corre antes de abrir la transacción: dos pedidos al mismo nombre pasan
     /// los dos, se serializan en el lock de membresía y el segundo recibe, al insertar, el <c>409</c> del respaldo
@@ -161,16 +183,19 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <summary>
     /// Suma artículos a una familia que ya existe, alineados con su artículo de referencia —el miembro vivo de menor
     /// id— (<see cref="ResultadoDeAgrupacion"/>). Rechaza, sin escribir nada: <c>400 articulos_requeridos</c> si la lista
-    /// está vacía; <c>404</c> si la familia no existe o está dada de baja; <c>409 familia_inactiva</c>; <c>409
+    /// está vacía; <c>400 demasiados_articulos</c> si trae más ids que el tope más uno, antes de buscar la familia;
+    /// <c>404</c> si la familia no existe o está dada de baja; <c>409 familia_inactiva</c>; <c>409
     /// familia_sin_articulos</c> si no tiene ningún miembro vivo, y por lo tanto referencia; y, para los artículos, lo
-    /// mismo que <see cref="CrearAsync"/>: <c>400 referencia_invalida</c>, <c>409 articulo_en_otra_familia</c> y <c>422
-    /// familia_precio_inalineable</c>. Un artículo que ya es miembro de esta familia no es un rechazo: se alinea igual.
+    /// mismo que <see cref="CrearAsync"/>: <c>400 referencia_invalida</c>, <c>409 articulo_en_otra_familia</c>, <c>400
+    /// demasiados_articulos</c> por los pares y <c>422 familia_precio_inalineable</c>. Un artículo que ya es miembro de
+    /// esta familia no es un rechazo: se alinea igual. La referencia de la familia puede figurar en la lista y no cuenta
+    /// para el tope: el tope exacto, sobre los destinos que quedan sin ella, se exige bajo el lock, cuando se la conoce.
     /// El detalle del orden y de los locks está en <see cref="AgruparAsync"/>.
     /// </summary>
     public async Task<ResultadoDeAgrupacion> AgregarArticulosAsync(
         int idFamilia, AgregadoDeArticulos datos, CancellationToken ct = default)
     {
-        var destinos = ReglaDeAgrupacion.Destinos(datos.IdsArticulos, idArticuloReferencia: null);
+        var destinos = ReglaDeAgrupacion.DestinosAlAgregar(datos.IdsArticulos);
 
         if (destinos.Count == 0)
         {
@@ -201,11 +226,19 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <item>las filas de <c>articulos</c>, ascendentes por id y <c>FOR NO KEY UPDATE</c> en un solo statement: la
     /// referencia y los destinos al crear; los miembros de la familia y los destinos al agregar (la referencia es uno de
     /// los miembros). Después, la ÚNICA lectura de las entidades, bajo esos locks;</item>
-    /// <item>las validaciones, que no escriben: la familia (al agregar), los artículos que no existen, los que ya están
+    /// <item>las validaciones, que no escriben: la familia (al agregar), el tope exacto de destinos sin la referencia de la
+    /// familia (al agregar: <see cref="ReglaDeAgrupacion.ExigirTope"/>), los artículos que no existen, los que ya están
     /// en otra familia;</item>
+    /// <item>los chequeos de catálogo del artículo de referencia, ya con las filas de los artículos bloqueadas, en el
+    /// orden de la edición de artículos (<c>ServicioDeArticulos.ActualizarAsync</c>): la alícuota de IVA, que es global y
+    /// no se bloquea, y el área, la categoría, el grupo y el proveedor habitual, cada uno <c>FOR KEY SHARE</c> sobre la
+    /// fila viva (<see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>): los trece valores de la referencia son
+    /// los que se copian a los demás, y un id de catálogo que no existe no se copia (<c>400 referencia_invalida</c>);</item>
     /// <item>los locks de par artículo-lista de cada destino y cada lista fija, por clave ascendente
     /// (<see cref="ServicioDePrecios.TomarLocksDeParesAsync"/>): el superconjunto de lo que se puede escribir, tomado
-    /// antes de leer ningún precio;</item>
+    /// antes de leer ningún precio y después de exigir que los pares no pasen de
+    /// <see cref="ReglaDeAgrupacion.MaximoDeParesPorPedido"/> (<see cref="ReglaDeAgrupacion.ExigirParesAcotados"/>, con
+    /// las listas fijas ya leídas);</item>
     /// <item>"ahora", UNA vez; FASE 1, solo lecturas: se planifica la alineación de los precios y se rechaza el pedido
     /// si algún par no se puede alinear;</item>
     /// <item>FASE 2, solo escrituras: la familia nueva (primer <c>SaveChangesAsync</c>, que da su id), la pertenencia y los
@@ -284,6 +317,11 @@ public class ServicioDeAgrupacionDeFamilias(
 
                     idReferencia = miembros[0].Id;
                     destinos = [.. pedido.Destinos.Where(id => id != idReferencia)];
+
+                    // El pedido pudo traer UNO más que el tope por si la referencia de la familia, que recién acá se
+                    // conoce, era uno de los ids: el tope exacto es sobre los destinos que quedan sin ella.
+                    ReglaDeAgrupacion.ExigirTope(destinos);
+
                     idsAExigir = destinos;
                 }
                 else
@@ -315,8 +353,12 @@ public class ServicioDeAgrupacionDeFamilias(
                         "articulo_en_otra_familia", MensajeDeArticuloEnOtraFamilia(articulos[enOtraFamilia[0]], nombres));
                 }
 
+                await ExigirCatalogosDeLaReferenciaAsync(referencia, ct);
+
                 var listas = await servicioDePrecios.ListasFijasAsync(ct);
                 var idsListas = listas.Select(l => l.Id).ToList();
+
+                ReglaDeAgrupacion.ExigirParesAcotados(destinos.Count, idsListas.Count);
 
                 await servicioDePrecios.TomarLocksDeParesAsync(idTenant, destinos, idsListas, ct);
 
@@ -332,6 +374,9 @@ public class ServicioDeAgrupacionDeFamilias(
                         MensajeDePrecioInalineable(articulos[rechazo.IdArticulo], listas.Single(l => l.Id == rechazo.IdListaPrecio), rechazo),
                         422);
                 }
+
+                var visibles = await CatalogosVisibles.LeerAsync(
+                    db, [ValoresCompartidosDeFamilia.De(referencia), .. destinos.Select(id => ValoresCompartidosDeFamilia.De(articulos[id]))], ct);
 
                 int idFamilia;
                 string nombreDeLaFamilia;
@@ -381,7 +426,7 @@ public class ServicioDeAgrupacionDeFamilias(
                         destino.UpdatedAt = ahora;
                     }
 
-                    cambios.Add(CambiosDe(destino, actuales, valores, campos, plan));
+                    cambios.Add(CambiosDe(destino, actuales, valores, campos, plan, visibles));
                 }
 
                 await servicioDePrecios.EscribirAlineacionAsync(plan, idTenant, ahora, ct);
@@ -406,21 +451,112 @@ public class ServicioDeAgrupacionDeFamilias(
     }
 
     /// <summary>Lo que cambia en un artículo al alinearlo: los valores que tenía (<paramref name="actuales"/>, que quien
-    /// llama toma ANTES de alinearlo), los de la referencia, las columnas que difieren y los pares de la lista que se
-    /// alinean.</summary>
+    /// llama toma ANTES de alinearlo), los de la referencia —los dos presentados como los lee un cliente: un id de
+    /// catálogo que no es visible viaja como <c>null</c> (<see cref="CatalogosVisibles.Presentar"/>)—, las columnas que
+    /// difieren, comparadas por el valor guardado, y los pares de la lista que se alinean.</summary>
     private static CambiosDeUnArticulo CambiosDe(
         Articulo articulo, ValoresCompartidosDeFamilia actuales, ValoresCompartidosDeFamilia valoresDeLaReferencia,
-        IReadOnlyList<string> campos, PlanDeAlineacionDePrecios plan) =>
+        IReadOnlyList<string> campos, PlanDeAlineacionDePrecios plan, CatalogosVisibles visibles) =>
         new(
             articulo.Id,
             campos,
-            actuales,
-            valoresDeLaReferencia,
+            visibles.Presentar(actuales),
+            visibles.Presentar(valoresDeLaReferencia),
             [
                 .. plan.Pares
                     .Where(par => par.IdArticulo == articulo.Id && par.Resolucion == ResolucionDeAlineacionDePrecios.Alinear)
                     .Select(par => new CambioDePreciosDeLista(par.IdListaPrecio, par.Actual, par.Referencia))
             ]);
+
+    private enum Catalogo
+    {
+        AlicuotaDeIva,
+        Area,
+        Categoria,
+        Grupo,
+        ProveedorHabitual
+    }
+
+    /// <summary>Los catálogos que el artículo de referencia comparte con los demás —los que se copian—, en el orden de la
+    /// edición de artículos (<c>ServicioDeArticulos.ActualizarAsync</c>, que además valida la marca, que no es
+    /// compartida): la alícuota de IVA, el área, la categoría, el grupo y el proveedor habitual. Los opcionales ausentes no
+    /// figuran. Es la única definición del orden y de lo que se chequea: la comparten el pedido real y la
+    /// previsualización.</summary>
+    private static IEnumerable<(Catalogo Catalogo, int Id)> CatalogosDeLaReferencia(Articulo referencia)
+    {
+        yield return (Catalogo.AlicuotaDeIva, referencia.IdAlicuotaIva);
+        yield return (Catalogo.Area, referencia.IdArea);
+
+        if (referencia.IdCategoria is { } idCategoria)
+        {
+            yield return (Catalogo.Categoria, idCategoria);
+        }
+
+        if (referencia.IdGrupo is { } idGrupo)
+        {
+            yield return (Catalogo.Grupo, idGrupo);
+        }
+
+        if (referencia.IdProveedorHabitual is { } idProveedor)
+        {
+            yield return (Catalogo.ProveedorHabitual, idProveedor);
+        }
+    }
+
+    /// <summary>Los chequeos de catálogo del pedido real: el de la edición de artículos aplicado a la referencia, con el
+    /// mismo código y el mismo mensaje. El área, la categoría, el grupo y el proveedor habitual se toman
+    /// <c>FOR KEY SHARE</c> sobre la fila VIVA (<see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>), dentro de la
+    /// transacción y con las filas de los artículos ya bloqueadas: una baja que gana la carrera hace que el chequeo
+    /// falle en vez de copiar un id colgante a los demás. La alícuota de IVA es global y se chequea sin lock, como en la
+    /// edición.</summary>
+    private async Task ExigirCatalogosDeLaReferenciaAsync(Articulo referencia, CancellationToken ct)
+    {
+        foreach (var (catalogo, id) in CatalogosDeLaReferencia(referencia))
+        {
+            var existe = catalogo switch
+            {
+                Catalogo.AlicuotaDeIva => await db.AlicuotasIva.AnyAsync(a => a.Id == id, ct),
+                Catalogo.Area => await guarda.BloquearSiEstaVivaAsync<Area>(id, ct),
+                Catalogo.Categoria => await guarda.BloquearSiEstaVivaAsync<Categoria>(id, ct),
+                Catalogo.Grupo => await guarda.BloquearSiEstaVivaAsync<Grupo>(id, ct),
+                _ => await guarda.BloquearSiEstaVivaAsync<Proveedor>(id, ct)
+            };
+
+            if (!existe)
+            {
+                throw new ErrorDominio("referencia_invalida", MensajeDeCatalogoInexistente(catalogo, id), 400);
+            }
+        }
+    }
+
+    /// <summary>Los catálogos del artículo de referencia que no existen, uno por problema y en el orden en que el pedido
+    /// real los rechaza. Solo lee, sin locks: el área, la categoría, el grupo y el proveedor habitual salen de
+    /// <paramref name="visibles"/>.</summary>
+    private async Task<List<ProblemaDeAgrupacion>> CatalogosInexistentesDeLaReferenciaAsync(
+        Articulo referencia, CatalogosVisibles visibles, CancellationToken ct)
+    {
+        var problemas = new List<ProblemaDeAgrupacion>();
+
+        foreach (var (catalogo, id) in CatalogosDeLaReferencia(referencia))
+        {
+            var existe = catalogo switch
+            {
+                Catalogo.AlicuotaDeIva => await db.AlicuotasIva.AsNoTracking().AnyAsync(a => a.Id == id, ct),
+                Catalogo.Area => visibles.AreaEsVisible(id),
+                Catalogo.Categoria => visibles.CategoriaEsVisible(id),
+                Catalogo.Grupo => visibles.GrupoEsVisible(id),
+                _ => visibles.ProveedorEsVisible(id)
+            };
+
+            if (!existe)
+            {
+                problemas.Add(new ProblemaDeAgrupacion(
+                    "referencia_invalida", MensajeDeCatalogoInexistente(catalogo, id), referencia.Id, null));
+            }
+        }
+
+        return problemas;
+    }
 
     /// <summary>Los nombres de las familias dadas, también las dadas de baja: el mensaje de un artículo que ya
     /// pertenece a una familia la nombra aunque la fila de la familia ya no esté viva. Solo el filtro de baja lógica se
@@ -448,6 +584,17 @@ public class ServicioDeAgrupacionDeFamilias(
     private static string MensajeDeArticuloInexistente(int idArticulo) => $"No existe el artículo {idArticulo}.";
 
     private static string MensajeDeFamiliaInexistente(int idFamilia) => $"No existe la familia {idFamilia}.";
+
+    /// <summary>Los mismos mensajes que la edición de artículos (<c>ServicioDeArticulos</c>) da por cada uno de estos
+    /// catálogos; <c>FamiliasAgruparTests</c> los compara contra las respuestas reales de la edición.</summary>
+    private static string MensajeDeCatalogoInexistente(Catalogo catalogo, int id) => catalogo switch
+    {
+        Catalogo.AlicuotaDeIva => $"No existe la alícuota de IVA {id}.",
+        Catalogo.Area => $"No existe el área {id}.",
+        Catalogo.Categoria => $"No existe la categoría {id}.",
+        Catalogo.Grupo => $"No existe el grupo {id}.",
+        _ => $"No existe el proveedor {id}."
+    };
 
     private static string MensajeDeFamiliaInactiva(string nombre) =>
         $"La familia \"{nombre}\" está inactiva: no se le pueden agregar artículos.";

@@ -496,23 +496,31 @@ no toman locks.
 - `POST /api/familias/previsualizacion` `{ idArticuloReferencia, idsArticulos }`: dice qué cambiaría si se agruparan
   esos artículos con la referencia como modelo, sin escribir nada, sin locks y sin transacción: es una foto. Los
   **destinos** son los ids pedidos sin repetir y sin la propia referencia, como máximo 100 (`400
-  demasiados_articulos`: cada destino sostendría un lock por lista fija hasta el commit y la tabla de locks de Postgres
-  es compartida); `400 id_articulo_referencia_requerido` si la referencia no es un id posible. Si la referencia ya es
+  demasiados_articulos`); `400 id_articulo_referencia_requerido` si la referencia no es un id posible. Entre todos los
+  destinos y las listas fijas del tenant hay además un tope de 1000 **pares** destino-lista fija: cada par es un lock
+  advisory que el pedido real sostiene hasta el commit, la tabla de locks de Postgres es compartida por todas las
+  conexiones, y los cien destinos solos no acotan los pares cuando el tenant tiene muchas listas fijas (con diez, cien
+  destinos son mil pares; con cincuenta, caben veinte). Pasarse del tope es `400 demasiados_articulos` en el pedido real,
+  con otro mensaje que nombra los dos factores, y en la previsualización es un problema más. Si la referencia ya es
   miembro de una familia, agrupar sería sumar a esa familia (`idFamilia`); si no, crear una nueva (`idFamilia: null`).
   Por cada destino que se puede alinear —no los inexistentes, ni los dados de baja, ni los que están en otra
-  familia— trae las columnas compartidas que difieren, con los trece valores actuales y los de la referencia tal cual
-  están guardados, y por cada lista fija en la que su estado de precios cambia, el estado actual y el de la referencia;
-  un destino ya idéntico trae todo vacío. Los `problemas` llevan el código de error de la API, en este orden: los
-  de la familia de la referencia (`no_encontrado` si está dada de baja, `familia_inactiva`), `referencia_invalida` por
-  cada artículo inexistente o dado de baja, `articulo_en_otra_familia` y `familia_precio_inalineable` por cada par
-  artículo-lista que no se puede alinear. Si la referencia no existe no hay con qué comparar: solo informa los
-  artículos inexistentes.
+  familia— trae las columnas compartidas que difieren, con los trece valores actuales y los de la referencia como los lee
+  el detalle de una familia —un id de catálogo que apunta a una fila dada de baja viaja como `null`: una columna puede
+  figurar entre las que difieren con `null` de los dos lados, porque el destino tiene un id colgante y la referencia
+  ninguno, y la alineación se lo borra—, y por cada lista fija en la que su estado de precios cambia, el estado actual
+  y el de la referencia; un destino ya idéntico trae `campos` y `precios` vacíos. Los `problemas` llevan el código de
+  error de la API, en este orden: los de la familia de la referencia (`no_encontrado` si está dada de baja,
+  `familia_inactiva`), `referencia_invalida` por cada artículo inexistente o dado de baja, `articulo_en_otra_familia`,
+  `referencia_invalida` por cada catálogo de la referencia (la alícuota de IVA, el área, la categoría, el grupo y el
+  proveedor habitual, en ese orden) que no existe o está dado de baja, `demasiados_articulos` si los pares pasan el
+  tope y `familia_precio_inalineable` por cada par artículo-lista que no se puede alinear. Si la referencia no existe no
+  hay con qué comparar: solo informa los artículos inexistentes.
 - `POST /api/familias` `{ nombre, idArticuloReferencia, idsArticulos }`: **crea** la familia y la agrupa: la
   referencia y los destinos (los ids pedidos sin repetir y sin la propia referencia, como máximo 100) quedan como sus
   miembros, y los destinos, alineados con la referencia ("Alinear"). `201` con `Location: /api/familias/{id}` y
   `{ idFamilia, nombre, idArticuloReferencia, articulos }`, donde `articulos` trae, por cada destino ascendente por
   id, lo mismo que la previsualización del mismo pedido —`campos`, los valores `actual` y `nuevo` y los `precios` que
-  cambiaron—, con las listas vacías para el que ya estaba alineado. `idsArticulos` puede faltar o venir vacío: la
+  cambiaron—, con `campos` y `precios` vacíos para el que ya estaba alineado. `idsArticulos` puede faltar o venir vacío: la
   familia nace con la referencia como único miembro. Los rechazos no escriben nada y se evalúan en este orden:
   `400 nombre_requerido`, `400 nombre_muy_largo`, `400 id_articulo_referencia_requerido` y `400
   demasiados_articulos`; `409 familia_nombre_duplicado`, que el chequeo previo adelanta —corre antes de abrir la
@@ -520,16 +528,24 @@ no toman locks.
   se serializan en el lock de membresía y el segundo recibe el 409 del respaldo; y, ya bajo los locks, `400
   referencia_invalida` (el menor id que no existe o está dado de baja entre la referencia y los destinos; también los de
   otro tenant), `409 articulo_en_otra_familia` (el menor id que ya es miembro de una familia, la referencia incluida:
-  agrupar no mueve a nadie) y `422 familia_precio_inalineable` (el mensaje nombra el artículo y la lista del primer
-  par que no se puede alinear; lo que se había alineado antes de él no queda escrito).
+  agrupar no mueve a nadie; el mensaje nombra la familia también si está dada de baja), `400 referencia_invalida` por
+  el primer catálogo de la referencia que no existe o está dado de baja —la alícuota de IVA, el área, la categoría,
+  el grupo y el proveedor habitual, en ese orden y con el código y el mensaje de la edición de artículos: los trece
+  valores de la referencia son los que se copian a los demás—, `400 demasiados_articulos` si los pares destino-lista
+  fija pasan los 1000 y `422 familia_precio_inalineable` (el mensaje nombra el artículo y la lista del primer par que no
+  se puede alinear; lo que se había alineado antes de él no queda escrito).
 - `POST /api/familias/{id}/articulos` `{ idsArticulos }`: **agrega** artículos que ya existen a la familia, alineados
   con su referencia: el miembro vivo de menor id, que no figura en `articulos`. `200` con el mismo cuerpo. Un artículo
   que ya es miembro de la familia se alinea igual, y si ya estaba alineado no se escribe nada: repetir un pedido no
   cambia nada. Rechazos, sin escribir nada: `400 articulos_requeridos` (lista ausente o vacía) y `400
-  demasiados_articulos`, antes de buscar la familia; `404` si la familia no existe, está dada de baja o es de otro tenant;
-  `409 familia_inactiva`; `409 familia_sin_articulos` (sin un miembro vivo no hay referencia); y, como al crear, `400
-  referencia_invalida`, `409 articulo_en_otra_familia` y `422 familia_precio_inalineable`. La familia se resuelve antes
-  que los artículos: la inactiva da su 409 aunque uno de los ids no exista.
+  demasiados_articulos` si trae más de 101 ids distintos, antes de buscar la familia; `404` si la familia no existe,
+  está dada de baja o es de otro tenant; `409 familia_inactiva`; `409 familia_sin_articulos` (sin un miembro vivo no hay
+  referencia); y, como al crear, `400 referencia_invalida` (también por los catálogos de la referencia de la familia),
+  `409 articulo_en_otra_familia`, `400 demasiados_articulos` por los pares y `422 familia_precio_inalineable`. La
+  familia se resuelve antes que los artículos: la inactiva da su 409 aunque uno de los ids no exista. El tope de 100
+  es sobre los destinos y la referencia de la familia —que puede figurar en la lista— no es uno: por eso la lista
+  admite uno más, y el tope exacto se exige bajo el lock, cuando se la conoce y sale de la lista (101 ids que no la
+  incluyen dan `400 demasiados_articulos` después de resolver la familia).
 - `PUT /api/familias/{id}`: el nombre y el estado `activo`, los dos obligatorios (`400 nombre_requerido`,
   `400 nombre_muy_largo` —hasta 150 caracteres, sin espacios en los extremos— y `400 activo_requerido`: un `activo`
   ausente se rechaza, no se lee como `false`). El nombre es único entre las familias vivas del tenant sin distinguir
@@ -617,8 +633,8 @@ uno de un tramo posterior y, dentro de un mismo tramo, todos los que lo toman lo
 garantía depende de que esos dos tramos sean solo de la confirmación —ningún otro escritor de familias toma
 filas de compra, de stock ni de lotes, ni escribe la fila del proveedor— y de que el lock de membresía siga
 siendo la primera sentencia de cada transacción; no cubre a las transacciones que no toman ese lock. Los
-chequeos de catálogo (`FOR KEY SHARE`, incluido el del proveedor habitual de la edición y del alta, que no
-choca con el `UPDATE` del proveedor de la confirmación) no chocan con ningún lock que tomen estos escritores y
+chequeos de catálogo (`FOR KEY SHARE`, incluido el del proveedor habitual de la edición, del alta y de agrupar, que
+no choca con el `UPDATE` del proveedor de la confirmación) no chocan con ningún lock que tomen estos escritores y
 no entran en el orden. La fila de la familia sí entra: el alta de un artículo la lee `FOR SHARE` después de los
 chequeos de catálogo y antes de los locks de par; agregar artículos a una familia, la misma lectura, justo después
 del lock de membresía y antes de las filas de los artículos; y la disolución la toma `FOR UPDATE` justo después de
@@ -642,9 +658,11 @@ otro escritor de este protocolo toma después de las filas de los artículos, y 
 ninguna toma locks de par, porque no escribe precios) y las dos operaciones que agrupan
 (`ServicioDeAgrupacionDeFamilias.CrearAsync` y `AgregarArticulosAsync`, que comparten un solo camino: exclusivo; al
 agregar, la fila de la familia `FOR SHARE` antes que las filas de los artículos; las filas de los artículos pedidos
-y, al agregar, de todos los miembros, ascendentes y en un solo statement; y los locks de par de todos los destinos en
-todas las listas fijas, por clave ascendente, antes de leer ningún precio); todo escritor de campos compartidos o de
-pertenencia tiene que respetarlo.
+y, al agregar, de todos los miembros, ascendentes y en un solo statement; los chequeos de catálogo de la referencia
+—el área, la categoría, el grupo y el proveedor habitual `FOR KEY SHARE` y la alícuota de IVA, que es global y no se
+bloquea— después de las filas, como en la edición de artículos; y los locks de par de todos los destinos en todas las
+listas fijas, por clave ascendente, antes de leer ningún precio y con los pares ya acotados a 1000); todo escritor de
+campos compartidos o de pertenencia tiene que respetarlo.
 
 ### Listas de precio, con historia
 

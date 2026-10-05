@@ -98,8 +98,8 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
         var estadoDeLaReferencia = new EstadoDePrecios(100m, new PrecioPendiente(130m, s.V));
         var d1 = resultado.Articulos[0];
         Assert.Equal(CamposDeD1, d1.Campos);
-        Assert.Equal(ValoresCompartidosDeFamilia.De(d1Antes), d1.Actual);
-        Assert.Equal(valoresDeLaReferencia, d1.Nuevo);
+        Assert.Equal(ComoLoLeeElCliente(ValoresCompartidosDeFamilia.De(d1Antes)), d1.Actual);
+        Assert.Equal(ComoLoLeeElCliente(valoresDeLaReferencia), d1.Nuevo);
         Assert.Equal(
             [
                 new CambioDePreciosDeLista(general, new EstadoDePrecios(90m, null), estadoDeLaReferencia),
@@ -228,7 +228,7 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
         {
             Assert.Empty(a.Campos);
             Assert.Empty(a.Precios);
-            Assert.Equal(s.ValoresDeLaReferencia, a.Actual);
+            Assert.Equal(ComoLoLeeElCliente(s.ValoresDeLaReferencia), a.Actual);
         });
         Assert.Equal(antes, await FotoAsync(s));
     }
@@ -273,8 +273,9 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
     // =================================================================================================
 
     /// <summary>La lista de ids se valida antes que la familia: una lista ausente o vacía da 400 aunque la familia no
-    /// exista, y más de cien destinos distintos dan 400 antes de tocar la base. Un cuerpo sin la propiedad es una lista
-    /// vacía.</summary>
+    /// exista, y más de 101 ids distintos —el tope más uno: la referencia de la familia puede ser uno de ellos y no
+    /// cuenta— dan 400 antes de tocar la base. Un cuerpo sin la propiedad es una lista vacía. Con 101 ids el tope exacto
+    /// se exige después, bajo el lock: <see cref="LaReferenciaDeLaFamiliaEnLaListaNoCuentaParaElTopeYUnDestinoDeMasSiCuenta"/>.</summary>
     [Fact]
     public async Task UnaListaVaciaOExcedidaDa400AntesDeBuscarLaFamilia()
     {
@@ -294,10 +295,10 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
                 await e.Admin.PostAsJsonAsync($"/api/familias/{familiaId}/articulos", new { }, OpcionesJson),
                 "articulos_requeridos"
             ),
-            ("cien destinos más uno", await PostAgregarAsync(e.Admin, familiaId, [.. cien, 900_000_101]), "demasiados_articulos"),
+            ("101 ids más uno", await PostAgregarAsync(e.Admin, familiaId, [.. cien, 900_000_101, 900_000_102]), "demasiados_articulos"),
             (
-                "cien destinos más uno en una familia que no existe",
-                await PostAgregarAsync(e.Admin, 999_999_999, [.. cien, 900_000_101]),
+                "101 ids más uno en una familia que no existe",
+                await PostAgregarAsync(e.Admin, 999_999_999, [.. cien, 900_000_101, 900_000_102]),
                 "demasiados_articulos"
             )
         };
@@ -428,5 +429,125 @@ public class FamiliasAgregarArticulosTests(WaysApiFixture fixture) : IClassFixtu
 
         var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, s.Referencia, s.D1, s.D2, s.D3));
         Assert.Equal(casos[^1].Mensaje, Assert.Single(previa.Problemas).Mensaje);
+    }
+
+    /// <summary>El tope de cien es sobre los destinos, y la referencia de la familia no es un destino aunque figure en la
+    /// lista: 101 ids que la incluyen son cien destinos, pasan el tope y recién los rechaza que no existen (400
+    /// <c>referencia_invalida</c>, el menor id que falta); 101 ids que no la incluyen son 101 destinos, y el tope exacto,
+    /// que se exige bajo el lock cuando se conoce la referencia, los rechaza con 400 <c>demasiados_articulos</c>. Ningún
+    /// pedido escribe nada.</summary>
+    [Fact]
+    public async Task LaReferenciaDeLaFamiliaEnLaListaNoCuentaParaElTopeYUnDestinoDeMasSiCuenta()
+    {
+        var s = await SembrarAsync(
+            apoyo, nameof(LaReferenciaDeLaFamiliaEnLaListaNoCuentaParaElTopeYUnDestinoDeMasSiCuenta), enFamilia: true);
+        using var e = s.E;
+        var familiaId = s.Familia!.Value;
+        var antes = await FotoAsync(s);
+        var cien = Enumerable.Range(900_000_001, 100).ToArray();
+
+        var conLaReferencia = await PostAgregarAsync(e.Admin, familiaId, [s.Referencia, .. cien]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, conLaReferencia.StatusCode);
+        Assert.Equal(("referencia_invalida", $"No existe el artículo {cien[0]}."), await ProblemaAsync(conLaReferencia));
+
+        var sinLaReferencia = await PostAgregarAsync(e.Admin, familiaId, [.. cien, 900_000_101]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, sinLaReferencia.StatusCode);
+        Assert.Equal(
+            ("demasiados_articulos", "Un pedido agrupa como máximo 100 artículos además del de referencia."),
+            await ProblemaAsync(sinLaReferencia));
+        Assert.Equal(antes, await FotoAsync(s));
+    }
+
+    // =================================================================================================
+    // Una referencia sin precio vigente
+    // =================================================================================================
+
+    /// <summary>Con una referencia que solo tiene un precio PROGRAMADO, agregar escribe su programado en el destino que no
+    /// tiene precios y en el que tiene uno programado propio (que queda cerrado en su propio inicio) y no toca al ya
+    /// idéntico, con la auditoría y un solo "ahora".</summary>
+    [Fact]
+    public async Task AgregarConUnaReferenciaSoloProgramadaEscribeSuPendienteEnLosDestinosQueSeAlinean()
+    {
+        var s = await SembrarProgramadosAsync(
+            apoyo, nameof(AgregarConUnaReferenciaSoloProgramadaEscribeSuPendienteEnLosDestinosQueSeAlinean), enFamilia: true);
+        using var e = s.E;
+
+        await AfirmarLaEscrituraDeUnaReferenciaSoloProgramadaAsync(
+            apoyo, s, ids => PostAgregarAsync(e.Admin, s.Familia!.Value, ids), HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task AgregarConUnaReferenciaSoloProgramadaRechazaLosParesQueNoSePuedenAlinearYNoEscribeNada()
+    {
+        var s = await SembrarProgramadosAsync(
+            apoyo, nameof(AgregarConUnaReferenciaSoloProgramadaRechazaLosParesQueNoSePuedenAlinearYNoEscribeNada), enFamilia: true);
+        using var e = s.E;
+
+        await AfirmarLosRechazosDeLaAlineacionDeUnaReferenciaSoloProgramadaAsync(
+            fixture, apoyo, s, ids => PostAgregarAsync(e.Admin, s.Familia!.Value, ids));
+    }
+
+    // =================================================================================================
+    // Los catálogos de la referencia
+    // =================================================================================================
+
+    /// <summary>Un catálogo de la referencia de la familia dado de baja se rechaza con 400 <c>referencia_invalida</c> y el
+    /// mismo mensaje que da la edición de un artículo con ese id, y no escribe nada: la referencia es la que copian los
+    /// demás. Una fila por catálogo, y en cada una ese catálogo y todos los que lo siguen en el orden de los chequeos
+    /// están dados de baja.</summary>
+    [Theory]
+    [InlineData("alicuota")]
+    [InlineData("area")]
+    [InlineData("categoria")]
+    [InlineData("grupo")]
+    [InlineData("proveedor")]
+    public async Task UnCatalogoDeLaReferenciaDeLaFamiliaDadoDeBajaDa400ConElMensajeDeLaEdicionYNoEscribeNada(string primerMuerto)
+    {
+        var s = await SembrarCatalogosAsync(
+            apoyo, nameof(UnCatalogoDeLaReferenciaDeLaFamiliaDadoDeBajaDa400ConElMensajeDeLaEdicionYNoEscribeNada), enFamilia: true);
+        using var e = s.E;
+        await DarDeBajaLosCatalogosAsync(apoyo, s, Catalogos.SkipWhile(c => c != primerMuerto));
+        var idMuerto = s.IdDeLaReferencia(primerMuerto);
+        var listas = new[] { e.IdListaGeneral, e.IdListaMayorista };
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, listas);
+
+        var respuesta = await PostAgregarAsync(e.Admin, s.Familia!.Value, s.Destino);
+
+        var mensaje = MensajeDeCatalogoInexistente(primerMuerto, idMuerto);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(("referencia_invalida", mensaje), await ProblemaAsync(respuesta));
+        Assert.Equal(
+            (HttpStatusCode.BadRequest, "referencia_invalida", mensaje),
+            await LoQueDiceLaEdicionAsync(apoyo, e, s.Destino, primerMuerto, idMuerto));
+        Assert.Equal(antes, await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, listas));
+    }
+
+    // =================================================================================================
+    // El tope de pares
+    // =================================================================================================
+
+    /// <summary>Con cincuenta listas fijas, veinte destinos son mil pares y se aceptan, y veintiuno son 1050 y dan 400
+    /// <c>demasiados_articulos</c> con el mensaje exacto, sin escribir nada: lo que se rechaza son los pares, y cada destino
+    /// cabe en el tope de artículos.</summary>
+    [Fact]
+    public async Task AgregarAdmiteMilParesYRechazaMilUnoSinEscribirNada()
+    {
+        var s = await SembrarParesAsync(apoyo, nameof(AgregarAdmiteMilParesYRechazaMilUnoSinEscribirNada), enFamilia: true);
+        using var e = s.E;
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, s.ListasFijas);
+
+        var respuesta = await PostAgregarAsync(e.Admin, s.Familia!.Value, [.. s.Destinos]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(("demasiados_articulos", s.MensajeDeLosParesExcedidos), await ProblemaAsync(respuesta));
+        Assert.Equal(antes, await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, s.ListasFijas));
+
+        var aceptado = await LeerResultadoAsync(
+            await PostAgregarAsync(e.Admin, s.Familia.Value, [.. s.Destinos.Take(EscenarioDeLosPares.DestinosEnElTope)]),
+            HttpStatusCode.OK);
+
+        Assert.Equal(EscenarioDeLosPares.DestinosEnElTope, aceptado.Articulos.Count);
     }
 }

@@ -162,18 +162,18 @@ internal static class MembresiaDeFamilias
         }
     }
 
-    /// <summary>Lo que el alta de un artículo dentro de una familia necesita saber de ella: su nombre, para los
-    /// mensajes, y si está activa.</summary>
+    /// <summary>Lo que necesita saber de una familia quien le agrega artículos —el alta de un artículo dentro de ella o
+    /// agrupar artículos en una que ya existe—: su nombre, para los mensajes, y si está activa.</summary>
     public sealed record FamiliaParaIngresar(string Nombre, bool Activa);
 
-    /// <summary>La familia a la que va a entrar un artículo nuevo: VIVA (<c>deleted_at IS NULL</c>) y de este
-    /// tenant, leída y bloqueada <c>FOR SHARE</c> en un solo statement, bajo el lock de membresía exclusivo;
-    /// <c>null</c> si no existe, es de otro tenant o está dada de baja. El <c>FOR SHARE</c> —y no el
-    /// <c>FOR KEY SHARE</c> de los chequeos de catálogo, que solo choca con quien borra o cambia la clave— es
-    /// lo que serializa el alta con cualquier <c>UPDATE</c> de la fila de la familia, sea una baja lógica o un
-    /// cambio de <c>activo</c>: todo <c>UPDATE</c> toma al menos <c>FOR NO KEY UPDATE</c>, que choca con
-    /// <c>FOR SHARE</c>. Si la fila cambió mientras se esperaba su lock, PostgreSQL reevalúa el <c>WHERE</c>
-    /// sobre la versión nueva y la descarta si ya no está viva.</summary>
+    /// <summary>La familia a la que van a entrar artículos —uno nuevo, en el alta de un artículo, o los pedidos, al
+    /// agrupar en una familia que ya existe—: VIVA (<c>deleted_at IS NULL</c>) y de este tenant, leída y bloqueada
+    /// <c>FOR SHARE</c> en un solo statement, bajo el lock de membresía exclusivo; <c>null</c> si no existe, es de otro
+    /// tenant o está dada de baja. El <c>FOR SHARE</c> —y no el <c>FOR KEY SHARE</c> de los chequeos de catálogo, que solo
+    /// choca con quien borra o cambia la clave— es lo que serializa a quien entra con cualquier <c>UPDATE</c> de la fila
+    /// de la familia, sea una baja lógica o un cambio de <c>activo</c>: todo <c>UPDATE</c> toma al menos
+    /// <c>FOR NO KEY UPDATE</c>, que choca con <c>FOR SHARE</c>. Si la fila cambió mientras se esperaba su lock,
+    /// PostgreSQL reevalúa el <c>WHERE</c> sobre la versión nueva y la descarta si ya no está viva.</summary>
     public static async Task<FamiliaParaIngresar?> LeerFamiliaParaIngresarAsync(
         DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, CancellationToken ct)
     {

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Familias;
 using Ways.Domain.Articulos;
 using Ways.Domain.Precios;
+using static Ways.IntegrationTests.ApoyoDeAgrupacion;
 using static Ways.IntegrationTests.ApoyoDeFamilias;
 
 namespace Ways.IntegrationTests;
@@ -22,32 +23,6 @@ namespace Ways.IntegrationTests;
 public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private readonly ApoyoDeFamilias apoyo = new(fixture);
-
-    /// <summary>Ids de artículo explícitos en una zona que el identity no alcanza: la clave primaria es global a todos
-    /// los tenants de la base.</summary>
-    private static int siguienteIdDeArticulo = 6_300_000;
-
-    private static int[] IdsAscendentes(int cantidad)
-    {
-        var primero = Interlocked.Add(ref siguienteIdDeArticulo, cantidad + 1) - cantidad;
-
-        return [.. Enumerable.Range(primero, cantidad)];
-    }
-
-    /// <summary><c>timestamptz</c> guarda microsegundos y <see cref="DateTimeOffset"/> tiene 100 ns de resolución.</summary>
-    private static DateTimeOffset AMicrosegundos(DateTimeOffset instante) =>
-        new(instante.Ticks - (instante.Ticks % (TimeSpan.TicksPerMillisecond / 1000)), instante.Offset);
-
-    private static Task<HttpResponseMessage> PostAsync(HttpClient cliente, int idReferencia, params int[]? ids) =>
-        cliente.PostAsJsonAsync(
-            "/api/familias/previsualizacion", new SolicitudDePrevisualizacion(idReferencia, ids), OpcionesJson);
-
-    private static async Task<PrevisualizacionDeAgrupacion> LeerAsync(HttpResponseMessage respuesta)
-    {
-        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-
-        return (await respuesta.Content.ReadFromJsonAsync<PrevisualizacionDeAgrupacion>(OpcionesJson))!;
-    }
 
     private sealed record Escenario(
         Entorno E, int Referencia, int D1, int D2, int D3, int D4, int D5, int Minorista, int FamiliaAjena,
@@ -118,7 +93,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         var @base = ValoresDeLaBase(e);
 
         // Los ids van desordenados y con repetidos, y la referencia también figura en la lista.
-        var previa = await LeerAsync(await PostAsync(
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(
             e.Admin, s.Referencia, s.D3, s.D5, s.D1, s.D1, inexistente, s.D2, s.D4, s.Referencia));
 
         Assert.Equal(s.Referencia, previa.IdArticuloReferencia);
@@ -127,8 +102,8 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         var d1 = previa.Articulos[0];
         Assert.Equal(["id_grupo", "costo_lista"], d1.Campos);
-        Assert.Equal(await ValoresDeAsync(s.D1), d1.Actual);
-        Assert.Equal(@base, d1.Nuevo);
+        Assert.Equal(ComoLoLeeElCliente(await ValoresDeAsync(s.D1)), d1.Actual);
+        Assert.Equal(ComoLoLeeElCliente(@base), d1.Nuevo);
         Assert.Equal(
             [
                 new CambioDePreciosDeLista(
@@ -139,14 +114,14 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         var d2 = previa.Articulos[1];
         Assert.Empty(d2.Campos);
-        Assert.Equal(@base, d2.Actual);
-        Assert.Equal(@base, d2.Nuevo);
+        Assert.Equal(ComoLoLeeElCliente(@base), d2.Actual);
+        Assert.Equal(ComoLoLeeElCliente(@base), d2.Nuevo);
         Assert.Empty(d2.Precios);
 
         var d3 = previa.Articulos[2];
         Assert.Equal(["id_area", "id_categoria", "unidad_venta", "controla_lote", "costo_nominal"], d3.Campos);
-        Assert.Equal(await ValoresDeAsync(s.D3), d3.Actual);
-        Assert.Equal(@base, d3.Nuevo);
+        Assert.Equal(ComoLoLeeElCliente(await ValoresDeAsync(s.D3)), d3.Actual);
+        Assert.Equal(ComoLoLeeElCliente(@base), d3.Nuevo);
         Assert.Equal(
             [
                 new CambioDePreciosDeLista(
@@ -198,7 +173,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         await apoyo.SembrarPrecioAsync(e, referencia, e.IdListaGeneral, 130m, v, null);
         await apoyo.SembrarPrecioVigenteAsync(e, conVigente, e.IdListaGeneral, 100m);
 
-        var previa = await LeerAsync(await PostAsync(e.Admin, referencia, conVigente, sinVigente));
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, referencia, conVigente, sinVigente));
 
         var problema = Assert.Single(previa.Problemas);
         Assert.Equal(("familia_precio_inalineable", conVigente, (int?)e.IdListaGeneral), (problema.Codigo, problema.IdArticulo, problema.IdListaPrecio));
@@ -229,7 +204,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         await apoyo.SembrarPrecioAsync(e, destino, e.IdListaGeneral, 50m, ahora.AddDays(1), ahora.AddDays(2));
         await apoyo.SembrarPrecioAsync(e, destino, e.IdListaGeneral, 60m, ahora.AddDays(2), null);
 
-        var previa = await LeerAsync(await PostAsync(e.Admin, referencia, destino));
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, referencia, destino));
 
         var problema = Assert.Single(previa.Problemas);
         Assert.Equal(("familia_precio_inalineable", destino, (int?)e.IdListaGeneral), (problema.Codigo, problema.IdArticulo, problema.IdListaPrecio));
@@ -252,7 +227,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         var antes = await EstadoDeLaBaseAsync(e, ids);
 
-        await LeerAsync(await PostAsync(e.Admin, s.Referencia, s.D1, s.D2, s.D3, s.D4, s.D5));
+        await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, s.Referencia, s.D1, s.D2, s.D3, s.D4, s.D5));
 
         Assert.Equal(antes, await EstadoDeLaBaseAsync(e, ids));
     }
@@ -296,7 +271,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         var (clave1, clave2) = Ways.Application.Precios.ServicioDePrecios.ClaveDeLockDePar(e.IdTenant, s.D1, e.IdListaGeneral);
         await EjecutarAsync(sostenedor, transaccion, "SELECT pg_advisory_xact_lock($1, $2)", clave1, clave2);
 
-        var respuesta = await PostAsync(e.Admin, s.Referencia, s.D1, s.D2, s.D3).WaitAsync(TimeSpan.FromSeconds(15));
+        var respuesta = await PostPrevisualizarAsync(e.Admin, s.Referencia, s.D1, s.D2, s.D3).WaitAsync(TimeSpan.FromSeconds(15));
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
@@ -318,9 +293,11 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
     }
 
     /// <summary>Los precios de todos los artículos y listas se leen en UNA consulta que se restringe a los artículos y a
-    /// las listas pedidos: <c>id_articulo = ANY</c> y <c>id_lista_precio = ANY</c>. Quitar cualquiera de las dos
-    /// condiciones no cambia ningún resultado —el estado de cada par se arma con sus propias filas— pero leería la
-    /// historia de precios de todo el tenant, así que afirmarlo sobre el texto de la sentencia es la única red.</summary>
+    /// las listas pedidos —<c>id_articulo = ANY</c> y <c>id_lista_precio = ANY</c>— y a las filas que pueden ser el vigente
+    /// o el pendiente, abiertas o cerradas a futuro: <c>vigente_hasta IS NULL OR vigente_hasta &gt; ahora</c>, con la
+    /// comparación estricta. Quitar cualquiera de las tres condiciones no cambia ningún resultado —el estado de cada par
+    /// se arma con sus propias filas y la historia cerrada no cuenta— pero leería la historia de precios de todo el
+    /// tenant, así que afirmarlo sobre el texto de la sentencia es la única red.</summary>
     [Fact]
     public async Task LaLecturaDeLosPreciosSeRestringeALosArticulosYALasListasPedidos()
     {
@@ -336,6 +313,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
             registro.Sentencias, sentencia => sentencia.Contains("FROM precios", StringComparison.Ordinal));
         Assert.Contains("id_articulo = ANY", lecturaDeLosPrecios, StringComparison.Ordinal);
         Assert.Contains("id_lista_precio = ANY", lecturaDeLosPrecios, StringComparison.Ordinal);
+        Assert.Matches(@"\(p\.vigente_hasta IS NULL OR p\.vigente_hasta > @\w+\)", lecturaDeLosPrecios);
     }
 
     /// <summary>"Ahora" se lee UNA vez: el reloj de la prueba da un instante distinto en cada lectura, así que una lectura
@@ -376,7 +354,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         await apoyo.SembrarArticuloAsync(e, "suelto", ValoresConUnCampoCambiado(e, "costo_lista"), id: suelto);
         await apoyo.SembrarArticuloAsync(e, "de-otra", ValoresBase(e), otraFamilia, id: deOtra);
 
-        var previa = await LeerAsync(await PostAsync(e.Admin, referencia, suelto, miembro, deOtra));
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, referencia, suelto, miembro, deOtra));
 
         Assert.Equal(familia, previa.IdFamilia);
         Assert.Equal([miembro, suelto], previa.Articulos.Select(a => a.IdArticulo));
@@ -403,14 +381,14 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         await apoyo.SembrarArticuloAsync(e, "de-la-dada-de-baja", ValoresBase(e), dadaDeBaja, id: deLaDadaDeBaja);
         await apoyo.SembrarArticuloAsync(e, "suelto", ValoresConUnCampoCambiado(e, "costo_lista"), id: suelto);
 
-        var deLaFamiliaInactiva = await LeerAsync(await PostAsync(e.Admin, deLaInactiva, inexistente, suelto));
+        var deLaFamiliaInactiva = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, deLaInactiva, inexistente, suelto));
 
         Assert.Equal(["familia_inactiva", "referencia_invalida"], deLaFamiliaInactiva.Problemas.Select(p => p.Codigo));
         Assert.Null(deLaFamiliaInactiva.Problemas[0].IdArticulo);
         Assert.Contains("\"Inactiva\"", deLaFamiliaInactiva.Problemas[0].Mensaje, StringComparison.Ordinal);
         Assert.Equal(["costo_lista"], Assert.Single(deLaFamiliaInactiva.Articulos).Campos);
 
-        var deLaFamiliaDadaDeBaja = await LeerAsync(await PostAsync(e.Admin, deLaDadaDeBaja, suelto));
+        var deLaFamiliaDadaDeBaja = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, deLaDadaDeBaja, suelto));
 
         var problema = Assert.Single(deLaFamiliaDadaDeBaja.Problemas);
         Assert.Equal(("no_encontrado", $"No existe la familia {dadaDeBaja}."), (problema.Codigo, problema.Mensaje));
@@ -435,7 +413,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         // referencia primero.
         foreach (var referencia in new[] { 999_999_997, deBaja, ajeno })
         {
-            var previa = await LeerAsync(await PostAsync(e.Admin, referencia, vivo, inexistente));
+            var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, referencia, vivo, inexistente));
 
             Assert.Null(previa.IdFamilia);
             Assert.Empty(previa.Articulos);
@@ -456,7 +434,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
     {
         using var e = await apoyo.PrepararAsync(nameof(UnaReferenciaQueNoEsUnIdPosibleDa400));
 
-        var respuesta = await PostAsync(e.Admin, idReferencia, 5);
+        var respuesta = await PostPrevisualizarAsync(e.Admin, idReferencia, 5);
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         Assert.Equal("id_articulo_referencia_requerido", (await ProblemaAsync(respuesta)).Codigo);
@@ -472,17 +450,124 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         var referencia = (await apoyo.SembrarArticuloAsync(e, "ref", ValoresBase(e)));
 
         var cien = Enumerable.Range(900_000_001, 100).ToArray();
-        var admitido = await LeerAsync(await PostAsync(e.Admin, referencia, [.. cien, .. cien, referencia]));
+        var admitido = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, referencia, [.. cien, .. cien, referencia]));
         Assert.Equal(100, admitido.Problemas.Count);
 
-        var demasiados = await PostAsync(e.Admin, referencia, [.. cien, 900_000_101]);
+        var demasiados = await PostPrevisualizarAsync(e.Admin, referencia, [.. cien, 900_000_101]);
         Assert.Equal(HttpStatusCode.BadRequest, demasiados.StatusCode);
         Assert.Equal("demasiados_articulos", (await ProblemaAsync(demasiados)).Codigo);
 
         var sinLista = await e.Admin.PostAsJsonAsync(
             "/api/familias/previsualizacion", new { idArticuloReferencia = referencia }, OpcionesJson);
-        var vacia = await LeerAsync(sinLista);
+        var vacia = await LeerPrevisualizacionAsync(sinLista);
         Assert.Empty(vacia.Articulos);
         Assert.Empty(vacia.Problemas);
+    }
+
+    // =================================================================================================
+    // Los catálogos de la referencia y los ids colgantes
+    // =================================================================================================
+
+    /// <summary>Un catálogo del artículo de referencia dado de baja es un problema —<c>referencia_invalida</c> con el
+    /// mensaje de la edición de artículos, atribuido a la referencia—, uno por catálogo y en el orden en que los chequea el
+    /// pedido real. Y un id de catálogo que apunta a una fila dada de baja viaja como <c>null</c>, igual que en el detalle
+    /// de la familia: en los valores de la referencia (<c>nuevo</c>, con la alícuota tal cual está guardada, que no se
+    /// anula) y en los del destino (<c>actual</c>, donde el área y el proveedor están dados de baja y la categoría y el
+    /// grupo, vivos, viajan con su id). La columna cuyo id colgante difiere del de la referencia figura en
+    /// <c>campos</c>. La referencia es la de una familia, así que <c>nuevo</c> es lo mismo que <c>valores</c> del detalle de
+    /// esa familia.</summary>
+    [Fact]
+    public async Task UnCatalogoDeLaReferenciaDadoDeBajaEsUnProblemaYLosIdsColgantesViajanComoNull()
+    {
+        var s = await SembrarCatalogosAsync(
+            apoyo, nameof(UnCatalogoDeLaReferenciaDadoDeBajaEsUnProblemaYLosIdsColgantesViajanComoNull), enFamilia: true);
+        using var e = s.E;
+        await DarDeBajaLosCatalogosAsync(apoyo, s, Catalogos, delDestino: ["area", "proveedor"]);
+
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, s.Referencia, s.Destino));
+
+        Assert.Equal(
+            Catalogos.Select(catalogo => new ProblemaDeAgrupacion(
+                "referencia_invalida", MensajeDeCatalogoInexistente(catalogo, s.IdDeLaReferencia(catalogo)), s.Referencia, null)),
+            previa.Problemas);
+        Assert.Equal(s.Familia, previa.IdFamilia);
+
+        var cambios = Assert.Single(previa.Articulos);
+        Assert.Equal(
+            ["id_area", "id_categoria", "id_grupo", "id_proveedor_habitual", "id_alicuota_iva"], cambios.Campos);
+
+        var delDestino = ValoresBase(e) with
+        {
+            IdArea = e.Areas[1], IdCategoria = e.Categorias[1], IdGrupo = e.Grupos[1], IdProveedorHabitual = e.Proveedores[1],
+            IdAlicuotaIva = e.Alicuotas[1]
+        };
+        Assert.Equal(ComoLoLeeElCliente(delDestino) with { IdArea = null, IdProveedorHabitual = null }, cambios.Actual);
+
+        var deLaReferencia = ValoresBase(e) with { IdAlicuotaIva = s.Alicuota };
+        Assert.Equal(
+            ComoLoLeeElCliente(deLaReferencia) with
+            {
+                IdArea = null, IdCategoria = null, IdGrupo = null, IdProveedorHabitual = null
+            },
+            cambios.Nuevo);
+
+        var detalle = (await e.Admin.GetFromJsonAsync<FamiliaDetalle>($"/api/familias/{s.Familia}", OpcionesJson))!;
+        Assert.Equal(detalle.Valores, cambios.Nuevo);
+    }
+
+    // =================================================================================================
+    // Una familia dada de baja con un artículo adentro
+    // =================================================================================================
+
+    /// <summary>Un destino que pertenece a una familia DADA DE BAJA se informa igual, y el mensaje nombra la familia: los
+    /// nombres de las familias de los problemas se leen también de las dadas de baja. Con el filtro de baja lógica
+    /// puesto el mensaje nombraría el id.</summary>
+    [Fact]
+    public async Task UnDestinoDeUnaFamiliaDadaDeBajaSeInformaNombrandoLaFamilia()
+    {
+        var s = await SembrarAsync(nameof(UnDestinoDeUnaFamiliaDadaDeBajaSeInformaNombrandoLaFamilia));
+        using var e = s.E;
+        var vieja = await apoyo.SembrarFamiliaAsync(e, "Familia vieja");
+        var enLaVieja = await apoyo.SembrarArticuloAsync(e, "en-la-vieja", ValoresBase(e), vieja);
+        await apoyo.DarDeBajaAsync("familias", "id_familia", vieja);
+        var codigo = (await apoyo.LeerAsync(enLaVieja)).CodigoInterno;
+
+        var previa = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, s.Referencia, s.D2, enLaVieja));
+
+        var problema = Assert.Single(previa.Problemas);
+        Assert.Equal(
+            (
+                "articulo_en_otra_familia",
+                $"El artículo {codigo} ya pertenece a la familia \"Familia vieja\": hay que sacarlo de ella antes de agruparlo.",
+                (int?)enLaVieja
+            ),
+            (problema.Codigo, problema.Mensaje, problema.IdArticulo));
+    }
+
+    // =================================================================================================
+    // El tope de pares
+    // =================================================================================================
+
+    /// <summary>Con cincuenta listas fijas, veintiún destinos son 1050 pares: la previsualización lo informa como un
+    /// problema <c>demasiados_articulos</c>, sin atribuirlo a un artículo y con el mismo mensaje que daría el pedido real,
+    /// y sigue trayendo los cambios. Con veinte destinos, que son exactamente mil pares, no hay ningún problema.</summary>
+    [Fact]
+    public async Task MasDeMilParesSonUnProblemaYMilExactosNo()
+    {
+        var s = await SembrarParesAsync(apoyo, nameof(MasDeMilParesSonUnProblemaYMilExactosNo));
+        using var e = s.E;
+
+        var excedido = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, s.Referencia, [.. s.Destinos]));
+
+        var problema = Assert.Single(excedido.Problemas);
+        Assert.Equal(
+            ("demasiados_articulos", s.MensajeDeLosParesExcedidos, (int?)null, (int?)null),
+            (problema.Codigo, problema.Mensaje, problema.IdArticulo, problema.IdListaPrecio));
+        Assert.Equal(s.Destinos.Count, excedido.Articulos.Count);
+
+        var enElTope = await LeerPrevisualizacionAsync(
+            await PostPrevisualizarAsync(e.Admin, s.Referencia, [.. s.Destinos.Take(EscenarioDeLosPares.DestinosEnElTope)]));
+
+        Assert.Empty(enElTope.Problemas);
     }
 }

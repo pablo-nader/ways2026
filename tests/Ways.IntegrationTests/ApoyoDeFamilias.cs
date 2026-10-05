@@ -167,6 +167,11 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         IdAlicuotaIva: e.Alicuotas[0], UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true,
         ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
 
+    /// <summary>Los trece valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
+    /// ningún id de catálogo: para las pruebas cuyos ids apuntan a filas vivas.</summary>
+    public static ValoresCompartidosDeLaFamilia ComoLoLeeElCliente(ValoresCompartidosDeFamilia valores) =>
+        ValoresCompartidosDeLaFamilia.De(valores);
+
     /// <summary>Los valores de <see cref="ValoresBase"/> con UN solo campo (el que nombra
     /// <paramref name="columna"/>, con el nombre de la columna de <c>articulos</c>) cambiado a otro valor
     /// válido.</summary>
@@ -295,6 +300,32 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         await SembrarPrecioAsync(e, idArticulo, idLista, montoPendiente, desdePendiente, null);
 
         return desdePendiente;
+    }
+
+    /// <summary>Una alícuota de IVA más, con un nombre único. La tabla es global —la define la plataforma—: las dos que
+    /// usa <see cref="Entorno.Alicuotas"/> son de todos los tenants y una prueba no las da de baja; la que necesita una
+    /// alícuota dada de baja siembra la suya.</summary>
+    public async Task<int> SembrarAlicuotaAsync(string prefijo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var alicuota = new AlicuotaIva
+        {
+            Nombre = $"{prefijo}-{Guid.NewGuid().ToString("N")[..8]}", Porcentaje = 7m, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.AlicuotasIva.Add(alicuota);
+        await db.SaveChangesAsync();
+
+        return alicuota.Id;
+    }
+
+    /// <summary>El nombre de una lista de precios, que los mensajes de la alineación nombran.</summary>
+    public async Task<string> NombreDeListaAsync(int idLista)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.ListasPrecio.IgnoreQueryFilters().Where(l => l.Id == idLista).Select(l => l.Nombre).SingleAsync();
     }
 
     /// <summary>Una lista de precios <c>fija</c> más del tenant, sin ningún precio.</summary>
@@ -446,7 +477,8 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         var auditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, new RelojDelSistema(), contexto);
 
         return new ServicioDeAgrupacionDeFamilias(
-            db, reloj, contexto, new ServicioDePrecios(db, reloj, contexto, auditoria), new ServicioDeLotes(db, reloj, contexto));
+            db, reloj, contexto, new ServicioDePrecios(db, reloj, contexto, auditoria), new ServicioDeLotes(db, reloj, contexto),
+            new GuardaDeReferencias(db, new InspectorDeUso(db)));
     }
 
     /// <summary>Un reloj que cuenta cuántas veces se lo lee y devuelve un instante distinto en cada lectura (un segundo

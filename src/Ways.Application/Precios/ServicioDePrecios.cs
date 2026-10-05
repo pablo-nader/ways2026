@@ -383,7 +383,8 @@ public class ServicioDePrecios(
 
     /// <summary>El estado de precios a <paramref name="ahora"/> (<see cref="EstadoDePrecios.De"/>) de cada par
     /// (artículo, lista) del producto cartesiano de los ids pedidos, en UNA consulta. Un par sin ninguna fila tiene el
-    /// estado vacío. Solo lectura, sin rastreo.</summary>
+    /// estado vacío. La consulta pide solo las filas que pueden ser el vigente o el pendiente —abiertas, o cerradas a
+    /// futuro—: la historia cerrada no cambia el estado y crece con cada cambio de precio. Solo lectura, sin rastreo.</summary>
     private async Task<Dictionary<(int IdArticulo, int IdListaPrecio), EstadoDePrecios>> LeerEstadosAsync(
         IReadOnlyList<int> idsArticulo, IReadOnlyList<int> idsLista, DateTimeOffset ahora, CancellationToken ct)
     {
@@ -392,7 +393,8 @@ public class ServicioDePrecios(
 
         var filas = await db.Precios
             .AsNoTracking()
-            .Where(p => articulos.Contains(p.IdArticulo) && listas.Contains(p.IdListaPrecio))
+            .Where(p => articulos.Contains(p.IdArticulo) && listas.Contains(p.IdListaPrecio)
+                && (p.VigenteHasta == null || p.VigenteHasta > ahora))
             .Select(p => new { p.IdArticulo, p.IdListaPrecio, p.Monto, p.VigenteDesde, p.VigenteHasta })
             .ToListAsync(ct);
 
@@ -433,9 +435,11 @@ public class ServicioDePrecios(
     /// <summary>
     /// FASE 2 de la alineación de precios de una familia: escribe lo que <see cref="PlanificarAlineacionAsync"/>
     /// planificó, sin volver a leer nada. Es una precondición del llamador que el plan no tenga rechazos
-    /// (<see cref="PlanDeAlineacionDePrecios.PrimerRechazo"/> es <c>null</c>), que "ahora" sea el mismo con que se
-    /// planificó y que tenga tomados los locks de los pares: dentro de SU transacción y con SU
-    /// <c>SaveChangesAsync</c>, que guarda las filas y su auditoría juntas.
+    /// (<see cref="PlanDeAlineacionDePrecios.PrimerRechazo"/> es <c>null</c>): con un plan que tiene alguno falla fuerte
+    /// con <see cref="InvalidOperationException"/> antes de escribir nada, en vez de escribir solo los pares que se
+    /// alinean y dejar los rechazados sin avisar. También son del llamador, y este método no los puede comprobar, que
+    /// "ahora" sea el mismo con que se planificó y que tenga tomados los locks de los pares, dentro de SU transacción y
+    /// con SU <c>SaveChangesAsync</c>, que guarda las filas y su auditoría juntas.
     ///
     /// <para>Mismas reglas de cierre que un cambio de precio, par por par y solo para los que se alinean: se cierra la fila
     /// abierta del destino y, si era pendiente, se re-cierra su predecesor
@@ -450,6 +454,12 @@ public class ServicioDePrecios(
     internal async Task EscribirAlineacionAsync(
         PlanDeAlineacionDePrecios plan, int idTenant, DateTimeOffset ahora, CancellationToken ct)
     {
+        if (plan.PrimerRechazo is not null)
+        {
+            throw new InvalidOperationException(
+                "EscribirAlineacionAsync recibió un plan con rechazos: el llamador tiene que rechazar el pedido antes de escribir.");
+        }
+
         var aAlinear = plan.Pares.Where(par => par.Resolucion == ResolucionDeAlineacionDePrecios.Alinear).ToList();
 
         foreach (var par in aAlinear)

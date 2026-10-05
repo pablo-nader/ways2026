@@ -87,8 +87,8 @@ public class FamiliasAgruparTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var estadoDeLaReferencia = new EstadoDePrecios(100m, new PrecioPendiente(130m, s.V));
         var d1 = resultado.Articulos[0];
         Assert.Equal(CamposDeD1, d1.Campos);
-        Assert.Equal(ValoresCompartidosDeFamilia.De(d1Antes), d1.Actual);
-        Assert.Equal(valoresDeLaReferencia, d1.Nuevo);
+        Assert.Equal(ComoLoLeeElCliente(ValoresCompartidosDeFamilia.De(d1Antes)), d1.Actual);
+        Assert.Equal(ComoLoLeeElCliente(valoresDeLaReferencia), d1.Nuevo);
         Assert.Equal(
             [
                 new CambioDePreciosDeLista(general, new EstadoDePrecios(90m, null), estadoDeLaReferencia),
@@ -98,12 +98,12 @@ public class FamiliasAgruparTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var d2 = resultado.Articulos[1];
         Assert.Empty(d2.Campos);
-        Assert.Equal(valoresDeLaReferencia, d2.Actual);
+        Assert.Equal(ComoLoLeeElCliente(valoresDeLaReferencia), d2.Actual);
         Assert.Empty(d2.Precios);
 
         var d3 = resultado.Articulos[2];
         Assert.Equal(CamposDeD3, d3.Campos);
-        Assert.Equal(ValoresCompartidosDeFamilia.De(d3Antes), d3.Actual);
+        Assert.Equal(ComoLoLeeElCliente(ValoresCompartidosDeFamilia.De(d3Antes)), d3.Actual);
         Assert.Equal(
             [
                 new CambioDePreciosDeLista(general, EstadoDePrecios.Vacio, estadoDeLaReferencia),
@@ -473,5 +473,122 @@ public class FamiliasAgruparTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Null(despues.IdFamilia);
         Assert.Equal(perdedoraAntes.UpdatedAt, despues.UpdatedAt);
         Assert.Equal(ganadora.IdFamilia, (await apoyo.LeerAsync(ganadora.IdArticuloReferencia)).IdFamilia);
+    }
+
+    /// <summary>Un destino que pertenece a una familia DADA DE BAJA se rechaza igual y el mensaje nombra la familia: los
+    /// nombres de las familias que nombra el rechazo se leen también de las dadas de baja (lo que quedó apuntando a ella
+    /// es un dato heredado: la baja de una familia con miembros no pasa por la API). Con el filtro de baja lógica puesto el
+    /// mensaje nombraría el id.</summary>
+    [Fact]
+    public async Task UnDestinoDeUnaFamiliaDadaDeBajaSeRechazaNombrandoLaFamilia()
+    {
+        var s = await SembrarAsync(apoyo, nameof(UnDestinoDeUnaFamiliaDadaDeBajaSeRechazaNombrandoLaFamilia));
+        using var e = s.E;
+        var vieja = await apoyo.SembrarFamiliaAsync(e, "Familia vieja");
+        var enLaVieja = await apoyo.SembrarArticuloAsync(e, "en-la-vieja", ValoresBase(e), vieja);
+        await apoyo.DarDeBajaAsync("familias", "id_familia", vieja);
+        var codigo = (await apoyo.LeerAsync(enLaVieja)).CodigoInterno;
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, e, [.. s.TodosLosArticulos, enLaVieja], s.ListasFijas);
+
+        var respuesta = await PostCrearAsync(e.Admin, "Nueva", s.Referencia, s.D1, enLaVieja);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal(
+            (
+                "articulo_en_otra_familia",
+                $"El artículo {codigo} ya pertenece a la familia \"Familia vieja\": hay que sacarlo de ella antes de agruparlo."
+            ),
+            await ProblemaAsync(respuesta));
+        Assert.Equal(antes, await FotoDeLaBaseAsync(fixture, apoyo, e, [.. s.TodosLosArticulos, enLaVieja], s.ListasFijas));
+    }
+
+    // =================================================================================================
+    // Una referencia sin precio vigente
+    // =================================================================================================
+
+    /// <summary>Con una referencia que solo tiene un precio PROGRAMADO, crear la familia escribe su programado en el
+    /// destino que no tiene precios y en el que tiene uno programado propio (que queda cerrado en su propio inicio) y no
+    /// toca al ya idéntico, con la auditoría y un solo "ahora".</summary>
+    [Fact]
+    public async Task CrearConUnaReferenciaSoloProgramadaEscribeSuPendienteEnLosDestinosQueSeAlinean()
+    {
+        var s = await SembrarProgramadosAsync(apoyo, nameof(CrearConUnaReferenciaSoloProgramadaEscribeSuPendienteEnLosDestinosQueSeAlinean));
+        using var e = s.E;
+
+        await AfirmarLaEscrituraDeUnaReferenciaSoloProgramadaAsync(
+            apoyo, s, ids => PostCrearAsync(e.Admin, "Programados", s.Referencia, ids), HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CrearConUnaReferenciaSoloProgramadaRechazaLosParesQueNoSePuedenAlinearYNoEscribeNada()
+    {
+        var s = await SembrarProgramadosAsync(
+            apoyo, nameof(CrearConUnaReferenciaSoloProgramadaRechazaLosParesQueNoSePuedenAlinearYNoEscribeNada));
+        using var e = s.E;
+
+        await AfirmarLosRechazosDeLaAlineacionDeUnaReferenciaSoloProgramadaAsync(
+            fixture, apoyo, s, ids => PostCrearAsync(e.Admin, "Nueva", s.Referencia, ids));
+    }
+
+    // =================================================================================================
+    // Los catálogos de la referencia
+    // =================================================================================================
+
+    /// <summary>Un catálogo del artículo de referencia dado de baja —con los artículos todavía apuntándole— se rechaza con
+    /// 400 <c>referencia_invalida</c> y el mismo mensaje que da la edición de un artículo con ese id, y no escribe nada.
+    /// Una fila por catálogo, y en cada una ese catálogo y todos los que lo siguen en el orden de los chequeos están dados
+    /// de baja: el pedido da el mensaje del PRIMERO, así que borrar o permutar cualquiera de los cinco chequeos cambia
+    /// el mensaje de alguna fila. La alícuota de IVA es una propia de la prueba.</summary>
+    [Theory]
+    [InlineData("alicuota")]
+    [InlineData("area")]
+    [InlineData("categoria")]
+    [InlineData("grupo")]
+    [InlineData("proveedor")]
+    public async Task UnCatalogoDeLaReferenciaDadoDeBajaDa400ConElMensajeDeLaEdicionYNoEscribeNada(string primerMuerto)
+    {
+        var s = await SembrarCatalogosAsync(apoyo, nameof(UnCatalogoDeLaReferenciaDadoDeBajaDa400ConElMensajeDeLaEdicionYNoEscribeNada));
+        using var e = s.E;
+        await DarDeBajaLosCatalogosAsync(apoyo, s, Catalogos.SkipWhile(c => c != primerMuerto));
+        var idMuerto = s.IdDeLaReferencia(primerMuerto);
+        var listas = new[] { e.IdListaGeneral, e.IdListaMayorista };
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, listas);
+
+        var respuesta = await PostCrearAsync(e.Admin, "Nueva", s.Referencia, s.Destino);
+
+        var mensaje = MensajeDeCatalogoInexistente(primerMuerto, idMuerto);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(("referencia_invalida", mensaje), await ProblemaAsync(respuesta));
+        Assert.Equal(
+            (HttpStatusCode.BadRequest, "referencia_invalida", mensaje),
+            await LoQueDiceLaEdicionAsync(apoyo, e, s.Destino, primerMuerto, idMuerto));
+        Assert.Equal(antes, await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, listas));
+    }
+
+    // =================================================================================================
+    // El tope de pares
+    // =================================================================================================
+
+    /// <summary>El tope de pares artículo-lista fija acota los locks que el pedido sostiene: con cincuenta listas fijas, veinte
+    /// destinos son mil pares y se aceptan (se toman los mil locks de par y la familia se crea), y veintiuno son 1050 y dan
+    /// 400 <c>demasiados_articulos</c> con el mensaje exacto, sin escribir nada. Cada destino cabe en el tope de artículos:
+    /// lo que se rechaza son los pares.</summary>
+    [Fact]
+    public async Task CrearAdmiteMilParesYRechazaMilUnoSinEscribirNada()
+    {
+        var s = await SembrarParesAsync(apoyo, nameof(CrearAdmiteMilParesYRechazaMilUnoSinEscribirNada));
+        using var e = s.E;
+        var antes = await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, s.ListasFijas);
+
+        var respuesta = await PostCrearAsync(e.Admin, "Nueva", s.Referencia, [.. s.Destinos]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(("demasiados_articulos", s.MensajeDeLosParesExcedidos), await ProblemaAsync(respuesta));
+        Assert.Equal(antes, await FotoDeLaBaseAsync(fixture, apoyo, e, s.TodosLosArticulos, s.ListasFijas));
+
+        var aceptado = await LeerResultadoAsync(
+            await PostCrearAsync(e.Admin, "Nueva", s.Referencia, [.. s.Destinos.Take(EscenarioDeLosPares.DestinosEnElTope)]), HttpStatusCode.Created);
+
+        Assert.Equal(EscenarioDeLosPares.DestinosEnElTope, aceptado.Articulos.Count);
     }
 }
