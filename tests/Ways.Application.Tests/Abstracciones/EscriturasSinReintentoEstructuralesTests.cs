@@ -102,6 +102,12 @@ public class EscriturasSinReintentoEstructuralesTests
         // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
         // ServicioDeArticulos.ActualizarAsync.
         { "Ways.Application/Familias/ServicioDeFamilias.cs", "ActualizarAsync" },
+
+        // Sacar un artículo de su familia y disolverla: cambian la pertenencia bajo el lock de membresía exclusivo.
+        // Disolver, además, no encontraría la familia ya dada de baja en un reintento tras un commit ambiguo y
+        // respondería 404 a una disolución que sí tuvo éxito, el mismo criterio que la baja de una oferta.
+        { "Ways.Application/Familias/ServicioDeFamilias.cs", "SacarArticuloAsync" },
+        { "Ways.Application/Familias/ServicioDeFamilias.cs", "DisolverAsync" },
     };
 
     /// <summary>

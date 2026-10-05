@@ -103,7 +103,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var registro = new InterceptorQueRegistraSentencias();
         await using var db = apoyo.ContextoDelTenant(e, registro);
 
-        var listado = await ServicioDe(db).ListarAsync();
+        var listado = await ServicioDe(db, e).ListarAsync();
 
         Assert.Equal(["Alfa", "Zeta"], listado.Select(f => f.Nombre));
         var consulta = Assert.Single(registro.Sentencias, s => s.Contains("FROM familias", StringComparison.Ordinal));
@@ -123,7 +123,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var registro = new InterceptorQueRegistraSentencias();
         await using var db = apoyo.ContextoDelTenant(e, registro);
 
-        var detalle = await ServicioDe(db).ObtenerAsync(familia);
+        var detalle = await ServicioDe(db, e).ObtenerAsync(familia);
 
         Assert.Equal(
             new[] { e.IdListaGeneral, e.IdListaMayorista }.Order(), detalle.Precios.Select(p => p.IdListaPrecio));

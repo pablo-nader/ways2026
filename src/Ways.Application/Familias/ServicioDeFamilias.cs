@@ -1,4 +1,7 @@
+using System.Data;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
 using Ways.Domain.Articulos;
@@ -10,14 +13,21 @@ namespace Ways.Application.Familias;
 
 /// <summary>
 /// Gestión de familias de artículos (doc 10 §3, "Familias de artículos"): las lecturas —listar las familias y leer
-/// una— y la edición de su nombre y de su estado. Autorización: <c>Politicas.GestionDeCatalogo</c> aplicada en la
+/// una—, la edición de su nombre y de su estado, y los dos cambios de pertenencia que solo sacan miembros: sacar un
+/// artículo de su familia y disolver la familia. Autorización: <c>Politicas.GestionDeCatalogo</c> aplicada en la
 /// capa de API, la misma puerta que el alta y la edición de artículos.
 ///
 /// <para>Las lecturas no toman locks: la familia, sus miembros y los precios de la referencia salen de consultas
 /// separadas, así que una escritura concurrente puede mostrarlos en momentos distintos. Lo que sostiene la
 /// invariante de la familia son los escritores, no estas lecturas.</para>
+///
+/// <para>Sacar un artículo y disolver cambian la pertenencia: toman el lock de membresía EXCLUSIVO como primera
+/// sentencia de su transacción (<see cref="LockDeMembresiaDeFamilias"/>), así que ningún otro escritor de familias
+/// está a mitad de camino mientras ellos escriben. Ninguno cambia un campo compartido ni un precio: lo que sale de la
+/// familia conserva todos sus valores.</para>
 /// </summary>
-public class ServicioDeFamilias(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+public class ServicioDeFamilias(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, GuardaDeReferencias guarda)
 {
     /// <summary>El tope del nombre: la columna <c>familias.nombre</c> es <c>citext</c> de 150, como
     /// <c>articulos.nombre</c>.</summary>
@@ -143,6 +153,158 @@ public class ServicioDeFamilias(IWaysDbContext db, IRelojDelSistema reloj, Guard
         }
 
         return new FamiliaListado(id, nombre, activo, await db.Articulos.CountAsync(a => a.IdFamilia == id, ct));
+    }
+
+    /// <summary>
+    /// Saca a un artículo de su familia: queda sin familia (<c>id_familia = NULL</c>) y conserva todos sus valores —los
+    /// campos compartidos, los propios y sus precios—, que son los de la familia en el momento de salir. Los demás
+    /// miembros no cambian. <c>404</c> si la familia no existe o está dada de baja, o si el artículo no existe o está
+    /// dado de baja (también los de otro tenant); <c>409 familia_cambio</c> si el artículo existe pero no es miembro de
+    /// esa familia —el cliente tiene que recargar—.
+    ///
+    /// <para>Salir cambia la pertenencia: el lock de membresía EXCLUSIVO es la primera sentencia de la transacción y
+    /// todo lo demás ocurre bajo él. Comprobada la existencia de la familia y del artículo, la fila del artículo se
+    /// bloquea <c>FOR NO KEY UPDATE</c> guardada por la familia pedida y por la baja lógica (paso (2) del protocolo,
+    /// <see cref="MembresiaDeFamilias.BloquearFilaDelArticuloAsync"/>): si el artículo no es miembro de esa familia, o
+    /// otra escritura lo cambió o lo dio de baja mientras se esperaba el lock, es <c>familia_cambio</c> y no se escribe
+    /// nada. Recién entonces se escribe, con un solo "ahora". Sin reintento, y es todo o nada: una sola
+    /// transacción.</para>
+    /// </summary>
+    public async Task SacarArticuloAsync(int idFamilia, int idArticulo, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            var conexion = await ObtenerConexionAbiertaAsync(ct);
+            var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+            await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
+
+            if (!await db.Familias.AnyAsync(f => f.Id == idFamilia, ct))
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la familia {idFamilia}.");
+            }
+
+            // Solo para el 404 de un artículo que no existe o está dado de baja: el valor que devuelve no se usa. La
+            // pertenencia no se decide acá sino en el bloqueo de abajo, que la comprueba contra la familia pedida bajo
+            // el lock de la fila.
+            await MembresiaDeFamilias.LeerIdFamiliaAsync(conexion, transaccionCruda, idArticulo, idTenant, ct);
+
+            await MembresiaDeFamilias.BloquearFilaDelArticuloAsync(
+                conexion, transaccionCruda, idArticulo, idFamilia, idTenant, ct);
+
+            await DesvincularArticulosAsync(conexion, transaccionCruda, [idArticulo], idTenant, reloj.Ahora, ct);
+
+            await transaccion.CommitAsync(ct);
+        });
+    }
+
+    /// <summary>
+    /// Disuelve la familia: todos sus miembros vivos quedan sin familia (<c>id_familia = NULL</c>, con todos sus
+    /// valores) y la familia se da de baja, en una sola transacción y con un solo "ahora". Los artículos dados de baja
+    /// no cuentan como miembros y conservan su <c>id_familia</c>, igual que antes. <c>404</c> si la familia no existe o
+    /// ya está dada de baja (también la de otro tenant). El nombre de una familia disuelta se puede reutilizar.
+    ///
+    /// <para>Cambia la pertenencia de todos los miembros, así que toma, en el orden global de los locks de las
+    /// familias, el lock de membresía EXCLUSIVO como primera sentencia, la fila de la familia (<c>FOR UPDATE</c>, antes
+    /// de leerla: la familia se lee UNA sola vez, bajo ese lock) y las filas de los miembros vivos ascendentes por id
+    /// (<see cref="MembresiaDeFamilias.BloquearMiembrosAsync"/>, que reevalúa la baja lógica bajo el lock de cada
+    /// fila). La escritura alcanza solo a las filas bloqueadas. Sin reintento (<c>ef-retry-safe-writes</c>, forma
+    /// (b): un reintento tras un commit ambiguo no encontraría la familia ya dada de baja y respondería <c>404</c> a
+    /// una disolución que sí tuvo éxito); lo que la operación dejó rastreado se suelta si falla.</para>
+    /// </summary>
+    public async Task DisolverAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        // Antes de la primera lectura: lo que esta operación deje rastreado se suelta si falla.
+        var yaRastreadas = RastreoDeEntidades.Instantanea(db);
+
+        try
+        {
+            await estrategia.ExecuteAsync(async () =>
+            {
+                await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+                var conexion = await ObtenerConexionAbiertaAsync(ct);
+                var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+                await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
+
+                await guarda.BloquearFilaAsync<Familia>(id, ct);
+
+                // La ÚNICA lectura de la familia, nacida bajo los dos locks: el filtro de baja lógica deja afuera a una
+                // familia que otra disolución dio de baja mientras se esperaba.
+                var familia = await db.Familias.FirstOrDefaultAsync(f => f.Id == id, ct)
+                    ?? throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
+
+                var miembros = await MembresiaDeFamilias.BloquearMiembrosAsync(conexion, transaccionCruda, id, idTenant, ct);
+
+                var ahora = reloj.Ahora;
+
+                await DesvincularArticulosAsync(conexion, transaccionCruda, miembros, idTenant, ahora, ct);
+
+                familia.DeletedAt = ahora;
+                familia.UpdatedAt = ahora;
+
+                await db.SaveChangesAsync(ct);
+                await transaccion.CommitAsync(ct);
+            });
+        }
+        catch
+        {
+            RastreoDeEntidades.SoltarLoAgregadoDesde(db, yaRastreadas);
+            throw;
+        }
+    }
+
+    /// <summary>Deja sin familia a los artículos <paramref name="idsBloqueados"/> —sus filas ya bloqueadas por quien
+    /// llama—, con <paramref name="ahora"/> como <c>updated_at</c>. <c>UPDATE</c> crudo por clave sobre exactamente
+    /// esas filas: no mira la familia ni la baja lógica, que el bloqueo ya verificó. Con una lista vacía no emite
+    /// ninguna sentencia.</summary>
+    private static async Task DesvincularArticulosAsync(
+        DbConnection conexion, DbTransaction? transaccion, IReadOnlyList<int> idsBloqueados, int idTenant,
+        DateTimeOffset ahora, CancellationToken ct)
+    {
+        if (idsBloqueados.Count == 0)
+        {
+            return;
+        }
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE articulos SET id_familia = NULL, updated_at = $1 WHERE id_articulo = ANY($2) AND id_tenant = $3";
+
+        ParametrosDeComando.Agregar(comando, ahora);
+        ParametrosDeComando.Agregar(comando, idsBloqueados.ToArray());
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private int ExigirTenantDeLaSesion() =>
+        contexto.IdTenant
+            // GestionDeCatalogo (capa de API) ya exige admin de tenant: un actor de plataforma nunca llega hasta
+            // acá. Defensa en profundidad, no un camino alcanzable en operación normal.
+            ?? throw new InvalidOperationException(
+                "ServicioDeFamilias requiere un actor de tenant; GestionDeCatalogo es admin-only.");
+
+    private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        return conexion;
     }
 
     /// <summary>Pre-chequeo best-effort del nombre (<c>db-error-backstops</c>): el contrato real es

@@ -453,7 +453,7 @@ public class FamiliasActualizacionTests(WaysApiFixture fixture) : IClassFixture<
     {
         var db = fixture.CrearContextoDeAplicacionConReintentos(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant), interceptores);
 
-        return (db, ServicioDe(db));
+        return (db, ServicioDe(db, e));
     }
 
     /// <summary>La edición no se reintenta ante un fallo transitorio: el contexto es el de la API, con

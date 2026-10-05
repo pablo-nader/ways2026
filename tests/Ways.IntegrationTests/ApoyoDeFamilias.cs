@@ -431,8 +431,18 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
 
     /// <summary>El servicio de familias armado a mano sobre <paramref name="db"/> —con el reloj real y las
     /// dependencias que tiene en producción—, para las pruebas que lo llaman sin pasar por HTTP.</summary>
-    public static ServicioDeFamilias ServicioDe(WaysDbContext db) =>
-        new(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
+    public static ServicioDeFamilias ServicioDe(WaysDbContext db, Entorno e) =>
+        new(db, new RelojDelSistema(), new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin), new GuardaDeReferencias(db, new InspectorDeUso(db)));
+
+    /// <summary>El actor de las pruebas que arman un servicio a mano: el administrador del tenant.</summary>
+    private sealed class ContextoDeAdmin(int idTenant, int idUsuario) : IContextoDeUsuario
+    {
+        public bool EstaAutenticado => true;
+        public int UsuarioId => idUsuario;
+        public string NombreUsuario => "admin-de-prueba";
+        public RolConocido Rol => RolConocido.Admin;
+        public int? IdTenant => idTenant;
+    }
 
     // =================================================================================================
     // Pedidos HTTP

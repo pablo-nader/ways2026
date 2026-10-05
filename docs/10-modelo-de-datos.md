@@ -350,10 +350,12 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 > familias"). La **baja lógica** de un artículo también cambia quién es miembro (`deleted_at`) y no sigue ese
 > protocolo: no toma el lock de membresía sino el `FOR UPDATE` de la fila del artículo, y los escritores que
 > bloquean miembros reevalúan `deleted_at IS NULL` sobre cada fila bajo su propio lock de fila, así que un
-> miembro dado de baja a mitad de camino queda fuera de lo que escriben. Todavía no hay endpoint para crear
-> una familia ni para mover un artículo de una familia a otra: la pertenencia se siembra por base, y el alta
-> de un artículo con `idFamilia` es el único camino de la API que agrega un miembro a una familia que ya
-> existe.
+> miembro dado de baja a mitad de camino queda fuera de lo que escriben. Otras dos operaciones de gestión solo
+> SACAN miembros y siguen el protocolo con el lock de membresía exclusivo: **sacar un artículo de su familia** y
+> **disolver la familia** ("Gestión de familias"); ninguna cambia un campo compartido ni un precio. Todavía no hay
+> endpoint para crear una familia ni para agregarle un artículo que ya existe: la pertenencia se siembra por base,
+> y el alta de un artículo con `idFamilia` es el único camino de la API que agrega un miembro a una familia que
+> ya existe.
 
 | | Campos |
 |---|---|
@@ -499,10 +501,24 @@ no toman locks.
   vez, después de su `FOR UPDATE`; una familia dada de baja mientras esperaba ese lock da `404` y no se escribe nada.
   No toma el lock de membresía ni bloquea filas de artículos. Escribe la fila de la familia, que el alta de un
   artículo con `idFamilia` lee `FOR SHARE`: un cambio de `activo` en curso hace esperar a ese alta, que lo ve.
+- `DELETE /api/familias/{id}/articulos/{idArticulo}`: **saca** al artículo de la familia: queda sin familia
+  (`id_familia = NULL`) con todos sus valores —los compartidos, los propios y sus precios— y los demás miembros no
+  cambian. `204`. `404` si la familia no existe o está dada de baja, o si el artículo no existe o está dado de
+  baja (también los de otro tenant); `409 familia_cambio` si el artículo existe pero no es miembro de esa familia.
+  Es una transacción sin reintento: el lock de membresía exclusivo como primera sentencia y, bajo él, la fila del
+  artículo `FOR NO KEY UPDATE` guardada por la familia pedida y por la baja lógica. Una familia que se queda sin
+  miembros vivos sigue existiendo, vacía.
+- `DELETE /api/familias/{id}`: **disuelve** la familia: sus miembros vivos quedan sin familia con todos sus
+  valores y la familia se da de baja, en una sola transacción sin reintento y con un solo "ahora". Los artículos
+  dados de baja conservan su `id_familia`. `204`; `404` si la familia no existe o ya está dada de baja (también la
+  de otro tenant). Toma, en este orden, el lock de membresía exclusivo, la fila de la familia `FOR UPDATE` y las
+  filas de los miembros vivos, ascendentes y `FOR NO KEY UPDATE`; el nombre de la familia disuelta se puede
+  reutilizar.
 
-**Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
-orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
-`bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
+**Protocolo de locks.** Toda transacción que escribe campos compartidos o precios, o que cambia la
+pertenencia, toma, en este orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una
+clave `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este",
+el alta de un artículo con `idFamilia`, sacar un artículo y disolver la familia),
 como primera sentencia; (2) las **filas de `articulos`** de los miembros en orden ascendente de id
 (`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE`, nunca `FOR UPDATE` sobre varias filas: choca con
 el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del propio artículo; (3) los
@@ -530,8 +546,12 @@ precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
 exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
 artículo todavía no existe, y los locks de par del artículo nuevo al final) y la confirmación de una compra
 (`ServicioDeCompras.ConfirmarAsync`: compartido, antes del encabezado; las filas de los artículos con costo
-ascendentes después del stock; no toma locks de par, porque no escribe precios); todo escritor de campos
-compartidos tiene que respetarlo.
+ascendentes después del stock; no toma locks de par, porque no escribe precios) y las dos operaciones que solo
+sacan miembros (`ServicioDeFamilias.SacarArticuloAsync`: exclusivo y la fila del propio artículo, como "solo
+este"; `ServicioDeFamilias.DisolverAsync`: exclusivo, después la fila de la familia `FOR UPDATE`, que ningún
+otro escritor de este protocolo toma después de las filas de los artículos, y después las filas de los miembros;
+ninguna toma locks de par, porque no escribe precios); todo escritor de campos compartidos o de pertenencia tiene
+que respetarlo.
 
 ### Listas de precio, con historia
 

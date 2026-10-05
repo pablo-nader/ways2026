@@ -30,6 +30,25 @@ public static class FamiliasEndpoints
         .WithSummary(
             "Cambia el nombre y el estado (activo) de la familia. Una familia inactiva no admite artículos nuevos.");
 
+        grupo.MapDelete("/{id:int}/articulos/{idArticulo:int}", async (
+            ServicioDeFamilias servicio, int id, int idArticulo, CancellationToken ct) =>
+        {
+            await servicio.SacarArticuloAsync(id, idArticulo, ct);
+            return Results.NoContent();
+        })
+        .WithSummary(
+            "Saca un artículo de su familia: queda sin familia y conserva todos sus valores. 409 familia_cambio si "
+                + "el artículo no es miembro de esa familia.");
+
+        grupo.MapDelete("/{id:int}", async (ServicioDeFamilias servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.DisolverAsync(id, ct);
+            return Results.NoContent();
+        })
+        .WithSummary(
+            "Disuelve la familia: sus artículos vivos quedan sin familia, con todos sus valores, y la familia se "
+                + "da de baja.");
+
         return app;
     }
 }
