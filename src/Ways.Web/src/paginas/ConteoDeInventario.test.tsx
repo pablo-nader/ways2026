@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -495,5 +495,57 @@ describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ron
     // default que el servidor), nunca un dead-end.
     await waitFor(() => expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument())
     expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
+  })
+})
+
+describe('ConteoDeInventario — cantidad contada según la unidad de venta', () => {
+  function mockearConArticulo(unidadVenta: 'Unidad' | 'Peso') {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ unidadVenta })], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/stock?')) return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  it('un artículo por unidad cuenta de a uno (cero permitido) y no habilita contar una fracción', async () => {
+    mockearConArticulo('Unidad')
+    const usuario = userEvent.setup()
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('40')
+
+    const contada = screen.getByLabelText('Cantidad contada')
+    expect(contada).toHaveAttribute('step', '1')
+    expect(contada).toHaveAttribute('min', '0')
+
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento')
+    fireEvent.change(contada, { target: { value: '12.5' } })
+    expect(contada).toHaveClass('is-invalid')
+    expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Contar' })).toBeDisabled()
+
+    fireEvent.change(contada, { target: { value: '0' } })
+    expect(contada).not.toHaveClass('is-invalid')
+    expect(screen.getByRole('button', { name: 'Contar' })).toBeEnabled()
+  })
+
+  it('un artículo por peso conserva el paso de 0.001 y habilita contar una fracción', async () => {
+    mockearConArticulo('Peso')
+    const usuario = userEvent.setup()
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('40')
+
+    const contada = screen.getByLabelText('Cantidad contada')
+    expect(contada).toHaveAttribute('step', '0.001')
+
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento')
+    fireEvent.change(contada, { target: { value: '12.5' } })
+
+    expect(contada).not.toHaveClass('is-invalid')
+    expect(screen.getByRole('button', { name: 'Contar' })).toBeEnabled()
   })
 })

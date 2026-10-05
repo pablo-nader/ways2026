@@ -8,6 +8,7 @@ import {
   type LineaDeTransferenciaFormulario,
 } from '../api/stock'
 import { clienteDeArticulos } from '../api/articulos'
+import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia } from '../api/tipos'
@@ -211,6 +212,9 @@ type PropsFilaDeLinea = {
 }
 
 function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta, onCambio, onQuitar }: PropsFilaDeLinea) {
+  const restriccion = restriccionDeCantidad(linea.unidadVenta)
+  const fraccionEnUnidad = esFraccionDeArticuloPorUnidad(linea.unidadVenta, linea.cantidad)
+
   return (
     <tr className={repetida ? 'table-danger' : incompleta ? 'table-warning text-muted' : undefined}>
       <td style={{ minWidth: 220 }}>
@@ -222,20 +226,25 @@ function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta
               idArticulo: a.id,
               descripcion: a.nombre,
               controlaLote: a.controlaLote,
+              unidadVenta: a.unidadVenta,
               idLote: '',
               codigoLote: '',
             })
           }
         />
         {repetida && <div className="small text-danger">Artículo repetido en la transferencia.</div>}
-        {incompleta && !repetida && <div className="small text-warning-emphasis">Línea incompleta — no se va a transferir.</div>}
+        {incompleta && !repetida && (
+          <div className="small text-warning-emphasis">
+            {fraccionEnUnidad ? `${MENSAJE_DE_CANTIDAD_ENTERA} No se va a transferir.` : 'Línea incompleta — no se va a transferir.'}
+          </div>
+        )}
       </td>
       <td style={{ width: 120 }}>
         <input
           type="number"
-          step="0.001"
-          min="0"
-          className="form-control form-control-sm"
+          step={restriccion.step}
+          min={restriccion.min}
+          className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
           aria-label="Cantidad"
           value={linea.cantidad}
           disabled={disabled}

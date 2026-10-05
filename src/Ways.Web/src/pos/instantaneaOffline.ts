@@ -174,6 +174,7 @@ export function buscarArticuloOffline(instantanea: InstantaneaDePos, entradaCrud
     codigoBarra: entrada.objetivo === 'CodigoBarra' ? entrada.codigo : null,
     cantidad: entrada.cantidad,
     acumulaEnVenta: articulo.acumulaEnVenta ?? true,
+    unidadVenta: articulo.unidadVenta,
   }
 }
 

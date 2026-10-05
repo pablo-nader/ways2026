@@ -20,7 +20,7 @@ namespace Ways.Application.Precios;
 /// servidor acepta el ordinal además del nombre; <c>0</c> incluido) llega al servicio y se rechaza con
 /// <c>alcance_invalido</c> (400). Un texto que no se lee ni como el nombre de un valor ni como un
 /// ordinal no llega al servicio: lo rechaza el binding JSON del framework, igual que para cualquier
-/// otro enum de la API, sin pasar por <c>alcance_invalido</c>.</para></summary>
+/// otro enum de la API, con <c>cuerpo_invalido</c> (400) en vez de <c>alcance_invalido</c>.</para></summary>
 public record AltaPrecio(
     int IdListaPrecio, decimal Precio, bool ConfirmarReemplazo = false, AlcanceDeFamilia? Alcance = null);
 

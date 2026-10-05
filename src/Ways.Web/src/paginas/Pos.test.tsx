@@ -1844,6 +1844,29 @@ describe('Pos — el borrador sobrevive a un restart entero (stage-pos-borrador-
     await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
   })
 
+  it('una línea restaurada de un borrador anterior, sin unidad de venta, conserva el paso de 0.001 y admite fracciones; una con unidad por unidad pide enteros', async () => {
+    await persistirBorrador({
+      lineas: [
+        { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1.5 },
+        { idArticulo: 2, codigoInterno: 'A0002', nombre: 'Fanta 1.5L', codigoBarra: null, cantidad: 2, unidadVenta: 'Unidad' },
+      ],
+      cantidadesEnEdicion: {},
+      filasPago: [{ id: 1, idMedioPago: '', importe: null, referencia: '', vueltoManual: null }],
+      proximoIdFilaPago: 2,
+      clienteSeleccionado: consumidorFinal,
+    })
+
+    render(arbolDePosConAuthYBorrador())
+
+    const sinUnidad = await screen.findByLabelText('Cantidad de Coca Cola 1L')
+    expect(sinUnidad).toHaveValue(1.5)
+    expect(sinUnidad).toHaveAttribute('step', '0.001')
+    expect(sinUnidad).toHaveAttribute('min', '0.001')
+    const porUnidad = screen.getByLabelText('Cantidad de Fanta 1.5L')
+    expect(porUnidad).toHaveAttribute('step', '1')
+    expect(porUnidad).toHaveAttribute('min', '1')
+  })
+
   it('una fila de pago restaurada con un medio que ya no existe monta sin romper y el panel queda usable', async () => {
     // El chequeo real de que ESTA fila se resetea a `idMedioPago: ''` (en vez de quedar con el id
     // huérfano 999) vive en `pagos.test.ts` (`filasConMedioInvalidoReseteado`, mutation-proof) —
@@ -2934,6 +2957,137 @@ describe('Pos — edición de cantidad', () => {
     fireEvent.blur(input)
 
     expect(input.value).toBe('1')
+  })
+})
+
+describe('Pos — cantidad según la unidad de venta', () => {
+  function mockearEscaneo(sobrescribir: Partial<ArticuloEscaneado>) {
+    mockearApiGet((ruta) =>
+      ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloEscaneadoFixture(sobrescribir)) : undefined,
+    )
+  }
+
+  async function escanearCocaCola() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  }
+
+  it('una línea de un artículo por unidad declara paso y mínimo 1, y ignora una fracción tipeada o pegada', async () => {
+    mockearEscaneo({ unidadVenta: 'Unidad' })
+    await escanearCocaCola()
+    const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
+    expect(input).toHaveAttribute('step', '1')
+    expect(input).toHaveAttribute('min', '1')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(input, { target: { value: '1.5' } })
+    expect(input.value).toBe('1.5')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAttribute('title', 'Este artículo se vende por unidad: la cantidad tiene que ser entera.')
+    await new Promise((resolver) => setTimeout(resolver, 350))
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+
+    fireEvent.blur(input)
+    expect(input.value).toBe('1')
+    expect(input).not.toHaveAttribute('aria-invalid')
+
+    fireEvent.change(input, { target: { value: '3' } })
+    expect(input).not.toHaveAttribute('aria-invalid')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+    fireEvent.blur(input)
+    expect(input.value).toBe('3')
+  })
+
+  it('una línea de un artículo por peso conserva el paso y el mínimo de 0.001 y admite fracciones', async () => {
+    mockearEscaneo({ unidadVenta: 'Peso' })
+    await escanearCocaCola()
+    const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
+    expect(input).toHaveAttribute('step', '0.001')
+    expect(input).toHaveAttribute('min', '0.001')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(input, { target: { value: '1.5' } })
+    expect(input).not.toHaveAttribute('aria-invalid')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+    fireEvent.blur(input)
+    expect(input.value).toBe('1.5')
+  })
+
+  it('un escaneo sin unidad de venta (servidor o instantánea anteriores) no bloquea una cantidad fraccionaria', async () => {
+    mockearEscaneo({ cantidad: 1.5 })
+    await escanearCocaCola()
+
+    const input = (await screen.findByLabelText('Cantidad de Coca Cola 1L')) as HTMLInputElement
+    expect(input).toHaveValue(1.5)
+    expect(input).toHaveAttribute('step', '0.001')
+    expect(screen.queryByText(/se vende por unidad/)).not.toBeInTheDocument()
+  })
+
+  it('una línea con cantidad fraccionaria a la que un reescaneo le completa la unidad "por unidad" queda inválida y no se puede cobrar', async () => {
+    await armarVentaLista()
+    const input = screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '1.5' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(screen.getByText('$ 150,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(input).not.toHaveClass('is-invalid')
+
+    mockearEscaneo({ unidadVenta: 'Unidad' })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    await waitFor(() => expect(input).toHaveValue(2.5))
+    expect(input).toHaveClass('is-invalid')
+    expect(input).toHaveAttribute('step', '1')
+    await waitFor(() => expect(screen.getByText('$ 250,00', { selector: 'strong' })).toBeInTheDocument())
+    const importe = screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.clear(importe)
+    await userEvent.type(importe, '250')
+
+    // Con la línea válida este mismo estado habilita "Cobrar" una vez que asienta la vista previa:
+    // se espera más que ese asiento para que el botón inerte no sea solo una carrera.
+    await expect(
+      waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled(), { timeout: 1500 }),
+    ).rejects.toThrow()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: '3' } })
+    await waitFor(() => expect(input).not.toHaveClass('is-invalid'))
+    await waitFor(() => expect(screen.getByText('$ 300,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.clear(importe)
+    await userEvent.type(importe, '300')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  })
+
+  it('un artículo por unidad que no acumula abre una línea por escaneo y cada una valida su propia cantidad', async () => {
+    mockearEscaneo({ unidadVenta: 'Unidad', acumulaEnVenta: false })
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    for (let i = 0; i < 2; i++) {
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(screen.getAllByLabelText('Cantidad de Coca Cola 1L')).toHaveLength(i + 1))
+    }
+    const [primera, segunda] = screen.getAllByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement[]
+    expect(primera).toHaveAttribute('step', '1')
+    expect(segunda).toHaveAttribute('step', '1')
+
+    fireEvent.change(segunda, { target: { value: '1.5' } })
+
+    expect(segunda).toHaveClass('is-invalid')
+    expect(primera).not.toHaveClass('is-invalid')
+    fireEvent.blur(segunda)
+    expect(segunda.value).toBe('1')
+    expect(primera.value).toBe('1')
+  })
+
+  it('escanear una fracción de un artículo por unidad no agrega la línea y avisa en el error del escaneo', async () => {
+    mockearEscaneo({ unidadVenta: 'Unidad', cantidad: 1.5 })
+    await escanearCocaCola()
+
+    expect(await screen.findByText('Este artículo se vende por unidad: la cantidad tiene que ser entera.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Cantidad de Coca Cola 1L')).not.toBeInTheDocument()
   })
 })
 

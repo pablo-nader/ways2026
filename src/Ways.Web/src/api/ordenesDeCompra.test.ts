@@ -150,6 +150,18 @@ describe('lineaDeOrdenCompletaParaEnvio', () => {
   it('artículo + cantidad positiva es completa, con o sin costo', () => {
     expect(lineaDeOrdenCompletaParaEnvio({ ...lineaDeOrdenVacia(1), idArticulo: 10, cantidadPedida: '5' })).toBe(true)
   })
+
+  it('una fracción es incompleta para un artículo por unidad y completa para uno por peso o sin unidad conocida', () => {
+    const base = { ...lineaDeOrdenVacia(1), idArticulo: 10, cantidadPedida: '2.5' }
+
+    expect(lineaDeOrdenCompletaParaEnvio({ ...base, unidadVenta: 'Unidad' })).toBe(false)
+    expect(lineaDeOrdenCompletaParaEnvio({ ...base, unidadVenta: 'Peso' })).toBe(true)
+    expect(lineaDeOrdenCompletaParaEnvio(base)).toBe(true)
+  })
+
+  it('un entero es completo para un artículo por unidad', () => {
+    expect(lineaDeOrdenCompletaParaEnvio({ ...lineaDeOrdenVacia(1), idArticulo: 10, cantidadPedida: '4', unidadVenta: 'Unidad' })).toBe(true)
+  })
 })
 
 describe('aLineaDeOrdenSolicitada', () => {
@@ -165,6 +177,16 @@ describe('aLineaDeOrdenSolicitada', () => {
 })
 
 describe('aSolicitudDeOrdenDeCompra', () => {
+  it('la fracción de un artículo por unidad no llega a los items de la solicitud', () => {
+    const solicitud = aSolicitudDeOrdenDeCompra({ ...encabezadoDeOrdenVacio(), idProveedor: 1, idPuntoVenta: 2 }, [
+      { ...lineaDeOrdenVacia(1), idArticulo: 10, cantidadPedida: '2.5', unidadVenta: 'Unidad' },
+      { ...lineaDeOrdenVacia(2), idArticulo: 11, cantidadPedida: '2.5', unidadVenta: 'Peso' },
+      { ...lineaDeOrdenVacia(3), idArticulo: 12, cantidadPedida: '3', unidadVenta: 'Unidad' },
+    ])
+
+    expect(solicitud.items.map((i) => i.idArticulo)).toEqual([11, 12])
+  })
+
   it('recorta observaciones vacías a null y fechaEsperada vacía a null', () => {
     const solicitud = aSolicitudDeOrdenDeCompra({ ...encabezadoDeOrdenVacio(), idProveedor: 1, idPuntoVenta: 2, observaciones: '  ' }, [])
     expect(solicitud.observaciones).toBeNull()

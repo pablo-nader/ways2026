@@ -854,7 +854,7 @@ public class ServicioDeCompras(
                 var articuloQueLaSupera = items.First(i => i.Orden == ordenQueLaSupera).IdArticulo!.Value;
 
                 resultados.Add(new ResultadoAplicarPrecio(
-                    item.IdArticulo!.Value, false, null,
+                    item.Orden, item.IdArticulo!.Value, false, null,
                     $"No se intentó: la línea {ordenQueLaSupera} (artículo #{articuloQueLaSupera}) es de la misma " +
                     "familia y de las líneas de una familia solo se intenta la de mayor orden. Si esa línea se " +
                     "aplica y su artículo sigue siendo miembro, su precio llega a toda la familia; ver el " +
@@ -873,11 +873,11 @@ public class ServicioDeCompras(
                     ModoDeAlcanceDeFamilia.FamiliaSiCorresponde,
                     ct);
 
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo.Value, true, precio.Precio, null));
+                resultados.Add(new ResultadoAplicarPrecio(item.Orden, item.IdArticulo.Value, true, precio.Precio, null));
             }
             catch (ErrorDominio error)
             {
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo!.Value, false, null, error.Message));
+                resultados.Add(new ResultadoAplicarPrecio(item.Orden, item.IdArticulo!.Value, false, null, error.Message));
             }
         }
 

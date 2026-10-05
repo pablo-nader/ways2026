@@ -7,6 +7,7 @@
  * deriva el ajuste bajo el lock de la fila de `stock`, nunca el cliente.
  */
 import { api } from './cliente'
+import { esTextoDeCantidadValido, respetaGranularidad } from './cantidadPorUnidad'
 import type {
   ConteoDeLote,
   LineaDeTransferencia,
@@ -18,6 +19,7 @@ import type {
   SolicitudDeMinimos,
   SolicitudDeTransferencia,
   StockActual,
+  UnidadVenta,
 } from './tipos'
 
 export const clienteDeStock = {
@@ -62,6 +64,9 @@ export type LineaDeTransferenciaFormulario = {
   /** `ArticuloListado.controlaLote` del artículo elegido — campo solo de UI (decide si esta fila
    * muestra el picker de lote), nunca viaja al backend: no es parte de `LineaDeTransferencia`. */
   controlaLote: boolean
+  /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso del campo de
+   * cantidad y si una fracción se acepta. Ausente se trata como `Peso` (permisivo). */
+  unidadVenta?: UnidadVenta
 }
 
 export function lineaDeTransferenciaVacia(clave: number): LineaDeTransferenciaFormulario {
@@ -69,8 +74,7 @@ export function lineaDeTransferenciaVacia(clave: number): LineaDeTransferenciaFo
 }
 
 export function lineaTransferenciaCompleta(l: LineaDeTransferenciaFormulario): boolean {
-  const cantidad = Number(l.cantidad)
-  return l.idArticulo !== '' && l.cantidad.trim() !== '' && Number.isFinite(cantidad) && cantidad > 0
+  return l.idArticulo !== '' && esTextoDeCantidadValido(l.unidadVenta, l.cantidad)
 }
 
 /** Espejo de `ExigirLineasDeTransferenciaValidas` (design decisión 9: "rechaza un artículo
@@ -174,10 +178,12 @@ export function aSolicitudDeConteo(
   }
 }
 
-export function contadaValida(contada: string): boolean {
+/** Cero es una cantidad contada legítima (no queda nada); la unidad de venta decide si admite
+ * fracciones. Sin unidad conocida se comporta como siempre. */
+export function contadaValida(contada: string, unidadVenta?: UnidadVenta | null): boolean {
   if (contada.trim() === '') return false
   const n = Number(contada)
-  return Number.isFinite(n) && n >= 0
+  return Number.isFinite(n) && n >= 0 && respetaGranularidad(unidadVenta, n)
 }
 
 // ---- Conteo por lote (stage-12-lotes-vencimientos, Slice 15, design decisión 12/18) ------------
@@ -195,12 +201,15 @@ export function lineaDeConteoDeLoteVacia(lote: LoteListado): LineaDeConteoDeLote
 /** Solo cuentan como "completas" las líneas con una `contada` tipeada — un lote listado pero sin
  * tocar por el operador se omite del request (mismo criterio que `ContarAsync`: no hace falta
  * recontar cada lote existente para actualizar uno solo). */
-export function lineasDeConteoDeLoteCompletas(lineas: LineaDeConteoDeLoteFormulario[]): LineaDeConteoDeLoteFormulario[] {
-  return lineas.filter((l) => contadaValida(l.contada))
+export function lineasDeConteoDeLoteCompletas(
+  lineas: LineaDeConteoDeLoteFormulario[],
+  unidadVenta?: UnidadVenta | null,
+): LineaDeConteoDeLoteFormulario[] {
+  return lineas.filter((l) => contadaValida(l.contada, unidadVenta))
 }
 
-export function aConteoDeLotes(lineas: LineaDeConteoDeLoteFormulario[]): ConteoDeLote[] {
-  return lineasDeConteoDeLoteCompletas(lineas).map((l) => ({ idLote: l.idLote, contada: Number(l.contada) }))
+export function aConteoDeLotes(lineas: LineaDeConteoDeLoteFormulario[], unidadVenta?: UnidadVenta | null): ConteoDeLote[] {
+  return lineasDeConteoDeLoteCompletas(lineas, unidadVenta).map((l) => ({ idLote: l.idLote, contada: Number(l.contada) }))
 }
 
 /** Rama por-lote de `SolicitudDeConteo` — `contada: null`, `lotes` con al menos una línea

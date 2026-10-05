@@ -141,6 +141,14 @@ describe('lineaDePresupuestoCompletaParaEnvio', () => {
   it('artículo + cantidad positiva es completa', () => {
     expect(lineaDePresupuestoCompletaParaEnvio({ ...lineaDePresupuestoVacia(1), idArticulo: 10, cantidad: '5' })).toBe(true)
   })
+
+  it('una fracción es incompleta para un artículo por unidad y completa para uno por peso o sin unidad conocida', () => {
+    const base = { ...lineaDePresupuestoVacia(1), idArticulo: 10, cantidad: '2.5' }
+
+    expect(lineaDePresupuestoCompletaParaEnvio({ ...base, unidadVenta: 'Unidad' })).toBe(false)
+    expect(lineaDePresupuestoCompletaParaEnvio({ ...base, unidadVenta: 'Peso' })).toBe(true)
+    expect(lineaDePresupuestoCompletaParaEnvio(base)).toBe(true)
+  })
 })
 
 describe('aLineaDePresupuestoSolicitada', () => {
