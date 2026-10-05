@@ -98,6 +98,9 @@ const MODELO: EntradaDelModelo[] = [
         titulo: 'Catálogo',
         enlaces: [
           enlace(puedeGestionarCatalogos, 'Artículos', '/articulos'),
+          // Familias de artículos (doc 10 §3): admin-only end a end, la misma puerta que Artículos
+          // (Politicas.GestionDeCatalogo del lado del servidor, también para las lecturas).
+          enlace(puedeGestionarCatalogos, 'Familias', '/familias'),
           enlace(puedeGestionarCatalogos, 'Categorías', '/catalogos/categorias'),
           ...Object.values(DESCRIPTORES_DE_CATALOGO).map((descriptor) =>
             enlace(puedeGestionarCatalogos, descriptor.titulo, `/catalogos/${descriptor.recurso}`),

@@ -795,6 +795,61 @@ export type FamiliaDetalle = {
   precios: EstadoDePreciosDeLista[]
 }
 
+/** Cuerpo de `PUT /api/familias/{id}`: lo único de una familia que se edita. Los dos campos son obligatorios: el
+ * nombre se guarda sin espacios en los extremos y es único entre las familias vivas sin distinguir mayúsculas. */
+export type EdicionFamilia = { nombre: string; activo: boolean }
+
+/** Cuerpo de `POST /api/familias/previsualizacion`: qué pasaría si se agruparan `idsArticulos` con
+ * `idArticuloReferencia` como modelo. Se admiten hasta 100 destinos además de la referencia. Si la referencia ya es
+ * miembro de una familia, agrupar sería sumar los artículos a ESA familia; si no, crear una nueva. */
+export type SolicitudDePrevisualizacion = { idArticuloReferencia: number; idsArticulos: number[] }
+
+/** El cambio de UNA lista fija para un artículo que se alinea: su estado de precios actual y el de la referencia. */
+export type CambioDePreciosDeLista = { idListaPrecio: number; actual: EstadoDePrecios; nuevo: EstadoDePrecios }
+
+/** Lo que cambia en UN artículo al alinearlo con la referencia: `campos` son las columnas compartidas de
+ * `articulos` (`id_area`, `costo_lista`, …) que difieren, en el orden de declaración de
+ * `ValoresCompartidosDeFamilia`; `actual` y `nuevo`, los trece valores del artículo y de la referencia; `precios`,
+ * las listas fijas en las que el estado de precios cambia. Un artículo ya alineado trae `campos` y `precios` vacíos. */
+export type CambiosDeUnArticulo = {
+  idArticulo: number
+  campos: string[]
+  actual: ValoresCompartidosDeLaFamilia
+  nuevo: ValoresCompartidosDeLaFamilia
+  precios: CambioDePreciosDeLista[]
+}
+
+/** Algo que impediría agrupar, con el código y el mensaje del error que daría el pedido real. Sin `idArticulo` es un
+ * problema de la familia o del pedido entero. */
+export type ProblemaDeAgrupacion = { codigo: string; mensaje: string; idArticulo: number | null; idListaPrecio: number | null }
+
+/** Respuesta de `POST /api/familias/previsualizacion`: `articulos` trae, por cada destino que se puede alinear y
+ * ascendente por id, lo que cambiaría; `problemas`, todo lo que impediría agrupar, en el orden en que el pedido real
+ * lo rechaza. `idFamilia` es la familia a la que se sumarían (la de la referencia) o `null` si se crearía una nueva.
+ * Es una foto sin locks. */
+export type PrevisualizacionDeAgrupacion = {
+  idArticuloReferencia: number
+  idFamilia: number | null
+  articulos: CambiosDeUnArticulo[]
+  problemas: ProblemaDeAgrupacion[]
+}
+
+/** Cuerpo de `POST /api/familias`: crea la familia con la referencia, que es siempre miembro aunque no figure en
+ * `idsArticulos`, y los artículos, que se alinean con ella. Ninguno puede pertenecer ya a una familia. */
+export type AltaDeFamilia = { nombre: string; idArticuloReferencia: number; idsArticulos: number[] }
+
+/** Cuerpo de `POST /api/familias/{id}/articulos`: suma artículos a la familia, alineados con su referencia. */
+export type AgregadoDeArticulos = { idsArticulos: number[] }
+
+/** Respuesta de `POST /api/familias` y de `POST /api/familias/{id}/articulos`: por cada artículo pedido distinto de
+ * la referencia, lo que la agrupación cambió en él. */
+export type ResultadoDeAgrupacion = {
+  idFamilia: number
+  nombre: string
+  idArticuloReferencia: number
+  articulos: CambiosDeUnArticulo[]
+}
+
 // --- Ofertas (stage-4-ofertas) ---
 // Entidad dedicada (design decision 9): alcance (id_articulo/id_grupo/id_categoria) y
 // beneficio (precio_unitario/porcentaje/importe_fijo) viajan como las tres columnas nullable
