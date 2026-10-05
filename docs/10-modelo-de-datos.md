@@ -553,7 +553,8 @@ no toman locks.
   carrera y que el chequeo previo adelanta con un mensaje que nombra el nombre pedido; el nombre de una familia dada de
   baja se puede reutilizar. Una familia inactiva no admite miembros nuevos, ni por el alta de un artículo con
   `idFamilia` ni por agregarle artículos (`409 familia_inactiva`). Responde la familia como el listado. `404` si la
-  familia no existe, está dada de baja o es de otro tenant, antes de cualquier rechazo del cuerpo o del nombre. Es una
+  familia no existe, está dada de baja o es de otro tenant: el servicio lo da antes de los tres `400` de arriba y del
+  chequeo previo del nombre (`409 familia_nombre_duplicado`). Es una
   transacción sin reintento que lee la fila UNA vez, después de su `FOR UPDATE`; una familia dada de baja mientras
   esperaba ese lock da `404` y no se escribe nada. No toma el lock de membresía ni bloquea filas de artículos. Escribe
   la fila de la familia, que el alta de un artículo con `idFamilia` y agregar artículos leen `FOR SHARE`: un cambio de

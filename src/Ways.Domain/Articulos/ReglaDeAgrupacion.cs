@@ -10,11 +10,12 @@ namespace Ways.Domain.Articulos;
 public static class ReglaDeAgrupacion
 {
     /// <summary>
-    /// Cuántos artículos, además del de referencia, admite un pedido. Acota el trabajo de un pedido: los artículos que se
-    /// bloquean, se leen y se alinean. No acota por sí solo los locks que el pedido sostiene: cada artículo aporta uno por
-    /// lista fija, así que con muchas listas el tope de artículos deja pasar más pares de los que
-    /// <see cref="MaximoDeParesPorPedido"/> admite, que es el que los acota. Sobre cien artículos se agrupa en varios
-    /// pedidos.
+    /// Cuántos artículos, además del de referencia, admite un pedido: acota los destinos, que son los que se piden alinear
+    /// con la referencia. No acota todo lo que un pedido bloquea y lee: al agregar a una familia que ya existe se bloquean
+    /// y se leen, además de los destinos, todos los miembros vivos de la familia, que este tope no acota. Tampoco acota por
+    /// sí solo los locks advisory de par artículo-lista que el pedido sostiene: cada destino aporta uno por lista fija, así
+    /// que con muchas listas el tope de artículos deja pasar más pares de los que <see cref="MaximoDeParesPorPedido"/>
+    /// admite, que es el que los acota. Sobre cien artículos se agrupa en varios pedidos.
     /// </summary>
     public const int MaximoDeArticulosPorPedido = 100;
 

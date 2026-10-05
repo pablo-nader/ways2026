@@ -570,4 +570,39 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         Assert.Empty(enElTope.Problemas);
     }
+
+    // =================================================================================================
+    // El orden de los problemas
+    // =================================================================================================
+
+    /// <summary>La previsualización de un pedido con un artículo inexistente, uno de otra familia, un catálogo de la
+    /// referencia dado de baja, más pares que el tope y un precio que no se puede alinear informa cinco problemas en este
+    /// orden: el inexistente, el de otra familia, el catálogo de la referencia, el tope de pares y el precio. Compara el
+    /// código, el artículo y la lista de cada uno. Defiende el lugar de los problemas de catálogo y de pares: cada uno
+    /// tiene un vecino de cada lado.</summary>
+    [Fact]
+    public async Task LosProblemasDeCatalogoYDeParesSalenEntreElDeOtraFamiliaYElDePrecios()
+    {
+        var s = await SembrarParesAsync(apoyo, nameof(LosProblemasDeCatalogoYDeParesSalenEntreElDeOtraFamiliaYElDePrecios));
+        using var e = s.E;
+        const int inexistente = 999_999_990;
+        var familiaAjena = await apoyo.SembrarFamiliaAsync(e, "Familia ajena");
+        var deOtraFamilia = await apoyo.SembrarArticuloAsync(e, "de-otra", ValoresBase(e), familiaAjena);
+        var conPrecioPropio = s.Destinos[0];
+        await apoyo.SembrarPrecioVigenteAsync(e, conPrecioPropio, e.IdListaGeneral, 90m);
+        await apoyo.DarDeBajaAsync("areas", "id_area", e.Areas[0]);
+
+        var previa = await LeerPrevisualizacionAsync(
+            await PostPrevisualizarAsync(e.Admin, s.Referencia, [.. s.Destinos, deOtraFamilia, inexistente]));
+
+        Assert.Equal(
+            [
+                ("referencia_invalida", inexistente, null),
+                ("articulo_en_otra_familia", deOtraFamilia, null),
+                ("referencia_invalida", s.Referencia, null),
+                ("demasiados_articulos", null, null),
+                ("familia_precio_inalineable", conPrecioPropio, e.IdListaGeneral)
+            ],
+            previa.Problemas.Select(p => (p.Codigo, p.IdArticulo, p.IdListaPrecio)));
+    }
 }

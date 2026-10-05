@@ -32,7 +32,7 @@ namespace Ways.Application.Familias;
 /// tramos de la confirmación sean solo de la confirmación (ningún otro escritor de familias toma filas de
 /// compra, de stock ni de lotes, ni escribe la fila del proveedor) y que este lock siga siendo la primera
 /// sentencia de cada transacción. No cubre a las transacciones que no toman este lock. Los chequeos de
-/// catálogo (<c>FOR KEY SHARE</c>, también el del proveedor habitual de la edición y del alta, que no
+/// catálogo (<c>FOR KEY SHARE</c>, también el del proveedor habitual de la edición, del alta y de agrupar, que no
 /// choca con el <c>UPDATE</c> de la confirmación) no chocan con ningún lock que tomen estos escritores y no
 /// entran en el orden. La fila de la familia sí entra: el alta de un artículo la lee <c>FOR SHARE</c> después de
 /// los chequeos de catálogo y antes de los locks de par; agregar artículos a una familia, la misma lectura, justo
