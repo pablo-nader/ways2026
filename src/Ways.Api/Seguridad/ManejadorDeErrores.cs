@@ -34,7 +34,7 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest, "Los datos enviados no tienen el formato esperado.", "cuerpo_invalido"),
 
             BadHttpRequestException rechazo =>
-                (rechazo.StatusCode, "La solicitud no tiene el formato esperado.", "solicitud_invalida"),
+                (rechazo.StatusCode, "La solicitud no es válida.", "solicitud_invalida"),
 
             // Camino EF SaveChangesAsync: Npgsql envuelve la excepción en DbUpdateException.
             // ClasificarPostgresException (helper compartido, más abajo) es la ÚNICA fuente de
@@ -126,6 +126,11 @@ public class ManejadorDeErrores(
         if (estado >= 500)
         {
             log.LogError(excepcion, "Error no controlado en {Ruta}.", contexto.Request.Path);
+        }
+        else if (excepcion is BadHttpRequestException)
+        {
+            // El cliente recibe un título fijo: el parámetro y la ruta JSON que fallaron quedan solo acá.
+            log.LogInformation(excepcion, "Solicitud rechazada por el binding en {Ruta}.", contexto.Request.Path);
         }
 
         contexto.Response.StatusCode = estado;

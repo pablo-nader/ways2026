@@ -11,9 +11,9 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Lo que responde la API cuando el binding de un endpoint rechaza la solicitud antes de llegar al
-/// servicio: un cuerpo que no deserializa o que falta, un parámetro de query que no parsea. La respuesta
-/// es un ProblemDetails con código estable y sin el mensaje del framework, que nombra tipos y parámetros
-/// internos. La clasificación de cada excepción la prueban, brazo por brazo,
+/// servicio: un cuerpo JSON que no deserializa, vacío o <c>null</c>, un parámetro de query que no parsea.
+/// La respuesta es un ProblemDetails con código estable y sin el mensaje del framework, que nombra tipos y
+/// parámetros internos. La clasificación de cada excepción la prueban, brazo por brazo,
 /// <see cref="ManejadorDeErroresBindingTests"/>; acá se prueba que el framework la tira de verdad.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -58,13 +58,13 @@ public class SolicitudesMalFormadasTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal("cuerpo_invalido", await CodigoSinDetallesInternosAsync(respuesta));
     }
 
-    /// <summary>Sin cuerpo, vacío o <c>null</c>, no hay JSON que falle al deserializar: el framework informa
-    /// el parámetro requerido ausente y la respuesta es <c>solicitud_invalida</c>, no
-    /// <c>cuerpo_invalido</c>.</summary>
+    /// <summary>Con <c>Content-Type</c> JSON y un cuerpo vacío o <c>null</c> no hay JSON que falle al
+    /// deserializar: el framework informa el parámetro requerido ausente y la respuesta es
+    /// <c>solicitud_invalida</c>, no <c>cuerpo_invalido</c>.</summary>
     [Theory]
     [InlineData("")]
     [InlineData("null")]
-    public async Task UnCuerpoAusenteDa400SolicitudInvalida(string cuerpo)
+    public async Task UnCuerpoJsonVacioONullDa400SolicitudInvalida(string cuerpo)
     {
         using var cliente = fixture.CreateClient();
 
