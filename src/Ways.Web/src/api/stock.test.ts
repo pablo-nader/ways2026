@@ -63,6 +63,12 @@ describe('lineaTransferenciaCompleta', () => {
     expect(lineaTransferenciaCompleta(lineaFixture({ cantidad: '0' }))).toBe(false)
     expect(lineaTransferenciaCompleta(lineaFixture({ cantidad: '-1' }))).toBe(false)
   })
+
+  it('una fracción no está completa para un artículo por unidad, sí para uno por peso o sin unidad conocida', () => {
+    expect(lineaTransferenciaCompleta(lineaFixture({ cantidad: '1.5', unidadVenta: 'Unidad' }))).toBe(false)
+    expect(lineaTransferenciaCompleta(lineaFixture({ cantidad: '1.5', unidadVenta: 'Peso' }))).toBe(true)
+    expect(lineaTransferenciaCompleta(lineaFixture({ cantidad: '1.5' }))).toBe(true)
+  })
 })
 
 describe('articulosRepetidosEnTransferencia', () => {
@@ -177,6 +183,15 @@ describe('contadaValida', () => {
     expect(contadaValida('')).toBe(false)
     expect(contadaValida('-1')).toBe(false)
     expect(contadaValida('abc')).toBe(false)
+  })
+
+  it('un artículo por unidad solo admite enteros, cero incluido; uno por peso o sin unidad conocida admite fracciones', () => {
+    expect(contadaValida('12', 'Unidad')).toBe(true)
+    expect(contadaValida('0', 'Unidad')).toBe(true)
+    expect(contadaValida('12.5', 'Unidad')).toBe(false)
+    expect(contadaValida('12.5', 'Peso')).toBe(true)
+    expect(contadaValida('12.5')).toBe(true)
+    expect(contadaValida('12.5', null)).toBe(true)
   })
 })
 

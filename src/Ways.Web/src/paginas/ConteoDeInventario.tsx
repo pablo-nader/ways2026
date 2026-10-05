@@ -9,6 +9,7 @@ import {
   type LineaDeConteoDeLoteFormulario,
 } from '../api/stock'
 import { clienteDeArticulos } from '../api/articulos'
+import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeParametros } from '../api/parametros'
@@ -158,6 +159,9 @@ export function ConteoDeInventario() {
   const [observaciones, setObservaciones] = useState('')
 
   const articuloControlaLote = articuloSeleccionado?.controlaLote === true
+  const unidadDelArticulo = articuloSeleccionado?.unidadVenta
+  const restriccionDeContada = restriccionDeCantidad(unidadDelArticulo, { permiteCero: true })
+  const fraccionEnUnidad = esFraccionDeArticuloPorUnidad(unidadDelArticulo, contada)
   const idEmpresaSeleccionada = (puntosVenta ?? []).find((pv) => pv.id === idPuntoVenta)?.idEmpresa ?? null
 
   // ---- `lotes_habilitado` de la empresa (judgment-day, Slice 15) — solo se resuelve cuando hace
@@ -275,7 +279,7 @@ export function ConteoDeInventario() {
     setLineasDeLote((prev) => prev.map((l) => (l.idLote === idLote ? { ...l, contada: contadaLote } : l)))
   }
 
-  const lineasDeLoteCompletas = lineasDeConteoDeLoteCompletas(lineasDeLote)
+  const lineasDeLoteCompletas = lineasDeConteoDeLoteCompletas(lineasDeLote, unidadDelArticulo)
   const lineasDeLoteIncompletas = lineasDeLote.length - lineasDeLoteCompletas.length
 
   const [contando, setContando] = useState(false)
@@ -294,7 +298,7 @@ export function ConteoDeInventario() {
       !contando &&
       idPuntoVenta !== '' &&
       idArticulo !== '' &&
-      contadaValida(contada) &&
+      contadaValida(contada, unidadDelArticulo) &&
       observaciones.trim() !== ''
 
   async function contar() {
@@ -420,13 +424,14 @@ export function ConteoDeInventario() {
               <input
                 id="conteo-contada"
                 type="number"
-                step="0.001"
-                min="0"
-                className="form-control"
+                step={restriccionDeContada.step}
+                min={restriccionDeContada.min}
+                className={`form-control${fraccionEnUnidad ? ' is-invalid' : ''}`}
                 value={contada}
                 disabled={contando || !referenciaOk}
                 onChange={(e) => setContada(e.target.value)}
               />
+              {fraccionEnUnidad && <div className="invalid-feedback">{MENSAJE_DE_CANTIDAD_ENTERA}</div>}
             </div>
           )}
           <div className="col-12">
@@ -463,14 +468,14 @@ export function ConteoDeInventario() {
                   </thead>
                   <tbody>
                     {lineasDeLote.map((l) => (
-                      <tr key={l.idLote} className={contadaValida(l.contada) ? undefined : 'table-warning text-muted'}>
+                      <tr key={l.idLote} className={contadaValida(l.contada, unidadDelArticulo) ? undefined : 'table-warning text-muted'}>
                         <td>{l.codigo}</td>
                         <td>
                           <input
                             type="number"
-                            step="0.001"
-                            min="0"
-                            className="form-control form-control-sm"
+                            step={restriccionDeContada.step}
+                            min={restriccionDeContada.min}
+                            className={`form-control form-control-sm${esFraccionDeArticuloPorUnidad(unidadDelArticulo, l.contada) ? ' is-invalid' : ''}`}
                             aria-label={`Contada del lote ${l.codigo}`}
                             value={l.contada}
                             disabled={contando || !referenciaOk}

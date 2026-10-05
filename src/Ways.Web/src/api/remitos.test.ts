@@ -116,6 +116,30 @@ describe('lineaDeRemitoCompletaParaEnvio', () => {
     expect(lineaDeRemitoCompletaParaEnvio({ ...lineaDeRemitoVacia(1), idArticulo: 10, cantidad: '5' })).toBe(true)
     expect(lineaDeRemitoCompletaParaEnvio({ ...lineaDeRemitoVacia(1), idArticulo: 10, cantidad: '5', idLote: 3 })).toBe(true)
   })
+
+  it('una fracción es incompleta para un artículo por unidad y completa para uno por peso o sin unidad conocida', () => {
+    const base = { ...lineaDeRemitoVacia(1), idArticulo: 10, cantidad: '1.5' }
+
+    expect(lineaDeRemitoCompletaParaEnvio({ ...base, unidadVenta: 'Unidad' })).toBe(false)
+    expect(lineaDeRemitoCompletaParaEnvio({ ...base, unidadVenta: 'Peso' })).toBe(true)
+    expect(lineaDeRemitoCompletaParaEnvio(base)).toBe(true)
+  })
+
+  it('un entero es completo para un artículo por unidad', () => {
+    expect(lineaDeRemitoCompletaParaEnvio({ ...lineaDeRemitoVacia(1), idArticulo: 10, cantidad: '4', unidadVenta: 'Unidad' })).toBe(true)
+  })
+
+  it('la fracción de un artículo por unidad no llega a la solicitud', () => {
+    const solicitud = aSolicitudDeRemito(
+      { idPuntoVenta: 9, idCliente: '', direccionEntrega: '', observaciones: '' },
+      [
+        { ...lineaDeRemitoVacia(1), idArticulo: 10, cantidad: '1.5', unidadVenta: 'Unidad' },
+        { ...lineaDeRemitoVacia(2), idArticulo: 11, cantidad: '1.5', unidadVenta: 'Peso' },
+      ],
+    )
+
+    expect(solicitud.lineas.map((l) => l.idArticulo)).toEqual([11])
+  })
 })
 
 describe('aLineaDeRemitoSolicitada', () => {

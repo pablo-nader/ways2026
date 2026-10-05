@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1779,5 +1779,69 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
       expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('CompraEditor — unidades según la unidad de venta del artículo', () => {
+  it('un borrador reabierto resuelve la unidad: por unidad pide enteros (cero permitido), marca una fracción y deja el tamaño del bulto como estaba', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad' }))
+      return undefined
+    })
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+
+    const unidades = screen.getByLabelText('Unidades')
+    await waitFor(() => expect(unidades).toHaveAttribute('step', '1'))
+    expect(unidades).toHaveAttribute('min', '0')
+    expect(screen.getByLabelText('Unidades por bulto')).toHaveAttribute('step', '0.001')
+
+    fireEvent.change(unidades, { target: { value: '2.5' } })
+
+    expect(unidades).toHaveClass('is-invalid')
+    expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera.')).toBeInTheDocument()
+    expect(screen.getByText('Línea incompleta — no se va a guardar.')).toBeInTheDocument()
+  })
+
+  it('elegir un artículo por unidad en una línea nueva fija el paso de unidades en 1, sin consultar el artículo otra vez', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
+      if (ruta.startsWith('/articulos?busqueda=')) {
+        return Promise.resolve({ items: [articuloFixture({ unidadVenta: 'Unidad' })], total: 1, pagina: 1, tamanio: 25 })
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
+    await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+
+    const unidades = screen.getByLabelText('Unidades')
+    expect(unidades).toHaveAttribute('step', '1')
+    fireEvent.change(unidades, { target: { value: '2.5' } })
+    expect(unidades).toHaveClass('is-invalid')
+    await act(async () => {})
+    expect(apiGetMock).not.toHaveBeenCalledWith('/articulos/20')
+  })
+
+  it('un artículo por peso, o uno cuya unidad no se pudo resolver, conserva el paso de 0.001', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Peso' }))
+      return undefined
+    })
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+
+    const unidades = screen.getByLabelText('Unidades')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
+    fireEvent.change(unidades, { target: { value: '2.5' } })
+
+    expect(unidades).toHaveAttribute('step', '0.001')
+    expect(unidades).not.toHaveClass('is-invalid')
   })
 })

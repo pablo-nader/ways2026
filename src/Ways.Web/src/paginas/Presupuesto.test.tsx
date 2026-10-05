@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -326,5 +326,41 @@ describe('Presupuesto — role gating (mismo gate que /pos: Politicas.OperacionD
     await screen.findByText('Enviado')
     expect(screen.getByRole('button', { name: 'Convertir en venta' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Anular' })).toBeInTheDocument()
+  })
+})
+
+describe('Presupuesto — cantidad según la unidad de venta', () => {
+  it('un borrador reabierto resuelve la unidad de su artículo: por unidad pide enteros y marca una fracción', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/presupuestos/30') return Promise.resolve(borradorFixture())
+      if (ruta === '/articulos/10') return Promise.resolve({ id: 10, unidadVenta: 'Unidad' })
+      return undefined
+    })
+    renderPantalla()
+
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
+    expect(cantidad).toHaveAttribute('min', '1')
+
+    fireEvent.change(cantidad, { target: { value: '0.5' } })
+
+    expect(cantidad).toHaveClass('is-invalid')
+    expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera. No se va a guardar.')).toBeInTheDocument()
+  })
+
+  it('un artículo por peso, o uno cuya unidad no se pudo resolver, conserva el paso de 0.001', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/presupuestos/30') return Promise.resolve(borradorFixture())
+      if (ruta === '/articulos/10') return Promise.resolve({ id: 10, unidadVenta: 'Peso' })
+      return undefined
+    })
+    renderPantalla()
+
+    const cantidad = await screen.findByLabelText('Cantidad')
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
+    fireEvent.change(cantidad, { target: { value: '0.5' } })
+
+    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).not.toHaveClass('is-invalid')
   })
 })
