@@ -811,11 +811,11 @@ public class ServicioDeCompras(
                     ModoDeAlcanceDeFamilia.FamiliaSiCorresponde,
                     ct);
 
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo.Value, true, precio.Precio, null));
+                resultados.Add(new ResultadoAplicarPrecio(item.Orden, item.IdArticulo.Value, true, precio.Precio, null));
             }
             catch (ErrorDominio error)
             {
-                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo!.Value, false, null, error.Message));
+                resultados.Add(new ResultadoAplicarPrecio(item.Orden, item.IdArticulo!.Value, false, null, error.Message));
             }
         }
 
