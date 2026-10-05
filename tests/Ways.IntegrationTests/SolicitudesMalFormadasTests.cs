@@ -33,7 +33,7 @@ public class SolicitudesMalFormadasTests(WaysApiFixture fixture) : IClassFixture
 
     /// <summary><see cref="StringContent"/> siempre manda un <c>Content-Type</c>; este cuerpo manda el indicado o
     /// ninguno.</summary>
-    private static ByteArrayContent CuerpoCon(string texto, string? contentType)
+    internal static ByteArrayContent CuerpoCon(string texto, string? contentType)
     {
         var cuerpo = new ByteArrayContent(Encoding.UTF8.GetBytes(texto));
         if (contentType is not null)
@@ -44,10 +44,10 @@ public class SolicitudesMalFormadasTests(WaysApiFixture fixture) : IClassFixture
         return cuerpo;
     }
 
-    private static string LoginDeRoot() =>
+    internal static string LoginDeRoot() =>
         JsonSerializer.Serialize(new SolicitudDeLogin(MailRoot, PasswordRoot), JsonSerializerOptions.Web);
 
-    private static async Task<string?> CodigoSinDetallesInternosAsync(HttpResponseMessage respuesta)
+    internal static async Task<string?> CodigoSinDetallesInternosAsync(HttpResponseMessage respuesta)
     {
         var texto = await respuesta.Content.ReadAsStringAsync();
         Assert.False(string.IsNullOrEmpty(texto), $"La respuesta {(int)respuesta.StatusCode} no trae cuerpo.");

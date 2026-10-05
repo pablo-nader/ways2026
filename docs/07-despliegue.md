@@ -113,6 +113,66 @@ Al cerrar el navegador la cookie sobrevive (es persistente).
 
 ---
 
+## Conector MCP (experimental)
+
+Permite agregar Ways como conector personalizado de Claude (claude.ai, escritorio o celular).
+Claude se autoriza con OAuth contra la propia API y llama al servidor MCP en `/mcp`. Hoy expone
+**una sola herramienta, de solo lectura**: `quien_soy`, que devuelve el nombre de usuario, el
+correo, el rol y el tenant de la cuenta que autorizó la conexión, más la hora del servidor.
+
+### Encenderlo
+
+```env
+Mcp__Habilitado=true
+Mcp__UrlPublica=https://aipos.site
+Mcp__MailsHabilitados=admin@empresa.com;otra@empresa.com
+```
+
+- `Mcp__UrlPublica`: la URL pública, sin ruta. Fuera de Development es obligatoria y tiene que
+  ser `https`. Si falta o no sirve, la app arranca igual, loguea **un** error y el conector queda
+  apagado.
+- `Mcp__MailsHabilitados`: los únicos mails que pueden autorizar, separados por coma o punto y
+  coma, sin distinguir mayúsculas. Vacío = nadie. Un usuario de plataforma (root) nunca puede
+  autorizar, aunque esté en la lista.
+
+Cada request al conector deja una línea `Conector MCP: …` en el log (método, ruta, estado,
+versión de protocolo, métodos JSON-RPC y parámetros OAuth), sin tokens, códigos ni contraseñas.
+
+Si Claude no logra conectarse, buscá esas líneas a la hora del intento: `OAuth=` muestra qué pidió
+Claude, `Error=` el error que devolvió `/connect/authorize` o `/connect/token`, y `Motivo=` por qué
+se rechazó (por ejemplo `mail fuera de Mcp:MailsHabilitados`, o en `/mcp` `sin token`,
+`token inválido o vencido`, `sesión revocada`). La línea `ways.bearer was not authenticated` en
+cada request a `/mcp` es esperable: es la sesión normal de Ways descartando el token del conector.
+
+### Agregarlo en claude.ai
+
+1. Agregá un conector personalizado con la URL `https://<dominio>/mcp`, sin barra final.
+2. En la configuración de OAuth elegí usar tu propio cliente ("Use your own OAuth client"):
+   client ID `claude-ways` (se cambia con `Mcp__IdDeCliente`), **sin** client secret.
+3. Claude abre la página de autorización de Ways: ingresá el mail y la contraseña de un usuario
+   habilitado y tocá **Aprobar**.
+
+Para revisar el servidor sin credenciales:
+
+```bash
+node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publico
+```
+
+### Límites
+
+- **Las conexiones viven en memoria.** Cada deploy o reinicio las borra (claves y tokens
+  incluidos) y hay que volver a autorizar desde Claude.
+- **Una sola instancia.** Con más de una réplica, cada una tendría sus propias claves y
+  conexiones.
+- El access token dura 60 minutos (`Mcp__MinutosDeAccessToken`) y se renueva con el refresh token.
+
+### Apagarlo
+
+Sacá `Mcp__Habilitado` (o ponelo en `false`) y redeployá: no queda ninguna ruta ni log del
+conector, y las conexiones existentes dejan de funcionar.
+
+---
+
 ## Local
 
 ### Todo en uno
