@@ -2,11 +2,14 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenIddict.Abstractions;
 using Ways.Api.ConectorMcp;
@@ -42,6 +45,29 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var fila = await db.Usuarios.SingleAsync(u => u.Id == idUsuario);
         fila.Estado = EstadoUsuario.Inactivo;
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>Production, con el conector encendido y la URL pública https de <see cref="ApoyoDeConectorMcp"/>.</summary>
+    private WebApplicationFactory<Program> HostEnProduction() =>
+        _apoyo.HostConConector(MailRoot, configurarMas: builder => builder.UseEnvironment(Environments.Production));
+
+    /// <summary>Por http plano y sin X-Forwarded-Proto, como el HEALTHCHECK del Dockerfile o un proxy que
+    /// termina TLS sin avisarlo.</summary>
+    private static HttpClient ClienteHttpPlano(WebApplicationFactory<Program> host) =>
+        host.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("http://localhost"),
+            AllowAutoRedirect = false
+        });
+
+    private static void AfirmarEncabezadosDeLaPagina(HttpResponseMessage respuesta)
+    {
+        Assert.Equal("text/html", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("DENY", Assert.Single(respuesta.Headers.GetValues("X-Frame-Options")));
+        Assert.Equal("no-store", respuesta.Headers.CacheControl?.ToString());
+        Assert.Equal("no-referrer", Assert.Single(respuesta.Headers.GetValues("Referrer-Policy")));
+        Assert.Equal(
+            PaginaDeConsentimiento.PoliticaDeContenido, Assert.Single(respuesta.Headers.GetValues("Content-Security-Policy")));
     }
 
     [Fact]
@@ -94,13 +120,19 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     /// <summary>Cubre las tres partes de la línea de diagnóstico: los parámetros OAuth (valor de la
     /// lista blanca, solo presencia de los secretos), el error OAuth de un rechazo y el motivo de un
-    /// 401 en <c>/mcp</c>; y que ningún log, de ninguna categoría, escribe un secreto del flujo.</summary>
+    /// 401 en <c>/mcp</c>; y que ningún log, de ninguna categoría, escribe un secreto del flujo, aunque
+    /// <c>Logging:LogLevel:OpenIddict</c> pida Information (el nivel en que OpenIddict registra cada
+    /// solicitud con su code_verifier).</summary>
     [Fact]
     public async Task ElLogMuestraLoQuePideElClienteYPorQueSeRechazaSinEscribirSecretos()
     {
         var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-diagnostico");
         var captura = new CapturaDeLogs();
-        await using var host = _apoyo.HostConConector(usuario.Mail, configurarMas: ConCaptura(captura));
+        await using var host = _apoyo.HostConConector(usuario.Mail, configurarMas: builder =>
+        {
+            builder.UseSetting("Logging:LogLevel:OpenIddict", "Information");
+            ConCaptura(captura)(builder);
+        });
         using var cliente = Cliente(host);
 
         var pkce = NuevoPkce();
@@ -123,7 +155,8 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.Unauthorized, (await LlamarMcpAsync(cliente, accessToken: null, "tools/list")).Estado);
         Assert.Equal(HttpStatusCode.Unauthorized, (await LlamarMcpAsync(cliente, "token-ajeno-al-conector", "tools/list")).Estado);
         await PostearCuerpoCrudoAsync(
-            cliente, $"{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{{\"relleno\":\"{new string('x', 1_000_001)}\"}}}}");
+            cliente,
+            $"{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{{\"relleno\":\"{new string('x', DiagnosticoDelConector.TamanioMaximoInspeccionado)}\"}}}}");
         await PostearCuerpoCrudoAsync(cliente, "{esto no es json");
 
         var lineas = LineasDeDiagnostico(captura);
@@ -192,6 +225,7 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
             cliente, UrlDeAutorizacion(NuevoPkce()), habilitado.Mail, "otra-contraseña");
         var fuera = await AprobarAsync(cliente, UrlDeAutorizacion(NuevoPkce()), fueraDeLaLista.Mail, Password);
 
+        Assert.Equal(HttpStatusCode.OK, conPasswordIncorrecta.StatusCode);
         Assert.Equal(HttpStatusCode.OK, fuera.StatusCode);
         Assert.Null(CodigoDe(fuera));
         var errorConPasswordIncorrecta = MensajeDeError(await conPasswordIncorrecta.Content.ReadAsStringAsync());
@@ -232,6 +266,7 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var respuesta = await AprobarAsync(cliente, UrlDeAutorizacion(NuevoPkce()), MailRoot, PasswordRoot);
 
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         Assert.Null(CodigoDe(respuesta));
         Assert.EndsWith(
             EndpointsDeAutorizacion.MensajeDeCredencialesInvalidas,
@@ -518,12 +553,15 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     /// <summary>El POST a <c>/mcp</c> no tiene binding que rechace el tipo de contenido: con un token válido y
     /// un cuerpo JSON-RPC correcto, un Content-Type que no es JSON da el mismo 415 y código que el binding de
-    /// los demás endpoints. Sin token sigue dando 401, como en <see cref="SolicitudesMalFormadasTests"/>.</summary>
+    /// los demás endpoints. Sin token sigue dando 401, como en <see cref="SolicitudesMalFormadasTests"/>. El
+    /// 415 sale de una excepción que traduce el manejador de errores, y la línea de diagnóstico registra ese
+    /// 415, no el estado que tenía la respuesta cuando se tiró.</summary>
     [Fact]
     public async Task UnPostAMcpConUnContentTypeQueNoEsJsonDa415SolicitudInvalidaYSinTokenDa401()
     {
         var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-415");
-        await using var host = _apoyo.HostConConector(usuario.Mail);
+        var captura = new CapturaDeLogs();
+        await using var host = _apoyo.HostConConector(usuario.Mail, configurarMas: ConCaptura(captura));
         using var cliente = Cliente(host);
         var accessToken = Campo(await ObtenerTokensAsync(cliente, usuario.Mail), "access_token");
 
@@ -553,6 +591,7 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
             Assert.Equal("solicitud_invalida", await SolicitudesMalFormadasTests.CodigoSinDetallesInternosAsync(respuesta));
         }
 
+        Assert.Equal(3, LineasDeDiagnostico(captura).Count(l => l.StartsWith("Conector MCP: POST /mcp -> 415 ", StringComparison.Ordinal)));
         Assert.Equal(HttpStatusCode.Unauthorized, (await PostearAsync(null, "text/plain")).StatusCode);
     }
 
@@ -619,5 +658,260 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         {
             raizWeb.Delete(recursive: true);
         }
+    }
+
+    /// <summary>En Production OpenIddict exige HTTPS en sus endpoints. Con el conector activo (el POST a
+    /// /mcp sin token da 401, no 404), GET /api/salud por http plano y sin X-Forwarded-Proto, que es lo
+    /// que hace el HEALTHCHECK del Dockerfile, responde 200 con la base en ok.</summary>
+    [Fact]
+    public async Task EnProductionConElConectorActivoGetApiSaludPorHttpPlanoDa200()
+    {
+        await using var host = HostEnProduction();
+        using var cliente = ClienteHttpPlano(host);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await LlamarMcpAsync(cliente, accessToken: null, "tools/list")).Estado);
+
+        var salud = await cliente.GetAsync("/api/salud");
+
+        Assert.Equal(HttpStatusCode.OK, salud.StatusCode);
+        var cuerpo = await salud.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("ok", Campo(cuerpo, "estado"));
+        Assert.Equal("ok", Campo(cuerpo, "baseDeDatos"));
+    }
+
+    /// <summary>Con URL pública https y un cliente por http plano, el conector fija el esquema de sus
+    /// requests: el WWW-Authenticate y la metadata publican las URLs https de la URL pública, y el
+    /// descubrimiento de OpenIddict responde 200 aunque en Production OpenIddict exija HTTPS.</summary>
+    [Fact]
+    public async Task PorHttpPlanoElConectorPublicaLasUrlsHttpsDeLaUrlPublica()
+    {
+        await using var host = HostEnProduction();
+        using var cliente = ClienteHttpPlano(host);
+
+        using var pedido = new HttpRequestMessage(HttpMethod.Post, ConstantesDeMcp.RutaMcp)
+        {
+            Content = JsonContent.Create(new { jsonrpc = "2.0", id = 1, method = "tools/list" })
+        };
+        pedido.Headers.Accept.ParseAdd("application/json");
+        pedido.Headers.Accept.ParseAdd("text/event-stream");
+        var sinToken = await cliente.SendAsync(pedido);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, sinToken.StatusCode);
+        Assert.Equal(
+            $"Bearer resource_metadata=\"{UrlPublica}/.well-known/oauth-protected-resource/mcp\"",
+            Assert.Single(sinToken.Headers.WwwAuthenticate).ToString());
+
+        var delServidor = await cliente.GetAsync("/.well-known/oauth-authorization-server");
+        Assert.Equal(HttpStatusCode.OK, delServidor.StatusCode);
+        var metadata = await delServidor.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(UrlPublica + "/", Campo(metadata, "issuer"));
+        Assert.Equal(UrlPublica + ConstantesDeMcp.RutaDeAutorizacion, Campo(metadata, "authorization_endpoint"));
+        Assert.Equal(UrlPublica + ConstantesDeMcp.RutaDeToken, Campo(metadata, "token_endpoint"));
+
+        var delRecurso = await cliente.GetFromJsonAsync<JsonElement>("/.well-known/oauth-protected-resource/mcp");
+        Assert.Equal(RecursoMcp, Campo(delRecurso, "resource"));
+    }
+
+    /// <summary>Un formulario que el framework no puede leer en /connect/token es un error del cliente: 400
+    /// invalid_request, la línea de diagnóstico con ese 400 y ninguna entrada de nivel Error en el log.
+    /// Multipart sin boundary lo rechaza OpenIddict por su Content-Type, con su propia descripción
+    /// (<see cref="EndpointsDeAutorizacion.RechazarFormularioIlegibleAsync"/> solo lee lo que leería
+    /// OpenIddict); una clave más larga que el límite de FormOptions la rechaza ese manejador.</summary>
+    [Fact]
+    public async Task UnFormularioIlegibleEnConnectTokenDa400InvalidRequestSinErroresEnElLog()
+    {
+        var captura = new CapturaDeLogs();
+        await using var host = _apoyo.HostConConector(MailRoot, configurarMas: ConCaptura(captura));
+        using var cliente = Cliente(host);
+
+        using var sinBoundary = new ByteArrayContent(Encoding.ASCII.GetBytes("grant_type=authorization_code"));
+        sinBoundary.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+        var multipart = await cliente.PostAsync(ConstantesDeMcp.RutaDeToken, sinBoundary);
+
+        Assert.Equal(HttpStatusCode.BadRequest, multipart.StatusCode);
+        var errorDelMultipart = await multipart.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_request", Campo(errorDelMultipart, "error"));
+        Assert.NotEqual(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, Campo(errorDelMultipart, "error_description"));
+
+        var claveLarga = await cliente.PostAsync(
+            ConstantesDeMcp.RutaDeToken,
+            new StringContent($"{new string('k', 3_000)}=v", Encoding.ASCII, "application/x-www-form-urlencoded"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, claveLarga.StatusCode);
+        var errorDeLaClave = await claveLarga.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_request", Campo(errorDeLaClave, "error"));
+        Assert.Equal(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, Campo(errorDeLaClave, "error_description"));
+
+        var lineas = LineasDeDiagnostico(captura)
+            .Where(l => l.StartsWith("Conector MCP: POST /connect/token ", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, lineas.Count);
+        Assert.All(lineas, l => Assert.StartsWith("Conector MCP: POST /connect/token -> 400 ", l));
+        Assert.All(lineas, l => Assert.Contains("| OAuth=(formulario no inspeccionado) |", l));
+        Assert.Contains($"| Error=invalid_request: {EndpointsDeAutorizacion.DescripcionDeFormularioIlegible} |", lineas[1]);
+        Assert.DoesNotContain(captura.Entradas, entrada => entrada.Nivel >= LogLevel.Error);
+    }
+
+    /// <summary>En /connect/authorize, un POST con un formulario que el framework no puede leer da el 400 de
+    /// OpenIddict, sin redirigir, en lugar de un 500. Un GET trae la solicitud en la query: aunque declare un
+    /// cuerpo de formulario ilegible, ese cuerpo no se lee y la página se muestra. Ninguno deja una entrada
+    /// de nivel Error en el log.</summary>
+    [Fact]
+    public async Task UnFormularioIlegibleEnConnectAuthorizeDa400YEnUnGetNoSeLee()
+    {
+        var captura = new CapturaDeLogs();
+        await using var host = _apoyo.HostConConector(MailRoot, configurarMas: ConCaptura(captura));
+        using var cliente = Cliente(host);
+        var ilegible = $"{new string('k', 3_000)}=v";
+
+        var post = await cliente.PostAsync(
+            ConstantesDeMcp.RutaDeAutorizacion, new StringContent(ilegible, Encoding.ASCII, "application/x-www-form-urlencoded"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, post.StatusCode);
+        Assert.Null(post.Headers.Location);
+        Assert.Contains(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, await post.Content.ReadAsStringAsync());
+
+        using var get = new HttpRequestMessage(HttpMethod.Get, UrlDeAutorizacion(NuevoPkce()))
+        {
+            Content = new StringContent(ilegible, Encoding.ASCII, "application/x-www-form-urlencoded")
+        };
+        var pagina = await cliente.SendAsync(get);
+
+        Assert.Equal(HttpStatusCode.OK, pagina.StatusCode);
+        Assert.Contains("<form", await pagina.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(captura.Entradas, entrada => entrada.Nivel >= LogLevel.Error);
+    }
+
+    /// <summary>Las tres respuestas HTML de /connect/authorize (la página, el 400 por antiforgery inválido
+    /// y la página otra vez con un error) llevan los encabezados de <see cref="PaginaDeConsentimiento"/>; la
+    /// primera, además, deja la cookie de antiforgery acotada a /connect/authorize, Secure, HttpOnly y
+    /// SameSite=Strict.</summary>
+    [Fact]
+    public async Task LasRespuestasDeLaPaginaDeConsentimientoLlevanSusEncabezadosYLaCookieDeAntiforgerySusAtributos()
+    {
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-encabezados");
+        await using var host = _apoyo.HostConConector(usuario.Mail);
+        using var cliente = Cliente(host);
+
+        var pagina = await cliente.GetAsync(UrlDeAutorizacion(NuevoPkce()));
+        Assert.Equal(HttpStatusCode.OK, pagina.StatusCode);
+        AfirmarEncabezadosDeLaPagina(pagina);
+        var cookie = Assert.Single(
+            pagina.Headers.GetValues("Set-Cookie"), c => c.StartsWith("ways.mcp.antiforgery=", StringComparison.Ordinal));
+        string[] atributos = ["httponly", "path=/connect/authorize", "samesite=strict", "secure"];
+        Assert.Equal(atributos, cookie.Split(';').Skip(1).Select(a => a.Trim().ToLowerInvariant()).Order(StringComparer.Ordinal));
+
+        var sinAntiforgery = await AprobarAsync(
+            cliente, UrlDeAutorizacion(NuevoPkce()), usuario.Mail, Password, conAntiforgery: false);
+        Assert.Equal(HttpStatusCode.BadRequest, sinAntiforgery.StatusCode);
+        AfirmarEncabezadosDeLaPagina(sinAntiforgery);
+
+        var conError = await AprobarAsync(cliente, UrlDeAutorizacion(NuevoPkce()), usuario.Mail, "otra-contraseña");
+        Assert.Equal(HttpStatusCode.OK, conError.StatusCode);
+        Assert.NotNull(MensajeDeError(await conError.Content.ReadAsStringAsync()));
+        AfirmarEncabezadosDeLaPagina(conError);
+    }
+
+    /// <summary>Dos usuarios del mismo tenant, cada uno con su token: quien_soy devuelve la fila de quien
+    /// llama, aunque RLS también deja ver la del otro.</summary>
+    [Fact]
+    public async Task QuienSoyDevuelveLaFilaDeQuienLlamaYNoLaDeOtroUsuarioDelMismoTenant()
+    {
+        var primero = await _apoyo.SembrarUsuarioDeTenantAsync("conector-quien-a");
+        var segundo = await _apoyo.SembrarUsuarioDeTenantAsync("conector-quien-b", delMismoTenantQue: primero);
+        await using var host = _apoyo.HostConConector($"{primero.Mail};{segundo.Mail}");
+        using var cliente = Cliente(host);
+
+        foreach (var (llamador, otro) in new[] { (primero, segundo), (segundo, primero) })
+        {
+            var texto = await QuienSoyAsync(cliente, Campo(await ObtenerTokensAsync(cliente, llamador.Mail), "access_token"));
+
+            Assert.Contains(llamador.Mail, texto);
+            Assert.DoesNotContain(otro.Mail, texto);
+            Assert.Contains(primero.NombreTenant, texto);
+        }
+    }
+
+    [Fact]
+    public async Task ConMinutosDeAccessTokenConfiguradoElTokenVenceEnEsosMinutos()
+    {
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-minutos");
+        await using var host = _apoyo.HostConConector(
+            usuario.Mail, configurarMas: builder => builder.UseSetting("Mcp:MinutosDeAccessToken", "5"));
+        using var cliente = Cliente(host);
+
+        var tokens = await ObtenerTokensAsync(cliente, usuario.Mail);
+
+        Assert.InRange(tokens.GetProperty("expires_in").GetInt64(), 295, 300);
+    }
+
+    [Fact]
+    public async Task ConIdDeClienteConfiguradoAutorizaEseClienteYYaNoElPorDefecto()
+    {
+        const string OtroCliente = "cliente-propio";
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-cliente");
+        await using var host = _apoyo.HostConConector(
+            usuario.Mail, configurarMas: builder => builder.UseSetting("Mcp:IdDeCliente", OtroCliente));
+        using var cliente = Cliente(host);
+
+        var conElPorDefecto = await cliente.GetAsync(UrlDeAutorizacion(NuevoPkce()));
+        Assert.Equal(HttpStatusCode.BadRequest, conElPorDefecto.StatusCode);
+        Assert.DoesNotContain("<form", await conElPorDefecto.Content.ReadAsStringAsync());
+
+        var tokens = await ObtenerTokensAsync(cliente, usuario.Mail, idCliente: OtroCliente);
+        Assert.Equal(HttpStatusCode.OK, (await LlamarMcpAsync(cliente, Campo(tokens, "access_token"), "tools/list")).Estado);
+    }
+
+    [Fact]
+    public async Task DenegarRedirigeAClaudeConAccessDeniedYSinCodigo()
+    {
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-denegar");
+        await using var host = _apoyo.HostConConector(usuario.Mail);
+        using var cliente = Cliente(host);
+        var pagina = await cliente.GetAsync(UrlDeAutorizacion(NuevoPkce()));
+        var campos = CamposOcultos(await pagina.Content.ReadAsStringAsync());
+        campos.Add(new("accion", "denegar"));
+
+        var respuesta = await cliente.PostAsync(ConstantesDeMcp.RutaDeAutorizacion, new FormUrlEncodedContent(campos));
+
+        Assert.Equal(HttpStatusCode.Redirect, respuesta.StatusCode);
+        var destino = respuesta.Headers.Location!;
+        Assert.StartsWith(Redireccion + "?", destino.AbsoluteUri, StringComparison.Ordinal);
+        var parametros = QueryHelpers.ParseQuery(destino.Query);
+        Assert.Equal("access_denied", parametros["error"].ToString());
+        Assert.Equal("estado-de-prueba", parametros["state"].ToString());
+        Assert.False(parametros.ContainsKey("code"));
+    }
+
+    [Fact]
+    public async Task ConLaRedirectUriDeClaudeComElFlujoCompletoFunciona()
+    {
+        const string RedireccionDeClaudeCom = "https://claude.com/api/mcp/auth_callback";
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-claude-com");
+        await using var host = _apoyo.HostConConector(usuario.Mail);
+        using var cliente = Cliente(host);
+
+        var tokens = await ObtenerTokensAsync(cliente, usuario.Mail, redireccion: RedireccionDeClaudeCom);
+
+        Assert.Equal(HttpStatusCode.OK, (await LlamarMcpAsync(cliente, Campo(tokens, "access_token"), "tools/list")).Estado);
+    }
+
+    [Fact]
+    public async Task ToolsListAnunciaQuienSoyDeSoloLecturaNoDestructivaIdempotenteYDeMundoCerrado()
+    {
+        var usuario = await _apoyo.SembrarUsuarioDeTenantAsync("conector-anotaciones");
+        await using var host = _apoyo.HostConConector(usuario.Mail);
+        using var cliente = Cliente(host);
+        var accessToken = Campo(await ObtenerTokensAsync(cliente, usuario.Mail), "access_token");
+
+        var (estado, mensaje) = await LlamarMcpAsync(cliente, accessToken, "tools/list");
+
+        Assert.Equal(HttpStatusCode.OK, estado);
+        var herramienta = Assert.Single(mensaje!.Value.GetProperty("result").GetProperty("tools").EnumerateArray());
+        Assert.Equal("quien_soy", Campo(herramienta, "name"));
+        var anotaciones = herramienta.GetProperty("annotations");
+        Assert.True(anotaciones.GetProperty("readOnlyHint").GetBoolean());
+        Assert.False(anotaciones.GetProperty("destructiveHint").GetBoolean());
+        Assert.True(anotaciones.GetProperty("idempotentHint").GetBoolean());
+        Assert.False(anotaciones.GetProperty("openWorldHint").GetBoolean());
     }
 }

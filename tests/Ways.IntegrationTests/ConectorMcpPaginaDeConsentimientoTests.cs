@@ -5,8 +5,9 @@ using Ways.Api.ConectorMcp;
 
 namespace Ways.IntegrationTests;
 
-/// <summary>Pruebas puras de <see cref="PaginaDeConsentimiento"/>: el HTML y los encabezados, sin
-/// levantar la app ni Docker.</summary>
+/// <summary>Pruebas puras de <see cref="PaginaDeConsentimiento"/>: el HTML y los valores que fija
+/// <see cref="PaginaDeConsentimiento.AplicarEncabezados"/>, sin levantar la app ni Docker. Los encabezados de
+/// las respuestas reales de /connect/authorize los prueba <see cref="ConectorMcpFlujoTests"/>.</summary>
 public class ConectorMcpPaginaDeConsentimientoTests
 {
     private const string CampoAntiforgery = "__RequestVerificationToken";
@@ -74,7 +75,7 @@ public class ConectorMcpPaginaDeConsentimientoTests
     }
 
     [Fact]
-    public void LosEncabezadosProhibenElEmbebidoYElCacheSinRestringirFormAction()
+    public void AplicarEncabezadosFijaDenyNoStoreNoReferrerYUnaCspSinFormAction()
     {
         var http = new DefaultHttpContext();
 

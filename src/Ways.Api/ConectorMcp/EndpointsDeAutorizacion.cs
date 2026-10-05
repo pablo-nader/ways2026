@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenIddict.Abstractions;
+using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
@@ -31,9 +32,37 @@ public static class EndpointsDeAutorizacion
     private const string CampoPassword = "password";
 
     /// <summary>El mismo texto que devuelve <see cref="ServicioDeAutenticacion.IniciarSesionAsync"/>
-    /// ante una contraseña incorrecta: un mail fuera de la lista o un usuario de plataforma no se
-    /// distinguen de una contraseña mal escrita.</summary>
+    /// ante una contraseña incorrecta. Un mail fuera de la lista y un usuario de plataforma reciben la
+    /// página con este texto y el mismo estado (200) que una contraseña mal escrita. El tiempo de
+    /// respuesta sí difiere para el mail fuera de la lista, que se rechaza antes de consultar la base.</summary>
     public const string MensajeDeCredencialesInvalidas = "Mail o contraseña incorrectos.";
+
+    public const string DescripcionDeFormularioIlegible = "El formulario de la solicitud no se puede leer.";
+
+    /// <summary>Corre en la extracción de OpenIddict de <c>/connect/authorize</c> y <c>/connect/token</c>,
+    /// antes de que OpenIddict lea el formulario, y lee el mismo que leería él: el de un POST
+    /// <c>application/x-www-form-urlencoded</c>. Si el framework lo rechaza (por ejemplo, una clave más larga
+    /// que el límite de <c>FormOptions</c>), la solicitud se rechaza como <c>invalid_request</c>; sin esto la
+    /// excepción saldría de OpenIddict y el manejador de errores de la app respondería 500.</summary>
+    public static async ValueTask RechazarFormularioIlegibleAsync(OpenIddictServerEvents.BaseValidatingContext contexto)
+    {
+        // En este servidor toda solicitud de OpenIddict llega por ASP.NET Core.
+        var request = contexto.Transaction.GetHttpRequest()!;
+        if (!HttpMethods.IsPost(request.Method) ||
+            request.ContentType?.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            return;
+        }
+
+        try
+        {
+            await request.ReadFormAsync(request.HttpContext.RequestAborted);
+        }
+        catch (InvalidDataException)
+        {
+            contexto.Reject(Errors.InvalidRequest, DescripcionDeFormularioIlegible);
+        }
+    }
 
     public static IEndpointRouteBuilder MapearEndpointsDeAutorizacion(this IEndpointRouteBuilder app)
     {
@@ -64,7 +93,9 @@ public static class EndpointsDeAutorizacion
         var cliente = (await aplicaciones.FindByClientIdAsync(solicitud.ClientId!, ct))!;
         var nombreDelCliente = (await aplicaciones.GetDisplayNameAsync(cliente, ct))!;
 
-        var formulario = http.Request.HasFormContentType ? await http.Request.ReadFormAsync(ct) : null;
+        // En un POST OpenIddict ya leyó el formulario (solo acepta application/x-www-form-urlencoded); un
+        // GET trae la solicitud en la query y su cuerpo no se lee.
+        var formulario = HttpMethods.IsPost(http.Request.Method) ? await http.Request.ReadFormAsync(ct) : null;
         var accion = formulario?[CampoAccion].ToString();
 
         var pedidos = solicitud.GetResources();

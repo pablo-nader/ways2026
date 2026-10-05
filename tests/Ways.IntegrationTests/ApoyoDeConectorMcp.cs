@@ -69,7 +69,9 @@ internal sealed class ApoyoDeConectorMcp(WaysApiFixture fixture)
             AllowAutoRedirect = false
         });
 
-    public async Task<UsuarioDeTenant> SembrarUsuarioDeTenantAsync(string nombre)
+    /// <param name="delMismoTenantQue">Si se pasa, el usuario nuevo va en el tenant de ese usuario en
+    /// lugar de uno nuevo.</param>
+    public async Task<UsuarioDeTenant> SembrarUsuarioDeTenantAsync(string nombre, UsuarioDeTenant? delMismoTenantQue = null)
     {
         // El host base siembra los roles al arrancar; la fila de usuarios los referencia.
         using var _ = fixture.CreateClient();
@@ -79,13 +81,23 @@ internal sealed class ApoyoDeConectorMcp(WaysApiFixture fixture)
         var hasheador = new HasheadorPbkdf2();
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
-        var tenant = new Tenant { Nombre = $"Tenant {unico}", Estado = EstadoTenant.Activo, CreatedAt = ahora, UpdatedAt = ahora };
-        db.Tenants.Add(tenant);
-        await db.SaveChangesAsync();
+        int idTenant;
+        string nombreTenant;
+        if (delMismoTenantQue is { } existente)
+        {
+            (idTenant, nombreTenant) = (existente.IdTenant, existente.NombreTenant);
+        }
+        else
+        {
+            var tenant = new Tenant { Nombre = $"Tenant {unico}", Estado = EstadoTenant.Activo, CreatedAt = ahora, UpdatedAt = ahora };
+            db.Tenants.Add(tenant);
+            await db.SaveChangesAsync();
+            (idTenant, nombreTenant) = (tenant.Id, tenant.Nombre);
+        }
 
         var usuario = new Usuario
         {
-            IdTenant = tenant.Id,
+            IdTenant = idTenant,
             NombreUsuario = $"admin-{unico}",
             Mail = $"{unico}@ways.test",
             RolId = (int)RolConocido.Admin,
@@ -98,7 +110,7 @@ internal sealed class ApoyoDeConectorMcp(WaysApiFixture fixture)
         db.Usuarios.Add(usuario);
         await db.SaveChangesAsync();
 
-        return new UsuarioDeTenant(tenant.Id, tenant.Nombre, usuario.Id, usuario.Mail);
+        return new UsuarioDeTenant(idTenant, nombreTenant, usuario.Id, usuario.Mail);
     }
 
     public static Pkce NuevoPkce()
@@ -165,24 +177,30 @@ internal sealed class ApoyoDeConectorMcp(WaysApiFixture fixture)
             ? WebUtility.HtmlDecode(aviso.Groups[1].Value)
             : null;
 
-    /// <summary>El código de autorización si la respuesta es la redirección a Claude; si no, <c>null</c>.</summary>
-    public static string? CodigoDe(HttpResponseMessage respuesta) =>
+    /// <summary>El código de autorización si la respuesta es la redirección a <paramref name="redireccion"/>;
+    /// si no, <c>null</c>.</summary>
+    public static string? CodigoDe(HttpResponseMessage respuesta, string redireccion = Redireccion) =>
         respuesta.StatusCode == HttpStatusCode.Redirect &&
         respuesta.Headers.Location is { } destino &&
-        destino.AbsoluteUri.StartsWith(Redireccion + "?", StringComparison.Ordinal) &&
+        destino.AbsoluteUri.StartsWith(redireccion + "?", StringComparison.Ordinal) &&
         QueryHelpers.ParseQuery(destino.Query).TryGetValue("code", out var codigo)
             ? codigo.ToString()
             : null;
 
     /// <param name="recurso"><c>null</c> no manda el parámetro <c>resource</c>.</param>
     public static Task<HttpResponseMessage> CanjearAsync(
-        HttpClient cliente, string codigo, Pkce pkce, string? recurso = RecursoMcp) =>
+        HttpClient cliente,
+        string codigo,
+        Pkce pkce,
+        string? recurso = RecursoMcp,
+        string idCliente = IdCliente,
+        string redireccion = Redireccion) =>
         cliente.PostAsync("/connect/token", Formulario(new Dictionary<string, string?>
         {
             ["grant_type"] = "authorization_code",
             ["code"] = codigo,
-            ["redirect_uri"] = Redireccion,
-            ["client_id"] = IdCliente,
+            ["redirect_uri"] = redireccion,
+            ["client_id"] = idCliente,
             ["code_verifier"] = pkce.Verificador,
             ["resource"] = recurso
         }));
@@ -204,14 +222,25 @@ internal sealed class ApoyoDeConectorMcp(WaysApiFixture fixture)
     /// <summary>Flujo completo para un usuario habilitado: devuelve la respuesta del token. Un
     /// <paramref name="recurso"/> o <paramref name="alcances"/> en <c>null</c> no se manda.</summary>
     public static async Task<JsonElement> ObtenerTokensAsync(
-        HttpClient cliente, string mail, string? recurso = RecursoMcp, string? alcances = "ways.mcp offline_access")
+        HttpClient cliente,
+        string mail,
+        string? recurso = RecursoMcp,
+        string? alcances = "ways.mcp offline_access",
+        string idCliente = IdCliente,
+        string redireccion = Redireccion)
     {
         var pkce = NuevoPkce();
-        var url = UrlDeAutorizacion(pkce, new Dictionary<string, string?> { ["resource"] = recurso, ["scope"] = alcances });
-        var codigo = CodigoDe(await AprobarAsync(cliente, url, mail, Password));
+        var url = UrlDeAutorizacion(pkce, new Dictionary<string, string?>
+        {
+            ["resource"] = recurso,
+            ["scope"] = alcances,
+            ["client_id"] = idCliente,
+            ["redirect_uri"] = redireccion
+        });
+        var codigo = CodigoDe(await AprobarAsync(cliente, url, mail, Password), redireccion);
         Assert.NotNull(codigo);
 
-        var canje = await CanjearAsync(cliente, codigo, pkce, recurso);
+        var canje = await CanjearAsync(cliente, codigo, pkce, recurso, idCliente, redireccion);
         Assert.Equal(HttpStatusCode.OK, canje.StatusCode);
         return await canje.Content.ReadFromJsonAsync<JsonElement>();
     }

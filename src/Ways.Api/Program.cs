@@ -220,6 +220,8 @@ var app = builder.Build();
 // Tiene que ir primero: todo lo que sigue depende de saber el esquema real.
 app.UseForwardedHeaders();
 
+// Antes de UseExceptionHandler: la línea de diagnóstico del conector registra el estado que deja el
+// manejador de errores, no el 200 que tiene la respuesta mientras la excepción sube.
 app.UsarConectorMcp(conectorMcp);
 
 app.UseExceptionHandler();

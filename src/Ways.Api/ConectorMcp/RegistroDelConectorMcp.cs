@@ -70,11 +70,9 @@ public static class RegistroDelConectorMcp
         builder.Services.AddSingleton(new UrlsDelConector(urlPublica, recursos));
 
         // OpenIddict registra cada solicitud completa en nivel Information y no oculta el
-        // code_verifier; se baja a Warning salvo que la configuración pida otro nivel.
-        if (string.IsNullOrEmpty(builder.Configuration["Logging:LogLevel:OpenIddict"]))
-        {
-            builder.Logging.AddFilter("OpenIddict", LogLevel.Warning);
-        }
+        // code_verifier. Esta regla se agrega después de las de configuración, así que la categoría
+        // queda en Warning aunque Logging:LogLevel:OpenIddict pida otro nivel.
+        builder.Logging.AddFilter("OpenIddict", LogLevel.Warning);
 
         // Nombre único por host: el almacén InMemory de EF se comparte entre todos los hosts del
         // mismo proceso que usan el mismo nombre.
@@ -122,6 +120,15 @@ public static class RegistroDelConectorMcp
                     opcionesDelServidor.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain);
                     opcionesDelServidor.ClientAuthenticationMethods.Add(ClientAuthenticationMethods.None);
                 });
+
+                servidor.AddEventHandler<OpenIddictServerEvents.ExtractAuthorizationRequestContext>(manejador => manejador
+                    .UseInlineHandler(EndpointsDeAutorizacion.RechazarFormularioIlegibleAsync)
+                    .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractGetOrPostRequest<
+                        OpenIddictServerEvents.ExtractAuthorizationRequestContext>.Descriptor.Order - 1_000));
+                servidor.AddEventHandler<OpenIddictServerEvents.ExtractTokenRequestContext>(manejador => manejador
+                    .UseInlineHandler(EndpointsDeAutorizacion.RechazarFormularioIlegibleAsync)
+                    .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractPostRequest<
+                        OpenIddictServerEvents.ExtractTokenRequestContext>.Descriptor.Order - 1_000));
 
                 var aspNetCore = servidor.UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()

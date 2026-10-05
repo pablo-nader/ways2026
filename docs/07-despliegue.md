@@ -165,6 +165,19 @@ node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publ
 - **Una sola instancia.** Con más de una réplica, cada una tendría sus propias claves y
   conexiones.
 - El access token dura 60 minutos (`Mcp__MinutosDeAccessToken`) y se renueva con el refresh token.
+- El refresh token vence a los 14 días sin usarse y cada renovación entrega uno nuevo, así que una
+  conexión que Claude sigue usando no vence. No se puede cortar una conexión sola: se cortan todas
+  reiniciando la app o apagando el flag, y las de un usuario desactivándolo en Ways (lo que también
+  le corta el acceso a Ways).
+- La página de autorización no limita los intentos y comparte el bloqueo de cuenta del login: quien
+  conozca un mail de `Mcp__MailsHabilitados` puede bloquear esa cuenta probando contraseñas
+  incorrectas, igual que desde `/login`.
+- A un mail fuera de la lista la página le responde con el mismo texto y el mismo estado que a una
+  contraseña incorrecta, pero más rápido, porque lo rechaza sin consultar la base: midiendo tiempos
+  se puede saber si un mail está en la lista.
+- Con `Mcp__UrlPublica` el conector trata sus rutas como https aunque la request llegue por http, así
+  que la exigencia de HTTPS de OpenIddict nunca rechaza nada y que la conexión sea de verdad HTTPS
+  depende solo del proxy (ver [Detrás del proxy inverso](#detrás-del-proxy-inverso)).
 
 ### Apagarlo
 
