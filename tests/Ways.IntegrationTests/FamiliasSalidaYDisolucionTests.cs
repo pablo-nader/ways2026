@@ -570,8 +570,8 @@ public class FamiliasSalidaYDisolucionTests(WaysApiFixture fixture) : IClassFixt
     /// <summary>Sacar no se reintenta ante un fallo transitorio. La escritura es SQL crudo, que ningún interceptor de
     /// EF ve: el <c>40001</c> se inyecta en la lectura de la familia que corre DENTRO de la transacción, la única
     /// sentencia de EF del camino. El error llega tal cual y esa lectura se intentó UNA vez (con la estrategia
-    /// reintentable la segunda vuelta comitearía y serían dos): el artículo sigue en su familia. Sin el interceptor la
-    /// misma llamada sobre el MISMO contexto lo saca.</summary>
+    /// reintentable la segunda vuelta comitearía y serían dos): el artículo sigue en su familia. La misma llamada sobre
+    /// el MISMO contexto lo saca: el interceptor sigue registrado, pero ya gastó su único fallo.</summary>
     [Fact]
     public async Task UnFalloTransitorioAlSacarNoSeReintentaYElArticuloSigueEnSuFamilia()
     {
@@ -598,7 +598,8 @@ public class FamiliasSalidaYDisolucionTests(WaysApiFixture fixture) : IClassFixt
     /// da de baja la familia, DESPUÉS de que el <c>UPDATE</c> crudo ya dejó sueltos a los miembros dentro de la
     /// transacción: al fallar, la transacción entera se revierte y los miembros siguen en su familia y la familia
     /// viva, el <c>UPDATE</c> se intentó UNA vez, y la familia que la operación leyó no queda rastreada en el contexto.
-    /// Sin el interceptor la misma llamada sobre el MISMO contexto disuelve.</summary>
+    /// La misma llamada sobre el MISMO contexto disuelve: el interceptor sigue registrado, pero ya gastó su único
+    /// fallo.</summary>
     [Fact]
     public async Task UnFalloTransitorioAlDisolverRevierteTodoNoSeReintentaYNoDejaLaFamiliaRastreada()
     {

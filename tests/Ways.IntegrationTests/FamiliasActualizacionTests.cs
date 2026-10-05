@@ -24,6 +24,7 @@ namespace Ways.IntegrationTests;
 ///
 /// <list type="bullet">
 /// <item>cada campo del cuerpo se escribe y se rechaza lo que no vale (<c>dto-contract-honesty</c>);</item>
+/// <item>el 404 de una familia que no se encuentra, que precede a la validación del cuerpo y al chequeo del nombre;</item>
 /// <item>la unicidad del nombre: el chequeo previo y, sobre todo, el respaldo <c>ux_familias_nombre</c> —el que
 /// responde en una carrera, con su SQLSTATE <c>23505</c> observado—;</item>
 /// <item>la lectura bajo el lock de la fila (<c>single-read-under-lock</c>): una edición que pierde una carrera
@@ -132,7 +133,8 @@ public class FamiliasActualizacionTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(antes, Huella(await apoyo.LeerFamiliaAsync(familia)));
     }
 
-    /// <summary>El nombre admite hasta 150 caracteres —la columna <c>citext</c> de 150— y no uno más.</summary>
+    /// <summary>El nombre admite hasta 150 caracteres y no uno más: el tope lo aplica la aplicación, porque la columna
+    /// <c>citext</c> no limita el largo.</summary>
     [Fact]
     public async Task UnNombreDeExactamenteElLargoMaximoSeAceptaYUnoMasLargoDa400()
     {
@@ -195,6 +197,49 @@ public class FamiliasActualizacionTests(WaysApiFixture fixture) : IClassFixture<
             Assert.Equal("no_encontrado", (await ProblemaAsync(respuesta)).Codigo);
         }
 
+        Assert.Equal(antesDeLaDadaDeBaja, Huella(await apoyo.LeerFamiliaAsync(dadaDeBaja)));
+        Assert.Equal(antesDeLaAjena, Huella(await apoyo.LeerFamiliaAsync(ajena)));
+    }
+
+    /// <summary>Una familia que no se encuentra —inexistente, dada de baja o de otro tenant— da 404 antes que cualquier
+    /// rechazo del cuerpo o del nombre, y no escribe nada. Se prueba con un cuerpo por cada rechazo que, sin ese orden,
+    /// ocurriría antes del 404: el nombre vacío y el de 151 caracteres (400 de la validación del nombre), el
+    /// <c>activo</c> ausente (400) y el nombre de una familia viva del tenant (409 del chequeo previo).</summary>
+    [Fact]
+    public async Task UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre));
+        using var otro = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre) + "-ajeno");
+        var viva = await apoyo.SembrarFamiliaAsync(e, "Viva");
+        var dadaDeBaja = await apoyo.SembrarFamiliaAsync(e, "Dada de baja", dadaDeBaja: true);
+        var ajena = await apoyo.SembrarFamiliaAsync(otro, "Ajena");
+        var antesDeLaViva = Huella(await apoyo.LeerFamiliaAsync(viva));
+        var antesDeLaDadaDeBaja = Huella(await apoyo.LeerFamiliaAsync(dadaDeBaja));
+        var antesDeLaAjena = Huella(await apoyo.LeerFamiliaAsync(ajena));
+
+        var cuerpos = new[]
+        {
+            """{"nombre":"","activo":true}""",
+            $$"""{"nombre":"{{new string('a', 151)}}","activo":true}""",
+            """{"nombre":"Otro nombre"}""",
+            """{"nombre":"VIVA","activo":true}"""
+        };
+
+        foreach (var id in new[] { 999_999_999, dadaDeBaja, ajena })
+        {
+            foreach (var cuerpo in cuerpos)
+            {
+                var respuesta = await e.Admin.PutAsync(
+                    $"/api/familias/{id}", new StringContent(cuerpo, System.Text.Encoding.UTF8, "application/json"));
+
+                Assert.True(
+                    respuesta.StatusCode == HttpStatusCode.NotFound,
+                    $"La familia {id} con el cuerpo {cuerpo[..Math.Min(cuerpo.Length, 30)]} dio {(int)respuesta.StatusCode} y no 404.");
+                Assert.Equal("no_encontrado", (await ProblemaAsync(respuesta)).Codigo);
+            }
+        }
+
+        Assert.Equal(antesDeLaViva, Huella(await apoyo.LeerFamiliaAsync(viva)));
         Assert.Equal(antesDeLaDadaDeBaja, Huella(await apoyo.LeerFamiliaAsync(dadaDeBaja)));
         Assert.Equal(antesDeLaAjena, Huella(await apoyo.LeerFamiliaAsync(ajena)));
     }
@@ -460,8 +505,8 @@ public class FamiliasActualizacionTests(WaysApiFixture fixture) : IClassFixture<
     /// <c>EnableRetryOnFailure</c>, y el interceptor rompe el primer <c>UPDATE familias</c> con un <c>40001</c>. El
     /// error llega tal cual, el <c>UPDATE</c> se intentó UNA vez y la fila queda intacta. Lo que se soltó del
     /// contexto: la familia que la edición había leído no queda rastreada, y la misma edición sobre el MISMO contexto
-    /// —ya sin el interceptor— entra y escribe una vez. (Con la estrategia reintentable el segundo intento comitearía
-    /// y esta prueba vería <c>Intentos == 2</c>.)</summary>
+    /// entra y escribe una vez: el interceptor sigue registrado, pero ya gastó su único fallo. (Con la estrategia
+    /// reintentable el segundo intento comitearía y esta prueba vería <c>Intentos == 2</c>.)</summary>
     [Fact]
     public async Task UnFalloTransitorioAlEditarNoSeReintentaYElContextoNoQuedaConLaFamiliaRastreada()
     {

@@ -497,8 +497,9 @@ no toman locks.
   mayúsculas (`ux_familias_nombre`): `409 familia_nombre_duplicado`, que sostiene la restricción también en una
   carrera y que el chequeo previo adelanta con un mensaje que nombra el nombre pedido; el nombre de una familia dada de
   baja se puede reutilizar. Una familia inactiva no admite miembros nuevos por el alta de un artículo con `idFamilia`
-  (`409 familia_inactiva`). Responde la familia como el listado. Es una transacción sin reintento que lee la fila UNA
-  vez, después de su `FOR UPDATE`; una familia dada de baja mientras esperaba ese lock da `404` y no se escribe nada.
+  (`409 familia_inactiva`). Responde la familia como el listado. `404` si la familia no existe, está dada de baja o es
+  de otro tenant, antes de cualquier rechazo del cuerpo o del nombre. Es una transacción sin reintento que lee la fila
+  UNA vez, después de su `FOR UPDATE`; una familia dada de baja mientras esperaba ese lock da `404` y no se escribe nada.
   No toma el lock de membresía ni bloquea filas de artículos. Escribe la fila de la familia, que el alta de un
   artículo con `idFamilia` lee `FOR SHARE`: un cambio de `activo` en curso hace esperar a ese alta, que lo ve.
 - `DELETE /api/familias/{id}/articulos/{idArticulo}`: **saca** al artículo de la familia: queda sin familia
@@ -534,8 +535,12 @@ garantía depende de que esos dos tramos sean solo de la confirmación —ningú
 filas de compra, de stock ni de lotes, ni escribe la fila del proveedor— y de que el lock de membresía siga
 siendo la primera sentencia de cada transacción; no cubre a las transacciones que no toman ese lock. Los
 chequeos de catálogo (`FOR KEY SHARE`, incluido el del proveedor habitual de la edición y del alta, que no
-choca con el `UPDATE` del proveedor de la confirmación) y la fila de la familia del alta (`FOR SHARE`) no
-chocan con ningún lock que tomen estos escritores y no entran en el orden. Dos escrituras de la misma familia
+choca con el `UPDATE` del proveedor de la confirmación) no chocan con ningún lock que tomen estos escritores y
+no entran en el orden. La fila de la familia sí entra: el alta la lee `FOR SHARE` después de los chequeos de
+catálogo y antes de los locks de par, y la disolución la toma `FOR UPDATE` justo después del lock de membresía
+y antes de las filas de los miembros; las dos toman antes ese lock en modo exclusivo, así que no pueden
+esperarse entre sí por esa fila. La edición de la familia no toma el lock de membresía: toma solo esa fila
+(`FOR UPDATE`), sin ningún otro lock de este protocolo, y por eso queda fuera del orden. Dos escrituras de la misma familia
 no llegan a competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
 estable hasta el commit; un artículo sin familia no toma (2) en los precios, y en la edición de artículos
 conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membresía. Lo implementan el escritor de

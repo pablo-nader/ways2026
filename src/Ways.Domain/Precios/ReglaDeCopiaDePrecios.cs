@@ -8,7 +8,7 @@ public sealed record FilaDePrecio(decimal Monto, DateTimeOffset VigenteDesde, Da
 /// <summary>
 /// Qué filas de <c>precios</c> necesita, en UNA lista fija, un artículo que tiene que quedar con un
 /// <see cref="EstadoDePrecios"/> dado (doc 10 §3): el de un miembro de referencia, para un artículo recién creado
-/// que entra a una familia o para uno que se alinea con ella. Regla pura, sin base de datos.
+/// que entra a una familia. Regla pura, sin base de datos.
 ///
 /// <para>El artículo no hereda la historia: su precio vigente arranca en <c>ahora</c>, no en la fecha en que el de
 /// la referencia empezó, y se cierra donde empieza el pendiente. El pendiente lo hereda con su misma fecha.</para>

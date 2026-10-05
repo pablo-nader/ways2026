@@ -132,7 +132,7 @@ public class EstadoDePreciosTests
     }
 
     /// <summary>Dos estados son iguales por valor: el mismo vigente, y el mismo monto y la misma fecha de
-    /// pendiente. Lo que la alineación de una familia compara es exactamente esto.</summary>
+    /// pendiente.</summary>
     [Fact]
     public void DosEstadosSonIgualesPorValorYDifierenEnCualquieraDeSusPartes()
     {

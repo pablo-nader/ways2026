@@ -29,8 +29,9 @@ namespace Ways.Application.Familias;
 public class ServicioDeFamilias(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, GuardaDeReferencias guarda)
 {
-    /// <summary>El tope del nombre: la columna <c>familias.nombre</c> es <c>citext</c> de 150, como
-    /// <c>articulos.nombre</c>.</summary>
+    /// <summary>El tope del nombre, el mismo que el alta de artículos aplica a <c>articulos.nombre</c>. La columna
+    /// <c>familias.nombre</c> es <c>citext</c>, que no limita el largo: el tope lo hace cumplir la aplicación y no la
+    /// base.</summary>
     private const int LargoMaximoDelNombre = 150;
 
     /// <summary>Las familias vivas del tenant, ordenadas por nombre. Cada una con la cantidad de miembros vivos:
@@ -49,7 +50,34 @@ public class ServicioDeFamilias(
         var familia = await db.Familias.AsNoTracking().FirstOrDefaultAsync(f => f.Id == id, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
 
-        var articulos = await db.Articulos.AsNoTracking().Where(a => a.IdFamilia == id).OrderBy(a => a.Id).ToListAsync(ct);
+        // Una sola lectura de los miembros, proyectada a las columnas que la respuesta usa y no a la entidad entera: la
+        // referencia es la primera fila, así que sus valores salen de la misma lectura que la lista.
+        var articulos = await db.Articulos
+            .AsNoTracking()
+            .Where(a => a.IdFamilia == id)
+            .OrderBy(a => a.Id)
+            .Select(a => new
+            {
+                a.Id,
+                a.CodigoInterno,
+                a.Nombre,
+                a.IdMarca,
+                a.Activo,
+                a.IdArea,
+                a.IdCategoria,
+                a.IdGrupo,
+                a.IdProveedorHabitual,
+                a.IdAlicuotaIva,
+                a.UnidadVenta,
+                a.UnidadesPorBulto,
+                a.EsProducto,
+                a.ControlaLote,
+                a.AcumulaEnVenta,
+                a.CostoLista,
+                a.DescuentoProveedor,
+                a.CostoNominal
+            })
+            .ToListAsync(ct);
 
         if (articulos.Count == 0)
         {
@@ -98,13 +126,17 @@ public class ServicioDeFamilias(
     /// (<c>ef-retry-safe-writes</c>, forma (b), como la edición de artículos: un reintento tras un commit ambiguo
     /// leería la familia ya editada por el intento anterior, y el fallo transitorio llega al operador como
     /// <c>503 resultado_incierto</c>): el <c>FOR UPDATE</c> de la fila de la familia es lo primero, y la familia se lee
-    /// UNA sola vez, después de ese lock (<c>single-read-under-lock</c>). Una familia dada de baja mientras esta edición
-    /// esperaba el lock ya no se encuentra y la respuesta es el <c>404</c>, sin escribir nada.
+    /// UNA sola vez, después de ese lock (<c>single-read-under-lock</c>). El <c>404</c> de una familia que no existe, está
+    /// dada de baja o es de otro tenant precede a la validación del cuerpo y al chequeo del nombre: la primera sentencia
+    /// es un <c>EXISTS</c>, que no instancia la familia, así que la lectura bajo el lock sigue siendo la única y es la
+    /// autoridad. Una familia dada de baja mientras esta edición esperaba el lock ya no se encuentra y la respuesta es el
+    /// <c>404</c>, sin escribir nada.
     ///
     /// <para>No toma el lock de membresía ni bloquea ninguna fila de artículo: no cambia la pertenencia ni escribe
-    /// campos compartidos ni precios. Lo que la serializa con los escritores que leen la fila de la familia —el alta de
-    /// un artículo con <c>idFamilia</c>, que la lee <c>FOR SHARE</c> bajo el lock de membresía— es el lock de la propia
-    /// fila: toda escritura de la fila choca con ese <c>FOR SHARE</c>.</para>
+    /// campos compartidos ni precios. Lo que la serializa con los escritores que toman la fila de la familia —el alta de
+    /// un artículo con <c>idFamilia</c>, que la lee <c>FOR SHARE</c>, y la disolución, que la toma <c>FOR UPDATE</c>,
+    /// las dos bajo el lock de membresía— es el lock de la propia fila: toda escritura de la fila choca con ese
+    /// <c>FOR SHARE</c> y con ese <c>FOR UPDATE</c>.</para>
     ///
     /// <para>La unicidad del nombre la sostiene <c>ux_familias_nombre</c> (<c>23505</c> → <c>409
     /// familia_nombre_duplicado</c> en <c>ManejadorDeErrores</c>); el chequeo previo es un servicio de UX, no la
@@ -114,6 +146,13 @@ public class ServicioDeFamilias(
     /// </summary>
     public async Task<FamiliaListado> ActualizarAsync(int id, EdicionFamilia datos, CancellationToken ct = default)
     {
+        // Antes de cualquier validación: con una familia que no se encuentra el cliente tiene que ver el 404 y no un
+        // 400 o un 409 sobre un cuerpo que de todos modos no se escribiría.
+        if (!await db.Familias.AnyAsync(f => f.Id == id, ct))
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
+        }
+
         var nombre = NormalizarNombre(datos.Nombre);
         var activo = datos.Activo
             ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
@@ -349,9 +388,11 @@ public class ServicioDeFamilias(
             .Select(l => l.Id)
             .ToListAsync(ct);
 
+        // Solo las filas que pueden ser el vigente o el pendiente (abiertas, o cerradas a futuro): la historia cerrada
+        // no cambia el estado y crece con cada cambio de precio.
         var filas = await db.Precios
             .AsNoTracking()
-            .Where(p => p.IdArticulo == idArticuloReferencia)
+            .Where(p => p.IdArticulo == idArticuloReferencia && (p.VigenteHasta == null || p.VigenteHasta > ahora))
             .Select(p => new { p.IdListaPrecio, p.Monto, p.VigenteDesde, p.VigenteHasta })
             .ToListAsync(ct);
 

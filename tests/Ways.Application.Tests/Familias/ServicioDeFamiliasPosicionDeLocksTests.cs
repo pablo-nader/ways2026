@@ -10,7 +10,8 @@ namespace Ways.Application.Tests.Familias;
 /// Es solo UNA de las dos redes: la otra, que mira los locks reales en <c>pg_locks</c> mientras la operación espera,
 /// vive en <c>FamiliasSalidaYDisolucionTests</c>. Esta cubre lo que esa no puede ver de afuera: que el lock de
 /// membresía sea la PRIMERA sentencia, que "ahora" se lea una sola vez, después de todos los locks, y que la
-/// familia se lea una sola vez.
+/// familia se lea una sola vez. Y una guarda que ahorra una sentencia sin cambiar ningún resultado: la del escritor
+/// de la salida sin artículos.
 /// </summary>
 public class ServicioDeFamiliasPosicionDeLocksTests
 {
@@ -158,6 +159,31 @@ public class ServicioDeFamiliasPosicionDeLocksTests
 
         Assert.Equal(
             ["ActualizarAsync", "DisolverAsync", "EstadoDePreciosDeLaReferenciaAsync", "SacarArticuloAsync"], lectores);
+    }
+
+    /// <summary>El escritor de la salida no ejecuta ninguna sentencia si no recibe artículos: la guarda
+    /// <c>idsBloqueados.Count == 0</c> sale con un <c>return</c> antes de crear el comando, y ese comando es lo único
+    /// que el método ejecuta. Llega a ella disolver una familia sin miembros vivos. Sin la guarda correría un
+    /// <c>UPDATE</c> sobre un arreglo vacío que no escribe nada: no cambia ningún resultado y solo ahorra una ida a la
+    /// base, y como el comando es crudo y un interceptor de EF no lo ve, el texto fuente es la única red. Se afirma
+    /// que la guarda aparece una vez, que su cuerpo es solo el <c>return</c>, que viene antes de crear el comando y
+    /// que el método crea y ejecuta un único comando.</summary>
+    [Fact]
+    public void ElEscritorDeLaSalidaNoEjecutaNingunaSentenciaSiNoRecibeArticulos()
+    {
+        var fuente = FuenteSinComentarios();
+        var escritor = CuerpoDe(fuente, "private static async Task DesvincularArticulosAsync(");
+
+        const string guarda = "if (idsBloqueados.Count == 0)";
+        Assert.Equal(1, Contar(escritor, guarda));
+
+        var indiceGuarda = escritor.IndexOf(guarda, StringComparison.Ordinal);
+        var indiceComando = Posicion(escritor, "CreateCommand(");
+
+        Assert.Equal("{ return; }", Regex.Replace(CuerpoDe(escritor, guarda), @"\s+", " ").Trim());
+        Assert.True(indiceGuarda < indiceComando, "La guarda tiene que salir ANTES de crear el comando.");
+        Assert.Equal(1, Contar(escritor, "CreateCommand("));
+        Assert.Equal(1, Contar(escritor, "ExecuteNonQueryAsync("));
     }
 
     /// <summary>La edición del nombre y del estado toma solo la fila de la familia: ni el lock de membresía ni la fila

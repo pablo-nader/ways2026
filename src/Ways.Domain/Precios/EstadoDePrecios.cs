@@ -10,8 +10,8 @@ public sealed record PrecioPendiente(decimal Monto, DateTimeOffset VigenteDesde)
 /// precio <b>vigente</b> —el de la fila con <c>vigente_desde &lt;= ahora</c> y <c>vigente_hasta</c> nulo o
 /// posterior a <c>ahora</c>— y, si lo hay, el <b>pendiente</b> —la fila abierta con <c>vigente_desde</c> a
 /// futuro, que dejó programar un precio—. La historia cerrada y las filas muertas (ventana vacía de un
-/// reemplazo con la misma fecha) no forman parte del estado. Regla pura, sin base de datos: dos artículos están
-/// alineados en una lista cuando sus estados son iguales, comparados por valor.
+/// reemplazo con la misma fecha) no forman parte del estado. Regla pura, sin base de datos. Es un <c>record</c>: dos
+/// estados se comparan por valor.
 /// </summary>
 public sealed record EstadoDePrecios(decimal? Vigente, PrecioPendiente? Pendiente)
 {
