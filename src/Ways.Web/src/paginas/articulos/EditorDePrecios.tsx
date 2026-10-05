@@ -2,10 +2,12 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import { clienteDePrecios } from '../../api/precios'
-import type { HistorialDePrecio, ListaPrecioListado, PrecioVigente } from '../../api/tipos'
+import type { AlcanceDeFamilia, HistorialDePrecio, ListaPrecioListado, PrecioVigente } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { formatearImporte } from '../../formato/importes'
+import { contextoDeAlcance, descripcionDeFamilia, type FamiliaDelArticulo } from './familia'
+import { PreguntaDeAlcance } from './PreguntaDeAlcance'
 
 type EstadoDeLista = {
   monto: string
@@ -15,6 +17,12 @@ type EstadoDeLista = {
   refrescando: boolean
   error: string
   confirmarPendiente: boolean
+  /** La pregunta de alcance está abierta (artículo miembro de una familia): `contexto` es con lo que se
+   * abre, la familia conocida o el texto del servidor. Mientras está abierta el panel queda inerte. */
+  preguntaDeAlcance: { contexto: string } | null
+  /** El alcance ya elegido, recordado por si el servidor pide confirmar el reemplazo de un precio
+   * programado: el reintento lo reenvía sin volver a preguntar. */
+  alcance: AlcanceDeFamilia | null
 }
 
 function estadoDeListaVacio(): EstadoDeLista {
@@ -26,7 +34,18 @@ function estadoDeListaVacio(): EstadoDeLista {
     refrescando: false,
     error: '',
     confirmarPendiente: false,
+    preguntaDeAlcance: null,
+    alcance: null,
   }
+}
+
+/** Lo que el borrador de una lista tiene que cumplir antes de pedir nada: el precio y, si se programa,
+ * su fecha de vigencia. Vacío cuando está listo. */
+function errorDelBorrador(estado: EstadoDeLista): string {
+  const monto = Number(estado.monto)
+  if (!estado.monto.trim() || Number.isNaN(monto)) return 'Ingresá un precio válido.'
+  if (estado.programado && !estado.vigenteDesde) return 'Elegí la fecha de vigencia.'
+  return ''
 }
 
 /**
@@ -36,22 +55,37 @@ function estadoDeListaVacio(): EstadoDeLista {
  * programación con el flujo de `confirmarReemplazo` en el 409 `precio_pendiente_existe` +
  * historial. Las listas `derivada` no admiten alta propia (se resuelven en lectura): solo
  * muestran el precio vigente resuelto.
+ *
+ * Un artículo miembro de una familia (`familia`, doc 10 §3) no escribe un precio sin que se pregunte el
+ * alcance: toda la familia, o solo este artículo, que sale de ella. El precio de un miembro que el cliente no
+ * sabía miembro lo frena el servidor con 409 `alcance_requerido` y se pregunta igual; `familia_cambio`
+ * (la pertenencia cambió) le pide al padre que recargue el artículo.
  */
 export function EditorDePrecios({
   idArticulo,
   listasPrecio,
   bloqueadoPorPadre,
   alDeEscribir,
+  familia,
+  alSalirDeLaFamilia,
+  alCambiarLaFamilia,
 }: {
   idArticulo: number
   listasPrecio: ListaPrecioListado[]
   bloqueadoPorPadre: boolean
   alDeEscribir: (enCurso: boolean) => void
+  /** La familia del artículo, o `null` si no es miembro de ninguna. */
+  familia: FamiliaDelArticulo | null
+  /** El precio se escribió con `SoloEste`: el artículo ya no es miembro. */
+  alSalirDeLaFamilia: (nombre: string | null) => void
+  alCambiarLaFamilia: () => void
 }) {
   const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
   const [errorVigentes, setErrorVigentes] = useState('')
   const cargaInicialHechaRef = useRef(false)
+  // Espejo sincrónico de "hay un precio escribiéndose o refrescándose" en cualquiera de las listas.
+  const escribiendoRef = useRef(false)
   const generacionVigentesRef = useRef(0)
   const generacionSugerenciaRef = useRef(0)
   // Generación por lista: la carga inicial de `alternarExpandida` y el refresco post-guardado
@@ -65,6 +99,9 @@ export function EditorDePrecios({
   const [sinSugerencia, setSinSugerencia] = useState(false)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
   const [errorSugerencia, setErrorSugerencia] = useState('')
+  // Resultado de la última escritura con alcance de familia que llegó a todos los miembros: la tabla solo
+  // muestra los precios de este artículo, así que lo que pasó con los demás hay que decirlo.
+  const [aviso, setAviso] = useState('')
 
   const cargarVigentes = useCallback(
     async (opciones?: { relanzarError?: boolean }) => {
@@ -147,38 +184,79 @@ export function EditorDePrecios({
     }
   }
 
-  async function guardarPrecio(idLista: number, confirmarReemplazo: boolean) {
+  /** Un clic en "Establecer ahora" o "Programar": valida el borrador y, si el artículo es miembro de una
+   * familia, pregunta el alcance en vez de escribir. Quien no es miembro escribe directo. */
+  function iniciarGuardado(idLista: number) {
+    const estado = estadoDe(idLista)
+    if (estado.guardando || estado.refrescando || bloqueadoPorPadre) return
+
+    const error = errorDelBorrador(estado)
+    if (error) {
+      actualizarEstado(idLista, { error })
+      return
+    }
+
+    if (familia === null) {
+      void guardarPrecio(idLista, false, undefined)
+      return
+    }
+
+    actualizarEstado(idLista, { error: '', preguntaDeAlcance: { contexto: contextoDeAlcance(familia) } })
+  }
+
+  async function guardarPrecio(idLista: number, confirmarReemplazo: boolean, alcance: AlcanceDeFamilia | undefined) {
+    // El espejo sincrónico va primero: dos clics en el mismo tick pasan ambos la guarda de estado de abajo, que
+    // recién se actualiza en el próximo render (react-async-state regla 11).
+    if (escribiendoRef.current) return
     const estado = estadoDe(idLista)
     if (estado.guardando || estado.refrescando || bloqueadoPorPadre) return
     const monto = Number(estado.monto)
 
-    if (!estado.monto.trim() || Number.isNaN(monto)) {
-      actualizarEstado(idLista, { error: 'Ingresá un precio válido.' })
+    const errorDeBorrador = errorDelBorrador(estado)
+    if (errorDeBorrador) {
+      actualizarEstado(idLista, { error: errorDeBorrador })
       return
     }
 
-    actualizarEstado(idLista, { guardando: true, error: '', confirmarPendiente: false })
+    escribiendoRef.current = true
+    setAviso('')
+    actualizarEstado(idLista, { guardando: true, error: '', confirmarPendiente: false, preguntaDeAlcance: null })
     alDeEscribir(true)
 
     try {
       try {
         if (estado.programado) {
-          if (!estado.vigenteDesde) {
-            actualizarEstado(idLista, { guardando: false, error: 'Elegí la fecha de vigencia.' })
-            return
-          }
           await clienteDePrecios.programar(idArticulo, {
             idListaPrecio: idLista,
             precio: monto,
             vigenteDesde: new Date(estado.vigenteDesde).toISOString(),
             confirmarReemplazo,
+            ...(alcance === undefined ? {} : { alcance }),
           })
         } else {
-          await clienteDePrecios.establecer(idArticulo, { idListaPrecio: idLista, precio: monto, confirmarReemplazo })
+          await clienteDePrecios.establecer(idArticulo, {
+            idListaPrecio: idLista,
+            precio: monto,
+            confirmarReemplazo,
+            ...(alcance === undefined ? {} : { alcance }),
+          })
         }
       } catch (e) {
         if (e instanceof ErrorApi && e.codigo === 'precio_pendiente_existe') {
-          actualizarEstado(idLista, { guardando: false, confirmarPendiente: true })
+          actualizarEstado(idLista, { guardando: false, confirmarPendiente: true, alcance: alcance ?? null })
+          return
+        }
+        // El artículo es miembro de una familia que el cliente no conocía: la pregunta que no se hizo antes se
+        // hace ahora, con el texto del servidor, que nombra la familia y cuántos artículos tiene.
+        if (e instanceof ErrorApi && e.codigo === 'alcance_requerido') {
+          actualizarEstado(idLista, { guardando: false, preguntaDeAlcance: { contexto: e.message } })
+          return
+        }
+        // La pertenencia cambió: lo escrito ya no corresponde al estado real del artículo. El padre recarga el
+        // artículo (y con él este editor), así que no queda nada que mostrar acá.
+        if (e instanceof ErrorApi && e.codigo === 'familia_cambio') {
+          actualizarEstado(idLista, { guardando: false })
+          alCambiarLaFamilia()
           return
         }
         actualizarEstado(idLista, {
@@ -186,6 +264,16 @@ export function EditorDePrecios({
           error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.',
         })
         return
+      }
+
+      const nombreDeLaFamilia = familia?.nombre ?? null
+      if (alcance === 'SoloEste') alSalirDeLaFamilia(nombreDeLaFamilia)
+      if (alcance === 'Familia') {
+        setAviso(
+          nombreDeLaFamilia === null
+            ? 'El precio se aplicó a toda la familia.'
+            : `El precio se aplicó a toda la familia "${nombreDeLaFamilia}".`,
+        )
       }
 
       // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
@@ -209,6 +297,8 @@ export function EditorDePrecios({
         })
       }
     } finally {
+      // Sin gate: la reentrancia se destraba siempre, también cuando el refresco falló o el artículo cambió.
+      escribiendoRef.current = false
       alDeEscribir(false)
     }
   }
@@ -247,6 +337,14 @@ export function EditorDePrecios({
       {errorSugerencia && <div className="alert alert-danger py-2 px-2 small mt-2">{errorSugerencia}</div>}
 
       {errorVigentes && <div className="alert alert-danger mt-2">{errorVigentes}</div>}
+
+      {familia !== null && (
+        <p className="small text-body-secondary mb-0 mt-2">
+          Este artículo es parte {descripcionDeFamilia(familia)}: al cambiar un precio se pregunta si se aplica a toda la familia.
+        </p>
+      )}
+
+      {aviso && <div className="alert alert-success py-2 px-2 small mt-2">{aviso}</div>}
 
       <div className="table-responsive mt-2">
         <table className="table table-sm table-bordered align-middle mb-0">
@@ -300,7 +398,12 @@ export function EditorDePrecios({
                           cargandoSugerencia={cargandoSugerencia}
                           bloqueadoPorPadre={bloqueadoPorPadre}
                           onCambio={(parcial) => actualizarEstado(lista.id, parcial)}
-                          onGuardar={(confirmarReemplazo) => guardarPrecio(lista.id, confirmarReemplazo)}
+                          onGuardar={(confirmarReemplazo) =>
+                            confirmarReemplazo
+                              ? void guardarPrecio(lista.id, true, estadoDe(lista.id).alcance ?? undefined)
+                              : iniciarGuardado(lista.id)
+                          }
+                          onElegirAlcance={(alcance) => void guardarPrecio(lista.id, false, alcance)}
                         />
                       </td>
                     </tr>
@@ -331,6 +434,7 @@ function PanelDeLista({
   bloqueadoPorPadre,
   onCambio,
   onGuardar,
+  onElegirAlcance,
 }: {
   lista: ListaPrecioListado
   estado: EstadoDeLista
@@ -340,11 +444,16 @@ function PanelDeLista({
   bloqueadoPorPadre: boolean
   onCambio: (parcial: Partial<EstadoDeLista>) => void
   onGuardar: (confirmarReemplazo: boolean) => void
+  onElegirAlcance: (alcance: AlcanceDeFamilia) => void
 }) {
   const ahora = new Date()
   const filaAbierta = historial.find((h) => h.vigenteHasta === null)
   const pendiente = filaAbierta && new Date(filaAbierta.vigenteDesde) > ahora ? filaAbierta : null
-  const bloqueado = estado.guardando || estado.refrescando || bloqueadoPorPadre
+  // Una escritura en vuelo (o un refresco, o el padre ocupado) deja inertes las tres respuestas de la pregunta
+  // de alcance; la pregunta abierta, además, deja inerte el resto del panel: el borrador sobre el que se
+  // pregunta no puede cambiar mientras se decide.
+  const enVuelo = estado.guardando || estado.refrescando || bloqueadoPorPadre
+  const bloqueado = enVuelo || estado.preguntaDeAlcance !== null
 
   if (lista.modo !== 'Fija') {
     return (
@@ -368,7 +477,11 @@ function PanelDeLista({
 
       {estado.confirmarPendiente && (
         <div className="alert alert-warning py-2 px-2 small d-flex align-items-center justify-content-between">
-          <span>Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?</span>
+          <span>
+            {estado.alcance === 'Familia'
+              ? 'Ya existe un precio programado para esta lista en algún artículo de la familia. ¿Confirmás el reemplazo?'
+              : 'Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?'}
+          </span>
           <div className="d-flex gap-2">
             <button
               type="button"
@@ -389,10 +502,24 @@ function PanelDeLista({
         </div>
       )}
 
+      {estado.preguntaDeAlcance && (
+        <div className="alert alert-warning py-2 px-2 small" role="group" aria-label="Alcance del precio">
+          <PreguntaDeAlcance
+            contexto={estado.preguntaDeAlcance.contexto}
+            ocupado={enVuelo}
+            onElegir={onElegirAlcance}
+            onCancelar={() => onCambio({ preguntaDeAlcance: null })}
+          />
+        </div>
+      )}
+
       <div className="row g-2 align-items-end">
         <div className="col-auto">
-          <label className="form-label mb-0 small">Precio</label>
+          <label className="form-label mb-0 small" htmlFor={`lp-precio-${lista.id}`}>
+            Precio
+          </label>
           <CampoImporte
+            id={`lp-precio-${lista.id}`}
             className="form-control form-control-sm"
             style={{ width: 140 }}
             valor={estado.monto === '' ? null : Number(estado.monto)}
@@ -432,8 +559,11 @@ function PanelDeLista({
 
         {estado.programado && (
           <div className="col-auto">
-            <label className="form-label mb-0 small">Vigente desde</label>
+            <label className="form-label mb-0 small" htmlFor={`lp-vigente-desde-${lista.id}`}>
+              Vigente desde
+            </label>
             <input
+              id={`lp-vigente-desde-${lista.id}`}
               type="datetime-local"
               className="form-control form-control-sm"
               value={estado.vigenteDesde}

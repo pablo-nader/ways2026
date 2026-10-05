@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { UNIDADES_VENTA } from '../../api/tipos'
 import type {
+  AlcanceDeFamilia,
   AlicuotaIvaListado,
   AltaArticulo,
   AreaListado,
@@ -20,8 +21,15 @@ import { AltaRapidaGrupo } from './AltaRapidaGrupo'
 import { AltaRapidaMarca } from './AltaRapidaMarca'
 import { AltaRapidaProveedor } from './AltaRapidaProveedor'
 import { EditorDePrecios } from './EditorDePrecios'
+import {
+  altaConFamiliaLista,
+  familiaDelArticulo,
+  type AccionesDeFamiliaDelFormulario,
+  type EstadoDeFamiliaDelFormulario,
+} from './familia'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
+import { SeccionDeFamilia } from './SeccionDeFamilia'
 
 export type Formulario = {
   id: number | null
@@ -45,6 +53,9 @@ export type Formulario = {
   activo: boolean
   controlaLote: boolean
   acumulaEnVenta: boolean
+  /** En un alta, la familia elegida (`''` = sin familia); al editar, la familia a la que pertenece el
+   * artículo. No se cambia editando: sale con `sacar` o con el alcance de un cambio. */
+  idFamilia: number | ''
 }
 
 export function formularioVacio(): Formulario {
@@ -70,6 +81,7 @@ export function formularioVacio(): Formulario {
     activo: true,
     controlaLote: false,
     acumulaEnVenta: true,
+    idFamilia: '',
   }
 }
 
@@ -96,6 +108,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     activo: a.activo,
     controlaLote: a.controlaLote,
     acumulaEnVenta: a.acumulaEnVenta,
+    idFamilia: a.idFamilia ?? '',
   }
 }
 
@@ -134,11 +147,14 @@ function camposComunes(f: Formulario) {
 }
 
 export function aAlta(f: Formulario): AltaArticulo {
-  return { codigoInterno: aVacioNulo(f.codigoInterno), ...camposComunes(f) }
+  return { codigoInterno: aVacioNulo(f.codigoInterno), ...camposComunes(f), idFamilia: f.idFamilia === '' ? null : f.idFamilia }
 }
 
-export function aEdicion(f: Formulario): EdicionArticulo {
-  return camposComunes(f)
+/** La familia no viaja en una edición: la pertenencia no se cambia editando. Con `alcance` el servidor
+ * decide qué escribir cuando el artículo es miembro y la edición cambia un campo compartido; sin él, un
+ * miembro con cambios compartidos se rechaza con 409 `alcance_requerido`. */
+export function aEdicion(f: Formulario, alcance?: AlcanceDeFamilia): EdicionArticulo {
+  return alcance === undefined ? camposComunes(f) : { ...camposComunes(f), alcance }
 }
 
 export function FormularioArticulo({
@@ -155,6 +171,8 @@ export function FormularioArticulo({
   guardando,
   ocupado,
   bloqueadoPorCatalogos,
+  familia,
+  accionesDeFamilia,
   onCambio,
   actualizarFormulario,
   onGuardar,
@@ -178,6 +196,9 @@ export function FormularioArticulo({
   guardando: boolean
   ocupado: boolean
   bloqueadoPorCatalogos: boolean
+  /** La familia del artículo (la elegida en un alta o la del miembro que se edita) y qué hacer con ella. */
+  familia: EstadoDeFamiliaDelFormulario
+  accionesDeFamilia: AccionesDeFamiliaDelFormulario
   onCambio: (f: Formulario) => void
   /** Actualización funcional, para el completado de las altas rápidas (react-async-state regla
    * 1): esos `onCreado` corren después de un `await` propio del mini-modal, así que un `valor`
@@ -194,6 +215,39 @@ export function FormularioArticulo({
   onProveedorCreado: (proveedor: ProveedorListado) => void
 }) {
   const esNuevo = valor.id === null
+  // Los campos compartidos de un alta dentro de una familia se toman de ella: quedan bloqueados desde que se la
+  // elige, aunque sus valores todavía se estén cargando. Al editar un miembro no se bloquean: el alcance se
+  // pregunta al guardar.
+  const bloqueoDeFamilia = esNuevo && valor.idFamilia !== ''
+  // Solo un alta depende de que la familia elegida esté cargada: un miembro que se edita se guarda aunque su
+  // familia no haya cargado, y el servidor frena un cambio compartido sin alcance con `alcance_requerido`.
+  const altaLista = !esNuevo || altaConFamiliaLista(valor.idFamilia, familia)
+  // Salida de la familia pendiente de confirmación (solo al editar un miembro): mientras está abierta el resto
+  // del formulario queda inerte, así que nada puede cambiar lo que se está por confirmar.
+  const [salida, setSalida] = useState<{ disparador: HTMLElement } | null>(null)
+  const focoDeSalidaRef = useRef<HTMLElement | null>(null)
+  const confirmandoSalida = salida !== null
+  const bloqueado = ocupado || confirmandoSalida
+
+  // El disparador de la confirmación se captura en el click (react-async-state regla 12) y recién recupera el
+  // foco una vez cerrada la confirmación, cuando el botón ya volvió a estar habilitado.
+  useEffect(() => {
+    if (salida !== null) return
+    const destino = focoDeSalidaRef.current
+    focoDeSalidaRef.current = null
+    if (destino !== null && destino.isConnected && !destino.matches(':disabled')) destino.focus()
+  }, [salida])
+
+  function cancelarSalida() {
+    focoDeSalidaRef.current = salida?.disparador ?? null
+    setSalida(null)
+  }
+
+  async function confirmarSalida() {
+    // Si la escritura no llegó a empezar (otra ya estaba en curso), la confirmación sigue abierta.
+    if (await accionesDeFamilia.sacar()) setSalida(null)
+  }
+
   // Alta rápida de padrones (Categoría/Marca/Grupo/Proveedor habitual): un solo estado porque solo
   // puede haber una abierta a la vez (cada "+" descarta cualquier otra). Los refs son el destino
   // de foco al abrir — enfocarlos ANTES de montar el modal hace que `Modal` los capture como el
@@ -221,11 +275,27 @@ export function FormularioArticulo({
 
   return (
     <div>
+      {/* La sección de la familia va FUERA del fieldset: su confirmación de salida tiene que seguir operable
+          mientras el resto del formulario está inerte. */}
+      <SeccionDeFamilia
+        esNuevo={esNuevo}
+        idFamilia={valor.idFamilia}
+        nombreDelArticulo={valor.nombre}
+        ocupado={ocupado}
+        listasPrecio={listasPrecio}
+        familia={familia}
+        acciones={accionesDeFamilia}
+        confirmandoSalida={confirmandoSalida}
+        onPedirSalida={(disparador) => setSalida({ disparador })}
+        onCancelarSalida={cancelarSalida}
+        onConfirmarSalida={() => void confirmarSalida()}
+      />
+
       <form
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bloqueadoPorCatalogos || ocupado) return
+          if (bloqueadoPorCatalogos || bloqueado || !altaLista) return
           onGuardar()
         }}
       >
@@ -233,7 +303,7 @@ export function FormularioArticulo({
             en vuelo, para que lo tipeado en la ventana de la request no se pise con la respuesta.
             Se le mueve acá la clase de grilla de Bootstrap (antes en el form) para no romper el
             layout de columnas; border-0/p-0/m-0 neutralizan el estilo por defecto del fieldset. */}
-        <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
+        <fieldset disabled={bloqueado} className="row g-3 border-0 p-0 m-0">
           <div className="col-12">
             <strong className="text-muted small text-uppercase">Identificación</strong>
           </div>
@@ -268,13 +338,14 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-3">
-            <label className="form-label" htmlFor="art-unidad-venta">
+            <Etiqueta htmlFor="art-unidad-venta" deFamilia={bloqueoDeFamilia}>
               Unidad de venta
-            </label>
+            </Etiqueta>
             <select
               id="art-unidad-venta"
               className="form-select"
               value={valor.unidadVenta}
+              disabled={bloqueoDeFamilia}
               onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
             >
               {UNIDADES_VENTA.map((u) => (
@@ -286,9 +357,9 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-3">
-            <label className="form-label" htmlFor="art-unidades-por-bulto">
+            <Etiqueta htmlFor="art-unidades-por-bulto" deFamilia={bloqueoDeFamilia}>
               Unidades por bulto
-            </label>
+            </Etiqueta>
             <input
               id="art-unidades-por-bulto"
               type="number"
@@ -296,6 +367,7 @@ export function FormularioArticulo({
               min="0"
               className="form-control"
               value={valor.unidadesPorBulto}
+              disabled={bloqueoDeFamilia}
               onChange={(e) => onCambio({ ...valor, unidadesPorBulto: e.target.value })}
             />
           </div>
@@ -307,11 +379,12 @@ export function FormularioArticulo({
                 type="checkbox"
                 className="form-check-input"
                 checked={valor.esProducto}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) => onCambio({ ...valor, esProducto: e.target.checked })}
               />
-              <label className="form-check-label" htmlFor="art-es-producto">
+              <Etiqueta htmlFor="art-es-producto" deFamilia={bloqueoDeFamilia} className="form-check-label">
                 Es producto (desmarcar si es un servicio)
-              </label>
+              </Etiqueta>
             </div>
           </div>
 
@@ -333,13 +406,14 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-3">
-            <label className="form-label" htmlFor="art-area">
+            <Etiqueta htmlFor="art-area" deFamilia={bloqueoDeFamilia}>
               Área
-            </label>
+            </Etiqueta>
             <select
               id="art-area"
               className="form-select"
               value={valor.idArea}
+              disabled={bloqueoDeFamilia}
               onChange={(e) => onCambio({ ...valor, idArea: Number(e.target.value) })}
               required
             >
@@ -356,15 +430,16 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-3">
-            <label className="form-label" htmlFor="art-categoria">
+            <Etiqueta htmlFor="art-categoria" deFamilia={bloqueoDeFamilia}>
               Categoría
-            </label>
+            </Etiqueta>
             <div className="input-group">
               <select
                 id="art-categoria"
                 ref={refSelectCategoria}
                 className="form-select"
                 value={valor.idCategoria}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
@@ -379,7 +454,7 @@ export function FormularioArticulo({
                 type="button"
                 className="btn btn-outline-secondary"
                 aria-label="Nueva categoría"
-                disabled={ocupado}
+                disabled={ocupado || bloqueoDeFamilia}
                 onClick={() => abrirAltaRapida('categoria', refSelectCategoria.current)}
               >
                 +
@@ -420,15 +495,16 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-3">
-            <label className="form-label" htmlFor="art-grupo">
+            <Etiqueta htmlFor="art-grupo" deFamilia={bloqueoDeFamilia}>
               Grupo
-            </label>
+            </Etiqueta>
             <div className="input-group">
               <select
                 id="art-grupo"
                 ref={refSelectGrupo}
                 className="form-select"
                 value={valor.idGrupo}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
@@ -444,7 +520,7 @@ export function FormularioArticulo({
                 type="button"
                 className="btn btn-outline-secondary"
                 aria-label="Nuevo grupo"
-                disabled={ocupado}
+                disabled={ocupado || bloqueoDeFamilia}
                 onClick={() => abrirAltaRapida('grupo', refSelectGrupo.current)}
               >
                 +
@@ -453,15 +529,16 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="art-proveedor-habitual">
+            <Etiqueta htmlFor="art-proveedor-habitual" deFamilia={bloqueoDeFamilia}>
               Proveedor habitual
-            </label>
+            </Etiqueta>
             <div className="input-group">
               <select
                 id="art-proveedor-habitual"
                 ref={refSelectProveedor}
                 className="form-select"
                 value={valor.idProveedorHabitual}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) =>
                   onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
                 }
@@ -478,7 +555,7 @@ export function FormularioArticulo({
                 type="button"
                 className="btn btn-outline-secondary"
                 aria-label="Nuevo proveedor"
-                disabled={ocupado}
+                disabled={ocupado || bloqueoDeFamilia}
                 onClick={() => abrirAltaRapida('proveedor', refSelectProveedor.current)}
               >
                 +
@@ -490,13 +567,14 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="art-alicuota-iva">
+            <Etiqueta htmlFor="art-alicuota-iva" deFamilia={bloqueoDeFamilia}>
               Alícuota de IVA
-            </label>
+            </Etiqueta>
             <select
               id="art-alicuota-iva"
               className="form-select"
               value={valor.idAlicuotaIva}
+              disabled={bloqueoDeFamilia}
               onChange={(e) => onCambio({ ...valor, idAlicuotaIva: Number(e.target.value) })}
               required
             >
@@ -516,21 +594,22 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="art-costo-lista">
+            <Etiqueta htmlFor="art-costo-lista" deFamilia={bloqueoDeFamilia}>
               Costo de lista
-            </label>
+            </Etiqueta>
             <CampoImporte
               id="art-costo-lista"
               className="form-control"
               valor={valor.costoLista === '' ? null : Number(valor.costoLista)}
+              disabled={bloqueoDeFamilia}
               onChange={(n) => onCambio({ ...valor, costoLista: n === null ? '' : String(n) })}
             />
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="art-descuento-proveedor">
+            <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
               Descuento de proveedor (%)
-            </label>
+            </Etiqueta>
             <input
               id="art-descuento-proveedor"
               type="number"
@@ -538,18 +617,20 @@ export function FormularioArticulo({
               min="0"
               className="form-control"
               value={valor.descuentoProveedor}
+              disabled={bloqueoDeFamilia}
               onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
             />
           </div>
 
           <div className="col-md-4">
-            <label className="form-label" htmlFor="art-costo-nominal">
+            <Etiqueta htmlFor="art-costo-nominal" deFamilia={bloqueoDeFamilia}>
               Costo nominal
-            </label>
+            </Etiqueta>
             <CampoImporte
               id="art-costo-nominal"
               className="form-control"
               valor={valor.costoNominal === '' ? null : Number(valor.costoNominal)}
+              disabled={bloqueoDeFamilia}
               onChange={(n) => onCambio({ ...valor, costoNominal: n === null ? '' : String(n) })}
             />
             <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
@@ -624,11 +705,12 @@ export function FormularioArticulo({
                 type="checkbox"
                 className="form-check-input"
                 checked={valor.controlaLote}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) => onCambio({ ...valor, controlaLote: e.target.checked })}
               />
-              <label className="form-check-label" htmlFor="art-controla-lote">
+              <Etiqueta htmlFor="art-controla-lote" deFamilia={bloqueoDeFamilia} className="form-check-label">
                 Controla lote / vencimiento
-              </label>
+              </Etiqueta>
             </div>
           </div>
 
@@ -640,11 +722,12 @@ export function FormularioArticulo({
                 className="form-check-input"
                 aria-describedby="art-acumula-en-venta-ayuda"
                 checked={valor.acumulaEnVenta}
+                disabled={bloqueoDeFamilia}
                 onChange={(e) => onCambio({ ...valor, acumulaEnVenta: e.target.checked })}
               />
-              <label className="form-check-label" htmlFor="art-acumula-en-venta">
+              <Etiqueta htmlFor="art-acumula-en-venta" deFamilia={bloqueoDeFamilia} className="form-check-label">
                 Acumula en una sola línea al vender
-              </label>
+              </Etiqueta>
               <div id="art-acumula-en-venta-ayuda" className="form-text">
                 Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket.
               </div>
@@ -652,10 +735,10 @@ export function FormularioArticulo({
           </div>
 
           <div className="col-12 d-flex gap-2">
-            <button type="submit" className="btn btn-success" disabled={ocupado || bloqueadoPorCatalogos}>
+            <button type="submit" className="btn btn-success" disabled={bloqueado || bloqueadoPorCatalogos || !altaLista}>
               {guardando ? 'Guardando…' : 'Guardar'}
             </button>
-            <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={ocupado}>
+            <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
               Cancelar
             </button>
           </div>
@@ -719,16 +802,40 @@ export function FormularioArticulo({
         <p className="text-muted mb-0">Guardá el artículo para poder cargar códigos de barra y precios.</p>
       ) : (
         <>
-          <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={ocupado} alDeEscribir={alDeEscribir} />
+          <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={bloqueado} alDeEscribir={alDeEscribir} />
           <hr />
           <EditorDePrecios
             idArticulo={valor.id}
             listasPrecio={listasPrecio.filter((l) => l.activo)}
-            bloqueadoPorPadre={ocupado}
+            bloqueadoPorPadre={bloqueado}
             alDeEscribir={alDeEscribir}
+            familia={familiaDelArticulo(valor.idFamilia, familia.detalle)}
+            alSalirDeLaFamilia={accionesDeFamilia.alSalirDeLaFamilia}
+            alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
           />
         </>
       )}
     </div>
+  )
+}
+
+/** Etiqueta de un campo. Con `deFamilia` agrega "(de la familia)", la nota que acompaña a los campos
+ * compartidos mientras el alta los toma de una familia y no se pueden cambiar. */
+function Etiqueta({
+  htmlFor,
+  deFamilia,
+  className = 'form-label',
+  children,
+}: {
+  htmlFor: string
+  deFamilia: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <label className={className} htmlFor={htmlFor}>
+      {children}
+      {deFamilia && <span className="text-body-secondary small ms-1">(de la familia)</span>}
+    </label>
   )
 }
