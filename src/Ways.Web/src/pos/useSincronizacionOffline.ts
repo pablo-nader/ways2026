@@ -239,6 +239,11 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const { idPuntoVenta, activo, intervaloMs = minutosAMilisegundos(INTERVALO_POR_DEFECTO_MINUTOS), sincronizarAntesDeVender = true } = params
 
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
+  // Desmontada la pantalla (al navegar, o al remontarse por `key` con otro punto de venta), un envío
+  // o una reserva que ya estaba en vuelo asienta su resultado en el almacén, pero la instancia no
+  // arranca otro envío, refresco, rendición ni reserva. La cola y el bloque quedan para la pantalla
+  // que se monte después, que parte otra vez del almacén; el `bloqueRef` de esta puede haber quedado
+  // viejo, y un refresco que vuelve tarde ya se descarta en `adoptarInstantaneaLocal`.
   const montadoRef = useRef(true)
   useEffect(() => {
     montadoRef.current = true
@@ -282,7 +287,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   async function drenarUnaPasada(): Promise<void> {
     for (;;) {
       const primera = await encolarOperacion(async () => (await leerOutbox(almacenRef.current))[0] ?? null)
-      if (!primera) return
+      if (!primera || !montadoRef.current) return
 
       try {
         await conTiempoLimite((senal) => clienteDeVentas.emitir(primera.solicitud, senal))
@@ -399,6 +404,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   /** `true` si el servidor respondió (hay señal), haya o no contenido nuevo. Con la etiqueta de la
    * copia local, un contenido sin cambios vuelve como `304` y solo renueva `verificadaEn`. */
   async function refrescarInstantaneaSiHaySenal(): Promise<boolean> {
+    if (!montadoRef.current) return false
     try {
       const local = instantaneaLocalRef.current
       const epocaAlPedir = epocaDeSesionLocalActual()
@@ -469,6 +475,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
         if (!necesitaReponerBloque(bloqueRef.current)) return
 
         const declaracion = await leerDeclaracionDeRendicion()
+        if (!montadoRef.current) return
         if (declaracion !== null) {
           if (declaracion.pendientes > 0) return
           try {
@@ -481,6 +488,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
           }
         }
 
+        if (!montadoRef.current) return
         const reservado = await conTiempoLimite(
           (senal) =>
             clienteDeVentas.reservarNumeracion(
@@ -523,7 +531,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
    */
   async function rendirColaLocal(): Promise<void> {
     const declaracion = await leerDeclaracionDeRendicion()
-    if (declaracion === null) return
+    if (declaracion === null || !montadoRef.current) return
 
     try {
       await conTiempoLimite((senal) => clienteDePos.rendirCola(declaracion, senal))
