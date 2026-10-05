@@ -614,6 +614,9 @@ export type ArticuloListado = {
   /** `true`: volver a agregarlo en el carrito del POS suma cantidad a su línea; `false`: cada
    * agregado es una línea nueva. */
   acumulaEnVenta: boolean
+  /** Familia a la que pertenece el artículo (`null` = sin familia), tal como está guardada: el servidor
+   * no la anula aunque la fila de la familia esté dada de baja (doc 10 §3, "Familias de artículos"). */
+  idFamilia: number | null
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
@@ -646,11 +649,22 @@ export type AltaArticulo = {
   acumulaEnVenta?: boolean
   /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
   codigoProveedor?: string | null
+  /** El artículo nace como miembro de esa familia: los trece campos compartidos tienen que ser idénticos
+   * a los de la familia (409 `familia_valores_distintos`) y el servidor le copia sus precios. */
+  idFamilia?: number | null
 }
 
+/** Lo que el cliente elige cuando el artículo escrito pertenece a una familia (espejo de
+ * `Ways.Application.Precios.AlcanceDeFamilia`, que viaja por nombre): `Familia` aplica el cambio a todos los
+ * miembros vivos y `SoloEste` saca al artículo de la familia y lo escribe solo a él. */
+export type AlcanceDeFamilia = 'Familia' | 'SoloEste'
+
 /** Sin `codigoInterno`: no es editable por este ABM (valor asignado en el alta, mismo criterio
- * que `ClienteListado.numero`). */
-export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno' | 'codigoProveedor'>
+ * que `ClienteListado.numero`). Tampoco `idFamilia`: la pertenencia no se cambia editando; el `alcance`
+ * decide qué se escribe cuando el artículo es miembro de una familia. */
+export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno' | 'codigoProveedor' | 'idFamilia'> & {
+  alcance?: AlcanceDeFamilia
+}
 
 export type CodigoBarraListado = { id: number; idArticulo: number; codigo: string; activo: boolean }
 export type AltaCodigoBarra = { codigo: string }
@@ -710,15 +724,76 @@ export type SugerenciaDePrecio = { precioSugerido: number | null }
 
 // --- Precios (history engine, stage-3-articulos-y-precios) ---
 
-export type AltaPrecio = { idListaPrecio: number; precio: number; confirmarReemplazo?: boolean }
+/** `alcance` solo se manda cuando el artículo es miembro de una familia (doc 10 §3): sin él, el servidor
+ * rechaza el cambio de un miembro con 409 `alcance_requerido`. */
+export type AltaPrecio = {
+  idListaPrecio: number
+  precio: number
+  confirmarReemplazo?: boolean
+  alcance?: AlcanceDeFamilia
+}
 export type ProgramarPrecio = {
   idListaPrecio: number
   precio: number
   vigenteDesde: string
   confirmarReemplazo?: boolean
+  alcance?: AlcanceDeFamilia
 }
 export type PrecioVigente = { idArticulo: number; idListaPrecio: number; precio: number | null; fecha: string }
 export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: string; vigenteHasta: string | null }
+
+// --- Familias de artículos (doc 10 §3) ---
+// Una familia agrupa artículos idénticos en sus trece campos compartidos y en el estado de precios de cada
+// lista fija. No guarda valores: sus miembros son la fuente de verdad, y la referencia es el miembro vivo de
+// menor id.
+
+/** Fila de `GET /api/familias`: `cantidadArticulos` cuenta solo los miembros vivos. */
+export type FamiliaListado = { id: number; nombre: string; activo: boolean; cantidadArticulos: number }
+
+/** Miembro vivo de una familia. `idMarca` viaja `null` cuando el artículo no tiene marca o la suya está
+ * dada de baja: el servidor nunca expone un id colgante. */
+export type MiembroDeFamilia = { id: number; codigoInterno: string; nombre: string; idMarca: number | null; activo: boolean }
+
+/** Los trece campos compartidos de un artículo, tal como los lee un cliente. Los cuatro ids de catálogo
+ * (`idArea`, `idCategoria`, `idGrupo`, `idProveedorHabitual`) viajan `null` cuando apuntan a una fila dada
+ * de baja: un área dada de baja que conserva artículos se lee como "sin asignar". */
+export type ValoresCompartidosDeLaFamilia = {
+  idArea: number | null
+  idCategoria: number | null
+  idGrupo: number | null
+  idProveedorHabitual: number | null
+  idAlicuotaIva: number
+  unidadVenta: UnidadVenta
+  unidadesPorBulto: number | null
+  esProducto: boolean
+  controlaLote: boolean
+  acumulaEnVenta: boolean
+  costoLista: number | null
+  descuentoProveedor: number | null
+  costoNominal: number | null
+}
+
+/** Un precio programado: su monto y la fecha desde la que rige. */
+export type PrecioPendiente = { monto: number; vigenteDesde: string }
+
+/** Estado de precios de un artículo en UNA lista fija a "ahora": el precio vigente y, si lo hay, el pendiente.
+ * Sin ningún precio en esa lista, los dos vienen `null`. */
+export type EstadoDePrecios = { vigente: number | null; pendiente: PrecioPendiente | null }
+
+export type EstadoDePreciosDeLista = { idListaPrecio: number; estado: EstadoDePrecios }
+
+/** Respuesta de `GET /api/familias/{id}`. `articulos` son los miembros vivos ascendentes por id: el primero es
+ * la referencia, de quien salen `valores` y `precios`. Una familia sin ningún miembro vivo no tiene referencia:
+ * `valores` es `null` y `precios` viene vacío. Con referencia, `precios` trae una entrada por cada lista fija
+ * del tenant, también las que la referencia no tiene precios. */
+export type FamiliaDetalle = {
+  id: number
+  nombre: string
+  activo: boolean
+  articulos: MiembroDeFamilia[]
+  valores: ValoresCompartidosDeLaFamilia | null
+  precios: EstadoDePreciosDeLista[]
+}
 
 // --- Ofertas (stage-4-ofertas) ---
 // Entidad dedicada (design decision 9): alcance (id_articulo/id_grupo/id_categoria) y

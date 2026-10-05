@@ -90,6 +90,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     activo: true,
     controlaLote: false,
     acumulaEnVenta: true,
+    idFamilia: null,
     ...sobrescribir,
   }
 }

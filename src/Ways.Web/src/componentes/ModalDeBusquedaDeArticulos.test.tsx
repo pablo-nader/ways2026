@@ -47,6 +47,7 @@ function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): Ar
     activo: true,
     controlaLote: false,
     acumulaEnVenta: true,
+    idFamilia: null,
     ...sobrescribir,
   }
 }

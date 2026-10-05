@@ -11,6 +11,8 @@ import type { AltaPrecio, HistorialDePrecio, ListaPrecioListado, PrecioVigente, 
 
 export const clienteDePrecios = {
   vigentes: (idArticulo: number) => api.get<PrecioVigente[]>(`/articulos/${idArticulo}/precios`),
+  /** `establecer` y `programar` aceptan un `alcance` (doc 10 §3): obligatorio para un miembro de una familia
+   * (409 `alcance_requerido` sin él) y rechazado con 409 `familia_cambio` para quien no lo es. */
   establecer: (idArticulo: number, datos: AltaPrecio) =>
     api.post<PrecioVigente>(`/articulos/${idArticulo}/precios`, datos),
   programar: (idArticulo: number, datos: ProgramarPrecio) =>

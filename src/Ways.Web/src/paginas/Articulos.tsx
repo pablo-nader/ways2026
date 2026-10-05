@@ -3,9 +3,11 @@ import { NavigationType, useLocation, useNavigate, useNavigationType } from 'rea
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeFamilias } from '../api/familias'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePrecios } from '../api/precios'
 import type {
+  AlcanceDeFamilia,
   AlicuotaIvaListado,
   AreaAlta,
   AreaListado,
@@ -22,12 +24,29 @@ import type {
   ProveedorListado,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { Modal } from '../componentes/Modal'
+import {
+  AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON,
+  AVISO_DE_FAMILIA_CAMBIO,
+  avisoDeValoresDistintos,
+  camposCompartidosModificados,
+  camposNombradosEnMensaje,
+  CODIGOS_DE_CONFLICTO_DE_ALTA,
+  contextoDeAlcance,
+  familiaDelArticulo,
+  mensajeDeAlta,
+  mensajeDeEdicion,
+  valoresDeFamiliaAFormulario,
+  type AccionesDeFamiliaDelFormulario,
+} from './articulos/familia'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
 import { GrillaDeArticulos } from './articulos/GrillaDeArticulos'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { desplazamientoHaciaLaAnterior, HISTORIAL_SIN_OBSERVAR, registrarEntrada } from './articulos/historialObservado'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
+import { PreguntaDeAlcance } from './articulos/PreguntaDeAlcance'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
+import { useFamiliasDelFormulario } from './articulos/useFamiliasDelFormulario'
 import { BotonIcono } from '../componentes/BotonIcono'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
@@ -43,6 +62,12 @@ const MENSAJE_CONFIRMAR_DESCARTE = 'Hay cambios sin guardar en el artículo. ¿D
  * apuntar a un id inválido sin formulario cargado. Se usa para distinguir "la URL cambió pero
  * seguimos en el mismo modal" (p. ej. tras cancelar un intento de salida) de una salida real. */
 type DestinoModal = 'nuevo' | number | 'invalido' | null
+
+/** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
+ * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
+ * compartidos que cambian. Se abre antes de escribir lo que pregunta; al elegir un alcance sigue abierta, con sus
+ * respuestas inertes, mientras dura el PUT, y la respuesta del PUT la cierra mientras el modal siga siendo el que preguntó. */
+type DecisionDeAlcance = { contexto: string; campos: string[] }
 
 function destinoDeRuta(modo: ModoModalDeArticulo | null, idParam: string | null): DestinoModal {
   if (modo === 'crear') return 'nuevo'
@@ -107,6 +132,13 @@ export function Articulos() {
   const [avisoGuardado, setAvisoGuardado] = useState('')
   const [errorGuardado, setErrorGuardado] = useState('')
   const [escriturasHijas, setEscriturasHijas] = useState(0)
+  // Familias (doc 10 §3): las que se ofrecen en un alta y el detalle de la familia del formulario.
+  const familias = useFamiliasDelFormulario()
+  const [decisionDeAlcance, setDecisionDeAlcance] = useState<DecisionDeAlcance | null>(null)
+  const [saliendoDeFamilia, setSaliendoDeFamilia] = useState(false)
+  // Única guarda de reentrancia de `guardar` y de `sacarDeLaFamilia` (react-async-state regla 11): es un `ref` porque el
+  // estado (`guardando`, `saliendoDeFamilia`) recién cambia en el próximo render, después de los dos clics de un mismo tick.
+  const escrituraEnCursoRef = useRef(false)
   const tokenEdicionRef = useRef(0)
   // Snapshot del formulario tal como quedó cargado/guardado por última vez — la base contra la que
   // se compara para saber si hay cambios sin guardar al intentar cerrar (regla: confirmar antes de
@@ -126,7 +158,7 @@ export function Articulos() {
   // rechazado volviendo a la entrada del modal (ver `historialObservado`).
   const historialRef = useRef(HISTORIAL_SIN_OBSERVAR)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
-  const ocupado = guardando || eliminando || escriturasHijas > 0
+  const ocupado = guardando || eliminando || escriturasHijas > 0 || saliendoDeFamilia
 
   // Token del fetch de edición en curso: protege contra la staleness del fetch de detalle (abrir
   // otra edición, o cerrar, mientras el detalle anterior sigue en vuelo) y contra que la propia
@@ -237,10 +269,14 @@ export function Articulos() {
     setFormulario((prev) => (prev ? actualizar(prev) : prev))
   }
 
-  async function abrirEdicion(idNumerico: number) {
+  /** `avisoInicial` es el error que el formulario recién cargado muestra: lo usa la recarga que sigue a un
+   * `familia_cambio`, que de otro modo perdería su explicación al limpiar los avisos. */
+  async function abrirEdicion(idNumerico: number, avisoInicial = '') {
     setErrorDetalle('')
     setCargandoDetalle(true)
     setFormulario(null)
+    setDecisionDeAlcance(null)
+    familias.descartarDetalle()
     const token = invalidarEdicionEnCurso()
     setClaveFormulario(idNumerico)
     try {
@@ -254,12 +290,19 @@ export function Articulos() {
       // `ErrorApi.message`.
       const detalle = await clienteDeArticulos.obtener(idNumerico)
       if (tokenEdicionRef.current !== token) return
+      // La familia del miembro (nombre y cantidad para el rótulo y para la pregunta de alcance) se espera antes
+      // de mostrar el formulario. Su fallo no lo impide: el hook deja el motivo y el artículo sigue siendo
+      // miembro, solo que sin nombre; el servidor frena un cambio sin alcance con `alcance_requerido`.
+      if (detalle.idFamilia !== null) {
+        await familias.cargarDetalle(detalle.idFamilia)
+        if (tokenEdicionRef.current !== token) return
+      }
       const cargado = aFormulario(detalle)
       setFormulario(cargado)
       formularioOriginalRef.current = cargado
       setGuardando(false)
       setAvisoGuardado('')
-      setErrorGuardado('')
+      setErrorGuardado(avisoInicial)
     } catch (e) {
       if (tokenEdicionRef.current !== token) return
       setFormulario(null)
@@ -278,6 +321,8 @@ export function Articulos() {
     destinoModalRef.current = null
     setDestinoMostrado(null)
     invalidarEdicionEnCurso()
+    familias.descartarDetalle()
+    setDecisionDeAlcance(null)
     setGuardando(false)
     setFormulario(null)
     formularioOriginalRef.current = null
@@ -336,6 +381,8 @@ export function Articulos() {
 
     if (modo === 'crear') {
       invalidarEdicionEnCurso()
+      familias.descartarDetalle()
+      setDecisionDeAlcance(null)
       setGuardando(false)
       setErrorDetalle('')
       setAvisoGuardado('')
@@ -352,6 +399,7 @@ export function Articulos() {
       const idNumerico = idParam !== null && /^\d+$/.test(idParam) ? Number(idParam) : null
       if (idNumerico === null) {
         invalidarEdicionEnCurso()
+        setDecisionDeAlcance(null)
         setFormulario(null)
         formularioOriginalRef.current = null
         setErrorDetalle(MENSAJE_ID_INVALIDO)
@@ -386,35 +434,83 @@ export function Articulos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, areaPorDefecto, alicuotaPorDefecto])
 
-  async function guardar() {
-    if (ocupado) return
+  /** Qué hace "Guardar": la edición de un miembro de una familia que cambia un campo compartido no escribe todavía,
+   * pregunta el alcance (doc 10 §3). Todo lo demás —el alta, la edición de quien no es miembro y la que solo cambia
+   * campos propios, que no tiene nada que replicar— guarda directo. */
+  function pedirGuardado() {
     if (!formulario) return
+
+    const original = formularioOriginalRef.current
+    if (formulario.id !== null && formulario.idFamilia !== '' && original !== null) {
+      const campos = camposCompartidosModificados(original, formulario)
+      if (campos.length > 0) {
+        setErrorGuardado('')
+        setAvisoGuardado('')
+        setDecisionDeAlcance({
+          contexto: contextoDeAlcance(familiaDelArticulo(formulario.idFamilia, familias.detalle)),
+          campos: campos.map((campo) => campo.etiqueta),
+        })
+        return
+      }
+    }
+
+    void guardar()
+  }
+
+  // Las dos salidas de la pregunta ("Cancelar" y el cierre del modal) ya están inertes mientras hay un guardado en vuelo.
+  function cancelarAlcance() {
+    setDecisionDeAlcance(null)
+  }
+
+  function elegirAlcance(alcance: AlcanceDeFamilia) {
+    void guardar(alcance)
+  }
+
+  async function guardar(alcance?: AlcanceDeFamilia) {
+    if (escrituraEnCursoRef.current) return
+    if (!formulario) return
+    escrituraEnCursoRef.current = true
 
     const token = invalidarEdicionEnCurso()
     setGuardando(true)
     setErrorGuardado('')
     setAvisoGuardado('')
+    // Lo que sigue a un rechazo que hay que resolver DESPUÉS de soltar el guardado (recargar el artículo o la
+    // familia): ejecutado dentro del `catch`, `abrirEdicion` invalidaría el token y el `finally` dejaría el
+    // formulario ocupado para siempre.
+    let seguimiento: (() => void) | null = null
 
     try {
       if (formulario.id === null) {
         const creado = await clienteDeArticulos.crear(aAlta(formulario))
+        // La familia tiene un miembro más: las que se ofrecen en un alta se vuelven a leer, también si el modal ya cambió de artículo.
+        if (creado.idFamilia !== null) void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(creado)
-          setAvisoGuardado(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
+          setAvisoGuardado(
+            mensajeDeAlta(formulario.nombre, creado.codigoInterno, familiaDelArticulo(creado.idFamilia ?? '', familias.detalle)),
+          )
           setFormulario(cargado)
           formularioOriginalRef.current = cargado
+          // El rótulo de la familia cuenta al artículo recién nacido: se vuelve a leer su detalle.
+          if (creado.idFamilia !== null) void familias.cargarDetalle(creado.idFamilia)
           // History replace (no push): /articulos/create nunca queda alcanzable con "atrás" una
           // vez que el alta se concretó — el modal sigue montado (misma entrada de ruta,
           // `/articulos/*`), así que el aviso y el foco sobreviven al cambio de URL.
           navigate(`/articulos/edit/${creado.id}`, { replace: true })
         }
       } else {
-        const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario))
+        const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario, alcance))
+        // El artículo salió de su familia: se vuelven a leer las que se ofrecen en un alta.
+        if (alcance === 'SoloEste') void familias.recargarOpciones()
         if (tokenEdicionRef.current === token) {
           const cargado = aFormulario(actualizado)
-          setAvisoGuardado(`Artículo "${formulario.nombre}" actualizado.`)
+          setAvisoGuardado(
+            mensajeDeEdicion(formulario.nombre, alcance, familiaDelArticulo(formulario.idFamilia, familias.detalle)?.nombre ?? null),
+          )
           setFormulario(cargado)
           formularioOriginalRef.current = cargado
+          setDecisionDeAlcance(null)
         }
       }
 
@@ -427,11 +523,181 @@ export function Articulos() {
       setPedidoDeRefresco((n) => n + 1)
     } catch (e) {
       if (tokenEdicionRef.current === token) {
-        setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setDecisionDeAlcance(null)
+        seguimiento = tratarFalloDeGuardado(e, formulario, token)
       }
     } finally {
+      // Sin gate de token: la reentrancia se destraba siempre (react-async-state regla 11).
+      escrituraEnCursoRef.current = false
       if (tokenEdicionRef.current === token) setGuardando(false)
     }
+
+    seguimiento?.()
+  }
+
+  /** El rechazo de un guardado. Los conflictos de familia (doc 10 §3) tienen su propio camino: la pregunta de
+   * alcance que el cliente no hizo, la pertenencia que cambió, la familia que ya no admite al artículo. Devuelve
+   * lo que queda por hacer una vez soltado el guardado, o `null` si el rechazo ya quedó resuelto. */
+  function tratarFalloDeGuardado(e: unknown, enviado: Formulario, token: number): (() => void) | null {
+    if (e instanceof ErrorApi) {
+      if (enviado.id === null && enviado.idFamilia !== '') {
+        const idFamilia = enviado.idFamilia
+        const rechazoDeLaFamilia = e.estado === 409 && (CODIGOS_DE_CONFLICTO_DE_ALTA as readonly string[]).includes(e.codigo)
+        if (rechazoDeLaFamilia || e.estado === 404) return () => void resolverAltaRechazadaPorLaFamilia(e, idFamilia, token)
+      }
+
+      if (enviado.id !== null && e.estado === 409) {
+        const idArticulo = enviado.id
+        if (e.codigo === 'alcance_requerido') {
+          // El artículo es miembro de una familia que la pantalla no conocía: se pregunta ahora, con el texto del
+          // servidor, que nombra la familia y cuántos artículos tiene. Si la pantalla no ve ningún campo compartido
+          // cambiado, lo que el servidor ve distinto es lo que ella tiene desactualizado: preguntar ofrecería escribir
+          // esos valores viejos en toda la familia, así que se recarga el artículo.
+          const campos = camposCompartidosModificados(formularioOriginalRef.current ?? enviado, enviado)
+          if (campos.length === 0) return () => recargarArticuloDesactualizado(idArticulo, AVISO_DE_CAMPOS_COMPARTIDOS_CAMBIARON)
+          setDecisionDeAlcance({ contexto: e.message, campos: campos.map((campo) => campo.etiqueta) })
+          return null
+        }
+        if (e.codigo === 'familia_cambio') return () => recargarArticuloDesactualizado(idArticulo)
+      }
+    }
+
+    setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+    return null
+  }
+
+  /** Un alta dentro de una familia que el servidor rechazó. `familia_valores_distintos`: la familia cambió desde
+   * que se la eligió, así que se la vuelve a leer y sus valores vuelven al formulario. Inactiva, sin artículos
+   * vivos o inexistente: ya no admite artículos, sale de la selección y se actualiza la lista de familias. */
+  async function resolverAltaRechazadaPorLaFamilia(e: ErrorApi, idFamilia: number, token: number) {
+    void familias.recargarOpciones()
+    let mensaje = e.message
+
+    if (e.codigo === 'familia_valores_distintos') {
+      const detalle = await familias.cargarDetalle(idFamilia)
+      if (tokenEdicionRef.current !== token) return
+
+      if (detalle === null) {
+        // La carga falló: el motivo lo muestra la sección de la familia, y el rechazo del servidor sigue en pie.
+        setErrorGuardado(e.message)
+        return
+      }
+
+      if (detalle.activo && detalle.valores !== null) {
+        const valores = valoresDeFamiliaAFormulario(detalle.valores)
+        actualizarFormulario((previo) => ({ ...previo, ...valores }))
+        setErrorGuardado(avisoDeValoresDistintos(camposNombradosEnMensaje(e.message)))
+        return
+      }
+
+      mensaje = detalle.activo
+        ? `La familia "${detalle.nombre}" no tiene artículos vivos: no hay valores de referencia ni precios que copiar.`
+        : `La familia "${detalle.nombre}" está inactiva: no se le pueden agregar artículos.`
+    }
+
+    familias.descartarDetalle()
+    actualizarFormulario((previo) => ({ ...previo, idFamilia: '' }))
+    setErrorGuardado(`${mensaje} Elegí otra familia o creá el artículo sin familia.`)
+  }
+
+  /** Lo que la pantalla muestra del artículo ya no es lo que hay en el servidor (`familia_cambio`: su pertenencia; o
+   * `alcance_requerido` sin cambios compartidos a la vista: sus campos compartidos). Se vuelve a leer el artículo con su
+   * familia y el aviso explica por qué se perdió lo tipeado. Solo si el modal sigue en ese artículo: la llamada puede
+   * venir del editor de precios de uno que ya se cerró. */
+  function recargarArticuloDesactualizado(idArticulo: number, aviso = AVISO_DE_FAMILIA_CAMBIO) {
+    if (destinoModalRef.current !== idArticulo) return
+    void abrirEdicion(idArticulo, aviso)
+  }
+
+  /** El artículo ya no es miembro: el formulario y su base de comparación dejan de tener familia, así que sacarlo
+   * no cuenta como un cambio sin guardar. */
+  function aplicarSalidaDeFamilia(idArticulo: number) {
+    actualizarFormulario((previo) => (previo.id === idArticulo ? { ...previo, idFamilia: '' } : previo))
+    if (formularioOriginalRef.current?.id === idArticulo) {
+      formularioOriginalRef.current = { ...formularioOriginalRef.current, idFamilia: '' }
+    }
+  }
+
+  /** El editor de precios escribió con "solo este": el precio quedó únicamente en este artículo, que salió. Las familias
+   * que se ofrecen en un alta se vuelven a leer aunque el modal ya muestre otro artículo: la salida ocurrió en el servidor. */
+  function alSalirDeLaFamiliaPorUnPrecio(idArticulo: number | null, nombre: string | null) {
+    void familias.recargarOpciones()
+    if (idArticulo === null || destinoModalRef.current !== idArticulo) return
+    aplicarSalidaDeFamilia(idArticulo)
+    setAvisoGuardado(`El artículo salió de la familia${nombre === null ? '' : ` "${nombre}"`}: el precio se guardó solo en él.`)
+  }
+
+  /** "Sacar de la familia": una escritura propia (DELETE), con su ventana inerte y su token. Resuelve `false`
+   * si no llegó a empezar. */
+  async function sacarDeLaFamilia(): Promise<boolean> {
+    if (escrituraEnCursoRef.current) return false
+    if (!formulario || formulario.id === null || formulario.idFamilia === '') return false
+    const idArticulo = formulario.id
+    const idFamilia = formulario.idFamilia
+    const nombre = formulario.nombre
+    const nombreDeLaFamilia = familiaDelArticulo(idFamilia, familias.detalle).nombre
+    escrituraEnCursoRef.current = true
+
+    const token = invalidarEdicionEnCurso()
+    setSaliendoDeFamilia(true)
+    setErrorGuardado('')
+    setAvisoGuardado('')
+
+    try {
+      await clienteDeFamilias.sacarArticulo(idFamilia, idArticulo)
+      // La familia tiene un miembro menos, y si era el último deja de ofrecerse en un alta.
+      void familias.recargarOpciones()
+      if (tokenEdicionRef.current === token) {
+        aplicarSalidaDeFamilia(idArticulo)
+        setAvisoGuardado(
+          `El artículo "${nombre}" salió de la familia${nombreDeLaFamilia === null ? '' : ` "${nombreDeLaFamilia}"`}: conserva todos sus valores y sus precios.`,
+        )
+      }
+    } catch (e) {
+      if (tokenEdicionRef.current === token) {
+        // La familia ya no existe o el artículo ya no es de ella: lo que la pantalla muestra dejó de ser cierto.
+        if (e instanceof ErrorApi && ((e.estado === 409 && e.codigo === 'familia_cambio') || e.estado === 404)) {
+          recargarArticuloDesactualizado(idArticulo)
+        } else {
+          setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo sacar el artículo de la familia.')
+        }
+      }
+    } finally {
+      // Sin gate de token, a diferencia de `guardar`: esta bandera es solo de esta escritura, así que la recarga que
+      // acaba de arrancar `abrirEdicion` no la afecta.
+      escrituraEnCursoRef.current = false
+      setSaliendoDeFamilia(false)
+    }
+
+    return true
+  }
+
+  /** Elegir una familia en un alta: el artículo toma sus trece campos compartidos, que quedan bloqueados. Dejarla
+   * en "Sin familia" los desbloquea y conserva lo que tenían. */
+  function elegirFamilia(idFamilia: number | '') {
+    // Elegir otra familia supera todo lo que estaba en vuelo sobre la anterior, incluido el seguimiento de un
+    // guardado rechazado que todavía está releyendo su familia.
+    invalidarEdicionEnCurso()
+    setErrorGuardado('')
+    familias.descartarDetalle()
+    actualizarFormulario((previo) => ({ ...previo, idFamilia }))
+    if (idFamilia !== '') void cargarFamiliaDelAlta(idFamilia)
+  }
+
+  async function cargarFamiliaDelAlta(idFamilia: number) {
+    const detalle = await familias.cargarDetalle(idFamilia)
+    // `null`: la carga falló (la sección muestra el motivo) o la superó otra elección o el cierre del modal. Una
+    // respuesta que no es `null` es la de la familia elegida ahora: la generación del hook descarta las demás.
+    if (detalle === null || detalle.valores === null) return
+
+    const valores = valoresDeFamiliaAFormulario(detalle.valores)
+    actualizarFormulario((previo) => ({ ...previo, ...valores }))
+  }
+
+  function reintentarFamilia() {
+    if (!formulario || formulario.id !== null || formulario.idFamilia === '') return
+    setErrorGuardado('')
+    void cargarFamiliaDelAlta(formulario.idFamilia)
   }
 
   // `idsEmpresas` es el único campo cuya REPRESENTACIÓN puede cambiar sin que haya un cambio real:
@@ -517,6 +783,19 @@ export function Articulos() {
     </nav>
   )
 
+  // Las acciones del formulario sobre su familia atan al artículo que se está mostrando: una que llegue tarde,
+  // desde el editor de precios de uno que ya se cerró, no puede tocar al que se abrió después.
+  const idDelFormulario = formulario?.id ?? null
+  const accionesDeFamilia: AccionesDeFamiliaDelFormulario = {
+    elegir: elegirFamilia,
+    reintentar: reintentarFamilia,
+    sacar: sacarDeLaFamilia,
+    alSalirDeLaFamilia: (nombre) => alSalirDeLaFamiliaPorUnPrecio(idDelFormulario, nombre),
+    alCambiarLaFamilia: () => {
+      if (idDelFormulario !== null) recargarArticuloDesactualizado(idDelFormulario)
+    },
+  }
+
   return (
     <div className="container-fluid py-4">
       <Box titulo="Artículos" variante="inverse" herramientas={herramientas}>
@@ -555,10 +834,13 @@ export function Articulos() {
           alicuotasIva={alicuotasIva}
           empresas={empresas}
           listasPrecio={listasPrecio}
+          familia={familias}
+          accionesDeFamilia={accionesDeFamilia}
+          preguntaDeAlcanceAbierta={decisionDeAlcance !== null}
           focoDeReserva={refBotonNuevo}
           onCambio={setFormulario}
           actualizarFormulario={actualizarFormulario}
-          onGuardar={guardar}
+          onGuardar={pedirGuardado}
           onCerrar={cerrarModal}
           alDeEscribir={alDeEscribir}
           onCategoriaCreada={alCrearCategoria}
@@ -566,6 +848,20 @@ export function Articulos() {
           onGrupoCreada={alCrearGrupo}
           onProveedorCreado={alCrearProveedor}
         />
+      )}
+
+      {/* La pregunta de alcance es hermana del modal de artículo y no hija: React propaga los eventos por el
+          árbol de componentes, y el Tab de este diálogo no tiene que pasar por la trampa de foco del de abajo. */}
+      {decisionDeAlcance !== null && (
+        <Modal titulo="Cambio en una familia" ocupado={ocupado} onCerrar={cancelarAlcance}>
+          <PreguntaDeAlcance
+            contexto={decisionDeAlcance.contexto}
+            cambios={decisionDeAlcance.campos}
+            ocupado={ocupado}
+            onElegir={elegirAlcance}
+            onCancelar={cancelarAlcance}
+          />
+        </Modal>
       )}
     </div>
   )

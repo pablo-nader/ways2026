@@ -65,6 +65,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     activo: true,
     controlaLote: false,
     acumulaEnVenta: true,
+    idFamilia: null,
     ...sobrescribir,
   }
 }
@@ -299,6 +300,9 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
         : Promise.resolve(catalogos.condicionesFiscales ?? [condicionFiscalFixture()])
     if (ruta === '/empresas') return Promise.resolve(catalogos.empresas ?? [])
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
+    // Familias (doc 10 §3): estos tests no usan familias, y sin familias el alta no ofrece el selector. Las
+    // pruebas del selector, de la pertenencia y del alcance viven en `ArticulosFamilias.test.tsx`.
+    if (ruta === '/familias') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }

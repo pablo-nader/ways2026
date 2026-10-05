@@ -74,7 +74,11 @@ export const clienteDeArticulos = {
    * (buscador del POS, alta rápida). */
   grilla: (filtros: FiltrosDeGrillaDeArticulos) =>
     api.get<PaginaDeGrillaDeArticulos>(`/articulos/grilla${construirQueryDeGrillaDeArticulos(filtros)}`),
+  /** Con `idFamilia` el artículo nace como miembro de esa familia: 409 `familia_valores_distintos`,
+   * `familia_inactiva` o `familia_sin_articulos` si no puede entrar, 404 si la familia no existe. */
   crear: (datos: AltaArticulo) => api.post<ArticuloListado>('/articulos', datos),
+  /** `alcance` solo hace falta cuando el artículo es miembro de una familia y la edición cambia alguno de
+   * sus trece campos compartidos: sin él, 409 `alcance_requerido` y no se escribe nada. */
   actualizar: (id: number, datos: EdicionArticulo) => api.put<ArticuloListado>(`/articulos/${id}`, datos),
   eliminar: (id: number) => api.delete(`/articulos/${id}`),
   codigosBarra: (id: number) => api.get<CodigoBarraListado[]>(`/articulos/${id}/codigos-barra`),

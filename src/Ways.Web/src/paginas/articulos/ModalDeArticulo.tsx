@@ -10,6 +10,7 @@ import type {
 } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
+import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario } from './familia'
 import { FormularioArticulo, type Formulario } from './FormularioArticulo'
 
 type Props = {
@@ -41,6 +42,9 @@ type Props = {
   alicuotasIva: AlicuotaIvaListado[]
   empresas: EmpresaListado[]
   listasPrecio: ListaPrecioListado[]
+  familia: EstadoDeFamiliaDelFormulario
+  accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  preguntaDeAlcanceAbierta: boolean
   focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   actualizarFormulario: (actualizar: (previo: Formulario) => Formulario) => void
@@ -84,6 +88,9 @@ export function ModalDeArticulo({
   alicuotasIva,
   empresas,
   listasPrecio,
+  familia,
+  accionesDeFamilia,
+  preguntaDeAlcanceAbierta,
   focoDeReserva,
   onCambio,
   actualizarFormulario,
@@ -140,6 +147,9 @@ export function ModalDeArticulo({
             guardando={guardando}
             ocupado={ocupado}
             bloqueadoPorCatalogos={bloqueadoPorCatalogos}
+            familia={familia}
+            accionesDeFamilia={accionesDeFamilia}
+            preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
             onCambio={onCambio}
             actualizarFormulario={actualizarFormulario}
             onGuardar={onGuardar}
