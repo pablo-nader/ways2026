@@ -10,6 +10,7 @@ using Ways.Application.Bajas;
 using Ways.Application.Familias;
 using Ways.Application.Organizacion;
 using Ways.Application.Precios;
+using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -166,6 +167,11 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         IdAlicuotaIva: e.Alicuotas[0], UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true,
         ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
 
+    /// <summary>Los trece valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
+    /// ningún id de catálogo: para las pruebas cuyos ids apuntan a filas vivas.</summary>
+    public static ValoresCompartidosDeLaFamilia ComoLoLeeElCliente(ValoresCompartidosDeFamilia valores) =>
+        ValoresCompartidosDeLaFamilia.De(valores);
+
     /// <summary>Los valores de <see cref="ValoresBase"/> con UN solo campo (el que nombra
     /// <paramref name="columna"/>, con el nombre de la columna de <c>articulos</c>) cambiado a otro valor
     /// válido.</summary>
@@ -294,6 +300,32 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         await SembrarPrecioAsync(e, idArticulo, idLista, montoPendiente, desdePendiente, null);
 
         return desdePendiente;
+    }
+
+    /// <summary>Una alícuota de IVA más, con un nombre único. La tabla es global —la define la plataforma—: las dos que
+    /// usa <see cref="Entorno.Alicuotas"/> son de todos los tenants y una prueba no las da de baja; la que necesita una
+    /// alícuota dada de baja siembra la suya.</summary>
+    public async Task<int> SembrarAlicuotaAsync(string prefijo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var alicuota = new AlicuotaIva
+        {
+            Nombre = $"{prefijo}-{Guid.NewGuid().ToString("N")[..8]}", Porcentaje = 7m, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.AlicuotasIva.Add(alicuota);
+        await db.SaveChangesAsync();
+
+        return alicuota.Id;
+    }
+
+    /// <summary>El nombre de una lista de precios, que los mensajes de la alineación nombran.</summary>
+    public async Task<string> NombreDeListaAsync(int idLista)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.ListasPrecio.IgnoreQueryFilters().Where(l => l.Id == idLista).Select(l => l.Nombre).SingleAsync();
     }
 
     /// <summary>Una lista de precios <c>fija</c> más del tenant, sin ningún precio.</summary>
@@ -433,6 +465,33 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     /// dependencias que tiene en producción—, para las pruebas que lo llaman sin pasar por HTTP.</summary>
     public static ServicioDeFamilias ServicioDe(WaysDbContext db, Entorno e) =>
         new(db, new RelojDelSistema(), new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin), new GuardaDeReferencias(db, new InspectorDeUso(db)));
+
+    /// <summary>El servicio de agrupación armado a mano sobre <paramref name="db"/>, con el reloj que pida la prueba
+    /// (por defecto el real). La auditoría usa siempre el reloj real: sella cada fila con su propia lectura, y contarlas
+    /// taparía las lecturas de la operación que la prueba quiere contar.</summary>
+    public static ServicioDeAgrupacionDeFamilias ServicioDeAgrupacionDe(
+        WaysDbContext db, Entorno e, IRelojDelSistema? reloj = null)
+    {
+        reloj ??= new RelojDelSistema();
+        var contexto = new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin);
+        var auditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, new RelojDelSistema(), contexto);
+
+        return new ServicioDeAgrupacionDeFamilias(
+            db, reloj, contexto, new ServicioDePrecios(db, reloj, contexto, auditoria), new ServicioDeLotes(db, reloj, contexto),
+            new GuardaDeReferencias(db, new InspectorDeUso(db)));
+    }
+
+    /// <summary>Un reloj que cuenta cuántas veces se lo lee y devuelve un instante distinto en cada lectura (un segundo
+    /// más que la anterior): dos lecturas del reloj en una misma operación dan instantes distintos y se pueden
+    /// distinguir.</summary>
+    public sealed class RelojContador(DateTimeOffset inicio) : IRelojDelSistema
+    {
+        private long lecturas;
+
+        public long Lecturas => Interlocked.Read(ref lecturas);
+
+        public DateTimeOffset Ahora => inicio.AddSeconds(Interlocked.Increment(ref lecturas));
+    }
 
     /// <summary>El actor de las pruebas que arman un servicio a mano: el administrador del tenant.</summary>
     private sealed class ContextoDeAdmin(int idTenant, int idUsuario) : IContextoDeUsuario

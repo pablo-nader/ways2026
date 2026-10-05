@@ -29,11 +29,6 @@ namespace Ways.Application.Familias;
 public class ServicioDeFamilias(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, GuardaDeReferencias guarda)
 {
-    /// <summary>El tope del nombre, el mismo que el alta de artículos aplica a <c>articulos.nombre</c>. La columna
-    /// <c>familias.nombre</c> es <c>citext</c>, que no limita el largo: el tope lo hace cumplir la aplicación y no la
-    /// base.</summary>
-    private const int LargoMaximoDelNombre = 150;
-
     /// <summary>Las familias vivas del tenant, ordenadas por nombre. Cada una con la cantidad de miembros vivos:
     /// el filtro de baja lógica de <c>articulos</c> deja afuera a los dados de baja.</summary>
     public async Task<IReadOnlyList<FamiliaListado>> ListarAsync(CancellationToken ct = default) =>
@@ -134,9 +129,9 @@ public class ServicioDeFamilias(
     ///
     /// <para>No toma el lock de membresía ni bloquea ninguna fila de artículo: no cambia la pertenencia ni escribe
     /// campos compartidos ni precios. Lo que la serializa con los escritores que toman la fila de la familia —el alta de
-    /// un artículo con <c>idFamilia</c>, que la lee <c>FOR SHARE</c>, y la disolución, que la toma <c>FOR UPDATE</c>,
-    /// las dos bajo el lock de membresía— es el lock de la propia fila: toda escritura de la fila choca con ese
-    /// <c>FOR SHARE</c> y con ese <c>FOR UPDATE</c>.</para>
+    /// un artículo con <c>idFamilia</c> y agregar artículos, que la leen <c>FOR SHARE</c>, y la disolución, que la toma
+    /// <c>FOR UPDATE</c>, todos bajo el lock de membresía— es el lock de la propia fila: toda escritura de la fila choca
+    /// con ese <c>FOR SHARE</c> y con ese <c>FOR UPDATE</c>.</para>
     ///
     /// <para>La unicidad del nombre la sostiene <c>ux_familias_nombre</c> (<c>23505</c> → <c>409
     /// familia_nombre_duplicado</c> en <c>ManejadorDeErrores</c>); el chequeo previo es un servicio de UX, no la
@@ -153,11 +148,11 @@ public class ServicioDeFamilias(
             throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
         }
 
-        var nombre = NormalizarNombre(datos.Nombre);
+        var nombre = NombreDeFamilia.Normalizar(datos.Nombre);
         var activo = datos.Activo
             ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
 
-        await ExigirNombreDisponibleAsync(nombre, excluirId: id, ct);
+        await NombreDeFamilia.ExigirDisponibleAsync(db, nombre, excluirId: id, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
@@ -344,37 +339,6 @@ public class ServicioDeFamilias(
         }
 
         return conexion;
-    }
-
-    /// <summary>Pre-chequeo best-effort del nombre (<c>db-error-backstops</c>): el contrato real es
-    /// <c>ux_familias_nombre</c> con su traducción a <c>409 familia_nombre_duplicado</c>. La comparación es la de la
-    /// columna <c>citext</c>, sin distinguir mayúsculas. <paramref name="excluirId"/> es la familia que se edita: su
-    /// propio nombre no es un duplicado.</summary>
-    private async Task ExigirNombreDisponibleAsync(string nombre, int? excluirId, CancellationToken ct)
-    {
-        if (await db.Familias.AnyAsync(f => f.Nombre == nombre && f.Id != excluirId, ct))
-        {
-            throw ErrorDominio.Conflicto(
-                "familia_nombre_duplicado", $"Ya existe una familia llamada \"{nombre}\" en este tenant.");
-        }
-    }
-
-    private static string NormalizarNombre(string? valor)
-    {
-        var limpio = valor?.Trim() ?? string.Empty;
-
-        if (limpio.Length == 0)
-        {
-            throw new ErrorDominio("nombre_requerido", "El campo nombre es obligatorio.", 400);
-        }
-
-        if (limpio.Length > LargoMaximoDelNombre)
-        {
-            throw new ErrorDominio(
-                "nombre_muy_largo", $"El campo nombre no puede superar los {LargoMaximoDelNombre} caracteres.", 400);
-        }
-
-        return limpio;
     }
 
     private async Task<IReadOnlyList<EstadoDePreciosDeLista>> EstadoDePreciosDeLaReferenciaAsync(

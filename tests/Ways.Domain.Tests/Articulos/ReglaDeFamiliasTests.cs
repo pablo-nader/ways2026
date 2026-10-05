@@ -263,4 +263,45 @@ public class ReglaDeFamiliasTests
             ResolucionDeIngresoAFamilia.ValoresDistintos,
             ReglaDeFamilias.ResolverIngreso(familiaActiva: true, ValoresDeReferencia, distinto));
     }
+
+    // =================================================================================================
+    // Agregar artículos a una familia existente: estado de la familia × miembros vivos
+    // =================================================================================================
+
+    public static TheoryData<bool, bool, ResolucionDeIngresoAFamilia> TablaDeAgregado() => new()
+    {
+        // La familia inactiva se informa primero, tenga o no miembros vivos.
+        { false, false, ResolucionDeIngresoAFamilia.FamiliaInactiva },
+        { false, true, ResolucionDeIngresoAFamilia.FamiliaInactiva },
+
+        // Activa y sin ningún miembro vivo: no hay referencia a la que alinear.
+        { true, false, ResolucionDeIngresoAFamilia.FamiliaSinArticulos },
+
+        // Activa y con referencia: se agrega. Los valores no se comparan, se alinean.
+        { true, true, ResolucionDeIngresoAFamilia.Permitido }
+    };
+
+    [Theory]
+    [MemberData(nameof(TablaDeAgregado))]
+    public void CadaCeldaDeLaTablaDeAgregadoDaSuResolucion(
+        bool familiaActiva, bool tieneMiembrosVivos, ResolucionDeIngresoAFamilia esperada)
+    {
+        Assert.Equal(esperada, ReglaDeFamilias.ResolverAgregado(familiaActiva, tieneMiembrosVivos));
+    }
+
+    /// <summary>Agregar nunca da <c>ValoresDistintos</c>: la regla de ingreso exige que los valores coincidan, la de
+    /// agregado los alinea.</summary>
+    [Fact]
+    public void AgregarNuncaDaValoresDistintos()
+    {
+        foreach (var familiaActiva in new[] { false, true })
+        {
+            foreach (var tieneMiembrosVivos in new[] { false, true })
+            {
+                Assert.NotEqual(
+                    ResolucionDeIngresoAFamilia.ValoresDistintos,
+                    ReglaDeFamilias.ResolverAgregado(familiaActiva, tieneMiembrosVivos));
+            }
+        }
+    }
 }

@@ -7,8 +7,9 @@ namespace Ways.Domain.Precios;
 /// append-only — un cambio de precio cierra la fila vigente (<see cref="VigenteHasta"/>) e
 /// inserta una nueva, nunca actualiza <see cref="Precio"/> de una fila existente. Sin
 /// <c>Update</c> a nivel de entidad a propósito: el único escritor legítimo es <c>ServicioDePrecios</c>
-/// —<c>AbrirNuevoPrecioAsync</c> para un artículo que ya existe y <c>CopiarEstadoDePreciosAlNuevoMiembroAsync</c>
-/// para el que nace dentro de una familia (doc 10 §3)— y esta clase solo declara la forma de la tabla.
+/// —<c>AbrirNuevoPrecioAsync</c> para un artículo que ya existe, <c>CopiarEstadoDePreciosAlNuevoMiembroAsync</c>
+/// para el que nace dentro de una familia y <c>EscribirAlineacionAsync</c> para los que se agrupan con un artículo de
+/// referencia (doc 10 §3)— y esta clase solo declara la forma de la tabla.
 /// </summary>
 public class Precio : EntidadTenant
 {

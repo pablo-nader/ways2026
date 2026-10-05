@@ -62,6 +62,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeFamilias>();
+        services.AddScoped<ServicioDeAgrupacionDeFamilias>();
         services.AddScoped<ServicioDeOfertas>();
 
         // stage-articulos-grilla-api: GET /api/articulos/grilla — compone ServicioDePrecios

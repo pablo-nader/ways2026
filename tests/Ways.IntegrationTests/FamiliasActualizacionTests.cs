@@ -201,15 +201,16 @@ public class FamiliasActualizacionTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(antesDeLaAjena, Huella(await apoyo.LeerFamiliaAsync(ajena)));
     }
 
-    /// <summary>Una familia que no se encuentra —inexistente, dada de baja o de otro tenant— da 404 antes que cualquier
-    /// rechazo del cuerpo o del nombre, y no escribe nada. Se prueba con un cuerpo por cada rechazo que, sin ese orden,
-    /// ocurriría antes del 404: el nombre vacío y el de 151 caracteres (400 de la validación del nombre), el
-    /// <c>activo</c> ausente (400) y el nombre de una familia viva del tenant (409 del chequeo previo).</summary>
+    /// <summary>Una familia que no se encuentra —inexistente, dada de baja o de otro tenant— da 404 antes que las
+    /// validaciones del cuerpo y el chequeo previo del nombre que hace el servicio, y no escribe nada. Se prueba con un
+    /// cuerpo por cada rechazo que, sin ese orden, ocurriría antes del 404: el nombre vacío y el de 151 caracteres (400 de
+    /// la validación del nombre), el <c>activo</c> ausente (400) y el nombre de una familia viva del tenant (409 del
+    /// chequeo previo).</summary>
     [Fact]
-    public async Task UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre()
+    public async Task UnaFamiliaQueNoSeEncuentraDa404AntesQueLasValidacionesDelServicio()
     {
-        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre));
-        using var otro = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueCualquierRechazoDelCuerpoOElNombre) + "-ajeno");
+        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueLasValidacionesDelServicio));
+        using var otro = await apoyo.PrepararAsync(nameof(UnaFamiliaQueNoSeEncuentraDa404AntesQueLasValidacionesDelServicio) + "-ajeno");
         var viva = await apoyo.SembrarFamiliaAsync(e, "Viva");
         var dadaDeBaja = await apoyo.SembrarFamiliaAsync(e, "Dada de baja", dadaDeBaja: true);
         var ajena = await apoyo.SembrarFamiliaAsync(otro, "Ajena");

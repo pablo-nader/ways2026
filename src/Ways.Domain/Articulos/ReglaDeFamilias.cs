@@ -109,6 +109,34 @@ public static class ReglaDeFamilias
     }
 
     /// <summary>
+    /// La decisión de AGREGAR artículos a una familia que ya existe (doc 10 §3): la regla de ingreso sin la comparación
+    /// de los campos compartidos, porque lo que se agrega se ALINEA con la referencia en vez de tener que coincidir con
+    /// ella. Mismos rechazos y misma precedencia que <see cref="ResolverIngreso"/>: familia inactiva y después familia
+    /// sin miembros vivos, que no tiene referencia a la que alinear. <paramref name="familiaActiva"/> y
+    /// <paramref name="tieneMiembrosVivos"/> tienen que salir de lecturas hechas bajo el lock de membresía exclusivo.
+    ///
+    /// <code>
+    /// familia   | miembros vivos | resolución
+    /// inactiva  | (cualquiera)   | FamiliaInactiva
+    /// activa    | ninguno        | FamiliaSinArticulos
+    /// activa    | alguno         | Permitido
+    /// </code>
+    ///
+    /// Nunca devuelve <see cref="ResolucionDeIngresoAFamilia.ValoresDistintos"/>.
+    /// </summary>
+    public static ResolucionDeIngresoAFamilia ResolverAgregado(bool familiaActiva, bool tieneMiembrosVivos)
+    {
+        if (!familiaActiva)
+        {
+            return ResolucionDeIngresoAFamilia.FamiliaInactiva;
+        }
+
+        return tieneMiembrosVivos
+            ? ResolucionDeIngresoAFamilia.Permitido
+            : ResolucionDeIngresoAFamilia.FamiliaSinArticulos;
+    }
+
+    /// <summary>
     /// <c>true</c> si el escritor puede cambiar la PERTENENCIA y por eso toma el lock de membresía
     /// en modo exclusivo; <c>false</c> si solo necesita que la pertenencia no cambie mientras
     /// escribe (modo compartido). Se decide por el modo pedido, antes de leer nada: un lock

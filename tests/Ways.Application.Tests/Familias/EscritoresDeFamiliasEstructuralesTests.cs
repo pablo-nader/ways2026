@@ -139,6 +139,8 @@ public class EscritoresDeFamiliasEstructuralesTests
     /// <list type="bullet">
     /// <item><c>ServicioDeArticulos</c>: la edición (<c>ActualizarAsync</c>) y el alta
     /// (<c>CrearAsync</c>, con <c>idFamilia</c>) respetan el protocolo y replican a la familia.</item>
+    /// <item><c>ServicioDeAgrupacionDeFamilias</c>: agrupar (<c>CrearAsync</c> y <c>AgregarArticulosAsync</c>) asigna
+    /// la familia y los trece campos de los artículos que entran, con el lock de membresía exclusivo.</item>
     /// <item><c>ServicioDeFamilias</c>: sacar un artículo de su familia y disolverla (<c>UPDATE articulos SET
     /// id_familia</c>), con el lock de membresía exclusivo.</item>
     /// <item><c>ServicioDePrecios</c>: la salida de la familia de "solo este" (<c>UPDATE articulos SET id_familia</c>).</item>
@@ -155,6 +157,7 @@ public class EscritoresDeFamiliasEstructuralesTests
             [
                 "Ways.Application/Articulos/ServicioDeArticulos.cs",
                 "Ways.Application/Compras/ServicioDeCompras.cs",
+                "Ways.Application/Familias/ServicioDeAgrupacionDeFamilias.cs",
                 "Ways.Application/Familias/ServicioDeFamilias.cs",
                 "Ways.Application/Precios/ServicioDePrecios.cs",
                 "Ways.Domain/Articulos/ValoresCompartidosDeFamilia.cs"

@@ -75,6 +75,66 @@ internal static class MembresiaDeFamilias
         return miembros;
     }
 
+    /// <summary>Las filas de <c>articulos</c> VIVAS de <paramref name="idsArticulos"/>, ascendentes por <c>id_articulo</c>
+    /// y bloqueadas <c>FOR NO KEY UPDATE</c> —paso (2) del orden global de locks, para quien escribe artículos que no
+    /// son los miembros de una familia—. Devuelve los ids que quedaron bloqueados: un id que no existe, que es de otro
+    /// tenant o que está dado de baja no aparece, también el que se dio de baja mientras se esperaba su fila
+    /// (PostgreSQL reevalúa el <c>WHERE</c> sobre la versión comiteada). Mismo statement único con <c>ORDER BY</c> y
+    /// mismo modo que <see cref="BloquearMiembrosAsync"/>, por las mismas razones.</summary>
+    public static async Task<List<int>> BloquearArticulosAsync(
+        DbConnection conexion, DbTransaction? transaccion, IReadOnlyCollection<int> idsArticulos, int idTenant,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_articulo FROM articulos " +
+            "WHERE id_articulo = ANY($1) AND id_tenant = $2 AND deleted_at IS NULL " +
+            "ORDER BY id_articulo FOR NO KEY UPDATE";
+
+        ParametrosDeComando.Agregar(comando, idsArticulos.ToArray());
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        return await LeerIdsAsync(comando, ct);
+    }
+
+    /// <summary>Los miembros vivos de la familia Y los artículos vivos de <paramref name="idsArticulos"/>, ascendentes por
+    /// <c>id_articulo</c> en UN solo statement y bloqueados <c>FOR NO KEY UPDATE</c>: el paso (2) de quien agrega
+    /// artículos a una familia que ya existe. Se bloquean los miembros aunque no se escriban porque el artículo de
+    /// referencia es uno de ellos, y su estado no puede cambiar bajo la escritura. Un solo statement, y no uno por
+    /// conjunto, porque el orden de los locks de fila tiene que ser ascendente sobre la UNIÓN: dos statements
+    /// ascendentes por separado no lo son. Devuelve los ids bloqueados.</summary>
+    public static async Task<List<int>> BloquearMiembrosYArticulosAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idFamilia, IReadOnlyCollection<int> idsArticulos,
+        int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_articulo FROM articulos " +
+            "WHERE (id_familia = $1 OR id_articulo = ANY($2)) AND id_tenant = $3 AND deleted_at IS NULL " +
+            "ORDER BY id_articulo FOR NO KEY UPDATE";
+
+        ParametrosDeComando.Agregar(comando, idFamilia);
+        ParametrosDeComando.Agregar(comando, idsArticulos.ToArray());
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        return await LeerIdsAsync(comando, ct);
+    }
+
+    private static async Task<List<int>> LeerIdsAsync(DbCommand comando, CancellationToken ct)
+    {
+        var ids = new List<int>();
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+
+        while (await lector.ReadAsync(ct))
+        {
+            ids.Add(lector.GetInt32(0));
+        }
+
+        return ids;
+    }
+
     /// <summary>"Solo este", paso (2) del orden de locks: bloquea la fila del artículo
     /// <c>FOR NO KEY UPDATE</c> —el mismo modo que <see cref="BloquearMiembrosAsync"/>— guardada por la
     /// familia que se leyó bajo el lock de membresía y por la baja lógica. Si la fila no cumple el
@@ -102,18 +162,18 @@ internal static class MembresiaDeFamilias
         }
     }
 
-    /// <summary>Lo que el alta de un artículo dentro de una familia necesita saber de ella: su nombre, para los
-    /// mensajes, y si está activa.</summary>
+    /// <summary>Lo que necesita saber de una familia quien le agrega artículos —el alta de un artículo dentro de ella o
+    /// agrupar artículos en una que ya existe—: su nombre, para los mensajes, y si está activa.</summary>
     public sealed record FamiliaParaIngresar(string Nombre, bool Activa);
 
-    /// <summary>La familia a la que va a entrar un artículo nuevo: VIVA (<c>deleted_at IS NULL</c>) y de este
-    /// tenant, leída y bloqueada <c>FOR SHARE</c> en un solo statement, bajo el lock de membresía exclusivo;
-    /// <c>null</c> si no existe, es de otro tenant o está dada de baja. El <c>FOR SHARE</c> —y no el
-    /// <c>FOR KEY SHARE</c> de los chequeos de catálogo, que solo choca con quien borra o cambia la clave— es
-    /// lo que serializa el alta con cualquier <c>UPDATE</c> de la fila de la familia, sea una baja lógica o un
-    /// cambio de <c>activo</c>: todo <c>UPDATE</c> toma al menos <c>FOR NO KEY UPDATE</c>, que choca con
-    /// <c>FOR SHARE</c>. Si la fila cambió mientras se esperaba su lock, PostgreSQL reevalúa el <c>WHERE</c>
-    /// sobre la versión nueva y la descarta si ya no está viva.</summary>
+    /// <summary>La familia a la que van a entrar artículos —uno nuevo, en el alta de un artículo, o los pedidos, al
+    /// agrupar en una familia que ya existe—: VIVA (<c>deleted_at IS NULL</c>) y de este tenant, leída y bloqueada
+    /// <c>FOR SHARE</c> en un solo statement, bajo el lock de membresía exclusivo; <c>null</c> si no existe, es de otro
+    /// tenant o está dada de baja. El <c>FOR SHARE</c> —y no el <c>FOR KEY SHARE</c> de los chequeos de catálogo, que solo
+    /// choca con quien borra o cambia la clave— es lo que serializa a quien entra con cualquier <c>UPDATE</c> de la fila
+    /// de la familia, sea una baja lógica o un cambio de <c>activo</c>: todo <c>UPDATE</c> toma al menos
+    /// <c>FOR NO KEY UPDATE</c>, que choca con <c>FOR SHARE</c>. Si la fila cambió mientras se esperaba su lock,
+    /// PostgreSQL reevalúa el <c>WHERE</c> sobre la versión nueva y la descarta si ya no está viva.</summary>
     public static async Task<FamiliaParaIngresar?> LeerFamiliaParaIngresarAsync(
         DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, CancellationToken ct)
     {

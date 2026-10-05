@@ -285,4 +285,102 @@ public class ServicioDePreciosPosicionDeLocksTests
         Assert.DoesNotContain("db.Precios.Add(", fuenteSinLaPareja, StringComparison.Ordinal);
         Assert.DoesNotContain("Auditoria.Registrar(", fuenteSinLaPareja, StringComparison.Ordinal);
     }
+
+    // =================================================================================================
+    // La alineación de los artículos que se agrupan con uno de referencia
+    // =================================================================================================
+
+    /// <summary>Los locks de par de la alineación se toman recorriendo el orden de
+    /// <c>OrdenDeLocksDeParesDeVariosArticulosYListas</c> (ascendente por clave) sobre el producto de los artículos y
+    /// las listas, y SIN leer ningún precio: se toman antes de la planificación, así que no hay un estado que decida cuáles
+    /// bloquear. La propiedad del orden la prueba <c>ServicioDePreciosOrdenDeLocksDeParesDeVariosArticulosYListasTests</c>;
+    /// acá, que el bucle la usa.</summary>
+    [Fact]
+    public void LosLocksDeParesDeLaAlineacionSeTomanPorClaveSobreElProductoYSinLeerPrecios()
+    {
+        var cuerpo = CuerpoDe(LeerFuente(), "internal async Task TomarLocksDeParesAsync(");
+
+        var producto = Posicion(cuerpo, "idsArticulo.SelectMany(idArticulo => idsLista.Select(idLista => (idArticulo, idLista)))");
+        var recorrido = Posicion(
+            cuerpo, "foreach (var (idArticulo, idLista) in OrdenDeLocksDeParesDeVariosArticulosYListas(idTenant, pares))");
+        var bloqueo = Posicion(cuerpo, "TomarLockDelParAsync(idTenant, idArticulo, idLista, ct)");
+
+        Assert.True(producto < recorrido && recorrido < bloqueo);
+
+        foreach (var ajeno in new[] { "db.", "reloj.Ahora", "SaveChangesAsync(", "EncolarFilaDePrecio(", "CerrarFilaAsync(" })
+        {
+            Assert.DoesNotContain(ajeno, cuerpo, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>La planificación de la alineación es la fase 1: solo lee. Ni toma locks, ni cierra una fila, ni encola una
+    /// fila de precio o de auditoría, ni guarda. Que un rechazo no deje nada escrito lo prueban, contra la base, las pruebas
+    /// de agrupar; con la transacción revertida, eso no distingue una escritura temprana de una tardía, y esta es la red
+    /// que sí.</summary>
+    [Fact]
+    public void LaPlanificacionDeLaAlineacionSoloLee()
+    {
+        var planificar = CuerpoDe(LeerFuente(), "internal async Task<PlanDeAlineacionDePrecios> PlanificarAlineacionAsync(");
+
+        foreach (var escritura in new[]
+        {
+            "TomarLockDelParAsync(", "CerrarFilaAsync(", "CerrarFilasDelPlanAsync(", "EncolarFilaDePrecio(", "Auditoria.Registrar(",
+            "db.Precios.Add(", "SaveChangesAsync(", "ExecuteNonQueryAsync(", "reloj.Ahora"
+        })
+        {
+            Assert.DoesNotContain(escritura, planificar, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>La escritura de la alineación es la fase 2: cierra las filas abiertas de TODOS los pares que se alinean y
+    /// después encola las filas nuevas con su auditoría, sin volver a leer nada (ni precios, ni el reloj), sin tomar locks
+    /// y sin guardar ni abrir una transacción: es del llamador. Solo recorre los pares con resolución <c>Alinear</c>.</summary>
+    [Fact]
+    public void LaEscrituraDeLaAlineacionCierraPrimeroEncolaDespuesYNoLeeNiGuarda()
+    {
+        var cuerpo = CuerpoDe(LeerFuente(), "internal async Task EscribirAlineacionAsync(");
+
+        var seleccion = Posicion(cuerpo, "ResolucionDeAlineacionDePrecios.Alinear");
+        var cierre = Posicion(cuerpo, "CerrarFilasDelPlanAsync(");
+        var encolado = Posicion(cuerpo, "EncolarFilaDePrecio(");
+
+        Assert.True(seleccion < cierre, "Solo se escribe en los pares que se alinean.");
+        Assert.True(cierre < encolado, "Primero se cierra lo abierto y después se encola lo nuevo.");
+
+        foreach (var ajeno in new[]
+        {
+            "db.", "reloj.Ahora", "SaveChangesAsync(", "BeginTransactionAsync(", "CommitAsync(", "TomarLockDelParAsync(",
+            "PlanificarPrecioDeUnArticuloAsync(", "ToListAsync("
+        })
+        {
+            Assert.DoesNotContain(ajeno, cuerpo, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>La escritura de la alineación exige que el plan no tenga rechazos y falla fuerte
+    /// (<see cref="InvalidOperationException"/>) ANTES de escribir nada: sin esa guarda, un plan con un par rechazado
+    /// escribiría solo los pares que se alinean y dejaría el otro sin avisar. El pedido real rechaza antes con 422 y
+    /// la guarda no es alcanzable por ningún pedido HTTP, ni la ve ninguna prueba contra la base: el texto fuente es la
+    /// única red. Se afirma que la guarda aparece una vez, que es la PRIMERA sentencia del método, que su cuerpo es solo el
+    /// <c>throw</c> de esa excepción y que viene antes de cerrar o encolar cualquier fila.</summary>
+    [Fact]
+    public void LaEscrituraDeLaAlineacionFallaFuerteSiElPlanTieneRechazosAntesDeEscribirNada()
+    {
+        var cuerpo = CuerpoDe(FuenteSinComentarios(), "internal async Task EscribirAlineacionAsync(");
+
+        const string guarda = "if (plan.PrimerRechazo is not null)";
+        Assert.Single(Regex.Matches(cuerpo, Regex.Escape(guarda)));
+
+        var normalizado = Regex.Replace(cuerpo, @"\s+", " ").Trim();
+        var cuerpoDeLaGuarda = Regex.Replace(CuerpoDe(cuerpo, guarda), @"\s+", " ").Trim();
+
+        Assert.StartsWith("{ " + guarda + " {", normalizado, StringComparison.Ordinal);
+        Assert.StartsWith("{ throw new InvalidOperationException(", cuerpoDeLaGuarda, StringComparison.Ordinal);
+        Assert.EndsWith("); }", cuerpoDeLaGuarda, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(cuerpoDeLaGuarda, @"\bthrow\b"));
+        Assert.True(
+            Posicion(cuerpo, guarda) < Posicion(cuerpo, "CerrarFilasDelPlanAsync(") &&
+            Posicion(cuerpo, guarda) < Posicion(cuerpo, "EncolarFilaDePrecio("),
+            "La guarda tiene que ir antes de escribir.");
+    }
 }
