@@ -780,7 +780,7 @@ describe('NuevaFamilia — crear', () => {
     })
   })
 
-  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `crear` (react-async-state regla 7: el aviso dice lo que de verdad
+  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `crear` (react-async-state regla 6: el aviso dice lo que de verdad
    * se sabe). Con la red caída o un 5xx no se sabe si el POST llegó a commitear: decir solo "No se pudo crear" invita a
    * crear de nuevo una familia que quizá ya existe. Evidencia de mutación (mutation-proof-tests): volver a `mensajeDeError`
    * hace fallar estas dos; revertido, vuelven a verde. */

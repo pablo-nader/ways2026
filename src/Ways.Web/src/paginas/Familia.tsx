@@ -53,25 +53,27 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
   /** Espejo síncrono de "hay una escritura en vuelo": dos clics en el mismo tick pasan la guarda de estado. */
   const ocupadoRef = useRef(false)
 
-  /** Resuelve `true` si la lectura se aplicó; `false` si falló (y su fallo ya se muestra) o la superó otra. */
+  /** Cómo terminó la lectura: `aplicada`; `inexistente` (404: el detalle se vació y su fallo ya lo dice); `fallida` por
+   * otra causa (su fallo ya se muestra); o `superada` por otra más nueva. */
   const cargar = useCallback(
-    async (token: number, propagar = false): Promise<boolean> => {
-      if (idFamilia === null) return false
+    async (token: number, propagar = false): Promise<'aplicada' | 'inexistente' | 'fallida' | 'superada'> => {
+      if (idFamilia === null) return 'fallida'
 
       setCargando(true)
       try {
         const lectura = await clienteDeFamilias.obtener(idFamilia)
-        if (generacion.current !== token) return false
+        if (generacion.current !== token) return 'superada'
         setDetalle(lectura)
         setError('')
-        return true
+        return 'aplicada'
       } catch (e) {
-        if (generacion.current !== token) return false
+        if (generacion.current !== token) return 'superada'
         if (propagar) throw e
+        const inexistente = e instanceof ErrorApi && e.estado === 404
         // Una familia que ya no existe no se sigue mostrando con los datos de la última lectura.
-        if (e instanceof ErrorApi && e.estado === 404) setDetalle(null)
+        if (inexistente) setDetalle(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar la familia.')
-        return false
+        return inexistente ? 'inexistente' : 'fallida'
       } finally {
         if (generacion.current === token) setCargando(false)
       }
@@ -132,11 +134,11 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
         const rechazo = mensajeDeFalloDeEscritura(e, 'sacar el artículo de la familia')
 
         // La pertenencia ya no es la que la pantalla muestra (`familia_cambio`) o la familia ya no existe: se la
-        // vuelve a leer para no seguir mostrando lo que dejó de ser cierto. Si la lectura falla (porque la familia ya
-        // no existe) su fallo ya lo dice, y el rechazo de la salida no se repite al lado.
+        // vuelve a leer para no seguir mostrando lo que dejó de ser cierto. El rechazo de la salida se muestra siempre,
+        // salvo cuando la lectura dice que la familia ya no existe: ese mensaje ya lo cubre y no se repite al lado.
         if (e instanceof ErrorApi && (e.codigo === 'familia_cambio' || e.estado === 404)) {
           setSalida(null)
-          if (await cargar(++generacion.current)) setErrorDeEscritura(rechazo)
+          if ((await cargar(++generacion.current)) !== 'inexistente') setErrorDeEscritura(rechazo)
         } else {
           setErrorDeEscritura(rechazo)
         }
@@ -154,7 +156,6 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
 
   /** Lo que el panel de agregado confirmó: se avisa y se vuelve a leer la familia (con sus miembros nuevos). */
   async function alAgregar(resultado: ResultadoDeAgrupacion) {
-    setErrorDeEscritura('')
     await refrescarTrasEscribir(avisoDeAgregado(resultado))
   }
 
@@ -387,8 +388,9 @@ function AgregarArticulos({
     invalidar()
   }, [detalle, invalidar])
 
-  // El servidor previsualiza sobre la referencia que él ve para esa familia: si esa no es la de esta familia, lo que la
-  // pantalla muestra de ella quedó viejo. Se la vuelve a leer, y esa lectura descarta lo previsualizado.
+  // La previsualización trae la familia a la que el servidor ve que pertenece el artículo de referencia que esta pantalla le
+  // mandó (el primer miembro que ella conoce): si no es esta familia, lo que la pantalla muestra de ella quedó viejo. Se
+  // la vuelve a leer, y esa lectura descarta lo previsualizado.
   const referenciaDesactualizada = previsualizacion !== null && previsualizacion.idFamilia !== detalle.id
   useEffect(() => {
     if (!referenciaDesactualizada) return

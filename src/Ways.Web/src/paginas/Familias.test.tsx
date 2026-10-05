@@ -355,6 +355,35 @@ describe('Familias — renombrar y activar o desactivar', () => {
     expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled()
   })
 
+  /** Cláusula bajo prueba: el `await cargar(...)` de la rama `estado === 404` de `guardar`: la ventana inerte cubre también
+   * la relectura del listado que sigue al rechazo (react-async-state regla 5). Con el listado en "Cargando…" lo que queda
+   * alcanzable es el enlace "Nueva familia". Evidencia de mutación (mutation-proof-tests): sacar ese `await` hace fallar
+   * este test (el enlace se habilita con la relectura todavía en vuelo); revertido, vuelve a verde. */
+  it('durante la relectura posterior a un 404 al guardar la pantalla sigue inerte', async () => {
+    const relectura = diferida<FamiliaListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => (++lecturas === 1 ? Promise.resolve([sabores, talles]) : relectura.promesa))
+    apiPutMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('No existe la familia 7.')
+
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+
+    await act(async () => {
+      relectura.resolver([talles])
+    })
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
+  })
+
   /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `guardar`: con un 5xx o la red caída no se sabe si el PUT llegó
    * a commitear. Evidencia de mutación (mutation-proof-tests): volver a `mensajeDeError` hace fallar estas dos;
    * revertido, vuelven a verde. */
@@ -400,6 +429,34 @@ describe('Familias — renombrar y activar o desactivar', () => {
       escritura.resolver(sabores)
     })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled())
+  })
+
+  /** Cláusula bajo prueba: el `await refrescarTrasEscribir(...)` de `guardar`: la ventana inerte cubre también el refresco
+   * del listado que sigue a un guardado que salió bien (react-async-state regla 5). Con el listado en "Cargando…" lo que
+   * queda alcanzable es el enlace "Nueva familia". Evidencia de mutación (mutation-proof-tests): sacar ese `await` hace
+   * fallar este test (el enlace se habilita con el refresco todavía en vuelo); revertido, vuelve a verde. */
+  it('durante el refresco posterior a guardar la pantalla sigue inerte', async () => {
+    const refresco = diferida<FamiliaListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => (++lecturas === 1 ? Promise.resolve([sabores, talles]) : refresco.promesa))
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Se actualizó la familia "Sabores".')
+
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+
+    await act(async () => {
+      refresco.resolver([sabores, talles])
+    })
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
   })
 
   /** Cláusula bajo prueba: `ocupadoRef`, el espejo sincrónico (react-async-state regla 11): dos envíos del
@@ -728,9 +785,39 @@ describe('Familias — disolver', () => {
     expect(screen.getByText(copia)).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: el `setFormulario(...)` de esa misma rama: el formulario abierto sobre la familia que ya no
-   * existe se cierra. Evidencia de mutación (mutation-proof-tests): sacarlo hace fallar este test; revertido, vuelve a
+  /** Cláusula bajo prueba: el `await cargar(...)` de la rama `estado === 404` de `confirmarDisolucion`: la ventana inerte
+   * cubre también la relectura del listado que sigue al rechazo (react-async-state regla 5). Con el listado en
+   * "Cargando…" lo que queda alcanzable es el enlace "Nueva familia". Evidencia de mutación (mutation-proof-tests): sacar
+   * ese `await` hace fallar este test (el enlace se habilita con la relectura todavía en vuelo); revertido, vuelve a
    * verde. */
+  it('durante la relectura posterior a un 404 al disolver la pantalla sigue inerte', async () => {
+    const relectura = diferida<FamiliaListado[]>()
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => (++lecturas === 1 ? Promise.resolve([sabores, talles]) : relectura.promesa))
+    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
+    await screen.findByText(/Ya no existe o no está a tu alcance/)
+
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Nueva familia' })).toHaveAttribute('aria-disabled', 'true')
+
+    await act(async () => {
+      relectura.resolver([talles])
+    })
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Nueva familia' })).not.toHaveAttribute('aria-disabled', 'true'))
+  })
+
+  /** Cláusula bajo prueba: el `setFormulario(...)` de la rama `estado === 404` de `confirmarDisolucion`: el formulario
+   * abierto sobre la familia que ya no existe se cierra. Evidencia de mutación (mutation-proof-tests): sacarlo hace fallar
+   * este test; revertido, vuelve a verde. */
   it('un 404 al disolver la familia que se está editando cierra también su formulario', async () => {
     apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
     await montarYEsperar()

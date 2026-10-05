@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation, type Location } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, type Location } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Familia } from './Familia'
 import { ErrorApi } from '../api/cliente'
@@ -181,17 +181,22 @@ function mockearApi(escenario: Escenario = {}) {
   })
 }
 
-/** La ubicación que el router tiene ahora: sirve para ver si la entrada del historial conserva su estado. */
+/** La ubicación que el router tiene ahora: sirve para ver si la entrada del historial conserva su estado. `irAtras` es el
+ * Atrás del navegador. */
 let ubicacionVigente: Location
+let irAtras: () => void = () => {}
 
 function EspiaDeUbicacion() {
   ubicacionVigente = useLocation()
+  const navegar = useNavigate()
+  irAtras = () => navegar(-1)
   return null
 }
 
-function montar(ruta: string | { pathname: string; state: unknown } = '/familias/7') {
+/** `anteriores` son las entradas del historial que preceden a `ruta`, la vigente. */
+function montar(ruta: string | { pathname: string; state: unknown } = '/familias/7', anteriores: string[] = []) {
   return render(
-    <MemoryRouter initialEntries={[ruta]}>
+    <MemoryRouter initialEntries={[...anteriores, ruta]} initialIndex={anteriores.length}>
       <EspiaDeUbicacion />
       <Routes>
         <Route path="/familias/:id" element={<Familia />} />
@@ -398,10 +403,11 @@ describe('Familia — el detalle', () => {
     expect(await screen.findByText('Se creó la familia "Sabores" con 3 artículos.')).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: el efecto de `DetalleDeFamilia` que reemplaza la entrada del historial con `state: null`. El
-   * estado de la navegación vive en el historial: sin esto el aviso de la creación reaparecía al recargar la pantalla o
-   * al volver a ella. Evidencia de mutación (mutation-proof-tests): sacar ese efecto hace fallar este test (la entrada
-   * conserva el aviso y la pantalla vuelta a montar con ella lo muestra de nuevo); revertido, vuelve a verde. */
+  /** Cláusula bajo prueba: el efecto de `DetalleDeFamilia` que deja la entrada del historial con `state: null`. El estado
+   * de la navegación vive en el historial: sin esto el aviso de la creación reaparecía al recargar la pantalla o al volver
+   * a ella. Evidencia de mutación (mutation-proof-tests): sacar ese efecto hace fallar este test (la entrada conserva el
+   * aviso y la pantalla vuelta a montar con ella lo muestra de nuevo); revertido, vuelve a verde. Que la entrada se
+   * reemplace y no se apile lo prueba la prueba siguiente. */
   it('el aviso con el que se llegó se consume: se ve una vez y la entrada del historial queda sin estado', async () => {
     mockearApi()
     const { unmount } = montar({ pathname: '/familias/7', state: { aviso: 'Se creó la familia "Sabores" con 3 artículos.' } })
@@ -418,6 +424,21 @@ describe('Familia — el detalle', () => {
     await screen.findByText('Vainilla')
 
     expect(screen.queryByText('Se creó la familia "Sabores" con 3 artículos.')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `replace: true` de ese mismo efecto. Con un `push` la entrada con el aviso queda en el historial
+   * y Atrás vuelve a ella en vez de volver a la pantalla desde la que se llegó. Evidencia de mutación
+   * (mutation-proof-tests): quitar `replace: true` hace fallar este test (Atrás se queda en la familia y no llega al
+   * listado); revertido, vuelve a verde. */
+  it('el aviso con el que se llegó se consume reemplazando la entrada: Atrás vuelve a la pantalla desde la que se llegó', async () => {
+    mockearApi()
+    montar({ pathname: '/familias/7', state: { aviso: 'Se creó la familia "Sabores" con 3 artículos.' } }, ['/familias'])
+    await screen.findByText('Vainilla')
+    await waitFor(() => expect(ubicacionVigente.state).toBeNull())
+
+    act(() => irAtras())
+
+    expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
   })
 
   it('un id que no es un número no pide nada y lo dice', async () => {
@@ -565,12 +586,15 @@ describe('Familia — sacar un artículo', () => {
     expect(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' })).toBeEnabled()
   })
 
-  /** Cláusula bajo prueba: `if (await cargar(...)) setErrorDeEscritura(rechazo)` del `catch` de `confirmarSalida`: si la
-   * relectura confirma que la familia ya no existe, el fallo de la lectura ya lo dice y el rechazo de la salida no se
-   * repite al lado. Evidencia de mutación (mutation-proof-tests): mostrar siempre el rechazo hace fallar este test (el
-   * mismo texto aparece dos veces); revertido, vuelve a verde. */
-  it('404 y la familia ya no existe: deja de mostrar su detalle y dice una sola vez que no existe', async () => {
-    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
+  /** Cláusula bajo prueba: `!== 'inexistente'` del `catch` de `confirmarSalida`: si la relectura dice que la familia ya no
+   * existe, ese mensaje cubre el rechazo de la salida y este no se repite al lado, sea cual sea el rechazo. Evidencia de
+   * mutación (mutation-proof-tests): mostrar siempre el rechazo hace fallar los dos casos (con el 404 el mismo texto
+   * aparece dos veces; con el 409 aparece el rechazo al lado); revertido, vuelven a verde. */
+  it.each<[string, ErrorApi]>([
+    ['404', new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.')],
+    ['409 familia_cambio', new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.')],
+  ])('%s y la familia ya no existe: deja de mostrar su detalle y dice una sola vez que no existe', async (_caso, rechazo) => {
+    apiDeleteMock.mockRejectedValue(rechazo)
     await montarYEsperar({
       detalleImpl: (llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))),
     })
@@ -580,11 +604,12 @@ describe('Familia — sacar un artículo', () => {
 
     await waitFor(() => expect(screen.queryByText('Artículos de la familia')).not.toBeInTheDocument())
     expect(screen.getAllByText('No existe la familia 7.')).toHaveLength(1)
+    expect(screen.queryByText('La pertenencia cambió.')).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: la rama `else` de ese mismo `catch` no es la que vale acá: con la relectura que sale bien, el
-   * rechazo SÍ se muestra (la pantalla se actualizó y hay que decir por qué la salida no se hizo). */
+  /** Cláusula bajo prueba: con la relectura que sale bien, el rechazo SÍ se muestra (la pantalla se actualizó y hay que
+   * decir por qué la salida no se hizo). */
   it('404 pero la familia sigue existiendo (el artículo ya no está): relee la familia y muestra el rechazo una sola vez', async () => {
     apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el artículo 31.'))
     await montarYEsperar({
@@ -600,7 +625,7 @@ describe('Familia — sacar un artículo', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en la salida (react-async-state regla 7: el aviso dice lo que de
+  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en la salida (react-async-state regla 6: el aviso dice lo que de
    * verdad se sabe). Con un 5xx o la red caída no se sabe si el DELETE llegó a commitear. Evidencia de mutación
    * (mutation-proof-tests): volver a `mensajeDeError` en `confirmarSalida` hace fallar estas dos; revertido, vuelven a
    * verde. */
@@ -679,9 +704,12 @@ describe('Familia — sacar un artículo', () => {
     expect(screen.queryByText('Se creó la familia "Sabores" con 3 artículos.')).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `setError('')` en la rama de éxito de `cargar`. La lectura que falla después de un 409
-   * `familia_cambio` deja su error con el detalle viejo a la vista; la próxima lectura que sale bien lo borra. */
-  it('una lectura que sale bien borra el error de la lectura anterior', async () => {
+  /** Cláusulas bajo prueba: `!== 'inexistente'` del `catch` de `confirmarSalida`: con la relectura fallida por otra causa,
+   * el rechazo de la salida se ve junto al fallo de la lectura; y `setError('')` en la rama de éxito de `cargar`: ese
+   * error, que dejó el detalle viejo a la vista, lo borra la próxima lectura que sale bien. Evidencia de mutación
+   * (mutation-proof-tests): mostrar el rechazo solo con la relectura aplicada (`=== 'aplicada'`) hace fallar el
+   * `expect` del rechazo, y sacar `setError('')`, el último; revertidos, vuelve a verde. */
+  it('con la relectura fallida se ven el rechazo de la salida y el fallo de la lectura, y una lectura que sale bien borra el segundo', async () => {
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.')).mockResolvedValueOnce(undefined)
     await montarYEsperar({
       detalleImpl: (llamada) =>
@@ -690,6 +718,7 @@ describe('Familia — sacar un artículo', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
     await screen.findByText('Se cayó la relectura.')
+    expect(await screen.findByText('La pertenencia cambió.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' }))
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
@@ -713,6 +742,26 @@ describe('Familia — sacar un artículo', () => {
 
     await act(async () => {
       relectura.resolver(detalleSabores({ articulos: detalleSabores().articulos.slice(1) }))
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Elegir artículos' })).toBeEnabled())
+  })
+
+  /** Cláusula bajo prueba: el `await cargar(...)` del `catch` de `confirmarSalida`: la ventana inerte cubre también la
+   * relectura que sigue a un rechazo (react-async-state regla 5). Evidencia de mutación (mutation-proof-tests): sacar ese
+   * `await` hace fallar este test (el panel se habilita con la relectura todavía en vuelo); revertido, vuelve a verde. */
+  it('durante la relectura posterior a un rechazo de la salida, el panel de agregado sigue inerte', async () => {
+    const relectura = diferida<FamiliaDetalle>()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
+    await montarYEsperar({ detalleImpl: (llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : relectura.promesa) })
+    await userEvent.click(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
+    await waitFor(() => expect(lecturasDelDetalle()).toBe(2))
+
+    expect(screen.getByRole('button', { name: 'Elegir artículos' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Sacar Frutilla de la familia' })).toBeDisabled()
+
+    await act(async () => {
+      relectura.resolver(detalleSabores())
     })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Elegir artículos' })).toBeEnabled())
   })
@@ -1119,8 +1168,9 @@ describe('Familia — agregar artículos', () => {
     })
   })
 
-  /** Cláusula bajo prueba: `setErrorDeEscritura('')` en `alAgregar`. El rechazo de una salida anterior (que dejó la puerta
-   * cerrada) no puede quedar al lado del aviso de un agregado que salió bien. */
+  /** Escenario completo, sin una cláusula propia: el rechazo de la salida anterior (que dejó la puerta cerrada) ya lo borró
+   * `alEmpezarUnaAccion` cuando se eligió el artículo, mucho antes de que `alAgregar` corra; esa línea la mata la prueba
+   * "el rechazo de una salida anterior también se va al empezar una acción del panel". */
   it('agregar con éxito borra el rechazo de una salida anterior', async () => {
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
     apiPostMock.mockImplementation((ruta: string) =>
@@ -1263,18 +1313,19 @@ describe('Familia — agregar artículos: cada acción del panel saca de pantall
   })
 })
 
-describe('Familia — agregar artículos: una previsualización hecha sobre otra referencia', () => {
+describe('Familia — agregar artículos: una previsualización cuyo artículo de referencia ya no es de esta familia', () => {
   const aviso = /La referencia de la previsualización no es la de esta familia/
 
-  /** Cláusulas bajo prueba: `!referenciaDesactualizada` en `sinProblemas` y el efecto que vuelve a leer la familia. Una
-   * previsualización de otra referencia (el servidor ve que la de esta familia ya no es la que la pantalla creía) no se
-   * puede confirmar y obliga a releer. Evidencia de mutación (mutation-proof-tests): sacar `&& !referenciaDesactualizada`
+  /** Cláusulas bajo prueba: `!referenciaDesactualizada` en `sinProblemas` y el efecto que vuelve a leer la familia. La
+   * previsualización trae la familia a la que el servidor ve que pertenece el artículo de referencia que la pantalla le
+   * mandó: si no es esta, lo que la pantalla muestra de la familia quedó viejo, así que no se puede confirmar y obliga a
+   * releer. Evidencia de mutación (mutation-proof-tests): sacar `&& !referenciaDesactualizada`
    * habilita "Confirmar y agregar" con la relectura todavía en vuelo; sacar la llamada de `alRelerFamilia` deja la
    * familia sin releer; sacar el aviso deja sin explicar por qué se descartó lo previsualizado. Cada una hace fallar los
    * dos casos de esta tabla; revertidas, vuelven a verde. */
   it.each<[string, number | null]>([
-    ['con la familia de otra referencia', 9],
-    ['sin familia (la referencia ya no es miembro de ninguna)', null],
+    ['con el artículo de referencia en otra familia', 9],
+    ['sin familia (el artículo de referencia ya no es miembro de ninguna)', null],
   ])('%s: bloquea "Confirmar y agregar", explica y vuelve a leer la familia', async (_caso, idFamilia) => {
     const relectura = diferida<FamiliaDetalle>()
     apiPostMock.mockResolvedValue(previsualizacionDe({ idFamilia, articulos: [cambiosDe(40)] }))
@@ -1358,6 +1409,25 @@ describe('Familia — agregar artículos: lo que el servidor rechaza al confirma
 
     await waitFor(() => expect(lecturasDelDetalle()).toBe(2))
     await verificar()
+  })
+
+  /** Cláusula bajo prueba: el `await alRelerFamilia()` del `catch` de `confirmar`: la ventana inerte cubre también la
+   * relectura que sigue a un rechazo (react-async-state regla 5). Evidencia de mutación (mutation-proof-tests): sacar ese
+   * `await` hace fallar este test (la pantalla se habilita con la relectura todavía en vuelo); revertido, vuelve a verde. */
+  it('durante la relectura posterior al rechazo la pantalla entera sigue inerte, también los "Sacar"', async () => {
+    const relectura = diferida<FamiliaDetalle>()
+    await confirmarConRechazo(new ErrorApi(409, 'familia_inactiva', 'La familia "Sabores" está inactiva: no se le pueden agregar artículos.'), {
+      detalleImpl: (llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : relectura.promesa),
+    })
+    await waitFor(() => expect(lecturasDelDetalle()).toBe(2))
+
+    expect(screen.getByRole('button', { name: 'Elegir artículos' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' })).toBeDisabled()
+
+    await act(async () => {
+      relectura.resolver(detalleSabores({ activo: false }))
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sacar Vainilla de la familia' })).toBeEnabled())
   })
 
   /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `confirmar`: con un 5xx o la red caída no se sabe si el POST

@@ -1,6 +1,6 @@
 ---
 name: react-async-state
-description: "Trigger: React screen with async fetches/saves, form editing, useState + await, ABM screens in Ways.Web, stale response, double submit, loading flags, confirmation gate, delete button, modal, focus restore, double click, re-entrancy. Every async read that sets screen state ships with token/generation gating; every write ships with a full-window disabled state and a synchronous re-entrancy ref, and its own response is gated wherever the screen can unmount or be superseded while it is in flight."
+description: "Trigger: React screen with async fetches/saves, form editing, useState + await, ABM screens in Ways.Web, stale response, double submit, loading flags, confirmation gate, delete button, modal, focus restore, double click, re-entrancy. Every async read that sets screen state ships with token/generation gating; every write ships with a full-window disabled state and a synchronous re-entrancy ref, and its own response is gated unless the surface stays inert for the whole write, nothing can replace or reopen what the response writes and the response does not navigate."
 license: Apache-2.0
 metadata:
   author: gentleman-programming
@@ -22,21 +22,23 @@ where five judgment-day rounds each found a new variant of the same defect class
    snapshot the updater exists to avoid (multiple dispatches in one async invocation
    silently clobber each other; `finally` runs even after a `catch`'s `return`).
 
-2. **Every async read that sets screen state is token-gated, and a write's own response is
-   gated wherever the screen can go away while it is in flight.**
+2. **Every async read that sets screen state is token-gated, and so is a write's own
+   response unless the three conditions below all hold.**
    Keep a `useRef` token (or generation counter). The read captures the token at
    start; every state application after every `await` checks
    `ref.current === token` first. That includes the read that refreshes after a write
    (`++generacion.current`), each with its own generation. The WRITER'S OWN response
-   keeps the same gate wherever the component can unmount or be superseded while the
-   write is in flight (pages with navigation or links, closable panels and modals): a
-   late 2xx must not navigate, close or reopen a panel, or overwrite what replaced it.
-   `Articulos.guardar` captures and checks its own token (a modal can be closed or
-   reopened); `NuevaFamilia.crear` asks `useMontado()` before navigating (the user can
-   leave through the menu or Back). It may be omitted only inside a surface that truly
-   cannot close or navigate during the write, or when the response only sets the
-   screen's own state and re-reads it (`Familias.guardar`: an unmounted screen discards
-   those setters).
+   keeps the same gate: a late 2xx must not navigate, close or reopen a panel, or
+   overwrite what replaced it. The gate may be omitted only when ALL of these hold: the
+   surface stays inert for the whole write (its refresh included), nothing can replace
+   or reopen the state the response writes, and the response does not navigate (an
+   unmounted screen's setters are discarded). Otherwise gate it.
+   `Articulos.guardar` captures and checks its own token (Back or Forward can close or
+   reopen the modal while the write is in flight); `NuevaFamilia.crear` asks
+   `useMontado()` before navigating (the user can leave through the menu or Back).
+   `Familias.guardar` meets all three, so its response is ungated: `bloqueado` keeps the
+   whole screen inert until its refresh lands (no handler can replace or reopen what the
+   response sets) and it never navigates.
 
 3. **Every action that supersedes an in-flight read or gated write invalidates the token.**
    Open-for-edit, new-blank-form, cancel, save, delete — all of them bump the token
@@ -80,8 +82,9 @@ where five judgment-day rounds each found a new variant of the same defect class
    four consecutive review rounds (stale finally, same-row re-open, failed
    supersede leaving a resubmittable create, delete resurrection). Blocking the
    window kills the whole class of supersede by another action. What it cannot stop is
-   the screen going away (menu, Back) or a panel closed and reopened: that is the
-   writer's own-response gate of rule 2, not a reconciliation of the supersede.
+   a panel closed and reopened, or the screen going away (menu, Back) under a response
+   that navigates: that is the writer's own-response gate of rule 2, not a
+   reconciliation of the supersede.
    The handler's re-entrancy guard is the ref of rule 11 and nothing else: an
    `if (ocupado) return` on state repeats the `disabled` of the control that fires the
    handler: its `return` never executes (rule 15).
@@ -193,7 +196,7 @@ where five judgment-day rounds each found a new variant of the same defect class
 | Situation | Action |
 |---|---|
 | New async fetch whose response calls a state setter | Token/generation guard before EVERY setter after EVERY await |
-| New save flow | Full-window disabled state + synchronous ref guard (rule 11); own-response gate (token in a modal, `useMontado` in a page) when the response can navigate, close or reopen a panel, or overwrite a successor (rule 2) |
+| New save flow | Full-window disabled state + synchronous ref guard (rule 11); own-response gate (token in a modal, `useMontado` in a page) unless the surface stays inert for the whole write, nothing can replace or reopen what the response writes and the response does not navigate (rule 2) |
 | Write whose response navigates | `if (!montado.current) return` before `navigate` (rule 2) |
 | Post-write refresh added | Separate try/catch + distinguishable message |
 | Helper reads state inside a functional updater | Rewrite to use `prev` |
