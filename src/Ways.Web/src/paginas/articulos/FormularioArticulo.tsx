@@ -256,6 +256,12 @@ export function FormularioArticulo({
     }
   }, [preguntaDeAlcanceAbierta])
 
+  // El formulario que reemplaza a otro desmontado con el foco adentro (la recarga del artículo tras un rechazo de familia)
+  // se monta con el foco en `<body>`: lo lleva a "Nombre".
+  useEffect(() => {
+    if (document.activeElement === document.body) refNombre.current?.focus()
+  }, [])
+
   function cancelarSalida() {
     focoDeSalidaRef.current = salida?.disparador ?? null
     setSalida(null)

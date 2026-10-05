@@ -230,7 +230,7 @@ function PertenenciaAFamilia({
       </div>
 
       {confirmandoSalida && (
-        <div className="alert alert-warning mt-2 mb-0" role="alertdialog" aria-label="Confirmar salida de la familia">
+        <div className="alert alert-warning mt-2 mb-0" role="group" aria-label="Confirmar salida de la familia">
           <p className="mb-2">
             <strong>
               ¿Sacar {nombreDelArticulo.trim() ? `"${nombreDelArticulo.trim()}"` : 'este artículo'} de{' '}

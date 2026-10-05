@@ -65,7 +65,8 @@ type DestinoModal = 'nuevo' | number | 'invalido' | null
 
 /** La pregunta de alcance abierta al guardar la edición de un miembro de una familia (doc 10 §3): `contexto` es
  * con lo que se abre (la familia conocida o el texto del servidor) y `campos`, las etiquetas de los campos
- * compartidos que cambian. Mientras está abierta no hay ninguna escritura en vuelo y lo que se pregunta no se escribió. */
+ * compartidos que cambian. Se abre antes de escribir lo que pregunta; al elegir un alcance sigue abierta, con sus
+ * respuestas inertes, mientras dura el PUT, y la respuesta del PUT la cierra mientras el modal siga siendo el que preguntó. */
 type DecisionDeAlcance = { contexto: string; campos: string[] }
 
 function destinoDeRuta(modo: ModoModalDeArticulo | null, idParam: string | null): DestinoModal {
@@ -135,8 +136,8 @@ export function Articulos() {
   const familias = useFamiliasDelFormulario()
   const [decisionDeAlcance, setDecisionDeAlcance] = useState<DecisionDeAlcance | null>(null)
   const [saliendoDeFamilia, setSaliendoDeFamilia] = useState(false)
-  // Espejo sincrónico de "hay un guardado o una salida de familia en vuelo" (react-async-state regla 11): dos
-  // clics en el mismo tick pasan ambos la guarda de estado, que recién se actualiza en el próximo render.
+  // Única guarda de reentrancia de `guardar` y de `sacarDeLaFamilia` (react-async-state regla 11): es un `ref` porque el
+  // estado (`guardando`, `saliendoDeFamilia`) recién cambia en el próximo render, después de los dos clics de un mismo tick.
   const escrituraEnCursoRef = useRef(false)
   const tokenEdicionRef = useRef(0)
   // Snapshot del formulario tal como quedó cargado/guardado por última vez — la base contra la que

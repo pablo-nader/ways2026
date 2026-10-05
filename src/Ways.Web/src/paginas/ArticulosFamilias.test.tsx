@@ -516,8 +516,8 @@ describe('Articulos — alta: elegir una familia', () => {
     expect(await screen.findByText(`$ 1.200,00 · programado $ 1.300,00 desde ${new Date(iso).toLocaleString('es-AR')}`)).toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `altaConFamiliaLista` en el `disabled` de "Guardar" y en la guarda del submit: el
-   * aviso "Cargando la familia…" promete que no se guarda mientras no llegó (react-async-state regla 7). */
+  /** Cláusula bajo prueba: `altaConFamiliaLista` en el `disabled` de "Guardar": el aviso "Cargando la familia…"
+   * promete que no se guarda mientras no llegó (react-async-state regla 7). */
   it('mientras la familia carga, sus campos ya están bloqueados y no se puede guardar', async () => {
     const lectura = diferida<FamiliaDetalle>()
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
@@ -1552,7 +1552,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
   })
 
   function confirmacionDeSalida() {
-    return screen.getByRole('alertdialog', { name: 'Confirmar salida de la familia' })
+    return screen.getByRole('group', { name: 'Confirmar salida de la familia' })
   }
 
   it('"Sacar de la familia" no escribe: pide confirmar, nombrando al artículo y a la familia, y enfoca "Cancelar"', async () => {
@@ -1596,7 +1596,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(apiDeleteMock).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1616,7 +1616,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/^Familia "/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Nombre')).toBeEnabled()
   })
 
@@ -1673,7 +1673,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await act(async () => {
       resolverDelete()
     })
-    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument())
     expect(botonNuevo()).toBeEnabled()
   })
 
@@ -1701,7 +1701,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar\./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(botonNuevo()).toBeEnabled()
   })
@@ -1715,7 +1715,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
 
     expect(await screen.findByText(/Se recargó el artículo: revisá los datos y volvé a intentar./)).toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(botonNuevo()).toBeEnabled()
   })
 
@@ -1756,7 +1756,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await userEvent.click(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' }))
 
     expect(await screen.findByText('Se cayó el servidor.')).toBeInTheDocument()
-    expect(screen.queryByRole('alertdialog', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Confirmar salida de la familia' })).not.toBeInTheDocument()
     expect(screen.getByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
@@ -1946,7 +1946,7 @@ describe('Articulos — las familias que se ofrecen en un alta se mantienen al d
     apiDeleteMock.mockResolvedValue(undefined)
     await abrirEdicion()
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
-    await userEvent.click(within(screen.getByRole('alertdialog', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }))
+    await userEvent.click(within(screen.getByRole('group', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }))
     await screen.findByText(/salió de la familia "Sabores"/)
 
     await abrirUnAltaNueva()
@@ -2050,5 +2050,76 @@ describe('Articulos — la URL cambia a un id inválido con la pregunta de alcan
 
     expect(await screen.findByText('No se especificó un artículo válido.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Articulos — después de recargar el artículo por un rechazo de familia, el foco queda en "Nombre"', () => {
+  /** Cláusula bajo prueba: el efecto de montaje de `FormularioArticulo` que enfoca "Nombre" cuando el foco está en `<body>`.
+   * Evidencia de mutación (mutation-proof-tests): sacar ese efecto hace fallar las cinco pruebas (el foco queda en
+   * `<body>`); revertido, vuelven a verde. Advertencia (react-async-state regla 12): jsdom no implementa el "focus fixup"
+   * del navegador, pero acá no hace falta: el foco se pierde porque se desmonta el elemento que lo tenía.
+   *
+   * La relectura del artículo queda en manos del test: mientras espera, la pantalla muestra "Cargando artículo…" y el
+   * formulario anterior ya se desmontó. Con una relectura inmediata el formulario no llega a desmontarse y el foco queda
+   * donde estaba. Devuelve lo que hay que esperar una vez disparada la recarga: que se vea el estado de carga, que llegue
+   * la relectura y que el foco quede en "Nombre". */
+  function relecturaPendiente(primeraLectura: ArticuloListado) {
+    const relectura = diferida<ArticuloListado>()
+    escenarioDelMiembro({ articuloImpl: (_id, llamada) => (llamada === 1 ? primeraLectura : relectura.promesa) })
+    return async (releida: ArticuloListado) => {
+      await screen.findByText('Cargando artículo…')
+      await act(async () => {
+        relectura.resolver(releida)
+      })
+      await waitFor(() => expect(screen.getByLabelText('Nombre')).toHaveFocus())
+    }
+  }
+
+  it('409 familia_cambio al elegir un alcance', async () => {
+    const esperarLaRecarga = relecturaPendiente(miembro())
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
+    await abrirEdicion()
+    await cambiarCostoDeLista('175')
+    await guardar()
+
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).getByRole('button', { name: 'Toda la familia' }))
+
+    await esperarLaRecarga(miembro())
+  })
+
+  it('409 alcance_requerido sin ningún campo compartido cambiado a la vista', async () => {
+    const esperarLaRecarga = relecturaPendiente(miembro({ idFamilia: null }))
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'alcance_requerido', 'El artículo pertenece a la familia "Sabores".'))
+    await abrirEdicion()
+    await userEvent.type(screen.getByLabelText('Nombre'), ' 2')
+    await guardar()
+
+    await esperarLaRecarga(miembro({ costoLista: 175 }))
+  })
+
+  it.each<[string, ErrorApi]>([
+    ['409 familia_cambio', new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.')],
+    ['404', new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.')],
+  ])('%s al sacarlo de la familia', async (_caso, rechazo) => {
+    const esperarLaRecarga = relecturaPendiente(miembro())
+    apiDeleteMock.mockRejectedValueOnce(rechazo)
+    await abrirEdicion()
+    await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar salida' }))
+
+    await esperarLaRecarga(miembro())
+  })
+
+  it('409 familia_cambio del editor de precios', async () => {
+    const esperarLaRecarga = relecturaPendiente(miembro())
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_cambio', 'La pertenencia cambió.'))
+    await abrirEdicion()
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Gestionar' }))[0])
+    await userEvent.type(await screen.findByLabelText('Precio'), '1500')
+    await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
+
+    await esperarLaRecarga(miembro())
   })
 })

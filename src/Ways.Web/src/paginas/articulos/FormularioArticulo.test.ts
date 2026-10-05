@@ -88,8 +88,13 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
     expect(aEdicion(formulario, 'Familia')).toEqual({ ...aEdicion(formulario), alcance: 'Familia' })
   })
 
-  /** Los trece valores son pares distintos entre sí, así que una columna cruzada con otra se nota. */
-  it('ida y vuelta: editar un miembro conserva sus trece campos compartidos y no manda su familia', () => {
+  /** Los ids y los números son distintos entre sí, así que una columna cruzada con otra se nota. Los tres booleanos no
+   * pueden serlo (solo hay dos valores): en cada asignación uno difiere de los otros dos y, entre las dos asignaciones,
+   * cada par de booleanos difiere en alguna. */
+  it.each<Pick<ArticuloListado, 'esProducto' | 'controlaLote' | 'acumulaEnVenta'>>([
+    { esProducto: false, controlaLote: true, acumulaEnVenta: false },
+    { esProducto: true, controlaLote: false, acumulaEnVenta: false },
+  ])('ida y vuelta: editar un miembro conserva sus trece campos compartidos y no manda su familia (booleanos %j)', (booleanos) => {
     const compartidos = {
       idArea: 11,
       idCategoria: 12,
@@ -98,9 +103,7 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
       idAlicuotaIva: 15,
       unidadVenta: 'Peso',
       unidadesPorBulto: 6,
-      esProducto: false,
-      controlaLote: true,
-      acumulaEnVenta: false,
+      ...booleanos,
       costoLista: 250,
       descuentoProveedor: 7,
       costoNominal: 200,

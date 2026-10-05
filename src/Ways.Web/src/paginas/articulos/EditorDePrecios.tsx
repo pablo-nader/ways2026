@@ -518,7 +518,7 @@ function PanelDeLista({
       )}
 
       {estado.preguntaDeAlcance && (
-        <div className="alert alert-warning py-2 px-2 small" role="alertdialog" aria-label="Alcance del precio">
+        <div className="alert alert-warning py-2 px-2 small" role="group" aria-label="Alcance del precio">
           <PreguntaDeAlcance
             contexto={estado.preguntaDeAlcance.contexto}
             ocupado={enVuelo}
