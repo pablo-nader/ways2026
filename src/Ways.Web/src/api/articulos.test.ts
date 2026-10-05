@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
 
 vi.mock('./cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...args),
     post: (...args: unknown[]) => apiPostMock(...args),
+    put: (...args: unknown[]) => apiPutMock(...args),
   },
 }))
 
 import { clienteDeArticulos, construirQueryDeGrillaDeArticulos, filtrosDeGrillaDeArticulosVacios } from './articulos'
-import type { FiltrosDeGrillaDeArticulos } from './tipos'
+import type { AltaArticulo, FiltrosDeGrillaDeArticulos } from './tipos'
 
 function filtros(sobrescribir: Partial<FiltrosDeGrillaDeArticulos> = {}): FiltrosDeGrillaDeArticulos {
   return { ...filtrosDeGrillaDeArticulosVacios(), ...sobrescribir }
@@ -117,5 +119,47 @@ describe('clienteDeArticulos — códigos de proveedor', () => {
   it('asociarCodigoProveedor hace POST con idProveedor y codigo al artículo indicado', () => {
     clienteDeArticulos.asociarCodigoProveedor(20, { idProveedor: 7, codigo: 'AB-12' })
     expect(apiPostMock).toHaveBeenCalledWith('/articulos/20/codigos-proveedor', { idProveedor: 7, codigo: 'AB-12' })
+  })
+})
+
+describe('clienteDeArticulos — familia (doc 10 §3)', () => {
+  const alta: AltaArticulo = {
+    codigoInterno: null,
+    nombre: 'Vainilla',
+    descripcion: null,
+    idArea: 1,
+    idCategoria: null,
+    idMarca: null,
+    idGrupo: null,
+    idProveedorHabitual: null,
+    idAlicuotaIva: 1,
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: null,
+    esProducto: true,
+    costoLista: null,
+    descuentoProveedor: null,
+    costoNominal: null,
+    disponibleParaTodas: true,
+    idsEmpresas: null,
+    activo: true,
+    controlaLote: false,
+  }
+
+  beforeEach(() => {
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+  })
+
+  it('crear manda idFamilia en el cuerpo del POST /articulos, tal cual', () => {
+    clienteDeArticulos.crear({ ...alta, idFamilia: 7 })
+
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith('/articulos', { ...alta, idFamilia: 7 })
+  })
+
+  it('actualizar manda el alcance en el cuerpo del PUT /articulos/{id}, por nombre', () => {
+    const { codigoInterno: _codigoInterno, ...edicion } = alta
+    clienteDeArticulos.actualizar(31, { ...edicion, alcance: 'SoloEste' })
+
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/articulos/31', { ...edicion, alcance: 'SoloEste' })
   })
 })
