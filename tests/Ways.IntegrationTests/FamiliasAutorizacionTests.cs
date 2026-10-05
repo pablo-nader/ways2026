@@ -21,8 +21,9 @@ public class FamiliasAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     private readonly ApoyoDeFamilias apoyo = new(fixture);
 
     /// <summary>Una ruta del grupo. <paramref name="EstadoDelAdmin"/> es lo que recibe el admin cuando la
-    /// ruta no destruye lo que las demás necesitan; <c>null</c> para las que sí, que prueban su camino feliz en su
-    /// propio archivo.</summary>
+    /// ruta no destruye lo que las demás necesitan —las dos de agrupar llevan un pedido que el servicio rechaza con
+    /// 400 antes de escribir, y llegar a ese 400 prueba que el admin pasó la autorización—; <c>null</c> para las que
+    /// sí, que prueban su camino feliz en su propio archivo.</summary>
     private sealed record Ruta(HttpMethod Metodo, string Url, object? Cuerpo, HttpStatusCode? EstadoDelAdmin);
 
     private static IReadOnlyList<Ruta> Rutas(int idFamilia) =>
@@ -30,6 +31,8 @@ public class FamiliasAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
         new(HttpMethod.Get, "/api/familias", null, HttpStatusCode.OK),
         new(HttpMethod.Get, $"/api/familias/{idFamilia}", null, HttpStatusCode.OK),
         new(HttpMethod.Post, "/api/familias/previsualizacion", new SolicitudDePrevisualizacion(1, null), HttpStatusCode.OK),
+        new(HttpMethod.Post, "/api/familias", new AltaDeFamilia("", 1, null), HttpStatusCode.BadRequest),
+        new(HttpMethod.Post, $"/api/familias/{idFamilia}/articulos", new AgregadoDeArticulos([]), HttpStatusCode.BadRequest),
         new(HttpMethod.Put, $"/api/familias/{idFamilia}", new EdicionFamilia("Con otro nombre", true), HttpStatusCode.OK),
         new(HttpMethod.Delete, $"/api/familias/{idFamilia}/articulos/1", null, null),
         new(HttpMethod.Delete, $"/api/familias/{idFamilia}", null, null)

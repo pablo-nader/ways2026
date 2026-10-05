@@ -98,23 +98,53 @@ public sealed record CambiosDeUnArticulo(
     IReadOnlyList<CambioDePreciosDeLista> Precios);
 
 /// <summary>
-/// Algo que impediría agrupar. <see cref="Codigo"/> es el código de error de la API para ese problema:
-/// <c>referencia_invalida</c> (el artículo no existe o está dado de baja), <c>articulo_en_otra_familia</c>,
-/// <c>familia_precio_inalineable</c> (con <see cref="IdListaPrecio"/>), <c>familia_inactiva</c> y
-/// <c>no_encontrado</c> (la familia de la referencia está dada de baja). Sin <see cref="IdArticulo"/> es un problema
-/// de la familia.
+/// Algo que impediría agrupar. <see cref="Codigo"/> y <see cref="Mensaje"/> son los de la respuesta de error que el
+/// pedido real daría por ese problema: <c>referencia_invalida</c> (el artículo no existe o está dado de baja),
+/// <c>articulo_en_otra_familia</c>, <c>familia_precio_inalineable</c> (con <see cref="IdListaPrecio"/>),
+/// <c>familia_inactiva</c> y <c>no_encontrado</c> (la familia de la referencia está dada de baja). Sin
+/// <see cref="IdArticulo"/> es un problema de la familia.
 /// </summary>
 public sealed record ProblemaDeAgrupacion(string Codigo, string Mensaje, int? IdArticulo, int? IdListaPrecio);
 
 /// <summary>
 /// Respuesta de <c>POST /api/familias/previsualizacion</c>: <see cref="Articulos"/> trae, para cada artículo pedido
 /// que se puede alinear y ascendente por id, lo que cambiaría; <see cref="Problemas"/>, todo lo que impediría
-/// agrupar, en este orden: los de la familia, los artículos que no existen, los que ya están en otra familia y los de
-/// precios. <see cref="IdFamilia"/> es la familia a la que se sumarían (la de la referencia) o <c>null</c> si se
-/// crearía una nueva. Es una foto sin locks: lo que se lea después puede ser otra cosa.
+/// agrupar, en el orden en que el pedido real los rechaza —el pedido real falla con el primero—: los de la familia, los
+/// artículos que no existen, los que ya están en otra familia y los de precios. <see cref="IdFamilia"/> es la familia a
+/// la que se sumarían (la de la referencia) o <c>null</c> si se crearía una nueva. Es una foto sin locks: entre la
+/// previsualización y el pedido real puede haber cambiado cualquier cosa, y el pedido real decide con lo que lee bajo
+/// sus locks.
 /// </summary>
 public sealed record PrevisualizacionDeAgrupacion(
     int IdArticuloReferencia,
     int? IdFamilia,
     IReadOnlyList<CambiosDeUnArticulo> Articulos,
     IReadOnlyList<ProblemaDeAgrupacion> Problemas);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/familias</c>: crea la familia <see cref="Nombre"/> con <see cref="IdArticuloReferencia"/> como
+/// modelo y la agrupa con <see cref="IdsArticulos"/>, que se alinean con él. Los tres campos se usan: el nombre (sin
+/// espacios en los extremos, hasta 150 caracteres, único entre las familias vivas sin distinguir mayúsculas), la
+/// referencia, que es siempre miembro aunque no figure en la lista, y los artículos (<c>null</c> es una lista vacía: la
+/// familia nace con la referencia sola; los repetidos y la propia referencia no cuentan, y se admiten como máximo 100
+/// además de ella). La referencia y los artículos tienen que existir y no pertenecer a ninguna familia: agrupar no
+/// mueve a nadie de la que ya tiene.
+/// </summary>
+public sealed record AltaDeFamilia(string? Nombre, int IdArticuloReferencia, IReadOnlyList<int>? IdsArticulos);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/familias/{id}/articulos</c>: suma <see cref="IdsArticulos"/> a la familia, alineados con su
+/// artículo de referencia (el miembro vivo de menor id). Los ids repetidos cuentan una vez, se admiten como máximo 100,
+/// y la lista no puede estar vacía (<c>400 articulos_requeridos</c>). Un id que ya es miembro de la familia se alinea
+/// igual y no cambia nada si ya está alineado; uno que es miembro de OTRA familia se rechaza.
+/// </summary>
+public sealed record AgregadoDeArticulos(IReadOnlyList<int>? IdsArticulos);
+
+/// <summary>
+/// Respuesta de <c>POST /api/familias</c> y de <c>POST /api/familias/{id}/articulos</c>: la familia, su artículo de
+/// referencia y, por cada artículo pedido distinto de la referencia y ascendente por id, lo que la agrupación cambió en
+/// él (<see cref="CambiosDeUnArticulo"/>, el mismo que la previsualización informa). Un artículo que ya estaba alineado
+/// trae las listas vacías.
+/// </summary>
+public sealed record ResultadoDeAgrupacion(
+    int IdFamilia, string Nombre, int IdArticuloReferencia, IReadOnlyList<CambiosDeUnArticulo> Articulos);

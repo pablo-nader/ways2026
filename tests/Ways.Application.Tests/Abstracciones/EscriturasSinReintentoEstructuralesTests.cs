@@ -108,6 +108,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // respondería 404 a una disolución que sí tuvo éxito, el mismo criterio que la baja de una oferta.
         { "Ways.Application/Familias/ServicioDeFamilias.cs", "SacarArticuloAsync" },
         { "Ways.Application/Familias/ServicioDeFamilias.cs", "DisolverAsync" },
+
+        // Agrupar artículos (crear una familia y agregarle artículos comparten este método): agrega la familia y las
+        // filas de precio y de auditoría, y muta los artículos que lee dentro del lambda; sin clave de idempotencia, un
+        // reintento arrastraría las entidades del intento anterior y duplicaría las filas agregadas.
+        { "Ways.Application/Familias/ServicioDeAgrupacionDeFamilias.cs", "AgruparAsync" },
     };
 
     /// <summary>

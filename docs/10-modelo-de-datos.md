@@ -350,12 +350,13 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 > familias"). La **baja lógica** de un artículo también cambia quién es miembro (`deleted_at`) y no sigue ese
 > protocolo: no toma el lock de membresía sino el `FOR UPDATE` de la fila del artículo, y los escritores que
 > bloquean miembros reevalúan `deleted_at IS NULL` sobre cada fila bajo su propio lock de fila, así que un
-> miembro dado de baja a mitad de camino queda fuera de lo que escriben. Otras dos operaciones de gestión solo
-> SACAN miembros y siguen el protocolo con el lock de membresía exclusivo: **sacar un artículo de su familia** y
-> **disolver la familia** ("Gestión de familias"); ninguna cambia un campo compartido ni un precio. Todavía no hay
-> endpoint para crear una familia ni para agregarle un artículo que ya existe: la pertenencia se siembra por base,
-> y el alta de un artículo con `idFamilia` es el único camino de la API que agrega un miembro a una familia que
-> ya existe.
+> miembro dado de baja a mitad de camino queda fuera de lo que escriben. Tres operaciones de gestión cambian la
+> pertenencia y siguen el protocolo con el lock de membresía exclusivo ("Gestión de familias"): **agrupar
+> artículos** —crear una familia con un artículo de referencia y agregar artículos que ya existen a una
+> familia—, que los ALINEA con la referencia en los trece campos compartidos y en los precios ("Alinear"), y las dos
+> que solo SACAN miembros, **sacar un artículo de su familia** y **disolver la familia**, que no cambian ningún
+> campo compartido ni ningún precio. El alta de un artículo con `idFamilia` agrega un miembro NUEVO; agrupar suma
+> artículos que ya existen.
 
 | | Campos |
 |---|---|
@@ -506,17 +507,41 @@ no toman locks.
   cada artículo inexistente o dado de baja, `articulo_en_otra_familia` y `familia_precio_inalineable` por cada par
   artículo-lista que no se puede alinear. Si la referencia no existe no hay con qué comparar: solo informa los
   artículos inexistentes.
+- `POST /api/familias` `{ nombre, idArticuloReferencia, idsArticulos }`: **crea** la familia y la agrupa: la
+  referencia y los destinos (los ids pedidos sin repetir y sin la propia referencia, como máximo 100) quedan como sus
+  miembros, y los destinos, alineados con la referencia ("Alinear"). `201` con `Location: /api/familias/{id}` y
+  `{ idFamilia, nombre, idArticuloReferencia, articulos }`, donde `articulos` trae, por cada destino ascendente por
+  id, lo mismo que la previsualización del mismo pedido —`campos`, los valores `actual` y `nuevo` y los `precios` que
+  cambiaron—, con las listas vacías para el que ya estaba alineado. `idsArticulos` puede faltar o venir vacío: la
+  familia nace con la referencia como único miembro. Los rechazos no escriben nada y se evalúan en este orden:
+  `400 nombre_requerido`, `400 nombre_muy_largo`, `400 id_articulo_referencia_requerido` y `400
+  demasiados_articulos`; `409 familia_nombre_duplicado`, que el chequeo previo adelanta —corre antes de abrir la
+  transacción y no espera ningún lock— y que `ux_familias_nombre` sostiene en una carrera: dos pedidos al mismo nombre
+  se serializan en el lock de membresía y el segundo recibe el 409 del respaldo; y, ya bajo los locks, `400
+  referencia_invalida` (el menor id que no existe o está dado de baja entre la referencia y los destinos; también los de
+  otro tenant), `409 articulo_en_otra_familia` (el menor id que ya es miembro de una familia, la referencia incluida:
+  agrupar no mueve a nadie) y `422 familia_precio_inalineable` (el mensaje nombra el artículo y la lista del primer
+  par que no se puede alinear; lo que se había alineado antes de él no queda escrito).
+- `POST /api/familias/{id}/articulos` `{ idsArticulos }`: **agrega** artículos que ya existen a la familia, alineados
+  con su referencia: el miembro vivo de menor id, que no figura en `articulos`. `200` con el mismo cuerpo. Un artículo
+  que ya es miembro de la familia se alinea igual, y si ya estaba alineado no se escribe nada: repetir un pedido no
+  cambia nada. Rechazos, sin escribir nada: `400 articulos_requeridos` (lista ausente o vacía) y `400
+  demasiados_articulos`, antes de buscar la familia; `404` si la familia no existe, está dada de baja o es de otro tenant;
+  `409 familia_inactiva`; `409 familia_sin_articulos` (sin un miembro vivo no hay referencia); y, como al crear, `400
+  referencia_invalida`, `409 articulo_en_otra_familia` y `422 familia_precio_inalineable`. La familia se resuelve antes
+  que los artículos: la inactiva da su 409 aunque uno de los ids no exista.
 - `PUT /api/familias/{id}`: el nombre y el estado `activo`, los dos obligatorios (`400 nombre_requerido`,
   `400 nombre_muy_largo` —hasta 150 caracteres, sin espacios en los extremos— y `400 activo_requerido`: un `activo`
   ausente se rechaza, no se lee como `false`). El nombre es único entre las familias vivas del tenant sin distinguir
   mayúsculas (`ux_familias_nombre`): `409 familia_nombre_duplicado`, que sostiene la restricción también en una
   carrera y que el chequeo previo adelanta con un mensaje que nombra el nombre pedido; el nombre de una familia dada de
-  baja se puede reutilizar. Una familia inactiva no admite miembros nuevos por el alta de un artículo con `idFamilia`
-  (`409 familia_inactiva`). Responde la familia como el listado. `404` si la familia no existe, está dada de baja o es
-  de otro tenant, antes de cualquier rechazo del cuerpo o del nombre. Es una transacción sin reintento que lee la fila
-  UNA vez, después de su `FOR UPDATE`; una familia dada de baja mientras esperaba ese lock da `404` y no se escribe nada.
-  No toma el lock de membresía ni bloquea filas de artículos. Escribe la fila de la familia, que el alta de un
-  artículo con `idFamilia` lee `FOR SHARE`: un cambio de `activo` en curso hace esperar a ese alta, que lo ve.
+  baja se puede reutilizar. Una familia inactiva no admite miembros nuevos, ni por el alta de un artículo con
+  `idFamilia` ni por agregarle artículos (`409 familia_inactiva`). Responde la familia como el listado. `404` si la
+  familia no existe, está dada de baja o es de otro tenant, antes de cualquier rechazo del cuerpo o del nombre. Es una
+  transacción sin reintento que lee la fila UNA vez, después de su `FOR UPDATE`; una familia dada de baja mientras
+  esperaba ese lock da `404` y no se escribe nada. No toma el lock de membresía ni bloquea filas de artículos. Escribe
+  la fila de la familia, que el alta de un artículo con `idFamilia` y agregar artículos leen `FOR SHARE`: un cambio de
+  `activo` en curso hace esperar a esa operación, que lo ve.
 - `DELETE /api/familias/{id}/articulos/{idArticulo}`: **saca** al artículo de la familia: queda sin familia
   (`id_familia = NULL`) con todos sus valores —los compartidos, los propios y sus precios— y los demás miembros no
   cambian. `204`. `404` si la familia no existe o está dada de baja, o si el artículo no existe o está dado de
@@ -547,17 +572,44 @@ estados que no se pueden alinear:
 Un tercer rechazo del mismo código es un dato que la API no produce: un pendiente del destino que reemplaza a una fila
 vigente que empieza en o después de "ahora". La regla es pura (`ReglaDeAlineacionDePrecios`).
 
+**Escribir la alineación.** Agrupar es todo o nada: UNA transacción sin reintento (ni la familia ni las filas de precio
+ni su auditoría tienen clave de idempotencia). Con el lock de membresía exclusivo como primera sentencia toma, en el
+orden del protocolo, la fila de la familia `FOR SHARE` (al agregar), las filas de los artículos y los locks de par;
+recién después lee "ahora", UNA vez, y planifica sin escribir —de ahí salen los rechazos, así que ninguno deja nada
+escrito—; solo entonces escribe, con ese mismo "ahora":
+
+- la familia, al crear, con `created_at` y `updated_at` en "ahora"; la referencia de una familia nueva recibe solo la
+  pertenencia (`id_familia` y `updated_at`);
+- cada destino recibe los trece campos de la referencia y, si no era miembro, `id_familia`; su `updated_at` pasa a
+  "ahora" si entró o si cambió algún campo, y no se escribe si ya era miembro y estaba alineado;
+- por cada par destino-lista que se alinea, `ServicioDePrecios` cierra la fila abierta del destino con las reglas de un
+  cambio de precio —un pendiente se reemplaza cerrándolo en su propio inicio, y se vuelve a cerrar su predecesor en
+  "ahora"— e inserta el estado de la referencia: el precio vigente desde "ahora", cerrado donde empieza el pendiente, y
+  el pendiente con su fecha. Cada fila insertada lleva su fila de auditoría `precio.cambio`, con el estado inmediato
+  anterior: la fila abierta que tenía el destino y, para la segunda fila, la primera. Un par que ya es igual no recibe
+  nada.
+
+Los locks de par se toman para TODOS los pares de los destinos y las listas fijas, antes de leer ningún precio: es el
+superconjunto de lo que se puede escribir. La referencia no los toma, porque no se le escribe ningún precio, y la lista
+derivada tampoco, porque no guarda filas. La familia se inserta en la fase de escrituras, después de "ahora" y de todos
+los locks. Un fallo en cualquier paso revierte todo y suelta del contexto lo que la operación dejó rastreado. Cuando
+`controla_lote` pasa de `false` a `true` en un destino, la reconciliación de lotes corre por cada uno, después del
+commit y en orden ascendente de id; mantiene el contrato de fallo parcial de la edición de artículos —el cambio ya está
+comiteado— y se recupera con `POST /api/stock/lotes/reconciliacion`.
+
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios, o que cambia la
 pertenencia, toma, en este orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una
 clave `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este",
-el alta de un artículo con `idFamilia`, sacar un artículo y disolver la familia),
-como primera sentencia; (2) las **filas de `articulos`** de los miembros en orden ascendente de id
-(`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE`, nunca `FOR UPDATE` sobre varias filas: choca con
-el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del propio artículo; (3) los
+el alta de un artículo con `idFamilia`, sacar un artículo, disolver la familia y agrupar artículos),
+como primera sentencia; (2) las **filas de `articulos`** de los miembros —y, al agrupar, de los artículos pedidos— en
+orden ascendente de id (`SELECT … ORDER BY id_articulo FOR NO KEY UPDATE` en un solo statement, nunca
+`FOR UPDATE` sobre varias filas: choca con el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la
+del propio artículo; (3) los
 **locks de par artículo-lista** en orden ascendente de su **clave de lock**
 (`ServicioDePrecios.ClaveDeLockDePar`), no de `id_articulo`: la clave de pares de listas distintas
 puede coincidir, y por id dos escrituras de familias distintas, cada una en su lista, podrían tomar las
-mismas dos claves en orden opuesto y esperarse en ciclo. La confirmación de una compra agrega dos tramos que
+mismas dos claves en orden opuesto y esperarse en ciclo; quien toma varios artículos en varias listas los toma todos
+juntos en ese orden, sin agrupar por artículo ni por lista. La confirmación de una compra agrega dos tramos que
 ningún otro escritor de familias toma: entre (1) y (2), las filas de la compra y de lo que mueve —encabezado,
 orden de compra, lotes y stock—, y al final la fila del proveedor, el último lock de fila de su transacción.
 Dos escritores de familias no se esperan en ciclo porque ninguno toma un lock de un tramo anterior después de
@@ -567,10 +619,11 @@ filas de compra, de stock ni de lotes, ni escribe la fila del proveedor— y de 
 siendo la primera sentencia de cada transacción; no cubre a las transacciones que no toman ese lock. Los
 chequeos de catálogo (`FOR KEY SHARE`, incluido el del proveedor habitual de la edición y del alta, que no
 choca con el `UPDATE` del proveedor de la confirmación) no chocan con ningún lock que tomen estos escritores y
-no entran en el orden. La fila de la familia sí entra: el alta la lee `FOR SHARE` después de los chequeos de
-catálogo y antes de los locks de par, y la disolución la toma `FOR UPDATE` justo después del lock de membresía
-y antes de las filas de los miembros; las dos toman antes ese lock en modo exclusivo, así que no pueden
-esperarse entre sí por esa fila. La edición de la familia no toma el lock de membresía: toma solo esa fila
+no entran en el orden. La fila de la familia sí entra: el alta de un artículo la lee `FOR SHARE` después de los
+chequeos de catálogo y antes de los locks de par; agregar artículos a una familia, la misma lectura, justo después
+del lock de membresía y antes de las filas de los artículos; y la disolución la toma `FOR UPDATE` justo después de
+ese lock y antes de las filas de los miembros. Las tres toman antes el lock de membresía en modo exclusivo, así que
+no pueden esperarse entre sí por esa fila. La edición de la familia no toma el lock de membresía: toma solo esa fila
 (`FOR UPDATE`), sin ningún otro lock de este protocolo, y por eso queda fuera del orden. Dos escrituras de la misma familia
 no llegan a competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
 estable hasta el commit; un artículo sin familia no toma (2) en los precios, y en la edición de artículos
@@ -586,8 +639,12 @@ ascendentes después del stock; no toma locks de par, porque no escribe precios)
 sacan miembros (`ServicioDeFamilias.SacarArticuloAsync`: exclusivo y la fila del propio artículo, como "solo
 este"; `ServicioDeFamilias.DisolverAsync`: exclusivo, después la fila de la familia `FOR UPDATE`, que ningún
 otro escritor de este protocolo toma después de las filas de los artículos, y después las filas de los miembros;
-ninguna toma locks de par, porque no escribe precios); todo escritor de campos compartidos o de pertenencia tiene
-que respetarlo.
+ninguna toma locks de par, porque no escribe precios) y las dos operaciones que agrupan
+(`ServicioDeAgrupacionDeFamilias.CrearAsync` y `AgregarArticulosAsync`, que comparten un solo camino: exclusivo; al
+agregar, la fila de la familia `FOR SHARE` antes que las filas de los artículos; las filas de los artículos pedidos
+y, al agregar, de todos los miembros, ascendentes y en un solo statement; y los locks de par de todos los destinos en
+todas las listas fijas, por clave ascendente, antes de leer ningún precio); todo escritor de campos compartidos o de
+pertenencia tiene que respetarlo.
 
 ### Listas de precio, con historia
 

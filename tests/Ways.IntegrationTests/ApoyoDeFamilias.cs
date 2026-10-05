@@ -10,6 +10,7 @@ using Ways.Application.Bajas;
 using Ways.Application.Familias;
 using Ways.Application.Organizacion;
 using Ways.Application.Precios;
+using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -435,16 +436,17 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         new(db, new RelojDelSistema(), new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
     /// <summary>El servicio de agrupación armado a mano sobre <paramref name="db"/>, con el reloj que pida la prueba
-    /// (por defecto el real).</summary>
+    /// (por defecto el real). La auditoría usa siempre el reloj real: sella cada fila con su propia lectura, y contarlas
+    /// taparía las lecturas de la operación que la prueba quiere contar.</summary>
     public static ServicioDeAgrupacionDeFamilias ServicioDeAgrupacionDe(
         WaysDbContext db, Entorno e, IRelojDelSistema? reloj = null)
     {
         reloj ??= new RelojDelSistema();
         var contexto = new ContextoDeAdmin(e.IdTenant, e.IdActorAdmin);
+        var auditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, new RelojDelSistema(), contexto);
 
         return new ServicioDeAgrupacionDeFamilias(
-            db, reloj, contexto,
-            new ServicioDePrecios(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto)));
+            db, reloj, contexto, new ServicioDePrecios(db, reloj, contexto, auditoria), new ServicioDeLotes(db, reloj, contexto));
     }
 
     /// <summary>Un reloj que cuenta cuántas veces se lo lee y devuelve un instante distinto en cada lectura (un segundo
