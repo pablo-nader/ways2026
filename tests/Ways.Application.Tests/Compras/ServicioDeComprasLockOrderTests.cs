@@ -169,10 +169,12 @@ public class ServicioDeComprasLockOrderTests
         throw new InvalidOperationException("Los paréntesis no cierran.");
     }
 
-    /// <summary>Si <paramref name="indice"/> cae dentro del cuerpo de alguna instrucción de ciclo (<c>foreach</c>,
-    /// <c>for</c>, <c>while</c> o <c>do</c>) de <paramref name="texto"/>: el bloque entre llaves o, sin llaves, la
-    /// sentencia única que sigue a la cabecera. Solo ve instrucciones de ciclo: una repetición hecha de otra
-    /// manera, con LINQ o con recursión, no la marca.</summary>
+    /// <summary>Si <paramref name="indice"/> cae dentro del cuerpo de alguna instrucción de ciclo de
+    /// <paramref name="texto"/>. Ve <c>foreach</c>, <c>for</c> y <c>while</c> con el cuerpo entre llaves o con
+    /// una sentencia simple sin llaves —hasta el primer <c>;</c> que sigue a la cabecera—, y <c>do</c> solo con
+    /// el cuerpo entre llaves. No ve un <c>do</c> sin llaves; no ve, de un cuerpo sin llaves que es otra
+    /// sentencia con llaves (un <c>if</c>, un <c>lock</c>), lo que viene después del primer <c>;</c> de ese
+    /// bloque; y no ve una repetición hecha de otra manera, con LINQ o con recursión.</summary>
     private static bool EstaDentroDeUnCiclo(string texto, int indice)
     {
         foreach (Match cabecera in CabeceraDeCiclo.Matches(texto))
@@ -206,9 +208,10 @@ public class ServicioDeComprasLockOrderTests
         return false;
     }
 
-    /// <summary>La detección de ciclos que usan las pruebas de abajo ve el cuerpo de cada una de las cuatro
-    /// instrucciones, con llaves o con una sola sentencia, y no marca lo que está fuera de ellos ni dentro de un
-    /// <c>if</c>.</summary>
+    /// <summary>La detección de ciclos que usan las pruebas de abajo ve el cuerpo entre llaves de cada una de las
+    /// cuatro instrucciones (<c>foreach</c>, <c>for</c>, <c>while</c> y <c>do</c>) y el cuerpo de una sola
+    /// sentencia sin llaves de las tres primeras, y no marca lo que está fuera de ellos ni dentro de un
+    /// <c>if</c>. Lo que no ve lo fija <see cref="LaDeteccionDeCiclosNoVeUnDoSinLlavesNiLoQueSigueAlPrimerPuntoYComa"/>.</summary>
     [Theory]
     [InlineData("foreach (var x in xs) { Llamar(x); }", true)]
     [InlineData("foreach (var x in xs) { Otra(x); Llamar(x); }", true)]
@@ -226,6 +229,23 @@ public class ServicioDeComprasLockOrderTests
 
         Assert.True(indice >= 0);
         Assert.Equal(dentro, EstaDentroDeUnCiclo(fuente, indice));
+    }
+
+    /// <summary>Lo que la detección de ciclos NO ve, tal como lo declara la documentación de
+    /// <see cref="EstaDentroDeUnCiclo"/>. Cada fila es código que SÍ está dentro de un ciclo y la detección no lo
+    /// marca: un <c>do</c> sin llaves, y un ciclo sin llaves cuya sentencia es otra sentencia con llaves, de la que
+    /// solo ve hasta el primer <c>;</c> del bloque. Si la detección pasa a ver alguno de estos casos, la fila y la
+    /// documentación tienen que cambiar juntas.</summary>
+    [Theory]
+    [InlineData("do Llamar(); while (hay);")]
+    [InlineData("foreach (var x in xs) if (y) { Otra(x); Llamar(x); }")]
+    [InlineData("while (hay) lock (candado) { Otra(); Llamar(); }")]
+    public void LaDeteccionDeCiclosNoVeUnDoSinLlavesNiLoQueSigueAlPrimerPuntoYComa(string fuente)
+    {
+        var indice = fuente.IndexOf("Llamar(", StringComparison.Ordinal);
+
+        Assert.True(indice >= 0);
+        Assert.False(EstaDentroDeUnCiclo(fuente, indice));
     }
 
     /// <summary>El lock de membresía de familias es lo PRIMERO que hace la transacción de la confirmación: lo
@@ -310,9 +330,10 @@ public class ServicioDeComprasLockOrderTests
 
     /// <summary>El costo se escribe con UN solo <c>UPDATE … FROM unnest</c> para todas las filas ya bloqueadas, y
     /// no con uno por artículo. Sobre el texto fuente: la confirmación llama al escritor en una única llamada,
-    /// escrita fuera de cualquier instrucción de ciclo (<c>foreach</c>, <c>for</c>, <c>while</c> o <c>do</c>) y con
-    /// la lista completa que devolvió el bloqueo; el escritor no tiene ningún ciclo y emite un único
-    /// <c>ExecuteNonQueryAsync</c>; y el escritor por fila ya no existe.</summary>
+    /// escrita fuera de cualquier ciclo que <see cref="EstaDentroDeUnCiclo"/> reconoce (sus límites están en su
+    /// documentación) y con la lista completa que devolvió el bloqueo; el texto del escritor no contiene
+    /// <c>foreach</c>, <c>for (</c> ni <c>while</c> y emite un único <c>ExecuteNonQueryAsync</c>; y el escritor
+    /// por fila ya no existe.</summary>
     [Fact]
     public void ElCostoSeEscribeConUnSoloUpdateParaTodasLasFilasBloqueadas()
     {
