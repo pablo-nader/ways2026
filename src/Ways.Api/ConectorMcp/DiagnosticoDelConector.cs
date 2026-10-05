@@ -16,9 +16,11 @@ namespace Ways.Api.ConectorMcp;
 /// Corre antes de autenticar, así que acota lo que manda el cliente: el método, la ruta, los tres
 /// headers que registra, los parámetros OAuth y los métodos JSON-RPC salen recortados a
 /// <see cref="LargoMaximoDeValor"/> caracteres y sin caracteres de control (ver
-/// <see cref="Limpiar(string)"/>), y un cuerpo solo se lee en <c>/mcp</c>, <c>/connect/authorize</c>
-/// y <c>/connect/token</c>, con un Content-Length de hasta <see cref="TamanioMaximoInspeccionado"/>
-/// bytes. Un cuerpo que no se puede leer se informa como no inspeccionado y la request sigue.
+/// <see cref="Limpiar(string)"/>), y un cuerpo solo se lee en un POST a <c>/mcp</c>,
+/// <c>/connect/authorize</c> o <c>/connect/token</c>, con un Content-Length de hasta
+/// <see cref="TamanioMaximoInspeccionado"/> bytes. El cuerpo JSON-RPC de un POST a <c>/mcp</c> o un
+/// formulario en una ruta OAuth que no se lee, o no se puede leer, se informa como no inspeccionado (el
+/// formulario, junto con los parámetros de la query) y la request sigue.
 /// </summary>
 public static class DiagnosticoDelConector
 {
@@ -154,16 +156,19 @@ public static class DiagnosticoDelConector
             parametros[clave] = valor;
         }
 
+        var formularioNoInspeccionado = false;
         if (request.HasFormContentType)
         {
-            if (await LeerFormularioAsync(request) is not { } formulario)
+            if (await LeerFormularioAsync(request) is { } formulario)
             {
-                return FormularioNoInspeccionado;
+                foreach (var (clave, valor) in formulario)
+                {
+                    parametros[clave] = valor;
+                }
             }
-
-            foreach (var (clave, valor) in formulario)
+            else
             {
-                parametros[clave] = valor;
+                formularioNoInspeccionado = true;
             }
         }
 
@@ -172,17 +177,19 @@ public static class DiagnosticoDelConector
             .Select(nombre => $"{nombre}=\"{Limpiar(parametros[nombre])}\"");
         var presencia = ParametrosSoloPresencia
             .Select(nombre => $"{nombre}={(parametros.ContainsKey(nombre) ? "true" : "false")}");
+        var descripcion = string.Join(" ", conValor.Concat(presencia));
 
-        return string.Join(" ", conValor.Concat(presencia));
+        return formularioNoInspeccionado ? $"{FormularioNoInspeccionado} {descripcion}" : descripcion;
     }
 
-    /// <summary>El formulario de <c>/connect/authorize</c> o <c>/connect/token</c>, si su Content-Length
-    /// está dentro del tope y el framework lo puede leer; si no, <c>null</c>. De las rutas OAuth por
-    /// defecto (<c>/authorize</c>, <c>/token</c>, <c>/register</c>), que no son endpoints de este
-    /// servidor, solo se registra que se pidieron.</summary>
+    /// <summary>El formulario de un POST a <c>/connect/authorize</c> o <c>/connect/token</c>, si su
+    /// Content-Length está dentro del tope y el framework lo puede leer; si no, <c>null</c>. Solo en un POST,
+    /// como lo leen OpenIddict y <see cref="EndpointsDeAutorizacion"/>: un GET trae la solicitud en la query.
+    /// De las rutas OAuth por defecto (<c>/authorize</c>, <c>/token</c>, <c>/register</c>), que no son
+    /// endpoints de este servidor, solo se registra que se pidieron.</summary>
     private static async Task<IFormCollection?> LeerFormularioAsync(HttpRequest request)
     {
-        if (!EndpointsOAuth.Contains(request.Path) || !TieneCuerpoInspeccionable(request))
+        if (!HttpMethods.IsPost(request.Method) || !EndpointsOAuth.Contains(request.Path) || !TieneCuerpoInspeccionable(request))
         {
             return null;
         }

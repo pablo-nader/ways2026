@@ -40,10 +40,12 @@ public static class EndpointsDeAutorizacion
     public const string DescripcionDeFormularioIlegible = "El formulario de la solicitud no se puede leer.";
 
     /// <summary>Corre en la extracción de OpenIddict de <c>/connect/authorize</c> y <c>/connect/token</c>,
-    /// antes de que OpenIddict lea el formulario, y lee el mismo que leería él: el de un POST
-    /// <c>application/x-www-form-urlencoded</c>. Si el framework lo rechaza (por ejemplo, una clave más larga
-    /// que el límite de <c>FormOptions</c>), la solicitud se rechaza como <c>invalid_request</c>; sin esto la
-    /// excepción saldría de OpenIddict y el manejador de errores de la app respondería 500.</summary>
+    /// antes de que OpenIddict lea el formulario, y solo para lo que leería él: un POST cuyo Content-Type
+    /// empieza con <c>application/x-www-form-urlencoded</c>. Rechaza como <c>invalid_request</c>, en lugar
+    /// del 500 que daría la excepción al salir de OpenIddict, un Content-Type con ese prefijo que el
+    /// framework no reconoce como formulario (por ejemplo <c>application/x-www-form-urlencoded-x</c>, o con
+    /// un parámetro entre comillas sin cerrar) y un formulario que el framework no puede leer (por ejemplo,
+    /// una clave más larga que el límite de <c>FormOptions</c>).</summary>
     public static async ValueTask RechazarFormularioIlegibleAsync(OpenIddictServerEvents.BaseValidatingContext contexto)
     {
         // En este servidor toda solicitud de OpenIddict llega por ASP.NET Core.
@@ -51,6 +53,14 @@ public static class EndpointsDeAutorizacion
         if (!HttpMethods.IsPost(request.Method) ||
             request.ContentType?.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase) is not true)
         {
+            return;
+        }
+
+        // OpenIddict solo mira el prefijo; con un Content-Type que no es un formulario, ReadFormAsync tira
+        // InvalidOperationException.
+        if (!request.HasFormContentType)
+        {
+            contexto.Reject(Errors.InvalidRequest, DescripcionDeFormularioIlegible);
             return;
         }
 

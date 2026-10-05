@@ -667,6 +667,7 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task EnProductionConElConectorActivoGetApiSaludPorHttpPlanoDa200()
     {
         await using var host = HostEnProduction();
+        Assert.True(host.Services.GetRequiredService<IHostEnvironment>().IsProduction());
         using var cliente = ClienteHttpPlano(host);
         Assert.Equal(HttpStatusCode.Unauthorized, (await LlamarMcpAsync(cliente, accessToken: null, "tools/list")).Estado);
 
@@ -685,6 +686,7 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
     public async Task PorHttpPlanoElConectorPublicaLasUrlsHttpsDeLaUrlPublica()
     {
         await using var host = HostEnProduction();
+        Assert.True(host.Services.GetRequiredService<IHostEnvironment>().IsProduction());
         using var cliente = ClienteHttpPlano(host);
 
         using var pedido = new HttpRequestMessage(HttpMethod.Post, ConstantesDeMcp.RutaMcp)
@@ -715,13 +717,27 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// invalid_request, la línea de diagnóstico con ese 400 y ninguna entrada de nivel Error en el log.
     /// Multipart sin boundary lo rechaza OpenIddict por su Content-Type, con su propia descripción
     /// (<see cref="EndpointsDeAutorizacion.RechazarFormularioIlegibleAsync"/> solo lee lo que leería
-    /// OpenIddict); una clave más larga que el límite de FormOptions la rechaza ese manejador.</summary>
+    /// OpenIddict); una clave más larga que el límite de FormOptions, y un Content-Type que pasa el chequeo
+    /// por prefijo de OpenIddict pero que el framework no reconoce como formulario, los rechaza ese
+    /// manejador.</summary>
     [Fact]
     public async Task UnFormularioIlegibleEnConnectTokenDa400InvalidRequestSinErroresEnElLog()
     {
         var captura = new CapturaDeLogs();
         await using var host = _apoyo.HostConConector(MailRoot, configurarMas: ConCaptura(captura));
         using var cliente = Cliente(host);
+
+        foreach (var contentType in new[] { "application/x-www-form-urlencoded-x", "application/x-www-form-urlencoded; charset=\"utf-8" })
+        {
+            using var noEsFormulario = new ByteArrayContent(Encoding.ASCII.GetBytes("grant_type=authorization_code"));
+            Assert.True(noEsFormulario.Headers.TryAddWithoutValidation("Content-Type", contentType));
+            var respuesta = await cliente.PostAsync(ConstantesDeMcp.RutaDeToken, noEsFormulario);
+
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            var error = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("invalid_request", Campo(error, "error"));
+            Assert.Equal(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, Campo(error, "error_description"));
+        }
 
         using var sinBoundary = new ByteArrayContent(Encoding.ASCII.GetBytes("grant_type=authorization_code"));
         sinBoundary.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
@@ -744,17 +760,19 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var lineas = LineasDeDiagnostico(captura)
             .Where(l => l.StartsWith("Conector MCP: POST /connect/token ", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(2, lineas.Count);
+        Assert.Equal(4, lineas.Count);
         Assert.All(lineas, l => Assert.StartsWith("Conector MCP: POST /connect/token -> 400 ", l));
-        Assert.All(lineas, l => Assert.Contains("| OAuth=(formulario no inspeccionado) |", l));
-        Assert.Contains($"| Error=invalid_request: {EndpointsDeAutorizacion.DescripcionDeFormularioIlegible} |", lineas[1]);
+        Assert.All(lineas.Skip(2), l => Assert.Contains("| OAuth=(formulario no inspeccionado) ", l));
+        Assert.Contains($"| Error=invalid_request: {EndpointsDeAutorizacion.DescripcionDeFormularioIlegible} |", lineas[3]);
         Assert.DoesNotContain(captura.Entradas, entrada => entrada.Nivel >= LogLevel.Error);
     }
 
-    /// <summary>En /connect/authorize, un POST con un formulario que el framework no puede leer da el 400 de
-    /// OpenIddict, sin redirigir, en lugar de un 500. Un GET trae la solicitud en la query: aunque declare un
-    /// cuerpo de formulario ilegible, ese cuerpo no se lee y la página se muestra. Ninguno deja una entrada
-    /// de nivel Error en el log.</summary>
+    /// <summary>En /connect/authorize, un POST con un formulario que el framework no puede leer, o con un
+    /// Content-Type que no reconoce como formulario, da el 400 de OpenIddict, sin redirigir, en lugar de un
+    /// 500. Un GET trae la solicitud en la query: aunque declare un cuerpo de formulario ilegible, la página
+    /// se muestra, porque ni <see cref="EndpointsDeAutorizacion.RechazarFormularioIlegibleAsync"/> ni el
+    /// endpoint leen el cuerpo de un GET (que el diagnóstico tampoco lo lea lo prueba
+    /// <see cref="ConectorMcpDiagnosticoTests"/>). Ninguno deja una entrada de nivel Error en el log.</summary>
     [Fact]
     public async Task UnFormularioIlegibleEnConnectAuthorizeDa400YEnUnGetNoSeLee()
     {
@@ -769,6 +787,14 @@ public class ConectorMcpFlujoTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.BadRequest, post.StatusCode);
         Assert.Null(post.Headers.Location);
         Assert.Contains(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, await post.Content.ReadAsStringAsync());
+
+        using var noEsFormulario = new ByteArrayContent(Encoding.ASCII.GetBytes("client_id=claude-ways"));
+        Assert.True(noEsFormulario.Headers.TryAddWithoutValidation("Content-Type", "application/x-www-form-urlencoded-x"));
+        var conOtroContentType = await cliente.PostAsync(ConstantesDeMcp.RutaDeAutorizacion, noEsFormulario);
+
+        Assert.Equal(HttpStatusCode.BadRequest, conOtroContentType.StatusCode);
+        Assert.Null(conOtroContentType.Headers.Location);
+        Assert.Contains(EndpointsDeAutorizacion.DescripcionDeFormularioIlegible, await conOtroContentType.Content.ReadAsStringAsync());
 
         using var get = new HttpRequestMessage(HttpMethod.Get, UrlDeAutorizacion(NuevoPkce()))
         {

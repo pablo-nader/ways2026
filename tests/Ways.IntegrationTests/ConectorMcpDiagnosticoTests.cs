@@ -181,18 +181,39 @@ public class ConectorMcpDiagnosticoTests
         Assert.Equal("secreto", codigoRecibido);
     }
 
+    /// <summary>La línea marca el formulario como no inspeccionado y describe igual la query.</summary>
     [Fact]
     public async Task UnFormularioSinContentLengthNoSeLeeYElEndpointLoRecibeEntero()
     {
         var http = Post(
             ConstantesDeMcp.RutaDeToken, "application/x-www-form-urlencoded", "grant_type=authorization_code"u8.ToArray(),
             conContentLength: false);
+        http.Request.QueryString = QueryString.Create("client_id", "claude-ways");
         string? recibido = null;
 
         var linea = await LineaAsync(http, async h => recibido = (await h.Request.ReadFormAsync())["grant_type"].ToString());
 
-        Assert.Contains("| OAuth=(formulario no inspeccionado) |", linea);
+        Assert.Contains("| OAuth=(formulario no inspeccionado) client_id=\"claude-ways\" ", linea);
         Assert.Equal("authorization_code", recibido);
+    }
+
+    /// <summary>Un GET a /connect/authorize trae la solicitud en la query: aunque declare un cuerpo de
+    /// formulario, la línea no lo lee (le llega entero al endpoint), lo marca como no inspeccionado y
+    /// describe la query.</summary>
+    [Fact]
+    public async Task ElFormularioDeUnGetAConnectAuthorizeNoSeLeeYLaLineaDescribeLaQuery()
+    {
+        const string Cuerpo = "grant_type=authorization_code";
+        var http = Post(ConstantesDeMcp.RutaDeAutorizacion, "application/x-www-form-urlencoded", Encoding.ASCII.GetBytes(Cuerpo));
+        http.Request.Method = HttpMethods.Get;
+        http.Request.QueryString = QueryString.Create("client_id", "claude-ways");
+        string? recibido = null;
+
+        var linea = await LineaAsync(http, async h => recibido = await LeerCuerpoAsync(h));
+
+        Assert.Contains("| OAuth=(formulario no inspeccionado) client_id=\"claude-ways\" ", linea);
+        Assert.DoesNotContain("authorization_code", linea);
+        Assert.Equal(Cuerpo, recibido);
     }
 
     /// <summary>Una clave más larga que el límite de <c>FormOptions</c> hace fallar la lectura: la línea lo
@@ -206,7 +227,7 @@ public class ConectorMcpDiagnosticoTests
 
         var linea = await LineaAsync(http, async h => delEndpoint = await Record.ExceptionAsync(() => h.Request.ReadFormAsync()));
 
-        Assert.Contains("| OAuth=(formulario no inspeccionado) |", linea);
+        Assert.Contains("| OAuth=(formulario no inspeccionado) ", linea);
         Assert.IsType<InvalidDataException>(delEndpoint);
     }
 
