@@ -19,8 +19,22 @@ namespace Ways.Application.Familias;
 /// de pares artículo-lista en orden ascendente de su CLAVE
 /// (<c>ServicioDePrecios.OrdenDeLocksDePares</c>), no de <c>id_articulo</c>: la clave de dos pares de
 /// listas distintas puede coincidir, y por id dos escrituras podrían tomar las mismas dos claves en
-/// orden opuesto. Como todos suben en el mismo orden, dos escritores nunca se esperan en
-/// ciclo.</para>
+/// orden opuesto. La confirmación de una compra (<c>ServicioDeCompras.ConfirmarAsync</c>) agrega dos
+/// tramos que ningún otro escritor de familias toma: entre (1) y (2), las filas de la compra y de lo
+/// que mueve —encabezado, orden de compra, lotes y stock, en el orden propio de esa transacción—, y al
+/// final la fila del proveedor, el último lock de fila de su transacción. No toma pares: no escribe
+/// precios.</para>
+///
+/// <para><b>Por qué no hay ciclo.</b> Dos escritores de familias no se esperan en ciclo porque ninguno
+/// toma un lock de un tramo anterior después de uno de un tramo posterior —el orden de los tramos es (1),
+/// el de la compra, (2), (3) y el del proveedor— y, dentro de un mismo tramo, todos los que lo toman lo
+/// hacen en el mismo orden. Esa garantía depende de dos condiciones que hay que conservar: que los dos
+/// tramos de la confirmación sean solo de la confirmación (ningún otro escritor de familias toma filas de
+/// compra, de stock ni de lotes, ni escribe la fila del proveedor) y que este lock siga siendo la primera
+/// sentencia de cada transacción. No cubre a las transacciones que no toman este lock. Los chequeos de
+/// catálogo (<c>FOR KEY SHARE</c>, también el del proveedor habitual de la edición y del alta, que no
+/// choca con el <c>UPDATE</c> de la confirmación) y la fila de la familia del alta (<c>FOR SHARE</c>) no
+/// chocan con ningún lock que tomen estos escritores y no entran en el orden.</para>
 ///
 /// <para><b>Compartido o exclusivo.</b> <see cref="TomarCompartidoAsync"/> es para quien escribe
 /// sin cambiar la pertenencia: varios escritores conviven, y todos excluyen a quien la cambia.

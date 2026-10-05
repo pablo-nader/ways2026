@@ -218,10 +218,9 @@ public class CalculadorDeCompraTests
             (2, 7, true, 200m, 200m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
-        Assert.Single(resultado);
-        Assert.Equal(200m, resultado[7]);
+        Assert.Equal([new ActualizacionDeCosto(IdFamilia: null, IdArticulo: 7, Costo: 200m)], resultado);
     }
 
     [Fact]
@@ -232,7 +231,7 @@ public class CalculadorDeCompraTests
             (1, 7, false, 100m, 100m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
         Assert.Empty(resultado);
     }
@@ -247,9 +246,46 @@ public class CalculadorDeCompraTests
             (1, 7, true, 0m, 0m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
         Assert.Empty(resultado);
+    }
+
+    /// <summary>Una bonificación total: costo unitario positivo, pero un descuento que iguala al importe bruto
+    /// deja el costo efectivo en cero. Escribirlo pondría en cero el <c>costo_nominal</c> del artículo.</summary>
+    [Fact]
+    public void ResolverActualizacionesDeCostoExcluyeUnCostoEfectivoCeroAunConCostoUnitarioPositivo()
+    {
+        var items = new List<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)>
+        {
+            (1, 7, true, 100m, 0m)
+        };
+
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
+
+        Assert.Empty(resultado);
+    }
+
+    /// <summary>Cada condición de <see cref="CalculadorDeCompra.ActualizaElCosto"/> tiene su caso, con las demás
+    /// cumplidas: un test que rompe dos a la vez sobrevive a que se borre cualquiera de las dos.</summary>
+    public static TheoryData<int?, bool, decimal, decimal, bool> CasosDeActualizaElCosto => new()
+    {
+        { 7, true, 100m, 100m, true },
+        { null, true, 100m, 100m, false },
+        { 7, false, 100m, 100m, false },
+        { 7, true, 0m, 50m, false },
+        { 7, true, -1m, 50m, false },
+        { 7, true, 100m, 0m, false },
+        { 7, true, 100m, -5m, false }
+    };
+
+    [Theory]
+    [MemberData(nameof(CasosDeActualizaElCosto))]
+    public void ActualizaElCostoExigeArticuloActualizaCostoYCostoUnitarioYEfectivoPositivos(
+        int? idArticulo, bool actualizaCosto, decimal costoUnitario, decimal costoEfectivo, bool esperado)
+    {
+        Assert.Equal(
+            esperado, CalculadorDeCompra.ActualizaElCosto((1, idArticulo, actualizaCosto, costoUnitario, costoEfectivo)));
     }
 
     [Fact]
@@ -335,10 +371,9 @@ public class CalculadorDeCompraTests
             (2, 7, true, 50m, 50m)
         };
 
-        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items);
+        var resultado = CalculadorDeCompra.ResolverActualizacionesDeCosto(items, new Dictionary<int, int>());
 
-        Assert.Single(resultado);
-        Assert.Equal(50m, resultado[7]);
+        Assert.Equal([new ActualizacionDeCosto(IdFamilia: null, IdArticulo: 7, Costo: 50m)], resultado);
     }
 
     // ---- header: varias líneas ------------------------------------------------------------------

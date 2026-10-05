@@ -298,8 +298,9 @@ public class ServicioDeArticulos(
             // Entrar a una familia es un cambio de PERTENENCIA: el lock de membresía EXCLUSIVO es la primera
             // sentencia de la transacción, antes que los locks de los catálogos. Excluye a los demás escritores
             // que toman ese lock —la escritura de precios y la edición de artículos, compartido salvo con "solo
-            // este"—, así que ninguno está a mitad de camino mientras se lee la referencia y se copian sus
-            // precios. Un alta sin familia no cambia ninguna pertenencia y no lo toma.
+            // este", y la confirmación de compras, compartido—, así que ninguno está a mitad de camino mientras
+            // se lee la referencia y se copian sus precios. Un alta sin familia no cambia ninguna pertenencia y
+            // no lo toma.
             if (datos.IdFamilia is not null)
             {
                 await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);

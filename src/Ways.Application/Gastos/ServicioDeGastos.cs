@@ -140,10 +140,11 @@ public class ServicioDeGastos(
     /// leído después del lock → 3) fila del gasto (insert, sin lock) → 4) fila del proveedor
     /// (<c>UPDATE saldo</c>, último lock de fila) → 5) advisory de tesorería de la empresa, ÚLTIMO.
     /// Es el mismo orden que el alta administrativa (<see cref="InsertarGastoDeAdministracionAsync"/>)
-    /// con el lock de la compra endurecido a exclusivo. Sin ciclo: la anulación y la confirmación
-    /// toman el header exclusivo como primer lock, y los demás escritores que tocan la compra (alta
-    /// ligada, vinculación) la toman <c>FOR SHARE</c> primero, así que todos se serializan contra el
-    /// paso 1 y ninguno retiene algo que este método necesite antes de ese lock.</summary>
+    /// con el lock de la compra endurecido a exclusivo. Sin ciclo: la anulación toma el header
+    /// exclusivo como primer lock; la confirmación lo toma exclusivo después del lock de membresía de
+    /// familias compartido, que este método no pide; y los demás escritores que tocan la compra (alta
+    /// ligada, vinculación) la toman <c>FOR SHARE</c>, así que todos se serializan contra el paso 1 y
+    /// ninguno retiene algo que este método necesite antes de ese lock.</summary>
     public async Task<ResultadoDePagoDeCompra> PagarCompraAsync(
         int idComprobanteCompra, SolicitudDePagoDeCompra solicitud, CancellationToken ct = default)
     {
@@ -232,8 +233,9 @@ public class ServicioDeGastos(
     /// proveedor, así que no puede formar un ciclo con el orden 1→2→3 de acá (se serializa contra
     /// el paso 1, nunca espera detrás del 2 o el 3). La confirmación de compra
     /// (<c>ServicioDeCompras.ConfirmarAsync</c>) tampoco toca <c>gastos</c>: su único lock
-    /// compartido con esta transacción es el propio header de la compra (paso 1 acá, primer
-    /// statement allá también) — mismo orden relativo, sin ciclo. El cierre de turno
+    /// compartido con esta transacción es el propio header de la compra (paso 1 acá; allá viene
+    /// justo después del lock de membresía de familias, que esta transacción no toma) — mismo
+    /// orden relativo entre los locks que comparten, sin ciclo. El cierre de turno
     /// (<c>ServicioDeTurnos</c>) no lockea ni compras ni gastos existentes (solo el turno mismo y,
     /// al insertar, filas nuevas de tesorería/CC) — no comparte ningún recurso con este método,
     /// así que tampoco puede ciclar. Los caminos de alta de gasto (<see cref="InsertarGastoAsync"/>/

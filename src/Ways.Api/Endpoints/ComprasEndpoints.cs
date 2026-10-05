@@ -98,7 +98,9 @@ public static class ComprasEndpoints
             return Results.Ok(confirmada);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Confirma un borrador: entra el stock, se actualiza costo_nominal, se congela precio_sugerido.");
+        .WithSummary(
+            "Confirma un borrador: entra el stock, se actualiza costo_nominal (en todos los miembros vivos de la "
+                + "familia del artículo, si la tiene), se congela precio_sugerido.");
 
         grupo.MapPost("/{id:int}/anular", async (ServicioDeCompras servicio, int id, CancellationToken ct) =>
         {
@@ -126,7 +128,9 @@ public static class ComprasEndpoints
             return Results.Ok(resultados);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Aplica precio_sugerido por item vía ServicioDePrecios, per-line results.");
+        .WithSummary(
+            "Aplica precio_sugerido por item vía ServicioDePrecios, per-line results. De las líneas de una misma "
+                + "familia solo se intenta la de mayor orden, a toda la familia si su artículo es miembro.");
 
         return app;
     }

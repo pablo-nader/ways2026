@@ -342,15 +342,18 @@ familia no guarda ningún valor: sus miembros son la fuente de verdad, así que 
 miembros en la misma transacción. El esquema no fuerza la igualdad; la sostienen los escritores.
 
 > **Estado (familias de artículos):** implementados el modelo (tabla `familias`, columna
-> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y tres de los escritores que
-> sostienen la invariante: el de **precios** ("Precios con alcance de familia", abajo), la **edición de
-> artículos** ("Edición con alcance de familia") y el **alta de un artículo dentro de una familia**
-> ("Alta dentro de una familia"). Los escritores de campos compartidos de `articulos` son tres —la edición,
-> el alta y la confirmación de una compra— y el que falta todavía **no replica a la familia**: la
-> confirmación de una compra actualiza `costo_nominal` solo en el artículo de la línea
-> (`ServicioDeCompras`). Todavía no hay endpoint para crear una familia ni para mover un artículo de una
-> familia a otra: la pertenencia se siembra por base, y el alta de un artículo con `idFamilia` es el único
-> camino de la API que agrega un miembro a una familia que ya existe.
+> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y cuatro escritores que respetan el
+> protocolo de locks y replican a la familia en su propia transacción: el de **precios** ("Precios con
+> alcance de familia", abajo; también lo usa aplicar el precio sugerido de una compra), la **edición de
+> artículos** ("Edición con alcance de familia"), el **alta de un artículo dentro de una familia** ("Alta
+> dentro de una familia") y la **confirmación de una compra**, que replica `costo_nominal` ("Compras y
+> familias"). La **baja lógica** de un artículo también cambia quién es miembro (`deleted_at`) y no sigue ese
+> protocolo: no toma el lock de membresía sino el `FOR UPDATE` de la fila del artículo, y los escritores que
+> bloquean miembros reevalúan `deleted_at IS NULL` sobre cada fila bajo su propio lock de fila, así que un
+> miembro dado de baja a mitad de camino queda fuera de lo que escriben. Todavía no hay endpoint para crear
+> una familia ni para mover un artículo de una familia a otra: la pertenencia se siembra por base, y el alta
+> de un artículo con `idFamilia` es el único camino de la API que agrega un miembro a una familia que ya
+> existe.
 
 | | Campos |
 |---|---|
@@ -440,6 +443,39 @@ del artículo nuevo en orden ascendente de su clave después de las filas y solo
 artículo son los del pedido. Un fallo al guardar —también el de las filas de precio— revierte el artículo entero,
 y el alta no se reintenta. Sin `idFamilia` el alta no cambia: no toma el lock de membresía y no copia nada.
 
+**Compras y familias.** La confirmación de una compra (`ServicioDeCompras.ConfirmarAsync`) toma el lock de
+membresía **compartido** como primera sentencia de su transacción, antes que el `UPDATE` del encabezado:
+ningún alta ni salida de una familia puede intercalarse hasta el commit. El costo que escribe
+(`costo_nominal`, solo con las líneas `actualiza_costo` con `costo_unitario > 0` y costo efectivo > 0: una
+bonificación total, cuyo descuento iguala al importe bruto, no pone en cero el costo del artículo ni el de su
+familia) se replica a **todos los miembros vivos** de la familia de cada línea: de las líneas de una misma
+familia gana la de mayor `orden` —no la de mayor costo— y su costo efectivo es el de toda la familia; los
+artículos sin familia conservan el dedupe por artículo. Las filas de los artículos a los que se escribe el
+costo (los miembros vivos de cada familia ganadora y los artículos sueltos ganadores) se bloquean
+`FOR NO KEY UPDATE` en un solo statement ordenado por id —paso (2) del protocolo—, después del stock y antes del
+lock del proveedor, que sigue siendo el último lock de fila de la transacción, y recién entonces el costo se
+escribe con un solo `UPDATE` para todas ellas. Si ninguna línea actualiza el costo, la confirmación no lee la
+pertenencia ni bloquea ni escribe nada de este paso. La baja lógica de un artículo no toma el lock de
+membresía sino el de su fila, así que puede comitear entre la lectura de la pertenencia y el bloqueo de las
+filas: el bloqueo reevalúa `deleted_at IS NULL` cuando obtiene el lock de cada fila, de modo que el artículo
+dado de baja no se devuelve en ese bloqueo ni recibe el costo de la familia, y los miembros vivos quedan
+idénticos entre sí; uno dado de baja antes de confirmar, aunque conserve su `id_familia`, es un artículo
+suelto y su línea solo lo escribe a él. Anular una compra nunca revierte el costo, tampoco el de una familia.
+
+Aplicar el precio sugerido (`POST /api/compras/{id}/precios`) pide "familia si corresponde" para cada línea y,
+como aplicar una línea de una familia llega a todos sus miembros, intenta **solo la de mayor `orden`** de cada
+familia. Las demás líneas de esa familia salen en el resultado como no aplicadas (`aplicado = false`, sin
+precio): no se intentan, y su motivo, en `error`, nombra la línea y el artículo que las superan y remite al
+resultado de esa línea, que es el que dice si el precio se aplicó (si se rechaza, ni ella ni las superadas
+escriben nada). Las líneas de artículos sueltos se intentan todas, en orden. El plan se arma con la
+pertenencia leída antes de escribir, sin lock; cada línea se aplica en su propia transacción, que resuelve la
+pertenencia de nuevo bajo el lock de membresía. Si la pertenencia cambia entre esa lectura y la escritura, el
+plan puede no coincidir con ella: una línea superada nunca se intenta, así que si la que la supera se rechaza,
+o su artículo salió de la familia, el precio de la compra no llega al artículo de la superada; y una línea que
+se intenta se aplica con el alcance que su artículo tenga al escribirla —a toda su familia si ya es miembro,
+aunque fuera suelto al armar el plan, o solo a él si dejó de serlo—. Cada escritura deja a la familia idéntica
+en cualquier caso.
+
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
 orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
@@ -449,8 +485,18 @@ el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del pr
 **locks de par artículo-lista** en orden ascendente de su **clave de lock**
 (`ServicioDePrecios.ClaveDeLockDePar`), no de `id_articulo`: la clave de pares de listas distintas
 puede coincidir, y por id dos escrituras de familias distintas, cada una en su lista, podrían tomar las
-mismas dos claves en orden opuesto y esperarse en ciclo. Dos escrituras de la misma familia no llegan a
-competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
+mismas dos claves en orden opuesto y esperarse en ciclo. La confirmación de una compra agrega dos tramos que
+ningún otro escritor de familias toma: entre (1) y (2), las filas de la compra y de lo que mueve —encabezado,
+orden de compra, lotes y stock—, y al final la fila del proveedor, el último lock de fila de su transacción.
+Dos escritores de familias no se esperan en ciclo porque ninguno toma un lock de un tramo anterior después de
+uno de un tramo posterior y, dentro de un mismo tramo, todos los que lo toman lo hacen en el mismo orden. Esa
+garantía depende de que esos dos tramos sean solo de la confirmación —ningún otro escritor de familias toma
+filas de compra, de stock ni de lotes, ni escribe la fila del proveedor— y de que el lock de membresía siga
+siendo la primera sentencia de cada transacción; no cubre a las transacciones que no toman ese lock. Los
+chequeos de catálogo (`FOR KEY SHARE`, incluido el del proveedor habitual de la edición y del alta, que no
+choca con el `UPDATE` del proveedor de la confirmación) y la fila de la familia del alta (`FOR SHARE`) no
+chocan con ningún lock que tomen estos escritores y no entran en el orden. Dos escrituras de la misma familia
+no llegan a competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
 estable hasta el commit; un artículo sin familia no toma (2) en los precios, y en la edición de artículos
 conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membresía. Lo implementan el escritor de
 precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
@@ -458,7 +504,9 @@ precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
 "solo este" bloquea solo la fila propia y en los demás casos todos los miembros, los 5 chequeos de catálogo
 `FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` (`ServicioDeArticulos.CrearAsync`:
 exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
-artículo todavía no existe, y los locks de par del artículo nuevo al final); todo escritor de campos
+artículo todavía no existe, y los locks de par del artículo nuevo al final) y la confirmación de una compra
+(`ServicioDeCompras.ConfirmarAsync`: compartido, antes del encabezado; las filas de los artículos con costo
+ascendentes después del stock; no toma locks de par, porque no escribe precios); todo escritor de campos
 compartidos tiene que respetarlo.
 
 ### Listas de precio, con historia
@@ -1087,7 +1135,8 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > ciclo completo.** `CalculadorDeCompra` (Slice 2) es la única aritmética de la compra —
 > `cantidad = unidades + bultos × unidades_por_bulto`, `costo_nominal` recibe el costo
 > efectivo **IVA-incluido** redondeado `AwayFromZero`, deduplicado por el `orden` más alto
-> cuando dos líneas repiten artículo. El ciclo `borrador → confirmada → anulada` corre en
+> cuando dos líneas repiten artículo o pertenecen a la misma familia (ver "Compras y familias", en §3).
+> El ciclo `borrador → confirmada → anulada` corre en
 > `ServicioDeCompras`: el borrador es un replace-set completo bajo `FOR UPDATE`, confirmar es
 > una `UPDATE … RETURNING` estado-guardada como única autoridad de transición (el mismo listón
 > que `MarcarAnuladoAsync` en etapa 5), y anular revierte por contramovimientos, rechazado con
@@ -1550,9 +1599,10 @@ que hoy, pero auditable.
 > saldada). Saldo pendiente = `total − pagado` (piso en cero), con `pagado` por la fórmula OD7
 > (`LectorDePagadoPorCompra`, la única fuente: el estado de pago, el detalle, el listado y la cuenta
 > corriente leen de ahí). Concurrencia: la compra se toma `FOR UPDATE` como primer lock (los demás
-> escritores que la tocan la toman `FOR SHARE` o exclusiva primero, sin ciclo) y el pagado se lee
-> después del lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin
-> reintento automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
+> escritores que la tocan la toman `FOR SHARE` o exclusiva, la confirmación después del lock de
+> membresía de familias compartido, que el pago no pide; sin ciclo) y el pagado se lee después del
+> lock, así que dos pagos que juntos superan el saldo no pueden entrar los dos; sin reintento
+> automático (un commit ambiguo sale como `503 resultado_incierto`). Un gasto editado hacia
 > arriba o dado de baja después de imputarse no toma el lock de la compra: puede dejarla sobrepagada
 > o con saldo distinto, que queda en cero y nunca negativo. Lecturas: `GET /api/compras/{id}` suma
 > `pagado` y `saldoPendiente` (cero fuera de una compra confirmada), `GET /api/compras` suma

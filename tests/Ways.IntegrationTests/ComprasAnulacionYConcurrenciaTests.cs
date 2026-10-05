@@ -469,7 +469,8 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
     }
 
     /// <summary>Design: Backstop Map — superficie racy 2, "confirm × concurrent borrador edit".
-    /// Ambos toman el MISMO lock de fila como primer statement (design decisión 1) — cualquiera
+    /// Ambos toman el MISMO lock de fila del encabezado antes que cualquier otro lock de fila (design decisión 1);
+    /// la confirmación solo toma antes el lock de membresía de familias, que la edición del borrador no toma — cualquiera
     /// de los dos resultados es representable: si el PUT gana primero, confirmar ve el estado ya
     /// editado y confirma sobre eso; si confirmar gana primero, el PUT ve <c>estado != borrador</c>
     /// al retomar el lock y se rechaza con <c>409</c>. Nunca un 500, nunca una mezcla corrupta.</summary>

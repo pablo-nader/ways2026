@@ -24,6 +24,12 @@ public sealed record ItemCalculado(
     int Orden, int? IdArticulo, decimal Cantidad, decimal Total,
     decimal CostoEfectivo, decimal? PrecioSugerido);
 
+/// <summary>El costo nuevo que una compra confirmada le escribe a un artículo suelto o a toda una familia
+/// (<see cref="CalculadorDeCompra.ResolverActualizacionesDeCosto"/>): con <see cref="IdFamilia"/> <c>null</c> es
+/// solo para <see cref="IdArticulo"/>; con valor, es para TODOS los miembros vivos de esa familia (doc 10 §3) y
+/// <see cref="IdArticulo"/> es el artículo de la línea ganadora.</summary>
+public sealed record ActualizacionDeCosto(int? IdFamilia, int IdArticulo, decimal Costo);
+
 /// <summary>El desglose de una alícuota: <see cref="Neto"/> es el neto gravado de esa alícuota e
 /// <see cref="Iva"/> el importe que se guarda (el calculado, o el impreso por el proveedor cuando se
 /// lo informó). Con precios netos el neto es la suma de los totales de línea; con precios finales
@@ -289,29 +295,84 @@ public static class CalculadorDeCompra
             ? Redondear(total * (1 + porcentajeIva / 100m) / cantidad, 2)
             : Redondear(total / cantidad, 2);
 
+    /// <summary>Si la línea cuenta para escribir <c>articulos.costo_nominal</c> (design decisión 4, el guard
+    /// anti-bonificación): tiene artículo, pide actualizar el costo y su costo unitario es positivo, y su costo
+    /// EFECTIVO también lo es. Una línea con costo unitario positivo y un descuento que iguala a su importe bruto
+    /// deja un costo efectivo de cero —una bonificación total—: escribirlo pondría en cero el costo del artículo
+    /// o, con familias, el de todos sus miembros.</summary>
+    public static bool ActualizaElCosto(
+        (int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo) item) =>
+        item.IdArticulo is not null && item.ActualizaCosto && item.CostoUnitario > 0m && item.CostoEfectivo > 0m;
+
     /// <summary>Design: Compra Arithmetic — "dos líneas del mismo artículo... el costo_nominal se
     /// deduplica en memoria con el mayor orden ganando, así que se emite exactamente un UPDATE
-    /// por artículo". Filtra por <c>actualizaCosto AND costoUnitario &gt; 0</c> (design decisión
-    /// 4, el guard anti-bonificación) antes de dedupear. Un concepto (sin artículo) nunca entra.</summary>
-    public static IReadOnlyDictionary<int, decimal> ResolverActualizacionesDeCosto(
-        IReadOnlyList<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)> items)
+    /// por artículo". Filtra con <see cref="ActualizaElCosto"/> antes de dedupear. Un concepto (sin artículo)
+    /// nunca entra.
+    ///
+    /// <para>Con familias (doc 10 §3) el dedupe es por FAMILIA: los artículos de una misma familia son
+    /// idénticos en <c>costo_nominal</c>, así que de todas las líneas filtradas de una familia gana la de
+    /// mayor orden y su costo es el de TODOS los miembros vivos. Un artículo sin familia conserva el dedupe
+    /// por artículo. <paramref name="familiaPorArticulo"/> da la familia de cada artículo que es miembro
+    /// (una clave ausente es un artículo suelto) y tiene que salir de una lectura bajo el lock de membresía.
+    /// El resultado trae, por cada ganador, la familia (<c>null</c> ⇒ solo ese artículo) y el artículo de
+    /// su línea, ascendentes por ese artículo; expandir una familia a sus miembros es del llamador, que es
+    /// quien los bloquea.</para></summary>
+    public static IReadOnlyList<ActualizacionDeCosto> ResolverActualizacionesDeCosto(
+        IReadOnlyList<(int Orden, int? IdArticulo, bool ActualizaCosto, decimal CostoUnitario, decimal CostoEfectivo)> items,
+        IReadOnlyDictionary<int, int> familiaPorArticulo)
     {
-        var ganador = new Dictionary<int, (int Orden, decimal Costo)>();
+        var ganador = new Dictionary<(int? IdFamilia, int? IdArticulo), (int Orden, int IdArticulo, decimal Costo)>();
 
         foreach (var item in items)
         {
-            if (item.IdArticulo is not { } idArticulo || !item.ActualizaCosto || item.CostoUnitario <= 0m)
+            if (!ActualizaElCosto(item) || item.IdArticulo is not { } idArticulo)
             {
                 continue;
             }
 
-            if (!ganador.TryGetValue(idArticulo, out var actual) || item.Orden > actual.Orden)
+            var clave = familiaPorArticulo.TryGetValue(idArticulo, out var idFamilia)
+                ? (IdFamilia: (int?)idFamilia, IdArticulo: (int?)null)
+                : (IdFamilia: null, IdArticulo: idArticulo);
+
+            if (!ganador.TryGetValue(clave, out var actual) || item.Orden > actual.Orden)
             {
-                ganador[idArticulo] = (item.Orden, item.CostoEfectivo);
+                ganador[clave] = (item.Orden, idArticulo, item.CostoEfectivo);
             }
         }
 
-        return ganador.ToDictionary(kv => kv.Key, kv => kv.Value.Costo);
+        return
+        [
+            .. ganador
+                .OrderBy(kv => kv.Value.IdArticulo)
+                .Select(kv => new ActualizacionDeCosto(kv.Key.IdFamilia, kv.Value.IdArticulo, kv.Value.Costo))
+        ];
+    }
+
+    /// <summary>Qué líneas con precio sugerido NO se aplican por separado cuando la compra se aplica a una
+    /// lista (doc 10 §3): aplicar el precio sugerido de un artículo que es miembro de una familia lo aplica a
+    /// toda la familia, así que de las líneas de una misma familia solo se aplica la de MAYOR orden y las demás
+    /// quedan superadas por ella. Las líneas de artículos sueltos nunca quedan superadas: cada una se aplica.
+    /// <paramref name="familiaPorArticulo"/> da la familia de cada artículo que es miembro (una clave ausente es
+    /// un artículo suelto). El resultado mapea el orden de cada línea superada al de la línea que la supera; una
+    /// línea que se aplica no figura.</summary>
+    public static IReadOnlyDictionary<int, int> ResolverLineasSuperadasDePrecio(
+        IReadOnlyList<(int Orden, int IdArticulo)> lineas, IReadOnlyDictionary<int, int> familiaPorArticulo)
+    {
+        var superadas = new Dictionary<int, int>();
+
+        foreach (var familia in lineas
+            .Where(l => familiaPorArticulo.ContainsKey(l.IdArticulo))
+            .GroupBy(l => familiaPorArticulo[l.IdArticulo]))
+        {
+            var ganadora = familia.Max(l => l.Orden);
+
+            foreach (var linea in familia.Where(l => l.Orden != ganadora))
+            {
+                superadas[linea.Orden] = ganadora;
+            }
+        }
+
+        return superadas;
     }
 
     private static decimal Redondear(decimal valor, int decimales) =>
