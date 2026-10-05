@@ -1946,7 +1946,10 @@ describe('useSincronizacionOffline — una instancia desmontada no arranca traba
 
   // El servidor ya tomó el bloque reservado como el vivo del dispositivo: descartarlo lo dejaría sin
   // nadie que rinda sobre él (ver `TIEMPO_LIMITE_DE_RESERVA_MS`).
-  it('una reserva que ya estaba en vuelo al desmontar guarda igual el bloque reservado, sin rendir sobre él', async () => {
+  it.each([
+    { caso: 'montada, lo guarda y rinde sobre él', desmontar: false, rendiciones: [{ codigoTipoComprobante: 'TX', entregadoHasta: 299, pendientes: 0 }] },
+    { caso: 'desmontada, lo guarda igual pero no rinde sobre él', desmontar: true, rendiciones: [] },
+  ])('una reserva que ya estaba en vuelo vuelve con el bloque nuevo: $caso', async ({ desmontar, rendiciones }) => {
     const almacen = almacenFake()
     await guardarBloque(almacen, BLOQUE_BAJO)
     const hook = await montarListo(almacen)
@@ -1958,7 +1961,7 @@ describe('useSincronizacionOffline — una instancia desmontada no arranca traba
     })
     await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
 
-    hook.unmount()
+    if (desmontar) hook.unmount()
     rendirColaMock.mockClear()
     await act(async () => {
       reserva.resolver(BLOQUE_RESERVADO)
@@ -1966,7 +1969,7 @@ describe('useSincronizacionOffline — una instancia desmontada no arranca traba
     })
 
     await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
-    expect(rendirColaMock).not.toHaveBeenCalled()
+    expect(rendirColaMock.mock.calls.map((c) => c[0])).toEqual(rendiciones)
   })
 
   it.each([
