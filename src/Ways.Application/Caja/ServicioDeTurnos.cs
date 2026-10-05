@@ -772,12 +772,18 @@ public class ServicioDeTurnos(
         DateTimeOffset? hasta = null,
         int pagina = 1,
         int tamanio = 25,
+        EstadoTurno? estado = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
         var query = db.TurnosCaja.AsQueryable();
+
+        if (estado is { } e)
+        {
+            query = query.Where(t => t.Estado == e);
+        }
 
         if (idPuntoVenta is { } pv)
         {

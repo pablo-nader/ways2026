@@ -3,6 +3,7 @@
  * reciben los datos ya resueltos por la pantalla y devuelven los bytes listos para `impresora.imprimir`.
  */
 import { COLUMNAS_FUENTE_A, ConstructorDeTicket } from './escpos'
+import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
@@ -277,6 +278,16 @@ export function ticketRetiroDeEfectivo(datos: DatosTicketRetiro, contexto: Conte
  * una resta más).
  */
 export function cierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): Uint8Array {
+  return armarCierreDeTurno(resumen, contexto).bytes()
+}
+
+/** Las líneas del MISMO ticket de `cierreDeTurno`, para mostrarlo e imprimirlo desde el navegador
+ * (back office): comparten el armado, así que el contenido no puede divergir del de la térmica. */
+export function lineasDeCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): LineaDeTicket[] {
+  return armarCierreDeTurno(resumen, contexto).lineas()
+}
+
+function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): ConstructorDeTicket {
   const ticket = new ConstructorDeTicket()
   encabezado(ticket, contexto)
 
@@ -336,5 +347,5 @@ export function cierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Conte
 
   ticket.avanzar(2).cortar()
 
-  return ticket.bytes()
+  return ticket
 }

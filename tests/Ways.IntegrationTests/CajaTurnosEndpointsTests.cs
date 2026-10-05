@@ -501,6 +501,31 @@ public class CajaTurnosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.All(filtrado.Items, item => Assert.Equal(ctx.IdPuntoVenta, item.IdPuntoVenta));
     }
 
+    /// <summary>El filtro <c>estado</c> devuelve solo los turnos cerrados (la lista del POS para
+    /// reimprimir cierres) y no mezcla los abiertos ni los de otro punto de venta al combinarlo con
+    /// <c>idPuntoVenta</c>.</summary>
+    [Fact]
+    public async Task ElHistorialFiltraPorEstadoCerradoYPuntoDeVenta()
+    {
+        var ctx = await PrepararAsync(nameof(ElHistorialFiltraPorEstadoCerradoYPuntoDeVenta));
+        var idOtroPuntoVenta = await SembrarSegundoPuntoDeVentaAsync(ctx);
+
+        var idCerrado = await SembrarTurnoCerradoAsync(ctx);
+        await AbrirTurnoAsync(ctx);
+        var enOtroPunto = await ctx.Admin.PostAsJsonAsync(
+            "/api/caja/turnos", new SolicitudDeApertura(idOtroPuntoVenta, 100m, "Local 2"));
+        Assert.Equal(HttpStatusCode.Created, enOtroPunto.StatusCode);
+
+        var cerrados = await ctx.Admin.GetFromJsonAsync<PaginaDeTurnos>(
+            $"/api/caja/turnos?idPuntoVenta={ctx.IdPuntoVenta}&estado=Cerrado", OpcionesJson);
+
+        Assert.NotNull(cerrados);
+        Assert.Equal(1, cerrados!.Total);
+        var item = Assert.Single(cerrados.Items);
+        Assert.Equal(idCerrado, item.Id);
+        Assert.Equal(EstadoTurno.Cerrado, item.Estado);
+    }
+
     /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MINOR): <c>GET …/{id}</c> con un id
     /// que no existe (a diferencia de <see cref="ObtenerUnTurnoDeOtroTenantDevuelve404"/>, que
     /// existe pero es de otro tenant) también cae en el mismo <c>404</c> ADR-8.</summary>

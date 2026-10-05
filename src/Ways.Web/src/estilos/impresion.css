@@ -37,3 +37,30 @@
     border: 1px solid #000 !important;
   }
 }
+
+/*
+ * Ticket impreso desde el navegador (cierre de turno reimpreso en el back office): en pantalla no
+ * se ve; con `body.imprimiendo-ticket` (lo pone la pantalla mientras dura la impresión) el papel
+ * lleva solo el ticket, en monoespaciado a 48 columnas.
+ */
+.vista-de-ticket {
+  display: none;
+}
+
+@media print {
+  body.imprimiendo-ticket > :not(.vista-de-ticket) {
+    display: none !important;
+  }
+
+  body.imprimiendo-ticket > .vista-de-ticket {
+    display: block;
+    width: 48ch;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #000;
+  }
+
+  .vista-de-ticket__linea {
+    white-space: pre;
+  }
+}

@@ -852,6 +852,48 @@ describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola F
   })
 })
 
+describe('ShellPos — "Cierres" reimprime el ticket de cierre por la MISMA cola FIFO que el cierre del turno', () => {
+  const RUTA_LISTA_DE_CIERRES = '/caja/turnos?idPuntoVenta=7&estado=Cerrado&pagina=1&tamanio=10'
+
+  function mockearCierres(resumen: ResumenDeCierrePorRetiro) {
+    mockearRutasDePos((ruta) => {
+      if (ruta === RUTA_LISTA_DE_CIERRES) {
+        return Promise.resolve({
+          items: [{ id: resumen.idTurnoCaja, idPuntoVenta: 7, fechaApertura: resumen.fechaApertura, fechaCierre: resumen.fechaCierre, estado: 'Cerrado' }],
+          total: 1,
+          pagina: 1,
+          tamanio: 10,
+        })
+      }
+      if (ruta === `/caja/turnos/${resumen.idTurnoCaja}/resumen-de-cierre`) return Promise.resolve(resumen)
+      return undefined
+    })
+  }
+
+  it('lista los cierres del PV del dispositivo y encola cierreDeTurno con el contexto del shell', async () => {
+    const resumen = resumenCierreFixture({ idTurnoCaja: 480 })
+    mockearCierres(resumen)
+    renderShell()
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Cierres' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir ticket de cierre' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock).toHaveBeenCalledWith(cierreDeTurno(resumen, CONTEXTO_DE_IMPRESION_SHELL))
+  })
+
+  it('si la impresora falla deja el aviso persistente con la descripción del turno y "Reimprimir"', async () => {
+    mockearCierres(resumenCierreFixture({ idTurnoCaja: 480 }))
+    imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    renderShell()
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Cierres' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir ticket de cierre' }))
+
+    expect(await screen.findByText('No se pudo imprimir el ticket de cierre del turno #480: sin papel')).toBeInTheDocument()
+  })
+})
+
 describe('ShellPos — aviso de actualización del escritorio', () => {
   type GlobalConTauri = typeof globalThis & {
     __TAURI__?: { core: { invoke: ReturnType<typeof vi.fn> }; event: { listen: ReturnType<typeof vi.fn> } }

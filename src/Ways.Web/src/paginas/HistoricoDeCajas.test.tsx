@@ -195,6 +195,30 @@ describe('HistoricoDeCajas — listado (stage-11-exportacion-reportes, Slice 6a)
     expect(within(filaDosDom).getByText('$ 50,00')).toBeInTheDocument()
   })
 
+  it('cada fila enlaza al detalle de SU turno y el enlace navega ahí', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/cajas?')) {
+        return Promise.resolve(paginaFixture([filaFixture({ idTurnoCaja: 100 }), filaFixture({ idTurnoCaja: 101 })]))
+      }
+      return undefined
+    })
+    render(
+      <MemoryRouter initialEntries={['/caja/historico']}>
+        <Routes>
+          <Route path="/caja/historico" element={<HistoricoDeCajas />} />
+          <Route path="/caja/turnos/:id/z" element={<div>Detalle del turno</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const enlaceUno = await screen.findByRole('link', { name: '#100' })
+    expect(enlaceUno).toHaveAttribute('href', '/caja/turnos/100/z')
+    expect(screen.getByRole('link', { name: '#101' })).toHaveAttribute('href', '/caja/turnos/101/z')
+
+    await userEvent.click(enlaceUno)
+    expect(await screen.findByText('Detalle del turno')).toBeInTheDocument()
+  })
+
   it('marca como Recalculado, con la fecha en el tooltip, solo los turnos con fechaRecalculo', async () => {
     const recalculada = filaFixture({ idTurnoCaja: 100, fechaRecalculo: '2026-09-20T15:30:00Z', idEmpleadoRecalculo: 4 })
     const intacta = filaFixture({ idTurnoCaja: 101 })

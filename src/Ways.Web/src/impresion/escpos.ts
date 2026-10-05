@@ -77,9 +77,18 @@ type Alineacion = 'izquierda' | 'centro' | 'derecha'
 
 const CODIGO_ALINEACION: Record<Alineacion, number> = { izquierda: 0, centro: 1, derecha: 2 }
 
-/** Builder fluido — cada método apila bytes, `bytes()` concatena todo al final. */
+/** Una línea de texto del ticket con el estilo vigente al emitirla: lo mismo que el builder manda
+ * a la térmica, expresado como dato para poder mostrarlo fuera de ella (vista previa / impresión
+ * del navegador). */
+export type LineaDeTicket = { texto: string; alineacion: Alineacion; negrita: boolean }
+
+/** Builder fluido — cada método apila bytes, `bytes()` concatena todo al final y `lineas()`
+ * entrega el texto de cada línea con su alineación y negrita. */
 export class ConstructorDeTicket {
   private readonly partes: number[] = []
+  private readonly lineasEmitidas: LineaDeTicket[] = []
+  private alineacionVigente: Alineacion = 'izquierda'
+  private negritaVigente = false
 
   private agregar(...valores: number[]): this {
     this.partes.push(...valores)
@@ -103,11 +112,13 @@ export class ConstructorDeTicket {
 
   /** `ESC a n` */
   alinear(modo: Alineacion): this {
+    this.alineacionVigente = modo
     return this.agregar(0x1b, 0x61, CODIGO_ALINEACION[modo])
   }
 
   /** `ESC E n` */
   negrita(activa: boolean): this {
+    this.negritaVigente = activa
     return this.agregar(0x1b, 0x45, activa ? 1 : 0)
   }
 
@@ -118,6 +129,7 @@ export class ConstructorDeTicket {
 
   /** Una línea de texto + salto de línea (`LF`). */
   linea(texto = ''): this {
+    this.lineasEmitidas.push({ texto, alineacion: this.alineacionVigente, negrita: this.negritaVigente })
     return this.agregarTexto(texto).agregar(0x0a)
   }
 
@@ -150,5 +162,10 @@ export class ConstructorDeTicket {
 
   bytes(): Uint8Array {
     return new Uint8Array(this.partes)
+  }
+
+  /** Las líneas de texto emitidas, en orden — sin los avances de papel ni el corte. */
+  lineas(): LineaDeTicket[] {
+    return this.lineasEmitidas.map((linea) => ({ ...linea }))
   }
 }

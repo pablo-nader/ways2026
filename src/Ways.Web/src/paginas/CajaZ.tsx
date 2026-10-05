@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { clienteDeCaja, rutasDeExportacionDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
-import type { DetalleDeTurno } from '../api/tipos'
+import { clienteDeOrganizacion } from '../api/organizacion'
+import type { DetalleDeTurno, ResumenDeCierrePorRetiro, TurnoResumen } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
+import { VistaDeTicket } from '../componentes/VistaDeTicket'
+import type { LineaDeTicket } from '../impresion/escpos'
 import { enEscritorio, imprimir } from '../impresion/impresora'
-import { reporteZ } from '../impresion/plantillas'
+import { cierreDeTurno, lineasDeCierreDeTurno } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
 import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
@@ -38,6 +41,11 @@ function formatearFechaHora(iso: string): string {
  * stage-desktop-pos: `contextoDeImpresion` es el mismo seam opcional que `CierreDeCaja.tsx` —
  * `undefined` en la app web normal (sin cambio de comportamiento), habilita un botón
  * "Reimprimir" ESC/POS acá solo dentro de Tauri (`enEscritorio()`).
+ *
+ * "Reimprimir ticket de cierre" reimprime el MISMO ticket que el POS imprime al cerrar el turno
+ * (`cierreDeTurno` sobre `GET .../resumen-de-cierre`): en Tauri sale por la térmica; en la web, por
+ * el diálogo de impresión del navegador con solo el ticket en el papel. Solo se ofrece con el
+ * turno cerrado.
  */
 type PropsCajaZ = { contextoDeImpresion?: ContextoDeImpresion }
 
@@ -54,28 +62,87 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
-  const [imprimiendo, setImprimiendo] = useState(false)
-  const imprimiendoRef = useRef(false)
   const [errorImpresion, setErrorImpresion] = useState('')
 
-  async function imprimirDetalle() {
-    if (!detalle || !contextoDeImpresion || imprimiendoRef.current) return
-    imprimiendoRef.current = true
-    setImprimiendo(true)
-    try {
-      const resultado = await imprimir(reporteZ(detalle, contextoDeImpresion))
-      setErrorImpresion(resultado.ok ? '' : resultado.mensaje)
-    } finally {
-      imprimiendoRef.current = false
-      setImprimiendo(false)
+  const [turno, setTurno] = useState<TurnoResumen | null>(null)
+  const [errorTurno, setErrorTurno] = useState('')
+  const [imprimiendoCierre, setImprimiendoCierre] = useState(false)
+  const imprimiendoCierreRef = useRef(false)
+  const [errorCierre, setErrorCierre] = useState('')
+  const [lineasAImprimir, setLineasAImprimir] = useState<LineaDeTicket[] | null>(null)
+
+  const enTermica = contextoDeImpresion !== undefined && enEscritorio()
+
+  async function contextoDeLaWeb(resumen: ResumenDeCierrePorRetiro): Promise<ContextoDeImpresion> {
+    // El nombre de la empresa es un dato de cabecera: sin él el ticket sale igual, con la línea vacía.
+    const puntosVenta = await clienteDeOrganizacion.listarPuntosVenta().catch(() => [])
+    const puntoVenta = puntosVenta.find((p) => p.id === resumen.puntoVenta.id)
+    return {
+      empresa: puntoVenta?.razonSocialEmpresa ?? puntoVenta?.nombreTenant ?? '',
+      puntoVenta: `PV ${resumen.puntoVenta.numero} — ${resumen.puntoVenta.nombre}`,
+      cajero: usuario?.usuario ?? '—',
     }
   }
+
+  async function reimprimirCierre() {
+    if (imprimiendoCierreRef.current) return
+    imprimiendoCierreRef.current = true
+    setImprimiendoCierre(true)
+    setErrorCierre('')
+    setErrorImpresion('')
+    const miGeneracion = generacionRef.current
+    try {
+      const resumen = await clienteDeCaja.obtenerResumenDeCierre(idTurno)
+      const contexto = contextoDeImpresion ?? (await contextoDeLaWeb(resumen))
+      if (generacionRef.current !== miGeneracion) return
+      if (enTermica) {
+        const resultado = await imprimir(cierreDeTurno(resumen, contexto))
+        if (generacionRef.current !== miGeneracion) return
+        setErrorImpresion(resultado.ok ? '' : resultado.mensaje)
+      } else {
+        setLineasAImprimir(lineasDeCierreDeTurno(resumen, contexto))
+      }
+    } catch (e) {
+      if (generacionRef.current !== miGeneracion) return
+      setErrorCierre(e instanceof ErrorApi ? e.message : 'No se pudo obtener el ticket de cierre.')
+    } finally {
+      imprimiendoCierreRef.current = false
+      setImprimiendoCierre(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!lineasAImprimir) return
+    const terminar = () => setLineasAImprimir(null)
+    document.body.classList.add('imprimiendo-ticket')
+    window.addEventListener('afterprint', terminar, { once: true })
+    window.print()
+    return () => {
+      window.removeEventListener('afterprint', terminar)
+      document.body.classList.remove('imprimiendo-ticket')
+    }
+  }, [lineasAImprimir])
 
   useEffect(() => {
     if (!idTurnoValido) return
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
+    setTurno(null)
+    setErrorTurno('')
+    setErrorCierre('')
+    setLineasAImprimir(null)
+
+    clienteDeCaja
+      .obtenerTurno(idTurno)
+      .then((datos) => {
+        if (generacionRef.current !== miGeneracion) return
+        setTurno(datos)
+      })
+      .catch((e) => {
+        if (generacionRef.current !== miGeneracion) return
+        setErrorTurno(e instanceof ErrorApi ? e.message : 'No se pudo determinar el estado del turno.')
+      })
 
     clienteDeCaja
       .obtenerDetalle(idTurno)
@@ -122,14 +189,14 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
               onInicio={() => setErrorDescarga('')}
               className="btn btn-sm btn-outline-secondary d-print-none"
             />
-            {contextoDeImpresion && enEscritorio() && (
+            {turno?.estado === 'Cerrado' && (
               <button
                 type="button"
                 className="btn btn-sm btn-outline-secondary d-print-none"
-                disabled={imprimiendo || !detalle}
-                onClick={() => void imprimirDetalle()}
+                disabled={imprimiendoCierre}
+                onClick={() => void reimprimirCierre()}
               >
-                {imprimiendo ? 'Imprimiendo…' : 'Reimprimir ticket'}
+                {imprimiendoCierre ? 'Imprimiendo…' : 'Reimprimir ticket de cierre'}
               </button>
             )}
           </div>
@@ -145,6 +212,12 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
         </div>
 
         {errorDescarga && <div className="alert alert-danger py-1 px-2 small mb-2">{errorDescarga}</div>}
+        {errorTurno && (
+          <div className="alert alert-warning py-1 px-2 small mb-2 d-print-none">
+            {errorTurno} No se ofrece la reimpresión del ticket de cierre.
+          </div>
+        )}
+        {errorCierre && <div className="alert alert-danger py-1 px-2 small mb-2 d-print-none">{errorCierre}</div>}
         {errorImpresion && (
           <div className="alert alert-warning py-1 px-2 small mb-2">No se pudo imprimir: {errorImpresion}</div>
         )}
@@ -282,6 +355,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
           </>
         )}
       </Box>
+      {lineasAImprimir && <VistaDeTicket lineas={lineasAImprimir} />}
     </div>
   )
 }
