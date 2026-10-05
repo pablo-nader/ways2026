@@ -132,7 +132,7 @@ public class EstadoDePreciosTests
     }
 
     /// <summary>Dos estados son iguales por valor: el mismo vigente, y el mismo monto y la misma fecha de
-    /// pendiente.</summary>
+    /// pendiente. Lo que compara <see cref="ReglaDeAlineacionDePrecios.Resolver"/> es exactamente esto.</summary>
     [Fact]
     public void DosEstadosSonIgualesPorValorYDifierenEnCualquieraDeSusPartes()
     {
