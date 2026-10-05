@@ -478,9 +478,7 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// <summary>Un texto que no es el nombre de ningún alcance no llega al servicio: lo rechaza el binding
     /// JSON del framework y no produce <c>alcance_invalido</c>. La respuesta no es propia del alcance: el
     /// control manda el mismo texto en el <c>modo</c> del aprovisionamiento —otro enum de la API— y recibe
-    /// la misma. En el entorno de las pruebas el fallo del binding es una excepción que
-    /// <c>ManejadorDeErrores</c> no traduce, y sale como 500 <c>error_interno</c>. Es una prueba de
-    /// caracterización: afirma esa respuesta del framework tal cual es, igual para ambos enums.</summary>
+    /// la misma, 400 <c>cuerpo_invalido</c>.</summary>
     [Fact]
     public async Task UnTextoQueNoEsUnAlcanceLoRechazaElBindingJsonComoCualquierOtroEnumYNoEscribeNada()
     {
@@ -507,10 +505,10 @@ public class PreciosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 ["modo"] = "Todas"
             });
 
-        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
-        Assert.Equal("error_interno", (await ProblemaAsync(respuesta)).Codigo);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("cuerpo_invalido", (await ProblemaAsync(respuesta)).Codigo);
         Assert.Equal(respuesta.StatusCode, control.StatusCode);
-        Assert.Equal("error_interno", (await ProblemaAsync(control)).Codigo);
+        Assert.Equal("cuerpo_invalido", (await ProblemaAsync(control)).Codigo);
 
         foreach (var (id, monto) in new[] { (a1, 100m), (a2, 110m) })
         {

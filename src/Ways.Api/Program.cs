@@ -189,6 +189,12 @@ builder.Services.ConfigureHttpJsonOptions(opciones =>
     opciones.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
+// En Development el framework ya tira BadHttpRequestException cuando el binding de un endpoint
+// rechaza la solicitud (JSON que no deserializa, enum desconocido, query que no parsea); en los demás
+// entornos responde con el estado y el cuerpo vacío. Tirarla siempre deja que ManejadorDeErrores la
+// traduzca a un ProblemDetails con código en todos los entornos por igual.
+builder.Services.Configure<RouteHandlerOptions>(opciones => opciones.ThrowOnBadRequest = true);
+
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ManejadorDeErrores>();
 builder.Services.AddOpenApi();

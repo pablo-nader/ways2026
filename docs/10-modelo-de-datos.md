@@ -377,7 +377,8 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 Un **ordinal** que no es el de ninguno de los dos (el JSON acepta el ordinal además del nombre; los
 valores son `Familia = 1` y `SoloEste = 2`, así que el `0` tampoco vale) es `400 alcance_invalido`. Un
 **texto** que no se lee ni como el nombre de un valor ni como un ordinal no llega al servicio: lo rechaza
-el binding JSON del framework, como a cualquier otro enum de la API, y no produce `alcance_invalido`.
+el binding JSON del framework, como a cualquier otro enum de la API, con `400 cuerpo_invalido` en vez de
+`alcance_invalido`.
 La escritura es **todo o nada**: una sola transacción, y un conflicto de cualquier miembro
 (`precio_pendiente_existe` sin `confirmarReemplazo`, `vigente_desde_invalido`) la aborta entera, incluida
 la salida de la familia de "solo este". Todos los miembros comparten el mismo "ahora" y cada uno
