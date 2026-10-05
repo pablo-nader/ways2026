@@ -21,9 +21,12 @@ import { Descargar } from './paginas/Descargar'
 import { Empresas } from './paginas/Empresas'
 import { EquiposPos } from './paginas/EquiposPos'
 import { Existencias } from './paginas/Existencias'
+import { Familia } from './paginas/Familia'
+import { Familias } from './paginas/Familias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
+import { NuevaFamilia } from './paginas/NuevaFamilia'
 import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
@@ -309,6 +312,36 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Articulos />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Familias de artículos (doc 10 §3): admin-only end a end, la misma puerta que /articulos
+                (Politicas.GestionDeCatalogo del lado del servidor, también para las lecturas: el detalle
+                trae los costos de la referencia). `/familias/nueva` va ANTES de `/familias/:id`: un
+                literal más específico gana sobre el parámetro en react-router, pero declararlo primero
+                es el mismo criterio defensivo que `/remitos/facturacion`. */}
+            <Route
+              path="/familias"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Familias />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/familias/nueva"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <NuevaFamilia />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/familias/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Familia />
                 </RutaProtegida>
               }
             />

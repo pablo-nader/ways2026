@@ -120,6 +120,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
       titulo: 'Catálogo',
       enlaces: [
         ['Artículos', '/articulos'],
+        ['Familias', '/familias'],
         ['Categorías', '/catalogos/categorias'],
         ['Áreas', '/catalogos/areas'],
         ['Marcas', '/catalogos/marcas'],
@@ -254,6 +255,8 @@ describe('esRutaActiva', () => {
     ['/pos', ['Vender']],
     ['/catalogos/marcas', ['Administración']],
     ['/articulos/5', ['Administración']],
+    ['/familias/7', ['Administración']],
+    ['/familias/nueva', ['Administración']],
     ['/', []],
     ['/cajas', []],
   ]
