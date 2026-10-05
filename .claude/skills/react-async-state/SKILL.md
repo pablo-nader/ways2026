@@ -150,6 +150,27 @@ where five judgment-day rounds each found a new variant of the same defect class
     obtiene su propio estado renderizado; un mensaje que reporta una precondición
     vigente no debe ser limpiado por una acción no relacionada.
 
+15. **Una guarda de handler que repite el `disabled` de su botón es código muerto.**
+    React no despacha `onClick` en un botón `disabled`, y la compuerta de confirmación ya
+    ignora "Cancelar" y Escape mientras `ocupado`: `if (ocupadoRef.current) return` en
+    `pedirX`, `cancelarX` o `abrirX` no puede ejecutarse, ninguna prueba lo mata y la
+    mutación sobrevive. La guarda de ref de la regla 11 vive solo donde el disparo no pasa
+    por un botón deshabilitado en el mismo tick: el `submit` de un formulario y el doble
+    clic síncrono sobre el botón que confirma. Mismo criterio para el token de la propia
+    respuesta del escritor: con la pantalla inerte (regla 9) nada la supera, así que solo
+    las lecturas llevan generación, cada una la suya (`++generacion.current`, también la
+    que refresca después de escribir). Antes de escribir una guarda, mutarla: si sobrevive,
+    no se escribe.
+
+16. **Cada acción que empieza borra lo que dijo la anterior, y cada una lleva su prueba.**
+    El aviso de éxito o el rechazo de la acción previa no pueden quedar en pantalla
+    mientras la nueva está abierta o en vuelo (`setError('')` / `setAviso('')` al abrir,
+    confirmar, reintentar, cambiar lo elegido o volver a previsualizar). Ningún camino
+    feliz ejercita esas líneas: la prueba deja el mensaje visible, dispara la acción
+    siguiente con su request pendiente y afirma que el mensaje ya no está, una por
+    hermana (regla 15 de `mutation-proof-tests`). Una limpieza que otra ya hizo antes en
+    todo camino alcanzable es redundante y no se escribe.
+
 ## Decision Gates
 
 | Situation | Action |
@@ -160,6 +181,8 @@ where five judgment-day rounds each found a new variant of the same defect class
 | Helper reads state inside a functional updater | Rewrite to use `prev` |
 | Aviso copy claims a block | Wire the actual `disabled` enforcement in the same commit |
 | Error-recovery path added to one surface | Grep the error code; replicate in every sibling surface of the PR |
+| `if (ocupado) return` en un handler cuyo botón ya está `disabled` | Mutar la guarda; si sobrevive, borrarla (regla 15) |
+| Acción nueva en una pantalla con aviso o error visible | Borrar lo previo al empezar y probarlo con la request pendiente (regla 16) |
 
 ## Verification
 
