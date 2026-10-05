@@ -412,6 +412,7 @@ describe('CompraEditor — compra confirmada', () => {
 
     renderEditor()
     await screen.findByRole('button', { name: 'Anular compra' })
+    await screen.findByRole('button', { name: 'Aplicar' })
     await usuario.click(screen.getByRole('button', { name: 'Anular compra' }))
     await usuario.click(screen.getByLabelText(/Confirmo que quiero anular esta compra/))
 
@@ -571,6 +572,7 @@ describe('CompraEditor — compra confirmada', () => {
     const botonAnularFinal = screen.getByRole('button', { name: 'Anular' })
     expect(botonAnularFinal).toBeEnabled()
 
+    await screen.findByLabelText('Lista de precios')
     await usuario.selectOptions(screen.getByLabelText('Lista de precios'), '1')
     await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
 
