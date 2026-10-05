@@ -1092,6 +1092,18 @@ export type TurnoResumen = {
   observaciones: string | null
 }
 
+/** Fila de `GET /api/caja/turnos` — espejo de `TurnoListado`. */
+export type TurnoListado = {
+  id: number
+  idPuntoVenta: number
+  fechaApertura: string
+  fechaCierre: string | null
+  estado: EstadoTurno
+}
+
+/** Página de `GET /api/caja/turnos` — espejo de `PaginaDeTurnos`. */
+export type PaginaDeTurnos = { items: TurnoListado[]; total: number; pagina: number; tamanio: number }
+
 export type TipoMovimientoCaja = 'Retiro' | 'Refuerzo' | 'AperturaCajon'
 
 export const TIPOS_MOVIMIENTO_CAJA: { valor: TipoMovimientoCaja; etiqueta: string }[] = [

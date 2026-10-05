@@ -4,16 +4,24 @@ import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from './finDeSesionLocal'
-import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type {
+  ClienteListado,
+  ComprobanteEmitido,
+  MedioPagoListado,
+  PuntoVentaListado,
+  ResumenDeCierrePorRetiro,
+  UsuarioAutenticado,
+} from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
+import { CierresDeCaja } from '../paginas/CierresDeCaja'
 import { GastosDelTurno } from '../paginas/GastosDelTurno'
 import { Pos } from '../paginas/Pos'
 import type { CajaDeEscritorio } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
-import { ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { AvisoDeActualizacion } from './AvisoDeActualizacion'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
@@ -220,6 +228,12 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     )
   }
 
+  /** "Reimprimir ticket de cierre" de "Cierres de caja": el mismo `cierreDeTurno` y la misma cola
+   * FIFO que el cierre del turno. */
+  function alReimprimirCierre(resumen: ResumenDeCierrePorRetiro) {
+    encolarImpresion(`el ticket de cierre del turno #${resumen.idTurnoCaja}`, cierreDeTurno(resumen, contextoDeImpresion))
+  }
+
   return (
     <AuthContext.Provider value={valorAuth}>
       <ProveedorDePuntoVentaFijo puntoVenta={puntoVenta}>
@@ -253,6 +267,9 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               </Link>
               <Link className="btn btn-outline-secondary" to="/gastos-del-turno">
                 Gastos
+              </Link>
+              <Link className="btn btn-outline-secondary" to="/cierres-de-caja">
+                Cierres
               </Link>
               {enEscritorio() && (
                 <button type="button" className="btn btn-outline-secondary" onClick={() => void abrirConfiguracion()}>
@@ -311,6 +328,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
               <Route path="/gastos-del-turno" element={<GastosDelTurno />} />
+              <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
               <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
               <Route path="*" element={<Navigate to="/vender" replace />} />
             </Routes>

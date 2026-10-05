@@ -6,6 +6,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
 using Ways.Application.Parametros;
+using Ways.Domain.Caja;
 
 namespace Ways.Api.Endpoints;
 
@@ -50,8 +51,9 @@ public static class CajaEndpoints
             DateTimeOffset? hasta,
             int? pagina,
             int? tamanio,
+            EstadoTurno? estado,
             CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, estado, ct))
         .WithSummary("Historial de turnos, paginado.");
 
         // task 2.6, design: API Surface — retiro / refuerzo / apertura de cajón contra el turno
