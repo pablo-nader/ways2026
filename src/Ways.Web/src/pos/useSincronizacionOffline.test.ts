@@ -1852,10 +1852,10 @@ describe('useSincronizacionOffline — fin de sesión', () => {
 /**
  * Cláusulas bajo prueba: los `montadoRef.current` de `drenarUnaPasada`, `refrescarInstantaneaSiHaySenal`,
  * `reponerBloque` (antes de rendir y antes de reservar) y `rendirColaLocal`. Una pantalla desmontada
- * asienta en el almacén el envío que ya tenía en vuelo, pero no arranca otro envío, refresco,
- * rendición ni reserva. Cada escenario corre dos veces: montada es el control positivo (el paso corre
- * y llega a la red) y desmontada, la afirmación — sin el control, un paso que nunca corre dejaría
- * verde el caso negativo.
+ * asienta en el almacén el envío o la reserva que ya tenía en vuelo, pero no arranca otro envío,
+ * refresco, rendición ni reserva. Los escenarios que afirman que algo NO pasa corren dos veces: montada
+ * es el control positivo (el paso corre y llega a la red) y desmontada, la afirmación — sin el control,
+ * un paso que nunca corre dejaría verde el caso negativo.
  */
 describe('useSincronizacionOffline — una instancia desmontada no arranca trabajo de red nuevo', () => {
   /** Lo que `Pos` hace al encolar una venta: `drenarAhora` en segundo plano, con el envío colgado. */
@@ -1942,6 +1942,31 @@ describe('useSincronizacionOffline — una instancia desmontada no arranca traba
 
     expect(reservarNumeracionMock).toHaveBeenCalledTimes(reservas)
     await expect(leerBloque(almacen)).resolves.toEqual(bloqueGuardado)
+  })
+
+  // El servidor ya tomó el bloque reservado como el vivo del dispositivo: descartarlo lo dejaría sin
+  // nadie que rinda sobre él (ver `TIEMPO_LIMITE_DE_RESERVA_MS`).
+  it('una reserva que ya estaba en vuelo al desmontar guarda igual el bloque reservado, sin rendir sobre él', async () => {
+    const almacen = almacenFake()
+    await guardarBloque(almacen, BLOQUE_BAJO)
+    const hook = await montarListo(almacen)
+    const reserva = promesaControlada<typeof BLOQUE_RESERVADO>()
+    reservarNumeracionMock.mockReturnValueOnce(reserva.promesa)
+    let drenado: Promise<unknown> = Promise.resolve()
+    act(() => {
+      drenado = hook.result.current.drenarAhora()
+    })
+    await waitFor(() => expect(reservarNumeracionMock).toHaveBeenCalledTimes(1))
+
+    hook.unmount()
+    rendirColaMock.mockClear()
+    await act(async () => {
+      reserva.resolver(BLOQUE_RESERVADO)
+      await drenado
+    })
+
+    await expect(leerBloque(almacen)).resolves.toEqual({ ...BLOQUE_RESERVADO, proximo: 300 })
+    expect(rendirColaMock).not.toHaveBeenCalled()
   })
 
   it.each([

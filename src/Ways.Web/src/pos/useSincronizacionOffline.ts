@@ -241,8 +241,9 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
   const almacenRef = useRef<AlmacenClaveValor>(params.almacen ?? crearAlmacenIndexedDb())
   // Desmontada la pantalla (al navegar, o al remontarse por `key` con otro punto de venta), un envío
   // o una reserva que ya estaba en vuelo asienta su resultado en el almacén, pero la instancia no
-  // arranca otro envío, refresco, rendición ni reserva: su `bloqueRef` puede haber quedado viejo, y
-  // la pantalla que se monte después parte otra vez del almacén.
+  // arranca otro envío, refresco, rendición ni reserva. La cola y el bloque quedan para la pantalla
+  // que se monte después, que parte otra vez del almacén; el `bloqueRef` de esta puede haber quedado
+  // viejo, y un refresco que vuelve tarde ya se descarta en `adoptarInstantaneaLocal`.
   const montadoRef = useRef(true)
   useEffect(() => {
     montadoRef.current = true
