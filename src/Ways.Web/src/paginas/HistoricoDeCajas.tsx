@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, filtrosDeHistoricoDeCajasVacios, rutasDeExportacion, type FiltrosDeHistoricoDeCajas } from '../api/reportes'
@@ -189,7 +190,7 @@ export function HistoricoDeCajas() {
                   {pagina.items.map((f) => (
                     <tr key={f.idTurnoCaja}>
                       <td>
-                        #{f.idTurnoCaja}
+                        <Link to={`/caja/turnos/${f.idTurnoCaja}/z`}>#{f.idTurnoCaja}</Link>
                         <InsigniaDeRecalculo fechaRecalculo={f.fechaRecalculo} />
                       </td>
                       <td>{puntoVentaPorId[f.idPuntoVenta]?.nombre ?? `PV #${f.idPuntoVenta}`}</td>

@@ -143,3 +143,29 @@ describe('ConstructorDeTicket', () => {
     expect(Array.from(bytes)).toEqual([0x1b, 0x40, 0x1b, 0x61, 1, 0x41, 0x0a, 0x1d, 0x56, 0x42, 0x00])
   })
 })
+
+describe('ConstructorDeTicket.lineas', () => {
+  it('registra cada línea con la alineación y la negrita vigentes al emitirla', () => {
+    const lineas = new ConstructorDeTicket()
+      .alinear('centro')
+      .negrita(true)
+      .linea('TITULO')
+      .negrita(false)
+      .alinear('izquierda')
+      .linea('detalle')
+      .lineas()
+
+    expect(lineas).toEqual([
+      { texto: 'TITULO', alineacion: 'centro', negrita: true },
+      { texto: 'detalle', alineacion: 'izquierda', negrita: false },
+    ])
+  })
+
+  it('las líneas de dos columnas conservan el texto ya rellenado a 48 columnas y los comandos sin texto no suman líneas', () => {
+    const lineas = new ConstructorDeTicket().lineaDeColumnas('Total', '$ 10,00').avanzar(2).cortar().lineas()
+
+    expect(lineas).toHaveLength(1)
+    expect(lineas[0].texto).toBe(dosColumnas('Total', '$ 10,00'))
+    expect(lineas[0].texto).toHaveLength(COLUMNAS_FUENTE_A)
+  })
+})

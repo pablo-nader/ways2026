@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 
 /** Decodificador mínimo para los tests: ASCII pasa directo, LF se vuelve '\n', cualquier otro
@@ -488,6 +488,34 @@ function resumenCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = 
     ...sobrescribir,
   }
 }
+
+/** Saca los comandos ESC/GS (con sus parámetros) y deja solo el texto, con LF como separador. */
+function lineasDeTexto(bytes: Uint8Array): string[] {
+  let texto = ''
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (b === 0x1b) i += b === 0x1b && bytes[i + 1] === 0x40 ? 1 : 2
+    else if (b === 0x1d) i += bytes[i + 1] === 0x56 ? 3 : 2
+    else if (b === 0x0a) texto += '\n'
+    else if (b >= 0x20 && b < 0x7f) texto += String.fromCharCode(b)
+  }
+  return texto.split('\n')
+}
+
+describe('lineasDeCierreDeTurno', () => {
+  it('es el mismo contenido que cierreDeTurno manda a la térmica, línea por línea', () => {
+    const resumen = resumenCierreFixture({ gastosEnEfectivo: 250, diferencia: -100 })
+
+    const lineasDelNavegador = lineasDeCierreDeTurno(resumen, CONTEXTO).map((l) => l.texto.replace(/[^\x20-\x7e]/g, ''))
+    const lineasDeLaTermica = lineasDeTexto(cierreDeTurno(resumen, CONTEXTO))
+
+    expect(lineasDeLaTermica.slice(0, lineasDelNavegador.length)).toEqual(lineasDelNavegador)
+    expect(lineasDelNavegador).toContain('CIERRE DE TURNO')
+    expect(lineasDelNavegador).toContain('Turno #501')
+    expect(lineasDelNavegador.some((l) => l.startsWith('Gastos en efectivo'))).toBe(true)
+    expect(lineasDelNavegador.some((l) => l.startsWith('Faltante'))).toBe(true)
+  })
+})
 
 describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () => {
   it('incluye el turno, las fechas de apertura/cierre y el vendedor', () => {
