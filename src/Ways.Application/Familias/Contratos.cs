@@ -8,6 +8,17 @@ namespace Ways.Application.Familias;
 /// escritores (doc 10 §3, "Familias de artículos").</summary>
 public sealed record FamiliaListado(int Id, string Nombre, bool Activo, int CantidadArticulos);
 
+/// <summary>
+/// Cuerpo de <c>PUT /api/familias/{id}</c>: lo único de una familia que se edita. Los dos campos son obligatorios y
+/// se escriben tal cual —el nombre sin espacios en los extremos— (<c>400 nombre_requerido</c>,
+/// <c>400 nombre_muy_largo</c>, <c>400 activo_requerido</c>): <see cref="Activo"/> es nullable para que su ausencia en
+/// el JSON se rechace en vez de leerse como <c>false</c> y desactivar la familia en silencio. <see cref="Activo"/>
+/// gobierna si la familia admite miembros nuevos: el alta de un artículo con <c>idFamilia</c> rechaza una familia
+/// inactiva (<c>409 familia_inactiva</c>). El nombre es único entre las familias vivas del tenant sin distinguir
+/// mayúsculas (<c>409 familia_nombre_duplicado</c>).
+/// </summary>
+public sealed record EdicionFamilia(string? Nombre, bool? Activo);
+
 /// <summary>Un miembro vivo de una familia. <see cref="IdMarca"/> es <c>null</c> cuando el artículo no tiene
 /// marca o la que tiene está dada de baja: un id colgante nunca se expone (el mismo criterio que la grilla de
 /// artículos).</summary>

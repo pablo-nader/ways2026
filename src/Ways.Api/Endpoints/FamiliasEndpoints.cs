@@ -24,6 +24,12 @@ public static class FamiliasEndpoints
             "Obtiene una familia con sus artículos vivos, los valores compartidos y el estado de precios de su "
                 + "artículo de referencia (el de menor id), que es lo que prellena el alta dentro de la familia.");
 
+        grupo.MapPut("/{id:int}", (
+            ServicioDeFamilias servicio, int id, EdicionFamilia datos, CancellationToken ct) =>
+            servicio.ActualizarAsync(id, datos, ct))
+        .WithSummary(
+            "Cambia el nombre y el estado (activo) de la familia. Una familia inactiva no admite artículos nuevos.");
+
         return app;
     }
 }

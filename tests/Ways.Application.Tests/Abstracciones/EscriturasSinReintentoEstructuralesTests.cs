@@ -14,7 +14,7 @@ namespace Ways.Application.Tests.Abstracciones;
 /// conductual (interceptor que inyecta un <c>40001</c> transitorio sobre la primera escritura,
 /// conteo de intentos y conteo exacto de filas) vive en
 /// <c>Ways.IntegrationTests.EscriturasSinReintentoTests</c> y solo puede ejercitar un camino por
-/// prueba; esta cubre los once a la vez y no necesita Docker.
+/// prueba; esta cubre todos los de la lista a la vez y no necesita Docker.
 ///
 /// Cada fila de <see cref="SitiosSinReintento"/> es un sitio del audit: entidades construidas de
 /// cero DENTRO del lambda (o números/códigos re-sorteados adentro), sin ninguna clave de
@@ -30,7 +30,7 @@ namespace Ways.Application.Tests.Abstracciones;
 public class EscriturasSinReintentoEstructuralesTests
 {
     /// <summary>Ruta, método y firma exacta de cada escritura sin reintento. La lista está
-    /// congelada a propósito: revertir cualquiera de los once sitios a la estrategia reintentable
+    /// congelada a propósito: revertir cualquiera de los sitios a la estrategia reintentable
     /// pone esta prueba en rojo NOMBRANDO el método. El aprovisionamiento está partido en dos
     /// métodos y esta lista cubre solo la mitad que crea la estrategia; la mitad que la EJECUTA
     /// tiene su propia prueba más abajo.</summary>
@@ -97,6 +97,11 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarAsync" },
         { "Ways.Application/Gastos/ServicioDeGastos.cs", "EditarDeAdministracionAsync" },
         { "Ways.Application/Gastos/ServicioDeGastos.cs", "EliminarDeAdministracionAsync" },
+
+        // Familias de artículos: editar el nombre y el estado de una familia lee la fila bajo su FOR UPDATE; un
+        // reintento tras un commit ambiguo la leería ya editada por el intento anterior, mismo criterio que
+        // ServicioDeArticulos.ActualizarAsync.
+        { "Ways.Application/Familias/ServicioDeFamilias.cs", "ActualizarAsync" },
     };
 
     /// <summary>
@@ -119,7 +124,7 @@ public class EscriturasSinReintentoEstructuralesTests
     /// <summary>
     /// La otra mitad del mismo enunciado, y la que no es redundante: que la fábrica esté presente
     /// no impide que la estrategia REINTENTABLE siga envolviendo la escritura al lado (una línea
-    /// sobreviviente, un segundo <c>ExecuteAsync</c> agregado después). Ninguno de los once sitios
+    /// sobreviviente, un segundo <c>ExecuteAsync</c> agregado después). Ninguno de los sitios
     /// puede nombrar <c>CreateExecutionStrategy</c> en absoluto.
     /// </summary>
     [Theory]

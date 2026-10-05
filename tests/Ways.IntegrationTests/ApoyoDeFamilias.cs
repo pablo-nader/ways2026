@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Bajas;
 using Ways.Application.Familias;
 using Ways.Application.Organizacion;
 using Ways.Application.Precios;
@@ -389,6 +390,14 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
     // Lectura de la base (contexto nuevo, nunca el que escribió)
     // =================================================================================================
 
+    /// <summary>La fila de la familia tal como está en la base, también si está dada de baja.</summary>
+    public async Task<Familia> LeerFamiliaAsync(int idFamilia)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        return await db.Familias.IgnoreQueryFilters().AsNoTracking().SingleAsync(f => f.Id == idFamilia);
+    }
+
     public async Task<Articulo> LeerAsync(int idArticulo)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
@@ -419,6 +428,11 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
 
     public WaysDbContext ContextoDelTenant(Entorno e, params Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor[] interceptores) =>
         fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant), interceptores);
+
+    /// <summary>El servicio de familias armado a mano sobre <paramref name="db"/> —con el reloj real y las
+    /// dependencias que tiene en producción—, para las pruebas que lo llaman sin pasar por HTTP.</summary>
+    public static ServicioDeFamilias ServicioDe(WaysDbContext db) =>
+        new(db, new RelojDelSistema(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
 
     // =================================================================================================
     // Pedidos HTTP

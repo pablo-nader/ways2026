@@ -489,6 +489,16 @@ no toman locks.
   está dada de baja o es de otro tenant. Un id de catálogo que apunta a una fila dada de baja viaja como `null`, igual
   que en la grilla de artículos: la `idMarca` de un miembro y el área, la categoría, el grupo y el proveedor
   habitual de la referencia.
+- `PUT /api/familias/{id}`: el nombre y el estado `activo`, los dos obligatorios (`400 nombre_requerido`,
+  `400 nombre_muy_largo` —hasta 150 caracteres, sin espacios en los extremos— y `400 activo_requerido`: un `activo`
+  ausente se rechaza, no se lee como `false`). El nombre es único entre las familias vivas del tenant sin distinguir
+  mayúsculas (`ux_familias_nombre`): `409 familia_nombre_duplicado`, que sostiene la restricción también en una
+  carrera y que el chequeo previo adelanta con un mensaje que nombra el nombre pedido; el nombre de una familia dada de
+  baja se puede reutilizar. Una familia inactiva no admite miembros nuevos por el alta de un artículo con `idFamilia`
+  (`409 familia_inactiva`). Responde la familia como el listado. Es una transacción sin reintento que lee la fila UNA
+  vez, después de su `FOR UPDATE`; una familia dada de baja mientras esperaba ese lock da `404` y no se escribe nada.
+  No toma el lock de membresía ni bloquea filas de artículos. Escribe la fila de la familia, que el alta de un
+  artículo con `idFamilia` lee `FOR SHARE`: un cambio de `activo` en curso hace esperar a ese alta, que lo ve.
 
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
 orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave

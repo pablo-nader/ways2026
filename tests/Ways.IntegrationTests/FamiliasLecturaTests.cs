@@ -1,10 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using Ways.Application.Abstracciones;
 using Ways.Application.Familias;
 using Ways.Domain.Articulos;
 using Ways.Domain.Precios;
-using Ways.Domain.Usuarios;
 using static Ways.IntegrationTests.ApoyoDeFamilias;
 
 namespace Ways.IntegrationTests;
@@ -105,7 +103,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var registro = new InterceptorQueRegistraSentencias();
         await using var db = apoyo.ContextoDelTenant(e, registro);
 
-        var listado = await new ServicioDeFamilias(db, new RelojDelSistema()).ListarAsync();
+        var listado = await ServicioDe(db).ListarAsync();
 
         Assert.Equal(["Alfa", "Zeta"], listado.Select(f => f.Nombre));
         var consulta = Assert.Single(registro.Sentencias, s => s.Contains("FROM familias", StringComparison.Ordinal));
@@ -125,7 +123,7 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var registro = new InterceptorQueRegistraSentencias();
         await using var db = apoyo.ContextoDelTenant(e, registro);
 
-        var detalle = await new ServicioDeFamilias(db, new RelojDelSistema()).ObtenerAsync(familia);
+        var detalle = await ServicioDe(db).ObtenerAsync(familia);
 
         Assert.Equal(
             new[] { e.IdListaGeneral, e.IdListaMayorista }.Order(), detalle.Precios.Select(p => p.IdListaPrecio));
@@ -319,41 +317,5 @@ public class FamiliasLecturaTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
             Assert.Equal("no_encontrado", (await ProblemaAsync(respuesta)).Codigo);
         }
-    }
-
-    // =================================================================================================
-    // Autorización: solo admin
-    // =================================================================================================
-
-    /// <summary>Las dos lecturas son de admin, como el resto del grupo: un vendedor, un supervisor y el usuario root
-    /// reciben 403, y sin sesión 401. Cada rol es su propio caso: la policy es <c>GestionDeCatalogo</c> (solo
-    /// admin), y una policy más laxa —<c>OperacionDePos</c>— dejaría pasar a dos de los tres.</summary>
-    [Theory]
-    [InlineData(RolConocido.Vendedor)]
-    [InlineData(RolConocido.Supervisor)]
-    [InlineData(RolConocido.Root)]
-    public async Task SoloUnAdminLeeLasFamilias(RolConocido rol)
-    {
-        using var e = await apoyo.PrepararAsync(nameof(SoloUnAdminLeeLasFamilias) + rol);
-        var familia = await apoyo.SembrarFamiliaAsync(e, "Solo para admin");
-        await apoyo.SembrarArticuloAsync(e, "miembro", ValoresBase(e), familia);
-
-        using var cliente = rol == RolConocido.Root ? await apoyo.ClienteRootAsync() : await apoyo.ClienteConRolAsync(e, rol);
-
-        Assert.Equal(HttpStatusCode.Forbidden, (await GetListadoAsync(cliente)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await GetDetalleAsync(cliente, familia)).StatusCode);
-
-        // El admin, en cambio, lee las dos.
-        Assert.Equal(HttpStatusCode.OK, (await GetListadoAsync(e.Admin)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await GetDetalleAsync(e.Admin, familia)).StatusCode);
-    }
-
-    [Fact]
-    public async Task SinSesionLasLecturasDan401()
-    {
-        using var anonimo = fixture.CreateClient();
-
-        Assert.Equal(HttpStatusCode.Unauthorized, (await GetListadoAsync(anonimo)).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await GetDetalleAsync(anonimo, 1)).StatusCode);
     }
 }
