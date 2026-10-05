@@ -77,13 +77,17 @@ public static class ArticulosEndpoints
             return Results.Created($"/api/articulos/{creado.Id}", creado);
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Crea un artículo. El código interno se autogenera si se omite.");
+        .WithSummary(
+            "Crea un artículo. El código interno se autogenera si se omite. Con idFamilia, el artículo entra "
+                + "a esa familia: sus campos compartidos tienen que coincidir con los de la familia y copia sus precios.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeArticulos servicio, int id, EdicionArticulo datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeCatalogo)
-        .WithSummary("Actualiza un artículo, incluida su disponibilidad por empresa.");
+        .WithSummary(
+            "Actualiza un artículo, incluida su disponibilidad por empresa. En un miembro de una familia, "
+                + "un cambio de campos compartidos exige el alcance (Familia o SoloEste).");
 
         grupo.MapDelete("/{id:int}", async (
             ServicioDeArticulos servicio, int id, CancellationToken ct) =>

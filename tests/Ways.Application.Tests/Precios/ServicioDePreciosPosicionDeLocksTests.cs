@@ -19,6 +19,12 @@ public class ServicioDePreciosPosicionDeLocksTests
         File.ReadAllText(Path.Combine(
             RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Precios", "ServicioDePrecios.cs"));
 
+    /// <summary>Los bloqueos de fila de la pertenencia viven en <c>MembresiaDeFamilias</c>, compartidos con los
+    /// demás escritores de familias: el texto de sus statements se afirma sobre ese archivo.</summary>
+    private static string LeerFuenteDeMembresia() =>
+        File.ReadAllText(Path.Combine(
+            RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Familias", "MembresiaDeFamilias.cs"));
+
     /// <summary>Del primer <c>{</c> después de la firma hasta su llave de cierre.</summary>
     private static string CuerpoDe(string fuente, string firma)
     {
@@ -193,7 +199,7 @@ public class ServicioDePreciosPosicionDeLocksTests
     [Fact]
     public void LosMiembrosSeBloqueanAscendentesYConForNoKeyUpdate()
     {
-        var cuerpo = CuerpoDe(LeerFuente(), "private async Task<List<int>> BloquearMiembrosAsync(");
+        var cuerpo = CuerpoDe(LeerFuenteDeMembresia(), "public static async Task<List<int>> BloquearMiembrosAsync(");
 
         Assert.Contains("ORDER BY id_articulo FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
         Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);
@@ -205,7 +211,7 @@ public class ServicioDePreciosPosicionDeLocksTests
     [Fact]
     public void LaFilaDeSoloEsteSeBloqueaConForNoKeyUpdate()
     {
-        var cuerpo = CuerpoDe(LeerFuente(), "private async Task BloquearFilaDelArticuloAsync(");
+        var cuerpo = CuerpoDe(LeerFuenteDeMembresia(), "public static async Task BloquearFilaDelArticuloAsync(");
 
         Assert.Contains("FOR NO KEY UPDATE", cuerpo, StringComparison.Ordinal);
         Assert.DoesNotContain("FOR UPDATE", cuerpo.Replace("FOR NO KEY UPDATE", string.Empty), StringComparison.Ordinal);
@@ -226,5 +232,57 @@ public class ServicioDePreciosPosicionDeLocksTests
         Assert.True(lectura < decision && decision < bloqueo);
         Assert.Equal(-1, cuerpo.IndexOf("LeerIdFamiliaAsync(", lectura + 1, StringComparison.Ordinal));
         Assert.DoesNotContain("LeerIdFamiliaAsync(", AbrirNuevoPrecio(), StringComparison.Ordinal);
+    }
+
+    // =================================================================================================
+    // La copia del estado de precios al artículo que entra a una familia
+    // =================================================================================================
+
+    private static string CopiaDeEstadoDePrecios() =>
+        CuerpoDe(LeerFuente(), "internal async Task CopiarEstadoDePreciosAlNuevoMiembroAsync(");
+
+    /// <summary>La copia respeta el orden de la escritura de precios: lee la referencia, toma los locks de par del
+    /// artículo nuevo recorriendo las listas en el orden de <c>OrdenDeLocksDeParesDeUnArticulo</c> (ascendente por
+    /// clave) y recién después encola las filas. No cierra filas, no guarda, no abre transacción y no lee el
+    /// reloj: el llamador pasa su "ahora" y guarda con su <c>SaveChangesAsync</c>, junto con el artículo.</summary>
+    [Fact]
+    public void LaCopiaLeeLaReferenciaTomaLosLocksDeParPorClaveYDespuesEncolaLasFilas()
+    {
+        var cuerpo = CopiaDeEstadoDePrecios();
+
+        var lectura = Posicion(cuerpo, "db.Precios");
+        var orden = Posicion(cuerpo, "OrdenDeLocksDeParesDeUnArticulo(idTenant, idArticuloNuevo, filasPorLista.Keys)");
+        var locks = Posicion(cuerpo, "TomarLockDelParAsync(");
+        var encolado = Posicion(cuerpo, "EncolarFilaDePrecio(");
+
+        Assert.True(lectura < orden, "La referencia se lee antes de decidir qué pares hay que bloquear.");
+        Assert.True(orden < locks, "Los locks de par se toman recorriendo las listas en el orden por clave.");
+        Assert.True(locks < encolado, "Las filas se encolan DESPUÉS de tomar los locks de par.");
+
+        foreach (var ajeno in new[]
+        {
+            "reloj.Ahora", "SaveChangesAsync(", "BeginTransactionAsync(", "CommitAsync(", "CerrarFilaAsync(", "ExecuteNonQueryAsync("
+        })
+        {
+            Assert.DoesNotContain(ajeno, cuerpo, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>El único modo de poner una fila en <c>precios</c> es <c>EncolarFilaDePrecio</c>, que registra la
+    /// auditoría y agrega la fila juntas: ni <c>AbrirNuevoPrecioAsync</c> ni la copia agregan una fila de precio
+    /// ni de auditoría por su cuenta.</summary>
+    [Fact]
+    public void LasFilasDePrecioYSuAuditoriaSoloSeEncolanPorLaParejaCompartida()
+    {
+        var fuente = FuenteSinComentarios();
+        var pareja = CuerpoDe(fuente, "private void EncolarFilaDePrecio(");
+
+        Assert.Contains("Auditoria.Registrar(", pareja, StringComparison.Ordinal);
+        Assert.Contains("db.Precios.Add(", pareja, StringComparison.Ordinal);
+
+        var fuenteSinLaPareja = fuente.Replace(pareja, string.Empty, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("db.Precios.Add(", fuenteSinLaPareja, StringComparison.Ordinal);
+        Assert.DoesNotContain("Auditoria.Registrar(", fuenteSinLaPareja, StringComparison.Ordinal);
     }
 }

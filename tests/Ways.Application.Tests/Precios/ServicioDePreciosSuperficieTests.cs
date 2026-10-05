@@ -11,9 +11,10 @@ namespace Ways.Application.Tests.Precios;
 /// documentada (design decision 3 es una disciplina de código, no una garantía de esquema). Lo
 /// que sí se puede y se prueba acá, sin base de datos, es que la superficie PÚBLICA de
 /// <see cref="ServicioDePrecios"/>/sus contratos no ofrece ningún camino para editar el
-/// <c>Monto</c> de una fila ya insertada — el único punto de escritura es
+/// <c>Monto</c> de una fila ya insertada — el único camino público de escritura es
 /// <see cref="ServicioDePrecios.AbrirNuevoPrecioAsync"/> (y sus dos envoltorios de contrato),
-/// que siempre ABRE una fila nueva.
+/// que siempre ABRE una fila nueva. La copia del estado de precios de un artículo que entra a una familia es
+/// <c>internal</c>, solo inserta y tampoco recibe el id de una fila existente.
 /// </summary>
 public class ServicioDePreciosSuperficieTests
 {
@@ -85,5 +86,31 @@ public class ServicioDePreciosSuperficieTests
 
         var deReflexion = Assert.IsType<TargetInvocationException>(excepcion);
         Assert.IsType<InvalidOperationException>(deReflexion.InnerException);
+    }
+
+    /// <summary>La copia del estado de precios al artículo nuevo de una familia no es parte de la API pública del
+    /// servicio: solo la alcanza otra clase del mismo ensamblado, dentro de su transacción.</summary>
+    [Fact]
+    public void LaCopiaDeEstadoDePreciosEsInternaYNoParteDeLaApiPublica()
+    {
+        var copia = typeof(ServicioDePrecios).GetMethod(
+            "CopiarEstadoDePreciosAlNuevoMiembroAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        Assert.NotNull(copia);
+        Assert.True(copia.IsAssembly, "La copia tiene que ser internal, ni pública ni privada.");
+        Assert.DoesNotContain(
+            typeof(ServicioDePrecios).GetMethods(BindingFlags.Public | BindingFlags.Instance),
+            m => m.Name == "CopiarEstadoDePreciosAlNuevoMiembroAsync");
+    }
+
+    [Fact]
+    public void LaCopiaDeEstadoDePreciosNoRecibeUnIdentificadorDeFilaExistente()
+    {
+        var copia = typeof(ServicioDePrecios).GetMethod(
+            "CopiarEstadoDePreciosAlNuevoMiembroAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var nombresDeParametros = copia.GetParameters().Select(p => p.Name).ToList();
+
+        Assert.DoesNotContain(nombresDeParametros, n => n is "idPrecio" or "IdPrecio");
     }
 }

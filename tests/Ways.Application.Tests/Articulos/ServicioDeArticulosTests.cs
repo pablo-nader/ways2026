@@ -3,6 +3,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Bajas;
 using Ways.Application.Organizacion;
+using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -86,7 +87,7 @@ public class ServicioDeArticulosTests
         // ReconciliacionTests (Ways.IntegrationTests), contra Postgres.
         return new ServicioDeArticulos(
             db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto),
-            new GuardaDeReferencias(db, new InspectorDeUso(db)));
+            new GuardaDeReferencias(db, new InspectorDeUso(db)), new ServicioDePrecios(db, reloj, contexto));
     }
 
     private static async Task<(int IdArea, int IdAlicuotaIva)> SembrarCatalogosAsync(string nombreDeBase, int idTenant)

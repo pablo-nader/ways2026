@@ -342,9 +342,15 @@ familia no guarda ningún valor: sus miembros son la fuente de verdad, así que 
 miembros en la misma transacción. El esquema no fuerza la igualdad; la sostienen los escritores.
 
 > **Estado (familias de artículos):** implementados el modelo (tabla `familias`, columna
-> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y el escritor de **precios**
-> (ver "Precios con alcance de familia", abajo). Todavía no hay endpoint de alta ni de membresía de
-> familias, ni escritor de campos compartidos de `articulos`: la pertenencia se siembra por base.
+> `articulos.id_familia`, regla pura `ValoresCompartidosDeFamilia`) y tres de los escritores que
+> sostienen la invariante: el de **precios** ("Precios con alcance de familia", abajo), la **edición de
+> artículos** ("Edición con alcance de familia") y el **alta de un artículo dentro de una familia**
+> ("Alta dentro de una familia"). Los escritores de campos compartidos de `articulos` son tres —la edición,
+> el alta y la confirmación de una compra— y el que falta todavía **no replica a la familia**: la
+> confirmación de una compra actualiza `costo_nominal` solo en el artículo de la línea
+> (`ServicioDeCompras`). Todavía no hay endpoint para crear una familia ni para mover un artículo de una
+> familia a otra: la pertenencia se siembra por base, y el alta de un artículo con `idFamilia` es el único
+> camino de la API que agrega un miembro a una familia que ya existe.
 
 | | Campos |
 |---|---|
@@ -379,6 +385,60 @@ registra su propia auditoría `precio.cambio`. Los llamadores internos que no ti
 (aplicar el precio sugerido de una compra) piden "familia si corresponde": un miembro se escribe con
 su familia y quien no lo es, solo.
 
+**Edición con alcance de familia.** `PUT /api/articulos/{id}` acepta el mismo `alcance` opcional. Lo que
+decide qué se escribe es si el pedido **cambia algún campo compartido**: se comparan los trece valores
+compartidos del pedido con los **actuales** del artículo, leídos bajo los locks (nunca una lectura previa).
+El pedido puede omitir `acumula_en_venta` (`null` conserva el valor guardado): su valor en el pedido es
+entonces el guardado en el artículo editado, leído bajo esos mismos locks, así que no cuenta como cambio y,
+con `Familia`, es el que se aplica a todos los miembros vivos.
+
+| `alcance` | Artículo sin familia | Miembro, sin cambio de campos compartidos | Miembro, con cambio de campos compartidos |
+|---|---|---|---|
+| ausente | se edita solo | se escriben solo los campos propios del artículo | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
+| `Familia` | `409 familia_cambio` | se escriben solo los campos propios (no hay nada que replicar) | los trece campos compartidos del pedido se aplican a **todos** los miembros vivos y los campos propios solo al artículo editado |
+| `SoloEste` | `409 familia_cambio` | el artículo **sale de la familia** y se escriben sus campos propios | el artículo **sale de la familia** y se escribe todo, solo en él |
+
+Los campos propios (`nombre`, `descripcion`, `id_marca`, `activo`, `disponible_para_todas` con su
+`articulos_empresas`) son siempre del artículo editado: ningún otro miembro los recibe. El `alcance` inválido
+(un ordinal que no es el de ninguno de los dos valores) es `400 alcance_invalido`, y el 404 de un artículo
+inexistente sigue precediendo a cualquier validación del pedido. La edición es **todo o nada**: una sola
+transacción sin reintento, y todo rechazo (`alcance_requerido`, `familia_cambio`, `referencia_invalida` y las
+demás validaciones) ocurre antes de mutar ninguna entidad. Cuando `controla_lote` pasa de `false` a `true` en
+varios miembros, la reconciliación de lotes corre **por cada miembro** que cambió, después del commit y en
+orden ascendente de id; mantiene el contrato de fallo parcial de siempre —el cambio ya está comiteado—, así que
+si una falla, los miembros siguientes quedan con el valor nuevo y sin reconciliar (se recupera con
+`POST /api/stock/lotes/reconciliacion`). Las lecturas (`GET /api/articulos`, `GET /api/articulos/{id}` y la
+respuesta de la edición) exponen `idFamilia` tal como está guardado, sin tratarlo como `NULL` cuando la fila
+de la familia está dada de baja: los escritores definen la pertenencia por `id_familia` y la baja del propio
+artículo, y un lector que lo anulara discreparía con ellos sobre quién es miembro.
+
+**Alta dentro de una familia.** `POST /api/articulos` acepta un `idFamilia` opcional: el artículo nace como
+miembro de esa familia. Entrar es un cambio de pertenencia: el alta toma el lock de membresía **exclusivo**
+como primera sentencia de su transacción —antes que los locks de los catálogos del pedido—, y bajo él, después de
+los chequeos de catálogo del pedido (una referencia inexistente es `400 referencia_invalida` aunque el pedido además
+difiera de la familia):
+
+1. la familia tiene que existir y estar viva (si no, `404`; también la de otro tenant) y estar **activa**
+   (`409 familia_inactiva`). Se lee y se bloquea `FOR SHARE`, que serializa el alta con cualquier `UPDATE` de la
+   fila de la familia, sea una baja lógica o un cambio de `activo`;
+2. tiene que tener al menos un artículo vivo (`409 familia_sin_articulos`); la **referencia** es el miembro vivo
+   de menor `id_articulo`, leído una sola vez bajo esos locks;
+3. los trece campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
+   `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
+   `acumula_en_venta` lleva su valor por defecto, `true`, y se compara como cualquier otro. Los rechazos se evalúan en ese orden
+   (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
+4. se inserta el artículo con `id_familia = F` y, en la misma transacción y con el mismo "ahora", se copia el
+   estado de precios de la referencia en cada lista fija: el precio vigente a ese instante (la fila nueva
+   arranca en el "ahora" del alta) y, si la referencia tiene un precio pendiente, el vigente se cierra donde
+   empieza el pendiente y se abre una fila pendiente con su misma fecha. La historia cerrada de la referencia no
+   se copia. Cada fila insertada lleva su fila de auditoría `precio.cambio`, sin valor anterior.
+
+`ServicioDePrecios` sigue siendo el único escritor de `precios`: la copia es
+`CopiarEstadoDePreciosAlNuevoMiembroAsync`, que corre dentro de la transacción del alta, toma los locks de par
+del artículo nuevo en orden ascendente de su clave después de las filas y solo inserta. Los campos propios del
+artículo son los del pedido. Un fallo al guardar —también el de las filas de precio— revierte el artículo entero,
+y el alta no se reintenta. Sin `idFamilia` el alta no cambia: no toma el lock de membresía y no copia nada.
+
 **Protocolo de locks.** Toda transacción que escribe campos compartidos o precios toma, en este
 orden global: (1) el **lock de membresía** del tenant (`pg_advisory_xact_lock` de una clave
 `bigint`, compartido para quien no cambia la pertenencia y exclusivo para quien la cambia: "solo este"),
@@ -390,9 +450,15 @@ el `FOR KEY SHARE` que toman las ventas por sus FK) o, en "solo este", la del pr
 puede coincidir, y por id dos escrituras de familias distintas, cada una en su lista, podrían tomar las
 mismas dos claves en orden opuesto y esperarse en ciclo. Dos escrituras de la misma familia no llegan a
 competir por los pares: se esperan antes, en (1) o en (2). La pertenencia que se lee después de (1) es
-estable hasta el commit; un artículo sin familia no toma (2). El escritor de precios
-(`ServicioDePrecios.AbrirNuevoPrecioAsync`) lo implementa; todo escritor de campos compartidos tiene que
-respetarlo.
+estable hasta el commit; un artículo sin familia no toma (2) en los precios, y en la edición de artículos
+conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membresía. Lo implementan el escritor de
+precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
+(`ServicioDeArticulos.ActualizarAsync`: exclusivo solo con `SoloEste`, compartido en cualquier otro caso; en
+"solo este" bloquea solo la fila propia y en los demás casos todos los miembros, los 5 chequeos de catálogo
+`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` (`ServicioDeArticulos.CrearAsync`:
+exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
+artículo todavía no existe, y los locks de par del artículo nuevo al final); todo escritor de campos
+compartidos tiene que respetarlo.
 
 ### Listas de precio, con historia
 
