@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeFamilias } from '../api/familias'
 import type { FamiliaDetalle, MiembroDeFamilia, ResultadoDeAgrupacion } from '../api/tipos'
@@ -9,7 +9,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { CAMPOS_COMPARTIDOS, cantidadDeArticulos, describirEstadoDePrecios } from './articulos/familia'
 import { avisoDeAgregado, LIMITE_DE_ARTICULOS } from './familias/agrupacion'
 import { ListaDeElegidos } from './familias/ListaDeElegidos'
-import { mensajeDeError } from './familias/mensajes'
+import { mensajeDeFalloDeEscritura } from './familias/mensajes'
 import { SelectorDeArticulos, type ArticuloElegido } from './familias/SelectorDeArticulos'
 import { useCatalogosDeFamilias, type CatalogosDeFamilias } from './familias/useCatalogosDeFamilias'
 import { usePrevisualizacion } from './familias/usePrevisualizacion'
@@ -17,6 +17,8 @@ import { formatearValorCompartido } from './familias/valoresCompartidos'
 import { VistaDePrevisualizacion } from './familias/VistaDePrevisualizacion'
 
 const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_DE_REFERENCIA_DESACTUALIZADA =
+  'La referencia de la previsualización no es la de esta familia: lo que la pantalla muestra quedó desactualizado. Se vuelve a leer la familia: previsualizá de nuevo.'
 
 /** Detalle de una familia (doc 10 §3). Se monta con `key={id}` (react-async-state regla 8): pasar de una familia a
  * otra remonta la pantalla y con ella su estado, en vez de arrastrar la selección de una a la otra. */
@@ -29,6 +31,7 @@ export function Familia() {
 function DetalleDeFamilia({ id }: { id: string | undefined }) {
   const idFamilia = id !== undefined && /^\d+$/.test(id) ? Number(id) : null
   const ubicacion = useLocation()
+  const navegar = useNavigate()
   // La pantalla que creó la familia deja su aviso en el estado de la navegación.
   const avisoDeEntrada = (ubicacion.state as { aviso?: string } | null)?.aviso ?? ''
   const catalogos = useCatalogosDeFamilias()
@@ -50,22 +53,25 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
   /** Espejo síncrono de "hay una escritura en vuelo": dos clics en el mismo tick pasan la guarda de estado. */
   const ocupadoRef = useRef(false)
 
+  /** Resuelve `true` si la lectura se aplicó; `false` si falló (y su fallo ya se muestra) o la superó otra. */
   const cargar = useCallback(
-    async (token: number, propagar = false) => {
-      if (idFamilia === null) return
+    async (token: number, propagar = false): Promise<boolean> => {
+      if (idFamilia === null) return false
 
       setCargando(true)
       try {
         const lectura = await clienteDeFamilias.obtener(idFamilia)
-        if (generacion.current !== token) return
+        if (generacion.current !== token) return false
         setDetalle(lectura)
         setError('')
+        return true
       } catch (e) {
-        if (generacion.current !== token) return
+        if (generacion.current !== token) return false
         if (propagar) throw e
         // Una familia que ya no existe no se sigue mostrando con los datos de la última lectura.
         if (e instanceof ErrorApi && e.estado === 404) setDetalle(null)
         setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar la familia.')
+        return false
       } finally {
         if (generacion.current === token) setCargando(false)
       }
@@ -75,6 +81,17 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
 
   useEffect(() => {
     void cargar(++generacion.current)
+  }, [cargar])
+
+  // El aviso con el que se llegó se consume: el estado de la navegación queda en el historial y reaparecería al
+  // recargar la pantalla o al volver a ella. El aviso ya está en el estado de la pantalla.
+  useEffect(() => {
+    if (avisoDeEntrada !== '') navegar(ubicacion.pathname, { replace: true, state: null })
+  }, [avisoDeEntrada, navegar, ubicacion.pathname])
+
+  /** La familia se vuelve a leer desde el panel de agregado: su identidad es estable para que un efecto no la repita. */
+  const relerFamilia = useCallback(async () => {
+    await cargar(++generacion.current)
   }, [cargar])
 
   function pedirSalida(miembro: MiembroDeFamilia, disparador: HTMLElement | null) {
@@ -112,12 +129,16 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
       try {
         await clienteDeFamilias.sacarArticulo(idFamilia, miembro.id)
       } catch (e) {
-        setErrorDeEscritura(mensajeDeError(e, 'sacar el artículo de la familia'))
+        const rechazo = mensajeDeFalloDeEscritura(e, 'sacar el artículo de la familia')
+
         // La pertenencia ya no es la que la pantalla muestra (`familia_cambio`) o la familia ya no existe: se la
-        // vuelve a leer para no seguir mostrando lo que dejó de ser cierto.
+        // vuelve a leer para no seguir mostrando lo que dejó de ser cierto. Si la lectura falla (porque la familia ya
+        // no existe) su fallo ya lo dice, y el rechazo de la salida no se repite al lado.
         if (e instanceof ErrorApi && (e.codigo === 'familia_cambio' || e.estado === 404)) {
           setSalida(null)
-          await cargar(++generacion.current)
+          if (await cargar(++generacion.current)) setErrorDeEscritura(rechazo)
+        } else {
+          setErrorDeEscritura(rechazo)
         }
 
         return
@@ -137,12 +158,25 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
     await refrescarTrasEscribir(avisoDeAgregado(resultado))
   }
 
+  /** Cada acción del panel de agregado que empieza saca de pantalla el aviso o el rechazo de la anterior. */
+  function alEmpezarUnaAccion() {
+    setAviso('')
+    setErrorDeEscritura('')
+  }
+
   /** La puerta abierta o cualquier escritura en vuelo (la salida o el agregado) bloquean la pantalla entera. */
   const bloqueado = salida !== null || saliendo !== null || agregando
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <Link to="/familias" className="btn btn-sm btn-outline-secondary text-nowrap">
+      <Link
+        to="/familias"
+        className="btn btn-sm btn-outline-secondary text-nowrap"
+        aria-disabled={bloqueado}
+        onClick={(evento) => {
+          if (bloqueado) evento.preventDefault()
+        }}
+      >
         Volver al listado
       </Link>
     </nav>
@@ -189,7 +223,9 @@ function DetalleDeFamilia({ id }: { id: string | undefined }) {
                 catalogos={catalogos}
                 bloqueadoPorLaPantalla={salida !== null || saliendo !== null}
                 alOcuparse={setAgregando}
+                alEmpezar={alEmpezarUnaAccion}
                 alAgregar={alAgregar}
+                alRelerFamilia={relerFamilia}
               />
             </>
           )
@@ -323,7 +359,9 @@ function AgregarArticulos({
   catalogos,
   bloqueadoPorLaPantalla,
   alOcuparse,
+  alEmpezar,
   alAgregar,
+  alRelerFamilia,
 }: {
   detalle: FamiliaDetalle
   catalogos: CatalogosDeFamilias
@@ -331,7 +369,11 @@ function AgregarArticulos({
   bloqueadoPorLaPantalla: boolean
   /** Avisa a la pantalla que este panel tiene una escritura en vuelo, para que deje inerte el resto. */
   alOcuparse: (enCurso: boolean) => void
+  /** Una acción del panel empieza: la pantalla saca de pantalla el aviso o el rechazo de la anterior. */
+  alEmpezar: () => void
   alAgregar: (resultado: ResultadoDeAgrupacion) => void | Promise<void>
+  /** Vuelve a leer la familia. Tiene que ser estable: un efecto de este panel depende de ella. */
+  alRelerFamilia: () => Promise<void>
 }) {
   const [elegidos, setElegidos] = useState<ArticuloElegido[]>([])
   const [selectorAbierto, setSelectorAbierto] = useState(false)
@@ -344,6 +386,15 @@ function AgregarArticulos({
   useEffect(() => {
     invalidar()
   }, [detalle, invalidar])
+
+  // El servidor previsualiza sobre la referencia que él ve para esa familia: si esa no es la de esta familia, lo que la
+  // pantalla muestra de ella quedó viejo. Se la vuelve a leer, y esa lectura descarta lo previsualizado.
+  const referenciaDesactualizada = previsualizacion !== null && previsualizacion.idFamilia !== detalle.id
+  useEffect(() => {
+    if (!referenciaDesactualizada) return
+    setErrorDeConfirmacion(AVISO_DE_REFERENCIA_DESACTUALIZADA)
+    void alRelerFamilia()
+  }, [referenciaDesactualizada, alRelerFamilia])
 
   const referencia = detalle.articulos[0]
 
@@ -372,10 +423,11 @@ function AgregarArticulos({
 
   const bloqueado = bloqueadoPorLaPantalla || previsualizando || confirmando
   const excedido = elegidos.length > LIMITE_DE_ARTICULOS
-  const sinProblemas = previsualizacion !== null && previsualizacion.problemas.length === 0
+  const sinProblemas = previsualizacion !== null && previsualizacion.problemas.length === 0 && !referenciaDesactualizada
   const nombresDeArticulos = new Map<number, ArticuloElegido>(elegidos.map((a) => [a.id, a]))
 
   function elegir(nuevos: ArticuloElegido[]) {
+    alEmpezar()
     setElegidos(nuevos)
     invalidar()
     setErrorDeConfirmacion('')
@@ -383,12 +435,14 @@ function AgregarArticulos({
   }
 
   function quitar(idArticulo: number) {
+    alEmpezar()
     setElegidos((previos) => previos.filter((a) => a.id !== idArticulo))
     invalidar()
     setErrorDeConfirmacion('')
   }
 
   function pedirPrevisualizacion() {
+    alEmpezar()
     setErrorDeConfirmacion('')
     void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id) })
   }
@@ -398,6 +452,7 @@ function AgregarArticulos({
     // sincrónico, porque dos clics en el mismo tick pasan la guarda de estado.
     if (confirmandoRef.current) return
 
+    alEmpezar()
     confirmandoRef.current = true
     setConfirmando(true)
     alOcuparse(true)
@@ -408,8 +463,14 @@ function AgregarArticulos({
       } catch (e) {
         // La foto quedó vieja (otro escritor cambió algo): se muestra lo que la API rechazó y hay que volver a
         // previsualizar antes de confirmar.
-        setErrorDeConfirmacion(mensajeDeError(e, 'agregar los artículos a la familia'))
+        setErrorDeConfirmacion(mensajeDeFalloDeEscritura(e, 'agregar los artículos a la familia'))
         invalidar()
+        // La familia dejó de admitir artículos o ya no existe: lo que la pantalla muestra dejó de ser cierto, así que
+        // se la vuelve a leer.
+        if (e instanceof ErrorApi && (e.estado === 404 || e.codigo === 'familia_inactiva' || e.codigo === 'familia_sin_articulos')) {
+          await alRelerFamilia()
+        }
+
         return
       }
 
@@ -428,7 +489,7 @@ function AgregarArticulos({
       <h6>Agregar artículos</h6>
       <p className="small text-body-secondary">
         Los artículos que sumes toman de la referencia ({referencia.codigoInterno} — {referencia.nombre}) sus campos compartidos y
-        el precio de cada lista. Previsualizá primero qué cambia en cada uno.
+        el precio de cada lista de precios fija. Previsualizá primero qué cambia en cada uno.
       </p>
 
       {errorDeConfirmacion && <div className="alert alert-danger">{errorDeConfirmacion}</div>}

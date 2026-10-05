@@ -35,7 +35,7 @@ const nombres: NombresDeCatalogo = {
 const listas = new Map([[2, 'General']])
 
 function articuloElegido(id: number, nombre: string): ArticuloElegido {
-  return { id, codigoInterno: `A00${id}`, nombre, idFamilia: null }
+  return { id, codigoInterno: `A00${id}`, nombre }
 }
 
 const articulos = new Map([
@@ -109,6 +109,66 @@ describe('VistaDePrevisualizacion — los artículos', () => {
     expect(within(filas[1]).getAllByRole('cell')[2].textContent).toBe('Sin asignar')
   })
 
+  /** Cláusula bajo prueba: `actual === nuevo ? [] : …` de `filasDeCampos`. El servidor lista una columna porque sus ids
+   * difieren; si los dos lados se muestran igual (dos filas de catálogo dadas de baja son las dos "Sin asignar") la fila
+   * no dice nada. Evidencia de mutación (mutation-proof-tests): listar siempre la fila hace fallar este test y los dos
+   * siguientes; revertido, vuelven a verde. */
+  it('un campo cuyos dos valores se muestran igual no se lista, y los que sí cambian siguen listados', () => {
+    montar(
+      previsualizacion({
+        articulos: [cambios(32, { campos: ['id_grupo', 'costo_lista'], actual: { ...base, idGrupo: null, costoLista: 100 }, nuevo: { ...base, idGrupo: null, costoLista: 250 } })],
+      }),
+    )
+
+    const filas = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    expect(filas.map((f) => within(f).getAllByRole('cell').map((c) => c.textContent))).toEqual([['Costo de lista', '$ 100,00', '$ 250,00']])
+  })
+
+  it('un importe que difiere por debajo del centavo se muestra igual en los dos lados y no se lista', () => {
+    montar(
+      previsualizacion({
+        articulos: [cambios(32, { campos: ['costo_lista', 'id_area'], actual: { ...base, costoLista: 100.001, idArea: 1 }, nuevo: { ...base, costoLista: 100.002, idArea: 9 } })],
+      }),
+    )
+
+    const filas = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    expect(filas.map((f) => within(f).getAllByRole('cell')[0].textContent)).toEqual(['Área'])
+  })
+
+  it('si todo lo que el servidor lista se muestra igual en los dos lados, el artículo se ve alineado y no hay tabla', () => {
+    montar(
+      previsualizacion({
+        articulos: [cambios(32, { campos: ['id_grupo'], actual: { ...base, idGrupo: null }, nuevo: { ...base, idGrupo: null } })],
+      }),
+    )
+
+    expect(screen.getByText('Ya está alineado con la referencia: no cambia nada.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `actual === nuevo ? [] : …` de `filasDePrecios`, la hermana de la de campos: un estado de
+   * precios que se muestra igual antes y después no es un cambio para quien lo mira. Evidencia de mutación
+   * (mutation-proof-tests): listar siempre la fila hace fallar este test; revertido, vuelve a verde. */
+  it('un precio cuyo estado se muestra igual antes y después no se lista, y el que sí cambia sigue listado', () => {
+    montar(
+      previsualizacion({
+        articulos: [
+          cambios(32, {
+            precios: [
+              { idListaPrecio: 2, actual: { vigente: 100.001, pendiente: null }, nuevo: { vigente: 100.002, pendiente: null } },
+              { idListaPrecio: 4, actual: { vigente: null, pendiente: null }, nuevo: { vigente: 50, pendiente: null } },
+            ],
+          }),
+        ],
+      }),
+    )
+
+    const filas = within(screen.getByRole('table')).getAllByRole('row').slice(1)
+    expect(filas.map((f) => within(f).getAllByRole('cell').map((c) => c.textContent))).toEqual([['Lista 4', '—', '$ 50,00']])
+  })
+
+  /** Una columna que el cliente no conoce se lista aunque sus dos lados sean rayas: el servidor dice que cambia y acá no se
+   * puede decir de qué a qué, que no es lo mismo que dos valores conocidos que se ven iguales. */
   it('una columna que el cliente no conoce se muestra por su nombre, con rayas, sin romper', () => {
     montar(previsualizacion({ articulos: [cambios(32, { campos: ['columna_nueva'] })] }))
 

@@ -4,8 +4,8 @@ import { ErrorApi } from '../../api/cliente'
 import type { ArticuloListado } from '../../api/tipos'
 import { Modal } from '../../componentes/Modal'
 
-/** Lo que una pantalla de familias necesita de un artículo elegido: cómo nombrarlo y si ya tiene familia. */
-export type ArticuloElegido = Pick<ArticuloListado, 'id' | 'codigoInterno' | 'nombre' | 'idFamilia'>
+/** Lo que una pantalla de familias necesita de un artículo elegido: cómo nombrarlo. */
+export type ArticuloElegido = Pick<ArticuloListado, 'id' | 'codigoInterno' | 'nombre'>
 
 const LARGO_MINIMO_DE_BUSQUEDA = 2
 
@@ -25,7 +25,7 @@ type Props = {
 }
 
 function aElegido(a: ArticuloListado): ArticuloElegido {
-  return { id: a.id, codigoInterno: a.codigoInterno, nombre: a.nombre, idFamilia: a.idFamilia }
+  return { id: a.id, codigoInterno: a.codigoInterno, nombre: a.nombre }
 }
 
 /**

@@ -6,6 +6,7 @@
  * es contrato; el mensaje es texto libre), y el mensaje del servidor NO se tira: es lo único que nombra el artículo
  * o la lista que bloquea, así que va primero y la ayuda va detrás, con lo que el mensaje no trae: qué hacer.
  */
+import { CODIGO_RESULTADO_INCIERTO, COPIA_RESULTADO_INCIERTO } from '../../api/bajas'
 import { ErrorApi } from '../../api/cliente'
 
 /**
@@ -45,4 +46,23 @@ export function mensajeDeError(error: unknown, accion: string): string {
   if (error instanceof ErrorApi) return mensajeDeProblema(error.codigo, error.message) || `No se pudo ${accion}.`
 
   return `No se pudo ${accion}.`
+}
+
+/**
+ * El texto de un fallo al ESCRIBIR (crear, agregar, guardar, sacar). Un rechazo del servidor rinde lo mismo que
+ * `mensajeDeError`. Lo que no es un rechazo —la red se cayó, un 5xx— no dice si el servidor llegó a commitear, así que
+ * comparte la copia del resultado incierto de las bajas (`bajas.ts`): `No se pudo {accion}. No se pudo confirmar el
+ * resultado: verificá el listado antes de reintentar.` Un 5xx con `resultado_incierto` rinde el mensaje del servidor,
+ * que ya dice qué verificar; cualquier otro 5xx no trae detalle útil y no se anexa.
+ */
+export function mensajeDeFalloDeEscritura(error: unknown, accion: string): string {
+  const encabezado = `No se pudo ${accion}.`
+
+  if (!(error instanceof ErrorApi)) return `${encabezado} ${COPIA_RESULTADO_INCIERTO}`
+  if (error.estado < 500) return mensajeDeError(error, accion)
+
+  const delServidor = error.message.trim()
+  const esCommitAmbiguo = error.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
+
+  return `${encabezado} ${esCommitAmbiguo ? delServidor : COPIA_RESULTADO_INCIERTO}`
 }

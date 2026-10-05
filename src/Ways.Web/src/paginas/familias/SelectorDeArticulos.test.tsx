@@ -52,8 +52,8 @@ function pagina(items: ArticuloListado[], total = items.length): PaginaDe<Articu
   return { items, total, pagina: 1, tamanio: 25 }
 }
 
-function elegido(id: number, idFamilia: number | null = null): ArticuloElegido {
-  return { id, codigoInterno: `A00${id}`, nombre: `Articulo ${id}`, idFamilia }
+function elegido(id: number): ArticuloElegido {
+  return { id, codigoInterno: `A00${id}`, nombre: `Articulo ${id}` }
 }
 
 function diferida<T>() {

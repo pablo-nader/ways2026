@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NuevaFamilia } from './NuevaFamilia'
 import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS } from './articulos/familia'
@@ -155,6 +155,22 @@ function montar(escenario: Escenario = {}) {
   )
 }
 
+/** Como `montar`, con un enlace afuera de la pantalla que hace de menú de la aplicación: el usuario puede irse por él
+ * mientras la pantalla tiene una escritura en vuelo. */
+function montarConMenu() {
+  mockearApi()
+  return render(
+    <MemoryRouter initialEntries={['/familias/nueva']}>
+      <Link to="/otra">Ir a otra pantalla</Link>
+      <Routes>
+        <Route path="/familias/nueva" element={<NuevaFamilia />} />
+        <Route path="/familias/:id" element={<DetalleDeFamilia />} />
+        <Route path="/otra" element={<p>Otra pantalla</p>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 async function buscarYElegir(titulo: string, ...ids: number[]) {
   const dialogo = await screen.findByRole('dialog', { name: titulo })
   await userEvent.type(within(dialogo).getByLabelText('Buscar artículo'), 'art')
@@ -203,9 +219,22 @@ describe('NuevaFamilia — la pantalla', () => {
     montar()
 
     const explicacion = screen.getByText(/Todos los artículos de la familia toman del artículo de referencia/)
-    for (const campo of CAMPOS_COMPARTIDOS) expect(explicacion).toHaveTextContent(campo.etiqueta.toLowerCase())
+    for (const campo of CAMPOS_COMPARTIDOS) {
+      expect(explicacion).toHaveTextContent(campo.etiqueta.charAt(0).toLowerCase() + campo.etiqueta.slice(1))
+    }
     expect(explicacion).toHaveTextContent('el precio de cada lista de precios fija')
     expect(explicacion).toHaveTextContent(`Son propios de cada artículo: ${CAMPOS_PROPIOS}.`)
+  })
+
+  /** Cláusula bajo prueba: `etiquetaEnMinuscula` baja solo la inicial: una sigla ("IVA") no se escribe en minúscula. Evidencia
+   * de mutación (mutation-proof-tests): volver a `toLowerCase()` de toda la etiqueta hace fallar este test (dice "alícuota
+   * de iva"); revertido, vuelve a verde. */
+  it('la lista de campos compartidos no baja a minúscula las siglas: dice "alícuota de IVA"', () => {
+    montar()
+
+    const explicacion = screen.getByText(/Todos los artículos de la familia toman del artículo de referencia/)
+    expect(explicacion).toHaveTextContent('alícuota de IVA')
+    expect(explicacion).not.toHaveTextContent('alícuota de iva')
   })
 
   it('arranca sin nada elegido: no se puede previsualizar ni crear, y dice por qué', () => {
@@ -222,6 +251,40 @@ describe('NuevaFamilia — la pantalla', () => {
   it('"Volver al listado" lleva al listado', async () => {
     montar()
 
+    await userEvent.click(screen.getByRole('link', { name: 'Volver al listado' }))
+
+    expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `aria-disabled={creando}` y el `preventDefault` del enlace: con el POST en vuelo no se puede ir
+   * por "Volver al listado". Evidencia de mutación (mutation-proof-tests): sacar cualquiera de los dos hace fallar este
+   * test; revertido, vuelve a verde. */
+  it('con el POST en vuelo "Volver al listado" no lleva a ningún lado', async () => {
+    montar()
+    await armarYPrevisualizar()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
+    expect(screen.getByRole('button', { name: 'Creando…' })).toBeDisabled()
+
+    const enlace = screen.getByRole('link', { name: 'Volver al listado' })
+    expect(enlace).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(enlace)
+
+    expect(screen.queryByText('Pantalla del listado de familias')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Creando…' })).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el enlace se bloquea con la escritura (`creando`), no con la previsualización: es una lectura y
+   * irse a mitad de ella no deja nada a medias. Evidencia de mutación (mutation-proof-tests): bloquearlo con `bloqueado`
+   * (que incluye `previsualizando`) hace fallar este test; revertido, vuelve a verde. */
+  it('con la previsualización en vuelo "Volver al listado" sigue llevando al listado', async () => {
+    montar()
+    apiPostMock.mockImplementation(() => new Promise(() => {}))
+    await elegirReferencia()
+    await previsualizar()
+    expect(screen.getByRole('button', { name: 'Previsualizando…' })).toBeDisabled()
+
+    expect(screen.getByRole('link', { name: 'Volver al listado' })).not.toHaveAttribute('aria-disabled', 'true')
     await userEvent.click(screen.getByRole('link', { name: 'Volver al listado' }))
 
     expect(await screen.findByText('Pantalla del listado de familias')).toBeInTheDocument()
@@ -510,8 +573,11 @@ describe('NuevaFamilia — crear', () => {
     expect(screen.queryByText(/Previsualizá antes de crear/)).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: `problemas.length === 0` dentro de `sinProblemas`: los problemas de la previsualización
-   * bloquean "Crear familia", y la guarda de `crear` también. */
+  /** Cláusulas bajo prueba: `problemas.length === 0` dentro de `sinProblemas` (los problemas de la previsualización
+   * bloquean "Crear familia") y la guarda `!listaParaCrear(...)` de `crear`. Con el botón deshabilitado el teclado no
+   * llega a ningún envío, así que `fireEvent.submit` es una palanca sintética que alcanza la guarda por debajo de él.
+   * Evidencia de mutación (mutation-proof-tests): sacar esa guarda hace fallar este test y el siguiente (se emite el
+   * POST con problemas); revertida, vuelven a verde. */
   it('los problemas de la previsualización se muestran y bloquean "Crear familia"', async () => {
     montar()
     await armarYPrevisualizar(
@@ -527,7 +593,8 @@ describe('NuevaFamilia — crear', () => {
   })
 
   /** Cláusula bajo prueba: `referenciaConFamilia` en `sinProblemas`: si la previsualización dice que la referencia ya
-   * es miembro de una familia (`idFamilia`), agrupar sería sumar a ESA familia, no crear una nueva. */
+   * es miembro de una familia (`idFamilia`), agrupar sería sumar a ESA familia, no crear una nueva. El enlace del aviso
+   * lleva al detalle de esa familia (`Link` con `idFamiliaDeLaReferencia`). */
   it('una referencia que ya es miembro de una familia bloquea "Crear familia" y manda a su detalle', async () => {
     montar()
     await armarYPrevisualizar(previsualizacionDe({ idFamilia: 9 }))
@@ -538,6 +605,11 @@ describe('NuevaFamilia — crear', () => {
     expect(screen.getByRole('button', { name: 'Crear familia' })).toBeDisabled()
     fireEvent.submit(screen.getByRole('button', { name: 'Crear familia' }).closest('form') as HTMLFormElement)
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/familias')).toHaveLength(0)
+    // Y "manda a su detalle": el aviso trae el enlace a la familia que ya tiene la referencia.
+    const enlace = screen.getByRole('link', { name: 'Ver el detalle de su familia' })
+    expect(enlace).toHaveAttribute('href', '/familias/9')
+    await userEvent.click(enlace)
+    expect(await screen.findByText(/Detalle de la familia 9/)).toBeInTheDocument()
   })
 
   it('crea la familia: POST con el nombre recortado, la referencia y los demás, y navega a su detalle con el aviso', async () => {
@@ -708,15 +780,46 @@ describe('NuevaFamilia — crear', () => {
     })
   })
 
-  it('un fallo que no es del servidor (la red) dice que no se pudo crear', async () => {
+  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `crear` (react-async-state regla 7: el aviso dice lo que de verdad
+   * se sabe). Con la red caída o un 5xx no se sabe si el POST llegó a commitear: decir solo "No se pudo crear" invita a
+   * crear de nuevo una familia que quizá ya existe. Evidencia de mutación (mutation-proof-tests): volver a `mensajeDeError`
+   * hace fallar estas dos; revertido, vuelven a verde. */
+  it.each<[string, () => unknown]>([
+    ['un fallo que no es del servidor (la red)', () => new TypeError('Failed to fetch')],
+    ['un 5xx sin código estable', () => new ErrorApi(500, 'error_interno', 'Se cayó el servidor.')],
+  ])('con %s no se sabe si se creó: lo dice y no anexa el texto del servidor', async (_caso, error) => {
     montar()
     await armarYPrevisualizar()
     apiPostMock.mockImplementation((ruta: string) =>
-      ruta === '/familias' ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(previsualizacionDe()),
+      ruta === '/familias' ? Promise.reject(error()) : Promise.resolve(previsualizacionDe()),
     )
 
     await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
 
-    expect(await screen.findByText('No se pudo crear la familia.')).toBeInTheDocument()
+    expect(
+      await screen.findByText('No se pudo crear la familia. No se pudo confirmar el resultado: verificá el listado antes de reintentar.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Se cayó el servidor/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `if (!montado.current) return` de `crear`, antes de navegar. Quien se fue mientras el POST estaba
+   * en vuelo (el menú, el Atrás) no vuelve a una pantalla que no pidió. El control positivo es la prueba de arriba: con el
+   * usuario en la pantalla, sí navega al detalle. Evidencia de mutación (mutation-proof-tests): sacar esa línea hace fallar
+   * este test (aparece el detalle de la familia creada); revertido, vuelve a verde. */
+  it('si el usuario se fue mientras el POST estaba en vuelo, la respuesta no lo manda al detalle de la familia', async () => {
+    const creacion = diferida<ResultadoDeAgrupacion>()
+    montarConMenu()
+    await armarYPrevisualizar()
+    apiPostMock.mockImplementation(() => creacion.promesa)
+    await userEvent.click(screen.getByRole('button', { name: 'Crear familia' }))
+    await userEvent.click(screen.getByRole('link', { name: 'Ir a otra pantalla' }))
+    expect(await screen.findByText('Otra pantalla')).toBeInTheDocument()
+
+    await act(async () => {
+      creacion.resolver(resultadoDe())
+    })
+
+    expect(screen.getByText('Otra pantalla')).toBeInTheDocument()
+    expect(screen.queryByText(/Detalle de la familia/)).not.toBeInTheDocument()
   })
 })

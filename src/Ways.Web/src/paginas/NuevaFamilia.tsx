@@ -6,9 +6,10 @@ import { Box } from '../componentes/Box'
 import { CAMPOS_COMPARTIDOS, CAMPOS_PROPIOS } from './articulos/familia'
 import { avisoDeCreacion, LIMITE_DE_ARTICULOS } from './familias/agrupacion'
 import { ListaDeElegidos } from './familias/ListaDeElegidos'
-import { mensajeDeError } from './familias/mensajes'
+import { mensajeDeFalloDeEscritura } from './familias/mensajes'
 import { SelectorDeArticulos, type ArticuloElegido } from './familias/SelectorDeArticulos'
 import { useCatalogosDeFamilias } from './familias/useCatalogosDeFamilias'
+import { useMontado } from './familias/useMontado'
 import { usePrevisualizacion } from './familias/usePrevisualizacion'
 import { VistaDePrevisualizacion } from './familias/VistaDePrevisualizacion'
 
@@ -17,6 +18,17 @@ const CODIGOS_DEL_NOMBRE = ['familia_nombre_duplicado', 'nombre_requerido', 'nom
 
 const AYUDA_DE_REFERENCIA_CON_FAMILIA =
   'El artículo de referencia ya es miembro de una familia: agrupar no mueve a nadie de la que tiene. Para sumarle artículos usá el detalle de su familia.'
+
+/** `Alícuota de IVA` → `alícuota de IVA`: baja solo la inicial, para no tocar una sigla. */
+function etiquetaEnMinuscula(etiqueta: string): string {
+  return etiqueta.charAt(0).toLowerCase() + etiqueta.slice(1)
+}
+
+/** Lo que hace falta para crear: una previsualización sin problemas, un nombre y una referencia. Es un type guard sobre
+ * la referencia: quien lo pregunta ya la tiene, y no tiene que volver a preguntar por ella. */
+function listaParaCrear(referencia: ArticuloElegido | null, sinProblemas: boolean, nombre: string): referencia is ArticuloElegido {
+  return sinProblemas && referencia !== null && nombre.trim() !== ''
+}
 
 /**
  * Nueva familia (doc 10 §3, "Gestión de familias"): el nombre, el artículo de referencia y los demás artículos. Todos
@@ -35,14 +47,16 @@ export function NuevaFamilia() {
   const [errorDeCreacion, setErrorDeCreacion] = useState('')
   const { previsualizacion, previsualizando, error: errorDePrevisualizacion, previsualizar, invalidar } = usePrevisualizacion()
   const creandoRef = useRef(false)
+  const montado = useMontado()
 
   const bloqueado = previsualizando || creando
   const excedido = elegidos.length > LIMITE_DE_ARTICULOS
   // Si la referencia ya tiene familia, la previsualización lo sabe (`idFamilia`): agrupar sería sumar a ESA familia,
   // que es lo que hace el detalle de la familia, no esta pantalla.
-  const referenciaConFamilia = previsualizacion !== null && previsualizacion.idFamilia !== null
+  const idFamiliaDeLaReferencia = previsualizacion?.idFamilia ?? null
+  const referenciaConFamilia = idFamiliaDeLaReferencia !== null
   const sinProblemas = previsualizacion !== null && previsualizacion.problemas.length === 0 && !referenciaConFamilia
-  const listoParaCrear = sinProblemas && referencia !== null && nombre.trim() !== ''
+  const listoParaCrear = listaParaCrear(referencia, sinProblemas, nombre)
 
   const articulosPorId = new Map<number, ArticuloElegido>(elegidos.map((a) => [a.id, a]))
 
@@ -72,15 +86,17 @@ export function NuevaFamilia() {
     setErrorDeCreacion('')
   }
 
-  function pedirPrevisualizacion() {
-    if (referencia === null) return
-
-    setErrorDeCreacion('')
-    void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id) })
-  }
+  // Sin referencia el botón "Previsualizar" está deshabilitado y no tiene qué hacer.
+  const pedirPrevisualizacion =
+    referencia === null
+      ? undefined
+      : () => {
+          setErrorDeCreacion('')
+          void previsualizar({ idArticuloReferencia: referencia.id, idsArticulos: elegidos.map((a) => a.id) })
+        }
 
   async function crear() {
-    if (creandoRef.current || !listoParaCrear || referencia === null) return
+    if (creandoRef.current || !listaParaCrear(referencia, sinProblemas, nombre)) return
 
     creandoRef.current = true
     setCreando(true)
@@ -91,9 +107,11 @@ export function NuevaFamilia() {
         idArticuloReferencia: referencia.id,
         idsArticulos: elegidos.map((a) => a.id),
       })
+      // Quien se fue mientras tanto (el menú, el Atrás) no vuelve a una pantalla que no pidió.
+      if (!montado.current) return
       navegar(`/familias/${resultado.idFamilia}`, { state: { aviso: avisoDeCreacion(resultado) } })
     } catch (e) {
-      setErrorDeCreacion(mensajeDeError(e, 'crear la familia'))
+      setErrorDeCreacion(mensajeDeFalloDeEscritura(e, 'crear la familia'))
       // La foto quedó vieja (otro escritor cambió algo): hay que volver a previsualizar. Un rechazo del nombre no
       // habla de lo previsualizado, así que lo conserva.
       if (!(e instanceof ErrorApi && CODIGOS_DEL_NOMBRE.includes(e.codigo))) invalidar()
@@ -105,7 +123,14 @@ export function NuevaFamilia() {
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <Link to="/familias" className="btn btn-sm btn-outline-secondary text-nowrap">
+      <Link
+        to="/familias"
+        className="btn btn-sm btn-outline-secondary text-nowrap"
+        aria-disabled={creando}
+        onClick={(evento) => {
+          if (creando) evento.preventDefault()
+        }}
+      >
         Volver al listado
       </Link>
     </nav>
@@ -116,7 +141,7 @@ export function NuevaFamilia() {
       <Box titulo="Nueva familia" variante="inverse" herramientas={herramientas}>
         <div className="alert alert-info">
           Todos los artículos de la familia toman del artículo de referencia sus campos compartidos (
-          {CAMPOS_COMPARTIDOS.map((c) => c.etiqueta.toLowerCase()).join(', ')}) y el precio de cada lista de precios fija: los que ya
+          {CAMPOS_COMPARTIDOS.map((c) => etiquetaEnMinuscula(c.etiqueta)).join(', ')}) y el precio de cada lista de precios fija: los que ya
           tengan otros valores o precios pasan a tener los de la referencia. Son propios de cada artículo: {CAMPOS_PROPIOS}.
         </div>
 
@@ -192,9 +217,12 @@ export function NuevaFamilia() {
 
           {previsualizacion && (
             <div className="mb-3">
-              {referenciaConFamilia && (
+              {idFamiliaDeLaReferencia !== null && (
                 <div className="alert alert-danger" role="alert">
-                  {AYUDA_DE_REFERENCIA_CON_FAMILIA}
+                  {AYUDA_DE_REFERENCIA_CON_FAMILIA}{' '}
+                  <Link to={`/familias/${idFamiliaDeLaReferencia}`} className="alert-link">
+                    Ver el detalle de su familia
+                  </Link>
                 </div>
               )}
               <VistaDePrevisualizacion

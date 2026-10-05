@@ -120,6 +120,25 @@ describe('Familias — listado', () => {
     expect(await screen.findByText('No se pudieron cargar las familias.')).toBeInTheDocument()
   })
 
+  /** Cláusula bajo prueba: `errorDeCarga === ''` en la fila vacía de la tabla. Un listado que no se pudo cargar no está
+   * vacío: decir "Todavía no hay familias." contradice el error que está al lado. Evidencia de mutación
+   * (mutation-proof-tests): sacar esa condición hace fallar las dos; revertido, vuelven a verde. */
+  it.each<[string, () => unknown, string]>([
+    ['un rechazo del servidor', () => new ErrorApi(500, 'error_interno', 'Se cayó el listado.'), 'Se cayó el listado.'],
+    ['la red caída', () => new TypeError('Failed to fetch'), 'No se pudieron cargar las familias.'],
+  ])('con %s no dice que todavía no hay familias', async (_caso, error, mensaje) => {
+    apiGetMock.mockRejectedValue(error())
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(mensaje)).toBeInTheDocument()
+
+    expect(screen.queryByText('Todavía no hay familias.')).not.toBeInTheDocument()
+  })
+
   /** Cláusula bajo prueba: la generación de `cargar` (react-async-state regla 2). Bajo StrictMode el efecto de carga corre
    * dos veces: la respuesta tardía de la primera lectura no pisa a la de la segunda. Evidencia de mutación
    * (mutation-proof-tests): sacar el `if (generacion.current !== token) return` de la rama de éxito hace fallar este
@@ -193,6 +212,7 @@ describe('Familias — listado', () => {
     await montarYEsperar()
 
     expect(screen.getByText(new RegExp(`Son propios de cada artículo: ${CAMPOS_PROPIOS}`))).toBeInTheDocument()
+    expect(screen.getByText(/en el precio de cada lista de precios fija: lo que se cambia en uno se aplica a todos/)).toBeInTheDocument()
   })
 
   it('"Nueva familia" lleva a la pantalla de alta', async () => {
@@ -292,6 +312,68 @@ describe('Familias — renombrar y activar o desactivar', () => {
     expect(screen.getByText('Editando familia 7')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(screen.queryByText(/Se actualizó/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: `setError('')` de `cancelarEdicion`: el rechazo del guardado pertenece al formulario, y
+   * cerrarlo lo saca de pantalla. Evidencia de mutación (mutation-proof-tests): sacar esa línea hace fallar este test;
+   * revertido, vuelve a verde. */
+  it('"Cancelar" después de un guardado rechazado saca el rechazo de pantalla', async () => {
+    apiPutMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe una familia llamada "Talles" en este tenant.'))
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText(/Ya existe una familia llamada "Talles"/)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Ya existe una familia llamada "Talles"/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: la rama `estado === 404` del `catch` de `guardar`. Un formulario abierto sobre una familia que ya
+   * no existe ofrecería guardar de nuevo contra el mismo 404: se cierra y se vuelve a leer el listado. Evidencia de
+   * mutación (mutation-proof-tests): sacar la rama hace fallar este test (el formulario sigue abierto y el listado, sin
+   * releer); revertido, vuelve a verde. */
+  it('un 404 al guardar (la familia ya no existe) rinde el rechazo, cierra el formulario y vuelve a leer el listado', async () => {
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => Promise.resolve(++lecturas === 1 ? [sabores, talles] : [talles]))
+    apiPutMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('No existe la familia 7.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Sabores')).not.toBeInTheDocument())
+    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
+    expect(lecturas).toBe(2)
+    expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled()
+  })
+
+  /** Cláusula bajo prueba: `mensajeDeFalloDeEscritura` en `guardar`: con un 5xx o la red caída no se sabe si el PUT llegó
+   * a commitear. Evidencia de mutación (mutation-proof-tests): volver a `mensajeDeError` hace fallar estas dos;
+   * revertido, vuelven a verde. */
+  it.each<[string, () => unknown]>([
+    ['un 5xx sin código estable', () => new ErrorApi(500, 'error_interno', 'Se cayó el servidor.')],
+    ['la red caída', () => new TypeError('Failed to fetch')],
+  ])('con %s no se sabe si se guardó: lo dice, sin el texto del servidor, y el formulario sigue abierto', async (_caso, error) => {
+    apiPutMock.mockRejectedValue(error())
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText('No se pudo guardar la familia. No se pudo confirmar el resultado: verificá el listado antes de reintentar.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Se cayó el servidor/)).not.toBeInTheDocument()
+    expect(screen.getByText('Editando familia 7')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 
   /** Cláusula bajo prueba: `bloqueado` deja inerte la pantalla entera mientras el PUT está en vuelo (react-async-state
@@ -618,19 +700,47 @@ describe('Familias — disolver', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
-  it('un 404 rinde la copia neutra con la puerta abierta, y "Cancelar" se la lleva', async () => {
+  /** Cláusula bajo prueba: la rama `estado === 404` del `catch` de `confirmarDisolucion`. Una familia que ya no existe no
+   * se puede disolver: la puerta no tiene nada que confirmar, así que se cierra y el listado se vuelve a leer. La copia
+   * neutra queda a la vista. Evidencia de mutación (mutation-proof-tests): sacar la rama hace fallar este test (la puerta
+   * sigue abierta y el listado, sin releer); revertido, vuelve a verde. */
+  it('un 404 rinde la copia neutra, cierra la puerta y vuelve a leer el listado', async () => {
+    let lecturas = 0
+    apiGetMock.mockImplementation(() => Promise.resolve(++lecturas === 1 ? [sabores, talles] : [talles]))
     apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
-    await montarYEsperar()
+    render(
+      <MemoryRouter>
+        <Familias />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Sabores')
     await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
 
     const copia = 'No se pudo disolver la familia. Ya no existe o no está a tu alcance. Actualizá el listado.'
     expect(await screen.findByText(copia)).toBeInTheDocument()
-    expect(puerta()).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByText(/No existe la familia 7/)).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByText(copia)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Sabores')).not.toBeInTheDocument())
+    expect(lecturas).toBe(2)
+    expect(screen.getByRole('button', { name: 'Editar Talles' })).toBeEnabled()
+    expect(screen.getByText(copia)).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el `setFormulario(...)` de esa misma rama: el formulario abierto sobre la familia que ya no
+   * existe se cierra. Evidencia de mutación (mutation-proof-tests): sacarlo hace fallar este test; revertido, vuelve a
+   * verde. */
+  it('un 404 al disolver la familia que se está editando cierra también su formulario', async () => {
+    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.'))
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Editar Sabores' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
+
+    await screen.findByText(/Ya no existe o no está a tu alcance/)
+    expect(screen.queryByText('Editando familia 7')).not.toBeInTheDocument()
   })
 
   it('disolver la familia que se está editando cierra también su formulario', async () => {

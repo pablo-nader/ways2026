@@ -116,7 +116,7 @@ describe('useCatalogosDeFamilias', () => {
     )
   })
 
-  /** Cláusula bajo prueba: el `cancelado` de la lectura (react-async-state regla 1). En StrictMode el efecto corre dos
+  /** Cláusula bajo prueba: el `cancelado` de la lectura (react-async-state regla 2). En StrictMode el efecto corre dos
    * veces; la respuesta tardía de la primera corrida no puede pisar a la de la segunda. */
   it('bajo StrictMode, la respuesta tardía de la primera corrida no pisa a la de la segunda', async () => {
     const vieja = diferida<unknown>()

@@ -64,7 +64,26 @@ function CambiosDelArticulo({
   nombres: NombresDeCatalogo
   listas: ReadonlyMap<number, string>
 }) {
-  const sinCambios = cambios.campos.length === 0 && cambios.precios.length === 0
+  // Una columna que el cliente no conoce se muestra por su nombre: el servidor dice que cambia aunque acá no se pueda decir
+  // de qué a qué. Un valor conocido cuyos dos lados se muestran igual no es un cambio para quien lo mira (dos filas de
+  // catálogo dadas de baja se ven "Sin asignar", dos importes que difieren por debajo del centavo se ven iguales): no se
+  // lista.
+  const filasDeCampos = cambios.campos.flatMap((columna) => {
+    const campo = CAMPOS_COMPARTIDOS.find((c) => c.columna === columna)
+    if (campo === undefined) return [{ columna, etiqueta: columna, actual: '—', nuevo: '—' }]
+
+    const actual = formatearValorCompartido(campo.clave, cambios.actual, nombres)
+    const nuevo = formatearValorCompartido(campo.clave, cambios.nuevo, nombres)
+
+    return actual === nuevo ? [] : [{ columna, etiqueta: campo.etiqueta, actual, nuevo }]
+  })
+  const filasDePrecios = cambios.precios.flatMap((precio) => {
+    const actual = describirEstadoDePrecios(precio.actual)
+    const nuevo = describirEstadoDePrecios(precio.nuevo)
+
+    return actual === nuevo ? [] : [{ idListaPrecio: precio.idListaPrecio, actual, nuevo }]
+  })
+  const sinCambios = filasDeCampos.length === 0 && filasDePrecios.length === 0
 
   return (
     <section className="mb-3" aria-label={nombreDelArticulo(cambios.idArticulo, articulos)}>
@@ -72,7 +91,7 @@ function CambiosDelArticulo({
 
       {sinCambios && <p className="text-muted small mb-0">Ya está alineado con la referencia: no cambia nada.</p>}
 
-      {cambios.campos.length > 0 && (
+      {filasDeCampos.length > 0 && (
         <div className="table-responsive">
           <table className="table table-sm table-bordered align-middle mb-2">
             <thead>
@@ -83,22 +102,19 @@ function CambiosDelArticulo({
               </tr>
             </thead>
             <tbody>
-              {cambios.campos.map((columna) => {
-                const campo = CAMPOS_COMPARTIDOS.find((c) => c.columna === columna)
-                return (
-                  <tr key={columna}>
-                    <td>{campo?.etiqueta ?? columna}</td>
-                    <td>{campo === undefined ? '—' : formatearValorCompartido(campo.clave, cambios.actual, nombres)}</td>
-                    <td>{campo === undefined ? '—' : formatearValorCompartido(campo.clave, cambios.nuevo, nombres)}</td>
-                  </tr>
-                )
-              })}
+              {filasDeCampos.map((fila) => (
+                <tr key={fila.columna}>
+                  <td>{fila.etiqueta}</td>
+                  <td>{fila.actual}</td>
+                  <td>{fila.nuevo}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {cambios.precios.length > 0 && (
+      {filasDePrecios.length > 0 && (
         <div className="table-responsive">
           <table className="table table-sm table-bordered align-middle mb-0">
             <thead>
@@ -109,11 +125,11 @@ function CambiosDelArticulo({
               </tr>
             </thead>
             <tbody>
-              {cambios.precios.map((precio) => (
+              {filasDePrecios.map((precio) => (
                 <tr key={precio.idListaPrecio}>
                   <td>{listas.get(precio.idListaPrecio) ?? `Lista ${precio.idListaPrecio}`}</td>
-                  <td>{describirEstadoDePrecios(precio.actual)}</td>
-                  <td>{describirEstadoDePrecios(precio.nuevo)}</td>
+                  <td>{precio.actual}</td>
+                  <td>{precio.nuevo}</td>
                 </tr>
               ))}
             </tbody>

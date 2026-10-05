@@ -99,11 +99,11 @@ const COPIA_NO_ENCONTRADO = 'Ya no existe o no está a tu alcance. Actualizá el
  * a restablecer la contraseña del admin). Por eso un 5xx CON `resultado_incierto` rinde el texto
  * del servidor y este fallback queda solo para el 5xx que de verdad no dice nada.
  */
-const COPIA_RESULTADO_INCIERTO =
+export const COPIA_RESULTADO_INCIERTO =
   'No se pudo confirmar el resultado: verificá el listado antes de reintentar.'
 
 /** El código con el que el servidor marca un commit ambiguo (`ManejadorDeErrores`). */
-const CODIGO_RESULTADO_INCIERTO = 'resultado_incierto'
+export const CODIGO_RESULTADO_INCIERTO = 'resultado_incierto'
 
 /**
  * Texto a rendir ante un fallo de baja: `{mensaje del servidor} {guía elegida por el código}`.

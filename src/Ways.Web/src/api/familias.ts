@@ -27,8 +27,11 @@ export const clienteDeFamilias = {
   /** Crea la familia y la agrupa. Todo o nada: 400 `referencia_invalida` o `demasiados_articulos`, 409
    * `familia_nombre_duplicado` o `articulo_en_otra_familia`, 422 `familia_precio_inalineable`. */
   crear: (alta: AltaDeFamilia) => api.post<ResultadoDeAgrupacion>('/familias', alta),
-  /** Suma artículos que ya existen a la familia, alineados con su referencia. Los mismos rechazos que `crear`, más
-   * 409 `familia_inactiva` y `familia_sin_articulos`, y 400 `articulos_requeridos` con la lista vacía. */
+  /** Suma artículos que ya existen a la familia, alineados con su referencia (su miembro vivo de menor id). Rechaza sin
+   * escribir: 400 `articulos_requeridos` con la lista vacía, 400 `demasiados_articulos` (por la lista o por los pares) o
+   * `referencia_invalida`, 404 si la familia no existe o está dada de baja, 409 `familia_inactiva`,
+   * `familia_sin_articulos` o `articulo_en_otra_familia`, y 422 `familia_precio_inalineable`. Un artículo que ya es
+   * miembro de esta familia no es un rechazo: se alinea igual. */
   agregarArticulos: (id: number, datos: AgregadoDeArticulos) =>
     api.post<ResultadoDeAgrupacion>(`/familias/${id}/articulos`, datos),
   /** Cambia el nombre y el estado; responde la familia como el listado. 409 `familia_nombre_duplicado`. */

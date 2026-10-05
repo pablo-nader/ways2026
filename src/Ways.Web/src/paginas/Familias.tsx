@@ -9,7 +9,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { CAMPOS_PROPIOS, cantidadDeArticulos } from './articulos/familia'
-import { mensajeDeError } from './familias/mensajes'
+import { mensajeDeFalloDeEscritura } from './familias/mensajes'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_DISOLUCION = 'Se disolvió, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -31,14 +31,17 @@ function notaDeDisolucion(familia: FamiliaListado): string {
 
 /**
  * Listado de familias de artículos (doc 10 §3): renombrar, activar o desactivar y disolver; el detalle y las
- * altas están en `/familias/:id` y `/familias/nueva`. Mismo patrón de puerta y re-entrancia que `Categorias.tsx` y
- * `EquiposPos.tsx` (`react-async-state` reglas 9 a 13): `bloqueado` deja inerte la pantalla entera mientras el
- * guardado, la disolución o la puerta están abiertos, así que nada supera a una escritura en vuelo y solo las
- * lecturas llevan generación; un espejo sincrónico frena el doble clic en el mismo tick.
+ * altas están en `/familias/:id` y `/familias/nueva`. `bloqueado` deja inerte la pantalla entera mientras el
+ * guardado, la disolución o la puerta (`ConfirmacionDeBaja`) están abiertos —los enlaces, con `preventDefault`—, así
+ * que nada supera a una escritura en vuelo: solo las lecturas llevan generación (la más nueva gana) y las escrituras
+ * no, a diferencia de `Categorias.tsx`, donde guardar y dar de baja acuñan el suyo. Un espejo sincrónico
+ * (`ocupadoRef`) frena el doble clic en el mismo tick (`react-async-state` reglas 9, 11 y 13).
  */
 export function Familias() {
   const [items, setItems] = useState<FamiliaListado[]>([])
   const [cargando, setCargando] = useState(true)
+  // Un slot por fuente (react-async-state regla 14): el fallo de la lectura y el rechazo de una escritura no se pisan.
+  const [errorDeCarga, setErrorDeCarga] = useState('')
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
@@ -60,10 +63,11 @@ export function Familias() {
       const filas = await clienteDeFamilias.listar()
       if (generacion.current !== token) return
       setItems(filas)
+      setErrorDeCarga('')
     } catch (e) {
       if (generacion.current !== token) return
       if (propagar) throw e
-      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las familias.')
+      setErrorDeCarga(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las familias.')
     } finally {
       if (generacion.current === token) setCargando(false)
     }
@@ -97,7 +101,13 @@ export function Familias() {
       try {
         await clienteDeFamilias.actualizar(datos.id, { nombre, activo: datos.activo })
       } catch (e) {
-        setError(mensajeDeError(e, 'guardar la familia'))
+        setError(mensajeDeFalloDeEscritura(e, 'guardar la familia'))
+        // La familia ya no existe: el formulario ofrecería guardar sobre algo que dejó de estar, así que se cierra y se
+        // vuelve a leer el listado.
+        if (e instanceof ErrorApi && e.estado === 404) {
+          setFormulario(null)
+          await cargar(++generacion.current)
+        }
 
         return
       }
@@ -135,6 +145,13 @@ export function Familias() {
         await clienteDeFamilias.disolver(familia.id)
       } catch (e) {
         setError(copiaDeFalloDeBaja(e, 'la familia', 'disolver'))
+        // La familia ya no existe: no hay nada que confirmar, así que la puerta se cierra, se cierra el formulario de
+        // esa familia si estaba abierto y se vuelve a leer el listado.
+        if (e instanceof ErrorApi && e.estado === 404) {
+          setDisolucion(null)
+          setFormulario((prev) => (prev?.id === familia.id ? null : prev))
+          await cargar(++generacion.current)
+        }
 
         return
       }
@@ -156,6 +173,11 @@ export function Familias() {
   function abrirEdicion(familia: FamiliaListado) {
     setFormulario({ id: familia.id, nombre: familia.nombre, activo: familia.activo })
     setAviso('')
+    setError('')
+  }
+
+  function cancelarEdicion() {
+    setFormulario(null)
     setError('')
   }
 
@@ -181,10 +203,11 @@ export function Familias() {
     <div className="container-fluid py-4">
       <Box titulo="Familias" variante="inverse" herramientas={herramientas}>
         <p className="text-muted">
-          Una familia agrupa artículos idénticos en sus campos compartidos y en el precio de cada lista: lo que se cambia en uno
+          Una familia agrupa artículos idénticos en sus campos compartidos y en el precio de cada lista de precios fija: lo que se cambia en uno
           se aplica a todos. Son propios de cada artículo: {CAMPOS_PROPIOS}.
         </p>
 
+        {errorDeCarga && <div className="alert alert-danger">{errorDeCarga}</div>}
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
 
@@ -209,7 +232,7 @@ export function Familias() {
             bloqueado={bloqueado}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
+            onCancelar={cancelarEdicion}
           />
         )}
 
@@ -266,7 +289,7 @@ export function Familias() {
                     </td>
                   </tr>
                 ))}
-                {items.length === 0 && (
+                {items.length === 0 && errorDeCarga === '' && (
                   <tr>
                     <td colSpan={4} className="text-center text-muted py-4">
                       Todavía no hay familias.
