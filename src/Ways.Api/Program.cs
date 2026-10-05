@@ -199,6 +199,17 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ManejadorDeErrores>();
 builder.Services.AddOpenApi();
 
+// Con la política de ruteo por Content-Type, un endpoint con cuerpo JSON queda descartado ante un
+// Content-Type que no es JSON o ante ninguno, y la ruta de respaldo, que acepta cualquier tipo, responde 404.
+// Sin ella el endpoint se selecciona igual y es el binding el que rechaza la solicitud (415 si el cuerpo no
+// es JSON), que ManejadorDeErrores traduce a solicitud_invalida. A cambio, dos endpoints no pueden compartir
+// ruta y método distinguiéndose solo por el Content-Type. Va después de todo registro de servicios porque un
+// AddRouting posterior la volvería a agregar, y Single hace fallar el arranque si el framework renombra el tipo.
+var politicaPorContentType = builder.Services.Single(servicio =>
+    servicio.ServiceType == typeof(MatcherPolicy)
+    && servicio.ImplementationType?.FullName == "Microsoft.AspNetCore.Routing.Matching.AcceptsMatcherPolicy");
+builder.Services.Remove(politicaPorContentType);
+
 var app = builder.Build();
 
 // Tiene que ir primero: todo lo que sigue depende de saber el esquema real.
