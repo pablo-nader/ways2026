@@ -40,12 +40,17 @@ public static class CajaEndpoints
         })
         .WithSummary("Fuente de verdad del gate seam de Pos.tsx: 200 con el turno abierto o 200 con null.");
 
-        grupo.MapGet("/{id:int}", async (ServicioDeTurnos servicio, int id, CancellationToken ct) =>
-            Results.Ok(await servicio.ObtenerAsync(id, ct)))
+        grupo.MapGet("/{id:int}", async (
+            ServicioDeTurnos servicio, VisibilidadDeTurnos visibilidad, int id, CancellationToken ct) =>
+        {
+            await visibilidad.ExigirVisibleAsync(id, ct);
+            return Results.Ok(await servicio.ObtenerAsync(id, ct));
+        })
         .WithSummary("Turno por id (payload del Z-report).");
 
-        grupo.MapGet("/", (
+        grupo.MapGet("/", async (
             ServicioDeTurnos servicio,
+            VisibilidadDeTurnos visibilidad,
             int? idPuntoVenta,
             DateTimeOffset? desde,
             DateTimeOffset? hasta,
@@ -53,7 +58,10 @@ public static class CajaEndpoints
             int? tamanio,
             EstadoTurno? estado,
             CancellationToken ct) =>
-            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, estado, ct))
+        {
+            var visibles = await visibilidad.ResolverPredicadoAsync(ct);
+            return await servicio.ListarAsync(visibles, idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, estado, ct);
+        })
         .WithSummary("Historial de turnos, paginado.");
 
         // task 2.6, design: API Surface — retiro / refuerzo / apertura de cajón contra el turno
@@ -70,8 +78,11 @@ public static class CajaEndpoints
         // derivación que el cierre (spec: Resumen Parcial Uses The Same Derivation As Cierre),
         // de solo lectura.
         grupo.MapGet("/{id:int}/resumen", async (
-            ServicioDeResumenDeTurno servicio, int id, CancellationToken ct) =>
-            Results.Ok(await servicio.ObtenerAsync(id, ct)))
+            ServicioDeResumenDeTurno servicio, VisibilidadDeTurnos visibilidad, int id, CancellationToken ct) =>
+        {
+            await visibilidad.ExigirVisibleAsync(id, ct);
+            return Results.Ok(await servicio.ObtenerAsync(id, ct));
+        })
         .WithSummary("Resumen parcial del turno — misma derivación que el cierre.");
 
         // stage-6-turnos-caja (Slice 4, task 4.7, design: The Cierre Transaction): cierre —
@@ -97,8 +108,11 @@ public static class CajaEndpoints
         // sirve para cualquier turno cerrado, por retiro o por el cierre clásico (ver el
         // doc-comment de ServicioDeTurnos.ObtenerResumenDeCierreAsync).
         grupo.MapGet("/{id:int}/resumen-de-cierre", async (
-            ServicioDeTurnos servicio, int id, CancellationToken ct) =>
-            Results.Ok(await servicio.ObtenerResumenDeCierreAsync(id, ct)))
+            ServicioDeTurnos servicio, VisibilidadDeTurnos visibilidad, int id, CancellationToken ct) =>
+        {
+            await visibilidad.ExigirVisibleAsync(id, ct);
+            return Results.Ok(await servicio.ObtenerResumenDeCierreAsync(id, ct));
+        })
         .WithSummary("Resumen de un cierre ya persistido — reimpresión / recuperación tras una falla de red ambigua.");
 
         // stage-11-exportacion-reportes, Slice 5a (design "The load-bearing refinement of the
@@ -110,8 +124,9 @@ public static class CajaEndpoints
         // lecturas indexadas llanas — sin escritura, sin agregado nuevo.
         grupo.MapGet("/{id:int}/detalle", async (
             ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas, IWaysDbContext db,
-            int id, CancellationToken ct) =>
+            VisibilidadDeTurnos visibilidad, int id, CancellationToken ct) =>
         {
+            await visibilidad.ExigirVisibleAsync(id, ct);
             var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
             var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
             var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
@@ -136,9 +151,11 @@ public static class CajaEndpoints
             ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas,
             IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int id, string formato, CancellationToken ct) =>
+            VisibilidadDeTurnos visibilidad, int id, string formato, CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
+
+            await visibilidad.ExigirVisibleAsync(id, ct);
 
             // 404 ADR-8 si el turno no existe o es de otro tenant — misma resolución que /detalle,
             // ANTES de leer punto de venta/fechas para el encabezado.

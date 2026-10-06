@@ -121,7 +121,7 @@ public static class PoliticaDeModoDePuntoVenta
 
     /// <summary>Único lookup dispositivo→punto de venta, compartido por las dos reglas de esta
     /// clase — nunca duplicado (ver el doc-comment de la clase).</summary>
-    private static async Task<int?> ResolverIdPuntoVentaDelDispositivoAsync(
+    public static async Task<int?> ResolverIdPuntoVentaDelDispositivoAsync(
         IWaysDbContext db, int idDispositivo, CancellationToken ct) =>
         await db.Dispositivos
             .Where(d => d.Id == idDispositivo)
