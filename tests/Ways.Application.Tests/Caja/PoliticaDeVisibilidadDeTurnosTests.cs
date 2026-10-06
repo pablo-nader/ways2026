@@ -12,6 +12,8 @@ public class PoliticaDeVisibilidadDeTurnosTests
     private const int Otro = 20;
     private const int PuntoVentaDelDispositivo = 5;
     private const int OtroPuntoVenta = 6;
+    private const int PuntoVentaWeb = 7;
+    private static readonly int[] PuntosVentaWeb = [PuntoVentaWeb];
 
     private static TurnoCaja Turno(
         int apertura, int? cierre, EstadoTurno estado, int puntoVenta = OtroPuntoVenta) => new()
@@ -23,7 +25,7 @@ public class PoliticaDeVisibilidadDeTurnosTests
     };
 
     private static bool Visible(RolConocido rol, int? puntoVentaDelDispositivo, TurnoCaja turno) =>
-        PoliticaDeVisibilidadDeTurnos.Predicado(rol, Yo, puntoVentaDelDispositivo).Compile()(turno);
+        PoliticaDeVisibilidadDeTurnos.Predicado(rol, Yo, puntoVentaDelDispositivo, PuntosVentaWeb).Compile()(turno);
 
     [Theory]
     [InlineData(RolConocido.Admin)]
@@ -46,6 +48,25 @@ public class PoliticaDeVisibilidadDeTurnosTests
     [Fact]
     public void ElVendedorWebNoVeElTurnoAbiertoAjeno() =>
         Assert.False(Visible(RolConocido.Vendedor, null, Turno(Otro, null, EstadoTurno.Abierto, PuntoVentaDelDispositivo)));
+
+    [Fact]
+    public void ElVendedorWebVeElTurnoAbiertoAjenoDeUnPuntoDeVentaWeb() =>
+        Assert.True(Visible(RolConocido.Vendedor, null, Turno(Otro, null, EstadoTurno.Abierto, PuntoVentaWeb)));
+
+    [Fact]
+    public void ElVendedorWebNoVeUnTurnoCerradoAjenoDeUnPuntoDeVentaWeb() =>
+        Assert.False(Visible(RolConocido.Vendedor, null, Turno(Otro, Otro, EstadoTurno.Cerrado, PuntoVentaWeb)));
+
+    [Fact]
+    public void ElVendedorDeDispositivoNoVeElTurnoAbiertoAjenoDeUnPuntoDeVentaWebSalvoQueSeaSuyo() =>
+        Assert.False(Visible(
+            RolConocido.Vendedor, PuntoVentaDelDispositivo, Turno(Otro, null, EstadoTurno.Abierto, PuntoVentaWeb)));
+
+    [Fact]
+    public void ElVendedorWebSinPuntosDeVentaWebSoloVeLosPropios() =>
+        Assert.False(PoliticaDeVisibilidadDeTurnos
+            .Predicado(RolConocido.Vendedor, Yo, null, [])
+            .Compile()(Turno(Otro, null, EstadoTurno.Abierto, PuntoVentaWeb)));
 
     [Fact]
     public void ElVendedorDeDispositivoVeElTurnoAbiertoAjenoDeSuPuntoDeVenta() =>

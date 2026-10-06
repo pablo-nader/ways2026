@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
@@ -184,11 +185,15 @@ public class ServicioDeTurnos(
 
     /// <summary>Fuente de verdad del gate seam de <c>Pos.tsx</c> (design: API Surface, <c>GET
     /// /api/caja/turnos/abierto</c>): a diferencia de <see cref="ResolverTurnoAbiertoAsync"/>,
-    /// nunca lanza — <c>null</c> es una respuesta válida (200), no un error.</summary>
-    public async Task<TurnoResumen?> ObtenerAbiertoAsync(int idPuntoVenta, CancellationToken ct = default)
+    /// nunca lanza — <c>null</c> es una respuesta válida (200), no un error. <paramref
+    /// name="visible"/> es el predicado de <see cref="PoliticaDeVisibilidadDeTurnos"/>: un turno
+    /// abierto que la sesión no puede ver se responde igual que un punto de venta sin turno.</summary>
+    public async Task<TurnoResumen?> ObtenerAbiertoAsync(
+        int idPuntoVenta, Expression<Func<TurnoCaja, bool>> visible, CancellationToken ct = default)
     {
         var turno = await db.TurnosCaja
             .Where(t => t.IdPuntoVenta == idPuntoVenta && t.Estado == EstadoTurno.Abierto)
+            .Where(visible)
             .FirstOrDefaultAsync(ct);
 
         return turno is null ? null : Proyectar(turno);

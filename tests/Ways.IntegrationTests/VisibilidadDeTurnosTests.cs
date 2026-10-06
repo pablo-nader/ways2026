@@ -51,7 +51,13 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
         int AbiertoPropioDeA,
         int AbiertoAjenoDeOtroPuntoDeVenta,
         int AbiertoPorElCajeroEnOtroPuntoDeVenta,
-        int CerradoPorElCajeroEnOtroPuntoDeVenta);
+        int CerradoPorElCajeroEnOtroPuntoDeVenta,
+        int AbiertoDeBEnUnPuntoDeVentaWeb,
+        int CerradoDeBEnUnPuntoDeVentaWeb,
+        int IdPuntoVentaWeb,
+        int IdPuntoVentaDelDispositivo,
+        int IdPuntoVentaEscritorioPropioDeA,
+        int IdPuntoVentaEscritorioAjeno);
 
     // ---- siembra -------------------------------------------------------------------------------
 
@@ -120,7 +126,9 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
         var puntoVentaPropio = NuevoPuntoVenta(resultado.IdTenant, idEmpresa, "Local 2", ahora);
         var puntoVentaAjeno = NuevoPuntoVenta(resultado.IdTenant, idEmpresa, "Local 3", ahora);
         var puntoVentaDelCajero = NuevoPuntoVenta(resultado.IdTenant, idEmpresa, "Local 4", ahora);
-        db.PuntosVenta.AddRange(puntoVentaPropio, puntoVentaAjeno, puntoVentaDelCajero);
+        var puntoVentaWeb = NuevoPuntoVenta(resultado.IdTenant, idEmpresa, "Web 1", ahora);
+        puntoVentaWeb.Modo = ModoPuntoVenta.Web;
+        db.PuntosVenta.AddRange(puntoVentaPropio, puntoVentaAjeno, puntoVentaDelCajero, puntoVentaWeb);
         await db.SaveChangesAsync();
 
         var cerradoAjeno = NuevoTurno(resultado.IdTenant, resultado.IdPuntoVenta, idB, idB, ahora.AddHours(-6), ahora);
@@ -130,15 +138,19 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
         var abiertoAjenoOtroPv = NuevoTurno(resultado.IdTenant, puntoVentaAjeno.Id, idB, null, ahora.AddHours(-1), ahora);
         var abiertoPorElCajeroEnOtroPv = NuevoTurno(resultado.IdTenant, puntoVentaDelCajero.Id, idCajero, null, ahora.AddHours(-2), ahora);
         var cerradoPorElCajeroEnOtroPv = NuevoTurno(resultado.IdTenant, puntoVentaPropio.Id, idB, idCajero, ahora.AddHours(-3), ahora);
+        var abiertoWebDeB = NuevoTurno(resultado.IdTenant, puntoVentaWeb.Id, idB, null, ahora.AddHours(-1), ahora);
+        var cerradoWebDeB = NuevoTurno(resultado.IdTenant, puntoVentaWeb.Id, idB, idB, ahora.AddHours(-9), ahora);
         db.TurnosCaja.AddRange(
             cerradoAjeno, cerradoQueCerroA, abiertoDeB, abiertoPropioDeA, abiertoAjenoOtroPv,
-            abiertoPorElCajeroEnOtroPv, cerradoPorElCajeroEnOtroPv);
+            abiertoPorElCajeroEnOtroPv, cerradoPorElCajeroEnOtroPv, abiertoWebDeB, cerradoWebDeB);
         await db.SaveChangesAsync();
 
         return new Escenario(
             resultado.IdTenant, admin, supervisor, vendedorA, cajero,
             cerradoAjeno.Id, cerradoQueCerroA.Id, abiertoDeB.Id, abiertoPropioDeA.Id, abiertoAjenoOtroPv.Id,
-            abiertoPorElCajeroEnOtroPv.Id, cerradoPorElCajeroEnOtroPv.Id);
+            abiertoPorElCajeroEnOtroPv.Id, cerradoPorElCajeroEnOtroPv.Id,
+            abiertoWebDeB.Id, cerradoWebDeB.Id, puntoVentaWeb.Id, resultado.IdPuntoVenta, puntoVentaPropio.Id,
+            puntoVentaAjeno.Id);
     }
 
     private static PuntoVenta NuevoPuntoVenta(int idTenant, int idEmpresa, string nombre, DateTimeOffset ahora) => new()
@@ -268,11 +280,41 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     [Fact]
-    public async Task ElVendedorWebNoLeeUnTurnoCerradoAjenoDelPuntoDeVentaDeUnDispositivo()
+    public async Task ElVendedorWebLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWebEnLasCincoRutas()
     {
-        var e = await PrepararAsync(nameof(ElVendedorWebNoLeeUnTurnoCerradoAjenoDelPuntoDeVentaDeUnDispositivo));
+        var e = await PrepararAsync(nameof(ElVendedorWebLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWebEnLasCincoRutas));
 
-        await ExigirNoEncontradoEnLasCincoRutasAsync(e.VendedorA, e.CerradoAjeno);
+        await ExigirVisibleEnLasCincoRutasAsync(e.VendedorA, e.AbiertoDeBEnUnPuntoDeVentaWeb, abierto: true);
+    }
+
+    [Fact]
+    public async Task ElVendedorWebNoLeeUnTurnoCerradoAjenoDeUnPuntoDeVentaWeb()
+    {
+        var e = await PrepararAsync(nameof(ElVendedorWebNoLeeUnTurnoCerradoAjenoDeUnPuntoDeVentaWeb));
+
+        await ExigirNoEncontradoEnLasCincoRutasAsync(e.VendedorA, e.CerradoDeBEnUnPuntoDeVentaWeb);
+    }
+
+    [Fact]
+    public async Task ElVendedorWebNoLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWebDadoDeBaja()
+    {
+        var e = await PrepararAsync(nameof(ElVendedorWebNoLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWebDadoDeBaja));
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, e.IdTenant)))
+        {
+            var puntoVenta = await db.PuntosVenta.FirstAsync(p => p.Id == e.IdPuntoVentaWeb);
+            puntoVenta.DeletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        await ExigirNoEncontradoEnLasCincoRutasAsync(e.VendedorA, e.AbiertoDeBEnUnPuntoDeVentaWeb);
+    }
+
+    [Fact]
+    public async Task LaSesionDeDispositivoNoLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWeb()
+    {
+        var e = await PrepararAsync(nameof(LaSesionDeDispositivoNoLeeElTurnoAbiertoAjenoDeUnPuntoDeVentaWeb));
+
+        await ExigirNoEncontradoEnLasCincoRutasAsync(e.CajeroDeDispositivo, e.AbiertoDeBEnUnPuntoDeVentaWeb);
     }
 
     [Fact]
@@ -315,6 +357,71 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
         return documento.RootElement.GetProperty("codigo").GetString()!;
     }
 
+    // ---- /abierto ------------------------------------------------------------------------------
+
+    private static async Task<int?> IdDelAbiertoAsync(HttpClient cliente, int idPuntoVenta)
+    {
+        var respuesta = await cliente.GetAsync($"/api/caja/turnos/abierto?idPuntoVenta={idPuntoVenta}");
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        if (cuerpo == "null")
+        {
+            return null;
+        }
+
+        using var documento = JsonDocument.Parse(cuerpo);
+        return documento.RootElement.GetProperty("id").GetInt32();
+    }
+
+    [Fact]
+    public async Task ElAbiertoDelVendedorWebMuestraElTurnoAjenoDeUnPuntoDeVentaWeb()
+    {
+        var e = await PrepararAsync(nameof(ElAbiertoDelVendedorWebMuestraElTurnoAjenoDeUnPuntoDeVentaWeb));
+
+        Assert.Equal(e.AbiertoDeBEnUnPuntoDeVentaWeb, await IdDelAbiertoAsync(e.VendedorA, e.IdPuntoVentaWeb));
+    }
+
+    [Fact]
+    public async Task ElAbiertoDelVendedorWebEsNullParaUnTurnoAjenoDeUnPuntoDeVentaEscritorio()
+    {
+        var e = await PrepararAsync(nameof(ElAbiertoDelVendedorWebEsNullParaUnTurnoAjenoDeUnPuntoDeVentaEscritorio));
+
+        Assert.Null(await IdDelAbiertoAsync(e.VendedorA, e.IdPuntoVentaEscritorioAjeno));
+        Assert.Null(await IdDelAbiertoAsync(e.VendedorA, e.IdPuntoVentaDelDispositivo));
+    }
+
+    [Fact]
+    public async Task ElAbiertoDelVendedorWebMuestraSuPropioTurnoEnUnPuntoDeVentaEscritorio()
+    {
+        var e = await PrepararAsync(nameof(ElAbiertoDelVendedorWebMuestraSuPropioTurnoEnUnPuntoDeVentaEscritorio));
+
+        Assert.Equal(e.AbiertoPropioDeA, await IdDelAbiertoAsync(e.VendedorA, e.IdPuntoVentaEscritorioPropioDeA));
+    }
+
+    [Fact]
+    public async Task ElAbiertoDeLaSesionDeDispositivoMuestraElDeSuPuntoDeVentaYNullEnElDeOtro()
+    {
+        var e = await PrepararAsync(nameof(ElAbiertoDeLaSesionDeDispositivoMuestraElDeSuPuntoDeVentaYNullEnElDeOtro));
+
+        Assert.Equal(
+            e.AbiertoDeBEnElPuntoDeVentaDelDispositivo,
+            await IdDelAbiertoAsync(e.CajeroDeDispositivo, e.IdPuntoVentaDelDispositivo));
+        Assert.Null(await IdDelAbiertoAsync(e.CajeroDeDispositivo, e.IdPuntoVentaEscritorioAjeno));
+        Assert.Null(await IdDelAbiertoAsync(e.CajeroDeDispositivo, e.IdPuntoVentaWeb));
+    }
+
+    [Fact]
+    public async Task ElAbiertoDeSupervisorYAdminMuestraElTurnoDeCualquierPuntoDeVenta()
+    {
+        var e = await PrepararAsync(nameof(ElAbiertoDeSupervisorYAdminMuestraElTurnoDeCualquierPuntoDeVenta));
+
+        foreach (var cliente in new[] { e.Supervisor, e.Admin })
+        {
+            Assert.Equal(e.AbiertoAjenoDeOtroPuntoDeVenta, await IdDelAbiertoAsync(cliente, e.IdPuntoVentaEscritorioAjeno));
+            Assert.Equal(e.AbiertoDeBEnUnPuntoDeVentaWeb, await IdDelAbiertoAsync(cliente, e.IdPuntoVentaWeb));
+        }
+    }
+
     // ---- listado -------------------------------------------------------------------------------
 
     [Fact]
@@ -324,9 +431,9 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var pagina = await ListarAsync(e.VendedorA);
 
-        Assert.Equal(2, pagina.Total);
+        Assert.Equal(3, pagina.Total);
         Assert.Equal(
-            new[] { e.CerradoQueCerroA, e.AbiertoPropioDeA }.Order(),
+            new[] { e.CerradoQueCerroA, e.AbiertoPropioDeA, e.AbiertoDeBEnUnPuntoDeVentaWeb }.Order(),
             pagina.Items.Select(i => i.Id).Order());
     }
 
@@ -337,7 +444,7 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var pagina = await ListarAsync(e.VendedorA, "?tamanio=1&pagina=2");
 
-        Assert.Equal(2, pagina.Total);
+        Assert.Equal(3, pagina.Total);
         Assert.Single(pagina.Items);
     }
 
@@ -386,8 +493,10 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         Assert.Equal(1, cerrados.Total);
         Assert.Equal(e.CerradoQueCerroA, Assert.Single(cerrados.Items).Id);
-        Assert.Equal(1, abiertos.Total);
-        Assert.Equal(e.AbiertoPropioDeA, Assert.Single(abiertos.Items).Id);
+        Assert.Equal(2, abiertos.Total);
+        Assert.Equal(
+            new[] { e.AbiertoPropioDeA, e.AbiertoDeBEnUnPuntoDeVentaWeb }.Order(),
+            abiertos.Items.Select(i => i.Id).Order());
     }
 
     [Fact]
@@ -399,8 +508,8 @@ public class VisibilidadDeTurnosTests(WaysApiFixture fixture) : IClassFixture<Wa
         {
             var pagina = await ListarAsync(cliente);
 
-            Assert.Equal(7, pagina.Total);
-            Assert.Equal(7, pagina.Items.Count);
+            Assert.Equal(9, pagina.Total);
+            Assert.Equal(9, pagina.Items.Count);
         }
     }
 }

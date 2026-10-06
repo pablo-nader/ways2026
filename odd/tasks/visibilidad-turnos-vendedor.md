@@ -12,7 +12,9 @@ shift of the tenant by id.
 - Supervisor / Admin: every shift of the tenant (unchanged).
 - Vendedor: a shift is visible when `IdEmpleadoApertura` or `IdEmpleadoCierre` is the Vendedor's
   empleado, OR the request comes from a POS device session and the shift belongs to that device's
-  PV, open or closed (shared register + POS "Cierres" reprint screen from #354).
+  PV, open or closed (shared register + POS "Cierres" reprint screen from #354), OR (web session,
+  slice 2) the shift is the OPEN shift of a non-deleted Web-mode PV.
+- `/abierto` returns the open shift only when visible under the same predicate, else 200 `null`.
 - Non-visible id → 404 (ADR-8 indistinguishable from not found).
 - Scope: the five reads + the list (filtered). Writes (`/movimientos`, `/cierre`,
   `/cierre-por-retiro`) unchanged.
@@ -29,7 +31,8 @@ shift of the tenant by id.
 - [x] T2 — Web check: CajaZ / CierreDeCaja / GastosDelTurno tests still green; no web change expected.
 
 ## Acceptance
-- Web Vendedor reading a foreign shift → 404 on each of the five reads; list excludes it.
+- Web Vendedor reading a foreign shift → 404 on each of the five reads; list excludes it — except
+  the open shift of a Web PV (slice 2) → 200.
 - Vendedor reading own (opened or closed) → 200.
 - Vendedor on a device → 200 on any shift (open or closed) of the device's PV; 404 on foreign
   shifts of other PVs.
@@ -56,3 +59,16 @@ shift of the tenant by id.
   Estado==Abierto re-added, apertura/cierre in both branches, role bypass x2, list ignores visibles,
   estado dropped, visibles dropped with estado, device PV unresolved) all killed.
 - T4: judgment-day round 1 (old base) clean; after the rebase and the rule change, round 2 on 84c1bb6d returned no CRITICAL findings (APPROVED). Suggestions: this doc was stale (fixed), one duplicated integration test, /abierto still has no visibility gate (pre-existing, follow-up).
+
+## Slice 2 — `/abierto` + web shared register (2026-10-05, owner decision)
+Gap: web sessions sell only on Web-mode PVs, a Web PV can be shared by several Vendedores and
+selling does not check the opener. With slice 1, Vendedor B on the web gets 404 on `/resumen` and
+`/detalle` of the open shift opened by A, and `/abierto` is ungated.
+Rule change: web Vendedor sees own shifts + the OPEN shift of any Web-mode PV. Device session is
+unchanged (own + any shift of its PV). `/abierto` returns the open shift only if it is visible under
+the same predicate, else 200 `null` (contract "never an error" kept).
+- [x] T5 — Widen the web clause, gate `/abierto` with the predicate, tests + mutation evidence,
+      web/POS screen tests. Route: delegated. Stacked on #355 (branch pnader/visibilidad-turno-abierto).
+- [x] T6 — judgment-day, PR (stacked-to-main), auto-merge.
+- T5 done (delegated writer): `PoliticaDeVisibilidadDeTurnos.Predicado` takes the ids of the tenant's Web-mode PVs (resolved by `VisibilidadDeTurnos` with one query on `db.PuntosVenta`, which the EF filter already limits to live PVs: a PV dado de baja shares nothing since nobody can sell there). Web clause: `Estado == Abierto && idsWeb.Contains(IdPuntoVenta)`; device/Admin/Supervisor unchanged. `/abierto` now filters with the same predicate (`ObtenerAbiertoAsync(idPuntoVenta, visible)`), else literal `null`. Removed the duplicated integration test. Evidence: 6 unit + 12 new integration tests (incl. baja de PV web); 12 mutants killed (web ids -> true, Estado removed, PV query without Modo, /abierto gate removed, /abierto predicate true, web apertura/cierre removed, device PV clause removed, web ids never resolved, IgnoreQueryFilters on PVs); unit 752, integration 3061 (full suite), web 989 green.
+- T6: judgment-day on a536c3a8 APPROVED (no CRITICAL); only suggestion was this stale Rule section (fixed). PR opened with auto-merge.
