@@ -109,6 +109,7 @@ public static class DependencyInjection
         services.AddScoped<LectorDeRendicionDeDispositivos>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
+        services.AddScoped<VisibilidadDeTurnos>();
         services.AddScoped<ServicioDeGastos>();
 
         // stage-7-cuenta-corriente (Slice 2): pago a cuenta (RC) — reusa

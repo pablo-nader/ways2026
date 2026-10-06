@@ -765,8 +765,11 @@ public class ServicioDeTurnos(
     }
 
     /// <summary>Historial paginado (design: API Surface, <c>GET /api/caja/turnos</c>) — mismo
-    /// criterio de paginado que <c>ServicioDeVentas.ListarAsync</c>.</summary>
+    /// criterio de paginado que <c>ServicioDeVentas.ListarAsync</c>. <paramref name="visibles"/>
+    /// es el predicado de <see cref="PoliticaDeVisibilidadDeTurnos"/>: el total y los items salen
+    /// de la misma consulta ya filtrada.</summary>
     public async Task<PaginaDeTurnos> ListarAsync(
+        System.Linq.Expressions.Expression<Func<TurnoCaja, bool>> visibles,
         int? idPuntoVenta = null,
         DateTimeOffset? desde = null,
         DateTimeOffset? hasta = null,
@@ -778,7 +781,7 @@ public class ServicioDeTurnos(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        var query = db.TurnosCaja.AsQueryable();
+        var query = db.TurnosCaja.Where(visibles);
 
         if (estado is { } e)
         {
