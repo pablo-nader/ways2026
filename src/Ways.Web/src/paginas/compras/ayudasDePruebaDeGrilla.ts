@@ -20,6 +20,11 @@ export function filaDeItems(indice: number): HTMLElement {
   return fila
 }
 
+/** Una celda de la fila `indice` por su etiqueta (los nombres accesibles llevan el número de línea). */
+export function celdaDeItems(indice: number, etiqueta: string): HTMLElement {
+  return within(filaDeItems(indice)).getByLabelText(`${etiqueta}, línea ${indice + 1}`)
+}
+
 export type ValoresDeFila = {
   codigo?: string
   detalle?: string
@@ -32,13 +37,13 @@ export type ValoresDeFila = {
 
 /** Carga una fila en el orden de lectura de la grilla; solo toca lo que se pasa. */
 export async function cargarFila(usuario: UsuarioDePrueba, indice: number, valores: ValoresDeFila): Promise<void> {
-  const fila = () => within(filaDeItems(indice))
-  if (valores.codigo !== undefined) await usuario.type(fila().getByLabelText('Código'), valores.codigo)
-  if (valores.detalle !== undefined) await usuario.type(fila().getByLabelText('Detalle'), valores.detalle)
-  if (valores.cantidad !== undefined) await usuario.type(fila().getByLabelText('Cantidad'), valores.cantidad)
-  if (valores.importe !== undefined) await usuario.type(fila().getByLabelText('Importe'), valores.importe)
-  if (valores.descuento !== undefined) await usuario.type(fila().getByLabelText('Descuento (%)'), valores.descuento)
-  if (valores.iva !== undefined) await usuario.selectOptions(fila().getByLabelText('IVA'), valores.iva)
+  const celda = (etiqueta: string) => celdaDeItems(indice, etiqueta)
+  if (valores.codigo !== undefined) await usuario.type(celda('Código'), valores.codigo)
+  if (valores.detalle !== undefined) await usuario.type(celda('Detalle'), valores.detalle)
+  if (valores.cantidad !== undefined) await usuario.type(celda('Cantidad'), valores.cantidad)
+  if (valores.importe !== undefined) await usuario.type(celda('Importe'), valores.importe)
+  if (valores.descuento !== undefined) await usuario.type(celda('Descuento (%)'), valores.descuento)
+  if (valores.iva !== undefined) await usuario.selectOptions(celda('IVA'), valores.iva)
 }
 
 /** Un concepto de cantidad 1 en la primera fila (reemplaza al antiguo "Cargar por total"). */

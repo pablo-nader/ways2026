@@ -225,7 +225,7 @@ async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>, 
   await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
   await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
   await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
 }
 
 function tablaDePercepciones() {
@@ -341,7 +341,7 @@ describe('CompraEditor — percepciones', () => {
     await prepararCompraNueva(usuario)
     await cargarConcepto(usuario, '1210')
 
-    const costo = within(filaDeItems(0)).getByLabelText('Importe')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()
@@ -360,7 +360,7 @@ describe('CompraEditor — percepciones', () => {
     await usuario.type(importe, '31,07')
     await usuario.tab()
 
-    const costo = within(filaDeItems(0)).getByLabelText('Importe')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()
@@ -383,7 +383,7 @@ describe('CompraEditor — percepciones', () => {
     expect(within(tablaDePercepciones()).queryByLabelText('Importe Percepción IIBB')).not.toBeInTheDocument()
     expect(screen.getByText('$ 1.225,00')).toBeInTheDocument()
 
-    const costo = within(filaDeItems(0)).getByLabelText('Importe')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()

@@ -3,7 +3,9 @@ import {
   cambiosAlEscribirCodigo,
   cambiosAlEscribirDetalle,
   cantidadDeLinea,
+  diferenciaDePrecioPorBulto,
   lineaTieneDatos,
+  mensajeDeCantidadDeBultos,
   tipoDeLinea,
   type LineaDeCompraFormulario,
   type UnidadDeMedidaDeLinea,
@@ -16,8 +18,11 @@ import { formatearImporte } from '../../formato/importes'
 import { ComboboxDeArticulos } from './ComboboxDeArticulos'
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
+const PASO_DE_BULTOS = 0.01
 
 type Props = {
+  /** Posición de la fila en la grilla (desde 1): da nombre accesible propio a cada celda. */
+  numero: number
   linea: LineaDeCompraFormulario
   alicuotas: AlicuotaIvaListado[]
   disabled: boolean
@@ -44,6 +49,7 @@ function pistaDelCodigo(linea: LineaDeCompraFormulario, idProveedor: number | nu
 }
 
 export function FilaDeGrilla({
+  numero,
   linea,
   alicuotas,
   disabled,
@@ -64,6 +70,9 @@ export function FilaDeGrilla({
   const esBulto = !esConcepto && linea.unidadDeMedida === 'Bulto'
   const restriccion = restriccionDeCantidad(esConcepto || esBulto ? undefined : linea.unidadVenta)
   const fraccionEnUnidad = !esConcepto && !esBulto && esFraccionDeArticuloPorUnidad(linea.unidadVenta, linea.cantidad)
+  const problemaDeBultos = mensajeDeCantidadDeBultos(linea)
+  const diferenciaPorBulto = diferenciaDePrecioPorBulto(linea)
+  const nombre = (celda: string) => `${celda}, línea ${numero}`
   const marca = (campo: (typeof invalidos)[number]) => marcarFaltantes && invalidos.includes(campo)
   const clase = (campo: (typeof invalidos)[number], extra = '') =>
     `form-control form-control-sm${extra ? ` ${extra}` : ''}${marca(campo) ? ' is-invalid' : ''}`
@@ -78,7 +87,7 @@ export function FilaDeGrilla({
           <input
             type="text"
             className="form-control form-control-sm"
-            aria-label="Código"
+            aria-label={nombre('Código')}
             data-celda="codigo"
             maxLength={LARGO_MAXIMO_CODIGO_PROVEEDOR}
             autoComplete="off"
@@ -91,6 +100,8 @@ export function FilaDeGrilla({
         </td>
         <td style={{ minWidth: 260 }}>
           <ComboboxDeArticulos
+            etiqueta={nombre('Detalle')}
+            etiquetaDeCrear={nombre('Crear artículo')}
             texto={linea.descripcion}
             conArticulo={linea.idArticulo !== ''}
             soloLectura={linea.resueltaPorCodigo}
@@ -105,7 +116,7 @@ export function FilaDeGrilla({
         <td style={{ width: 100 }}>
           <select
             className="form-select form-select-sm"
-            aria-label="UM"
+            aria-label={nombre('UM')}
             data-celda="um"
             value={linea.unidadDeMedida}
             disabled={disabled || !puedeBulto}
@@ -120,17 +131,18 @@ export function FilaDeGrilla({
         <td style={{ width: 110 }}>
           <input
             type="number"
-            step={restriccion.step}
-            min={restriccion.min}
-            className={clase('cantidad', fraccionEnUnidad ? 'is-invalid' : '')}
-            aria-label="Cantidad"
-            aria-invalid={marca('cantidad') || fraccionEnUnidad || undefined}
+            step={esBulto ? PASO_DE_BULTOS : restriccion.step}
+            min={esBulto ? PASO_DE_BULTOS : restriccion.min}
+            className={clase('cantidad', fraccionEnUnidad || problemaDeBultos !== null ? 'is-invalid' : '')}
+            aria-label={nombre('Cantidad')}
+            aria-invalid={marca('cantidad') || fraccionEnUnidad || problemaDeBultos !== null || undefined}
             data-celda="cantidad"
             value={linea.cantidad}
             disabled={disabled}
             onChange={(e) => onCambio(clave, { cantidad: e.target.value })}
           />
           {fraccionEnUnidad && <div className="invalid-feedback d-block">{MENSAJE_DE_CANTIDAD_ENTERA}</div>}
+          {problemaDeBultos !== null && <div className="invalid-feedback d-block">{problemaDeBultos}</div>}
           {esBulto && linea.unidadesPorBulto !== null && !invalidos.includes('cantidad') && (
             <div className="small text-muted">
               = {cantidadDeLinea(0, Number(linea.cantidad), linea.unidadesPorBulto)} un. ({linea.unidadesPorBulto} por bulto)
@@ -140,7 +152,7 @@ export function FilaDeGrilla({
         <td style={{ width: 130 }}>
           <CampoImporte
             className={clase('importe')}
-            aria-label="Importe"
+            aria-label={nombre('Importe')}
             aria-invalid={marca('importe') || undefined}
             data-celda="importe"
             placeholder={esBulto ? 'por bulto' : undefined}
@@ -149,11 +161,19 @@ export function FilaDeGrilla({
             disabled={disabled}
             onChange={(v) => onCambio(clave, { importe: v })}
           />
+          {diferenciaPorBulto && (
+            <div className="small text-warning-emphasis" data-aviso="precio-por-bulto">
+              El precio por bulto no se divide exacto entre {diferenciaPorBulto.unidadesPorBulto} unidades: la línea se registra por{' '}
+              {formatearImporte(diferenciaPorBulto.registrado, { simbolo: true })} (diferencia de{' '}
+              {formatearImporte(Math.abs(diferenciaPorBulto.diferencia), { simbolo: true })}).
+            </div>
+          )}
+          {!esConcepto && !linea.actualizaCosto && <div className="small text-muted">No actualiza el costo del artículo</div>}
         </td>
         <td style={{ width: 100 }}>
           <CampoImporte
             className={clase('descuento')}
-            aria-label="Descuento (%)"
+            aria-label={nombre('Descuento (%)')}
             aria-invalid={marca('descuento') || undefined}
             data-celda="descuento"
             placeholder="%"
@@ -168,7 +188,7 @@ export function FilaDeGrilla({
         <td style={{ width: 110 }}>
           <select
             className={`form-select form-select-sm${marca('iva') ? ' is-invalid' : ''}`}
-            aria-label="IVA"
+            aria-label={nombre('IVA')}
             aria-invalid={marca('iva') || undefined}
             data-celda="iva"
             value={linea.idAlicuotaIva}
@@ -192,8 +212,9 @@ export function FilaDeGrilla({
               type="button"
               className="btn btn-outline-danger btn-sm py-0 px-1"
               tabIndex={-1}
-              aria-label="Quitar línea"
-              title="Quitar línea"
+              aria-label={`Quitar línea ${numero}`}
+              title="Quitar línea (Ctrl+Supr)"
+              aria-keyshortcuts="Control+Delete"
               disabled={disabled}
               onClick={() => onQuitar(clave)}
             >
@@ -210,7 +231,7 @@ export function FilaDeGrilla({
               <input
                 type="text"
                 className="form-control form-control-sm w-auto"
-                aria-label="Código de lote"
+                aria-label={nombre('Código de lote')}
                 data-celda="codigo-lote"
                 placeholder="Código de lote (opcional)"
                 value={linea.codigoLote}
@@ -220,7 +241,7 @@ export function FilaDeGrilla({
               <div>
                 <CampoFecha
                   className={`form-control form-control-sm${linea.fechaVencimiento.trim() === '' ? ' is-invalid' : ''}`}
-                  aria-label="Fecha de vencimiento"
+                  aria-label={nombre('Fecha de vencimiento')}
                   data-celda="vencimiento"
                   value={linea.fechaVencimiento}
                   disabled={disabled}

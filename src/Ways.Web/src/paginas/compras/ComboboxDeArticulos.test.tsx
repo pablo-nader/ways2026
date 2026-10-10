@@ -176,6 +176,44 @@ describe('ComboboxDeArticulos — teclado y ARIA', () => {
     await screen.findAllByRole('option')
   }
 
+  it('una región con aria-live="polite" anuncia la cantidad de resultados y el "sin resultados"', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    const region = screen.getByRole('status')
+    expect(region).toHaveAttribute('aria-live', 'polite')
+    expect(region).toBeEmptyDOMElement()
+
+    await escribirYEsperar(usuario)
+    expect(region).toHaveTextContent('2 resultados.')
+
+    await usuario.clear(screen.getByRole('combobox', { name: 'Detalle' }))
+    await usuario.type(screen.getByRole('combobox', { name: 'Detalle' }), 'xx')
+    listarMock.mockImplementation(() => pagina([]))
+    await waitFor(() => expect(region).toHaveTextContent('Sin resultados.'))
+  })
+
+  it('con un único resultado el anuncio va en singular', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await escribirYEsperar(usuario, [LECHE])
+    expect(screen.getByRole('status')).toHaveTextContent('1 resultado.')
+  })
+
+  it('pasar el ratón por una opción la resalta y es la que queda con aria-selected y aria-activedescendant', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    const caja = screen.getByRole('combobox', { name: 'Detalle' })
+    await escribirYEsperar(usuario)
+    const [primera, segunda] = screen.getAllByRole('option')
+
+    await usuario.hover(segunda)
+
+    expect(segunda).toHaveAttribute('aria-selected', 'true')
+    expect(segunda).toHaveClass('active')
+    expect(primera).toHaveAttribute('aria-selected', 'false')
+    expect(caja).toHaveAttribute('aria-activedescendant', segunda.id)
+  })
+
   it('expone un combobox con listbox y opciones; la opción con código del proveedor lo muestra', async () => {
     const usuario = userEvent.setup()
     montar()

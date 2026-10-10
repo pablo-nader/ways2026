@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
@@ -634,6 +634,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [guardando, setGuardando] = useState(false)
   const [accion, setAccion] = useState<'guardar' | 'borrador' | null>(null)
   const guardandoRef = useRef(false)
+  // Códigos de proveedor que la grilla está consultando: guardar espera a que terminen, así una fila
+  // nunca se guarda como concepto y después la muta una respuesta tardía.
+  const consultandoCodigosRef = useRef(false)
+  const [esperandoCodigos, setEsperandoCodigos] = useState(false)
+  // Sube cuando el operador cambia el proveedor (no cuando lo fija una orden o un borrador al cargar).
+  const [cambiosDeProveedor, setCambiosDeProveedor] = useState(0)
+
+  const alCambiarConsultasEnVuelo = useCallback((hay: boolean) => {
+    consultandoCodigosRef.current = hay
+    if (!hay) setEsperandoCodigos(false)
+  }, [])
   const [error, setError] = useState(estadoInicial.error ?? '')
   const [advertencia, setAdvertencia] = useState(estadoInicial.advertencia ?? '')
   const [aviso, setAviso] = useState(estadoInicial.aviso ?? '')
@@ -747,6 +758,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     setEncabezado((prev) =>
       alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
     )
+    setCambiosDeProveedor((n) => n + 1)
   }
 
   function cambiarPuntoVenta(valor: string) {
@@ -843,6 +855,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   async function guardar(confirmar: boolean) {
     // regla 11: la guarda de reentrancia es el ref; el `disabled` de los botones cubre el estado.
     if (guardandoRef.current) return
+    if (consultandoCodigosRef.current) {
+      setEsperandoCodigos(true)
+      return
+    }
+    setEsperandoCodigos(false)
     if (mensajeDeLoQueImpideGuardar(encabezado, lineas, confirmar) !== null) {
       setAviso('')
       setAdvertencia('')
@@ -881,15 +898,18 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     }
 
     if (!confirmar) {
-      liberar()
       if (esNuevo) {
         // Remontaje completo vía cambio de `key` (regla 8): navega a la ruta real de la compra
-        // recién creada, nunca reutiliza este estado de "nuevo" para simular la edición.
+        // recién creada, nunca reutiliza este estado de "nuevo" para simular la edición. No se
+        // libera la pantalla: queda inerte hasta que la navegación la reemplace, así un clic en
+        // esa ventana no puede crear una segunda compra.
         if (montado.current) navigate(rutaDeLaCompra(guardada.id), { replace: true })
-      } else {
-        setCompra(guardada)
-        setAviso('Borrador guardado.')
+        else liberar()
+        return
       }
+      liberar()
+      setCompra(guardada)
+      setAviso('Borrador guardado.')
       return
     }
 
@@ -897,14 +917,16 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     try {
       confirmada = await clienteDeCompras.confirmar(guardada.id)
     } catch (e) {
-      liberar()
       // El 409 compra_no_es_borrador del perdedor de una carrera de doble confirmación se muestra
       // tal cual, como el resto de esta pantalla.
       const falla = e instanceof ErrorApi ? e.message : 'No se pudo confirmar la compra.'
       const nota = 'El borrador quedó guardado, pero la compra NO se confirmó.'
       if (esNuevo) {
+        // Sin liberar: la pantalla queda inerte hasta que la navegación la reemplace.
         if (montado.current) navigate(rutaDeLaCompra(guardada.id), { replace: true, state: { advertencia: nota, error: falla } satisfies EstadoDeNavegacion })
+        else liberar()
       } else {
+        liberar()
         setCompra(guardada)
         setAdvertencia(nota)
         setError(falla)
@@ -915,7 +937,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
     // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
     const errorDelVinculo = await vincularGasto(confirmada.id)
-    liberar()
     const avisoDeConfirmacion = confirmada.items.some((i) => i.idArticulo !== null)
       ? 'Compra confirmada: el stock y el costo ya se actualizaron.'
       : 'Compra confirmada.'
@@ -924,9 +945,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       errorVincularGasto: errorDelVinculo ?? undefined,
     }
     if (esNuevo) {
+      // Sin liberar: la pantalla queda inerte hasta que la navegación la reemplace.
       if (montado.current) navigate(rutaDeLaCompra(confirmada.id), { replace: true, state: { aviso: avisoDeConfirmacion, ...vinculo } satisfies EstadoDeNavegacion })
+      else liberar()
       return
     }
+    liberar()
     // regla 6: un 2xx de confirmar nunca se reporta como fallo — la respuesta ES el resultado.
     setCompra(confirmada)
     setAviso(avisoDeConfirmacion)
@@ -1185,10 +1209,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               alicuotas={alicuotas ?? []}
               disabled={ocupado || !referenciaOk || !puedeEscribir}
               discriminaIva={discriminaIva}
+              preciosFinales={preciosFinales}
               porcentajePorAlicuota={porcentajePorAlicuota}
               idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
               nombreProveedor={(proveedores ?? []).find((p) => p.id === encabezado.idProveedor)?.razonSocial ?? ''}
               marcarFaltantes={intentoFallido !== null}
+              cambiosDeProveedor={cambiosDeProveedor}
+              onConsultando={alCambiarConsultasEnVuelo}
               onCambio={cambiarLinea}
               onQuitar={quitarLinea}
             />
@@ -1256,6 +1283,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             {advertencia && (
               <div className="alert alert-warning py-1 px-2 small" role="alert">
                 {advertencia}
+              </div>
+            )}
+            {esperandoCodigos && (
+              <div className="alert alert-info py-1 px-2 small" role="alert">
+                Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.
               </div>
             )}
             {(impedimentoParaGuardar ?? error) && (

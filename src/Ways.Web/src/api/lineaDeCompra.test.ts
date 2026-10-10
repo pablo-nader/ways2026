@@ -3,19 +3,26 @@ import {
   aLineaSolicitada,
   alicuotaParaArticulo,
   brutoDeLinea,
+  cambiosAlDesresolver,
   cambiosAlElegirArticulo,
   cambiosAlEscribirCodigo,
   cambiosAlEscribirDetalle,
+  cambiosAlResolverPorCodigo,
   camposInvalidosDeLinea,
   cantidadDeLinea,
   completarConArticulo,
   costoDeArticuloParaCompra,
   descuentoDesdePorcentaje,
+  diferenciaDePrecioPorBulto,
+  importeSegunModoDePrecios,
   itemAFormulario,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
   lineaDesdeCoberturaDeOrden,
   lineaTieneDatos,
+  MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS,
+  MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES,
+  mensajeDeCantidadDeBultos,
   normalizarFilas,
   porcentajeDeDescuento,
   tipoDeLinea,
@@ -111,6 +118,7 @@ describe('lineaDeCompraVacia / lineaTieneDatos', () => {
       codigoLote: '',
       fechaVencimiento: '',
       unidadesPorBulto: null,
+      actualizaCosto: true,
       guardada: null,
     })
     expect(lineaTieneDatos(lineaDeCompraVacia(1))).toBe(false)
@@ -382,9 +390,28 @@ describe('itemAFormulario y reenvío de una línea guardada', () => {
 })
 
 describe('aLineaSolicitada', () => {
-  it('un artículo viaja con actualizaCosto true sin importar de dónde vino', () => {
+  it('una línea guardada con actualizaCosto false lo reenvía false mientras conserve el artículo, aunque se editen cantidad e importe', () => {
     const l = itemAFormulario(1, itemFixture({ actualizaCosto: false }))
-    expect(aLineaSolicitada(l).actualizaCosto).toBe(true)
+    expect(aLineaSolicitada(l).actualizaCosto).toBe(false)
+    expect(aLineaSolicitada({ ...l, cantidad: '99', importe: 7 }).actualizaCosto).toBe(false)
+  })
+
+  it('una línea guardada con actualizaCosto true lo reenvía true', () => {
+    expect(aLineaSolicitada(itemAFormulario(1, itemFixture({ actualizaCosto: true }))).actualizaCosto).toBe(true)
+  })
+
+  it('un artículo elegido, creado o resuelto por código en la grilla manda true aunque la fila viniera de una línea con false', () => {
+    const guardadaSinActualizar = itemAFormulario(1, itemFixture({ actualizaCosto: false }))
+    for (const origen of ['busqueda', 'alta', 'codigo'] as const) {
+      const cambios = cambiosAlElegirArticulo(guardadaSinActualizar, articuloFixture({ id: 21 }), ALICUOTAS, origen)
+      expect(cambios.actualizaCosto).toBe(true)
+      expect(aLineaSolicitada({ ...guardadaSinActualizar, ...cambios }).actualizaCosto).toBe(true)
+    }
+  })
+
+  it('un concepto manda false (lo exige el servidor) aunque la línea guardada dijera true', () => {
+    const concepto = itemAFormulario(1, itemFixture({ idArticulo: null, descripcion: 'Flete', actualizaCosto: true }))
+    expect(aLineaSolicitada(concepto).actualizaCosto).toBe(false)
   })
 
   it('mapea todos los campos de un artículo', () => {
@@ -563,9 +590,23 @@ describe('precarga desde un artículo', () => {
   })
 
   it('completarConArticulo completa las unidades por bulto solo cuando la línea no las trae', () => {
-    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: null }), { unidadesPorBulto: 12 })).toEqual({ unidadesPorBulto: 12 })
-    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: 6 }), { unidadesPorBulto: 12 })).toEqual({ unidadesPorBulto: 6 })
-    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: null }), { unidadesPorBulto: 0 })).toEqual({ unidadesPorBulto: null })
+    const articulo = { controlaLote: false, idAlicuotaIva: 3 }
+    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: null }), { ...articulo, unidadesPorBulto: 12 })).toMatchObject({ unidadesPorBulto: 12 })
+    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: 6 }), { ...articulo, unidadesPorBulto: 12 })).toMatchObject({ unidadesPorBulto: 6 })
+    expect(completarConArticulo(lineaFixture({ unidadesPorBulto: null }), { ...articulo, unidadesPorBulto: 0 })).toMatchObject({ unidadesPorBulto: null })
+  })
+
+  it('completarConArticulo completa si controla lote y no baja un lote ya inferido', () => {
+    const base = { unidadesPorBulto: null, idAlicuotaIva: 3 }
+    expect(completarConArticulo(lineaFixture({ controlaLote: false }), { ...base, controlaLote: true }).controlaLote).toBe(true)
+    expect(completarConArticulo(lineaFixture({ controlaLote: true }), { ...base, controlaLote: false }).controlaLote).toBe(true)
+    expect(completarConArticulo(lineaFixture({ controlaLote: false }), { ...base, controlaLote: false }).controlaLote).toBe(false)
+  })
+
+  it('completarConArticulo pone la alícuota del artículo solo donde la línea no tiene ninguna: nunca pisa una guardada o tipeada', () => {
+    const base = { unidadesPorBulto: null, controlaLote: false }
+    expect(completarConArticulo(lineaFixture({ idAlicuotaIva: '' }), { ...base, idAlicuotaIva: 4 }).idAlicuotaIva).toBe(4)
+    expect(completarConArticulo(lineaFixture({ idAlicuotaIva: 3 }), { ...base, idAlicuotaIva: 4 }).idAlicuotaIva).toBe(3)
   })
 })
 
@@ -590,8 +631,155 @@ describe('edición del Detalle y del Código', () => {
     expect(cambiosAlEscribirDetalle(lineaFixture({ idArticulo: '' }), 'Flete')).toEqual({ descripcion: 'Flete' })
   })
 
-  it('editar el código de una fila resuelta por código la deja sin resolver; en otra solo cambia el texto', () => {
-    expect(cambiosAlEscribirCodigo(lineaFixture({ resueltaPorCodigo: true }), 'X')).toEqual({ codigoProveedor: 'X', resueltaPorCodigo: false })
+  it('editar el código de una fila resuelta por código le saca el artículo: vuelve a ser concepto con Detalle vacío y el código sin consultar', () => {
+    const resuelta = lineaFixture({ resueltaPorCodigo: true, codigoProveedor: 'AB-1', codigoConsultado: 'AB-1', controlaLote: true, unidadesPorBulto: 12 })
+    const cambios = cambiosAlEscribirCodigo(resuelta, 'AB-2')
+    expect(cambios).toMatchObject({
+      codigoProveedor: 'AB-2',
+      idArticulo: '',
+      descripcion: '',
+      resueltaPorCodigo: false,
+      codigoConsultado: '',
+      controlaLote: false,
+      unidadesPorBulto: null,
+      guardada: null,
+    })
+    expect(tipoDeLinea({ ...resuelta, ...cambios })).toBe('concepto')
+    expect(cambios).not.toHaveProperty('importe')
+  })
+
+  it('editar el código de una fila cuyo artículo se eligió buscando o se creó con "+" conserva el artículo: el código es el pendiente de asociar', () => {
     expect(cambiosAlEscribirCodigo(lineaFixture({ resueltaPorCodigo: false }), 'X')).toEqual({ codigoProveedor: 'X' })
+  })
+
+  it('cambiosAlDesresolver deja la fila sin el artículo que le dio un código', () => {
+    expect(cambiosAlDesresolver()).toMatchObject({ idArticulo: '', descripcion: '', resueltaPorCodigo: false, codigoConsultado: '', actualizaCosto: true })
+  })
+})
+
+describe('diferencia de precio por bulto', () => {
+  const porBulto = (sobrescribir: Partial<LineaDeCompraFormulario> = {}) =>
+    lineaFixture({ unidadDeMedida: 'Bulto', unidadesPorBulto: 3, cantidad: '1000', importe: 100, descuentoPorcentaje: null, ...sobrescribir })
+
+  it('1000 bultos de 3 unidades a 100,00 por bulto se registran por 99.999,90: diferencia de 0,10', () => {
+    const l = porBulto()
+    expect(valoresParaApi(l).costoUnitario).toBe(33.3333)
+    expect(diferenciaDePrecioPorBulto(l)).toEqual({ registrado: 99999.9, diferencia: 0.1, unidadesPorBulto: 3 })
+  })
+
+  it('un bulto que divide exacto entre sus unidades no tiene diferencia', () => {
+    expect(diferenciaDePrecioPorBulto(porBulto({ unidadesPorBulto: 4, importe: 100 }))).toBeNull()
+    expect(diferenciaDePrecioPorBulto(porBulto({ unidadesPorBulto: 12, cantidad: '2', importe: 120 }))).toBeNull()
+  })
+
+  it('un bulto que no divide exacto pero cuyo redondeo final coincide con cantidad × importe no tiene diferencia', () => {
+    // 1 bulto de 3 unidades a 100: 33,3333 × 3 = 99,9999 → 100,00
+    expect(diferenciaDePrecioPorBulto(porBulto({ cantidad: '1' }))).toBeNull()
+  })
+
+  it('un redondeo hacia arriba también se informa, con la diferencia negativa (1000 bultos de 3 a 2,00 se registran de más: -0,10)', () => {
+    expect(diferenciaDePrecioPorBulto(porBulto({ importe: 2 }))).toMatchObject({ registrado: 2000.1, diferencia: -0.1 })
+  })
+
+  it('una fila por unidades, un concepto o una línea mezclada guardada nunca tienen diferencia', () => {
+    expect(diferenciaDePrecioPorBulto(lineaFixture({ cantidad: '1000', importe: 33.3333 }))).toBeNull()
+    expect(diferenciaDePrecioPorBulto(porBulto({ idArticulo: '', descripcion: 'Flete' }))).toBeNull()
+    const mezcla = itemAFormulario(1, itemFixture({ cantidad: 25, bultos: 2, unidadesPorBulto: 12, costoUnitario: 3 }))
+    expect(diferenciaDePrecioPorBulto(mezcla)).toBeNull()
+  })
+
+  it('una línea guardada solo de bultos que no se toca no inventa diferencia', () => {
+    const guardada = itemAFormulario(1, itemFixture({ cantidad: 3000, bultos: 1000, unidadesPorBulto: 3, costoUnitario: 33.3333, descuento: 0 }))
+    expect(guardada.importe).toBe(99.9999)
+    expect(diferenciaDePrecioPorBulto(guardada)).toBeNull()
+  })
+})
+
+describe('precarga según el modo de precios', () => {
+  const NETO: Parameters<typeof importeSegunModoDePrecios>[2] = { discriminaIva: true, preciosIncluyenIva: false }
+
+  it('con un comprobante que discrimina y precios netos, el costo (con IVA) se carga sin IVA a 4 decimales', () => {
+    expect(importeSegunModoDePrecios(121, 21, NETO)).toBe(100)
+    expect(importeSegunModoDePrecios(100, 21, NETO)).toBe(82.6446)
+    expect(importeSegunModoDePrecios(110.5, 10.5, NETO)).toBe(100)
+  })
+
+  it('con precios con IVA incluido, sin discriminar o sin modo, el costo se carga tal cual', () => {
+    expect(importeSegunModoDePrecios(121, 21, { discriminaIva: true, preciosIncluyenIva: true })).toBe(121)
+    expect(importeSegunModoDePrecios(121, 21, { discriminaIva: false, preciosIncluyenIva: false })).toBe(121)
+    expect(importeSegunModoDePrecios(121, 21, undefined)).toBe(121)
+    expect(importeSegunModoDePrecios(121, null, NETO)).toBe(121)
+  })
+
+  it('elegir un artículo usa la alícuota que le queda a la fila para extraer el IVA', () => {
+    const articulo = articuloFixture({ costoLista: 110.5, idAlicuotaIva: 4, descuentoProveedor: 5 })
+    expect(cambiosAlElegirArticulo(lineaDeCompraVacia(1), articulo, ALICUOTAS, 'busqueda', NETO)).toMatchObject({ importe: 100, descuentoPorcentaje: 5 })
+    expect(cambiosAlElegirArticulo(lineaDeCompraVacia(1), articulo, ALICUOTAS, 'busqueda')).toMatchObject({ importe: 110.5 })
+  })
+
+  it('el costo nominal (costo efectivo con IVA) se trata igual que el de lista', () => {
+    const articulo = articuloFixture({ costoNominal: 121, idAlicuotaIva: 3 })
+    expect(cambiosAlElegirArticulo(lineaDeCompraVacia(1), articulo, ALICUOTAS, 'busqueda', NETO).importe).toBe(100)
+  })
+
+  it('un artículo recién creado conserva el importe tipeado aunque el modo sea neto', () => {
+    const cambios = cambiosAlElegirArticulo(lineaFixture({ idArticulo: '', importe: 77 }), articuloFixture({ costoLista: 121 }), ALICUOTAS, 'alta', NETO)
+    expect(cambios.importe).toBe(77)
+  })
+})
+
+describe('cantidad de bultos', () => {
+  const porBulto = (sobrescribir: Partial<LineaDeCompraFormulario> = {}) =>
+    lineaFixture({ unidadDeMedida: 'Bulto', unidadesPorBulto: 3, unidadVenta: 'Unidad', cantidad: '2', importe: 30, descuentoPorcentaje: null, ...sobrescribir })
+
+  it('bultos enteros dan unidades enteras: válido', () => {
+    expect(mensajeDeCantidadDeBultos(porBulto())).toBeNull()
+    expect(lineaCompletaParaEnvio(porBulto())).toBe(true)
+  })
+
+  it('bultos fraccionados que dan unidades enteras en un artículo por unidad: válido (0,5 bulto de 4)', () => {
+    expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: '0.5', unidadesPorBulto: 4 }))).toBeNull()
+  })
+
+  it('bultos fraccionados que dan unidades fraccionadas en un artículo por unidad: inválido, con mensaje', () => {
+    const l = porBulto({ cantidad: '1.5' })
+    expect(mensajeDeCantidadDeBultos(l)).toBe(MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES)
+    expect(camposInvalidosDeLinea(l)).toContain('cantidad')
+  })
+
+  it('un artículo por peso admite bultos fraccionados que den unidades con fracción', () => {
+    expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: '1.5', unidadVenta: 'Peso' }))).toBeNull()
+  })
+
+  it('más de 2 decimales de bultos es inválido (la columna es numeric(10,2))', () => {
+    const l = porBulto({ cantidad: '1.234', unidadVenta: 'Peso' })
+    expect(mensajeDeCantidadDeBultos(l)).toBe(MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS)
+    expect(camposInvalidosDeLinea(l)).toContain('cantidad')
+    expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: '1.23', unidadVenta: 'Peso' }))).toBeNull()
+  })
+
+  it('sin UM Bulto, sin cantidad o en un concepto no hay mensaje', () => {
+    expect(mensajeDeCantidadDeBultos(lineaFixture({ cantidad: '1.5', unidadVenta: 'Unidad' }))).toBeNull()
+    expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: '' }))).toBeNull()
+    expect(mensajeDeCantidadDeBultos(porBulto({ idArticulo: '' }))).toBeNull()
+  })
+})
+
+describe('cambiosAlResolverPorCodigo respeta lo tipeado mientras la consulta estaba en vuelo', () => {
+  const alLanzar = () => lineaFixture({ idArticulo: '', descripcion: '', importe: null, descuentoPorcentaje: null, idAlicuotaIva: '', cantidad: '' })
+  const articulo = articuloFixture({ costoLista: 200, descuentoProveedor: 10, idAlicuotaIva: 4 })
+
+  it('las celdas que no se tocaron se precargan con el artículo', () => {
+    const lanzada = alLanzar()
+    expect(cambiosAlResolverPorCodigo(lanzada, lanzada, articulo, ALICUOTAS)).toMatchObject({ importe: 200, descuentoPorcentaje: 10, idAlicuotaIva: 4 })
+  })
+
+  it('las celdas tipeadas entretanto se conservan, una por una', () => {
+    const lanzada = alLanzar()
+    const actual = { ...lanzada, importe: 150, idAlicuotaIva: 3 as const, cantidad: '7' }
+    const cambios = cambiosAlResolverPorCodigo(lanzada, actual, articulo, ALICUOTAS)
+    expect(cambios).not.toHaveProperty('importe')
+    expect(cambios).not.toHaveProperty('idAlicuotaIva')
+    expect(cambios).toMatchObject({ idArticulo: 20, descuentoPorcentaje: 10 })
   })
 })

@@ -26,6 +26,27 @@ const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
 const apiPutMock = vi.fn()
 
+// Permite retener la navegación para observar la pantalla en la ventana entre guardar y que la
+// navegación la reemplace; por defecto navega de verdad.
+const navegacion = vi.hoisted(() => ({ retener: false, llamadas: [] as unknown[][] }))
+
+vi.mock('react-router', async (importarOriginal) => {
+  const real = await importarOriginal<typeof import('react-router')>()
+  return {
+    ...real,
+    useNavigate: () => {
+      const navegar = real.useNavigate()
+      return (...args: unknown[]) => {
+        if (navegacion.retener) {
+          navegacion.llamadas.push(args)
+          return
+        }
+        return (navegar as (...a: unknown[]) => unknown)(...args)
+      }
+    },
+  }
+})
+
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
@@ -290,6 +311,8 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   apiPutMock.mockReset()
+  navegacion.retener = false
+  navegacion.llamadas = []
   usuarioActual = usuarioFixture()
 })
 
@@ -303,17 +326,17 @@ describe('CompraEditor — borrador existente', () => {
     expect(filas).toHaveLength(2)
 
     const fila = within(filas[0])
-    expect(fila.getByLabelText('Detalle')).toHaveValue('Fideos 500g')
-    expect(fila.getByLabelText('UM')).toHaveValue('Unidad')
-    expect(fila.getByLabelText('Cantidad')).toHaveValue(10)
-    expect(fila.getByLabelText('Importe')).toHaveValue('100,0000')
-    expect(fila.getByLabelText('Descuento (%)')).toHaveValue('5,00')
-    await waitFor(() => expect(fila.getByLabelText('IVA')).toHaveValue('3'))
+    expect(fila.getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Fideos 500g')
+    expect(fila.getByLabelText(/^UM, línea \d+$/)).toHaveValue('Unidad')
+    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(10)
+    expect(fila.getByLabelText(/^Importe, línea \d+$/)).toHaveValue('100,0000')
+    expect(fila.getByLabelText(/^Descuento \(%\), línea \d+$/)).toHaveValue('5,00')
+    await waitFor(() => expect(fila.getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3'))
     expect(fila.getByText('$ 950,00')).toBeInTheDocument()
 
     const vacia = within(filas[1])
-    expect(vacia.getByLabelText('Código')).toHaveValue('')
-    expect(vacia.getByLabelText('Detalle')).toHaveValue('')
+    expect(vacia.getByLabelText(/^Código, línea \d+$/)).toHaveValue('')
+    expect(vacia.getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('')
 
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeInTheDocument()
@@ -332,7 +355,7 @@ describe('CompraEditor — borrador existente', () => {
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const importe = within(filaDeItems(0)).getByLabelText('Importe')
+    const importe = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(importe)
     await usuario.type(importe, '120')
 
@@ -422,7 +445,7 @@ describe('CompraEditor — borrador existente', () => {
     expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
-    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeDisabled()
 
     await act(async () => {
       resolverConfirmar(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-05T12:00:00Z' }))
@@ -486,7 +509,7 @@ describe('CompraEditor — compra confirmada', () => {
     renderEditor()
 
     await screen.findByText('Fideos 500g')
-    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
     expect(screen.getByText('$ 114,95')).toBeInTheDocument() // precio sugerido
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
   })
@@ -684,7 +707,7 @@ async function completarEncabezadoDeCompraNueva(usuario: ReturnType<typeof userE
   await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
   await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
   await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
 }
 
 describe('CompraEditor — compra nueva', () => {
@@ -837,7 +860,7 @@ describe('CompraEditor — compra nueva', () => {
     await screen.findByText('Se vinculará al gasto #5 al confirmar.')
     await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
-    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
     await cargarConcepto(usuario, '1500', 'Mercadería')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
@@ -864,7 +887,7 @@ describe('CompraEditor — cancelar', () => {
     const usuario = userEvent.setup()
 
     renderEditor('nueva')
-    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
@@ -883,7 +906,7 @@ describe('CompraEditor — cancelar', () => {
     expect(within(puerta).getByText(/Descartar los cambios sin guardar de esta compra/)).toBeInTheDocument()
     // La puerta deja inerte el resto de la pantalla.
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
-    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeDisabled()
 
     await usuario.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -901,7 +924,7 @@ describe('CompraEditor — cancelar', () => {
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-    await usuario.type(within(filaDeItems(0)).getByLabelText('Cantidad'), '5')
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/), '5')
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).toBeInTheDocument()
@@ -927,8 +950,8 @@ describe('CompraEditor — cancelar', () => {
     const usuario = userEvent.setup()
 
     renderEditor('nueva')
-    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
-    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), 'Flete')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/), 'Flete')
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).toBeInTheDocument()
@@ -1196,10 +1219,10 @@ describe('CompraEditor — líneas incompletas', () => {
 
     // Tras el intento, las celdas que faltan quedan marcadas; las que están bien, no.
     const fila = within(filaDeItems(1))
-    expect(fila.getByLabelText('Detalle')).toHaveAttribute('aria-invalid', 'true')
-    expect(fila.getByLabelText('IVA')).toHaveAttribute('aria-invalid', 'true')
-    expect(fila.getByLabelText('Cantidad')).not.toHaveAttribute('aria-invalid')
-    expect(fila.getByLabelText('Importe')).not.toHaveAttribute('aria-invalid')
+    expect(fila.getByLabelText(/^Detalle, línea \d+$/)).toHaveAttribute('aria-invalid', 'true')
+    expect(fila.getByLabelText(/^IVA, línea \d+$/)).toHaveAttribute('aria-invalid', 'true')
+    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).not.toHaveAttribute('aria-invalid')
+    expect(fila.getByLabelText(/^Importe, línea \d+$/)).not.toHaveAttribute('aria-invalid')
   })
 
   it('quitar la fila incompleta destraba el guardado', async () => {
@@ -1213,7 +1236,7 @@ describe('CompraEditor — líneas incompletas', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     expect(await screen.findByText(/Hay 1 línea\(s\) incompleta\(s\)/)).toBeInTheDocument()
 
-    await usuario.click(within(filaDeItems(1)).getByRole('button', { name: 'Quitar línea' }))
+    await usuario.click(within(filaDeItems(1)).getByRole('button', { name: /^Quitar línea \d+$/ }))
     expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument()
     expect(filasDeItems()).toHaveLength(2)
 
@@ -1233,7 +1256,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
   }
 
   async function elegirArticuloDeLaBusqueda(usuario: ReturnType<typeof userEvent.setup>, texto: string, opcion: string) {
-    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), texto)
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/), texto)
     await usuario.click(await screen.findByRole('option', { name: opcion }))
   }
 
@@ -1245,8 +1268,8 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     await screen.findByDisplayValue('00012345')
     await elegirArticuloDeLaBusqueda(usuario, 'leche', 'ART-20 — Leche en polvo 800g')
 
-    expect(screen.getByLabelText('Fecha de vencimiento')).toBeInTheDocument()
-    expect(screen.getByLabelText('Código de lote')).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toBeInTheDocument()
     expect(await screen.findByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
     await cargarFila(usuario, 0, { cantidad: '5', importe: '20' })
@@ -1255,7 +1278,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
     expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
-    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '01/12/2026')
+    await usuario.type(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/), '01/12/2026')
 
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
@@ -1268,17 +1291,17 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     await screen.findByDisplayValue('00012345')
     await elegirArticuloDeLaBusqueda(usuario, 'leche', 'ART-20 — Leche en polvo 800g')
 
-    await usuario.click(within(filaDeItems(0)).getByLabelText('IVA'))
+    await usuario.click(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/))
     await usuario.tab()
-    expect(screen.getByLabelText('Código de lote')).toHaveFocus()
+    expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toHaveFocus()
     await usuario.tab()
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveFocus()
+    expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toHaveFocus()
     await usuario.tab()
     // el calendario del vencimiento es parte de la misma fila de lote
     expect(document.activeElement).toHaveAccessibleName('Abrir calendario')
     expect(document.activeElement?.closest('tr[data-lote-de]')).not.toBeNull()
     await usuario.tab()
-    expect(within(filaDeItems(1)).getByLabelText('Código')).toHaveFocus()
+    expect(within(filaDeItems(1)).getByLabelText(/^Código, línea \d+$/)).toHaveFocus()
   })
 
   it('un artículo que no controla lote nunca muestra los inputs de lote', async () => {
@@ -1286,9 +1309,9 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     renderEditor()
 
     await screen.findByDisplayValue('00012345')
-    expect(within(filaDeItems(0)).getByLabelText('Detalle')).toHaveValue('Fideos 500g')
-    expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Código de lote')).not.toBeInTheDocument()
+    expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Fideos 500g')
+    expect(screen.queryByLabelText(/^Fecha de vencimiento, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Código de lote, línea \d+$/)).not.toBeInTheDocument()
   })
 
   it('re-elegir el artículo de una línea con lote cargado, por uno que no controla lote, no deja codigoLote/fechaVencimiento stale en el payload (judgment-day, MAJOR juez A)', async () => {
@@ -1302,16 +1325,16 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-    expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
+    expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toHaveValue('LOTE-A')
+    expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toHaveValue('01/06/2026')
 
-    await usuario.clear(within(filaDeItems(0)).getByLabelText('Detalle'))
+    await usuario.clear(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/))
     await elegirArticuloDeLaBusqueda(usuario, 'coca', 'ART-30 — Coca Cola 1.5L')
 
     // El artículo nuevo no controla lote: la fila de lote desaparece — el reset no es solo
     // interno, también es visible (el operador ve que el lote del artículo anterior ya no aplica).
-    expect(screen.queryByLabelText('Código de lote')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Código de lote, línea \d+$/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Fecha de vencimiento, línea \d+$/)).not.toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
@@ -1334,14 +1357,14 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-    expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
+    expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toHaveValue('LOTE-A')
+    expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toHaveValue('01/06/2026')
 
-    await usuario.clear(within(filaDeItems(0)).getByLabelText('Detalle'))
+    await usuario.clear(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/))
     await elegirArticuloDeLaBusqueda(usuario, 'yerba', 'ART-40 — Yerba 1kg')
 
-    expect(screen.getByLabelText('Código de lote')).toHaveValue('')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('')
+    expect(screen.getByLabelText(/^Código de lote, línea \d+$/)).toHaveValue('')
+    expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toHaveValue('')
   })
 })
 
@@ -1359,7 +1382,7 @@ describe('CompraEditor — role gating', () => {
     expect(screen.queryByRole('button', { name: 'Guardar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
-    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
   })
 
   it.each(['Borrador', 'Confirmada'] as const)(
@@ -1485,9 +1508,9 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
-    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toHaveValue(2) // Pendiente, no Pedida
-    expect(within(filaDeItems(0)).getByLabelText('Importe')).toHaveValue('100,0000') // CostoEstimado de la cobertura
-    expect(within(filaDeItems(0)).getByLabelText('Detalle')).toHaveValue('Yerba mate 1kg')
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(2) // Pendiente, no Pedida
+    expect(within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)).toHaveValue('100,0000') // CostoEstimado de la cobertura
+    expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Yerba mate 1kg')
     expect(filasDeItems()).toHaveLength(2) // la fila precargada y la vacía del final
   })
 
@@ -1505,7 +1528,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
 
     await screen.findByText(/Vinculada a la orden de compra/)
     expect(filasDeItems()).toHaveLength(2)
-    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toHaveValue(3)
+    expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(3)
   })
 
   it('un artículo nunca cotizado precarga costo unitario vacío, nunca "0"', async () => {
@@ -1517,7 +1540,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
     renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
 
     await screen.findByText(/Vinculada a la orden de compra/)
-    expect(within(filaDeItems(0)).getByLabelText('Importe')).toHaveValue('')
+    expect(within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)).toHaveValue('')
   })
 
   it('sin ?idOrdenCompra= no dispara ningún fetch a /ordenes-compra ni muestra el aviso de vínculo', async () => {
@@ -1687,11 +1710,11 @@ describe('CompraEditor — líneas por concepto', () => {
     await cargarConcepto(usuario, '1234,56')
 
     const fila = within(filaDeItems(0))
-    expect(fila.getByLabelText('Cantidad')).toHaveValue(1)
-    expect(fila.getByLabelText('Importe')).toHaveValue('1.234,5600')
+    expect(fila.getByLabelText(/^Cantidad, línea \d+$/)).toHaveValue(1)
+    expect(fila.getByLabelText(/^Importe, línea \d+$/)).toHaveValue('1.234,5600')
     // un concepto es siempre por unidad y no ofrece crear un artículo ya resuelto
-    expect(fila.getByLabelText('UM')).toBeDisabled()
-    expect(fila.getByLabelText('UM')).toHaveValue('Unidad')
+    expect(fila.getByLabelText(/^UM, línea \d+$/)).toBeDisabled()
+    expect(fila.getByLabelText(/^UM, línea \d+$/)).toHaveValue('Unidad')
     // el mirror suma el concepto: 1234,56 + 21% de IVA
     expect(screen.getAllByText('$ 1.493,82').length).toBeGreaterThan(0)
 
@@ -1744,11 +1767,11 @@ describe('CompraEditor — líneas por concepto', () => {
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    expect(within(filaDeItems(1)).getByLabelText('Detalle')).toHaveValue('Flete')
+    expect(within(filaDeItems(1)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Flete')
     // el concepto no ofrece bultos; el botón de crear artículo solo se ofrece en filas sin artículo
-    expect(within(filaDeItems(1)).getByLabelText('UM')).toBeDisabled()
-    expect(within(filaDeItems(0)).queryByRole('button', { name: 'Crear artículo' })).not.toBeInTheDocument()
-    expect(within(filaDeItems(1)).getByRole('button', { name: 'Crear artículo' })).toBeInTheDocument()
+    expect(within(filaDeItems(1)).getByLabelText(/^UM, línea \d+$/)).toBeDisabled()
+    expect(within(filaDeItems(0)).queryByRole('button', { name: /^Crear artículo, línea \d+$/ })).not.toBeInTheDocument()
+    expect(within(filaDeItems(1)).getByRole('button', { name: /^Crear artículo, línea \d+$/ })).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
@@ -1770,7 +1793,7 @@ describe('CompraEditor — líneas por concepto', () => {
 
     const celda = (await screen.findByText('Flete')).closest('td') as HTMLElement
     expect(within(celda).getByText('Concepto')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Importe, línea \d+$/)).not.toBeInTheDocument()
   })
 
   it('Guardar una compra solo de conceptos no promete mover stock ni costo, y la confirma', async () => {
@@ -1831,7 +1854,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
     await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
   }
 
   it('el remito ofrece el tilde Discrimina IVA y arranca apagado; una factura no lo ofrece', async () => {
@@ -2147,7 +2170,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
+    const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
     await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
     expect(cantidad).toHaveAttribute('min', '1')
 
@@ -2170,10 +2193,10 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), 'leche')
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/), 'leche')
     await usuario.click(await screen.findByRole('option', { name: 'ART-20 — Leche en polvo 800g' }))
 
-    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
+    const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
     expect(cantidad).toHaveAttribute('step', '1')
     fireEvent.change(cantidad, { target: { value: '2.5' } })
     expect(cantidad).toHaveClass('is-invalid')
@@ -2190,7 +2213,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
+    const cantidad = within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
     fireEvent.change(cantidad, { target: { value: '2.5' } })
 
@@ -2208,7 +2231,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const um = within(filaDeItems(0)).getByLabelText('UM')
+    const um = within(filaDeItems(0)).getByLabelText(/^UM, línea \d+$/)
     await waitFor(() => expect(um).toBeEnabled())
     await usuario.selectOptions(um, 'Bulto')
     expect(within(filaDeItems(0)).getByText('= 120 un. (12 por bulto)')).toBeInTheDocument()
@@ -2218,7 +2241,7 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
   it('una fila con UM Bulto manda bultos, unidades por bulto y el costo por unidad', async () => {
     mockearReferencia((ruta) => {
       if (ruta === '/compras/1') return Promise.resolve(compraFixture())
-      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad', unidadesPorBulto: 12 }))
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad', unidadesPorBulto: 12, controlaLote: false }))
       return undefined
     })
     apiPutMock.mockResolvedValue(compraFixture())
@@ -2227,12 +2250,12 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     await screen.findByDisplayValue('00012345')
 
     const fila = within(filaDeItems(0))
-    await waitFor(() => expect(fila.getByLabelText('UM')).toBeEnabled())
-    await usuario.selectOptions(fila.getByLabelText('UM'), 'Bulto')
-    await usuario.clear(fila.getByLabelText('Cantidad'))
-    await usuario.type(fila.getByLabelText('Cantidad'), '2')
-    await usuario.clear(fila.getByLabelText('Importe'))
-    await usuario.type(fila.getByLabelText('Importe'), '120')
+    await waitFor(() => expect(fila.getByLabelText(/^UM, línea \d+$/)).toBeEnabled())
+    await usuario.selectOptions(fila.getByLabelText(/^UM, línea \d+$/), 'Bulto')
+    await usuario.clear(fila.getByLabelText(/^Cantidad, línea \d+$/))
+    await usuario.type(fila.getByLabelText(/^Cantidad, línea \d+$/), '2')
+    await usuario.clear(fila.getByLabelText(/^Importe, línea \d+$/))
+    await usuario.type(fila.getByLabelText(/^Importe, línea \d+$/), '120')
     // 2 bultos × $120 = $240 bruto; 5 % de descuento = $12; total $228
     expect(fila.getByText('$ 228,00')).toBeInTheDocument()
 
@@ -2241,5 +2264,179 @@ describe('CompraEditor — cantidad según la unidad de venta del artículo', ()
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
     expect(cuerpo.items[0]).toMatchObject({ unidades: 0, bultos: 2, unidadesPorBulto: 12, costoUnitario: 10, descuento: 12 })
+  })
+})
+
+describe('CompraEditor — guardar espera a las consultas de código', () => {
+  it('Guardar y Guardar borrador no guardan mientras un código del proveedor se está consultando: avisan, y al terminar se puede guardar', async () => {
+    let resolver: (r: unknown) => void = () => {}
+    mockearReferencia((ruta) =>
+      ruta.startsWith('/articulos?busqueda=AB-1') ? new Promise((r) => (resolver = r)) : undefined,
+    )
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await cargarFila(usuario, 0, { detalle: 'Flete', cantidad: '1', importe: '500', iva: '3' })
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Código, línea \d+$/), 'AB-1')
+    await usuario.tab()
+    await within(filaDeItems(0)).findByText('Buscando…')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.')).toBeInTheDocument()
+
+    await act(async () => {
+      resolver({ items: [], total: 0, pagina: 1, tamanio: 25 })
+    })
+    await waitFor(() =>
+      expect(screen.queryByText('Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.')).not.toBeInTheDocument(),
+    )
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPostMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(cuerpo.items[0]).toMatchObject({ idArticulo: null, descripcion: 'Flete', codigoProveedor: 'AB-1' })
+  })
+
+  it('cambiar el proveedor del encabezado vuelve a consultar los códigos de las filas contra el proveedor nuevo', async () => {
+    mockearReferencia(
+      (ruta) => {
+        if (ruta.startsWith('/articulos?busqueda=AB-1&idProveedor=1')) {
+          return Promise.resolve({ items: [articuloFixture({ id: 20, nombre: 'Del uno', codigoProveedor: 'AB-1' })], total: 1, pagina: 1, tamanio: 25 })
+        }
+        if (ruta.startsWith('/articulos?busqueda=AB-1&idProveedor=2')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 25 })
+        return undefined
+      },
+      undefined,
+      undefined,
+      [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })],
+    )
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Código, línea \d+$/), 'AB-1')
+    await usuario.tab()
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Del uno'))
+
+    await screen.findByRole('option', { name: 'Proveedor Dos SA' })
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    await within(filaDeItems(0)).findByText('Pendiente de asociar')
+    expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('')
+  })
+})
+
+describe('CompraEditor — la pantalla queda inerte hasta que la navegación la reemplaza', () => {
+  it('tras guardar un borrador nuevo, los botones siguen deshabilitados y un clic más no crea una segunda compra', async () => {
+    mockearReferencia()
+    apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
+    navegacion.retener = true
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await cargarConcepto(usuario, '500', 'Flete')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(navegacion.llamadas).toHaveLength(1))
+    expect(navegacion.llamadas[0][0]).toBe('/compras/99')
+
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('tras guardar y confirmar una compra nueva sigue inerte hasta navegar', async () => {
+    mockearReferencia()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
+      if (ruta === '/compras/99/confirmar') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada' }))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    navegacion.retener = true
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '3')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '12345')
+    await usuario.type(screen.getByLabelText('Fecha del comprobante'), '01/08/2026')
+    await usuario.tab()
+    await cargarConcepto(usuario, '500', 'Flete')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(navegacion.llamadas).toHaveLength(1))
+
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    expect(apiPostMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('si el guardado falla, la pantalla sí se libera para reintentar', async () => {
+    mockearReferencia()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'compra_duplicada', 'Ya existe una compra con ese número.'))
+    navegacion.retener = true
+    const usuario = userEvent.setup()
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await cargarConcepto(usuario, '500', 'Flete')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await screen.findByText('Ya existe una compra con ese número.')
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeEnabled()
+  })
+})
+
+describe('CompraEditor — datos del artículo que completa la pantalla (lote e IVA)', () => {
+  it('una línea precargada desde una orden completa controlaLote y el IVA del artículo, y muestra el lote', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') return Promise.resolve(ordenFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ id: 10, controlaLote: true, idAlicuotaIva: 3 }))
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+
+    await screen.findByText(/Vinculada a la orden de compra/)
+    expect(await screen.findByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3'))
+  })
+
+  it('una línea de orden cuyo artículo no controla lote no muestra el lote, y el IVA que el operador ya eligió no se pisa', async () => {
+    let resolver: (r: unknown) => void = () => {}
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') return Promise.resolve(ordenFixture())
+      if (ruta === '/articulos/10') return new Promise((r) => (resolver = r))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+    await screen.findByText(/Vinculada a la orden de compra/)
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toBeEnabled())
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
+    await usuario.selectOptions(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/), '3')
+
+    await act(async () => {
+      resolver(articuloFixture({ id: 10, controlaLote: false, idAlicuotaIva: 4 }))
+    })
+
+    expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3')
+    expect(screen.queryByLabelText(/^Fecha de vencimiento, línea \d+$/)).not.toBeInTheDocument()
+  })
+
+  it('un borrador reabierto completa controlaLote desde el artículo y conserva la alícuota guardada', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ id: 10, controlaLote: true, idAlicuotaIva: 4 }))
+      return undefined
+    })
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(await screen.findByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
+    expect(within(filaDeItems(0)).getByLabelText(/^IVA, línea \d+$/)).toHaveValue('3')
   })
 })

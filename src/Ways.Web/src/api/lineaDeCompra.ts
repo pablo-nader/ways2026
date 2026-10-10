@@ -83,6 +83,10 @@ export type LineaDeCompraFormulario = {
   unidadVenta?: UnidadVenta
   /** Unidades por bulto del artículo (o de la línea guardada): habilita la UM `Bulto`. */
   unidadesPorBulto: number | null
+  /** El `actualizaCosto` que tenía la línea guardada: se reenvía mientras la fila conserve el mismo
+   * artículo. Un artículo elegido, creado o resuelto por código en la grilla lo deja en `true`. Un
+   * concepto no lo usa: el servidor exige `false`. */
+  actualizaCosto: boolean
   guardada: LineaGuardada | null
 }
 
@@ -103,6 +107,7 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
     codigoLote: '',
     fechaVencimiento: '',
     unidadesPorBulto: null,
+    actualizaCosto: true,
     guardada: null,
   }
 }
@@ -138,10 +143,35 @@ function numero(valor: string): number {
   return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
 }
 
+/** Decimales que admite la columna `bultos` (`numeric(10,2)`): con más, la base redondea en silencio
+ * y la cantidad registrada deja de coincidir con bultos × unidades por bulto. */
+const DECIMALES_DE_BULTOS = 2
+
+export const MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS = 'Los bultos admiten hasta 2 decimales.'
+export const MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES =
+  'Esa cantidad de bultos da unidades fraccionadas y este artículo se vende por unidad.'
+
 export type CampoDeLinea = 'detalle' | 'cantidad' | 'importe' | 'descuento' | 'iva' | 'vencimiento'
 
 function tieneBulto(l: LineaDeCompraFormulario): boolean {
   return l.unidadesPorBulto !== null && l.unidadesPorBulto > 0
+}
+
+/** Qué tiene mal la cantidad de bultos de una fila con UM `Bulto` (`null` = nada): más decimales de
+ * los que guarda la base, o un total de unidades fraccionado en un artículo que se vende por unidad.
+ * Lo segundo no lo exige el servidor de compras: es la regla que la grilla ya aplica a la UM
+ * `Unidad`, para no dejar entrar stock fraccionado de un artículo entero. */
+export function mensajeDeCantidadDeBultos(l: LineaDeCompraFormulario): string | null {
+  if (tipoDeLinea(l) !== 'articulo' || l.unidadDeMedida !== 'Bulto' || !tieneBulto(l)) return null
+  const bultos = l.cantidad.trim() === '' ? Number.NaN : Number(l.cantidad)
+  if (!(bultos > 0)) return null
+
+  const escalada = bultos * 10 ** DECIMALES_DE_BULTOS
+  if (Math.abs(escalada - Math.round(escalada)) >= 1e-6) return MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS
+  if (!respetaGranularidad(l.unidadVenta, cantidadDeLinea(0, bultos, l.unidadesPorBulto))) {
+    return MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES
+  }
+  return null
 }
 
 /** Qué le falta o tiene mal una fila (vacía si está completa). Una fila sin datos tampoco devuelve
@@ -157,7 +187,9 @@ export function camposInvalidosDeLinea(l: LineaDeCompraFormulario): CampoDeLinea
   if (esConcepto && l.descripcion.trim() === '') invalidos.push('detalle')
 
   const cantidad = l.cantidad.trim() === '' ? Number.NaN : Number(l.cantidad)
-  const granularidad = respetaGranularidad(esConcepto || esBulto ? undefined : l.unidadVenta, cantidad)
+  const granularidad = esBulto
+    ? mensajeDeCantidadDeBultos(l) === null
+    : respetaGranularidad(esConcepto ? undefined : l.unidadVenta, cantidad)
   if (!(cantidad > 0) || !granularidad || (esBulto && !tieneBulto(l))) invalidos.push('cantidad')
 
   if (l.importe === null) invalidos.push('importe')
@@ -258,13 +290,40 @@ export function valoresParaApi(l: LineaDeCompraFormulario): ValoresDeApi {
   }
 }
 
+export type DiferenciaDePrecioPorBulto = {
+  /** Bruto que se va a registrar: el que calcula el servidor con el costo por unidad enviado. */
+  registrado: number
+  /** `cantidad × importe` menos lo registrado: positivo = se registra de menos. */
+  diferencia: number
+  unidadesPorBulto: number
+}
+
+/**
+ * Con UM `Bulto` el precio por bulto se divide entre las unidades del bulto y se redondea a los 4
+ * decimales de la columna, así que el servidor puede registrar un bruto distinto de
+ * `bultos × precio por bulto` (1000 bultos de 3 unidades a $ 100,00 dan $ 99.999,90). Devuelve esa
+ * diferencia, comparada con aritmética decimal exacta, o `null` si no hay ninguna (o la fila no
+ * viaja por bultos).
+ */
+export function diferenciaDePrecioPorBulto(l: LineaDeCompraFormulario): DiferenciaDePrecioPorBulto | null {
+  if (tipoDeLinea(l) !== 'articulo' || l.unidadDeMedida !== 'Bulto' || !tieneBulto(l)) return null
+  const v = valoresParaApi(l)
+  if (v.bultos === null || v.unidadesPorBulto === null) return null
+
+  const esperado = productoRedondeado([numero(l.cantidad), l.importe ?? 0], 2)
+  const registrado = brutoDeLinea(v.unidades, v.bultos, v.unidadesPorBulto, v.costoUnitario)
+  const diferencia = redondearImporte(esperado - registrado, 2)
+  return diferencia === 0 ? null : { registrado, diferencia, unidadesPorBulto: v.unidadesPorBulto }
+}
+
 function codigoProveedorONulo(l: LineaDeCompraFormulario): string | null {
   const codigo = l.codigoProveedor.trim()
   return codigo === '' ? null : codigo
 }
 
-/** Fila de formulario → `LineaDeCompraSolicitada`. Un artículo siempre actualiza el costo; un
- * concepto nunca lo hace y no lleva bultos ni lote. */
+/** Fila de formulario → `LineaDeCompraSolicitada`. Un artículo reenvía su `actualizaCosto` (`true`
+ * si lo eligió la grilla); un concepto nunca lo actualiza —el servidor lo exige— y no lleva bultos
+ * ni lote. */
 export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolicitada {
   const v = valoresParaApi(l)
 
@@ -294,7 +353,7 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
     costoUnitario: v.costoUnitario,
     descuento: v.descuento,
     idAlicuotaIva: Number(l.idAlicuotaIva),
-    actualizaCosto: true,
+    actualizaCosto: l.actualizaCosto,
     codigoLote: l.codigoLote.trim() === '' ? null : l.codigoLote.trim(),
     fechaVencimiento: l.fechaVencimiento === '' ? null : l.fechaVencimiento,
     codigoProveedor: codigoProveedorONulo(l),
@@ -344,6 +403,7 @@ export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompr
     codigoLote: item.codigoLote ?? '',
     fechaVencimiento: item.fechaVencimiento ?? '',
     unidadesPorBulto: unidadesPorBulto !== null && unidadesPorBulto > 0 ? unidadesPorBulto : null,
+    actualizaCosto: item.actualizaCosto,
     guardada:
       costoUnitario === null || descuento === null
         ? null
@@ -394,21 +454,49 @@ export function alicuotaParaArticulo(articulo: Pick<ArticuloListado, 'idAlicuota
   return alicuotas.find((a) => a.porcentaje === PORCENTAJE_DE_IVA_POR_DEFECTO)?.id ?? ''
 }
 
+/** Cómo se cargan los precios del comprobante que se está armando. */
+export type ModoDePreciosDeCompra = { discriminaIva: boolean; preciosIncluyenIva: boolean }
+
+/**
+ * El costo de lista del artículo es el precio final de la lista del proveedor (el legado lo muestra
+ * como `lista / 1,21` para obtener el neto) y el nominal es el costo efectivo con IVA incluido
+ * (docs/10, compras). Un comprobante que discrimina IVA con precios netos pide el Importe sin IVA:
+ * se lo extrae con la alícuota de la fila, a los 4 decimales de la columna. En los demás modos
+ * (precios con IVA incluido, o un comprobante que no discrimina) el importe es el costo tal cual.
+ * Solo se aplica al precargar: cambiar el modo después no reescribe lo que ya está en las filas.
+ */
+export function importeSegunModoDePrecios(
+  costoConIva: number,
+  porcentajeIva: number | null,
+  modo: ModoDePreciosDeCompra | undefined,
+): number {
+  if (!modo || !modo.discriminaIva || modo.preciosIncluyenIva || porcentajeIva === null) return costoConIva
+  return redondearImporte(productoRedondeado([costoConIva, 100], 6) / (100 + porcentajeIva), 4)
+}
+
 /**
  * Cambios que deja elegir (o crear) un artículo en una fila: Detalle con su nombre, UM `Unidad`,
  * importe y descuento del artículo, su alícuota y los datos que habilitan bultos y lote. La
  * cantidad no se toca. Cambiar de artículo invalida el lote ya cargado (era del anterior) y la
- * línea guardada. Un artículo recién creado desde la fila (`alta`) conserva lo que ya se tipeó en
- * ella. Sin costo visible (rol sin permiso) el importe tipeado se respeta.
+ * línea guardada, y el `actualizaCosto` vuelve a ser `true`. Un artículo recién creado desde la
+ * fila (`alta`) conserva lo que ya se tipeó en ella. Sin costo visible (rol sin permiso) el importe
+ * tipeado se respeta. El importe se precarga según el modo de precios (`importeSegunModoDePrecios`).
  */
 export function cambiosAlElegirArticulo(
   l: LineaDeCompraFormulario,
   articulo: ArticuloListado,
   alicuotas: AlicuotaIvaListado[],
   origen: OrigenDeArticulo,
+  modo?: ModoDePreciosDeCompra,
 ): Partial<LineaDeCompraFormulario> {
-  const costo = costoDeArticuloParaCompra(articulo)
   const conservarLoTipeado = origen === 'alta'
+  const idAlicuotaIva = conservarLoTipeado && l.idAlicuotaIva !== '' ? l.idAlicuotaIva : alicuotaParaArticulo(articulo, alicuotas)
+  const porcentajeIva = alicuotas.find((a) => a.id === idAlicuotaIva)?.porcentaje ?? null
+  const costoDeLista = costoDeArticuloParaCompra(articulo)
+  const costo =
+    costoDeLista === null
+      ? null
+      : { ...costoDeLista, importe: importeSegunModoDePrecios(costoDeLista.importe, porcentajeIva, modo) }
   const importe = conservarLoTipeado ? (l.importe ?? costo?.importe ?? null) : (costo?.importe ?? l.importe)
   const descuentoPorcentaje = conservarLoTipeado || costo === null ? l.descuentoPorcentaje : costo.descuentoPorcentaje
 
@@ -422,10 +510,32 @@ export function cambiosAlElegirArticulo(
     unidadDeMedida: 'Unidad',
     importe,
     descuentoPorcentaje,
-    idAlicuotaIva: conservarLoTipeado && l.idAlicuotaIva !== '' ? l.idAlicuotaIva : alicuotaParaArticulo(articulo, alicuotas),
+    idAlicuotaIva,
+    actualizaCosto: true,
     guardada: null,
     ...(l.idArticulo !== articulo.id ? { codigoLote: '', fechaVencimiento: '' } : {}),
   }
+}
+
+const CAMPOS_PRECARGADOS_POR_CODIGO = ['unidadDeMedida', 'importe', 'descuentoPorcentaje', 'idAlicuotaIva'] as const
+
+/**
+ * Lo que aplica una consulta de código que encontró un artículo, sobre la fila tal como está AHORA
+ * (`actual`) y tal como estaba cuando se lanzó (`alLanzar`): las celdas que el operador tocó
+ * mientras la consulta estaba en vuelo se respetan, y el artículo solo precarga las que no tocó.
+ */
+export function cambiosAlResolverPorCodigo(
+  alLanzar: LineaDeCompraFormulario,
+  actual: LineaDeCompraFormulario,
+  articulo: ArticuloListado,
+  alicuotas: AlicuotaIvaListado[],
+  modo?: ModoDePreciosDeCompra,
+): Partial<LineaDeCompraFormulario> {
+  const cambios = cambiosAlElegirArticulo(actual, articulo, alicuotas, 'codigo', modo)
+  for (const campo of CAMPOS_PRECARGADOS_POR_CODIGO) {
+    if (!Object.is(actual[campo], alLanzar[campo])) delete cambios[campo]
+  }
+  return cambios
 }
 
 /** Escribir en el Detalle de una fila con artículo la deja sin artículo: pasa a ser un concepto con
@@ -446,20 +556,46 @@ export function cambiosAlEscribirDetalle(l: LineaDeCompraFormulario, texto: stri
   }
 }
 
-/** Editar el código de una fila resuelta por código la deja sin resolver: el Detalle vuelve a ser
- * editable y se vuelve a consultar al salir de la celda. El artículo ya elegido queda hasta que la
- * nueva consulta lo reemplace. */
+/** Deja la fila sin el artículo que le dio su código: vuelve a ser un concepto con el código sin
+ * consultar y sin el nombre del artículo. Importe, descuento e IVA ya cargados se conservan como
+ * valores tipeados. */
+export function cambiosAlDesresolver(): Partial<LineaDeCompraFormulario> {
+  return {
+    descripcion: '',
+    idArticulo: '',
+    resueltaPorCodigo: false,
+    codigoConsultado: '',
+    controlaLote: false,
+    codigoLote: '',
+    fechaVencimiento: '',
+    unidadVenta: undefined,
+    unidadesPorBulto: null,
+    unidadDeMedida: 'Unidad',
+    actualizaCosto: true,
+    guardada: null,
+  }
+}
+
+/** Editar el código de una fila resuelta por código le saca el artículo (era de OTRO código): el
+ * Detalle vuelve a ser editable y la nueva consulta, al salir de la celda, la vuelve a resolver. En
+ * una fila cuyo artículo se eligió buscando o se creó con "+", el código es el pendiente de asociar
+ * y el artículo se conserva. */
 export function cambiosAlEscribirCodigo(l: LineaDeCompraFormulario, codigo: string): Partial<LineaDeCompraFormulario> {
-  return l.resueltaPorCodigo ? { codigoProveedor: codigo, resueltaPorCodigo: false } : { codigoProveedor: codigo }
+  return l.resueltaPorCodigo ? { ...cambiosAlDesresolver(), codigoProveedor: codigo } : { codigoProveedor: codigo }
 }
 
 /** Datos del artículo que una fila reabierta (borrador o recepción de una orden) todavía no trae:
- * las unidades por bulto que habilitan la UM `Bulto`. Una línea guardada con bultos conserva las
- * suyas, que son las que se pactaron. */
+ * las unidades por bulto que habilitan la UM `Bulto`, si controla lote y la alícuota de IVA. Una
+ * línea guardada con bultos conserva las suyas, que son las que se pactaron; una alícuota ya
+ * cargada, guardada o tipeada, nunca se pisa, y un lote ya inferido no se baja. */
 export function completarConArticulo(
   l: LineaDeCompraFormulario,
-  articulo: Pick<ArticuloListado, 'unidadesPorBulto'>,
+  articulo: Pick<ArticuloListado, 'unidadesPorBulto' | 'controlaLote' | 'idAlicuotaIva'>,
 ): Partial<LineaDeCompraFormulario> {
   const delArticulo = articulo.unidadesPorBulto !== null && articulo.unidadesPorBulto > 0 ? articulo.unidadesPorBulto : null
-  return { unidadesPorBulto: l.unidadesPorBulto ?? delArticulo }
+  return {
+    unidadesPorBulto: l.unidadesPorBulto ?? delArticulo,
+    controlaLote: l.controlaLote || articulo.controlaLote,
+    idAlicuotaIva: l.idAlicuotaIva === '' ? articulo.idAlicuotaIva : l.idAlicuotaIva,
+  }
 }

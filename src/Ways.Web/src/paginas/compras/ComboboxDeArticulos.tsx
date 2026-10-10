@@ -7,6 +7,9 @@ const MINIMO_DE_CARACTERES = 2
 const ESPERA_DE_TIPEO_MS = 300
 
 type Props = {
+  /** Nombre accesible de la caja; por defecto "Detalle". La grilla lo hace propio de cada fila. */
+  etiqueta?: string
+  etiquetaDeCrear?: string
   /** Texto del Detalle de la fila: lo tipeado o el nombre del artículo ya elegido. */
   texto: string
   /** `true` mientras la fila tiene un artículo: no se ofrece crear otro desde ahí. */
@@ -36,6 +39,8 @@ function etiquetaDeOpcion(a: ArticuloListado): string {
  * Ctrl+Enter y el botón "+" piden crear el artículo.
  */
 export function ComboboxDeArticulos({
+  etiqueta = 'Detalle',
+  etiquetaDeCrear = 'Crear artículo',
   texto,
   conArticulo,
   soloLectura,
@@ -179,6 +184,13 @@ export function ComboboxDeArticulos({
     }
   }
 
+  const anuncio = buscando
+    ? ''
+    : terminoBuscado === null
+      ? ''
+      : resultados.length === 0
+        ? 'Sin resultados.'
+        : `${resultados.length} ${resultados.length === 1 ? 'resultado' : 'resultados'}.`
   const sinResultados = !buscando && terminoBuscado !== null && resultados.length === 0
 
   return (
@@ -189,7 +201,7 @@ export function ComboboxDeArticulos({
           type="text"
           role="combobox"
           className={`form-control form-control-sm${soloLectura ? ' bg-body-secondary text-muted' : ''}${invalido ? ' is-invalid' : ''}`}
-          aria-label="Detalle"
+          aria-label={etiqueta}
           aria-autocomplete="list"
           aria-expanded={visible}
           aria-controls={idLista}
@@ -211,7 +223,7 @@ export function ComboboxDeArticulos({
             type="button"
             className="btn btn-outline-secondary btn-sm"
             tabIndex={-1}
-            aria-label="Crear artículo"
+            aria-label={etiquetaDeCrear}
             title="Crear artículo (Ctrl+Enter)"
             aria-keyshortcuts="Control+Enter"
             disabled={disabled}
@@ -237,6 +249,9 @@ export function ComboboxDeArticulos({
               aria-selected={indice === activa}
               className={`list-group-item list-group-item-action py-1 px-2 small${indice === activa ? ' active' : ''}`}
               style={{ cursor: 'pointer' }}
+              onMouseMove={() => {
+                if (activa !== indice) setActiva(indice)
+              }}
               onMouseDown={(evento) => {
                 evento.preventDefault()
                 elegir(a)
@@ -246,6 +261,9 @@ export function ComboboxDeArticulos({
             </li>
           ))}
       </ul>
+      <div role="status" aria-live="polite" className="visually-hidden" data-anuncio="resultados">
+        {anuncio}
+      </div>
       {buscando && <div className="small text-muted">Buscando…</div>}
       {sinResultados && !conArticulo && <div className="small text-muted">Sin resultados: se carga como concepto.</div>}
     </div>
