@@ -351,7 +351,7 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 > protocolo de locks y replican a la familia en su propia transacción: el de **precios** ("Precios con
 > alcance de familia", abajo; también lo usa aplicar el precio sugerido de una compra), la **edición de
 > artículos** ("Edición con alcance de familia"), el **alta de un artículo dentro de una familia** ("Alta
-> dentro de una familia") y la **confirmación de una compra**, que replica `costo_nominal` ("Compras y
+> dentro de una familia", y "Alta con una familia nueva", que crea la familia con el artículo como único miembro) y la **confirmación de una compra**, que replica `costo_nominal` ("Compras y
 > familias"). La **baja lógica** de un artículo también cambia quién es miembro (`deleted_at`) y no sigue ese
 > protocolo: no toma el lock de membresía sino el `FOR UPDATE` de la fila del artículo, y los escritores que
 > bloquean miembros reevalúan `deleted_at IS NULL` sobre cada fila bajo su propio lock de fila, así que un
@@ -470,6 +470,22 @@ difiera de la familia):
 del artículo nuevo en orden ascendente de su clave después de las filas y solo inserta. Los campos propios del
 artículo son los del pedido. Un fallo al guardar —también el de las filas de precio— revierte el artículo entero,
 y el alta no se reintenta. Sin `idFamilia` el alta no cambia: no toma el lock de membresía y no copia nada.
+
+**Alta con una familia nueva.** `POST /api/articulos` acepta también un `nombreFamiliaNueva` opcional: el artículo y la
+familia con ese nombre se crean en UNA transacción y el artículo es su único miembro y su referencia. No hay valores
+compartidos que comparar ni precios que copiar, y ni el alta de artículos ni la creación de una familia escriben auditoría
+propia, así que no se agrega ninguna fila de auditoría. Es **excluyente** con `idFamilia`: los dos a la vez son
+`400 familia_existente_y_nueva`, sin elegir ninguno en silencio. Con el campo ausente o en `null` el alta no cambia. Presente,
+el nombre se normaliza como el de cualquier familia (`NombreDeFamilia.Normalizar`): una cadena vacía o de solo espacios es
+`400 nombre_requerido` y una de más de 150 caracteres, `400 nombre_muy_largo`; un campo aceptado nunca se descarta. Un
+nombre en uso entre las familias vivas del tenant (sin distinguir mayúsculas) es `409 familia_nombre_duplicado`: el
+pre-chequeo corre antes de abrir la transacción y es solo de mejor esfuerzo; el respaldo es `ux_familias_nombre`, cuyo
+`23505` se produce al insertar la familia cuando la carrera se pierde y la API traduce al mismo `409`. Un fallo en cualquier
+punto revierte la transacción entera y no deja ni el artículo ni la familia. La respuesta es la del alta
+(`ArticuloListado`), con el `idFamilia` de la familia creada. Orden de locks: el de membresía **exclusivo** es la primera
+sentencia, igual que con `idFamilia`; después los chequeos de catálogo; la familia nueva se inserta (con su propio
+`SaveChangesAsync`, que da el id) justo antes que el artículo. Una fila nueva no la puede bloquear nadie, así que no hay
+fila de familia que bloquear ni filas de miembros ni locks de par.
 
 **Compras y familias.** La confirmación de una compra (`ServicioDeCompras.ConfirmarAsync`) toma el lock de
 membresía **compartido** como primera sentencia de su transacción, antes que el `UPDATE` del encabezado:
@@ -673,7 +689,7 @@ conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membres
 precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
 (`ServicioDeArticulos.ActualizarAsync`: exclusivo solo con `SoloEste`, compartido en cualquier otro caso; en
 "solo este" bloquea solo la fila propia y en los demás casos todos los miembros, los 5 chequeos de catálogo
-`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` (`ServicioDeArticulos.CrearAsync`:
+`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` o `nombreFamiliaNueva` (`ServicioDeArticulos.CrearAsync`:
 exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
 artículo todavía no existe, y los locks de par del artículo nuevo al final) y la confirmación de una compra
 (`ServicioDeCompras.ConfirmarAsync`: compartido, antes del encabezado; las filas de los artículos con costo
