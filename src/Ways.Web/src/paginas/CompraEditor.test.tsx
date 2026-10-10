@@ -815,7 +815,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
     expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
 
-    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '2026-12-01')
+    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '01/12/2026')
 
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
@@ -843,7 +843,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     renderEditor()
     await screen.findByText('Elegido: Fideos 500g')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'coca')
     await screen.findByText('ART-30 — Coca Cola 1.5L')
@@ -879,7 +879,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     renderEditor()
     await screen.findByText('Elegido: Fideos 500g')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
     await screen.findByText('ART-40 — Yerba 1kg')
@@ -1140,7 +1140,7 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
-    expect(screen.getByLabelText('Fecha del comprobante')).toHaveValue('2026-08-15')
+    expect(screen.getByLabelText('Fecha del comprobante')).toHaveValue('15/08/2026')
     expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0003')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00099999')
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')

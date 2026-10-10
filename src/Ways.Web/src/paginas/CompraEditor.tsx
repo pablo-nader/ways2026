@@ -69,6 +69,7 @@ import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -431,16 +432,15 @@ function FilaDeItem({
               disabled={disabled}
               onChange={(e) => onCambio(linea.clave, { codigoLote: e.target.value })}
             />
-            <input
-              type="date"
+            <CampoFecha
               className={`form-control form-control-sm ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
               aria-label="Fecha de vencimiento"
               value={linea.fechaVencimiento}
               disabled={disabled}
-              onChange={(e) => onCambio(linea.clave, { fechaVencimiento: e.target.value })}
+              onChange={(valor) => onCambio(linea.clave, { fechaVencimiento: valor })}
             />
             {linea.fechaVencimiento.trim() === '' && (
-              <div className="invalid-feedback">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
+              <div className="invalid-feedback d-block">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
             )}
           </>
         ) : (
@@ -1546,13 +1546,12 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             <label className="form-label" htmlFor="compra-fecha-comprobante">
               Fecha del comprobante
             </label>
-            <input
+            <CampoFecha
               id="compra-fecha-comprobante"
-              type="date"
               className="form-control"
               value={encabezado.fechaComprobante}
               disabled={!esBorrador || ocupado || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, fechaComprobante: e.target.value }))}
+              onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
           <div className="col-12">

@@ -258,7 +258,10 @@ describe('Gastos (administración) — fecha', () => {
     const maniana = new Date()
     maniana.setDate(maniana.getDate() + 1)
     const manianaISO = fechaLocal(maniana)
-    fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: manianaISO } })
+    // El selector nativo oculto no valida contra `max` al recibir un cambio programático.
+    fireEvent.change(screen.getByLabelText('Fecha').closest('.position-relative')!.querySelector('input[type="date"]')!, {
+      target: { value: manianaISO },
+    })
     await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
@@ -308,7 +311,7 @@ describe('Gastos (administración) — alta', () => {
     renderGastos()
 
     await abrirYCompletarFormulario()
-    fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-01-15' } })
+    fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '15/01/2026' } })
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/administracion', expect.objectContaining({ fecha: '2026-01-15' })))

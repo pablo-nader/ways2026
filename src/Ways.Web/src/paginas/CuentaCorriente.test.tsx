@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
+import { textoAIso } from '../formato/fechas'
 import type {
   ClienteListado,
   ComprobanteEmitido,
@@ -383,8 +384,8 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
 
     const llamadaEstado = apiGetMock.mock.calls.find((c) => (c[0] as string).includes('/cuenta-corriente'))
     const query = decodeURIComponent(llamadaEstado?.[0] as string)
-    expect(query).toContain(`desde=${inputDesde.value}T00:00:00`)
-    expect(query).toContain(`hasta=${inputHasta.value}T23:59:59.999`)
+    expect(query).toContain(`desde=${textoAIso(inputDesde.value)}T00:00:00`)
+    expect(query).toContain(`hasta=${textoAIso(inputHasta.value)}T23:59:59.999`)
   })
 
   it('"Ver histórico completo" limpia los inputs Desde/Hasta — la ventana en efecto (sin recorte) queda visible', async () => {
@@ -1060,7 +1061,7 @@ describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
     const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
     const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
 
-    expect(screen.getByText(`Rango: ${inputDesde.value} a ${inputHasta.value}`)).toBeInTheDocument()
+    expect(screen.getByText(`Rango: ${textoAIso(inputDesde.value)} a ${textoAIso(inputHasta.value)}`)).toBeInTheDocument()
     expect(screen.getByText(/Generado:.*— cajera_ana/)).toBeInTheDocument()
   })
 

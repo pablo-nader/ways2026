@@ -214,8 +214,8 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
 
     await screen.findByText('Proveedor Uno SA')
     expect(llamadasAlLibro('/reportes/libro-iva-compras?')).toEqual([RUTA_COMPRAS])
-    expect(screen.getByLabelText('Desde')).toHaveValue('2026-05-01')
-    expect(screen.getByLabelText('Hasta')).toHaveValue('2026-05-31')
+    expect(screen.getByLabelText('Desde')).toHaveValue('01/05/2026')
+    expect(screen.getByLabelText('Hasta')).toHaveValue('31/05/2026')
     expect(screen.getByRole('tab', { name: 'Compras' })).toHaveAttribute('aria-selected', 'true')
 
     const encabezados = screen.getAllByRole('columnheader').map((c) => c.textContent)
@@ -297,7 +297,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     await screen.findByText('Proveedor Uno SA')
 
     await usuario.selectOptions(selector, '1')
-    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-05-05' } })
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '05/05/2026' } })
     await usuario.click(screen.getByRole('tab', { name: 'Ventas' }))
 
     await screen.findByText('Cliente Uno SRL')
@@ -350,7 +350,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     renderLibroIva()
     await waitFor(() => expect(llamadasAlLibro('/reportes/libro-iva-compras?')).toHaveLength(1))
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-05-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/05/2026' } })
     await screen.findByText('Proveedor Uno SA')
     expect(llamadasAlLibro('/reportes/libro-iva-compras?')).toHaveLength(2)
 
@@ -371,7 +371,7 @@ describe('LibroIva — pantalla con pestañas Compras y Ventas', () => {
     await screen.findByText('Proveedor Uno SA')
     const antes = llamadasAlLibro('/reportes/libro-iva-compras?').length
 
-    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-06-01' } })
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '01/06/2026' } })
 
     expect(await screen.findByText(/“desde” no puede ser posterior a “hasta”/)).toBeInTheDocument()
     expect(llamadasAlLibro('/reportes/libro-iva-compras?')).toHaveLength(antes)

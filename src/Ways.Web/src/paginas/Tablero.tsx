@@ -31,6 +31,7 @@ import { GraficoDeBarras } from '../componentes/graficos/GraficoDeBarras'
 import { GraficoDeLineas } from '../componentes/graficos/GraficoDeLineas'
 import { aSerieDeGrafico } from '../componentes/graficos/series'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -739,26 +740,24 @@ export function Tablero() {
                 <label className="form-label" htmlFor="tablero-desde">
                   Desde
                 </label>
-                <input
+                <CampoFecha
                   id="tablero-desde"
-                  type="date"
                   className="form-control"
                   value={desde}
                   disabled={cargando}
-                  onChange={(e) => setDesde(e.target.value)}
+                  onChange={(valor) => setDesde(valor)}
                 />
               </div>
               <div className="col-auto">
                 <label className="form-label" htmlFor="tablero-hasta">
                   Hasta
                 </label>
-                <input
+                <CampoFecha
                   id="tablero-hasta"
-                  type="date"
                   className="form-control"
                   value={hasta}
                   disabled={cargando}
-                  onChange={(e) => setHasta(e.target.value)}
+                  onChange={(valor) => setHasta(valor)}
                 />
               </div>
               <div className="col-auto">

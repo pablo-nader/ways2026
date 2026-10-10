@@ -6,6 +6,7 @@ import type { MedioPagoAlta, MedioPagoListado, ResultadoDePagoDeCompra } from '.
 import { formatearImporte } from '../formato/importes'
 import { CampoImporte } from './CampoImporte'
 import { Modal } from './Modal'
+import { CampoFecha } from './CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -129,13 +130,12 @@ export function ModalDePagoDeCompra({ idCompra, etiquetaDeLaCompra, saldoPendien
           <label className="form-label" htmlFor="pago-compra-fecha">
             Fecha
           </label>
-          <input
+          <CampoFecha
             id="pago-compra-fecha"
-            type="date"
             className="form-control"
             value={fecha}
             max={hoy}
-            onChange={(e) => setFecha(e.target.value)}
+            onChange={(valor) => setFecha(valor)}
           />
         </div>
 

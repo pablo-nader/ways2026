@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
 import { rangoUltimosSieteDias } from '../api/reportes'
+import { isoATexto } from '../formato/fechas'
 import { ROL } from '../api/tipos'
 import type {
   Comisiones,
@@ -307,8 +308,8 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
 
     const rangoEsperado = rangoUltimosSieteDias()
     await screen.findByText('Empresa Uno SA')
-    expect(screen.getByLabelText('Desde')).toHaveValue(rangoEsperado.desde)
-    expect(screen.getByLabelText('Hasta')).toHaveValue(rangoEsperado.hasta)
+    expect(screen.getByLabelText('Desde')).toHaveValue(isoATexto(rangoEsperado.desde))
+    expect(screen.getByLabelText('Hasta')).toHaveValue(isoATexto(rangoEsperado.hasta))
 
     expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument() // ventas netas
     expect(screen.getByText('$ 300,00')).toBeInTheDocument() // gastos
@@ -356,7 +357,7 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(screen.getByLabelText('Desde')).toBeInTheDocument()
 
     // Cambia "Hasta" ANTES de que la primera consulta (rango de 7 días por defecto) resuelva.
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
 
@@ -578,7 +579,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     renderTablero()
     await screen.findByText('Empresa Uno SA')
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     await waitFor(() => {
       const barras = screen.getAllByTestId('bar-chart')
@@ -611,7 +612,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     renderTablero()
     await screen.findByText('Empresa Uno SA')
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     await waitFor(() => {
       const barras = screen.getAllByTestId('bar-chart')
@@ -644,7 +645,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     renderTablero()
     await screen.findByText('Empresa Uno SA')
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     await waitFor(() => {
       const barras = screen.getAllByTestId('bar-chart')
@@ -679,7 +680,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     renderTablero()
     await screen.findByText('Empresa Uno SA')
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     await waitFor(() => {
       const barras = screen.getAllByTestId('bar-chart')
@@ -971,7 +972,7 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
     renderTablero()
     await screen.findByText('Rentabilidad')
 
-    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '20/08/2026' } })
 
     expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
 

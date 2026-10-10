@@ -42,6 +42,7 @@ import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { formatearImporte } from '../formato/importes'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
@@ -481,13 +482,12 @@ export function Gastos() {
               <label className="form-label" htmlFor="gasto-admin-fecha">
                 Fecha
               </label>
-              <input
+              <CampoFecha
                 id="gasto-admin-fecha"
-                type="date"
                 className="form-control"
                 max={fechaDeHoy()}
                 value={formulario.fecha}
-                onChange={(e) => setFormulario((prev) => ({ ...prev, fecha: e.target.value }))}
+                onChange={(valor) => setFormulario((prev) => ({ ...prev, fecha: valor }))}
               />
             </div>
 
@@ -750,24 +750,22 @@ export function Gastos() {
             <label className="form-label" htmlFor="gastos-admin-filtro-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="gastos-admin-filtro-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="gastos-admin-filtro-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="gastos-admin-filtro-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
         </fieldset>
