@@ -66,6 +66,7 @@ import {
 } from './sugerenciasDePercepcion'
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
+import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
 
 function formatearMoneda(valor: number | null): string {
@@ -973,6 +974,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     setEncabezado((prev) => alElegirProveedor(prev, prev.idProveedor, referenciaDePercepciones, conservarModo))
   }, [esNuevo, proveedores, ordenParaPrecargar, gastoOrigen, referenciaDePercepciones])
 
+  // Con un único punto de venta no hay nada que elegir: se preselecciona UNA vez, cuando llega su
+  // lista, y solo si el borrador nuevo todavía no tiene uno (orden de compra o gasto de origen).
+  const puntoVentaPreseleccionadoRef = useRef(false)
+  useEffect(() => {
+    if (!esNuevo || puntoVentaPreseleccionadoRef.current || puntosVenta === null) return
+    puntoVentaPreseleccionadoRef.current = true
+    if (puntosVenta.length !== 1) return
+    const unico = puntosVenta[0].id
+    setEncabezado((prev) =>
+      prev.idPuntoVenta === ''
+        ? conSugerenciasDePercepcion({ ...prev, idPuntoVenta: unico }, referenciaDePercepciones)
+        : prev,
+    )
+  }, [esNuevo, puntosVenta, referenciaDePercepciones])
+
   // Las sugerencias dependen de datos que llegan por separado (proveedores, tipos, puntos de venta,
   // empresas): cada vez que cambia la referencia de un borrador NUEVO se recomputan. Las filas que el
   // operador tocó o quitó se respetan; un borrador existente nunca recibe sugerencias nuevas.
@@ -1441,7 +1457,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               <option value="">Elegir…</option>
               {(proveedores ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.razonSocial}
+                  {etiquetaDeProveedor(p)}
                 </option>
               ))}
             </select>
@@ -1459,8 +1475,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             >
               <option value="">Elegir…</option>
               {(tipos ?? []).map((t) => (
-                <option key={t.id} value={t.id} title={t.nombre}>
-                  {t.codigo}
+                <option key={t.id} value={t.id}>
+                  {t.nombre}
                 </option>
               ))}
             </select>

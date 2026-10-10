@@ -267,12 +267,14 @@ function renderEditorProtegido(idCompra: string | number = 1) {
 function mockearReferencia(
   sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined,
   tipos: TipoComprobanteListado[] = [tipoFixture()],
+  puntosVenta: PuntoVentaListado[] = [puntoVentaFixture()],
+  proveedores: ProveedorListado[] = [proveedorFixture()],
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [proveedorFixture()], total: 1, pagina: 1, tamanio: 200 })
+    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: proveedores, total: proveedores.length, pagina: 1, tamanio: 200 })
     if (ruta === '/catalogos-fiscales/tipos-comprobante') return Promise.resolve(tipos)
     if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve([alicuotaFixture()])
-    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+    if (ruta === '/puntos-venta') return Promise.resolve(puntosVenta)
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([listaPrecioFixture()])
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
@@ -628,6 +630,57 @@ describe('CompraEditor — compra nueva', () => {
 
     expect(await screen.findByText('Ya existe una compra con ese número.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Crear borrador' })).toBeInTheDocument()
+  })
+})
+
+describe('CompraEditor — selectores del encabezado', () => {
+  it('el proveedor se rotula con el nombre de fantasía y cae a la razón social', async () => {
+    mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture()], [
+      proveedorFixture({ id: 1, razonSocial: 'Proveedor Uno SA', nombreFantasia: 'Uno' }),
+      proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA', nombreFantasia: null }),
+    ])
+    renderEditor('nueva')
+
+    expect(await screen.findByRole('option', { name: 'Uno' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Proveedor Dos SA' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Proveedor Uno SA' })).not.toBeInTheDocument()
+  })
+
+  it('el tipo de comprobante se rotula con el nombre, no con el código', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+
+    expect(await screen.findByRole('option', { name: 'Factura A de compra' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'C-FA' })).not.toBeInTheDocument()
+  })
+
+  it('con un único punto de venta lo preselecciona en una compra nueva', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await waitFor(() => expect(puntoVenta).toHaveValue('2'))
+  })
+
+  it('con varios puntos de venta no preselecciona ninguno', async () => {
+    mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture(), puntoVentaFixture({ id: 3, nombre: 'Sucursal' })])
+    renderEditor('nueva')
+
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await screen.findByRole('option', { name: 'Sucursal' })
+    expect(puntoVenta).toHaveValue('')
+  })
+
+  it('un borrador existente conserva su punto de venta aunque haya uno solo distinto', async () => {
+    mockearReferencia(
+      (ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ idPuntoVenta: 3 })) : undefined),
+      [tipoFixture()],
+      [puntoVentaFixture({ id: 2 }), puntoVentaFixture({ id: 3, nombre: 'Sucursal' })],
+    )
+    renderEditor()
+
+    await screen.findByDisplayValue('0003-00012345')
+    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue('3'))
   })
 })
 
@@ -1089,7 +1142,7 @@ describe('CompraEditor — líneas por concepto', () => {
     renderEditor('nueva')
     // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
     await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /C-FA/ })
+    await screen.findByRole('option', { name: /Factura A de compra/ })
     await screen.findByRole('option', { name: 'Casa Central' })
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
@@ -1254,7 +1307,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     renderEditor('nueva')
     // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
     await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /C-RM/ })
+    await screen.findByRole('option', { name: /Remito \/ comprobante no fiscal/ })
     await screen.findByRole('option', { name: 'Casa Central' })
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
