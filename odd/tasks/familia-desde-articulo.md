@@ -95,8 +95,20 @@ Created 2026-10-10.
   lost in several paths; two async errors without `role="alert"`; a test name that claims the
   payload while the banner assertion is what holds; duplicate-name copy says "por eso no
   aparece" even for a visible active familia; dead export `UNION_SIN_ELEGIR`; possible Tab
-  trap issue in the stacked modal (not executed, likely pre-existing). Fix round: awaiting
-  the owner.
+  trap issue in the stacked modal (not executed, likely pre-existing). Fix round 1
+  authorized by the owner ("dale", 2026-10-10).
+- Fix round 1: commit `71df9544` — the proposal is dropped after a successful save, after a
+  price write and after "+" creates a familia; 5 tests with mutation evidence. Observed
+  (fix actor): `npx tsc -b` exit 0; `npx oxlint --quiet` clean; touched suites 21 files / 692
+  tests; full `npx vitest run` 159 files / 3929 tests green.
+- Scoped re-judgment 1: both judges J1 RESOLVED, J2 RESOLVED, 0 CRITICAL, no fix-caused
+  defect. Confirmed by both, non-severe (A: SUGGESTION, B: WARNING): test d2 "la
+  previsualización tardía…" does not prove the `invalidar` generation bump (the group only
+  renders while `idElegida` is set), so its name claims more than it proves — PENDING before
+  the PR: add a re-propose-after-late-response test or narrow the name. One judge only: no
+  notice when a price write drops the proposal; a scheduled price also drops it;
+  `alEscribirPrecio` not asserted at unit level. Judges did not run tests nor load the
+  SKILL.md files in this round.
 
 ## Next step
 
