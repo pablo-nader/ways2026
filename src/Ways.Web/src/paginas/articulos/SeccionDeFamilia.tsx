@@ -1,24 +1,45 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FamiliaDetalle, ListaPrecioListado } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
+import { VistaDePrevisualizacion } from '../familias/VistaDePrevisualizacion'
+import type { NombresDeCatalogo } from '../familias/valoresCompartidos'
+import { AltaRapidaFamilia } from './AltaRapidaFamilia'
 import {
+  advertenciaDeUnion,
+  AVISO_DE_CAMBIOS_SIN_GUARDAR_EN_FAMILIA,
+  AVISO_DE_UNION_DESACTUALIZADA,
   CAMPOS_PROPIOS,
   describirEstadoDePrecios,
   etiquetaDeFamilia,
   familiaDelArticulo,
   opcionesDeFamilia,
+  previsualizacionDeUnionVigente,
   type AccionesDeFamiliaDelFormulario,
   type EstadoDeFamiliaDelFormulario,
+  type EstadoDeUnionAFamilia,
 } from './familia'
+
+/** Lo que el selector muestra como elegido cuando hay una familia nueva anotada en un alta: no es un id de familia. */
+const VALOR_FAMILIA_NUEVA = 'nueva'
 
 type Props = {
   esNuevo: boolean
   idFamilia: number | ''
+  /** En un alta, el nombre de la familia que se crea junto con el artículo; `''` si no se pidió ninguna. */
+  nombreFamiliaNueva: string
+  idDelArticulo: number | null
+  codigoInterno: string
   nombreDelArticulo: string
   ocupado: boolean
   listasPrecio: ListaPrecioListado[]
   familia: EstadoDeFamiliaDelFormulario
   acciones: AccionesDeFamiliaDelFormulario
+  union: EstadoDeUnionAFamilia
+  errorDeFamiliaNueva: string
+  /** El artículo existente tiene cambios sin guardar: el servidor lee los valores guardados, así que no se actúa sobre su familia. */
+  sinGuardar: boolean
+  nombresDeCatalogo: NombresDeCatalogo
+  nombresDeListas: ReadonlyMap<number, string>
   /** La salida de la familia espera confirmación. Lo decide `FormularioArticulo`, que es quien deja inerte
    * el resto del formulario mientras la confirmación está abierta. */
   confirmandoSalida: boolean
@@ -28,29 +49,54 @@ type Props = {
 }
 
 /**
- * La familia del artículo en el formulario (doc 10 §3). En un alta, el selector opcional de la familia a la
- * que se suma el artículo, con lo que toma de ella; al editar un miembro, su pertenencia y la salida de la
- * familia. El selector solo se ofrece cuando hay familias para elegir; si falló la carga de las familias, el
- * aviso se muestra aunque no haya selector, para que el motivo no se esconda.
+ * La familia del artículo en el formulario (doc 10 §3). El selector de familias está siempre: en un alta elige la familia de la
+ * que toma sus campos o, con "+", anota una nueva que el servidor crea al guardar; en un artículo existente que no es miembro,
+ * elegir una previsualiza lo que cambiaría y pide confirmar antes de unirlo, y "+" la crea con el artículo como referencia. Al
+ * editar un miembro, su pertenencia y la salida de la familia. Si falló la carga de las familias el aviso se muestra igual, para
+ * que el motivo no se esconda.
  */
 export function SeccionDeFamilia({
   esNuevo,
   idFamilia,
+  nombreFamiliaNueva,
+  idDelArticulo,
+  codigoInterno,
   nombreDelArticulo,
   ocupado,
   listasPrecio,
   familia,
   acciones,
+  union,
+  errorDeFamiliaNueva,
+  sinGuardar,
+  nombresDeCatalogo,
+  nombresDeListas,
   confirmandoSalida,
   onPedirSalida,
   onCancelarSalida,
   onConfirmarSalida,
 }: Props) {
-  if (esNuevo) {
-    return <EleccionDeFamilia idFamilia={idFamilia} ocupado={ocupado} listasPrecio={listasPrecio} familia={familia} acciones={acciones} />
+  if (esNuevo || idFamilia === '') {
+    return (
+      <EleccionDeFamilia
+        esNuevo={esNuevo}
+        idFamilia={idFamilia}
+        nombreFamiliaNueva={nombreFamiliaNueva}
+        idDelArticulo={idDelArticulo}
+        codigoInterno={codigoInterno}
+        nombreDelArticulo={nombreDelArticulo}
+        ocupado={ocupado}
+        listasPrecio={listasPrecio}
+        familia={familia}
+        acciones={acciones}
+        union={union}
+        errorDeFamiliaNueva={errorDeFamiliaNueva}
+        sinGuardar={sinGuardar}
+        nombresDeCatalogo={nombresDeCatalogo}
+        nombresDeListas={nombresDeListas}
+      />
+    )
   }
-
-  if (idFamilia === '') return null
 
   return (
     <PertenenciaAFamilia
@@ -66,51 +112,237 @@ export function SeccionDeFamilia({
   )
 }
 
+type PropsDeEleccion = Pick<
+  Props,
+  | 'esNuevo'
+  | 'idFamilia'
+  | 'nombreFamiliaNueva'
+  | 'idDelArticulo'
+  | 'codigoInterno'
+  | 'nombreDelArticulo'
+  | 'ocupado'
+  | 'listasPrecio'
+  | 'familia'
+  | 'acciones'
+  | 'union'
+  | 'errorDeFamiliaNueva'
+  | 'sinGuardar'
+  | 'nombresDeCatalogo'
+  | 'nombresDeListas'
+>
+
 function EleccionDeFamilia({
+  esNuevo,
   idFamilia,
+  nombreFamiliaNueva,
+  idDelArticulo,
+  codigoInterno,
+  nombreDelArticulo,
   ocupado,
   listasPrecio,
   familia,
   acciones,
-}: Pick<Props, 'idFamilia' | 'ocupado' | 'listasPrecio' | 'familia' | 'acciones'>) {
+  union,
+  errorDeFamiliaNueva,
+  sinGuardar,
+  nombresDeCatalogo,
+  nombresDeListas,
+}: PropsDeEleccion) {
+  const [altaAbierta, setAltaAbierta] = useState(false)
+  const refSelect = useRef<HTMLSelectElement>(null)
   const opciones = opcionesDeFamilia(familia.opciones)
+  const conCambiosSinGuardar = !esNuevo && sinGuardar
+  const elegida = esNuevo ? idFamilia : union.idElegida
+  const valorDelSelector = elegida !== '' ? elegida : nombreFamiliaNueva !== '' ? VALOR_FAMILIA_NUEVA : ''
 
-  if (opciones.length === 0 && familia.errorOpciones === '' && idFamilia === '') return null
+  function alElegir(valor: string) {
+    if (valor === VALOR_FAMILIA_NUEVA) return
+    acciones.elegir(valor === '' ? '' : Number(valor))
+  }
+
+  // Se enfoca el selector antes de montar el modal para que `Modal` lo capture como el foco previo y se lo devuelva al cerrar.
+  function abrirAlta() {
+    refSelect.current?.focus()
+    setAltaAbierta(true)
+  }
 
   return (
     <div className="mb-3">
       <strong className="text-muted small text-uppercase">Familia</strong>
       {familia.errorOpciones && <div className="alert alert-warning py-1 px-2 small mt-2">{familia.errorOpciones}</div>}
 
-      {opciones.length > 0 && (
-        <div className="row g-3 mt-0">
-          <div className="col-md-6">
-            <label className="form-label" htmlFor="art-familia">
-              Familia (opcional)
-            </label>
+      <div className="row g-3 mt-0">
+        <div className="col-md-6">
+          <label className="form-label" htmlFor="art-familia">
+            Familia (opcional)
+          </label>
+          <div className="input-group">
             <select
               id="art-familia"
+              ref={refSelect}
               className="form-select"
               aria-describedby="art-familia-ayuda"
-              value={idFamilia}
-              disabled={ocupado}
-              onChange={(e) => acciones.elegir(e.target.value === '' ? '' : Number(e.target.value))}
+              value={valorDelSelector}
+              disabled={ocupado || conCambiosSinGuardar}
+              onChange={(e) => alElegir(e.target.value)}
             >
               <option value="">Sin familia</option>
+              {nombreFamiliaNueva !== '' && <option value={VALOR_FAMILIA_NUEVA}>Nueva: {nombreFamiliaNueva}</option>}
               {opciones.map((o) => (
                 <option key={o.valor} value={o.valor}>
                   {o.etiqueta}
                 </option>
               ))}
             </select>
-            <div id="art-familia-ayuda" className="form-text">
-              Con una familia, el artículo toma sus campos compartidos y los precios de cada lista.
-            </div>
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              aria-label="Nueva familia"
+              disabled={ocupado || conCambiosSinGuardar}
+              onClick={abrirAlta}
+            >
+              +
+            </button>
           </div>
+          <div id="art-familia-ayuda" className="form-text">
+            {esNuevo
+              ? 'Con una familia, el artículo toma sus campos compartidos y los precios de cada lista.'
+              : 'Elegir una familia muestra qué cambia en el artículo y pide confirmar antes de unirlo.'}
+          </div>
+          {conCambiosSinGuardar && <div className="form-text text-warning-emphasis">{AVISO_DE_CAMBIOS_SIN_GUARDAR_EN_FAMILIA}</div>}
+        </div>
+      </div>
+
+      {esNuevo && nombreFamiliaNueva !== '' && (
+        <div className="alert alert-info py-2 px-2 small mt-2 d-flex flex-wrap align-items-center gap-2">
+          <span>{`Familia nueva: ${nombreFamiliaNueva}`}</span>
+          <span>Se crea al guardar el artículo, que será su referencia.</span>
+          <button type="button" className="btn btn-sm btn-outline-secondary" disabled={ocupado} onClick={abrirAlta}>
+            Cambiar nombre
+          </button>
+          <button type="button" className="btn btn-sm btn-outline-secondary" disabled={ocupado} onClick={acciones.quitarFamiliaNueva}>
+            Quitar
+          </button>
+        </div>
+      )}
+      {esNuevo && errorDeFamiliaNueva && (
+        <div className="alert alert-danger py-2 px-2 small mt-2" role="alert">
+          {errorDeFamiliaNueva}
+        </div>
+      )}
+
+      {!esNuevo && union.error && (
+        <div className="alert alert-danger py-2 px-2 small mt-2" role="alert">
+          {union.error}
         </div>
       )}
 
       {idFamilia !== '' && <FamiliaElegida idFamilia={idFamilia} listasPrecio={listasPrecio} familia={familia} acciones={acciones} />}
+      {!esNuevo && union.idElegida !== '' && idDelArticulo !== null && (
+        <PropuestaDeUnion
+          idDelArticulo={idDelArticulo}
+          codigoInterno={codigoInterno}
+          nombreDelArticulo={nombreDelArticulo}
+          ocupado={ocupado}
+          sinGuardar={sinGuardar}
+          familia={familia}
+          acciones={acciones}
+          union={union}
+          idElegida={union.idElegida}
+          nombresDeCatalogo={nombresDeCatalogo}
+          nombresDeListas={nombresDeListas}
+        />
+      )}
+
+      {altaAbierta && (
+        <AltaRapidaFamilia
+          familias={familia.opciones}
+          nombreInicial={nombreFamiliaNueva}
+          onConfirmar={acciones.crearFamilia}
+          onCerrar={() => setAltaAbierta(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+/** La unión de un artículo existente a la familia elegida: carga, previsualización y confirmación. Nada se escribe hasta confirmar. */
+function PropuestaDeUnion({
+  idDelArticulo,
+  codigoInterno,
+  nombreDelArticulo,
+  ocupado,
+  sinGuardar,
+  familia,
+  acciones,
+  union,
+  idElegida,
+  nombresDeCatalogo,
+  nombresDeListas,
+}: Pick<
+  Props,
+  'codigoInterno' | 'nombreDelArticulo' | 'ocupado' | 'sinGuardar' | 'familia' | 'acciones' | 'union' | 'nombresDeCatalogo' | 'nombresDeListas'
+> & { idDelArticulo: number; idElegida: number }) {
+  const detalle = familia.detalle
+
+  if (familia.cargando) return <Cargando texto="Cargando la familia…" />
+
+  if (familia.error) {
+    return (
+      <div className="alert alert-danger py-2 px-2 small mt-2 d-flex flex-wrap align-items-center gap-2">
+        <span>{familia.error}</span>
+        <button type="button" className="btn btn-sm btn-outline-danger" onClick={acciones.reintentar}>
+          Reintentar
+        </button>
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => acciones.elegir('')}>
+          Cancelar
+        </button>
+      </div>
+    )
+  }
+
+  if (detalle === null || detalle.id !== idElegida) return null
+  if (union.previsualizando) return <Cargando texto="Calculando qué cambia…" />
+
+  if (union.errorDePrevisualizacion) {
+    return (
+      <div className="alert alert-danger py-2 px-2 small mt-2 d-flex flex-wrap align-items-center gap-2">
+        <span>{union.errorDePrevisualizacion}</span>
+        <button type="button" className="btn btn-sm btn-outline-danger" onClick={acciones.reintentar}>
+          Reintentar
+        </button>
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => acciones.elegir('')}>
+          Cancelar
+        </button>
+      </div>
+    )
+  }
+
+  const previsualizacion = union.previsualizacion
+  if (previsualizacion === null) return null
+
+  const vigente = previsualizacionDeUnionVigente(previsualizacion, idElegida)
+  const conProblemas = previsualizacion.problemas.length > 0
+  const articulos = new Map([[idDelArticulo, { id: idDelArticulo, codigoInterno, nombre: nombreDelArticulo }]])
+
+  return (
+    <div className="mt-2" role="group" aria-label="Unir el artículo a la familia">
+      <p className="small mb-2">{advertenciaDeUnion(detalle.nombre)}</p>
+      <VistaDePrevisualizacion previsualizacion={previsualizacion} articulos={articulos} nombres={nombresDeCatalogo} listas={nombresDeListas} />
+      {!vigente && <div className="alert alert-warning py-1 px-2 small">{AVISO_DE_UNION_DESACTUALIZADA}</div>}
+      <div className="d-flex gap-2">
+        <button
+          type="button"
+          className="btn btn-success"
+          disabled={ocupado || conProblemas || !vigente || sinGuardar}
+          onClick={() => void acciones.confirmarUnion()}
+        >
+          {union.escribiendo ? 'Uniendo…' : 'Confirmar y unir a la familia'}
+        </button>
+        <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={() => acciones.elegir('')}>
+          Cancelar
+        </button>
+      </div>
     </div>
   )
 }

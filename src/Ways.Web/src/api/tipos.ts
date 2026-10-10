@@ -652,6 +652,9 @@ export type AltaArticulo = {
   /** El artículo nace como miembro de esa familia: los trece campos compartidos tienen que ser idénticos
    * a los de la familia (409 `familia_valores_distintos`) y el servidor le copia sus precios. */
   idFamilia?: number | null
+  /** El servidor crea una familia con ese nombre en la misma transacción del alta y el artículo es su referencia. No se
+   * manda junto con `idFamilia` (400 `familia_existente_y_nueva`); 409 `familia_nombre_duplicado` si el nombre está en uso. */
+  nombreFamiliaNueva?: string | null
 }
 
 /** Lo que el cliente elige cuando el artículo escrito pertenece a una familia (espejo de
@@ -662,7 +665,7 @@ export type AlcanceDeFamilia = 'Familia' | 'SoloEste'
 /** Sin `codigoInterno`: no es editable por este ABM (valor asignado en el alta, mismo criterio
  * que `ClienteListado.numero`). Tampoco `idFamilia`: la pertenencia no se cambia editando; el `alcance`
  * decide qué se escribe cuando el artículo es miembro de una familia. */
-export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno' | 'codigoProveedor' | 'idFamilia'> & {
+export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno' | 'codigoProveedor' | 'idFamilia' | 'nombreFamiliaNueva'> & {
   alcance?: AlcanceDeFamilia
 }
 

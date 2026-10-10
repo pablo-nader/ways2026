@@ -116,3 +116,36 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
     expect('idFamilia' in edicion).toBe(false)
   })
 })
+
+describe('FormularioArticulo — familia nueva en el alta', () => {
+  it('un formulario vacío no pide ninguna familia nueva, y aFormulario tampoco', () => {
+    expect(formularioVacio().nombreFamiliaNueva).toBe('')
+    expect(aFormulario(articuloFixture({ idFamilia: 7 })).nombreFamiliaNueva).toBe('')
+  })
+
+  it('aAlta manda nombreFamiliaNueva recortado, con idFamilia: null', () => {
+    const alta = aAlta({ ...formularioVacio(), nombreFamiliaNueva: '  Talles  ' })
+
+    expect(alta.nombreFamiliaNueva).toBe('Talles')
+    expect(alta.idFamilia).toBeNull()
+  })
+
+  it('aAlta no manda la clave nombreFamiliaNueva cuando no se pidió familia nueva', () => {
+    expect('nombreFamiliaNueva' in aAlta(formularioVacio())).toBe(false)
+    expect('nombreFamiliaNueva' in aAlta({ ...formularioVacio(), nombreFamiliaNueva: '   ' })).toBe(false)
+  })
+
+  /** Cláusula bajo prueba: la exclusión entre `idFamilia` y `nombreFamiliaNueva` (el servidor responde 400
+   * `familia_existente_y_nueva` si llegan los dos).
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('aAlta nunca manda la familia nueva junto con una familia elegida', () => {
+    const alta = aAlta({ ...formularioVacio(), idFamilia: 7, nombreFamiliaNueva: 'Talles' })
+
+    expect(alta.idFamilia).toBe(7)
+    expect('nombreFamiliaNueva' in alta).toBe(false)
+  })
+
+  it('aEdicion nunca manda nombreFamiliaNueva', () => {
+    expect('nombreFamiliaNueva' in aEdicion({ ...formularioVacio(), id: 1, nombreFamiliaNueva: 'Talles' })).toBe(false)
+  })
+})
