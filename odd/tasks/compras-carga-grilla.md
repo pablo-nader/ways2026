@@ -48,9 +48,13 @@ Slice 3 — items grid (web):
 ## Review
 
 - Slice 1: judgment-day round 1 (main..15ed8859) no severe findings, 4 warnings confirmed by both judges, fixed in d70a0d40; scoped re-judgment of the delta clean. Native picker on the `inert` hidden input verified in Chromium. JUDGMENT: APPROVED.
+- Slice 2 (T5): judgment-day (a29232a3..fb4cb1eb) no severe findings. Both judges suspected a race between confirm and the article soft delete; it was disproved (the stock movement FK already takes FOR KEY SHARE on the article before the association) and pinned with a deterministic test plus mutation evidence in 04878b3c. JUDGMENT: APPROVED.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
+
+- Owner question open: annulling a confirmed purchase keeps the supplier code association made at confirm.
+- A code left unassociated because it belongs to another article gives no signal beyond the code on the line.
 
 - `articulos/EditorDePrecios.tsx` still uses `datetime-local` (browser locale format).
 - Read-only printed date ranges (e.g. CuentaCorriente) still show ISO.
