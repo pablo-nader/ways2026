@@ -26,11 +26,11 @@ Slice 2 — supplier code on the purchase line (backend, DB gate approved 2026-1
 
 Slice 3 — items grid (web):
 
-- [ ] T6 Grid with columns Código, Detalle, UM, Cantidad, Importe, Descuento, IVA, Total; tab navigation; always one empty trailing row; remove "Agregar línea", "Agregar concepto", "Cargar por total". Lote/vencimiento cells only on rows whose article controls lote; "Act. costo" always on for article lines; UM Bulto = quantity × the article's unidades por bulto.
-- [ ] T7 Código lookup on blur against the supplier's codes: prefill Detalle (read-only), UM = Unidad (option Bulto), Importe = article cost, Descuento = article default, IVA = article's or 21%. Unknown code stays on the line (T5).
-- [ ] T8 Detalle as keyboard-navigable search (arrow keys, Tab to accept); free text with no match = concepto.
+- [x] T6 Grid with columns Código, Detalle, UM, Cantidad, Importe, Descuento, IVA, Total; tab navigation; always one empty trailing row; remove "Agregar línea", "Agregar concepto", "Cargar por total". Lote/vencimiento cells only on rows whose article controls lote; "Act. costo" always on for article lines; UM Bulto = quantity × the article's unidades por bulto. Route: delegated (single writer). Commit fd000f47.
+- [x] T7 Código lookup on blur against the supplier's codes: prefill Detalle (read-only), UM = Unidad (option Bulto), Importe = article cost, Descuento = article default, IVA = article's or 21%. Unknown code stays on the line (T5). Commit fd000f47.
+- [x] T8 Detalle as keyboard-navigable search (arrow keys, Tab to accept); free text with no match = concepto. The "+" opens the existing quick-create modal (the integration point T9 swaps). Commit fd000f47.
 - [ ] T9 "+" button next to Detalle opening the full article creation form (extract the form state out of `paginas/Articulos.tsx` so it can be embedded).
-- [ ] T10 Actions: "Guardar" (create + confirm chained from the web; on a failed confirm the user lands on the draft with the error), "Guardar borrador", "Cancelar" (with confirmation, back to the list).
+- [x] T10 Actions: "Guardar" (create + confirm chained from the web; on a failed confirm the user lands on the draft with the error), "Guardar borrador", "Cancelar" (with confirmation, back to the list). Commit fd000f47 (same commit as T6-T8: the four tasks rewrite the same hunks of `CompraEditor.tsx`).
 
 ## Constraints
 
@@ -44,6 +44,10 @@ Slice 3 — items grid (web):
 - 2026-10-10 (owner): unmatched supplier code is persisted on the purchase line (T5 model approved through the database gate).
 - 2026-10-10: a half-filled invoice number is never sent; saving and confirming refuse until both halves are filled or both are empty.
 - 2026-10-10: date field emits only complete valid dates while typing and commits on blur/Enter; two-digit years expand to the nearest of the next 20 years, otherwise the previous century.
+- 2026-10-10 (T6-T10): `descuento_proveedor` is a PERCENTAGE (`numeric(5,2)`, `SugeridorDePrecio`: `costoLista * (1 - descuento/100)`), so the Descuento column is a percent of the line gross and the API receives the amount `bruto * % / 100` (exact decimal, half away from zero).
+- 2026-10-10 (T7): the code lookup prefills with `costoLista` plus the article's `descuentoProveedor`; an article without list cost falls back to `costoNominal` (replacement cost, already net of discount) with no discount.
+- 2026-10-10 (T10): the irreversibility checkbox panel was replaced by a note next to "Guardar" (stock enters, article cost updates, no way back to draft); the note drops the stock sentence when the purchase only has conceptos.
+- 2026-10-10 (T6): an untouched saved line is resent with its stored numbers (percent and price-per-bulto shown are rounded derivations); a saved line mixing loose units and bultos opens as UM Unidad with the total quantity and is resent as stored until quantity, UM, importe or descuento is touched.
 
 ## Review
 
@@ -52,6 +56,10 @@ Slice 3 — items grid (web):
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
+
+- The "+" button of the Detalle is outside the Tab order (`tabIndex=-1`, reachable with Ctrl+Enter) to keep bulk entry fast; confirm with the owner.
+- A saved article line whose `actualizaCosto` was false (old editor checkbox) is resent as true, as the grid has no such column.
+- IVA of a concepto row is not defaulted: the operator picks it (the article rows take the article's alícuota or the 21 %).
 
 - Owner question open: annulling a confirmed purchase keeps the supplier code association made at confirm.
 - A code left unassociated because it belongs to another article gives no signal beyond the code on the line.
@@ -64,7 +72,8 @@ Slice 3 — items grid (web):
 
 - 2026-10-10: exploration done; slice 1 (T1-T4) implemented and reviewed; full web suite 3931 passed, tsc and oxlint clean.
 - 2026-10-10: T5 done: integration 3085, application 752, domain 1028, web 3936 passed; tsc and oxlint clean.
+- 2026-10-10: T6-T8 and T10 done (fd000f47): web 4061 passed (167 files), tsc and oxlint clean. Mutation evidence recorded for the lookup generation gate, the untouched-amount round trip, the incomplete-row block and the no-second-POST retry.
 
 ## Next step
 
-Deliver slices 1-2 (T1-T5) as PRs, then T6.
+Judgment-day over the slice 3 diff (T6-T8, T10), then deliver; T9 (embed the full article form in place of `AltaRapidaArticuloDeCompra`) is the remaining task.
