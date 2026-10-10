@@ -10,16 +10,20 @@ vi.mock('../api/articulos', () => ({
   clienteDeArticulos: { obtener: (...args: unknown[]) => obtenerMock(...(args as [number])) },
 }))
 
-type Linea = { clave: number; idArticulo: number | ''; cantidad: string; unidadVenta?: UnidadVenta }
+type Linea = { clave: number; idArticulo: number | ''; cantidad: string; unidadVenta?: UnidadVenta; porBulto?: number | null }
 
 function articulo(id: number, unidadVenta: UnidadVenta): ArticuloListado {
   return { id, unidadVenta } as ArticuloListado
 }
 
-function montar(inicial: Linea[], habilitado = true) {
+function montar(
+  inicial: Linea[],
+  habilitado = true,
+  completar?: (linea: Linea, articulo: ArticuloListado) => Partial<Linea>,
+) {
   return renderHook(() => {
     const [lineas, setLineas] = useState<Linea[]>(inicial)
-    useUnidadesDeVentaDeLineas(lineas, setLineas, habilitado)
+    useUnidadesDeVentaDeLineas(lineas, setLineas, habilitado, completar)
     return { lineas, setLineas }
   })
 }
@@ -129,5 +133,29 @@ describe('useUnidadesDeVentaDeLineas', () => {
     act(() => result.current.setLineas([{ clave: 1, idArticulo: 30, cantidad: '1' }]))
 
     await waitFor(() => expect(result.current.lineas[0].unidadVenta).toBe('Unidad'))
+  })
+
+  it('con `completar`, aprovecha la misma consulta para completar otros datos junto con la unidad, y los reaplica sin consultar de nuevo', async () => {
+    obtenerMock.mockImplementation((id: number) => Promise.resolve({ ...articulo(id, 'Unidad'), unidadesPorBulto: 12 } as ArticuloListado))
+    const completar = (linea: Linea, a: ArticuloListado) => ({ porBulto: linea.porBulto ?? a.unidadesPorBulto })
+    const { result } = montar([{ clave: 1, idArticulo: 10, cantidad: '2' }, { clave: 2, idArticulo: 10, cantidad: '3', porBulto: 6 }], true, completar)
+
+    await waitFor(() => expect(result.current.lineas.map((l) => l.unidadVenta)).toEqual(['Unidad', 'Unidad']))
+    // la que ya traía el dato lo conserva: `completar` decide qué respeta
+    expect(result.current.lineas.map((l) => l.porBulto)).toEqual([12, 6])
+
+    act(() => result.current.setLineas([{ clave: 7, idArticulo: 10, cantidad: '2' }]))
+    await waitFor(() => expect(result.current.lineas[0].porBulto).toBe(12))
+    expect(obtenerMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('una línea que ya trae su unidad no recibe lo de `completar` ni dispara consulta', async () => {
+    const completar = vi.fn(() => ({ porBulto: 99 }))
+    const { result } = montar([{ clave: 1, idArticulo: 10, cantidad: '2', unidadVenta: 'Peso' }], true, completar)
+
+    await act(async () => {})
+    expect(obtenerMock).not.toHaveBeenCalled()
+    expect(completar).not.toHaveBeenCalled()
+    expect(result.current.lineas[0].porBulto).toBeUndefined()
   })
 })

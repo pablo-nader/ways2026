@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CompraEditor } from './CompraEditor'
 import { RutaProtegida } from '../auth/RutaProtegida'
+import { cargarConcepto, cargarFila, filaDeItems, filasDeItems } from './compras/ayudasDePruebaDeGrilla'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
@@ -225,6 +226,7 @@ function renderEditor(idCompra: string | number = 1) {
     <MemoryRouter initialEntries={[`/compras/${idCompra}`]}>
       <Routes>
         <Route path="/compras/:id" element={<CompraEditor />} />
+        <Route path="/compras" element={<div>Listado de compras</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -237,6 +239,7 @@ function renderEditorEnRuta(ruta: string) {
     <MemoryRouter initialEntries={[ruta]}>
       <Routes>
         <Route path="/compras/:id" element={<CompraEditor />} />
+        <Route path="/compras" element={<div>Listado de compras</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -291,16 +294,37 @@ beforeEach(() => {
 })
 
 describe('CompraEditor — borrador existente', () => {
-  it('carga el header y los items del borrador', async () => {
+  it('carga el header y los items del borrador en la grilla, con una fila vacía al final', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     renderEditor()
 
     expect(await screen.findByDisplayValue('00012345')).toBeInTheDocument()
-    expect(screen.getByText('Elegido: Fideos 500g')).toBeInTheDocument()
+    const filas = filasDeItems()
+    expect(filas).toHaveLength(2)
+
+    const fila = within(filas[0])
+    expect(fila.getByLabelText('Detalle')).toHaveValue('Fideos 500g')
+    expect(fila.getByLabelText('UM')).toHaveValue('Unidad')
+    expect(fila.getByLabelText('Cantidad')).toHaveValue(10)
+    expect(fila.getByLabelText('Importe')).toHaveValue('100,0000')
+    expect(fila.getByLabelText('Descuento (%)')).toHaveValue('5,00')
+    await waitFor(() => expect(fila.getByLabelText('IVA')).toHaveValue('3'))
+    expect(fila.getByText('$ 950,00')).toBeInTheDocument()
+
+    const vacia = within(filas[1])
+    expect(vacia.getByLabelText('Código')).toHaveValue('')
+    expect(vacia.getByLabelText('Detalle')).toHaveValue('')
+
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ Agregar línea' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ Agregar concepto' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cargar por total' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Confirmar compra' })).not.toBeInTheDocument()
   })
 
-  it('guardar borrador manda un PUT con el replace-set completo (header + items editados)', async () => {
+  it('guardar borrador manda un PUT con el replace-set completo (header + items editados) y sin la fila vacía', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     apiPutMock.mockResolvedValue(compraFixture({ observaciones: 'Actualizado' }))
     const usuario = userEvent.setup()
@@ -308,9 +332,9 @@ describe('CompraEditor — borrador existente', () => {
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const costo = screen.getByLabelText('Costo unitario')
-    await usuario.clear(costo)
-    await usuario.type(costo, '120')
+    const importe = within(filaDeItems(0)).getByLabelText('Importe')
+    await usuario.clear(importe)
+    await usuario.type(importe, '120')
 
     await usuario.type(screen.getByLabelText('Observaciones'), 'Actualizado')
 
@@ -321,13 +345,46 @@ describe('CompraEditor — borrador existente', () => {
     expect(ruta).toBe('/compras/1')
     expect(cuerpo.observaciones).toBe('Actualizado')
     expect(cuerpo.items).toHaveLength(1)
-    expect((cuerpo.items as Record<string, unknown>[])[0].costoUnitario).toBe(120)
+    // Tocar el importe recalcula el descuento desde el 5 %: 5 % de 10 × 120.
+    expect((cuerpo.items as Record<string, unknown>[])[0]).toMatchObject({ costoUnitario: 120, descuento: 60, unidades: 10 })
     // replace-set: el header viaja completo, no solo el campo tocado.
     expect(cuerpo.idProveedor).toBe(1)
     expect(cuerpo.idTipoComprobante).toBe(5)
     expect(cuerpo.idPuntoVenta).toBe(2)
 
     expect(await screen.findByText('Borrador guardado.')).toBeInTheDocument()
+  })
+
+  it('guardar un borrador sin tocar sus líneas las manda exactamente como estaban guardadas', async () => {
+    const guardado = compraFixture({
+      items: [itemFixture({ cantidad: 20, bultos: 3, unidadesPorBulto: 6, costoUnitario: 10, descuento: 0.07 })],
+    })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(guardado) : undefined))
+    apiPutMock.mockResolvedValue(guardado)
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(cuerpo.items).toEqual([
+      {
+        idArticulo: 10,
+        descripcion: 'Fideos 500g',
+        unidades: 2,
+        bultos: 3,
+        unidadesPorBulto: 6,
+        costoUnitario: 10,
+        descuento: 0.07,
+        idAlicuotaIva: 3,
+        actualizaCosto: true,
+        codigoLote: null,
+        fechaVencimiento: null,
+        codigoProveedor: null,
+      },
+    ])
   })
 
   it('un 409 compra_duplicada al guardar se muestra tal cual, sin envolver el mensaje', async () => {
@@ -342,38 +399,60 @@ describe('CompraEditor — borrador existente', () => {
     expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
   })
 
-  it('confirmar: el checkbox de irreversibilidad bloquea el botón hasta tildarlo, y un doble click manda un solo POST', async () => {
+  it('Guardar actualiza el borrador y lo confirma en una sola acción; un doble click síncrono manda un solo PUT y un solo confirmar', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture())
     let resolverConfirmar: (valor: CompraDetalle) => void = () => {}
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras/1/confirmar') return new Promise((resolve) => (resolverConfirmar = resolve))
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    act(() => {
+      guardar.click()
+      guardar.click()
+    })
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/compras/1/confirmar'))
+
+    // Mientras se confirma, toda la acción queda inerte.
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeDisabled()
+
+    await act(async () => {
+      resolverConfirmar(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-05T12:00:00Z' }))
+    })
+    expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras/1/confirmar')).toHaveLength(1)
+    // Primero se guarda, después se confirma.
+    expect(apiPutMock.mock.invocationCallOrder[0]).toBeLessThan(apiPostMock.mock.invocationCallOrder[0])
+    // La compra confirmada se muestra de solo lectura, sin la grilla.
+    expect(screen.queryByRole('table', { name: 'Items de la compra' })).not.toBeInTheDocument()
+  })
+
+  it('si el guardado falla no se intenta confirmar', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockRejectedValue(new ErrorApi(409, 'compra_duplicada', 'Ya existe una compra confirmada con ese número.'))
     const usuario = userEvent.setup()
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    const botonConfirmarFinal = screen.getByRole('button', { name: 'Confirmar' })
-    expect(botonConfirmarFinal).toBeDisabled()
-
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
-    expect(botonConfirmarFinal).toBeEnabled()
-
-    // Doble click rápido — el guard de reentrancia de primera línea evita un segundo POST.
-    await usuario.click(botonConfirmarFinal)
-    await usuario.click(botonConfirmarFinal)
-
-    resolverConfirmar(compraFixture({ estado: 'Confirmada', fechaRecepcion: '2026-08-05T12:00:00Z' }))
-    await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')
-
-    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/confirmar')
-    expect(llamadas).toHaveLength(1)
+    expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('un 400 compra_incompleta_para_confirmar se renderiza de forma accionable en el panel', async () => {
+  it('un 400 al confirmar deja el borrador guardado a la vista con el error, y reintentar actualiza el mismo borrador', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture())
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras/1/confirmar') {
         return Promise.reject(
@@ -386,11 +465,18 @@ describe('CompraEditor — borrador existente', () => {
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText('La compra necesita número de comprobante y fecha para confirmarse.')).toBeInTheDocument()
+    expect(screen.getByText('El borrador quedó guardado, pero la compra NO se confirmó.')).toBeInTheDocument()
+    expect(screen.queryByText(/Compra confirmada/)).not.toBeInTheDocument()
+    // Sigue siendo el borrador editable.
+    expect(screen.getByRole('table', { name: 'Items de la compra' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled())
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
+    expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras')).toHaveLength(0)
   })
 })
 
@@ -400,7 +486,7 @@ describe('CompraEditor — compra confirmada', () => {
     renderEditor()
 
     await screen.findByText('Fideos 500g')
-    expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
     expect(screen.getByText('$ 114,95')).toBeInTheDocument() // precio sugerido
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
   })
@@ -590,8 +676,19 @@ describe('CompraEditor — compra confirmada', () => {
   })
 })
 
+/** Elige proveedor, tipo y punto de venta de una compra nueva, esperando los DATOS (no el select). */
+async function completarEncabezadoDeCompraNueva(usuario: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+  await screen.findByRole('option', { name: /Factura A de compra/ })
+  await screen.findByRole('option', { name: 'Casa Central' })
+  await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
+  await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+  await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
+  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+}
+
 describe('CompraEditor — compra nueva', () => {
-  it('crear borrador manda un POST con el header completo y los items completos únicamente', async () => {
+  it('guardar borrador manda un POST con el header completo y solo las líneas completas', async () => {
     mockearReferencia()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
@@ -600,21 +697,20 @@ describe('CompraEditor — compra nueva', () => {
     const usuario = userEvent.setup()
 
     renderEditor('nueva')
-    await screen.findByLabelText('Proveedor')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await cargarConcepto(usuario, '500', 'Flete')
 
-    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
-    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+    const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, { items: unknown[] }]
     expect(ruta).toBe('/compras')
-    expect(cuerpo).toMatchObject({ idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, items: [] })
+    expect(cuerpo).toMatchObject({ idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2 })
+    expect(cuerpo.items).toHaveLength(1)
+    expect(apiPostMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('/confirmar'))).toBe(false)
   })
 
-  it('un 409 compra_duplicada al crear se muestra sin navegar (sigue en modo nuevo)', async () => {
+  it('un 409 compra_duplicada al guardar se muestra sin navegar (sigue en modo nuevo)', async () => {
     mockearReferencia()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/compras') return Promise.reject(new ErrorApi(409, 'compra_duplicada', 'Ya existe una compra con ese número.'))
@@ -623,14 +719,219 @@ describe('CompraEditor — compra nueva', () => {
     const usuario = userEvent.setup()
 
     renderEditor('nueva')
-    await screen.findByLabelText('Proveedor')
-    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
-    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await completarEncabezadoDeCompraNueva(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     expect(await screen.findByText('Ya existe una compra con ese número.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Crear borrador' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Nueva compra' })).toBeInTheDocument()
+  })
+
+  it('Guardar de una compra nueva dice qué falta, antes de llamar a la API', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText(
+        'Para guardar y confirmar falta: el número del comprobante, la fecha del comprobante y al menos una línea completa.',
+      ),
+    ).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  async function prepararCompraNuevaListaParaConfirmar(usuario: ReturnType<typeof userEvent.setup>) {
+    await completarEncabezadoDeCompraNueva(usuario)
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '3')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '12345')
+    await usuario.type(screen.getByLabelText('Fecha del comprobante'), '01/08/2026')
+    await usuario.tab()
+    await cargarConcepto(usuario, '500', 'Flete')
+  }
+
+  it('Guardar de una compra nueva la crea, la confirma y aterriza en la compra confirmada', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/99'
+        ? Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [itemFixture({ idArticulo: null, descripcion: 'Flete' })] }))
+        : undefined,
+    )
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
+      if (ruta === '/compras/99/confirmar') {
+        return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [itemFixture({ idArticulo: null, descripcion: 'Flete' })] }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await prepararCompraNuevaListaParaConfirmar(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.map((c: unknown[]) => c[0])).toEqual(['/compras', '/compras/99/confirmar'])
+  })
+
+  async function guardarUnaCompraNuevaCuyaConfirmacionFalla(usuario: ReturnType<typeof userEvent.setup>) {
+    mockearReferencia((ruta) => (ruta === '/compras/99' ? Promise.resolve(compraFixture({ id: 99 })) : undefined))
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
+      if (ruta === '/compras/99/confirmar') {
+        return Promise.reject(new ErrorApi(409, 'compra_duplicada', 'Ya existe una compra confirmada con ese número.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    apiPutMock.mockResolvedValue(compraFixture({ id: 99 }))
+
+    renderEditor('nueva')
+    await prepararCompraNuevaListaParaConfirmar(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+  }
+
+  it('si la confirmación falla tras crear, aterriza en el borrador guardado con el error a la vista', async () => {
+    const usuario = userEvent.setup()
+    await guardarUnaCompraNuevaCuyaConfirmacionFalla(usuario)
+
+    // Aterrizó en la compra 99 (ya no es "Nueva compra") con la advertencia y el error del servidor.
+    expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
+    expect(screen.getByText('El borrador quedó guardado, pero la compra NO se confirmó.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Compra 0003-00012345/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Compra confirmada/)).not.toBeInTheDocument()
+  })
+
+  it('reintentar después de una confirmación fallida actualiza el mismo borrador: no vuelve a hacer POST /compras', async () => {
+    const usuario = userEvent.setup()
+    await guardarUnaCompraNuevaCuyaConfirmacionFalla(usuario)
+    await screen.findByRole('heading', { name: /Compra 0003-00012345/ })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled())
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/compras/99')
+    // Un único alta: el reintento actualizó el borrador existente.
+    expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras')).toHaveLength(1)
+    expect(apiPostMock.mock.calls.filter((c: unknown[]) => c[0] === '/compras/99/confirmar')).toHaveLength(2)
+  })
+
+  it('con una compra nueva que viene de un gasto, Guardar la confirma y la vincula al gasto de origen', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/gastos/administracion/5') return Promise.resolve(gastoFixture({ idProveedor: 1 }))
+      if (ruta === '/compras/99') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [] }))
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras') return Promise.resolve(compraFixture({ id: 99 }))
+      if (ruta === '/compras/99/confirmar') return Promise.resolve(compraFixture({ id: 99, estado: 'Confirmada', items: [] }))
+      if (ruta === '/gastos/5/vincular-compra') return Promise.resolve(compraFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditorEnRuta('/compras/nueva?desdeGasto=5')
+    await screen.findByText('Se vinculará al gasto #5 al confirmar.')
+    await waitFor(() => expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1'))
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await cargarConcepto(usuario, '1500', 'Mercadería')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 99 })
+  })
+})
+
+describe('CompraEditor — cancelar', () => {
+  it('sin cambios vuelve al listado sin preguntar', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('una compra nueva sin nada cargado también vuelve directo', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+  })
+
+  it('con cambios sin guardar pide confirmación; Cancelar de la puerta se queda, Descartar vuelve al listado', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'cambio')
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    const puerta = await screen.findByRole('alertdialog', { name: 'Descartar cambios' })
+    expect(within(puerta).getByText(/Descartar los cambios sin guardar de esta compra/)).toBeInTheDocument()
+    // La puerta deja inerte el resto de la pantalla.
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeDisabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Observaciones')).toHaveValue('cambio')
+    expect(screen.queryByText('Listado de compras')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Descartar cambios' }))
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+  })
+
+  it('un cambio en la grilla también cuenta como cambio sin guardar', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await usuario.type(within(filaDeItems(0)).getByLabelText('Cantidad'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).toBeInTheDocument()
+  })
+
+  it('después de guardar el borrador ya no hay cambios sin guardar', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture({ observaciones: 'cambio' }))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'cambio')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await screen.findByText('Borrador guardado.')
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByText('Listado de compras')).toBeInTheDocument()
+  })
+
+  it('una compra nueva con algo tipeado pregunta antes de descartar', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
+    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), 'Flete')
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(await screen.findByRole('alertdialog', { name: 'Descartar cambios' })).toBeInTheDocument()
   })
 })
 
@@ -713,7 +1014,7 @@ describe('CompraEditor — número de comprobante', () => {
     expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0010')
     expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00009985')
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('0010-00009985')
   })
@@ -744,7 +1045,7 @@ describe('CompraEditor — número de comprobante', () => {
     await waitFor(() => expect(proveedor).toBeEnabled())
     await usuario.selectOptions(proveedor, '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBeNull()
@@ -774,7 +1075,7 @@ describe('CompraEditor — número de comprobante', () => {
     expect(puntoVenta).not.toHaveClass('is-invalid')
     expect(screen.getByText(/Falta el número\./)).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
@@ -802,17 +1103,16 @@ describe('CompraEditor — número de comprobante', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('confirmar se rechaza con el número a medio cargar y no manda el POST de confirmación', async () => {
+  it('Guardar se rechaza con el número a medio cargar y no manda ni el guardado ni la confirmación', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     const usuario = userEvent.setup()
 
     renderEditor()
     await usuario.clear(await screen.findByDisplayValue('00012345'))
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
@@ -865,95 +1165,151 @@ describe('CompraEditor — número de comprobante', () => {
 })
 
 describe('CompraEditor — líneas incompletas', () => {
-  it('una línea incompleta no entra en el total mostrado, y se avisa con un contador', async () => {
+  it('una fila con datos pero incompleta no entra en el total, se cuenta y bloquea los dos guardados con un mensaje claro', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture())
     const usuario = userEvent.setup()
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
     expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    // La fila vacía del final se llena a medias (sin detalle ni IVA): queda incompleta a propósito,
+    // pero con cantidad e importe para que, si el mirror la sumara, el total cambiaría.
+    await cargarFila(usuario, 1, { cantidad: '5', importe: '20' })
 
-    // la línea nueva no tiene artículo ni alícuota elegidos — queda incompleta a propósito, pero
-    // se le cargan unidades/costo para que, si el mirror la sumara, el total cambiaría.
-    const unidades = screen.getAllByLabelText('Unidades')
-    await usuario.type(unidades[1], '5')
-    const costo = screen.getAllByLabelText('Costo unitario')
-    await usuario.type(costo[1], '20')
-
-    expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+    expect(await screen.findByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
     expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
+    // Tipear en la fila vacía abrió otra vacía debajo.
+    expect(filasDeItems()).toHaveLength(3)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    expect(
+      await screen.findByText('Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.'),
+    ).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() =>
+      expect(screen.getAllByText('Hay 1 línea(s) incompleta(s): complételas o quítelas antes de guardar.')).toHaveLength(1),
+    )
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    // Tras el intento, las celdas que faltan quedan marcadas; las que están bien, no.
+    const fila = within(filaDeItems(1))
+    expect(fila.getByLabelText('Detalle')).toHaveAttribute('aria-invalid', 'true')
+    expect(fila.getByLabelText('IVA')).toHaveAttribute('aria-invalid', 'true')
+    expect(fila.getByLabelText('Cantidad')).not.toHaveAttribute('aria-invalid')
+    expect(fila.getByLabelText('Importe')).not.toHaveAttribute('aria-invalid')
+  })
+
+  it('quitar la fila incompleta destraba el guardado', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture())
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await cargarFila(usuario, 1, { cantidad: '5' })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    expect(await screen.findByText(/Hay 1 línea\(s\) incompleta\(s\)/)).toBeInTheDocument()
+
+    await usuario.click(within(filaDeItems(1)).getByRole('button', { name: 'Quitar línea' }))
+    expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument()
+    expect(filasDeItems()).toHaveLength(2)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0] as [string, { items: unknown[] }])[1].items).toHaveLength(1)
   })
 })
 
 describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimientos, Slice 14)', () => {
-  it('elegir un artículo que controla lote muestra los inputs de lote y suma al contador hasta cargar la fecha de vencimiento', async () => {
+  function mockearLoteConBusqueda(items: ArticuloListado[], compra: CompraDetalle) {
     mockearReferencia((ruta) => {
-      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
-      if (ruta.startsWith('/articulos?busqueda=')) {
-        return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
-      }
+      if (ruta === '/compras/1') return Promise.resolve(compra)
+      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
       return undefined
     })
+  }
+
+  async function elegirArticuloDeLaBusqueda(usuario: ReturnType<typeof userEvent.setup>, texto: string, opcion: string) {
+    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), texto)
+    await usuario.click(await screen.findByRole('option', { name: opcion }))
+  }
+
+  it('elegir un artículo que controla lote muestra la fila de lote y bloquea el guardado hasta cargar el vencimiento', async () => {
+    mockearLoteConBusqueda([articuloFixture()], compraFixture({ items: [] }))
     const usuario = userEvent.setup()
 
     renderEditor()
     await screen.findByDisplayValue('00012345')
-
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
-    await screen.findByText('ART-20 — Leche en polvo 800g')
-    await usuario.click(screen.getByText('ART-20 — Leche en polvo 800g'))
+    await elegirArticuloDeLaBusqueda(usuario, 'leche', 'ART-20 — Leche en polvo 800g')
 
     expect(screen.getByLabelText('Fecha de vencimiento')).toBeInTheDocument()
-    expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Código de lote')).toBeInTheDocument()
+    expect(await screen.findByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
-    await usuario.type(screen.getByLabelText('Unidades'), '5')
-    await usuario.type(screen.getByLabelText('Costo unitario'), '20')
-    await usuario.selectOptions(screen.getByLabelText('Alícuota de IVA'), '3')
+    await cargarFila(usuario, 0, { cantidad: '5', importe: '20' })
 
     // Sigue incompleta: el artículo controla lote y la fecha de vencimiento es obligatoria
     // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
-    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
     await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '01/12/2026')
 
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
 
+  it('el lote queda en el orden de tabulación justo después de las celdas de su fila', async () => {
+    mockearLoteConBusqueda([articuloFixture()], compraFixture({ items: [] }))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await elegirArticuloDeLaBusqueda(usuario, 'leche', 'ART-20 — Leche en polvo 800g')
+
+    await usuario.click(within(filaDeItems(0)).getByLabelText('IVA'))
+    await usuario.tab()
+    expect(screen.getByLabelText('Código de lote')).toHaveFocus()
+    await usuario.tab()
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveFocus()
+    await usuario.tab()
+    // el calendario del vencimiento es parte de la misma fila de lote
+    expect(document.activeElement).toHaveAccessibleName('Abrir calendario')
+    expect(document.activeElement?.closest('tr[data-lote-de]')).not.toBeNull()
+    await usuario.tab()
+    expect(within(filaDeItems(1)).getByLabelText('Código')).toHaveFocus()
+  })
+
   it('un artículo que no controla lote nunca muestra los inputs de lote', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     renderEditor()
 
-    await screen.findByText('Elegido: Fideos 500g')
-    expect(screen.getByText('No controla lote')).toBeInTheDocument()
+    await screen.findByDisplayValue('00012345')
+    expect(within(filaDeItems(0)).getByLabelText('Detalle')).toHaveValue('Fideos 500g')
     expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Código de lote')).not.toBeInTheDocument()
   })
 
   it('re-elegir el artículo de una línea con lote cargado, por uno que no controla lote, no deja codigoLote/fechaVencimiento stale en el payload (judgment-day, MAJOR juez A)', async () => {
     const articuloSinLote = articuloFixture({ id: 30, codigoInterno: 'ART-30', nombre: 'Coca Cola 1.5L', controlaLote: false })
-    mockearReferencia((ruta) => {
-      if (ruta === '/compras/1')
-        return Promise.resolve(compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }))
-      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items: [articuloSinLote], total: 1, pagina: 1, tamanio: 25 })
-      return undefined
-    })
+    mockearLoteConBusqueda(
+      [articuloSinLote],
+      compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }),
+    )
     apiPutMock.mockResolvedValue(compraFixture())
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByText('Elegido: Fideos 500g')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
     expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'coca')
-    await screen.findByText('ART-30 — Coca Cola 1.5L')
-    await usuario.click(screen.getByText('ART-30 — Coca Cola 1.5L'))
+    await usuario.clear(within(filaDeItems(0)).getByLabelText('Detalle'))
+    await elegirArticuloDeLaBusqueda(usuario, 'coca', 'ART-30 — Coca Cola 1.5L')
 
-    // El artículo nuevo no controla lote: los inputs de lote desaparecen — el reset no es solo
+    // El artículo nuevo no controla lote: la fila de lote desaparece — el reset no es solo
     // interno, también es visible (el operador ve que el lote del artículo anterior ya no aplica).
-    expect(screen.getByText('No controla lote')).toBeInTheDocument()
     expect(screen.queryByLabelText('Código de lote')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
 
@@ -970,22 +1326,19 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
 
   it('re-elegir el artículo de una línea con lote cargado, por otro que también controla lote, resetea codigoLote/fechaVencimiento visualmente (el operador recarga los del lote nuevo)', async () => {
     const otroArticuloConLote = articuloFixture({ id: 40, codigoInterno: 'ART-40', nombre: 'Yerba 1kg', controlaLote: true })
-    mockearReferencia((ruta) => {
-      if (ruta === '/compras/1')
-        return Promise.resolve(compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }))
-      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items: [otroArticuloConLote], total: 1, pagina: 1, tamanio: 25 })
-      return undefined
-    })
+    mockearLoteConBusqueda(
+      [otroArticuloConLote],
+      compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }),
+    )
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByText('Elegido: Fideos 500g')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
     expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
-    await screen.findByText('ART-40 — Yerba 1kg')
-    await usuario.click(screen.getByText('ART-40 — Yerba 1kg'))
+    await usuario.clear(within(filaDeItems(0)).getByLabelText('Detalle'))
+    await elegirArticuloDeLaBusqueda(usuario, 'yerba', 'ART-40 — Yerba 1kg')
 
     expect(screen.getByLabelText('Código de lote')).toHaveValue('')
     expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('')
@@ -1003,9 +1356,10 @@ describe('CompraEditor — role gating', () => {
     // el gate de rol de la ruta lo dejó pasar — no lo mandó a "/".
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar borrador' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Confirmar compra' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Guardar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
-    expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
   })
 
   it.each(['Borrador', 'Confirmada'] as const)(
@@ -1131,8 +1485,10 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
-    expect(screen.getByLabelText('Unidades')).toHaveValue(2) // Pendiente, no Pedida
-    expect(screen.getByLabelText('Costo unitario')).toHaveValue('100,0000') // CostoEstimado de la cobertura
+    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toHaveValue(2) // Pendiente, no Pedida
+    expect(within(filaDeItems(0)).getByLabelText('Importe')).toHaveValue('100,0000') // CostoEstimado de la cobertura
+    expect(within(filaDeItems(0)).getByLabelText('Detalle')).toHaveValue('Yerba mate 1kg')
+    expect(filasDeItems()).toHaveLength(2) // la fila precargada y la vacía del final
   })
 
   it('excluye artículos con Pendiente = 0 (ya recibidos por completo)', async () => {
@@ -1148,8 +1504,8 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
     renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
 
     await screen.findByText(/Vinculada a la orden de compra/)
-    expect(screen.getAllByLabelText('Unidades')).toHaveLength(1)
-    expect(screen.getByLabelText('Unidades')).toHaveValue(3)
+    expect(filasDeItems()).toHaveLength(2)
+    expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toHaveValue(3)
   })
 
   it('un artículo nunca cotizado precarga costo unitario vacío, nunca "0"', async () => {
@@ -1161,7 +1517,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
     renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
 
     await screen.findByText(/Vinculada a la orden de compra/)
-    expect(screen.getByLabelText('Costo unitario')).toHaveValue('')
+    expect(within(filaDeItems(0)).getByLabelText('Importe')).toHaveValue('')
   })
 
   it('sin ?idOrdenCompra= no dispara ningún fetch a /ordenes-compra ni muestra el aviso de vínculo', async () => {
@@ -1268,14 +1624,13 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       if (ruta === '/gastos/5/vincular-compra') return Promise.resolve(compraFixture())
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
+    apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
     renderEditorEnRuta('/compras/1?desdeGasto=5')
     await screen.findByText('Se vinculará al gasto #5 al confirmar.')
 
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos/5/vincular-compra', { idComprobanteCompra: 1 }))
     expect(await screen.findByText('Vinculada al gasto #5.')).toBeInTheDocument()
@@ -1298,14 +1653,13 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       }
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
+    apiPutMock.mockResolvedValue(compraFixture({ idProveedor: 1 }))
     const usuario = userEvent.setup()
 
     renderEditorEnRuta('/compras/1?desdeGasto=5')
     await screen.findByText('Se vinculará al gasto #5 al confirmar.')
 
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
-    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     // La compra queda confirmada IGUAL — el fallo del vínculo nunca la revierte.
     expect(await screen.findByText('Compra confirmada: el stock y el costo ya se actualizaron.')).toBeInTheDocument()
@@ -1321,40 +1675,27 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
 describe('CompraEditor — líneas por concepto', () => {
   async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>) {
     renderEditor('nueva')
-    // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
-    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /Factura A de compra/ })
-    await screen.findByRole('option', { name: 'Casa Central' })
-    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
-    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
-    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cargar por total' })).toBeEnabled())
+    await completarEncabezadoDeCompraNueva(usuario)
   }
 
-  it('Cargar por total agrega UNA línea por concepto de cantidad 1 con el importe tipeado y la manda sin artículo', async () => {
+  it('un Detalle libre con cantidad, importe e IVA se manda como concepto: sin artículo, sin bultos ni lote y sin actualizar costo', async () => {
     mockearReferencia()
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
 
-    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
-    expect(screen.getByText(/cargá el importe neto, el IVA se suma/)).toBeInTheDocument()
+    await cargarConcepto(usuario, '1234,56')
 
-    await usuario.type(screen.getByLabelText('Importe total'), '1234,56')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
+    const fila = within(filaDeItems(0))
+    expect(fila.getByLabelText('Cantidad')).toHaveValue(1)
+    expect(fila.getByLabelText('Importe')).toHaveValue('1.234,5600')
+    // un concepto es siempre por unidad y no ofrece crear un artículo ya resuelto
+    expect(fila.getByLabelText('UM')).toBeDisabled()
+    expect(fila.getByLabelText('UM')).toHaveValue('Unidad')
+    // el mirror suma el concepto: 1234,56 + 21% de IVA
+    expect(screen.getAllByText('$ 1.493,82').length).toBeGreaterThan(0)
 
-    expect(screen.getByText('Concepto')).toBeInTheDocument()
-    expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Total del comprobante')
-    expect(screen.getByLabelText('Unidades')).toHaveValue(1)
-    expect(screen.getByLabelText('Costo unitario')).toHaveValue('1.234,5600')
-    expect(screen.queryByLabelText('Bultos')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Actualiza costo')).not.toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('Buscar artículo…')).not.toBeInTheDocument()
-    // el panel se cierra al agregar y el mirror suma el concepto: 1234,56 + 21% de IVA
-    expect(screen.queryByText('Cargar por total', { selector: 'strong' })).not.toBeInTheDocument()
-    expect(screen.getByText('$ 1.493,82')).toBeInTheDocument()
-
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1376,33 +1717,18 @@ describe('CompraEditor — líneas por concepto', () => {
     ])
   })
 
-  it('Cargar por total no agrega nada mientras el importe sea cero o esté vacío', async () => {
+  it('un concepto incompleto (sin cantidad ni IVA) no se guarda hasta tenerlos', async () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
 
-    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
-    const agregar = screen.getByRole('button', { name: 'Agregar como concepto' })
-    expect(agregar).toBeDisabled()
+    await cargarFila(usuario, 0, { detalle: 'Flete', importe: '500' })
+    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
-    await usuario.type(screen.getByLabelText('Importe total'), '0')
-    expect(agregar).toBeDisabled()
-    expect(screen.queryByLabelText('Descripción del concepto')).not.toBeInTheDocument()
-  })
+    await cargarFila(usuario, 0, { cantidad: '1' })
+    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
 
-  it('+ Agregar concepto arma una línea por concepto vacía que no se guarda hasta tener descripción, costo y alícuota', async () => {
-    mockearReferencia()
-    const usuario = userEvent.setup()
-    await prepararCompraNueva(usuario)
-
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar concepto' }))
-    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
-
-    await usuario.type(screen.getByLabelText('Descripción del concepto'), 'Flete')
-    await usuario.type(screen.getByLabelText('Costo unitario'), '500')
-    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
-
-    await usuario.selectOptions(screen.getByLabelText('Alícuota de IVA'), '3')
+    await cargarFila(usuario, 0, { iva: '3' })
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
 
@@ -1418,10 +1744,11 @@ describe('CompraEditor — líneas por concepto', () => {
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Flete')
-    // solo la línea de artículo ofrece bultos y actualiza costo
-    expect(screen.getAllByLabelText('Bultos')).toHaveLength(1)
-    expect(screen.getAllByLabelText('Actualiza costo')).toHaveLength(1)
+    expect(within(filaDeItems(1)).getByLabelText('Detalle')).toHaveValue('Flete')
+    // el concepto no ofrece bultos; el botón de crear artículo solo se ofrece en filas sin artículo
+    expect(within(filaDeItems(1)).getByLabelText('UM')).toBeDisabled()
+    expect(within(filaDeItems(0)).queryByRole('button', { name: 'Crear artículo' })).not.toBeInTheDocument()
+    expect(within(filaDeItems(1)).getByRole('button', { name: 'Crear artículo' })).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
@@ -1443,15 +1770,16 @@ describe('CompraEditor — líneas por concepto', () => {
 
     const celda = (await screen.findByText('Flete')).closest('td') as HTMLElement
     expect(within(celda).getByText('Concepto')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
   })
 
-  it('confirmar una compra solo de conceptos no promete mover stock ni costo', async () => {
+  it('Guardar una compra solo de conceptos no promete mover stock ni costo, y la confirma', async () => {
     const concepto = itemFixture({
       orden: 1, idArticulo: null, descripcion: 'Ferretería', cantidad: 1, costoUnitario: 500, descuento: 0, total: 500,
       actualizaCosto: false, precioSugerido: null,
     })
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ items: [concepto] })) : undefined))
+    apiPutMock.mockResolvedValue(compraFixture({ items: [concepto] }))
     apiPostMock.mockImplementation((ruta: string) =>
       ruta === '/compras/1/confirmar'
         ? Promise.resolve(compraFixture({ estado: 'Confirmada', items: [concepto] }))
@@ -1461,14 +1789,23 @@ describe('CompraEditor — líneas por concepto', () => {
 
     renderEditor()
     await screen.findByDisplayValue('Ferretería')
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
 
-    const casilla = screen.getByLabelText(/Confirmo que quiero confirmar esta compra/)
-    expect(casilla.closest('div')).not.toHaveTextContent('stock')
-    await usuario.click(casilla)
-    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+    const aviso = screen.getByText(/Guardar confirma la compra y es irreversible/)
+    expect(aviso).toHaveTextContent('no se puede volver a borrador')
+    expect(aviso).not.toHaveTextContent('stock')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByText('Compra confirmada.')).toBeInTheDocument()
+  })
+
+  it('con artículos, el aviso de irreversibilidad junto al botón dice que el stock entra y el costo se actualiza', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    expect(screen.getByText(/Guardar confirma la compra y es irreversible/)).toHaveTextContent(
+      'el stock entra, el costo del artículo se actualiza y no se puede volver a borrador',
+    )
   })
 })
 
@@ -1494,13 +1831,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
     await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cargar por total' })).toBeEnabled())
-  }
-
-  async function cargarConceptoPorTotal(usuario: ReturnType<typeof userEvent.setup>, importe: string) {
-    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
-    await usuario.type(screen.getByLabelText('Importe total'), importe)
-    await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
+    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText('Cantidad')).toBeEnabled())
   }
 
   it('el remito ofrece el tilde Discrimina IVA y arranca apagado; una factura no lo ofrece', async () => {
@@ -1517,11 +1848,11 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1534,7 +1865,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
 
@@ -1543,7 +1874,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     expect(within(fila).getByText('$ 1.000,00')).toBeInTheDocument()
     expect(within(fila).getByLabelText('IVA impreso 21%')).toHaveValue('210,00')
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1555,7 +1886,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
 
     const campo = screen.getByLabelText('IVA impreso 21%')
@@ -1566,7 +1897,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     expect(screen.getByText('Calculado: $ 210,00')).toBeInTheDocument()
     expect(screen.getByText('$ 1.210,50')).toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1576,7 +1907,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
   it('un IVA impreso que se pasa de un peso del calculado avisa antes de guardar', async () => {
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
 
     const campo = screen.getByLabelText('IVA impreso 21%')
@@ -1591,14 +1922,14 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
 
     const campo = screen.getByLabelText('IVA impreso 21%')
     await usuario.clear(campo)
     await usuario.type(campo, '210')
     await usuario.tab()
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1609,7 +1940,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
     const campo = screen.getByLabelText('IVA impreso 21%')
     await usuario.clear(campo)
@@ -1619,7 +1950,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
 
     expect(screen.getByLabelText('IVA impreso 21%')).toHaveValue('210,00')
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1630,7 +1961,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
   it('una factura B no discrimina IVA: ni tilde ni desglose', async () => {
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '6')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     expect(screen.queryByLabelText('Discrimina IVA')).not.toBeInTheDocument()
     expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
@@ -1666,14 +1997,14 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
     expect(screen.getByRole('table', { name: 'Desglose de IVA' })).toBeInTheDocument()
     await usuario.click(screen.getByLabelText('Discrimina IVA'))
     expect(screen.queryByRole('table', { name: 'Desglose de IVA' })).not.toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1684,7 +2015,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
   it('pasar de una factura A al remito no hereda el IVA discriminado de la factura', async () => {
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '5')
-    await cargarConceptoPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     expect(screen.getByRole('table', { name: 'Desglose de IVA' })).toBeInTheDocument()
 
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '7')
@@ -1806,285 +2137,8 @@ describe('CompraEditor — pagar una compra confirmada', () => {
   })
 })
 
-describe('CompraEditor — códigos de proveedor en el selector de artículos', () => {
-  const area = { id: 4, nombre: 'Almacén', activo: true, orden: 1 }
-
-  function mockearBusqueda(items: ArticuloListado[], compra: CompraDetalle = compraFixture({ items: [] })) {
-    mockearReferencia((ruta) => {
-      if (ruta === '/compras/1') return Promise.resolve(compra)
-      if (ruta === '/catalogos/areas') return Promise.resolve([area])
-      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
-      return undefined
-    })
-  }
-
-  async function abrirBusquedaEnUnaLineaNueva(termino: string) {
-    const usuario = userEvent.setup()
-    renderEditor()
-    await screen.findByDisplayValue('00012345')
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
-    return usuario
-  }
-
-  async function abrirBusquedaEnCompraSinProveedor(termino: string) {
-    const usuario = userEvent.setup()
-    renderEditor('nueva')
-    const proveedor = await screen.findByLabelText('Proveedor')
-    await waitFor(() => expect(proveedor).toBeEnabled())
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
-    return usuario
-  }
-
-  async function abrirModalConAreaCargada(usuario: ReturnType<typeof userEvent.setup>, termino: string) {
-    await usuario.click(await screen.findByRole('button', { name: `Crear artículo «${termino}»` }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-    await within(dialogo).findByRole('option', { name: 'Almacén' })
-    return dialogo
-  }
-
-  it('la búsqueda manda el idProveedor de la compra', async () => {
-    mockearBusqueda([articuloFixture()])
-    await abrirBusquedaEnUnaLineaNueva('leche')
-
-    await waitFor(() => {
-      const rutas = apiGetMock.mock.calls.map((c) => c[0] as string)
-      expect(rutas).toContain('/articulos?busqueda=leche&idProveedor=1')
-    })
-  })
-
-  it('sin proveedor elegido la búsqueda no manda idProveedor', async () => {
-    mockearBusqueda([articuloFixture()])
-    await abrirBusquedaEnCompraSinProveedor('leche')
-
-    await screen.findByText('ART-20 — Leche en polvo 800g')
-    const rutas = apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.startsWith('/articulos?busqueda='))
-    expect(rutas).toEqual(['/articulos?busqueda=leche'])
-  })
-
-  it('muestra el código del proveedor cuando el resultado coincide, y no ofrece asociarlo', async () => {
-    mockearBusqueda([articuloFixture({ codigoProveedor: 'LEC-1' })])
-    const usuario = await abrirBusquedaEnUnaLineaNueva('lec-1')
-
-    const opcion = await screen.findByText('ART-20 — Leche en polvo 800g (Cód. prov.: LEC-1)')
-    await usuario.click(opcion)
-
-    expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
-  })
-
-  it('sin resultados ofrece crear el artículo con el término buscado', async () => {
-    mockearBusqueda([])
-    await abrirBusquedaEnUnaLineaNueva('yerba rara')
-
-    expect(await screen.findByRole('button', { name: 'Crear artículo «yerba rara»' })).toBeInTheDocument()
-  })
-
-  it('con resultados ofrece "Crear artículo nuevo…" al final y no la variante con el término', async () => {
-    mockearBusqueda([articuloFixture()])
-    await abrirBusquedaEnUnaLineaNueva('leche')
-
-    expect(await screen.findByRole('button', { name: 'Crear artículo nuevo…' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Crear artículo «/ })).not.toBeInTheDocument()
-  })
-
-  it('si la búsqueda falla no ofrece crear', async () => {
-    mockearReferencia((ruta) => {
-      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
-      if (ruta.startsWith('/articulos?busqueda=')) return Promise.reject(new Error('red'))
-      return undefined
-    })
-    await abrirBusquedaEnUnaLineaNueva('leche')
-
-    await waitFor(() => {
-      const rutas = apiGetMock.mock.calls.map((c) => c[0] as string)
-      expect(rutas.some((r) => r.startsWith('/articulos?busqueda='))).toBe(true)
-    })
-    await waitFor(() => expect(screen.queryByText('Buscando…')).not.toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /Crear artículo/ })).not.toBeInTheDocument()
-  })
-
-  it('crear desde un código manda codigoProveedor e idProveedorHabitual y selecciona el artículo en la línea', async () => {
-    mockearBusqueda([])
-    apiPostMock.mockResolvedValue(
-      articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva', controlaLote: false }),
-    )
-    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
-
-    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('')
-    expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('AB-1234')
-    expect(within(dialogo).getByLabelText('Alícuota de IVA')).toHaveValue('3')
-
-    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
-    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
-
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
-    expect(ruta).toBe('/articulos')
-    expect(cuerpo).toMatchObject({
-      nombre: 'Yerba nueva',
-      idArea: 4,
-      idAlicuotaIva: 3,
-      idProveedorHabitual: 1,
-      codigoProveedor: 'AB-1234',
-      codigoInterno: null,
-    })
-
-    expect(await screen.findByText('Elegido: Yerba nueva')).toBeInTheDocument()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
-  })
-
-  it('el costo de la línea con más de 2 decimales se redondea a 2 en el modal y viaja como costoLista', async () => {
-    mockearBusqueda([])
-    apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
-    const usuario = userEvent.setup()
-    renderEditor()
-    await screen.findByDisplayValue('00012345')
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
-    await usuario.type(screen.getAllByLabelText('Costo unitario').at(-1)!, '12,3456')
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'AB-1234')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
-
-    expect(within(dialogo).getByLabelText('Costo de lista')).toHaveValue('12,35')
-
-    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
-    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
-
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].costoLista).toBe(12.35)
-  })
-
-  it('crear desde un texto con aspecto de nombre precarga el nombre y deja el código vacío', async () => {
-    mockearBusqueda([])
-    const usuario = await abrirBusquedaEnUnaLineaNueva('Yerba mate 1kg')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'Yerba mate 1kg')
-
-    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Yerba mate 1kg')
-    expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('')
-  })
-
-  it('un 409 codigo_proveedor_duplicado se muestra en el modal y el modal sigue abierto', async () => {
-    mockearBusqueda([])
-    apiPostMock.mockRejectedValue(
-      new ErrorApi(409, 'codigo_proveedor_duplicado', 'Ese código ya pertenece a otro artículo del proveedor.'),
-    )
-    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
-    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
-    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
-
-    expect(await within(dialogo).findByText('Ese código ya pertenece a otro artículo del proveedor.')).toBeInTheDocument()
-    expect(within(dialogo).getByLabelText('Nombre')).toBeEnabled()
-    expect(screen.queryByText(/^Elegido:/)).not.toBeInTheDocument()
-  })
-
-  it('un doble clic sincrónico en Crear emite una sola request y deshabilita el formulario mientras guarda', async () => {
-    mockearBusqueda([])
-    let resolver: (a: ArticuloListado) => void = () => {}
-    apiPostMock.mockImplementation(() => new Promise<ArticuloListado>((r) => (resolver = r)))
-    const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
-    await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
-    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-
-    const crear = within(dialogo).getByRole('button', { name: 'Crear' })
-    act(() => {
-      crear.click()
-      crear.click()
-    })
-
-    expect(apiPostMock).toHaveBeenCalledTimes(1)
-    expect(within(dialogo).getByLabelText('Nombre')).toBeDisabled()
-    expect(within(dialogo).getByLabelText('Área')).toBeDisabled()
-
-    await act(async () => {
-      resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
-    })
-    expect(await screen.findByText('Elegido: Yerba nueva')).toBeInTheDocument()
-  })
-
-  it('sin proveedor elegido el código del proveedor del modal queda deshabilitado con una pista', async () => {
-    mockearBusqueda([])
-    const usuario = await abrirBusquedaEnCompraSinProveedor('AB-1234')
-    const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
-
-    expect(within(dialogo).getByLabelText('Código del proveedor')).toBeDisabled()
-    expect(within(dialogo).getByText('Elegí un proveedor en la compra para poder cargar su código.')).toBeInTheDocument()
-  })
-
-  describe('asociar el código tipeado', () => {
-    it('aparece al elegir a mano un artículo sin coincidencia y llama al endpoint; luego se oculta', async () => {
-      mockearBusqueda([articuloFixture()])
-      apiPostMock.mockResolvedValue({ idCodigoProveedor: 1, idArticulo: 20, idProveedor: 1, codigo: 'AB-1234' })
-      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-
-      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
-      const accion = await screen.findByRole('button', { name: 'Asociar «AB-1234» como código de Proveedor Uno SA' })
-      await usuario.click(accion)
-
-      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
-      expect(apiPostMock).toHaveBeenCalledWith('/articulos/20/codigos-proveedor', { idProveedor: 1, codigo: 'AB-1234' })
-      expect(await screen.findByText('Código «AB-1234» asociado a Proveedor Uno SA.')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
-    })
-
-    it('un 409 muestra el mensaje y deja la acción disponible', async () => {
-      mockearBusqueda([articuloFixture()])
-      apiPostMock.mockRejectedValue(
-        new ErrorApi(409, 'codigo_proveedor_duplicado', 'Ese código ya pertenece a otro artículo del proveedor.'),
-      )
-      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-
-      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
-      await usuario.click(await screen.findByRole('button', { name: /Asociar «AB-1234»/ }))
-
-      expect(await screen.findByText('Ese código ya pertenece a otro artículo del proveedor.')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /Asociar «AB-1234»/ })).toBeEnabled()
-    })
-
-    it('un doble clic sincrónico emite una sola request', async () => {
-      mockearBusqueda([articuloFixture()])
-      apiPostMock.mockImplementation(() => new Promise(() => {}))
-      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
-
-      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
-      const accion = await screen.findByRole('button', { name: /Asociar «AB-1234»/ })
-      act(() => {
-        accion.click()
-        accion.click()
-      })
-
-      expect(apiPostMock).toHaveBeenCalledTimes(1)
-    })
-
-    it('no aparece si el término tiene más de 50 caracteres', async () => {
-      mockearBusqueda([articuloFixture()])
-      const usuario = await abrirBusquedaEnUnaLineaNueva('X'.repeat(51))
-
-      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
-      expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
-    })
-
-    it('no aparece si la compra no tiene proveedor elegido', async () => {
-      mockearBusqueda([articuloFixture()])
-      const usuario = await abrirBusquedaEnCompraSinProveedor('AB-1234')
-
-      await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
-      expect(await screen.findByText('Elegido: Leche en polvo 800g')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /Asociar/ })).not.toBeInTheDocument()
-    })
-  })
-})
-
-describe('CompraEditor — unidades según la unidad de venta del artículo', () => {
-  it('un borrador reabierto resuelve la unidad: por unidad pide enteros (cero permitido), marca una fracción y deja el tamaño del bulto como estaba', async () => {
+describe('CompraEditor — cantidad según la unidad de venta del artículo', () => {
+  it('un borrador reabierto resuelve la unidad: por unidad pide enteros, marca una fracción y la fila queda incompleta', async () => {
     mockearReferencia((ruta) => {
       if (ruta === '/compras/1') return Promise.resolve(compraFixture())
       if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad' }))
@@ -2093,19 +2147,18 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const unidades = screen.getByLabelText('Unidades')
-    await waitFor(() => expect(unidades).toHaveAttribute('step', '1'))
-    expect(unidades).toHaveAttribute('min', '0')
-    expect(screen.getByLabelText('Unidades por bulto')).toHaveAttribute('step', '0.001')
+    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
+    await waitFor(() => expect(cantidad).toHaveAttribute('step', '1'))
+    expect(cantidad).toHaveAttribute('min', '1')
 
-    fireEvent.change(unidades, { target: { value: '2.5' } })
+    fireEvent.change(cantidad, { target: { value: '2.5' } })
 
-    expect(unidades).toHaveClass('is-invalid')
+    expect(cantidad).toHaveClass('is-invalid')
     expect(screen.getByText('Este artículo se vende por unidad: la cantidad tiene que ser entera.')).toBeInTheDocument()
-    expect(screen.getByText('Línea incompleta — no se va a guardar.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea(s) incompleta(s) — complételas o quítelas para poder guardar.')).toBeInTheDocument()
   })
 
-  it('elegir un artículo por unidad en una línea nueva fija el paso de unidades en 1, sin consultar el artículo otra vez', async () => {
+  it('elegir un artículo por unidad en una fila nueva fija el paso en 1, sin consultar el artículo otra vez', async () => {
     mockearReferencia((ruta) => {
       if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
       if (ruta.startsWith('/articulos?busqueda=')) {
@@ -2117,14 +2170,13 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
-    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
-    await usuario.click(await screen.findByText('ART-20 — Leche en polvo 800g'))
+    await usuario.type(within(filaDeItems(0)).getByLabelText('Detalle'), 'leche')
+    await usuario.click(await screen.findByRole('option', { name: 'ART-20 — Leche en polvo 800g' }))
 
-    const unidades = screen.getByLabelText('Unidades')
-    expect(unidades).toHaveAttribute('step', '1')
-    fireEvent.change(unidades, { target: { value: '2.5' } })
-    expect(unidades).toHaveClass('is-invalid')
+    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
+    expect(cantidad).toHaveAttribute('step', '1')
+    fireEvent.change(cantidad, { target: { value: '2.5' } })
+    expect(cantidad).toHaveClass('is-invalid')
     await act(async () => {})
     expect(apiGetMock).not.toHaveBeenCalledWith('/articulos/20')
   })
@@ -2138,11 +2190,56 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
     renderEditor()
     await screen.findByDisplayValue('00012345')
 
-    const unidades = screen.getByLabelText('Unidades')
+    const cantidad = within(filaDeItems(0)).getByLabelText('Cantidad')
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))
-    fireEvent.change(unidades, { target: { value: '2.5' } })
+    fireEvent.change(cantidad, { target: { value: '2.5' } })
 
-    expect(unidades).toHaveAttribute('step', '0.001')
-    expect(unidades).not.toHaveClass('is-invalid')
+    expect(cantidad).toHaveAttribute('step', '0.001')
+    expect(cantidad).not.toHaveClass('is-invalid')
+  })
+
+  it('un borrador reabierto habilita Bulto con las unidades por bulto del artículo, en la misma consulta de la unidad', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad', unidadesPorBulto: 12 }))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    const um = within(filaDeItems(0)).getByLabelText('UM')
+    await waitFor(() => expect(um).toBeEnabled())
+    await usuario.selectOptions(um, 'Bulto')
+    expect(within(filaDeItems(0)).getByText('= 120 un. (12 por bulto)')).toBeInTheDocument()
+    expect(apiGetMock.mock.calls.filter((c: unknown[]) => c[0] === '/articulos/10')).toHaveLength(1)
+  })
+
+  it('una fila con UM Bulto manda bultos, unidades por bulto y el costo por unidad', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture())
+      if (ruta === '/articulos/10') return Promise.resolve(articuloFixture({ unidadVenta: 'Unidad', unidadesPorBulto: 12 }))
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(compraFixture())
+    const usuario = userEvent.setup()
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+
+    const fila = within(filaDeItems(0))
+    await waitFor(() => expect(fila.getByLabelText('UM')).toBeEnabled())
+    await usuario.selectOptions(fila.getByLabelText('UM'), 'Bulto')
+    await usuario.clear(fila.getByLabelText('Cantidad'))
+    await usuario.type(fila.getByLabelText('Cantidad'), '2')
+    await usuario.clear(fila.getByLabelText('Importe'))
+    await usuario.type(fila.getByLabelText('Importe'), '120')
+    // 2 bultos × $120 = $240 bruto; 5 % de descuento = $12; total $228
+    expect(fila.getByText('$ 228,00')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
+    expect(cuerpo.items[0]).toMatchObject({ unidades: 0, bultos: 2, unidadesPorBulto: 12, costoUnitario: 10, descuento: 12 })
   })
 })

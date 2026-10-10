@@ -1,6 +1,6 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
-import type { UnidadVenta } from '../api/tipos'
+import type { ArticuloListado, UnidadVenta } from '../api/tipos'
 
 type LineaConArticulo = { idArticulo: number | ''; unidadVenta?: UnidadVenta }
 
@@ -16,13 +16,20 @@ type LineaConArticulo = { idArticulo: number | ''; unidadVenta?: UnidadVenta }
  * falla, esa línea queda sin unidad, que se trata como peso, y ese artículo no se vuelve a pedir:
  * nunca bloquea. Cada respuesta solo completa líneas de SU artículo que siguen sin unidad, así que
  * una respuesta tardía no pisa lo que el operador eligió mientras tanto.
+ *
+ * `completar` (opcional) aprovecha esa misma consulta para completar otros datos del artículo en la
+ * línea (por ejemplo las unidades por bulto): se aplica junto con la unidad, solo a las líneas que
+ * todavía no traían la unidad, y decide por sí misma qué campos ya cargados respeta.
  */
 export function useUnidadesDeVentaDeLineas<L extends LineaConArticulo>(
   lineas: L[],
   setLineas: Dispatch<SetStateAction<L[]>>,
   habilitado: boolean,
+  completar?: (linea: L, articulo: ArticuloListado) => Partial<L>,
 ): void {
-  const unidadesRef = useRef(new Map<number, UnidadVenta>())
+  const articulosRef = useRef(new Map<number, ArticuloListado>())
+  const completarRef = useRef(completar)
+  completarRef.current = completar
   const consultadosRef = useRef(new Set<number>())
   const montadoRef = useRef(true)
 
@@ -38,11 +45,11 @@ export function useUnidadesDeVentaDeLineas<L extends LineaConArticulo>(
 
     const completarDesdeLoYaConocido = (prev: L[]) =>
       prev.map((l) => {
-        const unidadVenta = l.idArticulo === '' || l.unidadVenta !== undefined ? undefined : unidadesRef.current.get(l.idArticulo)
-        return unidadVenta === undefined ? l : { ...l, unidadVenta }
+        const articulo = l.idArticulo === '' || l.unidadVenta !== undefined ? undefined : articulosRef.current.get(l.idArticulo)
+        return articulo === undefined ? l : { ...l, ...completarRef.current?.(l, articulo), unidadVenta: articulo.unidadVenta }
       })
 
-    if (lineas.some((l) => l.idArticulo !== '' && l.unidadVenta === undefined && unidadesRef.current.has(l.idArticulo))) {
+    if (lineas.some((l) => l.idArticulo !== '' && l.unidadVenta === undefined && articulosRef.current.has(l.idArticulo))) {
       setLineas(completarDesdeLoYaConocido)
     }
 
@@ -60,9 +67,13 @@ export function useUnidadesDeVentaDeLineas<L extends LineaConArticulo>(
         .then((articulo) => {
           const unidadVenta = articulo?.unidadVenta
           if (!montadoRef.current || unidadVenta === undefined) return
-          unidadesRef.current.set(idArticulo, unidadVenta)
+          articulosRef.current.set(idArticulo, articulo)
           setLineas((prev) =>
-            prev.map((l) => (l.idArticulo === idArticulo && l.unidadVenta === undefined ? { ...l, unidadVenta } : l)),
+            prev.map((l) =>
+              l.idArticulo === idArticulo && l.unidadVenta === undefined
+                ? { ...l, ...completarRef.current?.(l, articulo), unidadVenta }
+                : l,
+            ),
           )
         })
         .catch(() => {})

@@ -7,21 +7,23 @@ import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import { elegirAlicuotaPorDefecto } from '../articulos/helpers'
-import { costoDeListaDeAltaRapida, prefillDeAltaRapidaDeArticulo } from './prefillAltaRapidaArticulo'
+import { costoDeListaDeAltaRapida } from './prefillAltaRapidaArticulo'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
 
 type Props = {
-  /** Lo que se tipeó en el buscador: precarga el nombre o el código del proveedor. */
-  termino: string
+  /** Lo que ya se tipeó en la fila: el Detalle precarga el nombre y el Código, el código del proveedor. */
+  nombreInicial: string
+  codigoInicial: string
   idProveedor: number | null
   nombreProveedor: string
   alicuotas: AlicuotaIvaListado[]
   idAlicuotaIvaDeLaLinea: number | ''
   costoDeLaLinea: number | null
-  onCreado: (articulo: ArticuloListado) => void
+  /** `codigoProveedor` es el que viajó al crear el artículo (el operador puede haberlo corregido acá). */
+  onCreado: (articulo: ArticuloListado, codigoProveedor: string | null) => void
   onCancelar: () => void
 }
 
@@ -32,7 +34,8 @@ type Props = {
  * de artículos edita de forma directa (`costoNominal` es solo un override que lo pisa).
  */
 export function AltaRapidaArticuloDeCompra({
-  termino,
+  nombreInicial,
+  codigoInicial,
   idProveedor,
   nombreProveedor,
   alicuotas,
@@ -41,14 +44,13 @@ export function AltaRapidaArticuloDeCompra({
   onCreado,
   onCancelar,
 }: Props) {
-  const [prefill] = useState(() => prefillDeAltaRapidaDeArticulo(termino))
   const alicuotasActivas = alicuotas.filter((a) => a.activo)
 
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
   const [cargandoAreas, setCargandoAreas] = useState(true)
   const [errorAreas, setErrorAreas] = useState('')
-  const [nombre, setNombre] = useState(prefill.nombre)
-  const [codigoProveedor, setCodigoProveedor] = useState(prefill.codigoProveedor)
+  const [nombre, setNombre] = useState(nombreInicial)
+  const [codigoProveedor, setCodigoProveedor] = useState(codigoInicial)
   const [idArea, setIdArea] = useState<number | ''>('')
   const [idAlicuotaIva, setIdAlicuotaIva] = useState<number | ''>(() =>
     idAlicuotaIvaDeLaLinea !== '' && alicuotasActivas.some((a) => a.id === idAlicuotaIvaDeLaLinea)
@@ -124,7 +126,7 @@ export function AltaRapidaArticuloDeCompra({
         controlaLote: false,
         codigoProveedor: sinProveedor || codigoLimpio === '' ? null : codigoLimpio,
       })
-      onCreado(creado)
+      onCreado(creado, sinProveedor || codigoLimpio === '' ? null : codigoLimpio)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo crear el artículo.')
     } finally {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
-  lineaDeConceptoVacia,
+  lineaDeCompraVacia,
   percepcionesAplicables,
   type EncabezadoDeCompraFormulario,
   type LineaDeCalculo,
@@ -45,7 +45,7 @@ function encabezado(sobrescribir: Partial<EncabezadoDeCompraFormulario> = {}): E
 }
 
 function lineaFormulario() {
-  return { ...lineaDeConceptoVacia(1), descripcion: 'Total', costoUnitario: 1210, idAlicuotaIva: 3 as const }
+  return { ...lineaDeCompraVacia(1), descripcion: 'Total', cantidad: '1', importe: 1210, idAlicuotaIva: 3 as const }
 }
 
 describe('calcularTotalesDeCompra — precios con IVA incluido', () => {

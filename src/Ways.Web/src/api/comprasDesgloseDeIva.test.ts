@@ -4,6 +4,7 @@ import {
   calcularTotalesDeCompra,
   discriminaIvaEfectivo,
   ivaImpresoDesdeDetalle,
+  lineaDeCompraVacia,
   type EncabezadoDeCompraFormulario,
   type LineaDeCalculo,
   type LineaDeCompraFormulario,
@@ -43,21 +44,11 @@ function tipo(sobrescribir: Partial<TipoComprobanteListado> = {}): TipoComproban
 
 function lineaDeFormulario(sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario {
   return {
-    clave: 1,
-    tipo: 'concepto',
-    idArticulo: '',
+    ...lineaDeCompraVacia(1),
     descripcion: 'Total',
-    unidades: '1',
-    bultos: '',
-    unidadesPorBulto: '',
-    costoUnitario: 1000,
-    descuento: null,
+    cantidad: '1',
+    importe: 1000,
     idAlicuotaIva: 3,
-    actualizaCosto: false,
-    controlaLote: false,
-    codigoLote: '',
-    fechaVencimiento: '',
-    codigoProveedor: '',
     ...sobrescribir,
   }
 }
