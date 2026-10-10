@@ -238,17 +238,18 @@ function fechaLocal(fecha: Date): string {
 }
 
 describe('Gastos (administración) — fecha', () => {
-  it('el campo de fecha no admite un valor posterior a hoy (atributo max)', async () => {
+  it('el selector de fecha no admite un valor posterior a hoy (atributo max)', async () => {
     mockearRutas({})
     renderGastos()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
     const campoFecha = await screen.findByLabelText('Fecha')
 
-    expect(campoFecha).toHaveAttribute('max', fechaLocal(new Date()))
+    const selector = campoFecha.closest('.position-relative')!.querySelector('input[type="date"]')
+    expect(selector).toHaveAttribute('max', fechaLocal(new Date()))
   })
 
-  it('una fecha futura (bypaseando el atributo max) se rechaza sin llegar a pegarle al servidor', async () => {
+  it('una fecha futura tipeada en el campo visible deja el gasto sin guardar y el campo inválido', async () => {
     mockearRutas({})
     renderGastos()
 
@@ -257,17 +258,17 @@ describe('Gastos (administración) — fecha', () => {
 
     const maniana = new Date()
     maniana.setDate(maniana.getDate() + 1)
-    const manianaISO = fechaLocal(maniana)
-    // El selector nativo oculto no valida contra `max` al recibir un cambio programático.
-    fireEvent.change(screen.getByLabelText('Fecha').closest('.position-relative')!.querySelector('input[type="date"]')!, {
-      target: { value: manianaISO },
-    })
+    const [anio, mes, dia] = fechaLocal(maniana).split('-')
+    const campoFecha = screen.getByLabelText('Fecha')
+    await userEvent.clear(campoFecha)
+    await userEvent.type(campoFecha, `${dia}/${mes}/${anio}`)
     await userEvent.type(screen.getByLabelText('Concepto'), 'Gasto futuro')
     await userEvent.type(screen.getByLabelText('Importe'), '500')
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
 
-    await screen.findByText('La fecha del gasto no puede ser futura.')
+    expect(campoFecha).toHaveClass('is-invalid')
+    expect(await screen.findByText('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')).toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 })

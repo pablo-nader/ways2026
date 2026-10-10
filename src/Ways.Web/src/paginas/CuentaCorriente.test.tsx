@@ -1,11 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import { textoAIso } from '../formato/fechas'
 import type {
   ClienteListado,
   ComprobanteEmitido,
@@ -262,6 +261,10 @@ async function abrirModalReliquidacion() {
   await screen.findByText('Actualizar precios (reliquidación)')
 }
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
@@ -372,20 +375,20 @@ describe('CuentaCorriente — header y ledger', () => {
 
 describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
   it('la ventana por defecto (design.md: "último mes") se precarga en Desde/Hasta y viaja en la consulta inicial', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
     mockearRutasBase()
     renderPantalla()
 
     await screen.findByText('$ 500,00')
 
-    const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
-    const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
-    expect(inputDesde.value).not.toBe('')
-    expect(inputHasta.value).not.toBe('')
+    expect(screen.getByLabelText('Desde')).toHaveValue('15/07/2026')
+    expect(screen.getByLabelText('Hasta')).toHaveValue('15/08/2026')
 
     const llamadaEstado = apiGetMock.mock.calls.find((c) => (c[0] as string).includes('/cuenta-corriente'))
     const query = decodeURIComponent(llamadaEstado?.[0] as string)
-    expect(query).toContain(`desde=${textoAIso(inputDesde.value)}T00:00:00`)
-    expect(query).toContain(`hasta=${textoAIso(inputHasta.value)}T23:59:59.999`)
+    expect(query).toContain('desde=2026-07-15T00:00:00')
+    expect(query).toContain('hasta=2026-08-15T23:59:59.999')
   })
 
   it('"Ver histórico completo" limpia los inputs Desde/Hasta — la ventana en efecto (sin recorte) queda visible', async () => {
@@ -1052,16 +1055,15 @@ describe('CuentaCorriente — detalle de un movimiento ActualizacionPrecios en e
  */
 describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
   it('el bloque de impresión muestra el rango real de filtros y quién/cuándo lo generó', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
     mockearRutasBase()
     usuarioActual = usuarioFixture({ usuario: 'cajera_ana' })
     renderPantalla()
 
     await screen.findByText('$ 500,00')
 
-    const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
-    const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
-
-    expect(screen.getByText(`Rango: ${textoAIso(inputDesde.value)} a ${textoAIso(inputHasta.value)}`)).toBeInTheDocument()
+    expect(screen.getByText('Rango: 2026-07-15 a 2026-08-15')).toBeInTheDocument()
     expect(screen.getByText(/Generado:.*— cajera_ana/)).toBeInTheDocument()
   })
 

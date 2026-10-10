@@ -2,6 +2,9 @@
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})$/
 
+/** Los campos de fecha no aceptan años anteriores: casi siempre es un año de dos dígitos mal tipeado. */
+export const ANIO_MINIMO = 1900
+
 export function esFechaReal(anio: number, mes: number, dia: number): boolean {
   if (mes < 1 || mes > 12 || dia < 1) return false
   const diasDelMes = new Date(Date.UTC(anio, mes, 0)).getUTCDate()
@@ -39,6 +42,7 @@ export function textoAIso(
   ).exec(texto.trim())
   if (!m) return null
   const anio = expandirAnio(m[3], anioActual)
+  if (anio < ANIO_MINIMO) return null
   const mes = Number(m[2])
   const dia = Number(m[1])
   if (!esFechaReal(anio, mes, dia)) return null
@@ -58,6 +62,12 @@ export function formatearTipeo(crudo: string): string {
     }
   }
   return partes.join('/')
+}
+
+/** Como `formatearTipeo`, pero un `YYYY-MM-DD` real (por ejemplo, pegado) se muestra como `DD/MM/AAAA`. */
+export function formatearTipeoOPegado(crudo: string): string {
+  const texto = isoATexto(crudo.trim())
+  return texto !== '' ? texto : formatearTipeo(crudo)
 }
 
 /** Un ISO fuera de `[min, max]` (ambos opcionales, también ISO) no es válido para el campo. */

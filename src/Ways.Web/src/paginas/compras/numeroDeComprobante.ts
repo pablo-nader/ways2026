@@ -4,6 +4,7 @@ export const DIGITOS_NUMERO = 8
 export type PartesDeNumero = { puntoVenta: string; numero: string }
 
 const FORMATO_ESTANDAR = /^(\d{1,4})-(\d{1,8})$/
+const MEDIO_NUMERO = /^(?:\d{1,4}-|-\d{1,8})$/
 
 export function soloDigitos(texto: string, maximo: number): string {
   return texto.replace(/\D/g, '').slice(0, maximo)
@@ -18,6 +19,32 @@ export function rellenarConCeros(digitos: string, largo: number): string {
 export function unirNumero({ puntoVenta, numero }: PartesDeNumero): string {
   if (puntoVenta === '' && numero === '') return ''
   return `${puntoVenta}-${numero}`
+}
+
+/** Solo una de las dos partes tiene dígitos: el número no se puede enviar así. */
+export function estaMedioLleno({ puntoVenta, numero }: PartesDeNumero): boolean {
+  return (puntoVenta === '') !== (numero === '')
+}
+
+/** Lo mismo sobre el valor unido: `PPPP-` o `-NNNNNNNN`, las únicas formas que produce `unirNumero` con una parte sola. */
+export function valorMedioLleno(valor: string): boolean {
+  return MEDIO_NUMERO.test(valor.trim())
+}
+
+/**
+ * Un número completo pegado (`0010-00009985`, `10-9985` o doce dígitos seguidos) se reparte en sus dos
+ * partes, rellenadas con ceros; cualquier otro texto devuelve `null` y se trata como tipeo común.
+ */
+export function repartirPegado(texto: string): PartesDeNumero | null {
+  const t = texto.trim()
+  const conGuion = /^(\d{1,4})\s*-\s*(\d{1,8})$/.exec(t)
+  const corrido = /^(\d{4})(\d{8})$/.exec(t)
+  const m = conGuion ?? corrido
+  if (!m) return null
+  return {
+    puntoVenta: rellenarConCeros(m[1], DIGITOS_PUNTO_DE_VENTA),
+    numero: rellenarConCeros(m[2], DIGITOS_NUMERO),
+  }
 }
 
 /** Un valor con el formato `PPPP-NNNNNNNN` se divide tal cual; cualquier otro (datos anteriores

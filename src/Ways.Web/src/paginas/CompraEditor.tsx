@@ -68,6 +68,7 @@ import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
+import { valorMedioLleno } from './compras/numeroDeComprobante'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
 import { CampoFecha } from '../componentes/CampoFecha'
 
@@ -140,6 +141,8 @@ type PropsSelectorDeArticulo = {
 }
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
+const MENSAJE_NUMERO_INCOMPLETO =
+  'El número del comprobante está incompleto: complete el punto de venta y el número, o deje ambos vacíos.'
 
 /** Código tipeado que el operador puede asociar al artículo elegido a mano. */
 type AsociacionPendiente = { idArticulo: number; idProveedor: number; nombreProveedor: string; codigo: string }
@@ -1246,6 +1249,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // regla 9: guard de reentrancia de primera línea.
     if (guardandoRef.current) return
     if (!puedeGuardar) return
+    if (valorMedioLleno(encabezado.numeroExterno)) {
+      setAviso('')
+      setError(MENSAJE_NUMERO_INCOMPLETO)
+      return
+    }
 
     guardandoRef.current = true
     setGuardando(true)
@@ -1289,6 +1297,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // regla 9: guard de reentrancia de primera línea.
     if (confirmandoRef.current) return
     if (!confirmadoParaConfirmar || idCompra === null) return
+    if (valorMedioLleno(encabezado.numeroExterno)) {
+      setErrorConfirmar(MENSAJE_NUMERO_INCOMPLETO)
+      return
+    }
 
     confirmandoRef.current = true
     setConfirmando(true)

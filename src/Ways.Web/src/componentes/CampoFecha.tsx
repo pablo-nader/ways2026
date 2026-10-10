@@ -1,12 +1,15 @@
 import { useRef, useState } from 'react'
-import type { ChangeEvent, FocusEvent, InputHTMLAttributes } from 'react'
-import { dentroDeRango, formatearTipeo, isoATexto, textoAIso } from '../formato/fechas'
+import type { ChangeEvent, FocusEvent, InputHTMLAttributes, KeyboardEvent } from 'react'
+import { dentroDeRango, formatearTipeoOPegado, isoATexto, textoAIso } from '../formato/fechas'
 
 export interface PropsCampoFecha
   extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'defaultValue' | 'inputMode'> {
   /** `YYYY-MM-DD` o `''` — el mismo contrato que un `<input type="date">` controlado. */
   value: string
-  /** Recibe `YYYY-MM-DD` solo para una fecha real dentro de `min`/`max`; `''` si se vació o el texto no es válido. */
+  /**
+   * Recibe `YYYY-MM-DD` al completarse una fecha real dentro de `min`/`max`, y `''` al vaciar el texto.
+   * Un texto parcial o inválido no emite mientras se tipea: se resuelve a `''` al salir del campo o con Enter.
+   */
   onChange: (valor: string) => void
   min?: string
   max?: string
@@ -14,7 +17,7 @@ export interface PropsCampoFecha
 
 type Estado = {
   texto: string
-  /** Último valor ISO que este campo emitió o recibió; si `value` difiere, vino de afuera. */
+  /** Último valor ISO que el padre tiene (el que este campo emitió o recibió); si `value` difiere, vino de afuera. */
   valorVisto: string
   /** Se muestra el error recién al salir del campo o al completar los diez caracteres. */
   validar: boolean
@@ -33,7 +36,7 @@ function isoDelTexto(texto: string, min?: string, max?: string, enVivo = false):
  * Campo de fecha que muestra y acepta `DD/MM/AAAA` sin depender de la configuración regional del
  * navegador. Hacia afuera se comporta como un `<input type="date">` controlado.
  */
-export function CampoFecha({ value, onChange, min, max, className, disabled, onBlur, ...resto }: PropsCampoFecha) {
+export function CampoFecha({ value, onChange, min, max, className, disabled, onBlur, onKeyDown, ...resto }: PropsCampoFecha) {
   const [estado, setEstado] = useState<Estado>(() => estadoDesde(value))
   const selectorRef = useRef<HTMLInputElement>(null)
 
@@ -45,24 +48,44 @@ export function CampoFecha({ value, onChange, min, max, className, disabled, onB
   }
 
   function manejarCambio(e: ChangeEvent<HTMLInputElement>) {
-    const texto = formatearTipeo(e.target.value)
-    emitir(isoDelTexto(texto, min, max, true) ?? '', texto, texto.length === 10)
+    const texto = formatearTipeoOPegado(e.target.value)
+    const iso = isoDelTexto(texto, min, max, true)
+    if (iso !== null) emitir(iso, texto, false)
+    else if (texto === '') emitir('', '', false)
+    else setEstado({ ...estado, texto, validar: texto.length === 10 })
+  }
+
+  function confirmarTexto() {
+    const iso = isoDelTexto(estado.texto, min, max)
+    if (iso !== null) emitir(iso, isoATexto(iso), false)
+    else if (estado.texto === '') emitir('', '', false)
+    else emitir('', estado.texto, true)
   }
 
   function manejarBlur(e: FocusEvent<HTMLInputElement>) {
-    const iso = isoDelTexto(estado.texto, min, max)
-    if (iso !== null) emitir(iso, isoATexto(iso), false)
-    else setEstado({ ...estado, validar: true })
+    confirmarTexto()
     onBlur?.(e)
   }
 
+  function manejarTecla(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') confirmarTexto()
+    onKeyDown?.(e)
+  }
+
+  function manejarSelector(e: ChangeEvent<HTMLInputElement>) {
+    if (e.target.value === '') {
+      emitir('', '', false)
+      return
+    }
+    const iso = isoDelTexto(isoATexto(e.target.value), min, max)
+    if (iso !== null) emitir(iso, isoATexto(iso), false)
+  }
+
   function abrirCalendario() {
-    const selector = selectorRef.current
-    if (!selector) return
     try {
-      selector.showPicker()
+      selectorRef.current?.showPicker()
     } catch {
-      selector.focus()
+      // Sin selector nativo disponible, el texto sigue siendo la vía de carga.
     }
   }
 
@@ -82,11 +105,10 @@ export function CampoFecha({ value, onChange, min, max, className, disabled, onB
           className={[className, invalido ? 'is-invalid' : ''].filter(Boolean).join(' ')}
           aria-invalid={invalido ? true : resto['aria-invalid']}
           value={estado.texto}
-          min={min}
-          max={max}
           disabled={disabled}
           onChange={manejarCambio}
           onBlur={manejarBlur}
+          onKeyDown={manejarTecla}
         />
         <button
           type="button"
@@ -106,6 +128,7 @@ export function CampoFecha({ value, onChange, min, max, className, disabled, onB
         ref={selectorRef}
         type="date"
         tabIndex={-1}
+        inert
         aria-hidden="true"
         className="visually-hidden"
         style={{ left: 0, bottom: 0 }}
@@ -113,7 +136,7 @@ export function CampoFecha({ value, onChange, min, max, className, disabled, onB
         min={min}
         max={max}
         disabled={disabled}
-        onChange={(e) => emitir(e.target.value, isoATexto(e.target.value), false)}
+        onChange={manejarSelector}
       />
     </div>
   )

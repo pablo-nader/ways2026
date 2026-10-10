@@ -1,9 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
 import { rangoUltimosSieteDias } from '../api/reportes'
-import { isoATexto } from '../formato/fechas'
 import { ROL } from '../api/tipos'
 import type {
   Comisiones,
@@ -294,6 +293,10 @@ function renderTableroProtegido() {
   )
 }
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiDescargarMock.mockReset()
@@ -303,13 +306,14 @@ beforeEach(() => {
 
 describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () => {
   it('por defecto carga el rango de los últimos 7 días y muestra ventas, gastos y ticket promedio', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 15, 12, 0, 0))
     mockearRutasBase()
     renderTablero()
 
-    const rangoEsperado = rangoUltimosSieteDias()
     await screen.findByText('Empresa Uno SA')
-    expect(screen.getByLabelText('Desde')).toHaveValue(isoATexto(rangoEsperado.desde))
-    expect(screen.getByLabelText('Hasta')).toHaveValue(isoATexto(rangoEsperado.hasta))
+    expect(screen.getByLabelText('Desde')).toHaveValue('09/08/2026')
+    expect(screen.getByLabelText('Hasta')).toHaveValue('15/08/2026')
 
     expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument() // ventas netas
     expect(screen.getByText('$ 300,00')).toBeInTheDocument() // gastos

@@ -671,16 +671,22 @@ describe('CompraEditor — selectores del encabezado', () => {
     expect(puntoVenta).toHaveValue('')
   })
 
-  it('un borrador existente conserva su punto de venta aunque haya uno solo distinto', async () => {
+  it('un borrador existente conserva su punto de venta aunque la lista tenga uno solo y distinto', async () => {
     mockearReferencia(
-      (ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ idPuntoVenta: 3 })) : undefined),
+      (ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ idPuntoVenta: 2 })) : undefined),
       [tipoFixture()],
-      [puntoVentaFixture({ id: 2 }), puntoVentaFixture({ id: 3, nombre: 'Sucursal' })],
+      [puntoVentaFixture({ id: 3, nombre: 'Sucursal' })],
     )
-    renderEditor()
+    apiPutMock.mockResolvedValue(compraFixture({ idPuntoVenta: 2 }))
+    const usuario = userEvent.setup()
 
+    renderEditor()
     await screen.findByDisplayValue('00012345')
-    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue('3'))
+    await screen.findByRole('option', { name: 'Sucursal' })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0] as [string, Record<string, unknown>])[1].idPuntoVenta).toBe(2)
   })
 })
 
@@ -741,6 +747,101 @@ describe('CompraEditor — número de comprobante', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBeNull()
+  })
+
+  it('con solo el punto de venta cargado, al salir del grupo marca la parte que falta y no manda nada al crear', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    const puntoVenta = screen.getByLabelText('Punto de venta del comprobante')
+    const numero = screen.getByLabelText('Número del comprobante')
+    await usuario.type(puntoVenta, '10')
+    await usuario.tab()
+    expect(numero).toHaveFocus()
+    expect(numero).not.toHaveClass('is-invalid')
+
+    await usuario.tab()
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveClass('is-invalid')
+    expect(puntoVenta).not.toHaveClass('is-invalid')
+    expect(screen.getByText(/Falta el número\./)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('con solo el número cargado marca el punto de venta y no manda nada al guardar un borrador existente', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    const puntoVenta = await screen.findByDisplayValue('0003')
+    await usuario.clear(puntoVenta)
+    await usuario.tab()
+    await usuario.tab()
+
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00012345')
+    expect(puntoVenta).toHaveClass('is-invalid')
+    expect(screen.getByText(/Falta el punto de venta\./)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('confirmar se rechaza con el número a medio cargar y no manda el POST de confirmación', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await usuario.clear(await screen.findByDisplayValue('00012345'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('pegar un número completo en cualquiera de los dos campos rellena ambas partes', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    const puntoVenta = screen.getByLabelText('Punto de venta del comprobante')
+    const numero = screen.getByLabelText('Número del comprobante')
+
+    await usuario.click(puntoVenta)
+    await usuario.paste('0010-00009985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(numero)
+    await usuario.paste('10-9985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(puntoVenta)
+    await usuario.paste('001000009985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
   })
 
   it('un número anterior al formato no se pierde ni se altera si no se edita', async () => {

@@ -289,10 +289,6 @@ export function Gastos() {
       setErrorGuardar('Completá fecha, empresa, medio de pago, concepto e importe (mayor a 0).')
       return
     }
-    if (formulario.fecha > fechaDeHoy()) {
-      setErrorGuardar('La fecha del gasto no puede ser futura.')
-      return
-    }
 
     guardandoRef.current = true
     setGuardando(true)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dentroDeRango, esFechaReal, expandirAnio, formatearTipeo, isoATexto, textoAIso } from './fechas'
+import { dentroDeRango, esFechaReal, expandirAnio, formatearTipeo, formatearTipeoOPegado, isoATexto, textoAIso } from './fechas'
 
 describe('esFechaReal', () => {
   it('rechaza días inexistentes y acepta el 29/02 solo en bisiestos', () => {
@@ -58,6 +58,12 @@ describe('textoAIso', () => {
     expect(textoAIso('10/13/2026', 2026)).toBeNull()
   })
 
+  it('rechaza años anteriores a 1900 y acepta 1900', () => {
+    expect(textoAIso('05/08/1899', 2026)).toBeNull()
+    expect(textoAIso('05/08/0001', 2026)).toBeNull()
+    expect(textoAIso('05/08/1900', 2026)).toBe('1900-08-05')
+  })
+
   it('rechaza texto incompleto o con otro formato', () => {
     expect(textoAIso('', 2026)).toBeNull()
     expect(textoAIso('05/08', 2026)).toBeNull()
@@ -92,6 +98,18 @@ describe('formatearTipeo', () => {
 
   it('cambiar el separador por otro admitido lo normaliza a barra', () => {
     expect(formatearTipeo('1-2-2026')).toBe('1/2/2026')
+  })
+})
+
+describe('formatearTipeoOPegado', () => {
+  it('un ISO real pegado se muestra como DD/MM/AAAA', () => {
+    expect(formatearTipeoOPegado('2026-08-05')).toBe('05/08/2026')
+    expect(formatearTipeoOPegado(' 2026-08-05 ')).toBe('05/08/2026')
+  })
+
+  it('lo que no es un ISO real sigue el formateo del tipeo', () => {
+    expect(formatearTipeoOPegado('1208')).toBe('12/08')
+    expect(formatearTipeoOPegado('05/08/2026')).toBe('05/08/2026')
   })
 })
 

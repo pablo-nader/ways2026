@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   dividirNumero,
+  estaMedioLleno,
   rellenarConCeros,
+  repartirPegado,
   soloDigitos,
   tieneFormatoEstandar,
   unirNumero,
+  valorMedioLleno,
 } from './numeroDeComprobante'
 
 describe('soloDigitos', () => {
@@ -77,5 +80,50 @@ describe('tieneFormatoEstandar', () => {
     expect(tieneFormatoEstandar('A-0001-00000012')).toBe(false)
     expect(tieneFormatoEstandar('12345')).toBe(false)
     expect(tieneFormatoEstandar('00003-00012345')).toBe(false)
+  })
+})
+
+describe('estaMedioLleno', () => {
+  it('es verdadero solo cuando exactamente una parte tiene dígitos', () => {
+    expect(estaMedioLleno({ puntoVenta: '0010', numero: '' })).toBe(true)
+    expect(estaMedioLleno({ puntoVenta: '', numero: '00009985' })).toBe(true)
+  })
+
+  it('con las dos partes llenas o las dos vacías no está a medio llenar', () => {
+    expect(estaMedioLleno({ puntoVenta: '0010', numero: '00009985' })).toBe(false)
+    expect(estaMedioLleno({ puntoVenta: '', numero: '' })).toBe(false)
+  })
+})
+
+describe('valorMedioLleno', () => {
+  it('reconoce las dos formas que produce unirNumero con una sola parte', () => {
+    expect(valorMedioLleno(unirNumero({ puntoVenta: '0010', numero: '' }))).toBe(true)
+    expect(valorMedioLleno(unirNumero({ puntoVenta: '', numero: '00009985' }))).toBe(true)
+  })
+
+  it('no confunde el vacío, un número completo ni un valor anterior al formato', () => {
+    expect(valorMedioLleno('')).toBe(false)
+    expect(valorMedioLleno('0010-00009985')).toBe(false)
+    expect(valorMedioLleno('12345')).toBe(false)
+    expect(valorMedioLleno('A-0001-00000012')).toBe(false)
+  })
+})
+
+describe('repartirPegado', () => {
+  it('reparte un número con guion y rellena con ceros', () => {
+    expect(repartirPegado('0010-00009985')).toEqual({ puntoVenta: '0010', numero: '00009985' })
+    expect(repartirPegado(' 10 - 9985 ')).toEqual({ puntoVenta: '0010', numero: '00009985' })
+  })
+
+  it('reparte doce dígitos corridos en cuatro y ocho', () => {
+    expect(repartirPegado('001000009985')).toEqual({ puntoVenta: '0010', numero: '00009985' })
+  })
+
+  it('cualquier otro texto no es un número completo', () => {
+    expect(repartirPegado('0010')).toBeNull()
+    expect(repartirPegado('12345')).toBeNull()
+    expect(repartirPegado('00010-00009985')).toBeNull()
+    expect(repartirPegado('A-0001-00000012')).toBeNull()
+    expect(repartirPegado('')).toBeNull()
   })
 })
