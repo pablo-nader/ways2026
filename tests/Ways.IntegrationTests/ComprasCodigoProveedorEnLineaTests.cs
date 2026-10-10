@@ -15,6 +15,7 @@ using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
+using static Ways.IntegrationTests.ApoyoDeFamilias;
 
 namespace Ways.IntegrationTests;
 
@@ -400,9 +401,9 @@ public class ComprasCodigoProveedorEnLineaTests(WaysApiFixture fixture) : IClass
         await ConfirmarAsync(ctx, creada.Id);
 
         await using var verificacion = Db(ctx);
-        var vivas = await verificacion.CodigosProveedor.AsNoTracking().IgnoreQueryFilters().ToListAsync();
-        Assert.Equal(2, vivas.Count);
-        Assert.Equal(ctx.IdArticulo1, vivas.Single(c => c.DeletedAt == null).IdArticulo);
+        var todas = await verificacion.CodigosProveedor.AsNoTracking().IgnoreQueryFilters().ToListAsync();
+        Assert.Equal(2, todas.Count);
+        Assert.Equal(ctx.IdArticulo1, todas.Single(c => c.DeletedAt == null).IdArticulo);
     }
 
     /// <summary>Cláusula bajo prueba: el artículo se exige vivo en el mismo statement de la asociación.</summary>
@@ -477,7 +478,9 @@ public class ComprasCodigoProveedorEnLineaTests(WaysApiFixture fixture) : IClass
         }
 
         var confirmacion = ConfirmarCrudoAsync(ctx, creada.Id);
-        await Task.Delay(1500);
+        await using var poll = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await EsperarAsync(
+            () => EsperandoUnaFilaAsync(poll), "La confirmación nunca se observó esperando el índice único.");
         Assert.False(confirmacion.IsCompleted, "la confirmación debía quedar esperando el índice único");
 
         if (comitea)
@@ -499,10 +502,53 @@ public class ComprasCodigoProveedorEnLineaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(EstadoCompra.Confirmada, (await ObtenerAsync(ctx, creada.Id)).Estado);
     }
 
+    /// <summary>Carrera real con la baja: otra transacción tiene tomado el <c>FOR UPDATE</c> del artículo y su baja
+    /// sin comitear. La confirmación espera (la FK del movimiento de stock pide <c>FOR KEY SHARE</c> sobre esa fila),
+    /// y al comitear la baja ya no asocia el código al artículo dado de baja; la compra confirma igual y el
+    /// código queda en la línea. Mata el chequeo de artículo vivo y el orden del paso (después del stock).</summary>
     [Fact]
-    public async Task DosConfirmacionesSimultaneasDelMismoCodigoNuevoConfirmanAmbasYAsocianUnaSolaVez()
+    public async Task UnaBajaDelArticuloSinComitearHaceEsperarALaConfirmacionYNoDejaUnCodigoVivoEnElArticuloDadoDeBaja()
     {
-        var ctx = await PrepararAsync(nameof(DosConfirmacionesSimultaneasDelMismoCodigoNuevoConfirmanAmbasYAsocianUnaSolaVez));
+        var ctx = await PrepararAsync(
+            nameof(UnaBajaDelArticuloSinComitearHaceEsperarALaConfirmacionYNoDejaUnCodigoVivoEnElArticuloDadoDeBaja));
+        using var _ = ctx.Admin;
+        var creada = await CrearBorradorAsync(ctx, Solicitud(ctx,
+            [DeArticulo(ctx, ctx.IdArticulo1, "VIVO"), DeArticulo(ctx, ctx.IdArticulo2, "MUERTO")]));
+
+        await using var baja = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var transaccionDeBaja = await baja.BeginTransactionAsync();
+        foreach (var sentencia in new[]
+        {
+            "SELECT 1 FROM articulos WHERE id_articulo = $1 FOR UPDATE",
+            "UPDATE articulos SET deleted_at = now(), updated_at = now() WHERE id_articulo = $1"
+        })
+        {
+            await using var comandoBaja = baja.CreateCommand();
+            comandoBaja.CommandText = sentencia;
+            comandoBaja.Parameters.Add(new NpgsqlParameter { Value = ctx.IdArticulo2 });
+            await comandoBaja.ExecuteNonQueryAsync();
+        }
+
+        var confirmacion = ConfirmarCrudoAsync(ctx, creada.Id);
+
+        await using var poll = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await EsperarAsync(
+            () => EsperandoUnaFilaAsync(poll), "La confirmación nunca se observó esperando la baja del artículo.");
+        Assert.False(confirmacion.IsCompleted, "la confirmación debía quedar esperando la fila del artículo");
+
+        await transaccionDeBaja.CommitAsync();
+
+        var respuesta = await confirmacion.WaitAsync(EsperaMaxima);
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, await respuesta.Content.ReadAsStringAsync());
+
+        Assert.Equal(["VIVO"], (await AsociacionesAsync(ctx)).Select(a => a.Codigo));
+        Assert.Equal(EstadoCompra.Confirmada, (await ObtenerAsync(ctx, creada.Id)).Estado);
+    }
+
+    [Fact]
+    public async Task DosConfirmacionesDelMismoCodigoNuevoConfirmanAmbasYAsocianUnaSolaVez()
+    {
+        var ctx = await PrepararAsync(nameof(DosConfirmacionesDelMismoCodigoNuevoConfirmanAmbasYAsocianUnaSolaVez));
         using var _ = ctx.Admin;
         var uno = await CrearBorradorAsync(ctx, Solicitud(ctx, [DeArticulo(ctx, ctx.IdArticulo1, "SIMULTANEO")]));
         var dos = await CrearBorradorAsync(ctx, Solicitud(ctx, [DeArticulo(ctx, ctx.IdArticulo2, "SIMULTANEO")]));

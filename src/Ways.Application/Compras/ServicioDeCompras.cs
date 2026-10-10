@@ -611,7 +611,12 @@ public class ServicioDeCompras(
 
         // 4.b. Códigos de proveedor de las líneas con artículo (doc 10 §3, codigos_proveedor): se asocian dentro de
         // esta transacción y antes del lock de proveedores. Un código que ya pertenece a otro artículo del proveedor
-        // no frena la confirmación: queda solo en la línea.
+        // no frena la confirmación: queda solo en la línea. El EXISTS de artículo vivo no bloquea, y no hace falta que
+        // lo haga: el paso 3 ya insertó movimientos_stock de cada artículo de las líneas, y su FK toma FOR KEY SHARE
+        // sobre la fila del artículo hasta el commit. Ese lock choca con el FOR UPDATE de la baja, así que una baja
+        // en curso hace esperar al paso 3 y este statement, con foto propia, ya la ve comiteada; una baja posterior
+        // espera a esta transacción y luego da de baja también el código asociado. Mover este paso antes del 3
+        // reabre la carrera.
         var lineasConCodigo = items.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor));
         foreach (var candidata in AsociacionDeCodigosDeProveedor.Seleccionar(lineasConCodigo))
         {

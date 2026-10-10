@@ -1152,7 +1152,8 @@ si otra línea de la misma compra, anterior en el orden, ya lo reclamó para otr
 compra se confirma igual y el código queda solo en la línea. Un concepto nunca asocia. La
 carrera con una asociación concurrente del mismo código se resuelve con
 `INSERT … ON CONFLICT DO NOTHING` sobre `ux_codigos_proveedor_proveedor_codigo`, sin abortar la
-transacción de la confirmación.
+transacción de la confirmación. Una línea cuyo artículo está dado de baja al
+confirmar no se asocia: la compra se confirma y el código queda solo en la línea.
 
 **Líneas por concepto.** Una línea con `id_articulo NULL` es un concepto (un flete, una
 factura de ferretería cargada por total): descripción libre, cantidad, costo, descuento y
