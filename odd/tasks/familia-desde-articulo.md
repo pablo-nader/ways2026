@@ -84,7 +84,19 @@ Created 2026-10-10.
 - Open, self-reported by the writer: a rejected join resets the selector even on a transient
   error; success notice is lost if the reload after a join fails; focus falls to `body`
   after creating a familia from an existing article.
-- Judgment-day on the web slice running.
+- Judgment-day, web slice `e85aca04`, round 1: 0 CRITICAL from either judge. Confirmed by
+  both (WARNING): J1 — after choosing a familia on an existing non-member, editing and saving
+  the article (or writing a price) leaves the old preview alive and re-enables confirm, so the
+  join runs against a stale diff (`guardar` edit branch never drops the proposal); J2 — "+"
+  with a proposal open leaves `unionElegida` behind, and after "Sacar de la familia" the
+  select shows the old familia with no proposal and cannot re-propose it
+  (`crearFamiliaDelArticulo` does not call `soltarFamiliaDelFormulario`). Suspect (one judge
+  or self-reported): any rejected join resets the selector, incl. uncertain results; focus
+  lost in several paths; two async errors without `role="alert"`; a test name that claims the
+  payload while the banner assertion is what holds; duplicate-name copy says "por eso no
+  aparece" even for a visible active familia; dead export `UNION_SIN_ELEGIR`; possible Tab
+  trap issue in the stacked modal (not executed, likely pre-existing). Fix round: awaiting
+  the owner.
 
 ## Next step
 
