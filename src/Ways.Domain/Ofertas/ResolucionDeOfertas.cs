@@ -6,7 +6,8 @@ namespace Ways.Domain.Ofertas;
 /// llega resuelto (categoría propia + ancestros, ver <see cref="CadenaDeCategorias"/>): el
 /// resolver nunca hace su propia consulta jerárquica, solo compara contra el conjunto que le
 /// entrega <c>ServicioDeOfertas.ResolverAsync</c>. <see cref="DiaSemana"/> es ISO-8601
-/// (1 = lunes … 7 = domingo, spec: ofertas / Vigencia Window Semantics).
+/// (1 = lunes … 7 = domingo, spec: ofertas / Vigencia Window Semantics). <see cref="IdFamilia"/>
+/// es la familia vigente del artículo al resolver (<c>null</c> ⇒ sin familia).
 /// </summary>
 public readonly record struct LineaAResolver(
     int IdArticulo,
@@ -17,7 +18,8 @@ public readonly record struct LineaAResolver(
     decimal PrecioOriginal,
     DateOnly Fecha,
     TimeOnly Hora,
-    int DiaSemana);
+    int DiaSemana,
+    int? IdFamilia = null);
 
 /// <summary>
 /// Una oferta candidata para una <see cref="LineaAResolver"/>. Ya pasó el filtro grueso de SQL

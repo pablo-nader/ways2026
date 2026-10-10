@@ -596,7 +596,9 @@ no toman locks.
   dados de baja conservan su `id_familia`. `204`; `404` si la familia no existe o ya está dada de baja (también la
   de otro tenant). Toma, en este orden, el lock de membresía exclusivo, la fila de la familia `FOR UPDATE` y las
   filas de los miembros vivos, ascendentes y `FOR NO KEY UPDATE`; el nombre de la familia disuelta se puede
-  reutilizar.
+  reutilizar. `409 familia_en_uso` si alguna oferta, viva o dada de baja, apunta a la familia (la misma política
+  que la baja de un grupo): la guarda corre bajo los dos locks, después de leer la familia, y no cuenta a los
+  artículos, que se sueltan en la misma transacción.
 
 **Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los quince campos compartidos (los
 propios no se tocan) y en el **estado de precios** de cada lista fija —el precio vigente y, si lo hay, el pendiente con su
@@ -728,6 +730,7 @@ ofertas (                     -- [catálogo]
     nombre          citext,                  -- lo que imprime el ticket (no único)
     -- alcance: exactamente uno
     id_articulo integer NULL, id_grupo integer NULL, id_categoria integer NULL,
+    id_familia  integer NULL,                -- FK (id_familia, id_tenant) -> familias; los miembros se leen al resolver
     -- vigencia
     fecha_desde date NULL, fecha_hasta date NULL,
     hora_desde  time NULL, hora_hasta  time NULL,
@@ -742,7 +745,7 @@ ofertas (                     -- [catálogo]
     acumulable      boolean NOT NULL DEFAULT false,  -- ¿se suma a otras o excluye?
     activo
 );
-CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria) = 1);
+CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
 CHECK (fecha_hasta >= fecha_desde AND hora_hasta >= hora_desde);  -- tolerante a NULL por eje
 CHECK (dias_semana IS NULL OR dias_semana <@ ARRAY[1,2,3,4,5,6,7]::smallint[]);
@@ -765,6 +768,13 @@ por cantidad) más lo que le faltaba: días de semana, ofertas por categoría, o
 limitadas a un subconjunto de listas, y reglas explícitas de solapamiento en lugar del
 `elseif` accidental de `funciones.php`. El descuento aplicado queda **en el item** que
 lo generó (ver abajo), no como línea fantasma con barra `OF...`.
+
+**Alcance por familia (ofertas-por-familia, aprobado 2026-10-10):** una oferta puede apuntar a una familia de
+artículos (`id_familia`, el cuarto alcance exclusivo). La pertenencia es dinámica: la oferta aplica a un artículo si
+y solo si `articulos.id_familia` es esa familia **al resolver** (un artículo dado de baja no es miembro), así que los
+comprobantes ya emitidos no cambian. La precedencia sigue siendo solo `prioridad`/`acumulable`: no hay orden
+automático por tipo de alcance. Una familia con `activo = false` no se valida ni al resolver ni al crear la oferta
+(igual que los grupos). Disolver una familia que alguna oferta referencia está bloqueado (`409 familia_en_uso`).
 
 ---
 
@@ -1971,6 +1981,7 @@ erDiagram
     ofertas }o--o| articulos : ""
     ofertas }o--o| grupos : ""
     ofertas }o--o| categorias : ""
+    ofertas }o--o| familias : ""
     comprobantes_venta }o--|| tipos_comprobante : ""
     comprobantes_venta }o--|| clientes : ""
     comprobantes_venta ||--o{ items_comprobante_venta : ""

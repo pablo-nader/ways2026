@@ -29,6 +29,11 @@ namespace Ways.Application.Familias;
 public class ServicioDeFamilias(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, GuardaDeReferencias guarda)
 {
+    /// <summary>Tabla que el guard de la disolución no cuenta como referencia: los artículos, que se sueltan en la
+    /// misma transacción (los dados de baja conservan su <c>id_familia</c> y no son miembros).</summary>
+    private static readonly IReadOnlySet<string> TablasQueSeResuelvenAlDisolver =
+        new HashSet<string>(StringComparer.Ordinal) { "articulos" };
+
     /// <summary>Las familias vivas del tenant, ordenadas por nombre. Cada una con la cantidad de miembros vivos:
     /// el filtro de baja lógica de <c>articulos</c> deja afuera a los dados de baja.</summary>
     public async Task<IReadOnlyList<FamiliaListado>> ListarAsync(CancellationToken ct = default) =>
@@ -245,7 +250,10 @@ public class ServicioDeFamilias(
     /// Disuelve la familia: todos sus miembros vivos quedan sin familia (<c>id_familia = NULL</c>, con todos sus
     /// valores) y la familia se da de baja, en una sola transacción y con un solo "ahora". Los artículos dados de baja
     /// no cuentan como miembros y conservan su <c>id_familia</c>, igual que antes. <c>404</c> si la familia no existe o
-    /// ya está dada de baja (también la de otro tenant). El nombre de una familia disuelta se puede reutilizar.
+    /// ya está dada de baja (también la de otro tenant); <c>409 familia_en_uso</c> si alguna oferta la referencia, viva
+    /// o dada de baja (OD4, la misma política que la baja de un grupo): el guard de referencias corre bajo los dos
+    /// locks, después de leer la familia, y no cuenta a los artículos, que se sueltan acá mismo. El nombre de una
+    /// familia disuelta se puede reutilizar.
     ///
     /// <para>Cambia la pertenencia de todos los miembros, así que toma, en el orden global de los locks de las
     /// familias, el lock de membresía EXCLUSIVO como primera sentencia, la fila de la familia (<c>FOR UPDATE</c>, antes
@@ -280,6 +288,10 @@ public class ServicioDeFamilias(
                 // familia que otra disolución dio de baja mientras se esperaba.
                 var familia = await db.Familias.FirstOrDefaultAsync(f => f.Id == id, ct)
                     ?? throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
+
+                await guarda.ExigirSinReferenciasAsync(
+                    familia, "familia_en_uso", "la familia", etiquetasPropias: null, ct,
+                    tablasQueNoBloquean: TablasQueSeResuelvenAlDisolver);
 
                 var miembros = await MembresiaDeFamilias.BloquearMiembrosAsync(conexion, transaccionCruda, id, idTenant, ct);
 

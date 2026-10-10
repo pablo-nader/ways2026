@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
 using Ways.Application.Precios;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
@@ -409,5 +410,156 @@ public class ServicioDeOfertasTests
         var detalle = await servicio.ObtenerAsync(oferta.Id);
 
         Assert.Empty(detalle.IdsListas);
+    }
+
+    // ---- alcance por familia -------------------------------------------------------------------
+
+    private static async Task<int> SembrarFamiliaAsync(
+        string nombreDeBase, int idTenant, string nombre = "Remeras", bool dadaDeBaja = false)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        var familia = new Familia
+        {
+            IdTenant = idTenant, Nombre = nombre, CreatedAt = Ahora, UpdatedAt = Ahora,
+            DeletedAt = dadaDeBaja ? Ahora : null
+        };
+        siembra.Familias.Add(familia);
+        await siembra.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    private static AltaOferta AltaDeFamilia(int idFamilia) =>
+        AltaValida(idGrupo: 0) with { IdGrupo = null, IdFamilia = idFamilia };
+
+    [Fact]
+    public async Task CrearConIdFamiliaInexistenteEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(AltaDeFamilia(999_999)));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+        Assert.Contains("familia", error.Message);
+    }
+
+    [Fact]
+    public async Task CrearConIdFamiliaDeOtroTenantEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idFamiliaAjena = await SembrarFamiliaAsync(nombreDeBase, idTenant: 2);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(AltaDeFamilia(idFamiliaAjena)));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task CrearConIdFamiliaDadaDeBajaEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idFamiliaDisuelta = await SembrarFamiliaAsync(nombreDeBase, idTenant: 1, dadaDeBaja: true);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(AltaDeFamilia(idFamiliaDisuelta)));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task CrearConFamiliaYGrupoEsRechazadoPorLaExclusividad()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
+        var idFamilia = await SembrarFamiliaAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idGrupo) with { IdFamilia = idFamilia };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("oferta_alcance_invalido", error.Codigo);
+    }
+
+    [Fact]
+    public async Task ActualizarConIdFamiliaInexistenteEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
+        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = EdicionValida(idGrupo) with { IdGrupo = null, IdFamilia = 999_999 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(oferta.Id, datos));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task ActualizarConIdFamiliaDeOtroTenantOEnBajaEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
+        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
+        var idFamiliaAjena = await SembrarFamiliaAsync(nombreDeBase, idTenant: 2, nombre: "Ajena");
+        var idFamiliaDisuelta = await SembrarFamiliaAsync(nombreDeBase, idTenant: 1, nombre: "Disuelta", dadaDeBaja: true);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        foreach (var idFamilia in new[] { idFamiliaAjena, idFamiliaDisuelta })
+        {
+            var datos = EdicionValida(idGrupo) with { IdGrupo = null, IdFamilia = idFamilia };
+
+            var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(oferta.Id, datos));
+
+            Assert.Equal("referencia_invalida", error.Codigo);
+        }
+    }
+
+    /// <summary>Un id de oferta inexistente responde 404 antes que el 400 de una familia inválida
+    /// (<c>update-404-first</c>).</summary>
+    [Fact]
+    public async Task ActualizarUnaOfertaInexistenteConFamiliaInvalidaResponde404()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = EdicionValida(idGrupo: 0) with { IdGrupo = null, IdFamilia = 999_999 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(999_999, datos));
+
+        Assert.Equal(404, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task ObtenerYListarProyectanElIdFamiliaDeLaOferta()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idFamilia = await SembrarFamiliaAsync(nombreDeBase, idTenant: 1);
+        await using (var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            siembra.Ofertas.Add(new Oferta
+            {
+                IdTenant = 1, Nombre = "Familia", IdFamilia = idFamilia, Porcentaje = 10m,
+                CreatedAt = Ahora, UpdatedAt = Ahora
+            });
+            await siembra.SaveChangesAsync();
+        }
+
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var listada = Assert.Single(await servicio.ListarAsync());
+        var detalle = await servicio.ObtenerAsync(listada.Id);
+
+        Assert.Equal(idFamilia, listada.IdFamilia);
+        Assert.Equal(idFamilia, detalle.IdFamilia);
+        Assert.Null(detalle.IdGrupo);
     }
 }

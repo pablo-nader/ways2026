@@ -11,7 +11,7 @@ namespace Ways.Domain.Tests.Ofertas;
 public class ReglaDeOfertasTests
 {
     private static Oferta CrearOferta(
-        int? idArticulo = 1, int? idGrupo = null, int? idCategoria = null,
+        int? idArticulo = 1, int? idGrupo = null, int? idCategoria = null, int? idFamilia = null,
         decimal? precioUnitario = null, decimal? porcentaje = 10m, decimal? importeFijo = null) =>
         new()
         {
@@ -20,6 +20,7 @@ public class ReglaDeOfertasTests
             IdArticulo = idArticulo,
             IdGrupo = idGrupo,
             IdCategoria = idCategoria,
+            IdFamilia = idFamilia,
             PrecioUnitario = precioUnitario,
             Porcentaje = porcentaje,
             ImporteFijo = importeFijo,
@@ -85,6 +86,58 @@ public class ReglaDeOfertasTests
             ReglaDeOfertas.LeerAlcance(CrearOferta(idArticulo: 1, idGrupo: 2, idCategoria: 3)));
 
         Assert.Equal("oferta_alcance_invalido", error.Codigo);
+    }
+
+    [Fact]
+    public void LeerAlcanceConSoloFamiliaDevuelveElAlcanceDeFamilia()
+    {
+        var alcance = ReglaDeOfertas.LeerAlcance(
+            CrearOferta(idArticulo: null, idGrupo: null, idCategoria: null, idFamilia: 11));
+
+        Assert.Null(alcance.IdArticulo);
+        Assert.Null(alcance.IdGrupo);
+        Assert.Null(alcance.IdCategoria);
+        Assert.Equal(11, alcance.IdFamilia);
+    }
+
+    [Fact]
+    public void LeerAlcanceSinFamiliaDejaElIdDeFamiliaEnNulo()
+    {
+        var alcance = ReglaDeOfertas.LeerAlcance(CrearOferta(idArticulo: 5));
+
+        Assert.Null(alcance.IdFamilia);
+    }
+
+    [Theory]
+    [InlineData(1, null, null)]
+    [InlineData(null, 2, null)]
+    [InlineData(null, null, 3)]
+    public void LeerAlcanceConFamiliaYOtraColumnaSeteadaEsRechazado(int? idArticulo, int? idGrupo, int? idCategoria)
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeOfertas.LeerAlcance(
+                CrearOferta(idArticulo: idArticulo, idGrupo: idGrupo, idCategoria: idCategoria, idFamilia: 4)));
+
+        Assert.Equal("oferta_alcance_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void LeerAlcanceConLasCuatroColumnasSeteadasEsRechazado()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeOfertas.LeerAlcance(CrearOferta(idArticulo: 1, idGrupo: 2, idCategoria: 3, idFamilia: 4)));
+
+        Assert.Equal("oferta_alcance_invalido", error.Codigo);
+    }
+
+    [Fact]
+    public void LeerAlcanceSinNingunaColumnaNiFamiliaMencionaLaFamiliaEnElMensaje()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeOfertas.LeerAlcance(CrearOferta(idArticulo: null)));
+
+        Assert.Contains("familia", error.Message);
     }
 
     // --- LeerBeneficio: exclusividad ---

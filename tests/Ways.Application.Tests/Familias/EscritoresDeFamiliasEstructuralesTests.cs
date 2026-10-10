@@ -24,7 +24,9 @@ namespace Ways.Application.Tests.Familias;
 /// <item>un <c>SetProperty</c> sobre un campo compartido de <c>articulos</c>;</item>
 /// <item>la asignación de <c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>,
 /// <c>UnidadesPorBulto</c>, <c>IdProveedorHabitual</c>, <c>IdAlicuotaIva</c>, <c>UnidadVenta</c>,
-/// <c>EsProducto</c>, <c>ControlaLote</c>, <c>AcumulaEnVenta</c> o <c>IdFamilia</c> sobre cualquier receptor.</item>
+/// <c>EsProducto</c>, <c>ControlaLote</c>, <c>AcumulaEnVenta</c> o <c>IdFamilia</c> sobre cualquier receptor,
+/// salvo uno llamado <c>oferta</c>: la oferta tiene su propia columna <c>id_familia</c> (alcance de la oferta,
+/// no pertenencia de un artículo) y <c>ServicioDeOfertas</c> la asigna.</item>
 /// </list>
 /// Los patrones son amplios a propósito (cualquier receptor, cualquier variable): un falso positivo obliga a
 /// mirar el archivo, que es justamente el punto.</para>
@@ -78,7 +80,7 @@ public class EscritoresDeFamiliasEstructuralesTests
         $@"\.SetProperty\(\s*\w+\s*=>\s*\w+\.(?:{CamposDeArticulosConOtrosUsos}|{CamposDeArticulosSinOtrosUsos})\b";
 
     private static readonly string AsignacionDeUnCampoCompartido =
-        $@"\.(?:{CamposDeArticulosSinOtrosUsos})\s*=[^=>]";
+        $@"(?<!\boferta)\.(?:{CamposDeArticulosSinOtrosUsos})\s*=[^=>]";
 
     internal static readonly Regex EscritoresDePrecios = new(
         string.Join(
@@ -231,6 +233,7 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("var vigente = a.CostoNominal == costo;")]
     [InlineData("db.ArticulosEmpresas.Add(fila);")]
     [InlineData("var fila = new ArticuloEmpresa { IdArticulo = id };")]
+    [InlineData("oferta.IdFamilia = candidato.IdFamilia;")]
     public void ElPatronDeArticulosNoVeLecturasNiOtrasTablas(string fuente)
     {
         Assert.DoesNotMatch(EscritoresDeArticulos, fuente);

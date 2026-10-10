@@ -26,7 +26,7 @@ public class OfertaConfiguration : IEntityTypeConfiguration<Oferta>
             // como respaldo de esquema ante una escritura cruda/fuera de banda.
             t.HasCheckConstraint(
                 "ck_ofertas_alcance_exclusivo",
-                "num_nonnulls(id_articulo, id_grupo, id_categoria) = 1");
+                "num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1");
 
             t.HasCheckConstraint(
                 "ck_ofertas_beneficio_exclusivo",
@@ -70,6 +70,7 @@ public class OfertaConfiguration : IEntityTypeConfiguration<Oferta>
         builder.Property(o => o.IdArticulo).HasColumnName("id_articulo");
         builder.Property(o => o.IdGrupo).HasColumnName("id_grupo");
         builder.Property(o => o.IdCategoria).HasColumnName("id_categoria");
+        builder.Property(o => o.IdFamilia).HasColumnName("id_familia");
 
         builder.Property(o => o.FechaDesde).HasColumnName("fecha_desde").HasColumnType("date");
         builder.Property(o => o.FechaHasta).HasColumnName("fecha_hasta").HasColumnType("date");
@@ -124,6 +125,7 @@ public class OfertaConfiguration : IEntityTypeConfiguration<Oferta>
         builder.HasIndex(o => new { o.IdArticulo, o.IdTenant }).HasDatabaseName("ix_ofertas_articulo");
         builder.HasIndex(o => new { o.IdGrupo, o.IdTenant }).HasDatabaseName("ix_ofertas_grupo");
         builder.HasIndex(o => new { o.IdCategoria, o.IdTenant }).HasDatabaseName("ix_ofertas_categoria");
+        builder.HasIndex(o => new { o.IdFamilia, o.IdTenant }).HasDatabaseName("ix_ofertas_familia");
 
         // Deliberadamente SIN índice único sobre nombre (design decision 6, Table Shapes):
         // "nombre" es una etiqueta de ticket, no un identificador de negocio — dos ofertas
@@ -165,6 +167,13 @@ public class OfertaConfiguration : IEntityTypeConfiguration<Oferta>
             .HasForeignKey(o => new { o.IdCategoria, o.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_ofertas_categoria")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Familia>()
+            .WithMany()
+            .HasForeignKey(o => new { o.IdFamilia, o.IdTenant })
+            .HasPrincipalKey(f => new { f.Id, f.IdTenant })
+            .HasConstraintName("fk_ofertas_familia")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

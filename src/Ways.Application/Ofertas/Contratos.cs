@@ -25,9 +25,11 @@ public sealed record OfertaListado(
     int Prioridad,
     bool Acumulable,
     bool Activo,
-    IReadOnlyList<int> IdsListas);
+    IReadOnlyList<int> IdsListas,
+    int? IdFamilia = null);
 
-/// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>) y
+/// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>/
+/// <see cref="IdFamilia"/>) y
 /// beneficio (<see cref="PrecioUnitario"/>/<see cref="Porcentaje"/>/<see cref="ImporteFijo"/>)
 /// viajan como las tres columnas nullable crudas de doc 10 (design decision 1) — la
 /// exclusividad de cada grupo la valida <c>ReglaDeOfertas</c> del lado de
@@ -52,7 +54,8 @@ public sealed record AltaOferta(
     int Prioridad,
     bool Acumulable,
     IReadOnlyList<int>? IdsListas = null,
-    bool Activo = true);
+    bool Activo = true,
+    int? IdFamilia = null);
 
 /// <summary>Mismo shape que <see cref="AltaOferta"/> — a diferencia de
 /// <c>EdicionArticulo</c>/<c>AltaArticulo</c>, acá no hay ninguna columna inmutable que excluir
@@ -77,7 +80,8 @@ public sealed record EdicionOferta(
     int Prioridad,
     bool Acumulable,
     IReadOnlyList<int>? IdsListas,
-    bool Activo);
+    bool Activo,
+    int? IdFamilia = null);
 
 /// <summary>Una línea de entrada para <c>ServicioDeOfertas.ResolverAsync</c> (task 3.6, design:
 /// Resolution Contract) — a diferencia de <c>Ways.Domain.Ofertas.LineaAResolver</c> (pura,
