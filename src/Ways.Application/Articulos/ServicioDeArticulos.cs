@@ -59,11 +59,11 @@ namespace Ways.Application.Articulos;
 ///
 /// Familias de artículos (doc 10 §3): <see cref="ActualizarAsync"/> respeta el protocolo de locks de las
 /// familias — lock de membresía como primera sentencia (exclusivo solo con el alcance <c>SoloEste</c>),
-/// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los trece campos
+/// después las filas de <c>articulos</c> y, al final, los chequeos de catálogo — y aplica los quince campos
 /// compartidos a TODOS los miembros vivos solo cuando el pedido cambia alguno y el cliente eligió el alcance
 /// <c>Familia</c>; los campos propios son siempre del artículo editado. <see cref="CrearAsync"/> con
 /// <see cref="AltaArticulo.IdFamilia"/> es un cambio de pertenencia: toma el lock de membresía exclusivo,
-/// exige que los trece campos compartidos del pedido sean idénticos a los del miembro vivo de menor id y copia
+/// exige que los quince campos compartidos del pedido sean idénticos a los del miembro vivo de menor id y copia
 /// su estado de precios con <see cref="ServicioDePrecios"/>, que sigue siendo el único escritor de
 /// <c>precios</c>.
 /// </summary>
@@ -185,7 +185,7 @@ public class ServicioDeArticulos(
                 x.Articulo.IdArea, x.Articulo.IdCategoria, x.Articulo.IdMarca, x.Articulo.IdGrupo,
                 x.Articulo.IdProveedorHabitual, x.Articulo.IdAlicuotaIva, x.Articulo.UnidadVenta,
                 x.Articulo.UnidadesPorBulto, x.Articulo.EsProducto, x.Articulo.CostoLista,
-                x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
+                x.Articulo.CostoListaPor, x.Articulo.CostoListaIncluyeIva, x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
                 x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor))
             .ToListAsync(ct);
@@ -220,7 +220,14 @@ public class ServicioDeArticulos(
     private bool PuedeVerCostos => contexto.Rol is RolConocido.Admin or RolConocido.Supervisor;
 
     private static ArticuloListado SinCostos(ArticuloListado a) =>
-        a with { CostoLista = null, DescuentoProveedor = null, CostoNominal = null };
+        a with
+        {
+            CostoLista = null,
+            CostoListaPor = null,
+            CostoListaIncluyeIva = null,
+            DescuentoProveedor = null,
+            CostoNominal = null
+        };
 
     /// <summary>Asigna <c>codigo_interno</c> de forma atómica (design decision 6) cuando se
     /// omite, dentro de la misma transacción que el INSERT — igual criterio que
@@ -231,7 +238,7 @@ public class ServicioDeArticulos(
     /// <para>Con <see cref="AltaArticulo.IdFamilia"/> el artículo entra a una familia (doc 10 §3), en este orden
     /// dentro de la transacción: lock de membresía EXCLUSIVO como primera sentencia, los 5 chequeos de
     /// catálogo, la familia viva y activa leída y bloqueada <c>FOR SHARE</c>, la referencia —el miembro vivo
-    /// de menor id, una sola lectura bajo esos locks— y la comparación de los trece campos compartidos del
+    /// de menor id, una sola lectura bajo esos locks— y la comparación de los quince campos compartidos del
     /// pedido; recién entonces el INSERT del artículo y la copia de su estado de precios
     /// (<see cref="ServicioDePrecios.CopiarEstadoDePreciosAlNuevoMiembroAsync"/>), todo en la misma
     /// transacción y con el mismo "ahora". Los rechazos de los chequeos de catálogo y de la familia ocurren
@@ -254,10 +261,14 @@ public class ServicioDeArticulos(
         ExigirIdRequerido(datos.IdAlicuotaIva, "id_alicuota_iva");
         ExigirUnidadesPorBultoValida(datos.UnidadesPorBulto);
         ExigirCostoValido(datos.CostoLista, "costo_lista");
-        ExigirCostoValido(datos.CostoNominal, "costo_nominal");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
+        ExigirCostoListaPorDefinido(datos.CostoListaPor);
+        ExigirUnidadesParaCostoPorBulto(datos.CostoListaPor, datos.UnidadesPorBulto);
 
-        await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
+        var porcentajeIva = await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
+        var costoNominal = CalcularCostoNominal(
+            datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
+            datos.DescuentoProveedor);
 
         // judgment-day ronda 1 (item 3): .Distinct() ANTES de validar/insertar — un duplicado
         // en el payload no debe inflar el conteo de "subset presente" ni generar dos INSERT
@@ -320,11 +331,14 @@ public class ServicioDeArticulos(
             // aunque además el pedido difiera de la familia— y ANTES de asignar el código interno y de insertar
             // nada: un rechazo no deja ni el artículo ni el contador consumido.
             int? idDeLaReferencia = null;
+            var costoNominalAGuardar = costoNominal;
 
             if (datos.IdFamilia is { } idFamilia)
             {
-                idDeLaReferencia = await ExigirIngresoALaFamiliaAsync(
+                var referencia = await ExigirIngresoALaFamiliaAsync(
                     conexion, transaccionCruda, idFamilia, idTenant, datos, ct);
+                idDeLaReferencia = referencia.Id;
+                costoNominalAGuardar = referencia.CostoNominal;
             }
 
             var codigoFinal = codigoInterno;
@@ -360,8 +374,10 @@ public class ServicioDeArticulos(
                     UnidadesPorBulto = datos.UnidadesPorBulto,
                     EsProducto = datos.EsProducto,
                     CostoLista = datos.CostoLista,
+                    CostoListaPor = datos.CostoListaPor,
+                    CostoListaIncluyeIva = datos.CostoListaIncluyeIva,
                     DescuentoProveedor = datos.DescuentoProveedor,
-                    CostoNominal = datos.CostoNominal,
+                    CostoNominal = costoNominalAGuardar,
                     DisponibleParaTodas = datos.DisponibleParaTodas,
                     Activo = datos.Activo,
                     ControlaLote = datos.ControlaLote,
@@ -453,10 +469,14 @@ public class ServicioDeArticulos(
         ExigirIdRequerido(datos.IdAlicuotaIva, "id_alicuota_iva");
         ExigirUnidadesPorBultoValida(datos.UnidadesPorBulto);
         ExigirCostoValido(datos.CostoLista, "costo_lista");
-        ExigirCostoValido(datos.CostoNominal, "costo_nominal");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
 
-        await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
+        if (datos.CostoListaPor is { } costoListaPorPedido)
+        {
+            ExigirCostoListaPorDefinido(costoListaPorPedido);
+        }
+
+        var porcentajeIva = await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
         // judgment-day ronda 1 (item 3): mismo dedup que CrearAsync, antes de validar/insertar.
         var idsEmpresas = datos.IdsEmpresas?.Distinct().ToList();
@@ -523,6 +543,30 @@ public class ServicioDeArticulos(
             var editado = bloqueados.Editado;
             articulo = editado;
 
+            // La base del costo de lista y su IVA, si el pedido no los trae, son los guardados: salen de la misma
+            // lectura única bajo los locks, igual que acumula_en_venta. El costo nominal no se recibe del cliente: se
+            // recalcula solo si cambió alguna entrada del cálculo respecto de lo guardado; si no, se conserva el
+            // guardado, que puede ser el costo efectivo que dejó una compra.
+            var costoListaPor = datos.CostoListaPor ?? editado.CostoListaPor;
+            var costoListaIncluyeIva = datos.CostoListaIncluyeIva ?? editado.CostoListaIncluyeIva;
+            ExigirUnidadesParaCostoPorBulto(costoListaPor, datos.UnidadesPorBulto);
+
+            var porcentajeIvaGuardado = editado.IdAlicuotaIva == datos.IdAlicuotaIva
+                ? porcentajeIva
+                : await LeerPorcentajeDeAlicuotaIvaAsync(editado.IdAlicuotaIva, ct) ?? porcentajeIva;
+            var cambiaElCalculo = CalculadorDeCostoNominal.CambiaAlgunaEntrada(
+                new CalculadorDeCostoNominal.Entradas(
+                    editado.CostoLista, editado.CostoListaPor, editado.CostoListaIncluyeIva, editado.UnidadesPorBulto,
+                    porcentajeIvaGuardado, editado.DescuentoProveedor),
+                new CalculadorDeCostoNominal.Entradas(
+                    datos.CostoLista, costoListaPor, costoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
+                    datos.DescuentoProveedor));
+            var costoNominal = cambiaElCalculo
+                ? CalcularCostoNominal(
+                    datos.CostoLista, costoListaPor, costoListaIncluyeIva, datos.UnidadesPorBulto, porcentajeIva,
+                    datos.DescuentoProveedor)
+                : editado.CostoNominal;
+
             await ExigirAreaValidaAsync(datos.IdArea, ct);
             await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
             await ExigirMarcaValidaAsync(datos.IdMarca, ct);
@@ -532,11 +576,12 @@ public class ServicioDeArticulos(
             // Hasta acá todo fue validar (los 5 chequeos de catálogo) y desde acá se decide: ninguna entidad se
             // muta antes de la última validación, porque un rechazo no puede dejar una mutación rastreada en
             // el contexto del request — un guardado posterior sobre ese mismo contexto la escribiría por
-            // detrás. Los trece campos compartidos del pedido se comparan con los ACTUALES del artículo,
+            // detrás. Los quince campos compartidos del pedido se comparan con los ACTUALES del artículo,
             // leídos bajo los locks: leídos antes, la comparación sería sobre un estado que otro escritor
             // puede haber cambiado. Lo mismo vale para acumula_en_venta, el único campo compartido cuyo nulo en
             // el pedido significa "conservar el guardado": su valor sale de esa misma lectura, no de otra.
-            var pedido = ValoresCompartidosDe(datos, editado.AcumulaEnVenta);
+            var pedido = ValoresCompartidosDe(
+                datos, editado.AcumulaEnVenta, costoListaPor, costoListaIncluyeIva, costoNominal);
             var resolucion = bloqueados.IdFamilia is null
                 ? ResolucionDeAlcanceDeFamilia.SoloElArticulo
                 : ReglaDeFamilias.ResolverEdicionDeMiembro(
@@ -709,12 +754,12 @@ public class ServicioDeArticulos(
     /// llamador ya tomó: la familia —viva, de este tenant, activa— leída y bloqueada <c>FOR SHARE</c>
     /// (<see cref="MembresiaDeFamilias.LeerFamiliaParaIngresarAsync"/>), la referencia —el miembro vivo de menor
     /// id, UNA lectura sin rastreo: no se muta— y la decisión de <see cref="ReglaDeFamilias.ResolverIngreso"/>.
-    /// Devuelve el id de la referencia, de la que se copian los precios.
+    /// Devuelve el id de la referencia, de la que se copian los precios, y su costo nominal, que el miembro nuevo hereda.
     ///
     /// <para>Los rechazos son <c>404</c> si la familia no existe o está dada de baja (también la de otro
     /// tenant), <c>familia_inactiva</c>, <c>familia_sin_articulos</c> y <c>familia_valores_distintos</c>, que
     /// nombra las columnas que difieren, todos 409.</para></summary>
-    private async Task<int> ExigirIngresoALaFamiliaAsync(
+    private async Task<(int Id, decimal? CostoNominal)> ExigirIngresoALaFamiliaAsync(
         DbConnection conexion, DbTransaction? transaccion, int idFamilia, int idTenant, AltaArticulo datos,
         CancellationToken ct)
     {
@@ -728,12 +773,16 @@ public class ServicioDeArticulos(
             .FirstOrDefaultAsync(ct);
 
         var valoresDeLaReferencia = referencia is null ? null : ValoresCompartidosDeFamilia.De(referencia);
-        var pedidos = ValoresCompartidosDe(datos);
+
+        // El costo nominal no es un campo del pedido y por sí solo nunca rechaza el alta: se compara con el de la
+        // referencia, y si el resto de los campos compartidos coincide, el miembro nuevo hereda ese costo (el que haya
+        // dejado una compra).
+        var pedidos = ValoresCompartidosDe(datos, referencia?.CostoNominal);
 
         switch (ReglaDeFamilias.ResolverIngreso(familia.Activa, valoresDeLaReferencia, pedidos))
         {
             case ResolucionDeIngresoAFamilia.Permitido:
-                return referencia!.Id;
+                return (referencia!.Id, referencia.CostoNominal);
 
             case ResolucionDeIngresoAFamilia.FamiliaInactiva:
                 throw ErrorDominio.Conflicto(
@@ -757,23 +806,27 @@ public class ServicioDeArticulos(
         }
     }
 
-    /// <summary>Los trece campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// <summary>Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// alta. Un campo compartido nuevo no compila hasta que se lo pasa acá: el record es posicional.</summary>
-    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(AltaArticulo datos) => new(
+    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(AltaArticulo datos, decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, datos.AcumulaEnVenta,
-        datos.CostoLista, datos.DescuentoProveedor, datos.CostoNominal);
+        datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor, costoNominal);
 
-    /// <summary>Los trece campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
+    /// <summary>Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// edición. <see cref="EdicionArticulo.AcumulaEnVenta"/> puede venir <c>null</c> (conservar el valor
     /// guardado): <paramref name="acumulaEnVentaGuardado"/> es el del artículo editado, leído bajo los locks, y
-    /// es el valor que ese campo toma en el pedido. Un campo compartido nuevo no compila hasta que se lo pasa
+    /// es el valor que ese campo toma en el pedido; <paramref name="costoListaPor"/> y
+    /// <paramref name="costoListaIncluyeIva"/> ya vienen resueltos de la misma manera, y
+    /// <paramref name="costoNominal"/> es el calculado por el servidor. Un campo compartido nuevo no compila hasta que se lo pasa
     /// acá: el record es posicional.</summary>
-    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(EdicionArticulo datos, bool acumulaEnVentaGuardado) => new(
+    private static ValoresCompartidosDeFamilia ValoresCompartidosDe(
+        EdicionArticulo datos, bool acumulaEnVentaGuardado, CostoListaPor costoListaPor, bool costoListaIncluyeIva,
+        decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
         datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote,
-        datos.AcumulaEnVenta ?? acumulaEnVentaGuardado, datos.CostoLista, datos.DescuentoProveedor,
-        datos.CostoNominal);
+        datos.AcumulaEnVenta ?? acumulaEnVentaGuardado, datos.CostoLista, costoListaPor, costoListaIncluyeIva,
+        datos.DescuentoProveedor, costoNominal);
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {
@@ -1039,6 +1092,42 @@ public class ServicioDeArticulos(
         }
     }
 
+    /// <summary>El JSON del servidor acepta el ordinal además del nombre: un ordinal fuera del enum se rechaza acá
+    /// y no llega al CHECK <c>ck_articulos_costo_lista_por</c>.</summary>
+    private static void ExigirCostoListaPorDefinido(CostoListaPor costoListaPor)
+    {
+        if (!Enum.IsDefined(costoListaPor))
+        {
+            throw new ErrorDominio(
+                "costo_lista_por_invalido", "El campo costo_lista_por debe ser Unidad o Bulto.", 400);
+        }
+    }
+
+    /// <summary>Un costo de lista por bulto no se puede llevar a costo por unidad sin las unidades del bulto.</summary>
+    private static void ExigirUnidadesParaCostoPorBulto(CostoListaPor costoListaPor, decimal? unidadesPorBulto)
+    {
+        if (CalculadorDeCostoNominal.BultoSinUnidades(costoListaPor, unidadesPorBulto))
+        {
+            throw new ErrorDominio(
+                "unidades_por_bulto_requerido",
+                "Un costo de lista por bulto exige unidades_por_bulto mayor que cero.",
+                400);
+        }
+    }
+
+    /// <summary>El costo nominal calculado también es una columna <c>numeric(14,2)</c>: con IVA puede superar el
+    /// tope que sí cumple el costo de lista, y ese caso es un 400 y no un desborde de la base.</summary>
+    private static decimal? CalcularCostoNominal(
+        decimal? costoLista, CostoListaPor costoListaPor, bool costoListaIncluyeIva, decimal? unidadesPorBulto,
+        decimal porcentajeIva, decimal? descuentoProveedor)
+    {
+        var costoNominal = CalculadorDeCostoNominal.Calcular(
+            costoLista, costoListaPor, costoListaIncluyeIva, unidadesPorBulto, porcentajeIva, descuentoProveedor);
+        ExigirCostoValido(costoNominal, "costo_nominal");
+
+        return costoNominal;
+    }
+
     /// <summary>Aplica a <c>costo_lista</c>/<c>costo_nominal</c>, ambas <c>numeric(14,2)</c> —
     /// mismo bound que <c>ServicioDeClientes.ExigirLimiteCreditoValido</c> (misma precisión de
     /// columna).</summary>
@@ -1151,14 +1240,17 @@ public class ServicioDeArticulos(
     /// <summary><c>alicuotas_iva</c> es <c>[global]</c> (no
     /// <see cref="Ways.Domain.Common.EntidadTenant"/>, ADR-11 gate #4): sin alcance de tenant
     /// que filtrar, mismo criterio que
-    /// <c>ServicioDeClientes.ExigirCondicionFiscalValidaAsync</c>.</summary>
-    private async Task ExigirAlicuotaIvaValidaAsync(int id, CancellationToken ct)
-    {
-        if (!await db.AlicuotasIva.AnyAsync(a => a.Id == id, ct))
-        {
-            throw new ErrorDominio("referencia_invalida", $"No existe la alícuota de IVA {id}.", 400);
-        }
-    }
+    /// <c>ServicioDeClientes.ExigirCondicionFiscalValidaAsync</c>. Devuelve el porcentaje, que el cálculo del costo
+    /// nominal necesita.</summary>
+    private async Task<decimal> ExigirAlicuotaIvaValidaAsync(int id, CancellationToken ct) =>
+        await LeerPorcentajeDeAlicuotaIvaAsync(id, ct)
+            ?? throw new ErrorDominio("referencia_invalida", $"No existe la alícuota de IVA {id}.", 400);
+
+    private async Task<decimal?> LeerPorcentajeDeAlicuotaIvaAsync(int id, CancellationToken ct) =>
+        await db.AlicuotasIva
+            .Where(a => a.Id == id)
+            .Select(a => (decimal?)a.Porcentaje)
+            .SingleOrDefaultAsync(ct);
 
     /// <summary>Spec: Cross-tenant empresa reference is blocked — pre-chequeo tenant-scoped
     /// (no <c>IgnoreQueryFilters</c>, per db-error-backstops) antes de escribir cualquier fila
@@ -1298,6 +1390,7 @@ public class ServicioDeArticulos(
     private static ArticuloListado Proyectar(Articulo a, IReadOnlyList<int> idsEmpresas) => new(
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca, a.IdGrupo,
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
-        a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo,
+        a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.CostoNominal,
+        a.DisponibleParaTodas, idsEmpresas, a.Activo,
         a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia);
 }

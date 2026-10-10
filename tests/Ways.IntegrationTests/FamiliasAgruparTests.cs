@@ -10,7 +10,7 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// <c>POST /api/familias</c> (doc 10 §3, "Familias de artículos") contra Postgres real: crea la familia y la agrupa —el
-/// artículo de referencia y los pedidos quedan como sus miembros, y los pedidos, ALINEADOS con la referencia en los trece
+/// artículo de referencia y los pedidos quedan como sus miembros, y los pedidos, ALINEADOS con la referencia en los quince
 /// campos compartidos y en el estado de precios de cada lista fija—. Es todo o nada. Los locks, la atomicidad y la
 /// reconciliación de lotes están en <c>FamiliasAgrupacionConcurrenciaTests</c>; la previsualización, en
 /// <c>FamiliasPrevisualizacionTests</c>.
@@ -44,7 +44,7 @@ public class FamiliasAgruparTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
     /// <summary>El pedido completo, con los ids desordenados, repetidos y con la referencia también en la lista: la
     /// familia se crea activa y con el nombre sin espacios en los extremos; la referencia y los tres destinos quedan
-    /// miembros; cada destino queda con los trece valores de la referencia y con sus campos propios intactos; los precios
+    /// miembros; cada destino queda con los quince valores de la referencia y con sus campos propios intactos; los precios
     /// de cada lista fija quedan como los de la referencia, con la fecha del pendiente; y hay una auditoría de precio por
     /// cada fila escrita, con el estado anterior que le corresponde. Todo con UN solo "ahora": la familia, los artículos
     /// escritos, las filas cerradas y las nuevas comparten el instante. El destino que ya era idéntico entra a la familia
@@ -124,7 +124,7 @@ public class FamiliasAgruparTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(Propios(referenciaAntes), Propios(referencia));
         Assert.Equal(valoresDeLaReferencia, ValoresCompartidosDeFamilia.De(referencia));
 
-        // Cada destino: miembro, con los trece valores de la referencia y lo propio intacto.
+        // Cada destino: miembro, con los quince valores de la referencia y lo propio intacto.
         foreach (var (antes, id) in new[] { (d1Antes, s.D1), (d2Antes, s.D2), (d3Antes, s.D3) })
         {
             var destino = await apoyo.LeerAsync(id);

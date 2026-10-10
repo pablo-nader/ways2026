@@ -5,7 +5,7 @@ namespace Ways.Domain.Tests.Articulos;
 
 /// <summary>
 /// Regla pura de qué campos de <see cref="Articulo"/> comparten los miembros de una
-/// <see cref="Familia"/>. Cada una de las trece columnas compartidas tiene su propio caso: sacar una
+/// <see cref="Familia"/>. Cada una de las quince columnas compartidas tiene su propio caso: sacar una
 /// del registro, de <see cref="ValoresCompartidosDeFamilia.AplicarA"/> o de
 /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> pone en rojo exactamente el caso de esa
 /// columna (un caso representativo no probaría las otras doce). Los campos propios se prueban
@@ -13,7 +13,7 @@ namespace Ways.Domain.Tests.Articulos;
 /// </summary>
 public class ValoresCompartidosDeFamiliaTests
 {
-    /// <summary>Las trece columnas de <c>articulos</c> compartidas por la familia, en el orden en que
+    /// <summary>Las quince columnas de <c>articulos</c> compartidas por la familia, en el orden en que
     /// <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/> las informa. Escritas a mano a
     /// propósito: pinean los nombres que <c>CamposDistintos</c> devuelve. Que cada uno sea una columna
     /// real de <c>articulos</c> lo comprueba <c>ModeloDeArticulosYPreciosTests</c> contra el modelo de EF.</summary>
@@ -30,6 +30,8 @@ public class ValoresCompartidosDeFamiliaTests
         "controla_lote",
         "acumula_en_venta",
         "costo_lista",
+        "costo_lista_por",
+        "costo_lista_incluye_iva",
         "descuento_proveedor",
         "costo_nominal"
     ];
@@ -70,6 +72,8 @@ public class ValoresCompartidosDeFamiliaTests
             ["controla_lote"] = a => a.ControlaLote = true,
             ["acumula_en_venta"] = a => a.AcumulaEnVenta = false,
             ["costo_lista"] = a => a.CostoLista = 150m,
+            ["costo_lista_por"] = a => a.CostoListaPor = CostoListaPor.Bulto,
+            ["costo_lista_incluye_iva"] = a => a.CostoListaIncluyeIva = false,
             ["descuento_proveedor"] = a => a.DescuentoProveedor = 15m,
             ["costo_nominal"] = a => a.CostoNominal = 130m
         };
@@ -138,6 +142,8 @@ public class ValoresCompartidosDeFamiliaTests
         ControlaLote = false,
         AcumulaEnVenta = true,
         CostoLista = 100m,
+        CostoListaPor = CostoListaPor.Unidad,
+        CostoListaIncluyeIva = true,
         DescuentoProveedor = 10m,
         CostoNominal = 90m,
         DisponibleParaTodas = true,
@@ -147,14 +153,14 @@ public class ValoresCompartidosDeFamiliaTests
         UpdatedAt = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero)
     };
 
-    /// <summary>Con los trece campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
+    /// <summary>Con los quince campos distintos, <see cref="ValoresCompartidosDeFamilia.CamposDistintos"/>
     /// informa exactamente los nombres de <see cref="ColumnasCompartidas"/>, en el orden de
     /// declaración, y hay un cambio por cada nombre. Compara contra la lista escrita en esta clase: no
     /// consulta la tabla ni el modelo de EF.</summary>
     [Fact]
-    public void CamposDistintosInformaLasTreceColumnasDeLaPruebaEnOrdenDeDeclaracion()
+    public void CamposDistintosInformaLasQuinceColumnasDeLaPruebaEnOrdenDeDeclaracion()
     {
-        Assert.Equal(13, ColumnasCompartidas.Length);
+        Assert.Equal(15, ColumnasCompartidas.Length);
         Assert.Equal(ColumnasCompartidas.Order(), CambiosCompartidos.Keys.Order());
 
         var todosDistintos = CrearArticulo();
@@ -253,11 +259,11 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Empty(distintos);
     }
 
-    /// <summary>Origen y destino difieren en TODO (los trece compartidos y los seis propios, más la
-    /// familia): después de aplicar, el destino tiene los trece del origen y conserva intactos sus
+    /// <summary>Origen y destino difieren en TODO (los quince compartidos y los seis propios, más la
+    /// familia): después de aplicar, el destino tiene los quince del origen y conserva intactos sus
     /// propios, su familia, su identidad y sus sellos de auditoría.</summary>
     [Fact]
-    public void AplicarACopiaSoloLosTreceCamposCompartidosYNoTocaLosPropios()
+    public void AplicarACopiaSoloLosQuinceCamposCompartidosYNoTocaLosPropios()
     {
         var origen = CrearArticulo();
         foreach (var cambio in CambiosCompartidos.Values.Concat(CambiosPropios.Values))
@@ -311,6 +317,8 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.ControlaLote),
             nameof(Articulo.AcumulaEnVenta),
             nameof(Articulo.CostoLista),
+            nameof(Articulo.CostoListaPor),
+            nameof(Articulo.CostoListaIncluyeIva),
             nameof(Articulo.DescuentoProveedor),
             nameof(Articulo.CostoNominal)
         ];

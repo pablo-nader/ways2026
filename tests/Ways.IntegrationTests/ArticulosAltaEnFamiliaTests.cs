@@ -25,7 +25,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// <c>POST /api/articulos</c> con <c>idFamilia</c> (doc 10 §3, "Familias de artículos") contra Postgres real: el
 /// alta de un artículo DENTRO de una familia existente. Entrar es un cambio de pertenencia: el alta toma el lock
-/// de membresía exclusivo, toma como referencia al miembro vivo de menor id, exige que los trece campos
+/// de membresía exclusivo, toma como referencia al miembro vivo de menor id, exige que los quince campos
 /// compartidos del pedido sean idénticos a los suyos y copia, en la misma transacción, su estado de precios en
 /// cada lista fija —el vigente y el pendiente— con una fila de auditoría <c>precio.cambio</c> por cada precio
 /// insertado.
@@ -63,9 +63,9 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         CodigoInterno: null, Nombre: nombre, Descripcion: descripcion, IdArea: v.IdArea, IdCategoria: v.IdCategoria,
         IdMarca: idMarca, IdGrupo: v.IdGrupo, IdProveedorHabitual: v.IdProveedorHabitual,
         IdAlicuotaIva: v.IdAlicuotaIva, UnidadVenta: v.UnidadVenta, UnidadesPorBulto: v.UnidadesPorBulto,
-        EsProducto: v.EsProducto, CostoLista: v.CostoLista, DescuentoProveedor: v.DescuentoProveedor,
-        CostoNominal: v.CostoNominal, Activo: activo, ControlaLote: v.ControlaLote,
-        AcumulaEnVenta: v.AcumulaEnVenta, IdFamilia: idFamilia);
+        EsProducto: v.EsProducto, CostoLista: v.CostoLista, DescuentoProveedor: v.DescuentoProveedor, Activo: activo, ControlaLote: v.ControlaLote,
+        AcumulaEnVenta: v.AcumulaEnVenta, IdFamilia: idFamilia, CostoListaPor: v.CostoListaPor,
+        CostoListaIncluyeIva: v.CostoListaIncluyeIva);
 
     private static Task<HttpResponseMessage> PostArticuloAsync(HttpClient admin, AltaArticulo alta) =>
         admin.PostAsJsonAsync("/api/articulos", alta, OpcionesJson);
@@ -91,7 +91,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
     public static TheoryData<string> Columnas()
     {
         var datos = new TheoryData<string>();
-        foreach (var columna in ColumnasCompartidas)
+        foreach (var columna in ColumnasPedibles)
         {
             datos.Add(columna);
         }
@@ -334,9 +334,11 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(auditoriaAntes, (await apoyo.AuditoriaDePreciosAsync(e.IdTenant)).Count);
     }
 
-    /// <summary>Cada uno de los trece campos compartidos, distinto solo, rechaza el alta con 409
-    /// <c>familia_valores_distintos</c> que nombra esa columna —y ninguna otra— y no escribe nada. Un caso por
-    /// campo: cada uno tiene su mutante en el mapeo del pedido a los valores compartidos.</summary>
+    /// <summary>Cada uno de los campos compartidos que el pedido trae, distinto solo, rechaza el alta con 409
+    /// <c>familia_valores_distintos</c> que nombra esa columna —y ninguna otra, tampoco <c>costo_nominal</c>, que el
+    /// pedido no trae y nunca rechaza por sí solo— y no escribe nada. Un caso por campo: cada uno tiene su mutante en
+    /// el mapeo del pedido a los valores compartidos. Los nombres se buscan como palabra entera: <c>costo_lista</c> es
+    /// prefijo de <c>costo_lista_por</c>.</summary>
     [Theory]
     [MemberData(nameof(Columnas))]
     public async Task UnCampoCompartidoDistintoDeLaReferenciaDa409NombraLaColumnaYNoEscribeNada(string columna)
@@ -353,10 +355,10 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
         var (codigo, mensaje) = await ProblemaAsync(respuesta);
         Assert.Equal("familia_valores_distintos", codigo);
         Assert.Contains("Gaseosas", mensaje, StringComparison.Ordinal);
-        Assert.Contains(columna, mensaje, StringComparison.Ordinal);
+        Assert.Matches($@"\b{columna}\b", mensaje);
         foreach (var otra in ColumnasCompartidas.Where(c => c != columna))
         {
-            Assert.DoesNotContain(otra, mensaje, StringComparison.Ordinal);
+            Assert.DoesNotMatch($@"\b{otra}\b", mensaje);
         }
 
         await AfirmarQueNoSeEscribioNadaAsync(e, articulos, precios, auditoria);
@@ -772,7 +774,7 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
     /// <summary>La referencia y sus campos compartidos se leen DESPUÉS del lock de membresía. Una escritura de
     /// la familia en curso (sostiene el lock compartido) cambió <c>costo_lista</c> de todos los miembros sin
     /// comitear; el pedido lleva el valor NUEVO. El alta espera, y al comitear la otra escritura lee la
-    /// referencia ya con ese valor: los trece campos coinciden y entra. Si la referencia se leyera antes de
+    /// referencia ya con ese valor: los quince campos coinciden y entra. Si la referencia se leyera antes de
     /// esperar, vería el valor viejo y el pedido daría <c>familia_valores_distintos</c>.</summary>
     [Fact]
     public async Task LaReferenciaSeLeeDespuesDelLockDeMembresiaYNoConLaFotoPrevia()

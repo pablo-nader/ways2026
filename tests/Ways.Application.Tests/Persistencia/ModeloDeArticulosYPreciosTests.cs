@@ -57,6 +57,8 @@ public class ModeloDeArticulosYPreciosTests
             [nameof(Articulo.ControlaLote)] = a => a.ControlaLote = true,
             [nameof(Articulo.AcumulaEnVenta)] = a => a.AcumulaEnVenta = false,
             [nameof(Articulo.CostoLista)] = a => a.CostoLista = 150m,
+            [nameof(Articulo.CostoListaPor)] = a => a.CostoListaPor = CostoListaPor.Bulto,
+            [nameof(Articulo.CostoListaIncluyeIva)] = a => a.CostoListaIncluyeIva = false,
             [nameof(Articulo.DescuentoProveedor)] = a => a.DescuentoProveedor = 15m,
             [nameof(Articulo.CostoNominal)] = a => a.CostoNominal = 130m
         };
@@ -88,6 +90,8 @@ public class ModeloDeArticulosYPreciosTests
         ControlaLote = false,
         AcumulaEnVenta = true,
         CostoLista = 100m,
+        CostoListaPor = CostoListaPor.Unidad,
+        CostoListaIncluyeIva = true,
         DescuentoProveedor = 10m,
         CostoNominal = 90m
     };

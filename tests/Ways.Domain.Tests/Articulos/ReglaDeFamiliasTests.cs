@@ -177,7 +177,8 @@ public class ReglaDeFamiliasTests
     private static readonly ValoresCompartidosDeFamilia ValoresDeReferencia = new(
         IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
         UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true, ControlaLote: false,
-        AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
+        AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad, CostoListaIncluyeIva: true,
+        DescuentoProveedor: 10m, CostoNominal: 40m);
 
     private static readonly ValoresCompartidosDeFamilia ValoresQueDifieren = ValoresDeReferencia with { CostoLista = 51m };
 
@@ -191,7 +192,7 @@ public class ReglaDeFamiliasTests
         // Activa y sin ningún miembro vivo: no hay con qué comparar ni qué copiar.
         { true, false, true, ResolucionDeIngresoAFamilia.FamiliaSinArticulos },
 
-        // Activa y con referencia: lo que decide es si los trece valores coinciden.
+        // Activa y con referencia: lo que decide es si los quince valores coinciden.
         { true, true, false, ResolucionDeIngresoAFamilia.ValoresDistintos },
         { true, true, true, ResolucionDeIngresoAFamilia.Permitido }
     };
@@ -223,7 +224,7 @@ public class ReglaDeFamiliasTests
             ReglaDeFamilias.ResolverIngreso(familiaActiva: true, ValoresDeReferencia, ValoresQueDifieren));
     }
 
-    /// <summary>Cada uno de los trece campos compartidos, solo, alcanza para que el ingreso sea
+    /// <summary>Cada uno de los quince campos compartidos, solo, alcanza para que el ingreso sea
     /// <c>ValoresDistintos</c>: la regla no deja pasar una diferencia en ninguno.</summary>
     [Theory]
     [InlineData("id_area")]
@@ -237,9 +238,11 @@ public class ReglaDeFamiliasTests
     [InlineData("controla_lote")]
     [InlineData("acumula_en_venta")]
     [InlineData("costo_lista")]
+    [InlineData("costo_lista_por")]
+    [InlineData("costo_lista_incluye_iva")]
     [InlineData("descuento_proveedor")]
     [InlineData("costo_nominal")]
-    public void UnaDiferenciaEnCualquieraDeLosTreceCamposImpideElIngreso(string columna)
+    public void UnaDiferenciaEnCualquieraDeLosQuinceCamposImpideElIngreso(string columna)
     {
         var distinto = columna switch
         {
@@ -254,6 +257,8 @@ public class ReglaDeFamiliasTests
             "controla_lote" => ValoresDeReferencia with { ControlaLote = true },
             "acumula_en_venta" => ValoresDeReferencia with { AcumulaEnVenta = false },
             "costo_lista" => ValoresDeReferencia with { CostoLista = 60m },
+            "costo_lista_por" => ValoresDeReferencia with { CostoListaPor = CostoListaPor.Bulto },
+            "costo_lista_incluye_iva" => ValoresDeReferencia with { CostoListaIncluyeIva = false },
             "descuento_proveedor" => ValoresDeReferencia with { DescuentoProveedor = 15m },
             "costo_nominal" => ValoresDeReferencia with { CostoNominal = 45m },
             _ => throw new ArgumentOutOfRangeException(nameof(columna), columna, "Columna compartida desconocida.")

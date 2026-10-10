@@ -131,8 +131,7 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             UnidadesPorBulto: null,
             EsProducto: true,
             CostoLista: null,
-            DescuentoProveedor: null,
-            CostoNominal: null);
+            DescuentoProveedor: null);
 
     // ---- task 2.8: codigo_interno ----------------------------------------------------------
 
@@ -1007,7 +1006,7 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             await AprovisionarTenantAsync(nameof(LaSugerenciaDePrecioNoPersisteNada));
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
-        var alta = AltaValida(idArea, idAlicuotaIva) with { CostoNominal = 100m };
+        var alta = AltaValida(idArea, idAlicuotaIva) with { CostoLista = 100m };
         var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
         var creado = await respuestaAlta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
 
@@ -1140,7 +1139,6 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         EsProducto: articulo.EsProducto,
         CostoLista: articulo.CostoLista,
         DescuentoProveedor: articulo.DescuentoProveedor,
-        CostoNominal: articulo.CostoNominal,
         DisponibleParaTodas: articulo.DisponibleParaTodas,
         IdsEmpresas: null,
         Activo: articulo.Activo,

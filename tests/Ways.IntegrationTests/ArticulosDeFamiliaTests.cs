@@ -28,7 +28,7 @@ namespace Ways.IntegrationTests;
 /// <c>PUT /api/articulos/{id}</c> con alcance de familia (doc 10 §3, "Familias de artículos") contra
 /// Postgres real: qué escribe la edición de un artículo que pertenece a una familia, qué rechaza, y el
 /// protocolo de locks que lo sostiene — membresía (compartida o exclusiva), filas de <c>articulos</c> de
-/// los miembros y catálogos. Las familias y sus miembros se siembran directo por EF, con los trece campos
+/// los miembros y catálogos. Las familias y sus miembros se siembran directo por EF, con los quince campos
 /// compartidos escritos uno por uno.
 ///
 /// <para>Los tests de concurrencia son rendezvous determinísticos: una conexión cruda sostiene un lock, la
@@ -82,7 +82,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     /// <summary>Todo lo que una edición puede tocar de un artículo, para afirmar que NO lo tocó: los campos
-    /// propios, la pertenencia, los trece compartidos, los sellos de auditoría y la baja.</summary>
+    /// propios, la pertenencia, los quince compartidos, los sellos de auditoría y la baja.</summary>
     private static object Huella(Articulo a) => new
     {
         a.CodigoInterno, a.Nombre, a.Descripcion, a.IdMarca, a.Activo, a.DisponibleParaTodas, a.IdFamilia,
@@ -280,7 +280,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         await AfirmarSinCambiosAsync(todos, huellasAntes);
     }
 
-    /// <summary>Cada uno de los trece campos compartidos, cambiado solo, con alcance <c>Familia</c>: llega a
+    /// <summary>Cada uno de los quince campos compartidos, cambiado solo, con alcance <c>Familia</c>: llega a
     /// TODOS los miembros vivos y a ningún otro artículo, y los campos propios del pedido son solo del
     /// artículo editado. Un caso por campo, porque cada uno tiene su mutante: olvidar uno en el mapeo del
     /// pedido, en la comparación o en la copia deja verdes los otros doce.</summary>
@@ -345,7 +345,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
     public static TheoryData<string> Columnas()
     {
         var datos = new TheoryData<string>();
-        foreach (var columna in ColumnasCompartidas)
+        foreach (var columna in ColumnasPedibles)
         {
             datos.Add(columna);
         }
@@ -433,7 +433,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var antes = await apoyo.LeerAsync(f.A2);
         var huellasDeLosAjenos = await HuellasAsync(f.DeBaja, f.Suelto, f.DeOtraFamilia);
 
-        var esperados = ValoresBase(e) with { AcumulaEnVenta = guardado, CostoLista = 60m };
+        var esperados = ValoresConUnCampoCambiado(e, "costo_lista") with { AcumulaEnVenta = guardado };
         var pedido = ConCompartidos(EdicionIgualA(antes, AlcanceDeFamilia.Familia), esperados) with { AcumulaEnVenta = null };
 
         var respuesta = await PutArticuloAsync(e.Admin, f.A2, pedido);
@@ -461,9 +461,10 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         var f = await SembrarFamiliaConVecinosAsync(e);
         var antes = await apoyo.LeerAsync(f.A2);
 
+        var nuevos = ValoresConUnCampoCambiado(e, "costo_lista");
         var pedido = ConCompartidos(
             EdicionIgualA(antes, AlcanceDeFamilia.Familia) with { DisponibleParaTodas = false, IdsEmpresas = [e.IdEmpresa] },
-            ValoresConUnCampoCambiado(e, "costo_nominal"));
+            nuevos);
 
         var respuesta = await PutArticuloAsync(e.Admin, f.A2, pedido);
 
@@ -475,7 +476,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
         {
             Assert.True((await apoyo.LeerAsync(id)).DisponibleParaTodas);
             Assert.Empty(await EmpresasDeAsync(id));
-            Assert.Equal(45m, (await apoyo.LeerAsync(id)).CostoNominal);
+            Assert.Equal(nuevos.CostoNominal, (await apoyo.LeerAsync(id)).CostoNominal);
         }
     }
 
@@ -544,7 +545,7 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
             ["idProveedorHabitual"] = antes.IdProveedorHabitual, ["idAlicuotaIva"] = antes.IdAlicuotaIva,
             ["unidadVenta"] = "Unidad", ["unidadesPorBulto"] = antes.UnidadesPorBulto, ["esProducto"] = antes.EsProducto,
             ["costoLista"] = 60m, ["descuentoProveedor"] = antes.DescuentoProveedor,
-            ["costoNominal"] = antes.CostoNominal, ["disponibleParaTodas"] = true, ["idsEmpresas"] = null,
+            ["disponibleParaTodas"] = true, ["idsEmpresas"] = null,
             ["activo"] = antes.Activo, ["controlaLote"] = antes.ControlaLote,
             ["acumulaEnVenta"] = antes.AcumulaEnVenta, ["alcance"] = ordinal
         };

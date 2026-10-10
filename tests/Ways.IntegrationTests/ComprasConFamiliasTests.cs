@@ -183,8 +183,8 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
             Assert.Equal(Costo(100m), await CostoNominalAsync(id));
         }
 
-        Assert.Equal(40m, await CostoNominalAsync(f.DeBaja));
-        Assert.Equal(40m, await CostoNominalAsync(f.G1));
+        Assert.Equal(45m, await CostoNominalAsync(f.DeBaja));
+        Assert.Equal(45m, await CostoNominalAsync(f.G1));
     }
 
     /// <summary>Las líneas que no actualizan el costo, o con costo unitario cero (el guard anti-bonificación),
@@ -228,7 +228,7 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
             Assert.Equal(Costo(100m), await CostoNominalAsync(id));
         }
 
-        Assert.Equal(40m, await CostoNominalAsync(f.Suelto));
+        Assert.Equal(45m, await CostoNominalAsync(f.Suelto));
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         }
 
         Assert.Equal(Costo(50m), await CostoNominalAsync(f.Suelto));
-        Assert.Equal(40m, await CostoNominalAsync(f.OtroSuelto));
+        Assert.Equal(45m, await CostoNominalAsync(f.OtroSuelto));
     }
 
     /// <summary>Anular una compra nunca revierte el costo, tampoco el de una familia.</summary>
@@ -495,17 +495,17 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         }
 
         var dadoDeBaja = await apoyo.LeerAsync(idDelDadoDeBaja);
-        Assert.Equal(40m, dadoDeBaja.CostoNominal);
+        Assert.Equal(45m, dadoDeBaja.CostoNominal);
         Assert.NotNull(dadoDeBaja.DeletedAt);
         Assert.Equal(f.Familia, dadoDeBaja.IdFamilia);
     }
 
     /// <summary>La razón del lock compartido de la confirmación: una confirmación en curso —ya escribió el costo de
     /// la familia y está por comitear— hace esperar a un alta dentro de esa familia, que pide el lock exclusivo.
-    /// Cuando la confirmación comitea, el alta lee la referencia con el costo NUEVO y entra con él. Sin el lock
-    /// de la confirmación el alta no esperaría, leería el costo viejo y la familia quedaría con un miembro de
-    /// costo distinto; el pedido lleva el costo nuevo, así que sin la espera el alta ni siquiera entraría
-    /// (<c>familia_valores_distintos</c>).</summary>
+    /// Cuando la confirmación comitea, el alta lee la referencia con el costo NUEVO y entra heredándolo: el pedido
+    /// no trae costo nominal, y como el resto de los campos compartidos coincide, el miembro nuevo toma el de la
+    /// familia. Sin el lock de la confirmación el alta no esperaría, leería el costo viejo y la familia quedaría con
+    /// un miembro de costo distinto.</summary>
     [Fact]
     public async Task UnaConfirmacionEnCursoHaceEsperarAlAltaEnLaFamiliaYElAltaEntraConElCostoNuevo()
     {
@@ -536,7 +536,7 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
                 IdProveedorHabitual: ValoresBase(c.E).IdProveedorHabitual, IdAlicuotaIva: ValoresBase(c.E).IdAlicuotaIva,
                 UnidadVenta: ValoresBase(c.E).UnidadVenta, UnidadesPorBulto: ValoresBase(c.E).UnidadesPorBulto,
                 EsProducto: ValoresBase(c.E).EsProducto, CostoLista: ValoresBase(c.E).CostoLista,
-                DescuentoProveedor: ValoresBase(c.E).DescuentoProveedor, CostoNominal: Costo(200m),
+                DescuentoProveedor: ValoresBase(c.E).DescuentoProveedor,
                 ControlaLote: ValoresBase(c.E).ControlaLote, AcumulaEnVenta: ValoresBase(c.E).AcumulaEnVenta,
                 IdFamilia: f.Familia);
             alta = c.E.Admin.PostAsJsonAsync("/api/articulos", pedido, OpcionesJson);
@@ -555,7 +555,6 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var creado = (await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;
 
-        Assert.Equal(Costo(200m), await CostoNominalAsync(creado.Id));
         foreach (var id in new[] { f.M1, f.M2, f.M3, creado.Id })
         {
             Assert.Equal(Costo(200m), await CostoNominalAsync(id));

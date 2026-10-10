@@ -260,7 +260,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             CodigoInterno: null, Nombre: nombre, Descripcion: null, IdArea: s.IdArea, IdCategoria: null,
             IdMarca: null, IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva,
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
-            DescuentoProveedor: null, CostoNominal: null);
+            DescuentoProveedor: null);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio);
 
@@ -309,7 +309,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var datos = new EdicionArticulo(
             Nombre: "Artículo editado", Descripcion: null, IdArea: s.IdArea, IdCategoria: null, IdMarca: null,
             IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva, UnidadVenta: UnidadVenta.Unidad,
-            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null, CostoNominal: null,
+            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null,
             DisponibleParaTodas: true, IdsEmpresas: null, Activo: true, ControlaLote: false);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio, ClaseDeSentencia.Update);

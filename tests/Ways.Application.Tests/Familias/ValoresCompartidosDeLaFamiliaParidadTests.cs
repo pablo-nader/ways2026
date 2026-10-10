@@ -55,16 +55,17 @@ public class ValoresCompartidosDeLaFamiliaParidadTests
         var dominio = new ValoresCompartidosDeFamilia(
             IdArea: 11, IdCategoria: 12, IdGrupo: 13, IdProveedorHabitual: 14, IdAlicuotaIva: 15,
             UnidadVenta: UnidadVenta.Peso, UnidadesPorBulto: 6.5m, EsProducto: esProducto, ControlaLote: controlaLote,
-            AcumulaEnVenta: acumulaEnVenta, CostoLista: 50.25m, DescuentoProveedor: 10.5m, CostoNominal: 40.75m);
+            AcumulaEnVenta: acumulaEnVenta, CostoLista: 50.25m, CostoListaPor: CostoListaPor.Bulto,
+            CostoListaIncluyeIva: false, DescuentoProveedor: 10.5m, CostoNominal: 40.75m);
 
         var dto = ValoresCompartidosDeLaFamilia.De(dominio);
 
         Assert.Equal(
             ((int?)11, (int?)12, (int?)13, (int?)14, 15, UnidadVenta.Peso, (decimal?)6.5m, esProducto, controlaLote, acumulaEnVenta,
-                (decimal?)50.25m, (decimal?)10.5m, (decimal?)40.75m),
+                (decimal?)50.25m, CostoListaPor.Bulto, false, (decimal?)10.5m, (decimal?)40.75m),
             (dto.IdArea, dto.IdCategoria, dto.IdGrupo, dto.IdProveedorHabitual, dto.IdAlicuotaIva, dto.UnidadVenta,
-                dto.UnidadesPorBulto, dto.EsProducto, dto.ControlaLote, dto.AcumulaEnVenta, dto.CostoLista, dto.DescuentoProveedor,
-                dto.CostoNominal));
+                dto.UnidadesPorBulto, dto.EsProducto, dto.ControlaLote, dto.AcumulaEnVenta, dto.CostoLista, dto.CostoListaPor,
+                dto.CostoListaIncluyeIva, dto.DescuentoProveedor, dto.CostoNominal));
     }
 
     /// <summary>La única nulabilidad que difiere es la de <c>IdArea</c>: obligatoria en el artículo, el detalle la lee

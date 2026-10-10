@@ -508,7 +508,7 @@ internal static class ApoyoDeAgrupacion
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdMarca, a.Activo, a.DisponibleParaTodas, a.CreatedAt, a.DeletedAt
     };
 
-    /// <summary>Todo lo que el artículo guarda: lo propio, los trece campos compartidos, la pertenencia y
+    /// <summary>Todo lo que el artículo guarda: lo propio, los quince campos compartidos, la pertenencia y
     /// <c>updated_at</c>.</summary>
     public static object Huella(Articulo a) => new
     {

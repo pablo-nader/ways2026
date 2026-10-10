@@ -155,8 +155,7 @@ public class ServicioDeArticulosTests
             UnidadesPorBulto: null,
             EsProducto: true,
             CostoLista: null,
-            DescuentoProveedor: null,
-            CostoNominal: null);
+            DescuentoProveedor: null);
 
     private static EdicionArticulo EdicionValida(int idArea, int idAlicuotaIva, string nombre = "Editado") =>
         new(
@@ -173,7 +172,6 @@ public class ServicioDeArticulosTests
             EsProducto: true,
             CostoLista: null,
             DescuentoProveedor: null,
-            CostoNominal: null,
             DisponibleParaTodas: true,
             IdsEmpresas: null,
             Activo: true,

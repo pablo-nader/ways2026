@@ -43,11 +43,16 @@ public class Articulo : EntidadTenant
     /// <summary><c>false</c> ⇒ servicio: no toca stock (doc 10 §3).</summary>
     public bool EsProducto { get; set; }
 
+    /// <summary>Costo de lista tal como se cargó: por unidad o por bulto (<see cref="CostoListaPor"/>), con o
+    /// sin IVA (<see cref="CostoListaIncluyeIva"/>).</summary>
     public decimal? CostoLista { get; set; }
+
+    public CostoListaPor CostoListaPor { get; set; } = CostoListaPor.Unidad;
+    public bool CostoListaIncluyeIva { get; set; } = true;
     public decimal? DescuentoProveedor { get; set; }
 
-    /// <summary>Costo real de reposición — lo actualiza el flujo de compras (fuera de
-    /// alcance de esta etapa).</summary>
+    /// <summary>Costo por unidad, con IVA y neto del descuento. El alta y la edición lo calculan en el servidor
+    /// (<see cref="CalculadorDeCostoNominal"/>); el flujo de compras lo pisa con el costo efectivo.</summary>
     public decimal? CostoNominal { get; set; }
 
     /// <summary><c>true</c> (default) ⇒ visible en todas las empresas del tenant, incluidas

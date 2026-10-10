@@ -16,7 +16,8 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 {
     public void Configure(EntityTypeBuilder<Articulo> builder)
     {
-        builder.ToTable("articulos");
+        builder.ToTable("articulos", t => t.HasCheckConstraint(
+            "ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')"));
 
         builder.HasKey(a => a.Id);
 
@@ -72,6 +73,18 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
         builder.Property(a => a.CostoLista)
             .HasColumnName("costo_lista")
             .HasColumnType("numeric(14,2)");
+
+        builder.Property(a => a.CostoListaPor)
+            .HasColumnName("costo_lista_por")
+            .HasColumnType("text")
+            .HasConversion<string>()
+            .HasDefaultValue(CostoListaPor.Unidad)
+            .IsRequired();
+
+        builder.Property(a => a.CostoListaIncluyeIva)
+            .HasColumnName("costo_lista_incluye_iva")
+            .HasDefaultValue(true)
+            .IsRequired();
 
         builder.Property(a => a.DescuentoProveedor)
             .HasColumnName("descuento_proveedor")

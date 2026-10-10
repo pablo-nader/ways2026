@@ -37,7 +37,7 @@ public class ServicioDeFamilias(
             .Select(f => new FamiliaListado(f.Id, f.Nombre, f.Activo, db.Articulos.Count(a => a.IdFamilia == f.Id)))
             .ToListAsync(ct);
 
-    /// <summary>La familia, sus miembros vivos, los trece valores compartidos del artículo de referencia (el
+    /// <summary>La familia, sus miembros vivos, los quince valores compartidos del artículo de referencia (el
     /// miembro vivo de menor id) y su estado de precios en cada lista fija: lo que el alta de un artículo dentro
     /// de la familia necesita prellenar. <c>404</c> si la familia no existe, está dada de baja o es de otro tenant.</summary>
     public async Task<FamiliaDetalle> ObtenerAsync(int id, CancellationToken ct = default)
@@ -69,6 +69,8 @@ public class ServicioDeFamilias(
                 a.ControlaLote,
                 a.AcumulaEnVenta,
                 a.CostoLista,
+                a.CostoListaPor,
+                a.CostoListaIncluyeIva,
                 a.DescuentoProveedor,
                 a.CostoNominal
             })
@@ -109,6 +111,8 @@ public class ServicioDeFamilias(
             ControlaLote: referencia.ControlaLote,
             AcumulaEnVenta: referencia.AcumulaEnVenta,
             CostoLista: referencia.CostoLista,
+            CostoListaPor: referencia.CostoListaPor,
+            CostoListaIncluyeIva: referencia.CostoListaIncluyeIva,
             DescuentoProveedor: referencia.DescuentoProveedor,
             CostoNominal: referencia.CostoNominal);
 
