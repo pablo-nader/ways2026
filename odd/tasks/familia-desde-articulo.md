@@ -47,11 +47,11 @@ familia column/filter in the article grid; empty familias (unchanged: still not 
   created in one transaction, the article being the reference. Route: delegated (writer;
   touches contracts, service, endpoint docs, tests, doc 10).
   Checks: `dotnet build`, unit tests, integration tests for the articles/familias endpoints.
-- [ ] T2 — Web: selector always visible + "+" quick-create (`AltaRapidaFamilia`) for a new
+- [x] T2 — Web: selector always visible + "+" quick-create (`AltaRapidaFamilia`) for a new
   article (name travels with the alta) and for an existing non-member (single
   `POST /api/familias`). Route: delegated (writer; 4+ files).
   Checks: `npm run lint`, `npx tsc --noEmit`, `npx vitest run` on the touched suites.
-- [ ] T3 — Web: join an existing familia from the edit form with preview and confirmation.
+- [x] T3 — Web: join an existing familia from the edit form with preview and confirmation.
   Route: delegated (writer). Checks: as T2.
 - [ ] T4 — Judgment-day on each PR slice, then PR(s). Route: delegated judges.
 
@@ -72,8 +72,20 @@ Created 2026-10-10.
   insert and the id assignment; integration tests cover it); the two messages of the same
   409 `familia_nombre_duplicado` predate this change; one very long line in doc 10. Both
   judges judged the skills by code inspection without reading each SKILL.md.
-- T2/T3 in progress (web writer).
+- T2 + T3 done in ONE commit `e85aca04` (hunks interleaved; could not be split cleanly):
+  12 files under src/Ways.Web/src, +1815/−74, ~1300 of them tests. Observed (writer):
+  `npx tsc -b` exit 0; `npx oxlint --quiet` exit 0; `npx vite build` OK; full
+  `npx vitest run` 159 files / 3924 tests green on the second run. First full run had one
+  failure, `NuevaFamilia.test.tsx` > "con más de 100 artículos además de la referencia avisa
+  cuántos sobran y no deja previsualizar" (6.7 s against the 5 s default timeout; passes
+  alone 49/49) — treated as load timeout, not investigated further. Parent spot check:
+  `npx vitest run src/paginas/ArticulosFamilias.test.tsx src/paginas/articulos` → 12 files,
+  515 tests passed.
+- Open, self-reported by the writer: a rejected join resets the selector even on a transient
+  error; success notice is lost if the reload after a join fails; focus falls to `body`
+  after creating a familia from an existing article.
+- Judgment-day on the web slice running.
 
 ## Next step
 
-T2/T3 (web), then T4.
+T4: judgment-day verdict on the web slice, then PRs (owner decides push/PR).
