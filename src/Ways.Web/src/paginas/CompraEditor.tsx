@@ -66,7 +66,11 @@ import {
 } from './sugerenciasDePercepcion'
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
+import { etiquetaDeProveedor } from './etiquetaDeProveedor'
+import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
+import { valorMedioLleno } from './compras/numeroDeComprobante'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
@@ -137,6 +141,8 @@ type PropsSelectorDeArticulo = {
 }
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
+const MENSAJE_NUMERO_INCOMPLETO =
+  'El número del comprobante está incompleto: complete el punto de venta y el número, o deje ambos vacíos.'
 
 /** Código tipeado que el operador puede asociar al artículo elegido a mano. */
 type AsociacionPendiente = { idArticulo: number; idProveedor: number; nombreProveedor: string; codigo: string }
@@ -429,16 +435,15 @@ function FilaDeItem({
               disabled={disabled}
               onChange={(e) => onCambio(linea.clave, { codigoLote: e.target.value })}
             />
-            <input
-              type="date"
+            <CampoFecha
               className={`form-control form-control-sm ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
               aria-label="Fecha de vencimiento"
               value={linea.fechaVencimiento}
               disabled={disabled}
-              onChange={(e) => onCambio(linea.clave, { fechaVencimiento: e.target.value })}
+              onChange={(valor) => onCambio(linea.clave, { fechaVencimiento: valor })}
             />
             {linea.fechaVencimiento.trim() === '' && (
-              <div className="invalid-feedback">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
+              <div className="invalid-feedback d-block">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
             )}
           </>
         ) : (
@@ -973,6 +978,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     setEncabezado((prev) => alElegirProveedor(prev, prev.idProveedor, referenciaDePercepciones, conservarModo))
   }, [esNuevo, proveedores, ordenParaPrecargar, gastoOrigen, referenciaDePercepciones])
 
+  // Con un único punto de venta no hay nada que elegir: se preselecciona UNA vez, cuando llega su
+  // lista, y solo si el borrador nuevo todavía no tiene uno (orden de compra o gasto de origen).
+  const puntoVentaPreseleccionadoRef = useRef(false)
+  useEffect(() => {
+    if (!esNuevo || puntoVentaPreseleccionadoRef.current || puntosVenta === null) return
+    puntoVentaPreseleccionadoRef.current = true
+    if (puntosVenta.length !== 1) return
+    const unico = puntosVenta[0].id
+    setEncabezado((prev) =>
+      prev.idPuntoVenta === ''
+        ? conSugerenciasDePercepcion({ ...prev, idPuntoVenta: unico }, referenciaDePercepciones)
+        : prev,
+    )
+  }, [esNuevo, puntosVenta, referenciaDePercepciones])
+
   // Las sugerencias dependen de datos que llegan por separado (proveedores, tipos, puntos de venta,
   // empresas): cada vez que cambia la referencia de un borrador NUEVO se recomputan. Las filas que el
   // operador tocó o quitó se respetan; un borrador existente nunca recibe sugerencias nuevas.
@@ -1229,6 +1249,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // regla 9: guard de reentrancia de primera línea.
     if (guardandoRef.current) return
     if (!puedeGuardar) return
+    if (valorMedioLleno(encabezado.numeroExterno)) {
+      setAviso('')
+      setError(MENSAJE_NUMERO_INCOMPLETO)
+      return
+    }
 
     guardandoRef.current = true
     setGuardando(true)
@@ -1272,6 +1297,10 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     // regla 9: guard de reentrancia de primera línea.
     if (confirmandoRef.current) return
     if (!confirmadoParaConfirmar || idCompra === null) return
+    if (valorMedioLleno(encabezado.numeroExterno)) {
+      setErrorConfirmar(MENSAJE_NUMERO_INCOMPLETO)
+      return
+    }
 
     confirmandoRef.current = true
     setConfirmando(true)
@@ -1441,7 +1470,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               <option value="">Elegir…</option>
               {(proveedores ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.razonSocial}
+                  {etiquetaDeProveedor(p)}
                 </option>
               ))}
             </select>
@@ -1459,8 +1488,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
             >
               <option value="">Elegir…</option>
               {(tipos ?? []).map((t) => (
-                <option key={t.id} value={t.id} title={t.nombre}>
-                  {t.codigo}
+                <option key={t.id} value={t.id}>
+                  {t.nombre}
                 </option>
               ))}
             </select>
@@ -1495,7 +1524,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               </div>
             )}
           </div>
-          <div className="col-md-3">
+          <div className="col-md-2">
             <label className="form-label" htmlFor="compra-punto-venta">
               Punto de venta
             </label>
@@ -1514,30 +1543,27 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               ))}
             </select>
           </div>
-          <div className="col-md-2">
-            <label className="form-label" htmlFor="compra-numero-externo">
+          <div className="col-md-3">
+            <span className="form-label d-block" id="compra-numero-externo-etiqueta">
               Número de comprobante
-            </label>
-            <input
-              id="compra-numero-externo"
-              type="text"
-              className="form-control"
-              value={encabezado.numeroExterno}
+            </span>
+            <CampoNumeroDeComprobante
+              idBase="compra-numero-externo"
+              valor={encabezado.numeroExterno}
               disabled={!esBorrador || ocupado || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, numeroExterno: e.target.value }))}
+              onChange={(numeroExterno) => setEncabezado((prev) => ({ ...prev, numeroExterno }))}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="compra-fecha-comprobante">
               Fecha del comprobante
             </label>
-            <input
+            <CampoFecha
               id="compra-fecha-comprobante"
-              type="date"
               className="form-control"
               value={encabezado.fechaComprobante}
               disabled={!esBorrador || ocupado || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, fechaComprobante: e.target.value }))}
+              onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaComprobante: valor }))}
             />
           </div>
           <div className="col-12">

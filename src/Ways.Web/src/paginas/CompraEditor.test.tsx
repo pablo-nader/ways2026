@@ -188,6 +188,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     codigoLote: null,
     fechaVencimiento: null,
     idLote: null,
+    codigoProveedor: null,
     ...sobrescribir,
   }
 }
@@ -267,12 +268,14 @@ function renderEditorProtegido(idCompra: string | number = 1) {
 function mockearReferencia(
   sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined,
   tipos: TipoComprobanteListado[] = [tipoFixture()],
+  puntosVenta: PuntoVentaListado[] = [puntoVentaFixture()],
+  proveedores: ProveedorListado[] = [proveedorFixture()],
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [proveedorFixture()], total: 1, pagina: 1, tamanio: 200 })
+    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: proveedores, total: proveedores.length, pagina: 1, tamanio: 200 })
     if (ruta === '/catalogos-fiscales/tipos-comprobante') return Promise.resolve(tipos)
     if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve([alicuotaFixture()])
-    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+    if (ruta === '/puntos-venta') return Promise.resolve(puntosVenta)
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([listaPrecioFixture()])
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
@@ -292,7 +295,7 @@ describe('CompraEditor — borrador existente', () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     renderEditor()
 
-    expect(await screen.findByDisplayValue('0003-00012345')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('00012345')).toBeInTheDocument()
     expect(screen.getByText('Elegido: Fideos 500g')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeInTheDocument()
   })
@@ -303,7 +306,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const costo = screen.getByLabelText('Costo unitario')
     await usuario.clear(costo)
@@ -333,7 +336,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
@@ -349,7 +352,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
 
     const botonConfirmarFinal = screen.getByRole('button', { name: 'Confirmar' })
@@ -382,7 +385,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
     await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
@@ -631,13 +634,243 @@ describe('CompraEditor — compra nueva', () => {
   })
 })
 
+describe('CompraEditor — selectores del encabezado', () => {
+  it('el proveedor se rotula con el nombre de fantasía y cae a la razón social', async () => {
+    mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture()], [
+      proveedorFixture({ id: 1, razonSocial: 'Proveedor Uno SA', nombreFantasia: 'Uno' }),
+      proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA', nombreFantasia: null }),
+    ])
+    renderEditor('nueva')
+
+    expect(await screen.findByRole('option', { name: 'Uno' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Proveedor Dos SA' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Proveedor Uno SA' })).not.toBeInTheDocument()
+  })
+
+  it('el tipo de comprobante se rotula con el nombre, no con el código', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+
+    expect(await screen.findByRole('option', { name: 'Factura A de compra' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'C-FA' })).not.toBeInTheDocument()
+  })
+
+  it('con un único punto de venta lo preselecciona en una compra nueva', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await waitFor(() => expect(puntoVenta).toHaveValue('2'))
+  })
+
+  it('con varios puntos de venta no preselecciona ninguno', async () => {
+    mockearReferencia(undefined, [tipoFixture()], [puntoVentaFixture(), puntoVentaFixture({ id: 3, nombre: 'Sucursal' })])
+    renderEditor('nueva')
+
+    const puntoVenta = await screen.findByLabelText('Punto de venta')
+    await screen.findByRole('option', { name: 'Sucursal' })
+    expect(puntoVenta).toHaveValue('')
+  })
+
+  it('un borrador existente conserva su punto de venta aunque la lista tenga uno solo y distinto', async () => {
+    mockearReferencia(
+      (ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ idPuntoVenta: 2 })) : undefined),
+      [tipoFixture()],
+      [puntoVentaFixture({ id: 3, nombre: 'Sucursal' })],
+    )
+    apiPutMock.mockResolvedValue(compraFixture({ idPuntoVenta: 2 }))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('00012345')
+    await screen.findByRole('option', { name: 'Sucursal' })
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0] as [string, Record<string, unknown>])[1].idPuntoVenta).toBe(2)
+  })
+})
+
+describe('CompraEditor — número de comprobante', () => {
+  it('rellena con ceros al salir de cada campo y manda PPPP-NNNNNNNN', async () => {
+    mockearReferencia()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '10')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '9985')
+    await usuario.tab()
+
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0010')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00009985')
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('0010-00009985')
+  })
+
+  it('solo admite dígitos y respeta el largo máximo de cada campo', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), 'a1b2c3d4e5')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '1x2345678901')
+
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('1234')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('12345678')
+  })
+
+  it('sin ninguna de las dos partes manda numeroExterno null', async () => {
+    mockearReferencia()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBeNull()
+  })
+
+  it('con solo el punto de venta cargado, al salir del grupo marca la parte que falta y no manda nada al crear', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    const puntoVenta = screen.getByLabelText('Punto de venta del comprobante')
+    const numero = screen.getByLabelText('Número del comprobante')
+    await usuario.type(puntoVenta, '10')
+    await usuario.tab()
+    expect(numero).toHaveFocus()
+    expect(numero).not.toHaveClass('is-invalid')
+
+    await usuario.tab()
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveClass('is-invalid')
+    expect(puntoVenta).not.toHaveClass('is-invalid')
+    expect(screen.getByText(/Falta el número\./)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('con solo el número cargado marca el punto de venta y no manda nada al guardar un borrador existente', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    const puntoVenta = await screen.findByDisplayValue('0003')
+    await usuario.clear(puntoVenta)
+    await usuario.tab()
+    await usuario.tab()
+
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00012345')
+    expect(puntoVenta).toHaveClass('is-invalid')
+    expect(screen.getByText(/Falta el punto de venta\./)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('confirmar se rechaza con el número a medio cargar y no manda el POST de confirmación', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await usuario.clear(await screen.findByDisplayValue('00012345'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
+
+    expect(await screen.findByText(/El número del comprobante está incompleto/)).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('pegar un número completo en cualquiera de los dos campos rellena ambas partes', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    const puntoVenta = screen.getByLabelText('Punto de venta del comprobante')
+    const numero = screen.getByLabelText('Número del comprobante')
+
+    await usuario.click(puntoVenta)
+    await usuario.paste('0010-00009985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(numero)
+    await usuario.paste('10-9985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
+
+    await usuario.clear(puntoVenta)
+    await usuario.clear(numero)
+    await usuario.click(puntoVenta)
+    await usuario.paste('001000009985')
+    expect(puntoVenta).toHaveValue('0010')
+    expect(numero).toHaveValue('00009985')
+  })
+
+  it('un número anterior al formato no se pierde ni se altera si no se edita', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ numeroExterno: 'A-0001-00000012' })) : undefined,
+    )
+    apiPutMock.mockResolvedValue(compraFixture({ numeroExterno: 'A-0001-00000012' }))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    expect(await screen.findByText('Número original: A-0001-00000012')).toBeInTheDocument()
+    const numero = screen.getByLabelText('Número del comprobante')
+    await usuario.click(numero)
+    await usuario.tab()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('A-0001-00000012')
+  })
+})
+
 describe('CompraEditor — líneas incompletas', () => {
   it('una línea incompleta no entra en el total mostrado, y se avisa con un contador', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
@@ -666,7 +899,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
@@ -684,7 +917,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
     expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
 
-    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '2026-12-01')
+    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '01/12/2026')
 
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
@@ -712,7 +945,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     renderEditor()
     await screen.findByText('Elegido: Fideos 500g')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'coca')
     await screen.findByText('ART-30 — Coca Cola 1.5L')
@@ -748,7 +981,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     renderEditor()
     await screen.findByText('Elegido: Fideos 500g')
     expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
-    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('01/06/2026')
 
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
     await screen.findByText('ART-40 — Yerba 1kg')
@@ -765,7 +998,7 @@ describe('CompraEditor — role gating', () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
 
     renderEditorProtegido()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     // el gate de rol de la ruta lo dejó pasar — no lo mandó a "/".
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
@@ -786,7 +1019,7 @@ describe('CompraEditor — role gating', () => {
       mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(sinCostos) : undefined))
 
       renderEditorProtegido()
-      await screen.findByDisplayValue('0003-00012345')
+      await screen.findByDisplayValue('00012345')
 
       const fila = screen.getByRole('row', { name: /Fideos 500g/ })
       // lote, vencimiento, costo unitario, descuento, total y precio sugerido.
@@ -823,7 +1056,7 @@ describe('CompraEditor — referencia fallida', () => {
     renderEditor()
 
     expect(await screen.findByText(/No se pudieron cargar los proveedores\./)).toBeInTheDocument()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
   })
 })
@@ -841,7 +1074,7 @@ describe('CompraEditor — carga inicial', () => {
 
     resolverGet(compraFixture())
     await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
-    expect(await screen.findByDisplayValue('0003-00012345')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('00012345')).toBeInTheDocument()
   })
 })
 
@@ -1009,8 +1242,9 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
-    expect(screen.getByLabelText('Fecha del comprobante')).toHaveValue('2026-08-15')
-    expect(screen.getByLabelText('Número de comprobante')).toHaveValue('0003-00099999')
+    expect(screen.getByLabelText('Fecha del comprobante')).toHaveValue('15/08/2026')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0003')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00099999')
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')
   })
 
@@ -1089,7 +1323,7 @@ describe('CompraEditor — líneas por concepto', () => {
     renderEditor('nueva')
     // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
     await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /C-FA/ })
+    await screen.findByRole('option', { name: /Factura A de compra/ })
     await screen.findByRole('option', { name: 'Casa Central' })
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
@@ -1137,6 +1371,7 @@ describe('CompraEditor — líneas por concepto', () => {
         actualizaCosto: false,
         codigoLote: null,
         fechaVencimiento: null,
+        codigoProveedor: null,
       },
     ])
   })
@@ -1181,7 +1416,7 @@ describe('CompraEditor — líneas por concepto', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Flete')
     // solo la línea de artículo ofrece bultos y actualiza costo
@@ -1254,7 +1489,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     renderEditor('nueva')
     // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
     await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /C-RM/ })
+    await screen.findByRole('option', { name: /Remito \/ comprobante no fiscal/ })
     await screen.findByRole('option', { name: 'Casa Central' })
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
     await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
@@ -1414,7 +1649,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await waitFor(() => expect(screen.getByLabelText('Discrimina IVA')).toBeChecked())
 
     // El IVA guardado (200) difiere del que sale del neto (199,50): es un override y se conserva.
@@ -1586,7 +1821,7 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
   async function abrirBusquedaEnUnaLineaNueva(termino: string) {
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
     return usuario
@@ -1708,7 +1943,7 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
     apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getAllByLabelText('Costo unitario').at(-1)!, '12,3456')
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'AB-1234')
@@ -1856,7 +2091,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
       return undefined
     })
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const unidades = screen.getByLabelText('Unidades')
     await waitFor(() => expect(unidades).toHaveAttribute('step', '1'))
@@ -1880,7 +2115,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
     })
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
@@ -1901,7 +2136,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
       return undefined
     })
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const unidades = screen.getByLabelText('Unidades')
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))

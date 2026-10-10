@@ -116,8 +116,8 @@ describe('ModalDePagoDeCompra', () => {
     await esperarMedios()
 
     expect(screen.getByLabelText('Importe')).toHaveValue('320,00')
-    expect(screen.getByLabelText('Fecha')).toHaveValue('2026-10-03')
-    expect(screen.getByLabelText('Fecha')).toHaveAttribute('max', '2026-10-03')
+    expect(screen.getByLabelText('Fecha')).toHaveValue('03/10/2026')
+    expect(screen.getByLabelText('Fecha').closest('.position-relative')!.querySelector('input[type="date"]')).toHaveAttribute('max', '2026-10-03')
     expect(screen.getByRole('option', { name: 'Transferencia' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'Cuenta corriente' })).not.toBeInTheDocument()
     expect(screen.getByText(/Saldo pendiente de la compra: \$\s320,00/)).toBeInTheDocument()

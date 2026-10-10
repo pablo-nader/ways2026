@@ -13,6 +13,7 @@ import type { EstadoOrdenCompra, OrdenDeCompraListada, PaginaDe, PaginaDeOrdenes
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const OPCIONES_ESTADO: { valor: EstadoOrdenCompra | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -202,24 +203,22 @@ export function OrdenesDeCompra() {
             <label className="form-label" htmlFor="oc-filtro-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="oc-filtro-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="oc-filtro-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="oc-filtro-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
         </div>

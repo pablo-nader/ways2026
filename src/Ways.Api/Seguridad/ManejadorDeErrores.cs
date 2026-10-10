@@ -1118,6 +1118,13 @@ public class ManejadorDeErrores(
                     "Una línea por concepto no puede llevar lote, bultos, costo ni precio sugerido.",
                     "concepto_con_efectos"),
 
+            // Backstop de ck_items_comprobante_compra_codigo_proveedor_normalizado — el servicio recorta el
+            // código y trata el vacío como ausente antes de escribir; esta rama atrapa una escritura que lo esquive.
+            "ck_items_comprobante_compra_codigo_proveedor_normalizado" =>
+                (StatusCodes.Status400BadRequest,
+                    "El código de proveedor de un ítem de compra tiene que venir recortado y no vacío.",
+                    "codigo_proveedor_invalido"),
+
             _ => null
         };
 

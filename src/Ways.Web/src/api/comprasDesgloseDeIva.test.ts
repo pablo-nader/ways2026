@@ -57,6 +57,7 @@ function lineaDeFormulario(sobrescribir: Partial<LineaDeCompraFormulario> = {}):
     controlaLote: false,
     codigoLote: '',
     fechaVencimiento: '',
+    codigoProveedor: '',
     ...sobrescribir,
   }
 }

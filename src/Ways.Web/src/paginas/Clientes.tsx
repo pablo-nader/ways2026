@@ -16,6 +16,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 type Formulario = {
   id: number | null
@@ -448,12 +449,11 @@ function FormularioCliente({
         <label className="form-label" htmlFor="c-nacimiento">
           Nacimiento
         </label>
-        <input
+        <CampoFecha
           id="c-nacimiento"
-          type="date"
           className="form-control"
           value={valor.nacimiento}
-          onChange={(e) => onCambio({ ...valor, nacimiento: e.target.value })}
+          onChange={(fecha) => onCambio({ ...valor, nacimiento: fecha })}
         />
       </div>
 

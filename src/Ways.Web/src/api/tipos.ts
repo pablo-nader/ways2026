@@ -1879,6 +1879,10 @@ export type LineaDeCompraSolicitada = {
    * que no controla lote (el servidor los ignora, `ReglaDeLotes.ControlEfectivo`). */
   codigoLote: string | null
   fechaVencimiento: string | null
+  /** Código que el proveedor imprimió para la línea (máx. 50). El servidor lo recorta; vacío o
+   * `null` = sin código. Se guarda en toda línea que lo trae; al confirmar, una línea con artículo
+   * lo asocia al artículo y al proveedor de la compra si está libre. */
+  codigoProveedor: string | null
 }
 
 /** Cuerpo de `POST /api/compras` (crea un borrador) y `PUT /api/compras/{id}` (replace-set
@@ -1959,6 +1963,8 @@ export type ItemDeCompra = {
   codigoLote: string | null
   fechaVencimiento: string | null
   idLote: number | null
+  /** Código del proveedor tal como se guardó en la línea, haya quedado asociado o no. */
+  codigoProveedor: string | null
 }
 
 /** Detalle completo de una compra (espejo de `CompraDetalle`).

@@ -12,7 +12,12 @@ namespace Ways.Application.Compras;
 /// <see cref="IdArticulo"/> nulo declara una línea por concepto: <see cref="Descripcion"/> es
 /// obligatoria y la línea no admite lote, bultos ni <see cref="ActualizaCosto"/> verdadero (se
 /// rechaza con 400, nunca se descarta en silencio). <see cref="ActualizaCosto"/> nulo significa
-/// "el default de la línea": <c>true</c> para un artículo, <c>false</c> para un concepto.</summary>
+/// "el default de la línea": <c>true</c> para un artículo, <c>false</c> para un concepto.
+///
+/// <see cref="CodigoProveedor"/> es el código que el proveedor imprimió para la línea: se recorta,
+/// vacío equivale a ninguno y más de 50 caracteres es 400. Se guarda en toda línea que lo trae; al
+/// confirmar, una línea con artículo lo asocia a ese artículo y al proveedor de la compra si el
+/// código está libre. Un concepto nunca asocia.</summary>
 public sealed record LineaDeCompraSolicitada(
     int? IdArticulo,
     string Descripcion,
@@ -24,7 +29,8 @@ public sealed record LineaDeCompraSolicitada(
     int IdAlicuotaIva,
     bool? ActualizaCosto = null,
     string? CodigoLote = null,
-    DateOnly? FechaVencimiento = null);
+    DateOnly? FechaVencimiento = null,
+    string? CodigoProveedor = null);
 
 /// <summary>El IVA que el proveedor imprimió para una alícuota: cuando difiere del calculado por
 /// redondeo, gana el impreso mientras no se aleje más de <see cref="CalculadorDeCompra.
@@ -79,7 +85,9 @@ public sealed record SolicitudDeCompra(
 /// resuelto (get-or-create), <c>NULL</c> mientras la compra es borrador y para artículos que no
 /// controlan lote (etapa 12, slice 5). <see cref="CostoUnitario"/>, <see cref="Descuento"/>,
 /// <see cref="Total"/> y <see cref="PrecioSugerido"/> son <c>null</c> para el rol vendedor, que
-/// no ve el costo de los artículos. <see cref="IdArticulo"/> nulo es una línea por concepto.</summary>
+/// no ve el costo de los artículos. <see cref="IdArticulo"/> nulo es una línea por concepto.
+/// <see cref="CodigoProveedor"/> es el código impreso por el proveedor tal como se guardó, haya
+/// quedado asociado o no a un artículo.</summary>
 public sealed record ItemDeCompra(
     int Orden,
     int? IdArticulo,
@@ -96,7 +104,8 @@ public sealed record ItemDeCompra(
     decimal? PrecioSugerido,
     string? CodigoLote,
     DateOnly? FechaVencimiento,
-    int? IdLote);
+    int? IdLote,
+    string? CodigoProveedor);
 
 /// <summary>Una fila del desglose de IVA de una compra que discrimina IVA: neto gravado e IVA de
 /// una alícuota. Exento y no gravado salen con IVA cero. <see cref="Neto"/> e <see cref="Iva"/> son
