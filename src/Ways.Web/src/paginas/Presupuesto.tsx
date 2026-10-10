@@ -25,6 +25,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('es-AR') : '—'
@@ -547,13 +548,12 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
                     <label className="form-label small mb-0" htmlFor="pres-vencimiento">
                       Vence el
                     </label>
-                    <input
+                    <CampoFecha
                       id="pres-vencimiento"
-                      type="date"
                       className="form-control form-control-sm"
                       value={vencimientoAEnviar}
                       disabled={ocupado}
-                      onChange={(e) => setVencimientoAEnviar(e.target.value)}
+                      onChange={(valor) => setVencimientoAEnviar(valor)}
                     />
                   </div>
                   <button type="button" className="btn btn-success" disabled={ocupado} onClick={enviar}>

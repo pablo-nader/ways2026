@@ -9,6 +9,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -137,24 +138,22 @@ export function HistoricoDeCajas() {
             <label className="form-label" htmlFor="historico-cajas-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="historico-cajas-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="historico-cajas-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="historico-cajas-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
           <div className="col-auto">

@@ -218,7 +218,7 @@ async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>, 
   renderEditor('nueva')
   // Esperar el DATO (las opciones cargadas), no el select que se renderiza antes del fetch.
   await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-  await screen.findByRole('option', { name: /C-FA/ })
+  await screen.findByRole('option', { name: /Factura A de compra/ })
   await screen.findByRole('option', { name: 'Casa Central' })
   await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
   await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
@@ -475,7 +475,7 @@ describe('CompraEditor — percepciones', () => {
     const usuario = userEvent.setup()
 
     renderEditor(1)
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const tabla = tablaDePercepciones()
     expect(within(tabla).getByLabelText('Importe Percepción IIBB')).toHaveValue('30,00')
@@ -550,7 +550,7 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
 
   async function esperarReferencia() {
     await screen.findByRole('option', { name: 'Proveedor Uno SA' })
-    await screen.findByRole('option', { name: /C-FA/ })
+    await screen.findByRole('option', { name: /Factura A de compra/ })
     await screen.findByRole('option', { name: 'Casa Central' })
   }
 

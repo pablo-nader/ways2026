@@ -15,6 +15,7 @@ import type { ClienteListado, EstadoPresupuesto, PaginaDePresupuestos, Presupues
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const OPCIONES_ESTADO: { valor: EstadoPresupuesto | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -225,24 +226,22 @@ export function Presupuestos() {
             <label className="form-label" htmlFor="pres-filtro-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="pres-filtro-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="pres-filtro-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="pres-filtro-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
         </div>
