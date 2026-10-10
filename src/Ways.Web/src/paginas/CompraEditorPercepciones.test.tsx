@@ -170,6 +170,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
         codigoLote: null,
         fechaVencimiento: null,
         idLote: null,
+        codigoProveedor: null,
       },
     ],
     idOrdenCompra: null,

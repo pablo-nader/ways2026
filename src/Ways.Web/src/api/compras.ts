@@ -170,6 +170,9 @@ export type LineaDeCompraFormulario = {
   controlaLote: boolean
   codigoLote: string
   fechaVencimiento: string
+  /** Código que el proveedor imprimió para la línea; `''` = sin código. Sin pantalla todavía: viaja
+   * para que reabrir y volver a guardar un borrador no pierda el que ya está guardado. */
+  codigoProveedor: string
   /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso de `unidades` y
    * si una fracción se acepta. Se toma del artículo al elegirlo; en un borrador reabierto la
    * completa `useUnidadesDeVentaDeLineas`. Ausente se trata como `Peso` (permisivo). Solo aplica a
@@ -193,6 +196,7 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
     controlaLote: false,
     codigoLote: '',
     fechaVencimiento: '',
+    codigoProveedor: '',
   }
 }
 
@@ -235,6 +239,7 @@ export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompr
     controlaLote: item.idLote !== null || item.codigoLote !== null || item.fechaVencimiento !== null,
     codigoLote: item.codigoLote ?? '',
     fechaVencimiento: item.fechaVencimiento ?? '',
+    codigoProveedor: item.codigoProveedor ?? '',
   }
 }
 
@@ -283,6 +288,11 @@ export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
   )
 }
 
+function codigoProveedorONulo(l: LineaDeCompraFormulario): string | null {
+  const codigo = l.codigoProveedor.trim()
+  return codigo === '' ? null : codigo
+}
+
 /** Fila de formulario → `LineaDeCompraSolicitada` — solo se envían las filas completas
  * (`lineaCompletaParaEnvio`), una fila a medio llenar nunca viaja al servidor. */
 export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolicitada {
@@ -299,6 +309,7 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
       actualizaCosto: false,
       codigoLote: null,
       fechaVencimiento: null,
+      codigoProveedor: codigoProveedorONulo(l),
     }
   }
 
@@ -314,6 +325,7 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
     actualizaCosto: l.actualizaCosto,
     codigoLote: l.codigoLote.trim() === '' ? null : l.codigoLote.trim(),
     fechaVencimiento: l.fechaVencimiento === '' ? null : l.fechaVencimiento,
+    codigoProveedor: codigoProveedorONulo(l),
   }
 }
 
