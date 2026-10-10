@@ -412,6 +412,18 @@ cambia conserva el guardado, que puede ser el costo efectivo de una compra, y es
 familia y el que se aplica a sus miembros. Un alta común siempre lo calcula; un alta dentro de una familia hereda el
 de la referencia y `costo_nominal` nunca es motivo de `familia_valores_distintos` por sí solo.
 
+**Sugerencia de precio** (`GET /api/articulos/{id}/sugerencia-precio?idEmpresa=`, nunca se aplica sola). El precio
+sugerido es `costo base × (1 + margen / 100)`, con el margen del grupo del artículo o, si no tiene, el de su
+proveedor habitual; sin costo base o sin margen no hay sugerencia (`precioSugerido: null`). El costo base es el
+`costo_nominal` guardado o, si el artículo no lo tiene, el que sale de normalizar `costo_lista` (por unidad, con IVA
+y neto del descuento, con la misma regla de `costo_nominal`); sin unidades por bulto en un costo por bulto, o sin la
+alícuota, tampoco hay costo base. El resultado se redondea al múltiplo más cercano del parámetro
+`redondeo_sugerencia_precio` (decimal, default `100`, a nivel empresa): 2896 se sugiere como 2900 y el empate se
+redondea lejos de cero (2950 → 3000). Si el múltiplo más cercano es cero (el precio no llega a la mitad del múltiplo)
+o el parámetro es menor o igual que cero, se redondea a 2 decimales. `idEmpresa` es opcional: sin él se usa el default
+del parámetro; con una empresa inexistente o de otro tenant responde `404`. El parámetro no valida rango al guardarse
+(solo que sea un decimal).
+
 | `alcance` | Artículo sin familia | Miembro, sin cambio de campos compartidos | Miembro, con cambio de campos compartidos |
 |---|---|---|---|
 | ausente | se edita solo | se escriben solo los campos propios del artículo | `409 alcance_requerido` (el mensaje nombra la familia y cuántos artículos vivos tiene); no se escribe nada |
@@ -1310,7 +1322,8 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > una `UPDATE … RETURNING` estado-guardada como única autoridad de transición (el mismo listón
 > que `MarcarAnuladoAsync` en etapa 5), y anular revierte por contramovimientos, rechazado con
 > `409` si dejaría stock negativo. `precio_sugerido` se calcula con el `SugeridorDePrecio`
-> existente y se aplica por una acción explícita separada — nunca dentro del confirm (decisión
+> existente —sobre el costo efectivo de la línea y redondeado al `redondeo_sugerencia_precio` de la empresa del
+> punto de venta de la compra, resuelto una vez por compra— y se aplica por una acción explícita separada — nunca dentro del confirm (decisión
 > 3 de la propuesta). Anular una compra **no** revierte los gastos ya ligados: quedan como
 > historial de un pago real (decisión 6, sin motor de reversión de gastos en el proyecto).
 >
@@ -1852,6 +1865,7 @@ parametros (                  -- [operativa a nivel punto de venta, con fallback
     clave citext, valor jsonb
 );
 -- tolerancia_pago, importe_adicional_recarga, slots_tickets_espera…
+-- redondeo_sugerencia_precio: múltiplo al que se redondea el precio sugerido (decimal, default 100)
 ```
 
 > **`vuelto_maximo` eliminado (decisión del dueño, 2026-09-16):** dejó de ser consumido por

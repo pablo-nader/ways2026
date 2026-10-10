@@ -51,7 +51,8 @@ public class ComprasConFamiliasTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <summary>El costo efectivo de una línea de 10 unidades en una factura A: el costo unitario más el IVA.</summary>
     private static decimal Costo(decimal costoUnitario) => costoUnitario * 1.21m;
 
-    private static decimal Sugerido(decimal costoUnitario) => Math.Round(Costo(costoUnitario) * 1.5m, 2, MidpointRounding.AwayFromZero);
+    /// <summary>Costo efectivo + 50% de margen, redondeado al múltiplo por defecto (100) de <c>redondeo_sugerencia_precio</c>.</summary>
+    private static decimal Sugerido(decimal costoUnitario) => Math.Round(Costo(costoUnitario) * 1.5m / 100m, 0, MidpointRounding.AwayFromZero) * 100m;
 
     private static LineaDeCompraSolicitada Linea(
         Contexto c, int idArticulo, decimal costoUnitario, bool? actualizaCosto = null, decimal descuento = 0m) =>

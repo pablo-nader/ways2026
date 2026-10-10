@@ -594,7 +594,8 @@ public class ArticulosDeFamiliaTests(WaysApiFixture fixture) : IClassFixture<Way
 
         return (db, new ServicioDeArticulos(
             db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto), new GuardaDeReferencias(db, new InspectorDeUso(db)),
-            new ServicioDePrecios(db, reloj, contexto)));
+            new ServicioDePrecios(db, reloj, contexto),
+            new Ways.Application.Parametros.ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, contexto))));
     }
 
     /// <summary>Un reloj que devuelve un instante DISTINTO en cada lectura —un minuto después del anterior—: lo que

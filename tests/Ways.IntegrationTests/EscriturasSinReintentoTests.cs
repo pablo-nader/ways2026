@@ -269,7 +269,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             var servicio = new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)));
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -281,7 +282,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             await new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)))
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))))
                 .CrearAsync(datos);
         }
 
@@ -319,7 +321,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             var servicio = new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)));
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.ActualizarAsync(idArticulo, datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -333,7 +336,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             await new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)))
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))))
                 .ActualizarAsync(idArticulo, datos);
         }
 

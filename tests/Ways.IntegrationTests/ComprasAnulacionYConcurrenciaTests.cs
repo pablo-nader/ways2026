@@ -792,7 +792,10 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
     private static ServicioDeCompras CrearServicio(WaysDbContext db, int idTenant) => new(
         db, new RelojFijo(DateTimeOffset.UtcNow), new ContextoFijo(idTenant, usuarioId: 1),
-        new Ways.Application.Precios.ServicioDePrecios(db, new RelojFijo(DateTimeOffset.UtcNow), new ContextoFijo(idTenant, 1)));
+        new Ways.Application.Precios.ServicioDePrecios(db, new RelojFijo(DateTimeOffset.UtcNow), new ContextoFijo(idTenant, 1)),
+        new Ways.Application.Parametros.ServicioDeParametros(
+            db, new RelojFijo(DateTimeOffset.UtcNow),
+            new Ways.Application.Stock.ServicioDeLotes(db, new RelojFijo(DateTimeOffset.UtcNow), new ContextoFijo(idTenant, 1))));
 
     private async Task<int> MedirConsultasDeConfirmarAsync(Contexto ctx, int cantidadDeItems)
     {

@@ -70,12 +70,19 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     public static readonly ParametroConocido DiasCoberturaObjetivo =
         new("dias_cobertura_objetivo", typeof(int), "7");
 
+    /// <summary>Múltiplo al que se redondea el precio sugerido de un artículo
+    /// (<see cref="Ways.Domain.Precios.SugeridorDePrecio"/>): con <c>100</c> una sugerencia de 2896 se
+    /// propone como 2900. Un valor menor o igual que cero deja la sugerencia sin redondear a múltiplos.
+    /// Sin migración — mismo patrón que <see cref="DiasCoberturaObjetivo"/>. Default <c>100</c>.</summary>
+    public static readonly ParametroConocido RedondeoSugerenciaPrecio =
+        new("redondeo_sugerencia_precio", typeof(decimal), "100");
+
     private static readonly IReadOnlyDictionary<string, ParametroConocido> PorClave =
         new[]
         {
             ToleranciaPago, ImporteAdicionalRecarga, SlotsTicketsEspera,
             ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento,
-            DiasRotacion, DiasCoberturaObjetivo
+            DiasRotacion, DiasCoberturaObjetivo, RedondeoSugerenciaPrecio
         }.ToDictionary(p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Devuelve el registro de <paramref name="clave"/>, o rechaza con un error de

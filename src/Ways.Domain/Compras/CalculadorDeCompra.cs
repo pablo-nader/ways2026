@@ -78,14 +78,17 @@ public static class CalculadorDeCompra
     /// mueve el neto en sentido contrario: el total del comprobante es el que se tipeó. Solo existe
     /// en un comprobante que discrimina IVA (uno que no discrimina ya es un precio final).
     /// <paramref name="percepciones"/> ya viene validada por <see cref="ReglaDePercepciones"/> y se
-    /// suma al total tal como la imprimió el proveedor.
+    /// suma al total tal como la imprimió el proveedor. <paramref name="multiploDeRedondeo"/> es el valor de
+    /// <c>redondeo_sugerencia_precio</c> de la empresa de la compra, que el llamador resuelve una sola vez; el
+    /// <c>0</c> por defecto deja el precio sugerido sin redondear a múltiplos.
     /// </summary>
     public static CompraCalculada Calcular(
         IReadOnlyList<LineaDeCompra> lineas, bool discriminaIva,
         IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes,
         IReadOnlyDictionary<int, decimal>? ivaImpreso = null,
         bool preciosIncluyenIva = false,
-        IReadOnlyList<PercepcionDeCompra>? percepciones = null)
+        IReadOnlyList<PercepcionDeCompra>? percepciones = null,
+        decimal multiploDeRedondeo = 0m)
     {
         if (!discriminaIva && ivaImpreso is { Count: > 0 })
         {
@@ -164,7 +167,7 @@ public static class CalculadorDeCompra
                 var (margenGrupo, margenProveedor) = margenes.TryGetValue(idArticulo, out var margen)
                     ? margen
                     : (null, null);
-                precioSugerido = SugeridorDePrecio.Sugerir(costoEfectivo, null, null, margenGrupo, margenProveedor);
+                precioSugerido = SugeridorDePrecio.Sugerir(costoEfectivo, margenGrupo, margenProveedor, multiploDeRedondeo);
             }
 
             items.Add(new ItemCalculado(linea.Orden, linea.IdArticulo, cantidad, total, costoEfectivo, precioSugerido));

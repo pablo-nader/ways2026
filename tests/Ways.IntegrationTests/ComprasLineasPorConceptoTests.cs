@@ -213,7 +213,7 @@ public class ComprasLineasPorConceptoTests(WaysApiFixture fixture) : IClassFixtu
         var creada = await CrearBorradorAsync(
             ctx, Solicitud(ctx, ctx.IdTipoCFA, [DeArticulo(ctx), Concepto(ctx, "Flete", 500m)]));
         Assert.Equal(1815m, creada.Total);
-        Assert.Equal(181.5m, creada.Items[0].PrecioSugerido);
+        Assert.Equal(200m, creada.Items[0].PrecioSugerido);
         Assert.Null(creada.Items[1].PrecioSugerido);
 
         await ConfirmarAsync(ctx, creada.Id);

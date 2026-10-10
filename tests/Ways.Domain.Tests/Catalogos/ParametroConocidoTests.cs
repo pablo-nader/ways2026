@@ -15,7 +15,8 @@ public class ParametroConocidoTests
     [InlineData("dias_alerta_vencimiento")]
     [InlineData("dias_rotacion")]
     [InlineData("dias_cobertura_objetivo")]
-    public void LasNueveClavesConocidasEstanRegistradas(string clave)
+    [InlineData("redondeo_sugerencia_precio")]
+    public void LasDiezClavesConocidasEstanRegistradas(string clave)
     {
         var conocido = ParametroConocido.Buscar(clave);
 
@@ -48,6 +49,13 @@ public class ParametroConocidoTests
     {
         Assert.Equal(typeof(int), ParametroConocido.DiasCoberturaObjetivo.TipoClr);
         Assert.Equal("7", ParametroConocido.DiasCoberturaObjetivo.ValorPorDefecto);
+    }
+
+    [Fact]
+    public void RedondeoSugerenciaPrecioDeclaraElDefaultEn100()
+    {
+        Assert.Equal(typeof(decimal), ParametroConocido.RedondeoSugerenciaPrecio.TipoClr);
+        Assert.Equal("100", ParametroConocido.RedondeoSugerenciaPrecio.ValorPorDefecto);
     }
 
     [Fact]

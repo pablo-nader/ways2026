@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
 using Ways.Application.Familias;
+using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Application.Usuarios;
@@ -69,7 +70,7 @@ namespace Ways.Application.Articulos;
 /// </summary>
 public class ServicioDeArticulos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
-    GuardaDeReferencias guarda, ServicioDePrecios servicioDePrecios)
+    GuardaDeReferencias guarda, ServicioDePrecios servicioDePrecios, ServicioDeParametros servicioDeParametros)
 {
     /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.4; design.md:60, decisión 9): el
     /// tope de paginado/selección — YA existía como el literal <c>200</c> del clamp de abajo, la
@@ -1012,10 +1013,26 @@ public class ServicioDeArticulos(
     /// <summary>Spec: Margin-Based Price Suggestion — resuelve <c>margenGrupo</c>/
     /// <c>margenProveedor</c> desde las referencias del artículo y delega el cálculo puro en
     /// <see cref="SugeridorDePrecio"/>. Nunca persiste un <c>precios</c> row (design decision
-    /// 8: "called but never auto-applied").</summary>
-    public async Task<SugerenciaDePrecio> SugerirPrecioAsync(int idArticulo, CancellationToken ct = default)
+    /// 8: "called but never auto-applied"). El costo base es el <c>costo_nominal</c> guardado o, si no
+    /// lo tiene, el que sale de normalizar el costo de lista (ver <see cref="CalcularCostoBaseAsync"/>).
+    /// Con <paramref name="idEmpresa"/> el múltiplo de redondeo es el de esa empresa
+    /// (<c>redondeo_sugerencia_precio</c>); sin ella, el default del parámetro. Una empresa que no
+    /// existe o no es visible para el tenant es un 404, igual que en la tesorería y los reportes.</summary>
+    public async Task<SugerenciaDePrecio> SugerirPrecioAsync(
+        int idArticulo, int? idEmpresa = null, CancellationToken ct = default)
     {
         var articulo = await BuscarAsync(idArticulo, ct);
+
+        var multiploDeRedondeo = decimal.Parse(ParametroConocido.RedondeoSugerenciaPrecio.ValorPorDefecto, CultureInfo.InvariantCulture);
+        if (idEmpresa is { } empresa)
+        {
+            if (!await db.Empresas.AnyAsync(e => e.Id == empresa, ct))
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la empresa {empresa}.");
+            }
+
+            multiploDeRedondeo = await servicioDeParametros.ResolverRedondeoDeSugerenciaAsync(empresa, ct);
+        }
 
         var margenGrupo = articulo.IdGrupo is { } idGrupo
             ? await db.Grupos.Where(g => g.Id == idGrupo).Select(g => g.Margen).FirstOrDefaultAsync(ct)
@@ -1025,10 +1042,37 @@ public class ServicioDeArticulos(
             ? await db.Proveedores.Where(p => p.Id == idProveedor).Select(p => p.Margen).FirstOrDefaultAsync(ct)
             : null;
 
-        var precioSugerido = SugeridorDePrecio.Sugerir(
-            articulo.CostoNominal, articulo.CostoLista, articulo.DescuentoProveedor, margenGrupo, margenProveedor);
+        var costoBase = await CalcularCostoBaseAsync(articulo, ct);
+        var precioSugerido = SugeridorDePrecio.Sugerir(costoBase, margenGrupo, margenProveedor, multiploDeRedondeo);
 
         return new SugerenciaDePrecio(precioSugerido);
+    }
+
+    /// <summary><c>costo_nominal</c> guardado o, si el artículo no lo tiene, el costo normalizado del costo de
+    /// lista (por unidad, con IVA y neto del descuento): el costo de lista puede estar por bulto o sin IVA y no
+    /// sirve crudo. <c>null</c> si tampoco hay costo de lista, si es por bulto sin unidades por bulto o si la
+    /// alícuota del artículo ya no existe.</summary>
+    private async Task<decimal?> CalcularCostoBaseAsync(Articulo articulo, CancellationToken ct)
+    {
+        if (articulo.CostoNominal is { } nominal)
+        {
+            return nominal;
+        }
+
+        if (articulo.CostoLista is null
+            || CalculadorDeCostoNominal.BultoSinUnidades(articulo.CostoListaPor, articulo.UnidadesPorBulto))
+        {
+            return null;
+        }
+
+        if (await LeerPorcentajeDeAlicuotaIvaAsync(articulo.IdAlicuotaIva, ct) is not { } porcentajeIva)
+        {
+            return null;
+        }
+
+        return CalculadorDeCostoNominal.Calcular(
+            articulo.CostoLista, articulo.CostoListaPor, articulo.CostoListaIncluyeIva, articulo.UnidadesPorBulto,
+            porcentajeIva, articulo.DescuentoProveedor);
     }
 
     /// <summary><see cref="ArticuloEmpresa.IdTenant"/> NO se auto-estampa (task 1.4: no hereda

@@ -579,7 +579,8 @@ public class ArticulosAltaEnFamiliaTests(WaysApiFixture fixture) : IClassFixture
 
         return (db, new ServicioDeArticulos(
             db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto), new GuardaDeReferencias(db, new InspectorDeUso(db)),
-            new ServicioDePrecios(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto))));
+            new ServicioDePrecios(db, reloj, contexto, new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto)),
+            new Ways.Application.Parametros.ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, contexto))));
     }
 
     /// <summary>Si el guardado de las filas de precio falla, se revierte el alta ENTERA —el artículo ya
