@@ -475,7 +475,7 @@ describe('CompraEditor — percepciones', () => {
     const usuario = userEvent.setup()
 
     renderEditor(1)
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const tabla = tablaDePercepciones()
     expect(within(tabla).getByLabelText('Importe Percepción IIBB')).toHaveValue('30,00')

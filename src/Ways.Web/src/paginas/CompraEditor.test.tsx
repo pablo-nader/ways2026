@@ -294,7 +294,7 @@ describe('CompraEditor — borrador existente', () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
     renderEditor()
 
-    expect(await screen.findByDisplayValue('0003-00012345')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('00012345')).toBeInTheDocument()
     expect(screen.getByText('Elegido: Fideos 500g')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeInTheDocument()
   })
@@ -305,7 +305,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const costo = screen.getByLabelText('Costo unitario')
     await usuario.clear(costo)
@@ -335,7 +335,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     expect(await screen.findByText('Ya existe una compra confirmada con ese número.')).toBeInTheDocument()
@@ -351,7 +351,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
 
     const botonConfirmarFinal = screen.getByRole('button', { name: 'Confirmar' })
@@ -384,7 +384,7 @@ describe('CompraEditor — borrador existente', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: 'Confirmar compra' }))
     await usuario.click(screen.getByLabelText(/Confirmo que quiero confirmar esta compra/))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar' }))
@@ -679,8 +679,86 @@ describe('CompraEditor — selectores del encabezado', () => {
     )
     renderEditor()
 
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue('3'))
+  })
+})
+
+describe('CompraEditor — número de comprobante', () => {
+  it('rellena con ceros al salir de cada campo y manda PPPP-NNNNNNNN', async () => {
+    mockearReferencia()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), '10')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '9985')
+    await usuario.tab()
+
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0010')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00009985')
+
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('0010-00009985')
+  })
+
+  it('solo admite dígitos y respeta el largo máximo de cada campo', async () => {
+    mockearReferencia()
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await usuario.type(screen.getByLabelText('Punto de venta del comprobante'), 'a1b2c3d4e5')
+    await usuario.type(screen.getByLabelText('Número del comprobante'), '1x2345678901')
+
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('1234')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('12345678')
+  })
+
+  it('sin ninguna de las dos partes manda numeroExterno null', async () => {
+    mockearReferencia()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/compras' ? Promise.resolve(compraFixture({ id: 99 })) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`)),
+    )
+    const usuario = userEvent.setup()
+
+    renderEditor('nueva')
+    const proveedor = await screen.findByLabelText('Proveedor')
+    await screen.findByRole('option', { name: 'Proveedor Uno SA' })
+    await waitFor(() => expect(proveedor).toBeEnabled())
+    await usuario.selectOptions(proveedor, '1')
+    await usuario.selectOptions(screen.getByLabelText('Tipo'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBeNull()
+  })
+
+  it('un número anterior al formato no se pierde ni se altera si no se edita', async () => {
+    mockearReferencia((ruta) =>
+      ruta === '/compras/1' ? Promise.resolve(compraFixture({ numeroExterno: 'A-0001-00000012' })) : undefined,
+    )
+    apiPutMock.mockResolvedValue(compraFixture({ numeroExterno: 'A-0001-00000012' }))
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    expect(await screen.findByText('Número original: A-0001-00000012')).toBeInTheDocument()
+    const numero = screen.getByLabelText('Número del comprobante')
+    await usuario.click(numero)
+    await usuario.tab()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect((apiPutMock.mock.calls[0] as [string, Record<string, unknown>])[1].numeroExterno).toBe('A-0001-00000012')
   })
 })
 
@@ -690,7 +768,7 @@ describe('CompraEditor — líneas incompletas', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
@@ -719,7 +797,7 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
@@ -818,7 +896,7 @@ describe('CompraEditor — role gating', () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
 
     renderEditorProtegido()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     // el gate de rol de la ruta lo dejó pasar — no lo mandó a "/".
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
@@ -839,7 +917,7 @@ describe('CompraEditor — role gating', () => {
       mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(sinCostos) : undefined))
 
       renderEditorProtegido()
-      await screen.findByDisplayValue('0003-00012345')
+      await screen.findByDisplayValue('00012345')
 
       const fila = screen.getByRole('row', { name: /Fideos 500g/ })
       // lote, vencimiento, costo unitario, descuento, total y precio sugerido.
@@ -876,7 +954,7 @@ describe('CompraEditor — referencia fallida', () => {
     renderEditor()
 
     expect(await screen.findByText(/No se pudieron cargar los proveedores\./)).toBeInTheDocument()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
   })
 })
@@ -894,7 +972,7 @@ describe('CompraEditor — carga inicial', () => {
 
     resolverGet(compraFixture())
     await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
-    expect(await screen.findByDisplayValue('0003-00012345')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('00012345')).toBeInTheDocument()
   })
 })
 
@@ -1063,7 +1141,8 @@ describe('CompraEditor — pre-carga desde un gasto (?desdeGasto=)', () => {
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
     expect(screen.getByLabelText('Fecha del comprobante')).toHaveValue('2026-08-15')
-    expect(screen.getByLabelText('Número de comprobante')).toHaveValue('0003-00099999')
+    expect(screen.getByLabelText('Punto de venta del comprobante')).toHaveValue('0003')
+    expect(screen.getByLabelText('Número del comprobante')).toHaveValue('00099999')
     expect(screen.getByLabelText('Observaciones')).toHaveValue('Pago de mercadería')
   })
 
@@ -1234,7 +1313,7 @@ describe('CompraEditor — líneas por concepto', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     expect(screen.getByLabelText('Descripción del concepto')).toHaveValue('Flete')
     // solo la línea de artículo ofrece bultos y actualiza costo
@@ -1467,7 +1546,7 @@ describe('CompraEditor — remito y desglose de IVA', () => {
     const usuario = userEvent.setup()
 
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await waitFor(() => expect(screen.getByLabelText('Discrimina IVA')).toBeChecked())
 
     // El IVA guardado (200) difiere del que sale del neto (199,50): es un override y se conserva.
@@ -1639,7 +1718,7 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
   async function abrirBusquedaEnUnaLineaNueva(termino: string) {
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), termino)
     return usuario
@@ -1761,7 +1840,7 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
     apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getAllByLabelText('Costo unitario').at(-1)!, '12,3456')
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'AB-1234')
@@ -1909,7 +1988,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
       return undefined
     })
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const unidades = screen.getByLabelText('Unidades')
     await waitFor(() => expect(unidades).toHaveAttribute('step', '1'))
@@ -1933,7 +2012,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
     })
     const usuario = userEvent.setup()
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
@@ -1954,7 +2033,7 @@ describe('CompraEditor — unidades según la unidad de venta del artículo', ()
       return undefined
     })
     renderEditor()
-    await screen.findByDisplayValue('0003-00012345')
+    await screen.findByDisplayValue('00012345')
 
     const unidades = screen.getByLabelText('Unidades')
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/10'))

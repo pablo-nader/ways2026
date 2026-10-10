@@ -67,6 +67,7 @@ import {
 import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
+import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
 import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
 
 function formatearMoneda(valor: number | null): string {
@@ -1511,7 +1512,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               </div>
             )}
           </div>
-          <div className="col-md-3">
+          <div className="col-md-2">
             <label className="form-label" htmlFor="compra-punto-venta">
               Punto de venta
             </label>
@@ -1530,17 +1531,15 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               ))}
             </select>
           </div>
-          <div className="col-md-2">
-            <label className="form-label" htmlFor="compra-numero-externo">
+          <div className="col-md-3">
+            <span className="form-label d-block" id="compra-numero-externo-etiqueta">
               Número de comprobante
-            </label>
-            <input
-              id="compra-numero-externo"
-              type="text"
-              className="form-control"
-              value={encabezado.numeroExterno}
+            </span>
+            <CampoNumeroDeComprobante
+              idBase="compra-numero-externo"
+              valor={encabezado.numeroExterno}
               disabled={!esBorrador || ocupado || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, numeroExterno: e.target.value }))}
+              onChange={(numeroExterno) => setEncabezado((prev) => ({ ...prev, numeroExterno }))}
             />
           </div>
           <div className="col-md-2">
