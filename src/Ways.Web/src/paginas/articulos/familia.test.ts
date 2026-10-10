@@ -36,6 +36,8 @@ function valoresFixture(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {
     controlaLote: false,
     acumulaEnVenta: true,
     costoLista: 100,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: 10,
     costoNominal: 90,
     ...sobrescribir,
@@ -67,7 +69,7 @@ function familiaListado(sobrescribir: Partial<FamiliaListado> = {}): FamiliaList
 }
 
 describe('CAMPOS_COMPARTIDOS', () => {
-  it('son los trece campos compartidos, con las columnas del servidor y en su orden de declaración', () => {
+  it('son los quince campos compartidos, con las columnas del servidor y en su orden de declaración', () => {
     expect(CAMPOS_COMPARTIDOS.map((c) => c.columna)).toEqual([
       'id_area',
       'id_categoria',
@@ -80,6 +82,8 @@ describe('CAMPOS_COMPARTIDOS', () => {
       'controla_lote',
       'acumula_en_venta',
       'costo_lista',
+      'costo_lista_por',
+      'costo_lista_incluye_iva',
       'descuento_proveedor',
       'costo_nominal',
     ])
@@ -91,13 +95,13 @@ describe('CAMPOS_COMPARTIDOS', () => {
 
   it('cada campo tiene una etiqueta legible, distinta de las demás', () => {
     const etiquetas = CAMPOS_COMPARTIDOS.map((c) => c.etiqueta)
-    expect(new Set(etiquetas).size).toBe(13)
+    expect(new Set(etiquetas).size).toBe(15)
     expect(etiquetas.every((e) => e.trim() !== '')).toBe(true)
   })
 })
 
 describe('valoresDeFamiliaAFormulario', () => {
-  it('copia los trece valores con la forma del formulario: números como están y decimales como texto', () => {
+  it('copia los quince valores con la forma del formulario: números como están y decimales como texto', () => {
     expect(valoresDeFamiliaAFormulario(valoresFixture())).toEqual({
       idArea: 1,
       idCategoria: 2,
@@ -110,6 +114,8 @@ describe('valoresDeFamiliaAFormulario', () => {
       controlaLote: false,
       acumulaEnVenta: true,
       costoLista: '100',
+      costoListaPor: 'Unidad',
+      costoListaIncluyeIva: true,
       descuentoProveedor: '10',
       costoNominal: '90',
     })
@@ -124,6 +130,8 @@ describe('valoresDeFamiliaAFormulario', () => {
         idProveedorHabitual: null,
         unidadesPorBulto: null,
         costoLista: null,
+        costoListaPor: 'Unidad',
+        costoListaIncluyeIva: true,
         descuentoProveedor: null,
         costoNominal: null,
       }),
@@ -139,6 +147,15 @@ describe('valoresDeFamiliaAFormulario', () => {
       descuentoProveedor: '',
       costoNominal: '',
     })
+  })
+
+  it('la base y el IVA del costo de lista pasan tal cual; sin visibilidad de costos quedan en los valores por defecto', () => {
+    expect(
+      valoresDeFamiliaAFormulario(valoresFixture({ costoListaPor: 'Bulto', costoListaIncluyeIva: false })),
+    ).toMatchObject({ costoListaPor: 'Bulto', costoListaIncluyeIva: false })
+    expect(
+      valoresDeFamiliaAFormulario(valoresFixture({ costoListaPor: null, costoListaIncluyeIva: null })),
+    ).toMatchObject({ costoListaPor: 'Unidad', costoListaIncluyeIva: true })
   })
 
   it('un cero NO es "sin valor": 0 viaja como "0"', () => {
@@ -172,6 +189,8 @@ describe('camposCompartidosModificados', () => {
     ['controlaLote', { controlaLote: true }],
     ['acumulaEnVenta', { acumulaEnVenta: false }],
     ['costoLista', { costoLista: '120' }],
+    ['costoListaPor', { costoListaPor: 'Bulto' }],
+    ['costoListaIncluyeIva', { costoListaIncluyeIva: false }],
     ['descuentoProveedor', { descuentoProveedor: '15' }],
     ['costoNominal', { costoNominal: '95' }],
   ]
@@ -180,7 +199,7 @@ describe('camposCompartidosModificados', () => {
     expect(camposCompartidosModificados(formulario(), formulario(cambio)).map((c) => c.clave)).toEqual([clave])
   })
 
-  it('los trece casos de arriba cubren los trece campos compartidos', () => {
+  it('los quince casos de arriba cubren los quince campos compartidos', () => {
     expect(cambios.map(([clave]) => clave).sort()).toEqual(CAMPOS_COMPARTIDOS.map((c) => c.clave).sort())
   })
 
@@ -245,6 +264,13 @@ describe('camposNombradosEnMensaje', () => {
     expect(camposNombradosEnMensaje('difieren costo_nominal, id_grupo, costo_nominal.').map((c) => c.clave)).toEqual([
       'idGrupo',
       'costoNominal',
+    ])
+  })
+
+  it('nombra la base y el IVA del costo de lista por sus columnas, sin confundirlas con costo_lista', () => {
+    expect(camposNombradosEnMensaje('difieren costo_lista_por, costo_lista_incluye_iva.').map((c) => c.clave)).toEqual([
+      'costoListaPor',
+      'costoListaIncluyeIva',
     ])
   })
 

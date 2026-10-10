@@ -14,6 +14,8 @@ const valores: ValoresCompartidosDeLaFamilia = {
   controlaLote: false,
   acumulaEnVenta: true,
   costoLista: null,
+  costoListaPor: 'Unidad',
+  costoListaIncluyeIva: true,
   descuentoProveedor: null,
   costoNominal: null,
 }

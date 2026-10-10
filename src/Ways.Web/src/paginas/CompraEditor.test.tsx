@@ -158,6 +158,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -1722,6 +1724,35 @@ describe('CompraEditor — códigos de proveedor en el selector de artículos', 
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1].costoLista).toBe(12.35)
+  })
+
+  describe('el modo de IVA de la compra decide si el costo del artículo creado trae el IVA', () => {
+    async function crearYLeerElCuerpo(compra: CompraDetalle) {
+      mockearBusqueda([], compra)
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      const usuario = await abrirBusquedaEnUnaLineaNueva('AB-1234')
+      const dialogo = await abrirModalConAreaCargada(usuario, 'AB-1234')
+      await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba nueva')
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+      return apiPostMock.mock.calls[0][1] as Record<string, unknown>
+    }
+
+    it('una compra que discrimina IVA con precios netos crea el artículo con el costo sin IVA, por unidad y sin costoNominal', async () => {
+      const cuerpo = await crearYLeerElCuerpo(compraFixture({ items: [], discriminaIva: true, preciosIncluyenIva: false }))
+
+      expect(cuerpo).toMatchObject({ costoListaPor: 'Unidad', costoListaIncluyeIva: false })
+      expect(cuerpo).not.toHaveProperty('costoNominal')
+    })
+
+    it('una compra que discrimina IVA con precios que incluyen IVA crea el artículo con el costo con IVA', async () => {
+      const cuerpo = await crearYLeerElCuerpo(compraFixture({ items: [], discriminaIva: true, preciosIncluyenIva: true }))
+
+      expect(cuerpo).toMatchObject({ costoListaPor: 'Unidad', costoListaIncluyeIva: true })
+      expect(cuerpo).not.toHaveProperty('costoNominal')
+    })
   })
 
   it('crear desde un texto con aspecto de nombre precarga el nombre y deja el código vacío', async () => {

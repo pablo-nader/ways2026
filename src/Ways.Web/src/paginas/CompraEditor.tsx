@@ -8,6 +8,7 @@ import {
   etiquetaDeEstadoCompra,
   itemAFormulario,
   ivaImpresoDesdeDetalle,
+  costoDeLineaIncluyeIva,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
   lineaDeConceptoVacia,
@@ -133,6 +134,8 @@ type PropsSelectorDeArticulo = {
   alicuotas: AlicuotaIvaListado[]
   idAlicuotaIvaDeLaLinea: number | ''
   costoDeLaLinea: number | null
+  /** El costo unitario de la línea ya trae el IVA (ver `costoDeLineaIncluyeIva`). */
+  costoIncluyeIva: boolean
   onElegir: (articulo: ArticuloListado) => void
 }
 
@@ -150,6 +153,7 @@ function SelectorDeArticulo({
   alicuotas,
   idAlicuotaIvaDeLaLinea,
   costoDeLaLinea,
+  costoIncluyeIva,
   onElegir,
 }: PropsSelectorDeArticulo) {
   const [termino, setTermino] = useState('')
@@ -330,6 +334,7 @@ function SelectorDeArticulo({
           alicuotas={alicuotas}
           idAlicuotaIvaDeLaLinea={idAlicuotaIvaDeLaLinea}
           costoDeLaLinea={costoDeLaLinea}
+          costoIncluyeIva={costoIncluyeIva}
           onCreado={elegirCreado}
           onCancelar={() => setCreando(null)}
         />
@@ -345,6 +350,8 @@ type PropsFilaDeItem = {
   alicuotas: AlicuotaIvaListado[]
   disabled: boolean
   discriminaIva: boolean
+  /** El costo unitario de las líneas ya trae el IVA (ver `costoDeLineaIncluyeIva`). */
+  costoIncluyeIva: boolean
   porcentajePorAlicuota: Record<number, number>
   idProveedor: number | null
   nombreProveedor: string
@@ -357,6 +364,7 @@ function FilaDeItem({
   alicuotas,
   disabled,
   discriminaIva,
+  costoIncluyeIva,
   porcentajePorAlicuota,
   idProveedor,
   nombreProveedor,
@@ -397,6 +405,7 @@ function FilaDeItem({
             alicuotas={alicuotas}
             idAlicuotaIvaDeLaLinea={linea.idAlicuotaIva}
             costoDeLaLinea={linea.costoUnitario}
+            costoIncluyeIva={costoIncluyeIva}
             onElegir={(a) => {
               // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
               // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
@@ -1582,6 +1591,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                       alicuotas={alicuotas ?? []}
                       disabled={ocupado || !referenciaOk || !puedeEscribir}
                       discriminaIva={discriminaIva}
+                      costoIncluyeIva={costoDeLineaIncluyeIva(discriminaIva, preciosFinales)}
                       porcentajePorAlicuota={porcentajePorAlicuota}
                       idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
                       nombreProveedor={

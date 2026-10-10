@@ -16,6 +16,8 @@ function valores(sobrescribir: Partial<ValoresCompartidosDeLaFamilia> = {}): Val
     controlaLote: false,
     acumulaEnVenta: true,
     costoLista: 1234.5,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: 5,
     costoNominal: 99,
     ...sobrescribir,
@@ -43,6 +45,8 @@ describe('formatearValorCompartido', () => {
     ['controlaLote', 'No'],
     ['acumulaEnVenta', 'Sí'],
     ['costoLista', '$ 1.234,50'],
+    ['costoListaPor', 'Unidad'],
+    ['costoListaIncluyeIva', 'Sí'],
     ['descuentoProveedor', '5%'],
     ['costoNominal', '$ 99,00'],
   ] as const)('%s se muestra como "%s"', (clave, esperado) => {
@@ -54,7 +58,7 @@ describe('formatearValorCompartido', () => {
     expect(formatearValorCompartido('unidadVenta', valores({ unidadVenta: 'Docena' as unknown as UnidadVenta }), nombres)).toBe('Docena')
   })
 
-  it('los trece campos compartidos tienen formato: la prueba de arriba cubre cada uno', () => {
+  it('los quince campos compartidos tienen formato: la prueba de arriba cubre cada uno', () => {
     expect(CAMPOS_COMPARTIDOS.map((c) => c.clave).sort()).toEqual(
       [
         'idArea',
@@ -68,6 +72,8 @@ describe('formatearValorCompartido', () => {
         'controlaLote',
         'acumulaEnVenta',
         'costoLista',
+        'costoListaPor',
+        'costoListaIncluyeIva',
         'descuentoProveedor',
         'costoNominal',
       ].sort(),
@@ -100,6 +106,20 @@ describe('formatearValorCompartido', () => {
     expect(formatearValorCompartido('costoLista', sinValores, nombres)).toBe('—')
     expect(formatearValorCompartido('descuentoProveedor', sinValores, nombres)).toBe('—')
     expect(formatearValorCompartido('costoNominal', sinValores, nombres)).toBe('—')
+  })
+
+  it('la base y el IVA del costo de lista: Bulto, y Sí o No', () => {
+    const v = valores({ costoListaPor: 'Bulto', costoListaIncluyeIva: false })
+
+    expect(formatearValorCompartido('costoListaPor', v, nombres)).toBe('Bulto')
+    expect(formatearValorCompartido('costoListaIncluyeIva', v, nombres)).toBe('No')
+  })
+
+  it('sin visibilidad de costos la base y el IVA del costo de lista son una raya', () => {
+    const v = valores({ costoListaPor: null, costoListaIncluyeIva: null })
+
+    expect(formatearValorCompartido('costoListaPor', v, nombres)).toBe('—')
+    expect(formatearValorCompartido('costoListaIncluyeIva', v, nombres)).toBe('—')
   })
 
   it('un cero es un valor: "$ 0,00" y "0%"', () => {

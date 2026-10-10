@@ -3,6 +3,7 @@ import {
   aLineaSolicitada,
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
+  costoDeLineaIncluyeIva,
   construirQueryDeCompras,
   etiquetaDeEstadoCompra,
   filtrosDeComprasVacios,
@@ -199,6 +200,29 @@ describe('líneas por concepto', () => {
     expect(totales.subtotal).toBe(1000)
     expect(totales.ivaTotal).toBe(210)
     expect(totales.total).toBe(1210)
+  })
+})
+
+describe('costoDeLineaIncluyeIva', () => {
+  it.each([
+    ['discrimina IVA y los precios no son finales: el costo es neto', true, false, false],
+    ['discrimina IVA y los precios son finales: el costo trae el IVA', true, true, true],
+    ['no discrimina IVA: el costo es el final', false, false, true],
+  ])('%s', (_nombre, discriminaIva, preciosFinales, esperado) => {
+    expect(costoDeLineaIncluyeIva(discriminaIva, preciosFinales)).toBe(esperado)
+  })
+
+  it('coincide con cómo calcula el costo efectivo de la línea: solo suma el IVA cuando el costo es neto', () => {
+    const linea = { ...lineaDeCompraVacia(1), unidades: '1', costoUnitario: 100, idAlicuotaIva: 3 as const }
+    const costoEfectivo = (discriminaIva: boolean, preciosFinales: boolean) =>
+      calcularTotalesDeCompra([lineaFormularioACalculo(linea, { 3: 21 })], discriminaIva, {}, preciosFinales).items[0].costoEfectivo
+
+    expect(costoEfectivo(true, false)).toBe(121)
+    expect(costoDeLineaIncluyeIva(true, false)).toBe(false)
+    expect(costoEfectivo(true, true)).toBe(100)
+    expect(costoDeLineaIncluyeIva(true, true)).toBe(true)
+    expect(costoEfectivo(false, false)).toBe(100)
+    expect(costoDeLineaIncluyeIva(false, false)).toBe(true)
   })
 })
 

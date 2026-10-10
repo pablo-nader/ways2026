@@ -499,6 +499,12 @@ export function lineaFormularioACalculo(
   }
 }
 
+/** `true` si el costo unitario tipeado en una línea ya trae el IVA. Solo es neto de IVA cuando el comprobante discrimina
+ * IVA y los precios no son finales (`preciosFinales`: discrimina y sus precios incluyen IVA). */
+export function costoDeLineaIncluyeIva(discriminaIva: boolean, preciosFinales: boolean): boolean {
+  return !(discriminaIva && !preciosFinales)
+}
+
 function calcularItem(l: LineaDeCalculo, discriminaIva: boolean, preciosIncluyenIva: boolean): ItemCalculado {
   const cantidad = redondear(l.unidades + l.bultos * l.unidadesPorBulto, 3)
   const bruto = redondear(cantidad * l.costoUnitario, 2)
@@ -506,7 +512,7 @@ function calcularItem(l: LineaDeCalculo, discriminaIva: boolean, preciosIncluyen
   const costoEfectivo =
     cantidad <= 0
       ? null
-      : discriminaIva && !preciosIncluyenIva
+      : !costoDeLineaIncluyeIva(discriminaIva, preciosIncluyenIva)
         ? redondear((total * (1 + l.porcentajeIva / 100)) / cantidad, 2)
         : redondear(total / cantidad, 2)
   return { cantidad, bruto, total, costoEfectivo }
