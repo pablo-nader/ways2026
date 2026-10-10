@@ -22,7 +22,7 @@ Slice 1 — header and cross-cutting fixes (no backend change):
 
 Slice 2 — supplier code on the purchase line (backend, DB gate approved 2026-10-10):
 
-- [ ] T5 `items_comprobante_compra.codigo_proveedor` (`citext` NULL, max 50, CHECK normalized; no FK, no unique index, no backfill): entity, configuration, migration, doc 10; request/response contracts; persisted on draft create/update for article and concepto lines; at confirm, article lines associate the code in `codigos_proveedor` (a code owned by another article of that supplier does not block: it stays on the line only). Route: delegated.
+- [x] T5 `items_comprobante_compra.codigo_proveedor` (`citext` NULL, max 50, CHECK normalized; no FK, no unique index, no backfill): entity, configuration, migration, doc 10; request/response contracts; persisted on draft create/update for article and concepto lines; at confirm, article lines associate the code in `codigos_proveedor` (a code owned by another article of that supplier does not block: it stays on the line only). Route: delegated. Commits 4d40dfef (backend, migration `ComprasCodigoProveedorEnLinea`, doc 10), fb4cb1eb (web types and mapper).
 
 Slice 3 — items grid (web):
 
@@ -59,7 +59,8 @@ Slice 3 — items grid (web):
 ## Progress
 
 - 2026-10-10: exploration done; slice 1 (T1-T4) implemented and reviewed; full web suite 3931 passed, tsc and oxlint clean.
+- 2026-10-10: T5 done: integration 3085, application 752, domain 1028, web 3936 passed; tsc and oxlint clean.
 
 ## Next step
 
-Deliver slice 1 as a PR, then T5.
+Deliver slices 1-2 (T1-T5) as PRs, then T6.
