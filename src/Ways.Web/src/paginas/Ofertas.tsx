@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeFamilias } from '../api/familias'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import {
   aAltaOferta,
   aValoresOferta,
   clienteDeOfertas,
   formularioOfertaVacio,
+  opcionesDeFamiliaDeOferta,
   opcionesDeLista,
   resumenDeBeneficio,
   type AlcanceOferta,
@@ -15,7 +17,15 @@ import {
 } from '../api/ofertas'
 import { clienteDePrecios } from '../api/precios'
 import { DIAS_SEMANA } from '../api/tipos'
-import type { ArticuloListado, CategoriaListado, EmpresaListado, GrupoListado, ListaPrecioListado, OfertaListado } from '../api/tipos'
+import type {
+  ArticuloListado,
+  CategoriaListado,
+  EmpresaListado,
+  FamiliaListado,
+  GrupoListado,
+  ListaPrecioListado,
+  OfertaListado,
+} from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
@@ -29,15 +39,17 @@ function validarFormulario(f: FormularioOferta): string | null {
   if (f.alcance === 'Articulo' && f.idArticulo === '') return 'Elegí un artículo para el alcance.'
   if (f.alcance === 'Grupo' && f.idGrupo === '') return 'Elegí un grupo para el alcance.'
   if (f.alcance === 'Categoria' && f.idCategoria === '') return 'Elegí una categoría para el alcance.'
+  if (f.alcance === 'Familia' && f.idFamilia === '') return 'Elegí una familia para el alcance.'
   if (f.beneficio === 'PrecioUnitario' && f.precioUnitario.trim() === '') return 'Ingresá el precio unitario del beneficio.'
   if (f.beneficio === 'Porcentaje' && f.porcentaje.trim() === '') return 'Ingresá el porcentaje del beneficio.'
   if (f.beneficio === 'ImporteFijo' && f.importeFijo.trim() === '') return 'Ingresá el importe fijo del beneficio.'
   return null
 }
 
-function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: CategoriaListado[]): string {
+function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: CategoriaListado[], familias: FamiliaListado[]): string {
   if (o.idArticulo !== null) return `Artículo #${o.idArticulo}`
   if (o.idGrupo !== null) return `Grupo: ${grupos.find((g) => g.id === o.idGrupo)?.nombre ?? o.idGrupo}`
+  if (o.idFamilia !== null) return `Familia: ${familias.find((f) => f.id === o.idFamilia)?.nombre ?? o.idFamilia}`
   return `Categoría: ${categorias.find((c) => c.id === o.idCategoria)?.nombre ?? o.idCategoria}`
 }
 
@@ -52,6 +64,7 @@ export function Ofertas() {
   const [ofertas, setOfertas] = useState<OfertaListado[] | null>(null)
   const [grupos, setGrupos] = useState<GrupoListado[]>([])
   const [categorias, setCategorias] = useState<CategoriaListado[]>([])
+  const [familias, setFamilias] = useState<FamiliaListado[]>([])
   const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
   const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[]>([])
   const [avisosCatalogos, setAvisosCatalogos] = useState<string[]>([])
@@ -112,6 +125,13 @@ export function Ofertas() {
         agregarAvisoCatalogo(
           'No se pudieron cargar las categorías: el alcance por categoría no va a estar disponible hasta recargar la página.',
         )
+      })
+    clienteDeFamilias
+      .listar()
+      .then(setFamilias)
+      .catch(() => {
+        setFamilias([])
+        agregarAvisoCatalogo('No se pudieron cargar las familias: el alcance por familia no va a estar disponible hasta recargar la página.')
       })
     clienteDeOrganizacion
       .listarEmpresas()
@@ -273,6 +293,7 @@ export function Ofertas() {
             valor={formulario}
             grupos={grupos}
             categorias={categorias}
+            familias={familias}
             empresas={empresas}
             listasPrecio={listasPrecio}
             guardando={guardando}
@@ -303,7 +324,7 @@ export function Ofertas() {
                 {ofertas?.map((o) => (
                   <tr key={o.id}>
                     <td>{o.nombre}</td>
-                    <td>{textoAlcance(o, grupos, categorias)}</td>
+                    <td>{textoAlcance(o, grupos, categorias, familias)}</td>
                     <td>{resumenDeBeneficio(o)}</td>
                     <td>{o.prioridad}</td>
                     <td>{o.acumulable ? 'Sí' : 'No'}</td>
@@ -347,6 +368,7 @@ function FormularioOfertaCampos({
   valor,
   grupos,
   categorias,
+  familias,
   empresas,
   listasPrecio,
   guardando,
@@ -358,6 +380,7 @@ function FormularioOfertaCampos({
   valor: FormularioOferta
   grupos: GrupoListado[]
   categorias: CategoriaListado[]
+  familias: FamiliaListado[]
   empresas: EmpresaListado[]
   listasPrecio: ListaPrecioListado[]
   guardando: boolean
@@ -368,6 +391,7 @@ function FormularioOfertaCampos({
 }) {
   const esNuevo = valor.id === null
   const opcionesLista = opcionesDeLista(listasPrecio)
+  const opcionesFamilia = opcionesDeFamiliaDeOferta(familias)
 
   function alternarDia(dia: number) {
     const yaEsta = valor.diasSemana.includes(dia)
@@ -468,7 +492,7 @@ function FormularioOfertaCampos({
           </div>
 
           <div className="col-12 d-flex gap-3">
-            {(['Articulo', 'Grupo', 'Categoria'] as AlcanceOferta[]).map((opcion) => (
+            {(['Articulo', 'Grupo', 'Categoria', 'Familia'] as AlcanceOferta[]).map((opcion) => (
               <div className="form-check" key={opcion}>
                 <input
                   id={`of-alcance-${opcion}`}
@@ -479,7 +503,7 @@ function FormularioOfertaCampos({
                   onChange={() => onCambio({ ...valor, alcance: opcion })}
                 />
                 <label className="form-check-label" htmlFor={`of-alcance-${opcion}`}>
-                  {opcion === 'Articulo' ? 'Artículo' : opcion === 'Grupo' ? 'Grupo' : 'Categoría'}
+                  {opcion === 'Articulo' ? 'Artículo' : opcion === 'Grupo' ? 'Grupo' : opcion === 'Familia' ? 'Familia' : 'Categoría'}
                 </label>
               </div>
             ))}
@@ -536,6 +560,29 @@ function FormularioOfertaCampos({
                 {categorias.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {valor.alcance === 'Familia' && (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="of-familia">
+                Familia objetivo
+              </label>
+              <select
+                id="of-familia"
+                className="form-select"
+                value={valor.idFamilia}
+                onChange={(e) => onCambio({ ...valor, idFamilia: e.target.value === '' ? '' : Number(e.target.value) })}
+              >
+                <option value="" disabled>
+                  Elegir…
+                </option>
+                {opcionesFamilia.map((o) => (
+                  <option key={o.valor} value={o.valor}>
+                    {o.etiqueta}
                   </option>
                 ))}
               </select>

@@ -909,6 +909,7 @@ export type OfertaListado = {
   idArticulo: number | null
   idGrupo: number | null
   idCategoria: number | null
+  idFamilia: number | null
   fechaDesde: string | null
   fechaHasta: string | null
   horaDesde: string | null
@@ -932,6 +933,7 @@ export type AltaOferta = {
   idArticulo: number | null
   idGrupo: number | null
   idCategoria: number | null
+  idFamilia: number | null
   fechaDesde: string | null
   fechaHasta: string | null
   horaDesde: string | null

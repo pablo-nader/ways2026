@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { aAltaOferta, aValoresOferta, formularioOfertaVacio, opcionesDeLista, resumenDeBeneficio } from './ofertas'
-import type { ListaPrecioListado, OfertaListado } from './tipos'
+import {
+  aAltaOferta,
+  aValoresOferta,
+  formularioOfertaVacio,
+  opcionesDeFamiliaDeOferta,
+  opcionesDeLista,
+  resumenDeBeneficio,
+} from './ofertas'
+import type { FamiliaListado, ListaPrecioListado, OfertaListado } from './tipos'
 
 function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado {
   return {
@@ -10,6 +17,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     idArticulo: null,
     idGrupo: null,
     idCategoria: null,
+    idFamilia: null,
     fechaDesde: null,
     fechaHasta: null,
     horaDesde: null,
@@ -27,6 +35,10 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
   }
 }
 
+function familiaFixture(sobrescribir: Partial<FamiliaListado> = {}): FamiliaListado {
+  return { id: 1, nombre: 'Sabores', activo: true, cantidadArticulos: 3, ...sobrescribir }
+}
+
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
   return {
     id: 1,
@@ -42,48 +54,24 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
 }
 
 describe('aAltaOferta — exclusividad de alcance', () => {
-  it('fuerza idGrupo e idCategoria a null cuando el alcance es Articulo', () => {
-    const alta = aAltaOferta({
-      ...formularioOfertaVacio(),
-      nombre: 'Oferta',
-      alcance: 'Articulo',
-      idArticulo: 5,
-      idGrupo: 9,
-      idCategoria: 9,
-    })
+  /** Con las cuatro columnas de alcance cargadas a la vez, solo la del radio elegido sobrevive. */
+  const todasCargadas = { idArticulo: 5, idGrupo: 9, idCategoria: 8, idFamilia: 7 } as const
 
-    expect(alta.idArticulo).toBe(5)
-    expect(alta.idGrupo).toBeNull()
-    expect(alta.idCategoria).toBeNull()
+  it.each([
+    ['Articulo', { idArticulo: 5, idGrupo: null, idCategoria: null, idFamilia: null }],
+    ['Grupo', { idArticulo: null, idGrupo: 9, idCategoria: null, idFamilia: null }],
+    ['Categoria', { idArticulo: null, idGrupo: null, idCategoria: 8, idFamilia: null }],
+    ['Familia', { idArticulo: null, idGrupo: null, idCategoria: null, idFamilia: 7 }],
+  ] as const)('con alcance %s conserva solo su columna y fuerza las otras tres a null', (alcance, esperado) => {
+    const alta = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'Oferta', alcance, ...todasCargadas })
+
+    expect({ idArticulo: alta.idArticulo, idGrupo: alta.idGrupo, idCategoria: alta.idCategoria, idFamilia: alta.idFamilia }).toEqual(esperado)
   })
 
-  it('fuerza idArticulo e idCategoria a null cuando el alcance es Grupo', () => {
-    const alta = aAltaOferta({
-      ...formularioOfertaVacio(),
-      nombre: 'Oferta',
-      alcance: 'Grupo',
-      idArticulo: 5,
-      idGrupo: 9,
-      idCategoria: 9,
-    })
+  it('con alcance Familia sin familia elegida manda idFamilia null y no hereda otra columna', () => {
+    const alta = aAltaOferta({ ...formularioOfertaVacio(), nombre: 'Oferta', alcance: 'Familia', idFamilia: '', idGrupo: 9 })
 
-    expect(alta.idGrupo).toBe(9)
-    expect(alta.idArticulo).toBeNull()
-    expect(alta.idCategoria).toBeNull()
-  })
-
-  it('fuerza idArticulo e idGrupo a null cuando el alcance es Categoria', () => {
-    const alta = aAltaOferta({
-      ...formularioOfertaVacio(),
-      nombre: 'Oferta',
-      alcance: 'Categoria',
-      idArticulo: 5,
-      idGrupo: 9,
-      idCategoria: 3,
-    })
-
-    expect(alta.idCategoria).toBe(3)
-    expect(alta.idArticulo).toBeNull()
+    expect(alta.idFamilia).toBeNull()
     expect(alta.idGrupo).toBeNull()
   })
 })
@@ -206,6 +194,19 @@ describe('aValoresOferta — deriva alcance y beneficio', () => {
     expect(valores.alcance).toBe('Categoria')
   })
 
+  it('deriva alcance Familia cuando idFamilia no es null', () => {
+    const valores = aValoresOferta(ofertaFixture({ idFamilia: 4 }))
+    expect(valores.alcance).toBe('Familia')
+    expect(valores.idFamilia).toBe(4)
+    expect(valores.idArticulo).toBe('')
+    expect(valores.idGrupo).toBe('')
+    expect(valores.idCategoria).toBe('')
+  })
+
+  it('las ofertas sin familia leen idFamilia como vacío', () => {
+    expect(aValoresOferta(ofertaFixture({ idGrupo: 3 })).idFamilia).toBe('')
+  })
+
   it('deriva beneficio PrecioUnitario cuando precioUnitario no es null', () => {
     const valores = aValoresOferta(ofertaFixture({ idArticulo: 1, precioUnitario: 50 }))
     expect(valores.beneficio).toBe('PrecioUnitario')
@@ -238,6 +239,51 @@ describe('aValoresOferta — deriva alcance y beneficio', () => {
   it('mapea idEmpresa null a string vacío', () => {
     const valores = aValoresOferta(ofertaFixture({ idArticulo: 1, porcentaje: 10, idEmpresa: null }))
     expect(valores.idEmpresa).toBe('')
+  })
+})
+
+describe('aValoresOferta ∘ aAltaOferta — la oferta de una familia da la vuelta entera', () => {
+  it('reenvía idFamilia y deja las otras tres columnas de alcance en null', () => {
+    const oferta = ofertaFixture({ idFamilia: 4, porcentaje: 15, idsListas: [2] })
+
+    const alta = aAltaOferta(aValoresOferta(oferta))
+
+    expect(alta.idFamilia).toBe(4)
+    expect(alta.idArticulo).toBeNull()
+    expect(alta.idGrupo).toBeNull()
+    expect(alta.idCategoria).toBeNull()
+    expect(alta.porcentaje).toBe(15)
+    expect(alta.idsListas).toEqual([2])
+  })
+})
+
+describe('opcionesDeFamiliaDeOferta', () => {
+  it('ofrece todas las familias vivas, también las inactivas y las vacías, en el orden del servidor', () => {
+    const opciones = opcionesDeFamiliaDeOferta([
+      familiaFixture({ id: 1, nombre: 'Sabores' }),
+      familiaFixture({ id: 2, nombre: 'Talles', activo: false }),
+      familiaFixture({ id: 3, nombre: 'Colores', cantidadArticulos: 0 }),
+    ])
+
+    expect(opciones.map((o) => o.valor)).toEqual([1, 2, 3])
+  })
+
+  it('una familia activa y con artículos va sin rótulo', () => {
+    expect(opcionesDeFamiliaDeOferta([familiaFixture({ id: 1, nombre: 'Sabores' })])).toEqual([{ valor: 1, etiqueta: 'Sabores' }])
+  })
+
+  it('rotula la inactiva, la vacía y la que es las dos cosas', () => {
+    const opciones = opcionesDeFamiliaDeOferta([
+      familiaFixture({ id: 2, nombre: 'Talles', activo: false }),
+      familiaFixture({ id: 3, nombre: 'Colores', cantidadArticulos: 0 }),
+      familiaFixture({ id: 4, nombre: 'Marcas', activo: false, cantidadArticulos: 0 }),
+    ])
+
+    expect(opciones.map((o) => o.etiqueta)).toEqual(['Talles (inactiva)', 'Colores (sin artículos)', 'Marcas (inactiva, sin artículos)'])
+  })
+
+  it('sin familias no ofrece nada', () => {
+    expect(opcionesDeFamiliaDeOferta([])).toEqual([])
   })
 })
 

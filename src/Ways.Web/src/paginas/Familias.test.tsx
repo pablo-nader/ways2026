@@ -692,6 +692,18 @@ describe('Familias — disolver', () => {
     expect(screen.getByText('Talles')).toBeInTheDocument()
   })
 
+  it('un 409 familia_en_uso (la familia tiene ofertas) muestra el motivo del servidor y la familia sigue en el listado', async () => {
+    apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_en_uso', 'No se puede dar de baja la familia porque tiene ofertas.'))
+    await montarYEsperar()
+    await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar disolución' }))
+
+    expect(await screen.findByText('No se puede dar de baja la familia porque tiene ofertas.')).toBeInTheDocument()
+    expect(screen.queryByText(/Se disolvió la familia/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Disolver Sabores' })).toBeInTheDocument()
+  })
+
   /** Cláusula bajo prueba: la ventana inerte cubre el DELETE y también su refresco, y `ocupadoRef` descarta el segundo
    * clic del mismo tick. */
   it('durante el DELETE y su refresco no queda nada alcanzable, y dos clics sincrónicos emiten un solo DELETE', async () => {
