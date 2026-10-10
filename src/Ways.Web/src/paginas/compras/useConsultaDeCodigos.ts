@@ -38,6 +38,25 @@ type Opciones = {
 
 type EnVuelo = { codigo: string; generacion: number }
 
+/** Una consulta que no responde en este tiempo se da por fallida: la fila muestra el error y el próximo blur reintenta. */
+export const TIEMPO_MAXIMO_DE_CONSULTA_MS = 15_000
+
+function conTiempoMaximo<T>(promesa: Promise<T>): Promise<T> {
+  return new Promise<T>((resolver, rechazar) => {
+    const temporizador = setTimeout(() => rechazar(new Error('La consulta del código excedió el tiempo máximo.')), TIEMPO_MAXIMO_DE_CONSULTA_MS)
+    promesa.then(
+      (valor) => {
+        clearTimeout(temporizador)
+        resolver(valor)
+      },
+      (error: unknown) => {
+        clearTimeout(temporizador)
+        rechazar(error)
+      },
+    )
+  })
+}
+
 function sinClave(prev: Record<number, 'buscando' | 'error'>, clave: number) {
   if (!(clave in prev)) return prev
   const { [clave]: _descartada, ...resto } = prev
@@ -134,9 +153,10 @@ export function useConsultaDeCodigos({
     [soltar],
   )
 
-  /** `fila` es la fila tal como está al lanzar la consulta; ya no depende del último código consultado. */
+  /** `fila` es la fila tal como está al lanzar la consulta; ya no depende del último código consultado.
+   * `soloCeldasVacias`: la re-consulta por cambio de proveedor no pisa lo que la fila ya carga. */
   const consultar = useCallback(
-    async (fila: LineaDeCompraFormulario, idProveedorConsultado: number) => {
+    async (fila: LineaDeCompraFormulario, idProveedorConsultado: number, soloCeldasVacias = false) => {
       const clave = fila.clave
       const codigo = fila.codigoProveedor.trim()
       if (enVueloRef.current.get(clave)?.codigo === codigo) return
@@ -157,7 +177,7 @@ export function useConsultaDeCodigos({
 
       let articulo: ArticuloListado | null
       try {
-        articulo = await buscarArticuloPorCodigoDeProveedor(idProveedorConsultado, codigo)
+        articulo = await conTiempoMaximo(buscarArticuloPorCodigoDeProveedor(idProveedorConsultado, codigo))
       } catch {
         if (!esPropia()) return
         // Sin respuesta no se sabe si el código existe: no se marca como consultado y se puede reintentar.
@@ -182,7 +202,7 @@ export function useConsultaDeCodigos({
         return
       }
       aplicarRef.current(clave, {
-        ...cambiosAlResolverPorCodigo(fila, actual, articulo, alicuotasRef.current, modoRef.current),
+        ...cambiosAlResolverPorCodigo(fila, actual, articulo, alicuotasRef.current, modoRef.current, soloCeldasVacias),
         codigoConsultado: codigo,
       })
       alResolverRef.current(clave)
@@ -196,7 +216,7 @@ export function useConsultaDeCodigos({
       const idProv = idProveedorRef.current
       if (!fila || idProv === null) return
       const codigo = fila.codigoProveedor.trim()
-      if (codigo === '' || fila.resueltaPorCodigo || codigo === fila.codigoConsultado) return
+      if (fila.idArticulo !== '' || codigo === '' || codigo === fila.codigoConsultado) return
       void consultar(fila, idProv)
     },
     [consultar],
@@ -221,7 +241,7 @@ export function useConsultaDeCodigos({
       const cambios = fila.resueltaPorCodigo ? cambiosAlDesresolver() : fila.codigoConsultado !== '' ? { codigoConsultado: '' } : null
       if (cambios) aplicarRef.current(fila.clave, cambios)
       const despues = cambios ? { ...fila, ...cambios } : fila
-      if (idProv !== null && despues.idArticulo === '' && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv)
+      if (idProv !== null && despues.idArticulo === '' && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv, true)
     }
   }, [cambiosDeProveedor, avisar, consultar])
 

@@ -21,7 +21,6 @@ import {
   lineaDesdeCoberturaDeOrden,
   lineaTieneDatos,
   MENSAJE_DE_BULTOS_CON_DECIMALES_DE_MAS,
-  MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES,
   mensajeDeCantidadDeBultos,
   normalizarFilas,
   porcentajeDeDescuento,
@@ -741,10 +740,24 @@ describe('cantidad de bultos', () => {
     expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: '0.5', unidadesPorBulto: 4 }))).toBeNull()
   })
 
-  it('bultos fraccionados que dan unidades fraccionadas en un artículo por unidad: inválido, con mensaje', () => {
+  it('bultos fraccionados que dan unidades fraccionadas en un artículo por unidad: válido (el servidor no lo exige)', () => {
     const l = porBulto({ cantidad: '1.5' })
-    expect(mensajeDeCantidadDeBultos(l)).toBe(MENSAJE_DE_BULTOS_QUE_FRACCIONAN_UNIDADES)
-    expect(camposInvalidosDeLinea(l)).toContain('cantidad')
+    expect(mensajeDeCantidadDeBultos(l)).toBeNull()
+    expect(camposInvalidosDeLinea(l)).not.toContain('cantidad')
+  })
+
+  it('un borrador guardado con 1,5 bultos × 3 y un artículo por unidad se reabre completo y sin tocar sigue siendo enviable', () => {
+    const l = itemAFormulario(1, itemFixture({ cantidad: 4.5, bultos: 1.5, unidadesPorBulto: 3, costoUnitario: 10, descuento: 0 }))
+    const reabierta = { ...l, unidadVenta: 'Unidad' as const }
+    expect(reabierta.unidadDeMedida).toBe('Bulto')
+    expect(camposInvalidosDeLinea(reabierta)).toEqual([])
+    expect(lineaCompletaParaEnvio(reabierta)).toBe(true)
+  })
+
+  it('una cantidad guardada con dos decimales no se marca como de más (0,07 y 99999999,99 bultos)', () => {
+    for (const bultos of [0.07, 1.15, 99999999.99]) {
+      expect(mensajeDeCantidadDeBultos(porBulto({ cantidad: String(bultos) }))).toBeNull()
+    }
   })
 
   it('un artículo por peso admite bultos fraccionados que den unidades con fracción', () => {
@@ -765,6 +778,14 @@ describe('cantidad de bultos', () => {
   })
 })
 
+describe('cambiosAlElegirArticulo sobre una fila que ya tiene artículo', () => {
+  it('elegir el mismo artículo conserva el actualizaCosto de la fila; elegir otro lo vuelve true', () => {
+    const fila = lineaFixture({ idArticulo: 20, actualizaCosto: false })
+    expect(cambiosAlElegirArticulo(fila, articuloFixture({ id: 20 }), ALICUOTAS, 'busqueda').actualizaCosto).toBe(false)
+    expect(cambiosAlElegirArticulo(fila, articuloFixture({ id: 21 }), ALICUOTAS, 'busqueda').actualizaCosto).toBe(true)
+  })
+})
+
 describe('cambiosAlResolverPorCodigo respeta lo tipeado mientras la consulta estaba en vuelo', () => {
   const alLanzar = () => lineaFixture({ idArticulo: '', descripcion: '', importe: null, descuentoPorcentaje: null, idAlicuotaIva: '', cantidad: '' })
   const articulo = articuloFixture({ costoLista: 200, descuentoProveedor: 10, idAlicuotaIva: 4 })
@@ -780,6 +801,41 @@ describe('cambiosAlResolverPorCodigo respeta lo tipeado mientras la consulta est
     const cambios = cambiosAlResolverPorCodigo(lanzada, actual, articulo, ALICUOTAS)
     expect(cambios).not.toHaveProperty('importe')
     expect(cambios).not.toHaveProperty('idAlicuotaIva')
-    expect(cambios).toMatchObject({ idArticulo: 20, descuentoPorcentaje: 10 })
+    expect(cambios).toMatchObject({ idArticulo: 20 })
+  })
+
+  it('Importe y Descuento son un par: tipeado uno entretanto no se precarga ninguno', () => {
+    const lanzada = alLanzar()
+    const conImporte = cambiosAlResolverPorCodigo(lanzada, { ...lanzada, importe: 150 }, articulo, ALICUOTAS)
+    expect(conImporte).not.toHaveProperty('importe')
+    expect(conImporte).not.toHaveProperty('descuentoPorcentaje')
+
+    const conDescuento = cambiosAlResolverPorCodigo(lanzada, { ...lanzada, descuentoPorcentaje: 3 }, articulo, ALICUOTAS)
+    expect(conDescuento).not.toHaveProperty('importe')
+    expect(conDescuento).not.toHaveProperty('descuentoPorcentaje')
+  })
+
+  it('un IVA elegido entretanto se conserva y el importe precargado se neta con ESA alícuota', () => {
+    const lanzada = alLanzar()
+    const neto = { discriminaIva: true, preciosIncluyenIva: false }
+    const delArticulo = articuloFixture({ costoLista: 121, descuentoProveedor: null, idAlicuotaIva: 4 })
+    const cambios = cambiosAlResolverPorCodigo(lanzada, { ...lanzada, idAlicuotaIva: 3 }, delArticulo, ALICUOTAS, neto)
+    expect(cambios).not.toHaveProperty('idAlicuotaIva')
+    expect(cambios.importe).toBe(100)
+  })
+
+  it('con soloCeldasVacias no se pisa un par ni un IVA que la fila ya carga, pero sí lo que está vacío', () => {
+    const cargada = lineaFixture({ idArticulo: '', importe: 90, descuentoPorcentaje: 2, idAlicuotaIva: 3 })
+    const sobreCargada = cambiosAlResolverPorCodigo(cargada, cargada, articulo, ALICUOTAS, undefined, true)
+    expect(sobreCargada).not.toHaveProperty('importe')
+    expect(sobreCargada).not.toHaveProperty('descuentoPorcentaje')
+    expect(sobreCargada).not.toHaveProperty('idAlicuotaIva')
+
+    const vacia = alLanzar()
+    expect(cambiosAlResolverPorCodigo(vacia, vacia, articulo, ALICUOTAS, undefined, true)).toMatchObject({
+      importe: 200,
+      descuentoPorcentaje: 10,
+      idAlicuotaIva: 4,
+    })
   })
 })

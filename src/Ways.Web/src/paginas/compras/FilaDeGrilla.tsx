@@ -213,8 +213,8 @@ export function FilaDeGrilla({
               className="btn btn-outline-danger btn-sm py-0 px-1"
               tabIndex={-1}
               aria-label={`Quitar línea ${numero}`}
-              title="Quitar línea (Ctrl+Supr)"
-              aria-keyshortcuts="Control+Delete"
+              title="Quitar línea (Alt+Supr)"
+              aria-keyshortcuts="Alt+Delete"
               disabled={disabled}
               onClick={() => onQuitar(clave)}
             >

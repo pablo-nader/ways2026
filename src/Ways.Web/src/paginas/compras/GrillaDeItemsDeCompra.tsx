@@ -43,7 +43,7 @@ function sonIguales(fila: LineaDeCompraFormulario, cambios: Partial<LineaDeCompr
  * y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
  * Shift+Tab recorren las celdas en orden de lectura y pasan de fila; Enter en una celda (sin lista
  * de artículos abierta) va al Código de la fila siguiente; el botón de quitar queda fuera del
- * orden de tabulación (Ctrl+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta rápida de
+ * orden de tabulación (Alt+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta rápida de
  * artículo desde la fila.
  */
 export function GrillaDeItemsDeCompra({
@@ -118,8 +118,8 @@ export function GrillaDeItemsDeCompra({
   }
 
   function alTeclear(evento: KeyboardEvent<HTMLTableElement>) {
-    if (evento.key === 'Delete' && evento.ctrlKey && !evento.metaKey && !evento.altKey && !evento.shiftKey) {
-      quitarFilaDelFoco(evento)
+    if (evento.key === 'Delete' && evento.altKey && !evento.ctrlKey && !evento.metaKey && !evento.shiftKey) {
+      if (!evento.repeat) quitarFilaDelFoco(evento)
       return
     }
     if (evento.key !== 'Enter' || evento.defaultPrevented || evento.ctrlKey || evento.metaKey || evento.altKey || evento.shiftKey) return

@@ -413,7 +413,7 @@ describe('GrillaDeItemsDeCompra — UM, cantidad e importe', () => {
     expect(filaDeItems(0).querySelector('[data-celda="total"]')).toHaveTextContent('$ 120.000,00')
   })
 
-  it('una cantidad de bultos que fracciona las unidades de un artículo por unidad se marca y deja la fila incompleta', async () => {
+  it('una cantidad de bultos que da unidades fraccionadas en un artículo por unidad se acepta: el servidor no lo exige', async () => {
     const usuario = userEvent.setup()
     const { enviadas } = montar({ inicial: [{ ...conBulto(), unidadesPorBulto: 3 }] })
 
@@ -421,10 +421,9 @@ describe('GrillaDeItemsDeCompra — UM, cantidad e importe', () => {
     await usuario.clear(campo(0, 'Cantidad'))
     await usuario.type(campo(0, 'Cantidad'), '1.5')
 
-    expect(campo(0, 'Cantidad')).toHaveClass('is-invalid')
-    expect(campo(0, 'Cantidad')).toHaveAttribute('aria-invalid', 'true')
-    expect(within(filaDeItems(0)).getByText('Esa cantidad de bultos da unidades fraccionadas y este artículo se vende por unidad.')).toBeInTheDocument()
-    expect(enviadas()).toHaveLength(0)
+    expect(campo(0, 'Cantidad')).not.toHaveClass('is-invalid')
+    expect(enviadas()).toHaveLength(1)
+    expect(enviadas()[0]).toMatchObject({ bultos: 1.5, unidadesPorBulto: 3 })
   })
 
   it('más de dos decimales de bultos se marcan (la base guarda dos) y con dos decimales se acepta', async () => {
@@ -771,6 +770,71 @@ describe('GrillaDeItemsDeCompra — código del proveedor (T7)', () => {
     expect(within(filaDeItems(0)).queryByText('No se pudo buscar el código.')).not.toBeInTheDocument()
   })
 
+  it('una fila que ya tiene artículo no consulta el código al salir: es solo el pendiente de asociar y no pisa precio ni actualizaCosto', async () => {
+    respuestas['AB-1'] = () => pagina([POR_CODIGO])
+    const usuario = userEvent.setup()
+    const { enviadas } = montar({ inicial: [itemAFormulario(1, itemFixture({ actualizaCosto: false }))] })
+
+    await escribirCodigoYSalir(usuario, 0, 'AB-1')
+    await act(async () => {})
+
+    expect(terminosBuscados()).toEqual([])
+    expect(campo(0, 'Detalle')).toHaveValue('Fideos 500g')
+    expect(campo(0, 'Importe')).toHaveValue('100,0000')
+    expect(within(filaDeItems(0)).getByText('No actualiza el costo del artículo')).toBeInTheDocument()
+    expect(enviadas()[0]).toMatchObject({ idArticulo: 10, codigoProveedor: 'AB-1', costoUnitario: 100, descuento: 50, actualizaCosto: false })
+  })
+
+  it('un IVA elegido mientras la consulta está en vuelo se conserva y el importe precargado se neta con ESE IVA', async () => {
+    let resolver: (r: unknown) => void = () => {}
+    respuestas['AB-1'] = () => new Promise((r) => (resolver = r))
+    const usuario = userEvent.setup()
+    montar({ discriminaIva: true })
+
+    await escribirCodigoYSalir(usuario, 0, 'AB-1')
+    await within(filaDeItems(0)).findByText('Buscando…')
+    await usuario.selectOptions(campo(0, 'IVA'), '3')
+    await act(async () => {
+      resolver({ items: [{ ...POR_CODIGO, costoLista: 121, descuentoProveedor: null }], total: 1, pagina: 1, tamanio: 25 })
+    })
+
+    expect(campo(0, 'IVA')).toHaveValue('3')
+    expect(campo(0, 'Importe')).toHaveValue('100,0000')
+  })
+
+  it('una consulta que nunca responde se da por fallida a los 15 s: la fila lo dice, guardar deja de esperar y el próximo blur reintenta', async () => {
+    respuestas['AB-1'] = () => new Promise(() => {})
+    const usuario = userEvent.setup()
+    const { captura } = montar()
+    await usuario.type(campo(0, 'Código'), 'AB-1')
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      act(() => campo(0, 'Código').blur())
+      expect(within(filaDeItems(0)).getByText('Buscando…')).toBeInTheDocument()
+      expect(captura.consultando.at(-1)).toBe(true)
+
+      await act(async () => {
+        vi.advanceTimersByTime(14_999)
+      })
+      expect(within(filaDeItems(0)).getByText('Buscando…')).toBeInTheDocument()
+
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(within(filaDeItems(0)).getByText('No se pudo buscar el código.')).toBeInTheDocument()
+      expect(captura.consultando.at(-1)).toBe(false)
+
+      respuestas['AB-1'] = () => pagina([POR_CODIGO])
+      act(() => campo(0, 'Código').focus())
+      await act(async () => campo(0, 'Código').blur())
+      await act(async () => {})
+      expect(campo(0, 'Detalle')).toHaveValue('Leche en polvo 800g')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   describe('una respuesta tardía nunca pisa una fila que ya cambió', () => {
     it('si el operador cambió el Detalle mientras la consulta estaba en vuelo, se descarta, no queda "Buscando…" y el código se vuelve a consultar al salir de la celda', async () => {
       const resolvers: ((r: unknown) => void)[] = []
@@ -837,11 +901,11 @@ describe('GrillaDeItemsDeCompra — código del proveedor (T7)', () => {
       // …lo tipeado se respeta…
       expect(campo(0, 'Cantidad')).toHaveValue(3)
       expect(campo(0, 'Importe')).toHaveValue('150')
-      // …y solo se precargaron las celdas que seguían vacías
-      expect(campo(0, 'Descuento (%)')).toHaveValue('10,00')
+      // …Importe y Descuento son un par: tipeado uno, el artículo no precarga ninguno; el IVA vacío sí se precarga
+      expect(campo(0, 'Descuento (%)')).toHaveValue('')
       expect(campo(0, 'IVA')).toHaveValue('4')
       expect(within(filaDeItems(0)).queryByText('Buscando…')).not.toBeInTheDocument()
-      expect(captura.lineas[0]).toMatchObject({ idArticulo: 20, cantidad: '3', importe: 150, idAlicuotaIva: 4, descuentoPorcentaje: 10 })
+      expect(captura.lineas[0]).toMatchObject({ idArticulo: 20, cantidad: '3', importe: 150, idAlicuotaIva: 4, descuentoPorcentaje: null })
     })
 
     it('avisa a la pantalla mientras hay consultas en vuelo, para que guardar espere', async () => {
@@ -1244,8 +1308,9 @@ describe('GrillaDeItemsDeCompra — editar el código de una fila ya resuelta', 
     await usuario.type(campo(0, 'Código'), 'ZZ-9')
     expect(campo(0, 'Detalle')).toHaveValue('Yerba 1kg')
     await usuario.tab()
-    await within(filaDeItems(0)).findByText('Pendiente de asociar')
+    await act(async () => {})
 
+    expect(terminosBuscados()).not.toContain('ZZ-9')
     expect(campo(0, 'Detalle')).toHaveValue('Yerba 1kg')
     expect(enviadas()[0]).toMatchObject({ idArticulo: 40, codigoProveedor: 'ZZ-9' })
   })
@@ -1267,7 +1332,8 @@ describe('GrillaDeItemsDeCompra — editar el código de una fila ya resuelta', 
     await usuario.clear(campo(0, 'Código'))
     await usuario.type(campo(0, 'Código'), 'AB-7')
     await usuario.tab()
-    await within(filaDeItems(0)).findByText('Pendiente de asociar')
+    await act(async () => {})
+    expect(terminosBuscados()).not.toContain('AB-7')
     await usuario.type(campo(0, 'Cantidad'), '1')
     await usuario.type(campo(0, 'Importe'), '5')
     await usuario.selectOptions(campo(0, 'IVA'), '3')
@@ -1354,8 +1420,29 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
     await usuario.click(campo(0, 'Código'))
     await usuario.tab()
-    await waitFor(() => expect(busquedasConProveedor().at(-1)).toBe('ZZ-9&idProveedor=2'))
+    await act(async () => {})
+    expect(busquedasConProveedor()).toHaveLength(antes)
     expect(campo(0, 'Detalle')).toHaveValue('Yerba 1kg')
+  })
+
+  it('una fila resuelta por código cuyo importe, descuento e IVA el operador ajustó los conserva al re-consultarse contra el proveedor nuevo', async () => {
+    respuestas['AB-1@1'] = () => pagina([DEL_UNO])
+    respuestas['AB-1@2'] = () => pagina([{ ...DEL_DOS, descuentoProveedor: 20, idAlicuotaIva: 4 }])
+    const usuario = userEvent.setup()
+    montar()
+    await escribirCodigoYSalir(usuario, 0, 'AB-1')
+    await waitFor(() => expect(campo(0, 'Importe')).toHaveValue('200,0000'))
+    await usuario.clear(campo(0, 'Importe'))
+    await usuario.type(campo(0, 'Importe'), '150')
+    await usuario.type(campo(0, 'Descuento (%)'), '5')
+    await usuario.selectOptions(campo(0, 'IVA'), '3')
+
+    await proveedor(usuario, '2')
+
+    await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+    expect(campo(0, 'Importe')).toHaveValue('150,0000')
+    expect(campo(0, 'Descuento (%)')).toHaveValue('5,00')
+    expect(campo(0, 'IVA')).toHaveValue('3')
   })
 
   it('los códigos tipeados antes de elegir un proveedor se consultan todos al elegirlo', async () => {
@@ -1460,12 +1547,12 @@ describe('GrillaDeItemsDeCompra — accesibilidad', () => {
     itemAFormulario(3, itemFixture({ idArticulo: 12, descripcion: 'C' })),
   ]
 
-  it('Ctrl+Supr quita la fila donde está el foco y lo deja en el Código de la fila que ocupa su lugar', async () => {
+  it('Alt+Supr quita la fila donde está el foco y lo deja en el Código de la fila que ocupa su lugar', async () => {
     const usuario = userEvent.setup()
     montar({ inicial: tresFilas() })
 
     await usuario.click(campo(1, 'Importe'))
-    await usuario.keyboard('{Control>}{Delete}{/Control}')
+    await usuario.keyboard('{Alt>}{Delete}{/Alt}')
 
     expect(filasDeItems()).toHaveLength(3)
     expect(campo(0, 'Detalle')).toHaveValue('A')
@@ -1473,19 +1560,19 @@ describe('GrillaDeItemsDeCompra — accesibilidad', () => {
     expect(campo(1, 'Código')).toHaveFocus()
   })
 
-  it('Ctrl+Supr funciona desde el Detalle y desde la última fila con datos (el foco pasa a la fila vacía)', async () => {
+  it('Alt+Supr funciona desde el Detalle y desde la última fila con datos (el foco pasa a la fila vacía)', async () => {
     const usuario = userEvent.setup()
     montar({ inicial: tresFilas() })
 
     await usuario.click(campo(2, 'Detalle'))
-    await usuario.keyboard('{Control>}{Delete}{/Control}')
+    await usuario.keyboard('{Alt>}{Delete}{/Alt}')
 
     expect(filasDeItems()).toHaveLength(3)
     expect(campo(2, 'Código')).toHaveFocus()
     expect(campo(2, 'Detalle')).toHaveValue('')
   })
 
-  it('Supr solo no quita nada; Ctrl+Supr no quita la fila vacía ni con la grilla deshabilitada', async () => {
+  it('Supr solo no quita nada, y Alt+Supr tampoco quita la fila vacía', async () => {
     const usuario = userEvent.setup()
     montar({ inicial: tresFilas() })
 
@@ -1494,20 +1581,40 @@ describe('GrillaDeItemsDeCompra — accesibilidad', () => {
     expect(filasDeItems()).toHaveLength(4)
 
     await usuario.click(campo(3, 'Código'))
-    await usuario.keyboard('{Control>}{Delete}{/Control}')
+    await usuario.keyboard('{Alt>}{Delete}{/Alt}')
     expect(filasDeItems()).toHaveLength(4)
   })
 
-  it('con la grilla deshabilitada Ctrl+Supr no quita nada', () => {
+  it('con la grilla deshabilitada Alt+Supr no quita nada', () => {
     montar({ inicial: tresFilas(), disabled: true })
+
+    fireEvent.keyDown(campo(1, 'Importe'), { key: 'Delete', altKey: true })
+
+    expect(filasDeItems()).toHaveLength(4)
+  })
+
+  it('Ctrl+Supr es el "borrar palabra siguiente" nativo del campo: no quita la fila', () => {
+    montar({ inicial: tresFilas() })
 
     fireEvent.keyDown(campo(1, 'Importe'), { key: 'Delete', ctrlKey: true })
 
     expect(filasDeItems()).toHaveLength(4)
   })
 
+  it('la repetición automática de Alt+Supr no sigue quitando filas', () => {
+    montar({ inicial: tresFilas() })
+
+    fireEvent.keyDown(campo(0, 'Importe'), { key: 'Delete', altKey: true })
+    expect(filasDeItems()).toHaveLength(3)
+
+    fireEvent.keyDown(campo(0, 'Importe'), { key: 'Delete', altKey: true, repeat: true })
+    expect(filasDeItems()).toHaveLength(3)
+  })
+
   it('el botón de quitar declara su atajo', () => {
     montar({ inicial: tresFilas() })
-    expect(screen.getByRole('button', { name: 'Quitar línea 1' })).toHaveAttribute('aria-keyshortcuts', 'Control+Delete')
+    const boton = screen.getByRole('button', { name: 'Quitar línea 1' })
+    expect(boton).toHaveAttribute('aria-keyshortcuts', 'Alt+Delete')
+    expect(boton).toHaveAttribute('title', 'Quitar línea (Alt+Supr)')
   })
 })
