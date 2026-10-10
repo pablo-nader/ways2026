@@ -2884,6 +2884,139 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
     expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
   })
 
+  describe('lo que descarta una propuesta abierta', () => {
+    function selectorDeFamilia() {
+      return screen.getByLabelText('Familia (opcional)')
+    }
+
+    /** Cláusula bajo prueba: `descartarPropuestaDeUnion()` del `guardar` de una edición: la foto de la unión se calculó con los
+     * valores guardados antes, así que al guardar el artículo ya no puede confirmarse.
+     * Evidencia de mutación (mutation-proof-tests): sacar esa llamada hace fallar este test (la propuesta sigue y "Confirmar" se
+     * habilita); revertido, vuelve a verde. */
+    it('guardar el artículo con una propuesta abierta la descarta: ya no hay con qué confirmar la unión', async () => {
+      escenarioDeUnion()
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await proponerLaFamilia()
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(selectorDeFamilia()).toBeEnabled()
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Cláusula bajo prueba: `alEscribirPrecio()` de `guardarPrecio` y su cableado `descartarPropuestaDeUnion` en `Articulos`: un
+     * precio escrito cambia lo que la unión reemplazaría, así que la propuesta abierta se descarta.
+     * Evidencia de mutación (mutation-proof-tests): dejar `alEscribirPrecio` como una función vacía hace fallar este test (la
+     * propuesta sigue abierta con su foto vieja); revertido, vuelve a verde. */
+    it('escribir un precio del artículo con una propuesta abierta la descarta: ya no hay con qué confirmar la unión', async () => {
+      escenarioDeUnion()
+      await proponerLaFamilia()
+      mockearPosts({
+        '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion()),
+        '/familias/7/articulos': () => Promise.resolve(resultadoDeUnir),
+        '/articulos/1/precios': () => Promise.resolve({ idArticulo: 1, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' }),
+      })
+
+      await userEvent.click((await screen.findAllByRole('button', { name: 'Gestionar' }))[0])
+      await userEvent.type(await screen.findByLabelText('Precio'), '1500')
+      await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+
+      await waitFor(() => expect(pedidosA('/articulos/1/precios')).toHaveLength(1))
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Cláusula bajo prueba: `soltarFamiliaDelFormulario()` de `crearFamiliaDelArticulo`: crear una familia con "+" descarta la
+     * propuesta abierta, así que tras "Sacar de la familia" el selector no conserva la elección vieja y elegir esa familia
+     * vuelve a proponerla.
+     * Evidencia de mutación (mutation-proof-tests): sacar esa llamada hace fallar este test (el selector queda en "7"); revertido,
+     * vuelve a verde. */
+    it('crear una familia con "+" descarta la propuesta: tras sacar al artículo el selector vuelve a "Sin familia" y elegir la misma familia la propone', async () => {
+      const miembroUnico = [{ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno', idMarca: null, activo: true }]
+      escenarioDeUnion({
+        detalles: { 7: detalleSabores(), 50: detalleSabores({ id: 50, nombre: 'Talles', articulos: miembroUnico }) },
+      })
+      mockearPosts({
+        '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion()),
+        '/familias': () => Promise.resolve({ idFamilia: 50, nombre: 'Talles', idArticuloReferencia: 1, articulos: [] }),
+      })
+      apiDeleteMock.mockResolvedValue(undefined)
+      await proponerLaFamilia()
+
+      await anotarFamiliaNueva('Talles')
+      await screen.findByText('Familia "Talles" (1 artículo)')
+      await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+      await userEvent.click(
+        within(screen.getByRole('group', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }),
+      )
+
+      await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledExactlyOnceWith('/familias/50/articulos/1'))
+      await screen.findByLabelText('Familia (opcional)')
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+
+      await elegirFamiliaEnElSelector('7')
+
+      expect(await screen.findByRole('group', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('7')
+    })
+
+    /** Cláusula bajo prueba: el descarte del detalle en `soltarFamiliaDelFormulario` (generación de `useFamiliasDelFormulario`) al
+     * guardar: el detalle tardío de la propuesta descartada no previsualiza.
+     * Evidencia de mutación (mutation-proof-tests): sacar `descartarPropuestaDeUnion()` del `guardar` hace fallar este test
+     * (el detalle tardío dispara la previsualización); revertido, vuelve a verde. */
+    it('el detalle tardío de una propuesta descartada al guardar no previsualiza ni la reabre', async () => {
+      const detalleTardio = diferida<FamiliaDetalle>()
+      escenarioDeUnion({ detalleDeFamiliaImpl: () => detalleTardio.promesa })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await screen.findByText('Cargando la familia…')
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await act(async () => {
+        detalleTardio.resolver(detalleSabores())
+      })
+
+      expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+    })
+
+    /** Cláusula bajo prueba: lo mismo para la previsualización en vuelo al guardar: su respuesta tardía no reabre la propuesta.
+     * Evidencia de mutación (mutation-proof-tests): sacar `descartarPropuestaDeUnion()` del `guardar` hace fallar este test
+     * (el selector queda en "7"); revertido, vuelve a verde. */
+    it('la previsualización tardía de una propuesta descartada al guardar no la reabre', async () => {
+      const fotoTardia = diferida<PrevisualizacionDeAgrupacion>()
+      escenarioDeUnion()
+      mockearPosts({ '/familias/previsualizacion': () => fotoTardia.promesa })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(1))
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await act(async () => {
+        fotoTardia.resolver(fotoDeUnion())
+      })
+
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+  })
+
   describe('lo que el servidor rechaza al confirmar', () => {
     it.each([
       ['familia_inactiva', 409, 'La familia está inactiva.', 'Activala desde el listado de familias para poder sumarle artículos.'],

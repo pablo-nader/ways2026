@@ -876,6 +876,7 @@ export function FormularioArticulo({
             alDeEscribir={alDeEscribir}
             familia={familiaDelArticulo(valor.idFamilia, familia.detalle)}
             alSalirDeLaFamilia={accionesDeFamilia.alSalirDeLaFamilia}
+            alEscribirPrecio={accionesDeFamilia.alEscribirPrecio}
             alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
           />
         </>

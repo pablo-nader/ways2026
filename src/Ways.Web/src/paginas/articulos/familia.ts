@@ -358,6 +358,8 @@ export type AccionesDeFamiliaDelFormulario = {
   sacar: () => Promise<boolean>
   /** El editor de precios sacó al artículo de la familia (`SoloEste`). */
   alSalirDeLaFamilia: (nombre: string | null) => void
+  /** El editor de precios escribió un precio del artículo: la previsualización de una unión propuesta ya no vale. */
+  alEscribirPrecio: () => void
   /** El servidor dijo que la pertenencia cambió (`familia_cambio`): hay que recargar el artículo. */
   alCambiarLaFamilia: () => void
 }

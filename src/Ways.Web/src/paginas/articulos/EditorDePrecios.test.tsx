@@ -71,6 +71,7 @@ function montar(props: Partial<ComponentProps<typeof EditorDePrecios>> = {}) {
       alDeEscribir={alDeEscribir}
       familia={sabores}
       alSalirDeLaFamilia={alSalirDeLaFamilia}
+      alEscribirPrecio={vi.fn()}
       alCambiarLaFamilia={alCambiarLaFamilia}
       {...props}
     />,
@@ -382,6 +383,7 @@ describe('EditorDePrecios — un miembro de una familia pregunta el alcance ante
         alDeEscribir={alDeEscribir}
         familia={sabores}
         alSalirDeLaFamilia={alSalirDeLaFamilia}
+        alEscribirPrecio={vi.fn()}
         alCambiarLaFamilia={alCambiarLaFamilia}
       />,
     )

@@ -291,6 +291,13 @@ export function Articulos() {
     setErrorDeFamiliaNueva('')
   }
 
+  /** La propuesta de unión previsualiza lo que cambiaría con los valores GUARDADOS del artículo: si se guardó el artículo o uno de
+   * sus precios, esa foto ya no vale y se descarta (el selector vuelve a "Sin familia"). Solo actúa si hay una propuesta abierta:
+   * `soltarFamiliaDelFormulario` también descarta el detalle de la familia de un miembro. */
+  function descartarPropuestaDeUnion() {
+    if (unionElegida !== '') soltarFamiliaDelFormulario()
+  }
+
   /** `avisoInicial` es el error que el formulario recién cargado muestra: lo usa la recarga que sigue a un
    * `familia_cambio`, que de otro modo perdería su explicación al limpiar los avisos. */
   async function abrirEdicion(idNumerico: number, avisoInicial = '') {
@@ -539,6 +546,7 @@ export function Articulos() {
           setFormulario(cargado)
           formularioOriginalRef.current = cargado
           setDecisionDeAlcance(null)
+          descartarPropuestaDeUnion()
         }
       }
 
@@ -811,6 +819,7 @@ export function Articulos() {
       void familias.recargarOpciones()
       setPedidoDeRefresco((n) => n + 1)
       if (tokenEdicionRef.current === token) {
+        soltarFamiliaDelFormulario()
         aplicarPertenencia(idArticulo, creada.idFamilia)
         void familias.cargarDetalle(creada.idFamilia)
         setAvisoGuardado(`Se creó la familia "${creada.nombre}": este artículo es su referencia y conserva sus valores y sus precios.`)
@@ -993,6 +1002,9 @@ export function Articulos() {
     reintentar: reintentarFamilia,
     sacar: sacarDeLaFamilia,
     alSalirDeLaFamilia: (nombre) => alSalirDeLaFamiliaPorUnPrecio(idDelFormulario, nombre),
+    alEscribirPrecio: () => {
+      if (idDelFormulario !== null && destinoModalRef.current === idDelFormulario) descartarPropuestaDeUnion()
+    },
     alCambiarLaFamilia: () => {
       if (idDelFormulario !== null) recargarArticuloDesactualizado(idDelFormulario)
     },
