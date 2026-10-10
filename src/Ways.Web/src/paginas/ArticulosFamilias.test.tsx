@@ -2994,7 +2994,9 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
 
     /** Cláusula bajo prueba: lo mismo para la previsualización en vuelo al guardar: su respuesta tardía no reabre la propuesta.
      * Evidencia de mutación (mutation-proof-tests): sacar `descartarPropuestaDeUnion()` del `guardar` hace fallar este test
-     * (el selector queda en "7"); revertido, vuelve a verde. */
+     * (el selector queda en "7"); revertido, vuelve a verde. No prueba la generación de `invalidar`: quitándola también
+     * pasa, porque el grupo de la propuesta no se dibuja mientras el selector está en "Sin familia" (la mata
+     * `usePrevisualizacion.test.ts`). */
     it('la previsualización tardía de una propuesta descartada al guardar no la reabre', async () => {
       const fotoTardia = diferida<PrevisualizacionDeAgrupacion>()
       escenarioDeUnion()
@@ -3014,6 +3016,73 @@ describe('Articulos — edición: unir un artículo a una familia que ya existe'
       expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
       expect(selectorDeFamilia()).toHaveValue('')
       expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Comportamiento de punta a punta, sin cláusula propia: la foto de una propuesta descartada al guardar llega tarde, cuando el
+     * usuario ya volvió a elegir la MISMA familia (su `idFamilia` coincide, así que contaría como vigente), y nunca se muestra
+     * ni se puede confirmar. La relectura del detalle va diferida para abrir la ventana en la que la foto vieja podría quedar en
+     * el estado del hook; un observador del DOM registra si alguna vez se pintó.
+     * Evidencia de mutación (mutation-proof-tests): quitar `generacionRef.current += 1` de `invalidar` NO hace fallar este test,
+     * porque la llamada siguiente a `previsualizar` limpia el estado antes de que llegue a pintarse (observado); esa cláusula la mata
+     * `usePrevisualizacion.test.ts` ("invalidar con una solicitud en vuelo…"). */
+    it('al volver a elegir la misma familia, la previsualización tardía de la propuesta descartada no se muestra ni se confirma', async () => {
+      const fotoVieja = diferida<PrevisualizacionDeAgrupacion>()
+      const fotoNueva = diferida<PrevisualizacionDeAgrupacion>()
+      const detalleDeLaReeleccion = diferida<FamiliaDetalle>()
+      const conPrecio = (vigente: number) => ({
+        precios: [{ idListaPrecio: 2, actual: { vigente: 900, pendiente: null }, nuevo: { vigente, pendiente: null } }],
+      })
+      const [deLaVieja, deLaNueva] = [conPrecio(4321), conPrecio(5678)]
+      const fotoConPrecio = (precio: { precios: PrevisualizacionDeAgrupacion['articulos'][number]['precios'] }) =>
+        fotoDeUnion({ articulos: [{ ...fotoDeUnion().articulos[0], ...precio }] })
+      escenarioDeUnion({
+        detalleDeFamiliaImpl: (_id, llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : detalleDeLaReeleccion.promesa),
+      })
+      let pedidasLasFotos = 0
+      mockearPosts({
+        '/familias/previsualizacion': () => (pedidasLasFotos++ === 0 ? fotoVieja.promesa : fotoNueva.promesa),
+        '/familias/7/articulos': () => Promise.resolve(resultadoDeUnir),
+      })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(1))
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(unaFamiliaPidioSuDetalle()).toHaveLength(2))
+
+      let seMostroLaFotoVieja = false
+      const observador = new MutationObserver(() => {
+        if (/4\.321/.test(document.body.textContent ?? '')) seMostroLaFotoVieja = true
+      })
+      observador.observe(document.body, { subtree: true, childList: true, characterData: true })
+      try {
+        await act(async () => {
+          fotoVieja.resolver(fotoConPrecio(deLaVieja))
+        })
+        await act(async () => {
+          detalleDeLaReeleccion.resolver(detalleSabores())
+        })
+        await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(2))
+        await screen.findByText('Calculando qué cambia…')
+
+        expect(seMostroLaFotoVieja).toBe(false)
+        expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+
+        await act(async () => {
+          fotoNueva.resolver(fotoConPrecio(deLaNueva))
+        })
+        expect(propuesta()).toHaveTextContent(/5\.678/)
+        expect(propuesta()).not.toHaveTextContent(/4\.321/)
+        expect(seMostroLaFotoVieja).toBe(false)
+        expect(within(propuesta()).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeEnabled()
+        expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+      } finally {
+        observador.disconnect()
+      }
     })
   })
 
