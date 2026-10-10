@@ -48,11 +48,16 @@ Slice 3 — items grid (web):
 - 2026-10-10 (T7): the code lookup prefills with `costoLista` plus the article's `descuentoProveedor`; an article without list cost falls back to `costoNominal` (replacement cost, already net of discount) with no discount.
 - 2026-10-10 (T10): the irreversibility checkbox panel was replaced by a note next to "Guardar" (stock enters, article cost updates, no way back to draft); the note drops the stock sentence when the purchase only has conceptos.
 - 2026-10-10 (T6): an untouched saved line is resent with its stored numbers (percent and price-per-bulto shown are rounded derivations); a saved line mixing loose units and bultos opens as UM Unidad with the total quantity and is resent as stored until quantity, UM, importe or descuento is touched.
+- 2026-10-10 (slice 3): the Descuento column is a percentage of the line gross; the API still receives the amount.
+- 2026-10-10 (slice 3): UM Bulto takes the price per bulto, with a visible warning when the 4-decimal unit cost does not divide exactly.
+- 2026-10-10 (slice 3): article costs are IVA-inclusive, so the prefilled Importe is netted when the receipt discriminates IVA and prices are net.
+- 2026-10-10 (slice 3): a loaded line keeps its stored `actualizaCosto`.
 
 ## Review
 
 - Slice 1: judgment-day round 1 (main..15ed8859) no severe findings, 4 warnings confirmed by both judges, fixed in d70a0d40; scoped re-judgment of the delta clean. Native picker on the `inert` hidden input verified in Chromium. JUDGMENT: APPROVED.
 - Slice 2 (T5): judgment-day (a29232a3..fb4cb1eb) no severe findings. Both judges suspected a race between confirm and the article soft delete; it was disproved (the stock movement FK already takes FOR KEY SHARE on the article before the association) and pinned with a deterministic test plus mutation evidence in 04878b3c. JUDGMENT: APPROVED.
+- Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
