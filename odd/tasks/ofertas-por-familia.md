@@ -53,8 +53,32 @@ resolved prices; no release needed), precedence by specificity, `activo = false`
 
 ## Progress
 
-Created 2026-10-10. Branch `pnader/ofertas-por-familia`. Nothing implemented yet.
+Created 2026-10-10. Branch `pnader/ofertas-por-familia`.
+
+- O1 implemented — commit `87ec0041` (28 files; +966/−52 outside the generated migration
+  files). Migration `20261010191731_OfertasPorFamilia`, exactly the approved model. Contract:
+  `idFamilia` on `OfertaListado`/`AltaOferta`/`EdicionOferta`; 400 `oferta_alcance_invalido`
+  ("…exactamente un artículo, grupo, categoría o familia."); 400 `referencia_invalida` for a
+  missing/soft-deleted/other-tenant familia; `DELETE /api/familias/{id}` → 409 `familia_en_uso`
+  when any oferta (live or soft-deleted) references it. Observed (writer): build 0 errors /
+  0 warnings; Domain 1032; Application 767; integration filtered 505; FULL integration
+  3095/3095. Parent spot check: Domain 1032/1032; `FamiliasDisolverConOfertasTests` +
+  `OfertasCheckBackstopTests` 17/17. Migration `Down` never executed (no migration tests).
+  Not checked off: judgment findings below are open.
+- Judgment-day, O1, round 1: 0 CRITICAL from either judge. Confirmed by both:
+  K1 — `openspec/specs/ofertas/spec.md:52-58` claims a soft-deleted familia ends in 23503; false,
+  the row exists and the FK passes, only the service pre-check rejects it (both WARNING).
+  K2 — unlocked familia pre-check in `ServicioDeOfertas` vs a concurrent dissolve can leave a
+  live oferta on a dissolved familia (inert); same residual as grupos;
+  `BloquearSiEstaVivaAsync` exists and is unused; doc 10 says "bloqueado" without the residual
+  (A WARNING, B SUGGESTION). K3 — `Down` aborts with 23514 once familia ofertas exist (both
+  SUGGESTION). K4 — the structural-net lookbehind exempts every field for a receiver named
+  `oferta`, not only `IdFamilia` (both SUGGESTION). One judge only: the guard's position after
+  the FOR UPDATE is not pinned by `ServicioDeFamiliasPosicionDeLocksTests`; `Contratos.cs`
+  summary still says "las tres columnas". Judges ran no tests and read few SKILL.md files.
+  Fix round: awaiting the owner.
+- O2 in progress (web writer; also carries the pending d2 test fix of familia-desde-articulo).
 
 ## Next step
 
-O1.
+Owner decision on the O1 fix round; then O2 verdict and PRs.
