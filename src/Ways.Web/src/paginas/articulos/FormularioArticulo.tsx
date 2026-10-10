@@ -17,6 +17,7 @@ import type {
   UnidadVenta,
 } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
+import { IconoDeAyuda } from '../../componentes/IconoDeAyuda'
 import { formatearImporte } from '../../formato/importes'
 import { AltaRapidaCategoria } from './AltaRapidaCategoria'
 import { AltaRapidaGrupo } from './AltaRapidaGrupo'
@@ -871,9 +872,11 @@ export function FormularioArticulo({
               <Etiqueta htmlFor="art-acumula-en-venta" deFamilia={bloqueoDeFamilia} className="form-check-label">
                 Acumula en una sola línea al vender
               </Etiqueta>
-              <div id="art-acumula-en-venta-ayuda" className="form-text">
-                Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket.
-              </div>
+              <IconoDeAyuda
+                id="art-acumula-en-venta-ayuda"
+                texto="Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket."
+                etiqueta="Ayuda sobre acumular en una sola línea"
+              />
             </div>
           </div>
 

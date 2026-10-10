@@ -3,7 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi } from '../../api/cliente'
-import type { HistorialDePrecio, ListaPrecioListado, PrecioVigente } from '../../api/tipos'
+import type { HistorialDePrecio, ListaPrecioListado, PrecioVigente, PuntoVentaListado } from '../../api/tipos'
+import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { EditorDePrecios } from './EditorDePrecios'
 import type { FamiliaDelArticulo } from './familia'
 
@@ -610,5 +611,84 @@ describe('EditorDePrecios — cada acción que empieza borra lo que dijo la ante
 
     expect(screen.getByRole('group', { name: 'Alcance del precio' })).toBeInTheDocument()
     expect(screen.queryByText('El precio no es válido.')).not.toBeInTheDocument()
+  })
+})
+
+function listaDerivada(id: number, nombre: string): ListaPrecioListado {
+  return { ...listaGeneral, id, nombre, esDefault: false, modo: 'Derivada', idListaBase: 2, porcentaje: 10 }
+}
+
+describe('EditorDePrecios — tabla de listas', () => {
+  it('muestra primero las manuales y después las derivadas, y las derivadas no tienen acciones', async () => {
+    const listas = [
+      listaDerivada(5, 'Gremio'),
+      listaGeneral,
+      listaDerivada(4, 'Mayorista'),
+      { ...listaGeneral, id: 3, nombre: 'Especial', esDefault: false },
+    ]
+    vigentes = [
+      { idArticulo: 31, idListaPrecio: 2, precio: 1000, fecha: '2026-10-01T00:00:00Z' },
+      { idArticulo: 31, idListaPrecio: 4, precio: 1100, fecha: '2026-10-01T00:00:00Z' },
+    ]
+    montar({ listasPrecio: listas })
+    await screen.findByText('Mayorista')
+
+    const filas = screen.getAllByRole('row').slice(1)
+    expect(filas.map((f) => within(f).getAllByRole('cell')[0].textContent)).toEqual([
+      'Especial',
+      'GeneralDefault',
+      'GremioDerivada de General (+10%)',
+      'MayoristaDerivada de General (+10%)',
+    ])
+    expect(filas.map((f) => within(f).queryAllByRole('button').length)).toEqual([1, 1, 0, 0])
+    expect(screen.queryByRole('button', { name: 'Ver detalle' })).not.toBeInTheDocument()
+  })
+})
+
+describe('EditorDePrecios — sugerencia con la empresa de la sesión', () => {
+  const puntoVenta = { id: 9, idEmpresa: 4 } as PuntoVentaListado
+
+  function sugerenciasPedidas() {
+    return apiGetMock.mock.calls.map((c) => c[0] as string).filter((r) => r.includes('sugerencia-precio'))
+  }
+
+  it('manda idEmpresa cuando hay un punto de venta de sesión', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos/31/precios') return Promise.resolve(vigentes)
+      if (ruta.startsWith('/articulos/31/sugerencia-precio')) return Promise.resolve({ precioSugerido: 1200 })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    render(
+      <PuntoVentaContext.Provider value={{ puntosVenta: [puntoVenta], puntoVenta, elegir: vi.fn(), recargar: vi.fn() }}>
+        <EditorDePrecios
+          idArticulo={31}
+          listasPrecio={[listaGeneral]}
+          bloqueadoPorPadre={false}
+          alDeEscribir={vi.fn()}
+          familia={null}
+          alSalirDeLaFamilia={vi.fn()}
+          alCambiarLaFamilia={vi.fn()}
+        />
+      </PuntoVentaContext.Provider>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Calcular sugerencia de precio' }))
+    await screen.findByText(/redondeado al múltiplo configurado/)
+
+    expect(sugerenciasPedidas()).toEqual(['/articulos/31/sugerencia-precio?idEmpresa=4'])
+  })
+
+  it('sin punto de venta de sesión pide la sugerencia sin empresa', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos/31/precios') return Promise.resolve(vigentes)
+      if (ruta.startsWith('/articulos/31/sugerencia-precio')) return Promise.resolve({ precioSugerido: 1200 })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    montar()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Calcular sugerencia de precio' }))
+    await screen.findByText(/redondeado al múltiplo configurado/)
+
+    expect(sugerenciasPedidas()).toEqual(['/articulos/31/sugerencia-precio'])
   })
 })

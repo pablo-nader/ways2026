@@ -91,8 +91,12 @@ export const clienteDeArticulos = {
   eliminarCodigoBarra: (id: number, idCodigoBarra: number) =>
     api.delete(`/articulos/${id}/codigos-barra/${idCodigoBarra}`),
   /** Solo lectura: propone, nunca persiste un precio por sí sola (spec: Margin-Based Price
-   * Suggestion, "Suggestion requires explicit apply"). */
-  sugerenciaDePrecio: (id: number) => api.get<SugerenciaDePrecio>(`/articulos/${id}/sugerencia-precio`),
+   * Suggestion, "Suggestion requires explicit apply").
+   * `idEmpresa` opcional: el servidor redondea al múltiplo de esa empresa; sin él usa el default. */
+  sugerenciaDePrecio: (id: number, idEmpresa?: number) =>
+    api.get<SugerenciaDePrecio>(
+      `/articulos/${id}/sugerencia-precio${idEmpresa === undefined ? '' : `?idEmpresa=${idEmpresa}`}`,
+    ),
   /** Resolución de escaneo del POS (stage-5-pos-ventas, Slice 2/6): identidad únicamente, nunca
    * precio (design decisión 7). `entrada` viaja tal cual la tipeó/leyó el lector — el parseo de
    * `N*codigo` es responsabilidad del servidor (`ParserDeEscaneo`). */

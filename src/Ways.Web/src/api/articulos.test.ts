@@ -164,3 +164,21 @@ describe('clienteDeArticulos — familia (doc 10 §3)', () => {
     expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/articulos/31', { ...edicion, alcance: 'SoloEste' })
   })
 })
+
+describe('clienteDeArticulos.sugerenciaDePrecio', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+  })
+
+  it('sin empresa pide la ruta pelada', () => {
+    clienteDeArticulos.sugerenciaDePrecio(31)
+
+    expect(apiGetMock).toHaveBeenCalledExactlyOnceWith('/articulos/31/sugerencia-precio')
+  })
+
+  it('con empresa la manda como idEmpresa en la query', () => {
+    clienteDeArticulos.sugerenciaDePrecio(31, 4)
+
+    expect(apiGetMock).toHaveBeenCalledExactlyOnceWith('/articulos/31/sugerencia-precio?idEmpresa=4')
+  })
+})

@@ -301,6 +301,12 @@ export const PARAMETROS_CONOCIDOS: {
     tipo: 'entero',
     porDefecto: '30',
   },
+  {
+    clave: 'redondeo_sugerencia_precio',
+    etiqueta: 'Redondeo de la sugerencia de precio (múltiplo, $)',
+    tipo: 'decimal',
+    porDefecto: '100',
+  },
 ]
 
 /** Zonas IANA ofrecidas en el editor de `zona_horaria` (design decisión 12): un `<select>`
