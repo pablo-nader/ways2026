@@ -66,6 +66,12 @@ Created 2026-10-10.
   Application 755 passed (writer); integration `ArticulosAltaConFamiliaNuevaTests` 14/14;
   integration Familia*/ArticulosEndpointsTests/Estructurales 373/373 (parent run).
   Review: RDD off (clone-local), not assessed; judgment-day pending in T4.
+- Judgment-day, backend slice `4c8f8669`, round 1: judge A and judge B both 0 CRITICAL,
+  0 WARNING, 3 SUGGESTION each → APPROVED, no fix round. Info only: the source-text position
+  tests are a weak guard (the third does not pin the `SaveChangesAsync` between the familia
+  insert and the id assignment; integration tests cover it); the two messages of the same
+  409 `familia_nombre_duplicado` predate this change; one very long line in doc 10. Both
+  judges judged the skills by code inspection without reading each SKILL.md.
 - T2/T3 in progress (web writer).
 
 ## Next step
