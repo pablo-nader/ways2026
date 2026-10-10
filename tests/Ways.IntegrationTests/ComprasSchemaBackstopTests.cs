@@ -362,6 +362,38 @@ public class ComprasSchemaBackstopTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("ck_items_comprobante_compra_concepto_sin_efectos", excepcion.ConstraintName);
     }
 
+    /// <summary>Cláusulas bajo prueba: <c>= btrim(...)</c> (inicio y fin) y <c>&lt;&gt; ''</c> (vacío y solo
+    /// espacios) de la CHECK de normalización del código de proveedor de la línea.</summary>
+    [Theory]
+    [InlineData("' X'", "inicio")]
+    [InlineData("'X '", "fin")]
+    [InlineData("''", "vacio")]
+    [InlineData("'  '", "espacios")]
+    public async Task UnCodigoDeProveedorSinNormalizarViolaLaCheckDeLaLinea(string valorSql, string caso)
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnCodigoDeProveedorSinNormalizarViolaLaCheckDeLaLinea) + caso);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(
+            () => InsertarConceptoAsync(cruda, p, idComprobante, "codigo_proveedor", valorSql));
+
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_compra_codigo_proveedor_normalizado", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnCodigoDeProveedorNormalizadoOAusenteSePuedeInsertarEnLaLinea()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnCodigoDeProveedorNormalizadoOAusenteSePuedeInsertarEnLaLinea));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        var idComprobante = await InsertarComprobanteAsync(cruda, p, "borrador", null);
+
+        await InsertarConceptoAsync(cruda, p, idComprobante, "codigo_proveedor", "'AB 12'");
+    }
+
     [Fact]
     public async Task UnConceptoQueActualizaCostoViolaLaCheckDeConceptoSinEfectos()
     {

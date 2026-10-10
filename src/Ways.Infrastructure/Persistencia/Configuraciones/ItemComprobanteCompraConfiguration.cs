@@ -42,6 +42,10 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
                 "id_articulo IS NOT NULL OR (actualiza_costo = false AND codigo_lote IS NULL " +
                 "AND fecha_vencimiento IS NULL AND id_lote IS NULL AND bultos IS NULL " +
                 "AND unidades_por_bulto IS NULL AND precio_sugerido IS NULL)");
+
+            t.HasCheckConstraint(
+                "ck_items_comprobante_compra_codigo_proveedor_normalizado",
+                "codigo_proveedor IS NULL OR (codigo_proveedor = btrim(codigo_proveedor) AND codigo_proveedor <> '')");
         });
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_compra");
@@ -91,6 +95,11 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
         builder.Property(i => i.CodigoLote).HasColumnName("codigo_lote").HasColumnType("text");
         builder.Property(i => i.FechaVencimiento).HasColumnName("fecha_vencimiento").HasColumnType("date");
         builder.Property(i => i.IdLote).HasColumnName("id_lote");
+
+        builder.Property(i => i.CodigoProveedor)
+            .HasColumnName("codigo_proveedor")
+            .HasColumnType("citext")
+            .HasMaxLength(ReglaDeCodigoProveedor.LongitudMaxima);
 
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();

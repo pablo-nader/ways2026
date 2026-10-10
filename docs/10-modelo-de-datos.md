@@ -1134,9 +1134,25 @@ items_comprobante_compra (
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),
     total           numeric(14,2),
     actualiza_costo boolean DEFAULT true,    -- al confirmar, pisa articulos.costo_nominal
-    precio_sugerido numeric(14,2) NULL       -- propuesta de nuevo precio de venta (margen)
+    precio_sugerido numeric(14,2) NULL,      -- propuesta de nuevo precio de venta (margen)
+    codigo_proveedor citext NULL             -- el código impreso por el proveedor para la línea
 );
+-- CHECK ck_items_comprobante_compra_codigo_proveedor_normalizado:
+--   codigo_proveedor IS NULL OR (codigo_proveedor = btrim(codigo_proveedor) AND codigo_proveedor <> '').
+-- Máximo 50 caracteres (el mismo que codigos_proveedor.codigo). Sin FK ni índice propios.
 ```
+
+**Código de proveedor de la línea.** `codigo_proveedor` guarda el código tal como el proveedor lo
+imprimió, normalizado (recortado; vacío equivale a `NULL`), en toda línea que lo trae, con o sin
+artículo y haya quedado asociado o no. El guardado del borrador solo lo persiste y nunca toca
+`codigos_proveedor`. Al confirmar, cada línea con artículo y con código lo asocia a ese
+artículo y al proveedor de la compra dentro de la misma transacción: si el proveedor ya lo
+tiene asignado a ese artículo no hay nada que hacer, y si lo tiene asignado a otro artículo (o
+si otra línea de la misma compra, anterior en el orden, ya lo reclamó para otro artículo) la
+compra se confirma igual y el código queda solo en la línea. Un concepto nunca asocia. La
+carrera con una asociación concurrente del mismo código se resuelve con
+`INSERT … ON CONFLICT DO NOTHING` sobre `ux_codigos_proveedor_proveedor_codigo`, sin abortar la
+transacción de la confirmación.
 
 **Líneas por concepto.** Una línea con `id_articulo NULL` es un concepto (un flete, una
 factura de ferretería cargada por total): descripción libre, cantidad, costo, descuento y

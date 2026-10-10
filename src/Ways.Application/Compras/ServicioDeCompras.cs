@@ -197,6 +197,7 @@ public class ServicioDeCompras(
         // rechaza al guardar, no solo al confirmar.
         ValidarLineasDeConcepto(solicitud.Items);
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
+        var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
@@ -241,7 +242,7 @@ public class ServicioDeCompras(
         db.ComprobantesCompra.Add(comprobante);
         await db.SaveChangesAsync(ct);
 
-        var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, solicitud.Items, momento);
+        var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, solicitud.Items, codigosDeProveedor, momento);
         db.ItemsComprobanteCompra.AddRange(itemsEntidad);
         var alicuotasEntidad = MaterializarAlicuotas(comprobante.Id, idTenant, calculada, momento);
         db.AlicuotasComprobanteCompra.AddRange(alicuotasEntidad);
@@ -264,6 +265,7 @@ public class ServicioDeCompras(
         // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
         ValidarLineasDeConcepto(solicitud.Items);
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
+        var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
@@ -275,12 +277,13 @@ public class ServicioDeCompras(
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarActualizacionAsync(id, idTenant, solicitud, discriminaIva, lineas, calculada, momento, ct));
+            await EjecutarActualizacionAsync(
+                id, idTenant, solicitud, discriminaIva, lineas, calculada, codigosDeProveedor, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarActualizacionAsync(
         int id, int idTenant, SolicitudDeCompra solicitud, bool discriminaIva, IReadOnlyList<LineaDeCompra> lineas,
-        CompraCalculada calculada, DateTimeOffset momento, CancellationToken ct)
+        CompraCalculada calculada, IReadOnlyList<string?> codigosDeProveedor, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -338,7 +341,7 @@ public class ServicioDeCompras(
         comprobante.Total = calculada.Total;
         comprobante.UpdatedAt = momento;
 
-        var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, solicitud.Items, momento);
+        var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, solicitud.Items, codigosDeProveedor, momento);
         db.ItemsComprobanteCompra.AddRange(itemsNuevos);
         var alicuotasNuevas = MaterializarAlicuotas(id, idTenant, calculada, momento);
         db.AlicuotasComprobanteCompra.AddRange(alicuotasNuevas);
@@ -604,6 +607,17 @@ public class ServicioDeCompras(
             var articulosConCosto = await BloquearArticulosConCostoAsync(
                 conexion, transaccionCruda, idTenant, costosAActualizar, ct);
             await ActualizarCostosNominalesAsync(conexion, transaccionCruda, idTenant, articulosConCosto, momento, ct);
+        }
+
+        // 4.b. Códigos de proveedor de las líneas con artículo (doc 10 §3, codigos_proveedor): se asocian dentro de
+        // esta transacción y antes del lock de proveedores. Un código que ya pertenece a otro artículo del proveedor
+        // no frena la confirmación: queda solo en la línea.
+        var lineasConCodigo = items.Select(i => new LineaConCodigoDeProveedor(i.Orden, i.IdArticulo, i.CodigoProveedor));
+        foreach (var candidata in AsociacionDeCodigosDeProveedor.Seleccionar(lineasConCodigo))
+        {
+            await AsociarCodigoDeProveedorSiEstaLibreAsync(
+                conexion, transaccionCruda, idTenant, candidata.IdArticulo, encabezado.IdProveedor, candidata.Codigo,
+                momento, ct);
         }
 
         // 5. proveedores — ÚLTIMO lock de fila for update de esta transacción (stage-15-cc-
@@ -1070,6 +1084,31 @@ public class ServicioDeCompras(
         }
     }
 
+    /// <summary>Asocia el código al artículo y al proveedor salvo que el proveedor ya lo tenga asignado (a este u otro
+    /// artículo vivo). <c>ON CONFLICT DO NOTHING</c> contra <c>ux_codigos_proveedor_proveedor_codigo</c> hace el
+    /// no-op idempotente y deja la transacción sana ante una asociación concurrente del mismo código, que un
+    /// 23505 abortaría; el artículo se exige vivo en el mismo statement.</summary>
+    private static async Task AsociarCodigoDeProveedorSiEstaLibreAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idProveedor, string codigo,
+        DateTimeOffset creadoEl, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO codigos_proveedor (id_tenant, id_articulo, id_proveedor, codigo, created_at, updated_at) " +
+            "SELECT $1, $2, $3, $4, $5, $5 " +
+            "WHERE EXISTS (SELECT 1 FROM articulos WHERE id_articulo = $2 AND id_tenant = $1 AND deleted_at IS NULL) " +
+            "ON CONFLICT (id_tenant, id_proveedor, codigo) WHERE deleted_at IS NULL DO NOTHING";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idProveedor);
+        ParametrosDeComando.Agregar(comando, codigo);
+        ParametrosDeComando.Agregar(comando, creadoEl);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
@@ -1420,7 +1459,8 @@ public class ServicioDeCompras(
     /// necesita saber que existen.</summary>
     private static List<ItemComprobanteCompra> MaterializarItems(
         int idComprobante, int idTenant, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada,
-        IReadOnlyList<LineaDeCompraSolicitada> solicitudItems, DateTimeOffset momento)
+        IReadOnlyList<LineaDeCompraSolicitada> solicitudItems, IReadOnlyList<string?> codigosDeProveedor,
+        DateTimeOffset momento)
     {
         var items = new List<ItemComprobanteCompra>(lineas.Count);
 
@@ -1449,6 +1489,7 @@ public class ServicioDeCompras(
                 PrecioSugerido = item.PrecioSugerido,
                 CodigoLote = NormalizarOpcional(solicitudItem.CodigoLote),
                 FechaVencimiento = solicitudItem.FechaVencimiento,
+                CodigoProveedor = codigosDeProveedor[i],
                 CreatedAt = momento,
                 UpdatedAt = momento
             });
@@ -1456,6 +1497,12 @@ public class ServicioDeCompras(
 
         return items;
     }
+
+    /// <summary>Recorta el código de proveedor de cada línea (vacío equivale a ninguno) y rechaza con 400 el que
+    /// supera el máximo. Corre antes de escribir nada: <see cref="CrearBorradorAsync"/> guarda el encabezado antes
+    /// que las líneas y un rechazo tardío lo dejaría huérfano.</summary>
+    private static List<string?> NormalizarCodigosDeProveedor(IReadOnlyList<LineaDeCompraSolicitada> items) =>
+        items.Select(i => ReglaDeCodigoProveedor.NormalizarOpcional(i.CodigoProveedor, "codigo_proveedor")).ToList();
 
     /// <summary>Un concepto (sin artículo) no recibe mercadería, así que un lote no tiene dónde
     /// resolverse: <c>codigo_lote</c>/<c>fecha_vencimiento</c> se rechazan en vez de descartarse.
@@ -1580,7 +1627,7 @@ public class ServicioDeCompras(
                 i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
                 PuedeVerCostos ? i.CostoUnitario : null, PuedeVerCostos ? i.Descuento : null, i.IdAlicuotaIva,
                 i.PorcentajeIva, PuedeVerCostos ? i.Total : null, i.ActualizaCosto,
-                PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote))
+                PuedeVerCostos ? i.PrecioSugerido : null, i.CodigoLote, i.FechaVencimiento, i.IdLote, i.CodigoProveedor))
             .ToList(),
         comprobante.IdOrdenCompra,
         comprobante.DiscriminaIva,
