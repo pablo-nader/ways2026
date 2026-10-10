@@ -77,7 +77,26 @@ Created 2026-10-10. Branch `pnader/ofertas-por-familia`.
   the FOR UPDATE is not pinned by `ServicioDeFamiliasPosicionDeLocksTests`; `Contratos.cs`
   summary still says "las tres columnas". Judges ran no tests and read few SKILL.md files.
   Fix round: awaiting the owner.
-- O2 in progress (web writer; also carries the pending d2 test fix of familia-desde-articulo).
+- O2 implemented — commit `bcdddd8c` (6 files, +355/−56): radio "Familia", select "Familia
+  objetivo", mappers, option builder labelling inactive/empty familias, listing text, load
+  failure notice, pin test for the dissolve 409. Observed (writer): `npx tsc -b` OK;
+  `npx oxlint --quiet` exit 0; touched suites 103 passed; full `npx vitest run` 159 files /
+  3949 tests. Parent spot check: ofertas + Ofertas + Familias + ArticulosFamilias suites
+  261/261. Not checked off: findings below are open.
+- Also on this branch, belonging to familia-desde-articulo: `3cc69c64` (test-only) — real
+  mutation showed no product hole; d2's comment narrowed, a full re-propose sequence test
+  added; the `invalidar` bump is killed by the hook test in `usePrevisualizacion.test.ts`.
+- Judgment-day, O2, round 1: 0 CRITICAL from either judge. Confirmed by both (non-severe):
+  L1 — the `Familias.test.tsx` pin test is named for `familia_en_uso` but proves only "the
+  server message of a rejected DELETE is shown"; L2 — editing a familia oferta with the
+  familias list failed shows "Elegir…" while the value is kept (payload correct, display
+  misleading; the notice copy overstates). One judge only: L3 — `idFamilia !== null` is true
+  for `undefined`, so a web deployed before the backend would open categoría ofertas as
+  "Familia" and list "Familia: undefined" (deploy-skew; one-line fix); no test of precedence
+  with two non-null scopes; no `GUIA_POR_CODIGO` hint for `familia_en_uso`; radios without
+  fieldset/legend (pre-existing). Fix round: awaiting the owner.
+- Product note raised to the owner: with OD4 strict, a familia that ever had an oferta
+  (even a soft-deleted one) can never be dissolved.
 
 ## Next step
 
