@@ -77,7 +77,7 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
   `combos_componentes`, RLS, doc 10; pure `ResolvedorDeCombos` in `Ways.Domain` (detection per
   D2/D5/D6, allocation per D3, comparison input for D1) with unit tests; constraint backstops
   with SQLSTATE-asserted tests. Route: delegated (writer; multiple non-trivial files).
-- [ ] T2 — ABM API. `GET/POST/PUT/DELETE /api/combos`, validation (≥ 2 units, Unidad-only,
+- [x] T2 — ABM API. `GET/POST/PUT/DELETE /api/combos`, validation (≥ 2 units, Unidad-only,
   live references, unique code with 23505 backstop, 404-first), dissolve/baja guards for a
   family or article used by a combo, integration tests. Route: delegated (writer).
 - [ ] T3 — Sale integration. `id_combo` on the item; combos applied in the decide phase of
@@ -121,6 +121,39 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
   service; baja guards must ignore components of soft-deleted combos.
 - Review tier: RDD off (clone-local) → no native review; PR gate is judgment-day.
 
+- T1 delivered: PR pablo-nader/ways2026#379, merged 2026-10-11.
+- T2 implemented on `pnader/combos-abm` — commits `e5c978a8` (ABM + guards) and `31a09e0e`
+  (judgment fixes). Route: delegated writer. Contract: `GET /api/combos`, `GET /{id}` (POS
+  roles, like ofertas); `POST`, `PUT`, `DELETE` (Admin). Body `{ codigo?, nombre, precio,
+  idEmpresa?, activo, componentes[{ idArticulo?, idFamilia?, cantidad }] }`; `activo` required
+  on PUT. Codes 1..999999, auto-assigned as max live + 1 under a per-tenant advisory lock
+  (`"COMB"` bigint key, first statement of every combo write). Errors: 400
+  `combo_precio_invalido` (incl. scale > 2), `combo_componente_invalido`,
+  `combo_cantidad_invalida`, `combo_componente_duplicado`, `combo_unidades_insuficientes`,
+  `combo_componentes_excedidos` (> 50), `combo_codigo_invalido`, `combo_componente_no_unitario`,
+  `referencia_invalida`, `nombre_requerido`, `nombre_muy_largo`, `activo_requerido`; 404
+  `no_encontrado` (404-first); 409 `combo_codigo_duplicado`, `combo_codigo_agotado`,
+  `combo_componente_duplicado` (23505 backstop). Read model: a component whose article or
+  family is soft-deleted stays with `nombre = null`, `disponible = false`. DELETE soft-deletes
+  the combo and physically removes its components, so bajas stop being blocked. Guards: a
+  family or article used by a live combo cannot be given a baja (409 `familia_en_uso` /
+  `articulo_en_uso`); the writer takes `FOR KEY SHARE` on the rows it references.
+  Observed (fix actor): build 0 errors; Domain 1198/1198; Application 795/795; integration
+  `~Combos` 109/109; earlier writer run `Combos|Familias|ManejadorDeErrores` 439/439 and
+  `Combos|Articulos|Familias` 664/664. Parent spot checks: `BajasEstructurales` 13/13, Domain
+  `~Combos` 63/63. Integration tests were written after the service (no RED observed);
+  mutation evidence stands in: 16 mutants killed, one surviving redundant clause removed.
+- Judgment-day, T2: round 1 — 0 CRITICAL. Confirmed by both and fixed: C1 PUT without
+  `activo` reactivated the combo; C2 doc claimed weighed components are ignored by the engine
+  (false); C3 no cap on components. Also fixed (one judge, verified): F1 price scale, W3 three
+  missing tests, S2 stale comment. Scoped re-judgment: both judges, all resolved, 0 CRITICAL →
+  APPROVED. Info/suspect, not fixed: empresa existence check outside the lock (same residual
+  as ofertas); a lock-order cycle (combo write × family dissolve × article baja) claimed by
+  one judge and refuted by the other.
+- Carried to T3: exclude weighed articles from detection by unit of sale, never by quantity
+  (the ABM check is point-in-time); keep oferta discounts non-negative into the engine; the
+  `C` + digits parser accepts 1..999999.
+
 ## Next step
 
-PR for T1 (slice 1), then T2.
+PR for T2 (slice 2), then T3.
