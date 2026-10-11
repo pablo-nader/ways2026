@@ -8,9 +8,13 @@ ERP/POS rewrite (multi-tenant SaaS). Stack: .NET 10 (`src/Ways.Api|Domain|Infras
 - `docs/09-multi-tenancy.md` — tenancy hierarchy, scoping rules, isolation layers.
 - `docs/10-modelo-de-datos.md` — the definitive schema. Every new table must match its scoping category and naming convention (`id_x` PKs, Spanish snake_case plurals).
 
-## Database change gate (MANDATORY)
+## Database changes
 
-Before creating or modifying ANY database schema (EF Core migration, DDL, entity model change), present the user a concise summary of the model about to be created — tables, key columns, constraints, tenancy scoping — and WAIT for explicit approval. Never generate or apply a migration without that validation step. This applies to every agent, including delegated sub-agents: sub-agents must return the proposed model summary to the orchestrator instead of applying migrations themselves.
+Schema changes (EF Core migrations, DDL, entity model changes) no longer need the owner's
+prior approval: that gate belonged to the project's initial stage. Follow `docs/10` for
+scoping and naming, keep the model summary in the ODD feature document as evidence, and
+ship the migration with its tests (see the `db-error-backstops` and `rls-migration-backfills`
+skills).
 
 ## Code style
 
@@ -38,9 +42,12 @@ adversarial automated review before it is sent:
    (`judgment-day` skill): two independent blind review agents judge the diff, verdicts
    are compared, confirmed issues are fixed, and the diff is re-judged. Iterate until a
    clean round (no confirmed issues).
-2. Only then create the PR (per `branch-pr` skill), merge it, and continue with the next
-   slice. Never merge a PR that has not passed a clean judgment-day round.
-3. Review findings that reveal a recurring mistake must feed the skills loop (see Skills
+2. Only then create the PR (per `branch-pr` skill). Never open a PR that has not passed a
+   clean judgment-day round.
+3. Every finished stage or slice ships as a PR automatically, without asking: open it, enable
+   auto-merge (main requires green CI) and enable the desktop app's Auto-fix monitor so CI
+   failures are resolved without the owner's intervention. Then continue with the next slice.
+4. Review findings that reveal a recurring mistake must feed the skills loop (see Skills
    section): update or create the skill so the next slice doesn't repeat it.
 
 ## Agent orchestration

@@ -3026,6 +3026,68 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("ofertas_listas", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Organizacion.Dominio", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_dominio");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<bool>("EsPrincipal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("es_principal");
+
+                    b.Property<string>("Host")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("host");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<DateTimeOffset?>("VerificadoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("verificado_en");
+
+                    b.HasKey("Id")
+                        .HasName("pk_dominios");
+
+                    b.HasIndex("Host")
+                        .IsUnique()
+                        .HasDatabaseName("ux_dominios_host")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ix_dominios_tenant")
+                        .HasDatabaseName("ix_dominios_tenant");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ux_dominios_principal_por_tenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_dominios_principal_por_tenant")
+                        .HasFilter("es_principal AND deleted_at IS NULL");
+
+                    b.ToTable("dominios", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_dominios_host_formato", "host = lower(host) AND char_length(host) <= 253 AND host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Organizacion.Empresa", b =>
                 {
                     b.Property<int>("Id")
@@ -5796,6 +5858,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_ofertas_listas_oferta");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Organizacion.Dominio", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_dominios_tenant");
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Empresa", b =>

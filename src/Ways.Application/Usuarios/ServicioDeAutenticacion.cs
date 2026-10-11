@@ -55,22 +55,54 @@ public class ServicioDeAutenticacion(
     }
 
     /// <summary>
+    /// Valida las credenciales sin tenant resuelto por dominio (host de la plataforma). Ver
+    /// <see cref="IniciarSesionAsync(SolicitudDeLogin, int?, CancellationToken)"/>.
+    /// </summary>
+    public Task<UsuarioAutenticado> IniciarSesionAsync(
+        SolicitudDeLogin solicitud,
+        CancellationToken ct = default) =>
+        IniciarSesionAsync(solicitud, idTenantDelDominio: null, ct);
+
+    /// <summary>
     /// Valida las credenciales. Devuelve el usuario autenticado o lanza <see cref="ErrorDominio"/>.
     ///
     /// El mensaje de error es deliberadamente el mismo para "mail inexistente" y
     /// "contraseña incorrecta": el legacy los distinguía y eso permite enumerar cuentas.
     ///
-    /// Login es por <c>mail</c> (flow B, doc 09 stage 1): el mail resuelve la cuenta — y con
-    /// ella el tenant — sin que el request cargue ningún contexto de tenant. El llamador
-    /// (<c>AuthEndpoints</c>) tiene que dejar el contexto de tenant de la request en
-    /// <see cref="Abstracciones.ModoDeAcceso.Login"/> antes de invocar este método: es el
-    /// único modo bajo el cual RLS permite leer/actualizar <c>usuarios</c> sin un tenant
-    /// resuelto todavía.
+    /// Se identifica por <c>mail</c> o por <c>usuario</c> (exactamente uno; otra combinación es un 400
+    /// <c>solicitud_invalida</c>). El mail resuelve la cuenta —y con ella el tenant— sin que el request
+    /// cargue ningún contexto de tenant (flow B, doc 09 stage 1). El <c>usuario</c> necesita el tenant
+    /// del dominio por el que llegó la request (<paramref name="idTenantDelDominio"/>): sin él es un 400
+    /// <c>usuario_requiere_dominio</c>, y con él se busca por <c>(id_tenant, usuario)</c>.
+    ///
+    /// Bajo el dominio de un tenant también el mail se acota a ese tenant: la cuenta de otro tenant (o la
+    /// de plataforma) no se encuentra, con el mismo error y el mismo costo que una contraseña mala, así
+    /// que el dominio no sirve para saber en qué tenant existe un mail.
+    ///
+    /// El llamador (<c>AuthEndpoints</c>) tiene que dejar el contexto de tenant de la request en
+    /// <see cref="Abstracciones.ModoDeAcceso.Login"/> antes de invocar este método: es el único modo bajo
+    /// el cual RLS permite leer/actualizar <c>usuarios</c> sin un tenant resuelto todavía.
     /// </summary>
     public async Task<UsuarioAutenticado> IniciarSesionAsync(
         SolicitudDeLogin solicitud,
+        int? idTenantDelDominio,
         CancellationToken ct = default)
     {
+        var indicoUsuario = solicitud.Usuario is not null;
+        var indicoMail = solicitud.Mail is not null;
+
+        if (indicoUsuario == indicoMail)
+        {
+            throw new ErrorDominio(
+                "solicitud_invalida", "Indicá el mail o el usuario, uno solo de los dos.", 400);
+        }
+
+        if (indicoUsuario)
+        {
+            return await IniciarSesionPorUsuarioAsync(
+                solicitud.Usuario!, solicitud.Password, idTenantDelDominio, ct);
+        }
+
         var mail = solicitud.Mail?.Trim() ?? string.Empty;
         if (mail.Length == 0 || string.IsNullOrEmpty(solicitud.Password))
         {
@@ -79,12 +111,47 @@ public class ServicioDeAutenticacion(
 
         // La comparación es case-insensitive por el tipo citext de la columna,
         // así que un '==' plano alcanza y usa el índice único.
-        var usuario = await db.Usuarios
-            .Include(u => u.Rol)
-            .FirstOrDefaultAsync(u => u.Mail == mail, ct);
+        var cuentas = db.Usuarios.Include(u => u.Rol).Where(u => u.Mail == mail);
+
+        if (idTenantDelDominio is { } idTenant)
+        {
+            cuentas = cuentas.Where(u => u.IdTenant == idTenant);
+        }
+
+        var usuario = await cuentas.FirstOrDefaultAsync(ct);
 
         var validado = await ValidarYCompletarLoginAsync(
             usuario, solicitud.Password, "Mail o contraseña incorrectos.", rolesPermitidos: null, ct);
+
+        return Mapear(validado);
+    }
+
+    private async Task<UsuarioAutenticado> IniciarSesionPorUsuarioAsync(
+        string usuarioIndicado,
+        string password,
+        int? idTenantDelDominio,
+        CancellationToken ct)
+    {
+        if (idTenantDelDominio is not { } idTenant)
+        {
+            throw new ErrorDominio(
+                "usuario_requiere_dominio",
+                "Para iniciar sesión con el usuario hay que entrar por el dominio del comercio. Con el mail se puede desde cualquier dominio.",
+                400);
+        }
+
+        var nombreUsuario = usuarioIndicado.Trim();
+        if (nombreUsuario.Length == 0 || string.IsNullOrEmpty(password))
+        {
+            throw CredencialesInvalidas("Usuario o contraseña incorrectos.");
+        }
+
+        var candidato = await db.Usuarios
+            .Include(u => u.Rol)
+            .FirstOrDefaultAsync(u => u.IdTenant == idTenant && u.NombreUsuario == nombreUsuario, ct);
+
+        var validado = await ValidarYCompletarLoginAsync(
+            candidato, password, "Usuario o contraseña incorrectos.", rolesPermitidos: null, ct);
 
         return Mapear(validado);
     }

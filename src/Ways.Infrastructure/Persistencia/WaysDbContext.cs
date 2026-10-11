@@ -38,6 +38,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<PuntoVenta> PuntosVenta => Set<PuntoVenta>();
 
+    // Dominios propios de cada tenant (rebanada 0 de la tienda online): ServicioDeDominios los
+    // administra y ResolvedorDeDominios los lee para resolver el tenant desde el host.
+    public DbSet<Dominio> Dominios => Set<Dominio>();
+
     // stage-desktop-pos: dispositivo de escritorio vinculado a un punto de venta.
     // ServicioDeDispositivos es el primer (y único) consumidor de Application.
     public DbSet<Dispositivo> Dispositivos => Set<Dispositivo>();

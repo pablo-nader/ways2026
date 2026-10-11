@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Dominios;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -44,6 +45,23 @@ public static class ValidadorDeSesion
         var rolEnClaim = int.TryParse(principal.FindFirstValue(ClaimsWays.RolId), out var rolParseado)
             ? rolParseado
             : (int?)null;
+
+        // Una sesión de un tenant solo vale en el dominio de ese tenant (o en el host de la
+        // plataforma): la cookie que un comercio emitió no sirve en el dominio de otro. Es la primera
+        // decisión porque no necesita la base. Rechazarla corta la sesión igual que cualquier otra
+        // causa de invalidez: la cookie se borra, el bearer simplemente falla.
+        var esSesionDePlataforma = rolEnClaim is not null && (RolConocido)rolEnClaim == RolConocido.Root;
+        int? idTenantEnClaim = int.TryParse(principal.FindFirstValue(ClaimsWays.IdTenant), out var tenantDelClaim)
+            ? tenantDelClaim
+            : null;
+
+        if (!PoliticaDeDominio.SesionCorrespondeAlHost(
+                http.RequestServices.GetRequiredService<IDominioActual>().IdTenant,
+                esSesionDePlataforma,
+                idTenantEnClaim))
+        {
+            return false;
+        }
 
         // El modo/tenant se resuelve ANTES de tocar `usuarios` a propósito (mismo motivo que el
         // comentario original en Program.cs): el filtro de tenant de EF (ADR-1) falla cerrado en

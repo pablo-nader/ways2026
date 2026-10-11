@@ -35,6 +35,8 @@ public interface IWaysDbContext
     DbSet<Empresa> Empresas { get; }
     DbSet<PuntoVenta> PuntosVenta { get; }
 
+    DbSet<Dominio> Dominios { get; }
+
     // stage-desktop-pos: expuesto desde esta slice — ServicioDeDispositivos es el primer
     // consumidor de Application.
     DbSet<Dispositivo> Dispositivos { get; }
