@@ -31,6 +31,9 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { Modal } from '../componentes/Modal'
+
+const ID_FORMULARIO_OFERTA = 'formulario-oferta'
 
 const clienteGrupos = { listar: () => api.get<GrupoListado[]>('/catalogos/grupos') }
 
@@ -59,6 +62,10 @@ function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: Cate
  * listado del servidor no completa `idsListas` por fila (evita el N+1, ver el doc-comment de
  * `OfertaListado`), así que la tabla nunca muestra el targeting de listas: eso solo se ve/edita
  * en el detalle, después de `obtener`.
+ *
+ * El alta y la edición viven en un `Modal` (mismo criterio que `Gastos.tsx`): un guardado exitoso
+ * lo cierra y el aviso queda en la pantalla; los errores que ocurren con el modal abierto se
+ * muestran adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo.
  */
 export function Ofertas() {
   const [ofertas, setOfertas] = useState<OfertaListado[] | null>(null)
@@ -71,6 +78,7 @@ export function Ofertas() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [formulario, setFormulario] = useState<FormularioOferta | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [eliminando, setEliminando] = useState(false)
@@ -162,6 +170,7 @@ export function Ofertas() {
     setFormulario(formularioOfertaVacio())
     setAviso('')
     setError('')
+    setErrorFormulario('')
   }
 
   function cancelarEdicion() {
@@ -169,6 +178,7 @@ export function Ofertas() {
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(null)
+    setErrorFormulario('')
   }
 
   async function abrirEdicion(o: OfertaListado) {
@@ -195,6 +205,7 @@ export function Ofertas() {
       setFormulario({ ...aValoresOferta(detalle), nombreArticulo })
       setGuardando(false)
       setAviso('')
+      setErrorFormulario('')
     } catch (e) {
       if (tokenEdicionRef.current !== token) return
       setGuardando(false)
@@ -208,32 +219,34 @@ export function Ofertas() {
 
     const mensajeInvalido = validarFormulario(formulario)
     if (mensajeInvalido) {
-      setError(mensajeInvalido)
+      setErrorFormulario(mensajeInvalido)
       return
     }
 
     const token = invalidarEdicionEnCurso()
     setGuardando(true)
     setError('')
+    setErrorFormulario('')
     setAviso('')
 
     try {
       if (formulario.id === null) {
-        const creada = await clienteDeOfertas.crear(aAltaOferta(formulario))
+        await clienteDeOfertas.crear(aAltaOferta(formulario))
         if (tokenEdicionRef.current === token) {
           setAviso(`Oferta "${formulario.nombre}" creada.`)
-          setFormulario({ ...aValoresOferta(creada), nombreArticulo: formulario.nombreArticulo })
+          setFormulario(null)
         }
       } else {
-        const actualizada = await clienteDeOfertas.actualizar(formulario.id, aAltaOferta(formulario))
+        await clienteDeOfertas.actualizar(formulario.id, aAltaOferta(formulario))
         if (tokenEdicionRef.current === token) {
           setAviso(`Oferta "${formulario.nombre}" actualizada.`)
-          setFormulario({ ...aValoresOferta(actualizada), nombreArticulo: formulario.nombreArticulo })
+          setFormulario(null)
         }
       }
 
       // El refresco de la tabla no pertenece al token de edición: un fallo acá es solo de
-      // vista, el guardado ya tuvo éxito (mismo criterio que Articulos.tsx).
+      // vista, el guardado ya tuvo éxito (mismo criterio que Articulos.tsx). El modal ya se
+      // cerró, así que el aviso va a la pantalla.
       try {
         await cargar({ relanzarError: true })
       } catch {
@@ -243,7 +256,7 @@ export function Ofertas() {
       }
     } catch (e) {
       if (tokenEdicionRef.current === token) {
-        setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar la oferta.')
+        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar la oferta.')
       }
     } finally {
       if (tokenEdicionRef.current === token) setGuardando(false)
@@ -287,23 +300,6 @@ export function Ofertas() {
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {avisosCatalogos.length > 0 && (
           <div className="alert alert-warning">{avisosCatalogos.join(' ')}</div>
-        )}
-
-        {formulario && (
-          <FormularioOfertaCampos
-            key={formulario.id ?? 'nuevo'}
-            valor={formulario}
-            grupos={grupos}
-            categorias={categorias}
-            familias={familias}
-            empresas={empresas}
-            listasPrecio={listasPrecio}
-            guardando={guardando}
-            ocupado={ocupado}
-            onCambio={setFormulario}
-            onGuardar={guardar}
-            onCancelar={cancelarEdicion}
-          />
         )}
 
         {cargando && !cargaInicialHechaRef.current ? (
@@ -362,11 +358,29 @@ export function Ofertas() {
           </div>
         )}
       </Box>
+
+      {formulario && (
+        <ModalDeOferta
+          key={formulario.id ?? 'nuevo'}
+          valor={formulario}
+          grupos={grupos}
+          categorias={categorias}
+          familias={familias}
+          empresas={empresas}
+          listasPrecio={listasPrecio}
+          guardando={guardando}
+          ocupado={ocupado}
+          error={errorFormulario}
+          onCambio={setFormulario}
+          onGuardar={guardar}
+          onCancelar={cancelarEdicion}
+        />
+      )}
     </div>
   )
 }
 
-function FormularioOfertaCampos({
+function ModalDeOferta({
   valor,
   grupos,
   categorias,
@@ -375,6 +389,7 @@ function FormularioOfertaCampos({
   listasPrecio,
   guardando,
   ocupado,
+  error,
   onCambio,
   onGuardar,
   onCancelar,
@@ -387,6 +402,7 @@ function FormularioOfertaCampos({
   listasPrecio: ListaPrecioListado[]
   guardando: boolean
   ocupado: boolean
+  error: string
   onCambio: (f: FormularioOferta) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -408,9 +424,22 @@ function FormularioOfertaCampos({
     onCambio({ ...valor, idsListas: yaEsta ? valor.idsListas.filter((x) => x !== id) : [...valor.idsListas, id] })
   }
 
+  const pie = (
+    <>
+      <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={ocupado}>
+        Cancelar
+      </button>
+      <button type="submit" form={ID_FORMULARIO_OFERTA} className="btn btn-success" disabled={ocupado}>
+        {guardando ? 'Guardando…' : 'Guardar'}
+      </button>
+    </>
+  )
+
   return (
-    <div className="border p-3 mb-4 bg-body">
+    <Modal titulo={esNuevo ? 'Nueva oferta' : 'Editar oferta'} tamano="xl" desplazable ocupado={ocupado} pie={pie} onCerrar={onCancelar}>
+      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
       <form
+        id={ID_FORMULARIO_OFERTA}
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
@@ -421,10 +450,6 @@ function FormularioOfertaCampos({
         {/* fieldset disabled: cascada nativa a todos los controles anidados mientras hay un
             guardado en vuelo (react-async-state rule 5/9), mismo criterio que Articulos.tsx. */}
         <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
-          <div className="col-12">
-            <strong>{esNuevo ? 'Nueva oferta' : `Editando oferta "${valor.nombre}"`}</strong>
-          </div>
-
           <div className="col-12">
             <strong className="text-muted small text-uppercase">Identificación</strong>
           </div>
@@ -791,18 +816,9 @@ function FormularioOfertaCampos({
               </label>
             </div>
           </div>
-
-          <div className="col-12 d-flex gap-2">
-            <button type="submit" className="btn btn-success" disabled={ocupado}>
-              {guardando ? 'Guardando…' : 'Guardar'}
-            </button>
-            <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={ocupado}>
-              Cancelar
-            </button>
-          </div>
         </fieldset>
       </form>
-    </div>
+    </Modal>
   )
 }
 
