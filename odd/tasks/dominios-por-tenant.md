@@ -200,6 +200,17 @@ Not covered and left honest: the "Dominios" screen has no end-to-end test agains
 component tests mock `api/cliente`); the date in the verification column uses the browser's local
 time zone.
 
+### Judgment-day of T2 (target 7d2a0d51, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident warnings fixed in
+`67782536` (voseo copy in Dominios; the list is re-read after a 404 or an uncertain write failure
+while the message stays; comment matched to the code; dead `setCargandoDominios(false)`
+removed; "Marcar verificado" label-in-name). Verified with `npx tsc -b`, `npx oxlint` and the
+full `npx vitest run` (175 files, 4500 tests) plus mutation evidence on the three re-reads; no
+new judge round. Left as follow-ups: the server allows `@` in a username, so a username with
+`@` can only log in by mail (document or forbid server-side); a failed add leaves `aria-invalid`
+on the Host field for non-host errors; "Reintentar" after a failed list read clears a typed host.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
