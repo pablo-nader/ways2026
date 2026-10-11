@@ -273,6 +273,18 @@ Not covered and left honest: no end-to-end check against a real `vite build` out
 not by a Vitest run of the server; a missing static file with an extension (`/assets/x.js`) still gets
 the framework's 401 and not the landing, as before.
 
+### Judgment-day of T3 (target de41a31e, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident suggestions fixed
+in `71782c48`: `/admin.html`, `/online.html` and `/index.html` now redirect to their prefix
+(they rendered a blank page because the router basename did not match), the unreachable
+`valor[0] != '/'` guard is gone, the dev/preview rewrite is case-insensitive like the server,
+and the stale desktop-sync note was corrected. `!Path.HasValue` stays: it is reachable with a
+`PathBase` and has its own test. Verified with the bounded `RutasDeLaSpa|RutaDeRespaldo`
+integration filter (108 tests), `tsc` and the `entradasDeVite` tests, plus mutation evidence on
+the `/admin.html` arm. Then `origin/main` was merged (`0762633c`) and the suites re-run before
+the PR.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
