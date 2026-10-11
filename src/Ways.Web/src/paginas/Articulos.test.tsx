@@ -2788,6 +2788,20 @@ describe('Articulos — sección Costos', () => {
     expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoListaPor: 'Bulto', unidadesPorBulto: 12, costoLista: 300 })
   })
 
+  /** Cláusula bajo prueba: `|| bultoSinUnidadesPorBulto` en el `disabled` de "Guardar". Enter en un campo envía el
+   * formulario haciendo clic en su botón por defecto, y con ese botón deshabilitado no se envía nada. Evidencia de
+   * mutación (mutation-proof-tests): sacar esa cláusula del `disabled` emite el POST con Enter y hace fallar esta prueba. */
+  it('Enter en un campo con un costo por bulto sin unidades por bulto tampoco guarda', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Costo de lista con IVA'), '300')
+    await userEvent.selectOptions(screen.getByLabelText('Costo por'), 'Bulto')
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo{Enter}')
+
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
   it('la base por unidad no exige unidades por bulto', async () => {
     await abrirAltaConAlicuota()
 

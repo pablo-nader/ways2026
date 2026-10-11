@@ -395,7 +395,6 @@ export function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bultoSinUnidadesPorBulto) return
           onGuardar()
         }}
       >
