@@ -43,11 +43,11 @@ resolved prices; no release needed), precedence by specificity, `activo = false`
 
 ## Tasks
 
-- [ ] O1 — Backend: migration + entity/config, domain rule and resolver, service (create,
+- [x] O1 — Backend: migration + entity/config, domain rule and resolver, service (create,
   update, existence check, candidate query, projection), dissolve guard, error text, doc 10
   and specs, tests (domain, application, integration incl. CHECK/FK backstops by SQLSTATE and
   the missing DB-level resolution test for grupo and familia). Route: delegated (writer).
-- [ ] O2 — Web: Ofertas screen and mappers (`AlcanceOferta`, `aAltaOferta`, `aValoresOferta`),
+- [x] O2 — Web: Ofertas screen and mappers (`AlcanceOferta`, `aAltaOferta`, `aValoresOferta`),
   types, tests. Route: delegated (writer).
 - [ ] O3 — Judgment-day per slice, then PRs. Route: delegated judges.
 
@@ -95,9 +95,24 @@ Created 2026-10-10. Branch `pnader/ofertas-por-familia`.
   "Familia" and list "Familia: undefined" (deploy-skew; one-line fix); no test of precedence
   with two non-null scopes; no `GUIA_POR_CODIGO` hint for `familia_en_uso`; radios without
   fieldset/legend (pre-existing). Fix round: awaiting the owner.
+- Owner decision 2026-10-10: K2 race stays documented as a follow-up ("dejala documentada").
+- Fix round 1: `9665edc6` (backend/docs/tests: K1, K2 doc, K3 note, K4 regex narrowed, K5
+  guard position pinned, K6) and `c80af516` (web: L1 rename, L2 fallback option "Familia #N
+  (no disponible)" + truthful notice, L3 `!= null` + precedence tests). Observed (fix actor):
+  build 0/0; Domain 1032; Application 770; integration filtered 417; `npx tsc -b` and
+  `npx oxlint --quiet` clean; full `npx vitest run` 159 files / 3952 tests.
+- Scoped re-judgment 1: both judges — every item RESOLVED, 0 CRITICAL, no fix-caused code
+  defect. Confirmed by both: stale "tres columnas" comment left in `api/tipos.ts` (K6
+  residue). One judge: doc 10 said the residual is pending "para todos los catálogos" while
+  article writers already close it. Both corrected by the parent as wording-only commits
+  `7cd7888c` and `03a3bd6e` (`npx tsc -b` + `npx oxlint --quiet` clean); verified by readback
+  against `GuardaDeReferencias.cs:46-52`, NOT re-judged. Left as info: "(no disponible)"
+  flashes while familias are still loading; `textoAlcance` fix has no test of its own; grupo
+  and categoría selects have the same orphan-option gap (pre-existing).
+- Verdict: APPROVED for both slices, pending only the owner's delivery decision.
 - Product note raised to the owner: with OD4 strict, a familia that ever had an oferta
   (even a soft-deleted one) can never be dissolved.
 
 ## Next step
 
-Owner decision on the O1 fix round; then O2 verdict and PRs.
+O3: PRs (owner decides push/PR/merge). Four slices: familia backend, familia web, ofertas backend, ofertas web.
