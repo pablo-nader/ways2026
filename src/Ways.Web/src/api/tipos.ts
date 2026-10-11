@@ -992,6 +992,11 @@ export type ArticuloEscaneado = {
   unidadVenta?: UnidadVenta
 }
 
+/** Cómo el servidor interpreta el lote de `POST /api/ofertas/resolver` (espejo de
+ * `AgregacionDeResolucion`): `Documento` suma las cantidades de una familia entre líneas (el carrito);
+ * `PorLinea` resuelve cada línea por separado (vista previa de búsquedas y consulta de precio). */
+export type AgregacionDeResolucion = 'Documento' | 'PorLinea'
+
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
 export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
 

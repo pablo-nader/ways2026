@@ -361,6 +361,18 @@ public class ServicioDeOfertas(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
         ResolverAsync(lineas, momento, agregarPorFamilia: true, ct);
 
+    /// <summary>Despacha según <see cref="SolicitudDeResolucion.Agregacion"/>. Un valor numérico fuera
+    /// del enum (el binding JSON acepta enteros) se rechaza: ningún valor llega al servicio sin uso.</summary>
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverSolicitudAsync(
+        SolicitudDeResolucion solicitud, CancellationToken ct = default) =>
+        solicitud.Agregacion switch
+        {
+            AgregacionDeResolucion.Documento => ResolverDocumentoAsync(solicitud.Lineas, solicitud.Momento, ct),
+            AgregacionDeResolucion.PorLinea => ResolverPorLineaAsync(solicitud.Lineas, solicitud.Momento, ct),
+            _ => throw new ErrorDominio(
+                "agregacion_invalida", "La agregación debe ser 'Documento' o 'PorLinea'.", 400),
+        };
+
     /// <summary>Igual que <see cref="ResolverDocumentoAsync"/> pero cada línea se resuelve con SU
     /// cantidad, sin sumar la familia: para lotes que no son un documento (una etiqueta precia UNA
     /// unidad de UN artículo). Elegir entre las dos es decisión explícita del llamador.</summary>

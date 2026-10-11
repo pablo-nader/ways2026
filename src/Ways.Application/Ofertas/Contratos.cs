@@ -100,7 +100,23 @@ public sealed record LineaDeResolucion(int IdArticulo, int? IdEmpresa, int IdLis
 /// <c>SetsRequiredMembers</c>: la clave "lineas" ausente o explícitamente <c>null</c> deserializa
 /// igual, así que <c>ServicioDeOfertas.ResolverAsync</c> es quien distingue ese caso (400
 /// <c>lineas_requeridas</c>) de un lote vacío legítimo (<c>[]</c> ⇒ resultado vacío).</summary>
-public sealed record SolicitudDeResolucion(IReadOnlyList<LineaDeResolucion>? Lineas, DateTimeOffset? Momento = null);
+public sealed record SolicitudDeResolucion(
+    IReadOnlyList<LineaDeResolucion>? Lineas,
+    DateTimeOffset? Momento = null,
+    AgregacionDeResolucion Agregacion = AgregacionDeResolucion.Documento);
+
+/// <summary>Cómo se interpreta el lote de <see cref="SolicitudDeResolucion"/>. El valor por omisión
+/// es <see cref="Documento"/> porque los POS ya instalados envían su carrito sin este campo.</summary>
+public enum AgregacionDeResolucion
+{
+    /// <summary>El lote es un documento: las ofertas de familia comparan su cantidad mínima contra
+    /// la suma de las cantidades de la familia en todo el lote (carrito, venta).</summary>
+    Documento = 0,
+
+    /// <summary>Cada línea es una consulta independiente a su propia cantidad: nada se suma entre
+    /// líneas (vista previa de un resultado de búsqueda, consulta de precio).</summary>
+    PorLinea = 1,
+}
 
 /// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>.</summary>
 public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal DescuentoUnitario);

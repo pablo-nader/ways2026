@@ -127,7 +127,7 @@ export function ModalDeBusquedaDeArticulos({
         idListaPrecio,
         cantidad: CANTIDAD_POR_DEFECTO,
       }))
-      const resueltos = await clienteDeOfertas.resolver(lineas)
+      const resueltos = await clienteDeOfertas.resolver(lineas, 'PorLinea')
       if (generacionRef.current !== generacion) return
       const indice: Record<number, ResultadoDeResolucion> = {}
       for (const r of resueltos) indice[r.idArticulo] = r
