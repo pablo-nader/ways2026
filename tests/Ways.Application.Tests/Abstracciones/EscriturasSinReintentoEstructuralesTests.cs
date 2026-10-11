@@ -113,6 +113,14 @@ public class EscriturasSinReintentoEstructuralesTests
         // filas de precio y de auditoría, y muta los artículos que lee dentro del lambda; sin clave de idempotencia, un
         // reintento arrastraría las entidades del intento anterior y duplicaría las filas agregadas.
         { "Ways.Application/Familias/ServicioDeAgrupacionDeFamilias.cs", "AgruparAsync" },
+
+        // Dominios por tenant: el alta agrega la fila y mueve la marca de principal, y la baja y la
+        // verificación leen la fila bajo el lock del tenant. Un reintento sobre un commit ambiguo
+        // respondería 409 host_duplicado (o 404) a una operación que sí tuvo éxito, el mismo criterio
+        // que la baja de una oferta.
+        { "Ways.Application/Dominios/ServicioDeDominios.cs", "AgregarAsync" },
+        { "Ways.Application/Dominios/ServicioDeDominios.cs", "VerificarAsync" },
+        { "Ways.Application/Dominios/ServicioDeDominios.cs", "EliminarAsync" },
     };
 
     /// <summary>

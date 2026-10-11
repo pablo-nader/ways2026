@@ -150,6 +150,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-20 slice 4 (task 4.9): la baja lógica del tenant, en el MISMO grupo
         // SoloPlataforma que las cuatro de arriba — cero policies nuevas (criterio V5).
         ("DELETE", "/api/plataforma/tenants/{id:int}"),
+        // Dominios propios de un tenant: el mismo grupo SoloPlataforma, declarado por el grupo
+        // /api/plataforma/tenants/{id:int}/dominios (DominiosEndpoints).
+        ("POST", "/api/plataforma/tenants/{id:int}/dominios/"),
+        ("POST", "/api/plataforma/tenants/{id:int}/dominios/{idDominio:int}/verificar"),
+        ("DELETE", "/api/plataforma/tenants/{id:int}/dominios/{idDominio:int}"),
 
         // Organización (empresas/puntos de venta) — GestionDeOrganizacion (Root + Admin, sin
         // Vendedor).
@@ -479,7 +484,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // costos de la referencia de la familia. Registrado por prefijo de GRUPO para que un GET nuevo caiga bajo este
         // guard sin edición. Las rutas de escritura no necesitan entrada en el allowlist de arriba: apilan
         // GestionDeCatalogo desde el grupo, y el guard de las rutas que no son GET lo comprueba.
-        ("/api/familias", Politicas.GestionDeCatalogo)
+        ("/api/familias", Politicas.GestionDeCatalogo),
+        // Todo lo que cuelga de /api/plataforma es de root, también las lecturas (listar tenants y
+        // sus dominios). Por prefijo de grupo, para que un GET nuevo caiga bajo el guard sin edición.
+        ("/api/plataforma", Politicas.SoloPlataforma)
     ];
 
     [Fact]

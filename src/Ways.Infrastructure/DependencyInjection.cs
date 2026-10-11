@@ -16,6 +16,7 @@ using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Application.Articulos;
+using Ways.Application.Dominios;
 using Ways.Application.Exportacion;
 using Ways.Application.Fiscal;
 using Ways.Infrastructure.Exportacion;
@@ -51,6 +52,9 @@ public static class DependencyInjection
         services.AddScoped<TenantActualDeSesion>();
         services.AddScoped<ITenantActual>(sp => sp.GetRequiredService<TenantActualDeSesion>());
         services.AddScoped<InterceptorDeContextoDeTenant>();
+
+        // Singleton: guarda en memoria lo que resolvió, y abre un alcance propio por consulta.
+        services.AddSingleton<IResolvedorDeDominios, ResolvedorDeDominios>();
 
         services.AddDbContext<WaysDbContext>((sp, options) =>
         {

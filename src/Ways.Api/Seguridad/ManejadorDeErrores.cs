@@ -410,6 +410,23 @@ public class ManejadorDeErrores(
                 when string.Equals(uxFamiliaNombre, "ux_familias_nombre", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe una familia con ese nombre.", "familia_nombre_duplicado"),
 
+            // Dominios por tenant (db-error-backstops): ux_dominios_host — un host resuelve a un solo
+            // tenant, así que dos altas del mismo host (incluso de tenants distintos, que el lock por
+            // tenant de ServicioDeDominios no serializa) chocan acá. Exact-match ANTES del brazo
+            // genérico: "ux_dominios_host" contiene "_host".
+            { SqlState: "23505", ConstraintName: string uxDominioHost }
+                when string.Equals(uxDominioHost, "ux_dominios_host", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ese host ya está cargado en otro dominio.", "host_duplicado"),
+
+            // ux_dominios_principal_por_tenant — a lo sumo un principal vivo por tenant. El alta toma un
+            // lock por tenant antes de mover la marca, así que bajo operación normal esta rama es
+            // inalcanzable: queda como backstop de esquema ante una escritura fuera de banda.
+            { SqlState: "23505", ConstraintName: string uxDominioPrincipal }
+                when string.Equals(uxDominioPrincipal, "ux_dominios_principal_por_tenant", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "El tenant ya tiene otro dominio principal. Reintentá la operación.",
+                    "dominio_principal_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -454,6 +471,14 @@ public class ManejadorDeErrores(
             // ck_clientes_cf_protegido).
             { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } =>
                 (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
+
+            // Dominios por tenant: ck_dominios_host_formato. ServicioDeDominios normaliza y valida el host
+            // con Dominio.NormalizarHost antes de escribir (mismo código de dominio); esto atrapa una
+            // escritura cruda que la esquive.
+            { SqlState: "23514", ConstraintName: "ck_dominios_host_formato" } =>
+                (StatusCodes.Status400BadRequest,
+                    "El host no es válido: indicá solo el nombre de dominio, sin https:// ni rutas.",
+                    "host_invalido"),
 
             // stage-pos-reserva-de-numeracion (db-error-backstops, DB CHANGE GATE aprobado):
             // ck_reservas_numeracion_rango ("hasta >= desde"). AsignadorDeNumeroComprobante.

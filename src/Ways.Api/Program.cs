@@ -263,6 +263,8 @@ app.MapearUsuarios();
 app.MapearCatalogos();
 app.MapearParametros();
 app.MapearAprovisionamiento();
+// Dominios propios de cada tenant (solo plataforma).
+app.MapearDominios();
 app.MapearOrganizacion();
 // stage-desktop-pos: vinculación de dispositivos de escritorio + su login por usuario.
 app.MapearDispositivos();
