@@ -95,3 +95,4 @@ Next step: merge the PR, then the POS desktop release.
 
 - POS desktop bundle needs a `Ways.Desktop` version bump + `pos-v*` tag for the cashiers to get T2.
 - Sale amounts still print ",00" on screen; dropping the decimals from display is an open product decision.
+- `ResolvedorDeCombos` (domain-only, not wired to sales yet) splits the combo saving per line at 2 decimals; it must split in whole pesos before a sale path consumes it.
