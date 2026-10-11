@@ -132,6 +132,16 @@ internal sealed class ApoyoDeVitrinas(WaysApiFixture fixture)
         return vitrina.Id;
     }
 
+    public async Task SuspenderTenantAsync(int idTenant)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var tenant = await db.Tenants.SingleAsync(t => t.Id == idTenant);
+        tenant.Estado = EstadoTenant.Suspendido;
+        tenant.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>Un usuario más del tenant, con el rol pedido. Devuelve su mail y su contraseña.</summary>
     public async Task<(string Mail, string Password)> SembrarUsuarioAsync(int idTenant, RolConocido rol, string usuario)
     {

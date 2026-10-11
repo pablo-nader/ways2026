@@ -69,6 +69,25 @@ public sealed class LectorDeVitrinaPublica(IServiceScopeFactory alcances) : ILec
             sucursales);
     }
 
+    public async Task<VersionDeLogo?> ObtenerVersionDelLogoAsync(int idTenant, CancellationToken ct = default)
+    {
+        await using var alcance = EnModoPublico(idTenant);
+        var db = alcance.ServiceProvider.GetRequiredService<IWaysDbContext>();
+
+        // Solo el tipo y la marca de carga: `v.Logo != null` se traduce a `IS NOT NULL` y la columna bytea
+        // nunca viaja. De esto sale el ETag, así que una condicional que coincide no lee los bytes.
+        var version = await (
+                from v in db.Vitrinas.AsNoTracking()
+                join e in db.Empresas.AsNoTracking() on v.IdEmpresa equals e.Id
+                where v.Logo != null
+                select new { v.LogoContentType, v.LogoActualizadoEn })
+            .FirstOrDefaultAsync(ct);
+
+        return version is { LogoContentType: not null, LogoActualizadoEn: not null }
+            ? new VersionDeLogo(version.LogoContentType, version.LogoActualizadoEn.Value)
+            : null;
+    }
+
     public async Task<LogoPublico?> ObtenerLogoAsync(int idTenant, CancellationToken ct = default)
     {
         await using var alcance = EnModoPublico(idTenant);

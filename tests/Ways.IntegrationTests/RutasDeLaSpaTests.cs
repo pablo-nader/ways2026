@@ -127,6 +127,8 @@ public class RutasDeLaSpaTests
         public int? IdTenant => null;
 
         public string? NombreComercio => null;
+
+        public bool TenantPuedeOperar => false;
     }
 
     private static string RaizDelRepositorio()

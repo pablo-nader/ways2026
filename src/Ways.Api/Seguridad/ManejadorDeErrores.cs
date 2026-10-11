@@ -499,8 +499,11 @@ public class ManejadorDeErrores(
                     "El host no es válido: indicá solo el nombre de dominio, sin https:// ni rutas.",
                     "host_invalido"),
 
-            // Vitrinas: Vitrina.Normalizar* y Vitrina.ValidarLogo validan antes de escribir y devuelven
-            // estos mismos códigos; los CHECK atrapan una escritura cruda que los esquive.
+            // Vitrinas: Vitrina.Normalizar* y Vitrina.ValidarLogo validan antes de escribir, así que ningún
+            // CHECK se alcanza por la API; son backstops de esquema para una escritura cruda. Los tres de
+            // texto repiten los códigos de dominio (tema_invalido, color_invalido, texto_demasiado_largo).
+            // El del logo NO: la API contesta 413 logo_demasiado_grande y 415 logo_no_admitido, y este
+            // backstop contesta 400 logo_no_admitido para cualquier logo fuera del CHECK.
             { SqlState: "23514", ConstraintName: "ck_vitrinas_tema" } =>
                 (StatusCodes.Status400BadRequest, "El tema tiene que ser claro u oscuro.", "tema_invalido"),
 

@@ -1,7 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Ways.Application.Vitrinas;
 using Ways.Domain.Organizacion;
 using Ways.Infrastructure.Multitenancy;
 
@@ -326,5 +330,139 @@ public class VitrinaPublicaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         using var cliente = apoyo.Dominios.ClienteEnHost(comercio.Host);
 
         Assert.Equal(HttpStatusCode.NotFound, (await cliente.GetAsync(RutaLogo)).StatusCode);
+    }
+
+    /// <summary>
+    /// Una condicional que coincide contesta 304 SIN leer la columna bytea: el lector real va envuelto en uno
+    /// que cuenta cada llamada que trae los bytes. Con la versión barata alcanza para el ETag; solo la
+    /// request que no coincide pasa a la segunda consulta.
+    /// </summary>
+    [Fact]
+    public async Task UnaCondicionalQueCoincideDa304SinLeerLosBytesDelLogo()
+    {
+        var comercio = await apoyo.SembrarComercioAsync("logo-304-sin-bytes");
+        var bytes = ApoyoDeVitrinas.Imagen(Vitrina.TipoPng, largo: 300, relleno: 4);
+        await apoyo.SembrarVitrinaAsync(comercio.IdTenant, comercio.IdEmpresa, publicada: true, logo: bytes);
+        var etag = $"\"{(await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!.LogoActualizadoEn!.Value.UtcTicks:x}\"";
+
+        var lector = new LectorQueCuentaLasLecturas();
+        await using var host = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(servicios =>
+        {
+            servicios.RemoveAll<ILectorDeVitrinaPublica>();
+            servicios.AddSingleton<ILectorDeVitrinaPublica>(sp =>
+            {
+                lector.Real = new LectorDeVitrinaPublica(sp.GetRequiredService<IServiceScopeFactory>());
+                return lector;
+            });
+        }));
+        using var cliente = host.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri($"http://{comercio.Host}")
+        });
+
+        var completa = await cliente.GetAsync(RutaLogo);
+        Assert.Equal(HttpStatusCode.OK, completa.StatusCode);
+        Assert.Equal(bytes, await completa.Content.ReadAsByteArrayAsync());
+        Assert.Equal((1, 1), (lector.LecturasDeVersion, lector.LecturasDeBytes));
+
+        foreach (var condicion in new[] { new EntityTagHeaderValue(etag), EntityTagHeaderValue.Any, new EntityTagHeaderValue(etag, isWeak: true) })
+        {
+            using var condicional = new HttpRequestMessage(HttpMethod.Get, RutaLogo);
+            condicional.Headers.IfNoneMatch.Add(condicion);
+
+            var noModificado = await cliente.SendAsync(condicional);
+
+            Assert.Equal(HttpStatusCode.NotModified, noModificado.StatusCode);
+            Assert.Empty(await noModificado.Content.ReadAsByteArrayAsync());
+            Assert.Equal(etag, noModificado.Headers.ETag?.Tag);
+        }
+
+        // Tres condicionales que coinciden: tres lecturas de versión más y ninguna de bytes.
+        Assert.Equal((4, 1), (lector.LecturasDeVersion, lector.LecturasDeBytes));
+
+        using var otroEtag = new HttpRequestMessage(HttpMethod.Get, RutaLogo);
+        otroEtag.Headers.IfNoneMatch.Add(new EntityTagHeaderValue("\"viejo\""));
+        var distinto = await cliente.SendAsync(otroEtag);
+
+        Assert.Equal(HttpStatusCode.OK, distinto.StatusCode);
+        Assert.Equal(bytes, await distinto.Content.ReadAsByteArrayAsync());
+        Assert.Equal((5, 2), (lector.LecturasDeVersion, lector.LecturasDeBytes));
+    }
+
+    // ---- tenant suspendido ------------------------------------------------------------------------
+
+    /// <summary>Un tenant suspendido no sirve su vitrina ni su logo (ni siquiera con una condicional que
+    /// coincidiría), pero su dominio sigue resolviendo: el login ya rechaza la suspensión por su cuenta.
+    /// El comercio activo de al lado se sirve igual, así que el 404 viene del estado y no de otra cosa.</summary>
+    [Fact]
+    public async Task UnTenantSuspendidoNoSirveSuVitrinaNiSuLogoPeroSuDominioSigueResolviendo()
+    {
+        var suspendido = await apoyo.SembrarComercioAsync("suspendido", nombreFantasia: "Suspendido SA");
+        var activo = await apoyo.SembrarComercioAsync("suspendido-control", nombreFantasia: "Activo SA");
+        var logo = ApoyoDeVitrinas.Imagen(Vitrina.TipoPng, largo: 128, relleno: 6);
+
+        foreach (var comercio in new[] { suspendido, activo })
+        {
+            await apoyo.SembrarVitrinaAsync(
+                comercio.IdTenant, comercio.IdEmpresa, publicada: true, tagline: "Publicada", logo: logo);
+        }
+
+        await apoyo.SuspenderTenantAsync(suspendido.IdTenant);
+
+        using var clienteActivo = apoyo.Dominios.ClienteEnHost(activo.Host);
+        Assert.Equal(HttpStatusCode.OK, (await clienteActivo.GetAsync(RutaVitrina)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await clienteActivo.GetAsync(RutaLogo)).StatusCode);
+
+        using var cliente = apoyo.Dominios.ClienteEnHost(suspendido.Host);
+
+        var sitio = await cliente.GetAsync("/api/publico/sitio");
+        Assert.Equal(HttpStatusCode.OK, sitio.StatusCode);
+        Assert.Equal(
+            suspendido.Tenant.Nombre,
+            (await ApoyoDeDominios.LeerJsonAsync(sitio)).GetProperty("nombreComercio").GetString());
+
+        var vitrina = await cliente.GetAsync(RutaVitrina);
+        Assert.Equal(HttpStatusCode.NotFound, vitrina.StatusCode);
+        Assert.Equal("vitrina_no_publicada", await ApoyoDeDominios.CodigoDeErrorAsync(vitrina));
+        Assert.False(vitrina.Headers.CacheControl?.Public ?? false);
+
+        var imagen = await cliente.GetAsync(RutaLogo);
+        Assert.Equal(HttpStatusCode.NotFound, imagen.StatusCode);
+        Assert.Equal("logo_no_encontrado", await ApoyoDeDominios.CodigoDeErrorAsync(imagen));
+        Assert.False(imagen.Headers.CacheControl?.Public ?? false);
+
+        var guardada = (await apoyo.LeerVitrinaAsync(suspendido.IdEmpresa))!;
+        using var condicional = new HttpRequestMessage(HttpMethod.Get, RutaLogo);
+        condicional.Headers.IfNoneMatch.Add(new EntityTagHeaderValue($"\"{guardada.LogoActualizadoEn!.Value.UtcTicks:x}\""));
+        Assert.Equal(HttpStatusCode.NotFound, (await cliente.SendAsync(condicional)).StatusCode);
+    }
+
+    /// <summary>Envuelve al lector real y cuenta cuántas veces se pidió la versión del logo y cuántas sus
+    /// bytes: es lo que prueba que la columna no se leyó.</summary>
+    private sealed class LectorQueCuentaLasLecturas : ILectorDeVitrinaPublica
+    {
+        private int lecturasDeVersion;
+        private int lecturasDeBytes;
+
+        public ILectorDeVitrinaPublica Real { get; set; } = null!;
+
+        public int LecturasDeVersion => lecturasDeVersion;
+
+        public int LecturasDeBytes => lecturasDeBytes;
+
+        public Task<VitrinaPublica?> ObtenerAsync(int idTenant, CancellationToken ct = default) =>
+            Real.ObtenerAsync(idTenant, ct);
+
+        public Task<VersionDeLogo?> ObtenerVersionDelLogoAsync(int idTenant, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref lecturasDeVersion);
+            return Real.ObtenerVersionDelLogoAsync(idTenant, ct);
+        }
+
+        public Task<LogoPublico?> ObtenerLogoAsync(int idTenant, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref lecturasDeBytes);
+            return Real.ObtenerLogoAsync(idTenant, ct);
+        }
     }
 }

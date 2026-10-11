@@ -9,11 +9,12 @@ using Ways.Domain.Organizacion;
 namespace Ways.Application.Vitrinas;
 
 /// <summary>
-/// La vitrina de cada empresa: leerla, guardarla y subir o quitar su logo. La administra el admin del
-/// tenant (<c>GestionDeOrganizacion</c> en la API); la plataforma también puede.
+/// La vitrina de cada empresa: leerla, guardarla, darla de baja y subir, quitar o previsualizar su logo.
+/// La administra el admin del tenant (<c>GestionDeOrganizacion</c> en la API); la plataforma también puede.
 ///
 /// Orden de cada operación: primero 404 (la empresa no existe, está dada de baja o es de otro tenant),
-/// después la validación del cuerpo, después la escritura. Las tres escrituras corren bajo
+/// después la validación del cuerpo, después la escritura. Las cuatro escrituras (guardar, subir el logo,
+/// quitarlo y dar de baja la vitrina) corren bajo
 /// <see cref="FabricaDeEstrategiaSinReintento"/> (skill <c>ef-retry-safe-writes</c>, forma (b)) y bajo el
 /// mismo lock de tenant que las bajas de organización y los dominios: una vitrina no puede nacer
 /// mientras se da de baja su empresa o su tenant, y dos publicaciones del mismo tenant se serializan, de
@@ -148,6 +149,75 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
 
             return true;
         }, ct);
+    }
+
+    /// <summary>
+    /// Baja lógica de la vitrina de la empresa, que además la despublica: la policy pública exige
+    /// <c>deleted_at IS NULL</c>. Idempotente a propósito: una empresa sin vitrina contesta lo mismo que una
+    /// que la tenía (204 en la API), porque lo que el admin pidió —que no haya vitrina— ya se cumple; el
+    /// 404 queda para la empresa que no se ve. No libera nada del guard de bajas: esa guarda cuenta las filas
+    /// de <c>vitrinas</c> con SQL crudo, que ignora <c>deleted_at</c>, así que una vitrina dada de baja
+    /// sigue impidiendo la baja de su empresa. Una vitrina nueva (PUT) la reemplaza: los índices únicos son
+    /// parciales sobre las filas vivas.
+    /// </summary>
+    public async Task EliminarAsync(int idEmpresa, CancellationToken ct = default)
+    {
+        var idTenant = await ObtenerTenantDeLaEmpresaAsync(idEmpresa, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await EnUnaTransaccionAsync(estrategia, idEmpresa, idTenant, async () =>
+        {
+            var vitrina = await db.Vitrinas.FirstOrDefaultAsync(v => v.IdEmpresa == idEmpresa, ct);
+
+            if (vitrina is null)
+            {
+                return false;
+            }
+
+            var ahora = reloj.Ahora;
+            vitrina.DeletedAt = ahora;
+            vitrina.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+
+            return true;
+        }, ct);
+    }
+
+    /// <summary>Tipo y marca de carga del logo, sin leer los bytes: con eso el endpoint arma el ETag y
+    /// contesta 304 sin traer la columna. <c>null</c> cuando la empresa no tiene vitrina o no tiene logo; 404
+    /// primero si la empresa no se ve. Sirve también para una vitrina sin publicar.</summary>
+    public async Task<VersionDeLogo?> ObtenerVersionDelLogoAsync(int idEmpresa, CancellationToken ct = default)
+    {
+        await ObtenerTenantDeLaEmpresaAsync(idEmpresa, ct);
+
+        var version = await db.Vitrinas
+            .AsNoTracking()
+            .Where(v => v.IdEmpresa == idEmpresa && v.Logo != null)
+            .Select(v => new { v.LogoContentType, v.LogoActualizadoEn })
+            .FirstOrDefaultAsync(ct);
+
+        return version is { LogoContentType: not null, LogoActualizadoEn: not null }
+            ? new VersionDeLogo(version.LogoContentType, version.LogoActualizadoEn.Value)
+            : null;
+    }
+
+    /// <summary>Los bytes del logo para la vista previa del admin. Misma regla que
+    /// <see cref="ObtenerVersionDelLogoAsync"/>.</summary>
+    public async Task<LogoPublico?> ObtenerLogoAsync(int idEmpresa, CancellationToken ct = default)
+    {
+        await ObtenerTenantDeLaEmpresaAsync(idEmpresa, ct);
+
+        var logo = await db.Vitrinas
+            .AsNoTracking()
+            .Where(v => v.IdEmpresa == idEmpresa && v.Logo != null)
+            .Select(v => new { v.Logo, v.LogoContentType, v.LogoActualizadoEn })
+            .FirstOrDefaultAsync(ct);
+
+        return logo is { Logo: not null, LogoContentType: not null, LogoActualizadoEn: not null }
+            ? new LogoPublico(logo.Logo, logo.LogoContentType, logo.LogoActualizadoEn.Value)
+            : null;
     }
 
     // --- Común ---

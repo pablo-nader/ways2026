@@ -180,6 +180,12 @@ modo de acceso,
   `ITenantActual` de la request no se toca, así que el modo no llega a nada más de esa request (por
   ejemplo, a una cookie de sesión que viniera con ella). El tenant sale del host (`IDominioActual`), nunca
   de un parámetro del cliente.
+- **Tenant suspendido**: el dominio sigue resolviendo (el login ya rechaza la suspensión), pero la vitrina
+  no se sirve: `ResolvedorDeDominios` lee el tenant con el contexto de plataforma, como ya hacía para el
+  nombre, y deja `TenantPuedeOperar` (`Tenant.PuedeOperar`) en `IDominioActual`; los endpoints públicos de
+  la vitrina contestan `404 vitrina_no_publicada` / `logo_no_encontrado` si es `false`. Ninguna policy de
+  `tenants` se abre al modo público. El dato vive en la caché de resolución del host (60 s): suspender o
+  reactivar un tenant tarda hasta ese lapso en verse en el dominio.
 - **Lo que RLS no hace**: la policy es por fila, no por columna. `empresas` y `puntos_venta` se leen
   enteras en este modo (CUIT, alícuotas, modo), así que el lector proyecta solo los campos del contrato
   público. Todo código nuevo que lea en este modo tiene que hacer lo mismo.

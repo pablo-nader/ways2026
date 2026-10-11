@@ -164,6 +164,7 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // que hace las cuatro operaciones como admin y rebota a Supervisor y Vendedor con 403.
         ("PUT", "/api/empresas/{id:int}/vitrina"),
         ("PUT", "/api/empresas/{id:int}/vitrina/logo"),
+        ("DELETE", "/api/empresas/{id:int}/vitrina"),
         ("DELETE", "/api/empresas/{id:int}/vitrina/logo"),
         ("PUT", "/api/puntos-venta/{id:int}"),
         // Alta de un punto de venta sobre una empresa existente: la declara la ruta y no el grupo,

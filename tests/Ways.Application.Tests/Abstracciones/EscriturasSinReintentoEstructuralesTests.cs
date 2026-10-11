@@ -128,6 +128,7 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "GuardarAsync" },
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "GuardarLogoAsync" },
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "QuitarLogoAsync" },
+        { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "EliminarAsync" },
     };
 
     /// <summary>

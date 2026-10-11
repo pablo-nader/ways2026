@@ -24,4 +24,14 @@ public record VitrinaPublica(
     long? LogoVersion,
     IReadOnlyList<SucursalPublica> Sucursales);
 
+/// <summary>
+/// Cuál es el logo y de qué carga, sin sus bytes: alcanza para armar el ETag y contestar una condicional
+/// sin leer la columna <c>logo</c>.
+/// </summary>
+public record VersionDeLogo(string ContentType, DateTimeOffset ActualizadoEn);
+
+/// <summary>
+/// Los bytes del logo con su tipo y la marca de su carga. Los sirven el endpoint público y la vista previa
+/// del admin; solo se leen cuando la condicional no alcanza para contestar.
+/// </summary>
 public record LogoPublico(byte[] Contenido, string ContentType, DateTimeOffset ActualizadoEn);

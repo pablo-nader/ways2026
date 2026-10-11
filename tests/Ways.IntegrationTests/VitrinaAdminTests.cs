@@ -1,10 +1,12 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Vitrinas;
+using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -205,7 +207,7 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         foreach (var empresa in new[] { "inexistente", "dada-de-baja", "de-otro-tenant" })
         {
-            foreach (var operacion in new[] { "get", "put", "put-logo", "delete-logo" })
+            foreach (var operacion in new[] { "get", "put", "put-logo", "delete-logo", "get-logo", "delete" })
             {
                 datos.Add(empresa, operacion);
             }
@@ -234,7 +236,8 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         // La vitrina de la empresa ajena existe y está publicada: el 404 no puede delatarla ni tocarla.
         if (empresa == "de-otro-tenant")
         {
-            await apoyo.SembrarVitrinaAsync(ajeno.IdTenant, ajeno.IdEmpresa, publicada: true, tagline: "Ajena");
+            await apoyo.SembrarVitrinaAsync(
+                ajeno.IdTenant, ajeno.IdEmpresa, publicada: true, tagline: "Ajena", logo: ApoyoDeVitrinas.Imagen(Vitrina.TipoPng));
         }
 
         using var admin = await apoyo.ClienteAdminAsync(propio);
@@ -247,6 +250,8 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             "get" => await admin.GetAsync(Ruta(idEmpresa)),
             "put" => await admin.PutAsJsonAsync(Ruta(idEmpresa), invalido),
             "put-logo" => await admin.PutAsync(RutaLogo(idEmpresa), ApoyoDeVitrinas.Contenido(grande, "text/plain")),
+            "get-logo" => await admin.GetAsync(RutaLogo(idEmpresa)),
+            "delete" => await admin.DeleteAsync(Ruta(idEmpresa)),
             _ => await admin.DeleteAsync(RutaLogo(idEmpresa))
         };
 
@@ -255,7 +260,9 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         if (empresa == "de-otro-tenant")
         {
-            Assert.Equal("Ajena", (await apoyo.LeerVitrinaAsync(ajeno.IdEmpresa))!.Tagline);
+            var ajena = (await apoyo.LeerVitrinaAsync(ajeno.IdEmpresa))!;
+            Assert.Equal("Ajena", ajena.Tagline);
+            Assert.Null(ajena.DeletedAt);
         }
         else
         {
@@ -645,6 +652,208 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Null(await apoyo.LeerVitrinaAsync(sinVitrina.IdEmpresa));
     }
 
+    // ---- dar de baja la vitrina -------------------------------------------------------------------
+
+    [Fact]
+    public async Task DarDeBajaLaVitrinaLaDespublicaEsIdempotenteYUnPutPosteriorCreaUnaNueva()
+    {
+        var comercio = await apoyo.SembrarComercioAsync("baja-vitrina");
+        var sinVitrina = await apoyo.SembrarComercioAsync("baja-vitrina-sin-nada");
+        await apoyo.SembrarVitrinaAsync(
+            comercio.IdTenant, comercio.IdEmpresa, publicada: true, tagline: "Visible",
+            logo: ApoyoDeVitrinas.Imagen(Vitrina.TipoPng));
+        using var admin = await apoyo.ClienteAdminAsync(comercio);
+        using var adminSinVitrina = await apoyo.ClienteAdminAsync(sinVitrina);
+        using var publico = apoyo.Dominios.ClienteEnHost(comercio.Host);
+
+        Assert.Equal(HttpStatusCode.OK, (await publico.GetAsync("/api/publico/vitrina")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await publico.GetAsync("/api/publico/vitrina/logo")).StatusCode);
+        var idOriginal = (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!.Id;
+
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(Ruta(comercio.IdEmpresa))).StatusCode);
+
+        // La fila queda como baja lógica, no se borra.
+        var enBase = (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!;
+        Assert.Equal(idOriginal, enBase.Id);
+        Assert.NotNull(enBase.DeletedAt);
+        Assert.Equal("Visible", enBase.Tagline);
+
+        // Se despublica: la lectura pública y la del admin ya no la ven.
+        var vitrinaPublica = await publico.GetAsync("/api/publico/vitrina");
+        Assert.Equal(HttpStatusCode.NotFound, vitrinaPublica.StatusCode);
+        Assert.Equal("vitrina_no_publicada", await ApoyoDeDominios.CodigoDeErrorAsync(vitrinaPublica));
+        Assert.Equal(HttpStatusCode.NotFound, (await publico.GetAsync("/api/publico/vitrina/logo")).StatusCode);
+        Assert.False((await JsonAsync(await admin.GetAsync(Ruta(comercio.IdEmpresa)))).GetProperty("existe").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync(RutaLogo(comercio.IdEmpresa))).StatusCode);
+
+        // Idempotente: repetirla, o darla de baja en una empresa que nunca tuvo vitrina, es un 204 que no crea nada.
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(Ruta(comercio.IdEmpresa))).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await adminSinVitrina.DeleteAsync(Ruta(sinVitrina.IdEmpresa))).StatusCode);
+        Assert.Null(await apoyo.LeerVitrinaAsync(sinVitrina.IdEmpresa));
+        Assert.Equal(1, await apoyo.ContarVitrinasAsync(comercio.IdTenant));
+
+        // La baja libera a la empresa: un PUT crea una vitrina nueva, y la dada de baja queda al lado.
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await admin.PutAsJsonAsync(Ruta(comercio.IdEmpresa), Cuerpo(publicada: true, tagline: "Nueva"))).StatusCode);
+        Assert.Equal(2, await apoyo.ContarVitrinasAsync(comercio.IdTenant));
+        var nueva = await JsonAsync(await publico.GetAsync("/api/publico/vitrina"));
+        Assert.Equal("Nueva", nueva.GetProperty("tagline").GetString());
+        Assert.False(nueva.GetProperty("tieneLogo").GetBoolean());
+    }
+
+    // ---- vista previa del logo --------------------------------------------------------------------
+
+    [Fact]
+    public async Task LaVistaPreviaDelLogoSirveLosBytesDeUnaVitrinaSinPublicarSinCacheYConEtagYCondicional()
+    {
+        var comercio = await apoyo.SembrarComercioAsync("preview-logo");
+        var bytes = ApoyoDeVitrinas.Imagen(Vitrina.TipoPng, largo: 400, relleno: 13);
+        await apoyo.SembrarVitrinaAsync(comercio.IdTenant, comercio.IdEmpresa, publicada: false, logo: bytes);
+        var guardada = (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!;
+        var etagEsperado = $"\"{guardada.LogoActualizadoEn!.Value.UtcTicks:x}\"";
+        using var admin = await apoyo.ClienteAdminAsync(comercio);
+
+        var respuesta = await admin.GetAsync(RutaLogo(comercio.IdEmpresa));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(bytes, await respuesta.Content.ReadAsByteArrayAsync());
+        Assert.Equal("image/png", respuesta.Content.Headers.ContentType?.MediaType);
+        Assert.True(respuesta.Headers.CacheControl is { Private: true, NoStore: true, Public: false });
+        Assert.Equal("nosniff", respuesta.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(etagEsperado, respuesta.Headers.ETag?.Tag);
+
+        using var condicional = new HttpRequestMessage(HttpMethod.Get, RutaLogo(comercio.IdEmpresa));
+        condicional.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(etagEsperado));
+        var noModificado = await admin.SendAsync(condicional);
+
+        Assert.Equal(HttpStatusCode.NotModified, noModificado.StatusCode);
+        Assert.Empty(await noModificado.Content.ReadAsByteArrayAsync());
+        Assert.Equal(etagEsperado, noModificado.Headers.ETag?.Tag);
+        Assert.True(noModificado.Headers.CacheControl is { Private: true, NoStore: true, Public: false });
+
+        // Un logo nuevo cambia el ETag y la misma condicional ya no coincide.
+        var nuevo = ApoyoDeVitrinas.Imagen(Vitrina.TipoJpeg, relleno: 14);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await admin.PutAsync(RutaLogo(comercio.IdEmpresa), ApoyoDeVitrinas.Contenido(nuevo, Vitrina.TipoJpeg))).StatusCode);
+        using var vieja = new HttpRequestMessage(HttpMethod.Get, RutaLogo(comercio.IdEmpresa));
+        vieja.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(etagEsperado));
+        var cambiado = await admin.SendAsync(vieja);
+
+        Assert.Equal(HttpStatusCode.OK, cambiado.StatusCode);
+        Assert.Equal(nuevo, await cambiado.Content.ReadAsByteArrayAsync());
+        Assert.Equal("image/jpeg", cambiado.Content.Headers.ContentType?.MediaType);
+        Assert.NotEqual(etagEsperado, cambiado.Headers.ETag?.Tag);
+
+        // Y la vista previa no abre lo que la lectura pública no sirve: la vitrina sigue sin publicar.
+        using var publico = apoyo.Dominios.ClienteEnHost(comercio.Host);
+        Assert.Equal(HttpStatusCode.NotFound, (await publico.GetAsync("/api/publico/vitrina/logo")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("sin-vitrina")]
+    [InlineData("sin-logo")]
+    [InlineData("logo-quitado")]
+    public async Task LaVistaPreviaDeUnaEmpresaSinLogoDa404LogoNoEncontrado(string caso)
+    {
+        var comercio = await apoyo.SembrarComercioAsync($"preview-404-{caso}");
+
+        if (caso != "sin-vitrina")
+        {
+            await apoyo.SembrarVitrinaAsync(
+                comercio.IdTenant, comercio.IdEmpresa, publicada: false,
+                logo: caso == "logo-quitado" ? ApoyoDeVitrinas.Imagen(Vitrina.TipoPng) : null);
+        }
+
+        using var admin = await apoyo.ClienteAdminAsync(comercio);
+
+        if (caso == "logo-quitado")
+        {
+            Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(RutaLogo(comercio.IdEmpresa))).StatusCode);
+        }
+
+        var respuesta = await admin.GetAsync(RutaLogo(comercio.IdEmpresa));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        Assert.Equal("logo_no_encontrado", await ApoyoDeDominios.CodigoDeErrorAsync(respuesta));
+        Assert.False(respuesta.Headers.CacheControl?.Public ?? false);
+    }
+
+    /// <summary>Por HTTP la versión siempre corre antes que los bytes, así que la ruta no distingue si el
+    /// 404 de la empresa lo da una o las dos; el servicio sí: cada lectura del logo es 404-first por sí
+    /// sola, y no depende de que quien la llama haya preguntado antes por la versión.</summary>
+    [Fact]
+    public async Task CadaLecturaDelLogoDelServicioDa404NoEncontradoParaUnaEmpresaQueNoVe()
+    {
+        var propio = await apoyo.SembrarComercioAsync("servicio-404");
+        var ajeno = await apoyo.SembrarComercioAsync("servicio-404-ajeno");
+        await apoyo.SembrarVitrinaAsync(
+            ajeno.IdTenant, ajeno.IdEmpresa, publicada: true, logo: ApoyoDeVitrinas.Imagen(Vitrina.TipoPng));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, propio.IdTenant));
+        var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+
+        foreach (var idEmpresa in new[] { ajeno.IdEmpresa, 987_654_321 })
+        {
+            var enVersion = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerVersionDelLogoAsync(idEmpresa));
+            var enBytes = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerLogoAsync(idEmpresa));
+
+            Assert.Equal("no_encontrado", enVersion.Codigo);
+            Assert.Equal("no_encontrado", enBytes.Codigo);
+        }
+    }
+
+    [Fact]
+    public async Task ElBorradoDeLaVitrinaYLaVistaPreviaDelLogoSoloLosHacenElAdminYLaPlataforma()
+    {
+        var comercio = await apoyo.SembrarComercioAsync("admin-roles-nuevas");
+        var logo = ApoyoDeVitrinas.Imagen(Vitrina.TipoPng, relleno: 21);
+        await apoyo.SembrarVitrinaAsync(
+            comercio.IdTenant, comercio.IdEmpresa, publicada: false, tagline: "Intacta", logo: logo);
+        var supervisor = await apoyo.SembrarUsuarioAsync(comercio.IdTenant, RolConocido.Supervisor, "supervisor");
+        var vendedor = await apoyo.SembrarUsuarioAsync(comercio.IdTenant, RolConocido.Vendedor, "vendedor");
+
+        HttpRequestMessage[] Solicitudes() =>
+        [
+            new(HttpMethod.Get, RutaLogo(comercio.IdEmpresa)),
+            new(HttpMethod.Delete, Ruta(comercio.IdEmpresa))
+        ];
+
+        using var anonimo = fixture.CreateClient();
+        foreach (var solicitud in Solicitudes())
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.SendAsync(solicitud)).StatusCode);
+        }
+
+        foreach (var (mail, password) in new[] { supervisor, vendedor })
+        {
+            using var sinPermiso = await apoyo.ClienteConSesionAsync(mail, password);
+
+            foreach (var solicitud in Solicitudes())
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, (await sinPermiso.SendAsync(solicitud)).StatusCode);
+            }
+        }
+
+        var intacta = (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!;
+        Assert.Null(intacta.DeletedAt);
+        Assert.Equal(logo, intacta.Logo);
+
+        using var root = await apoyo.Dominios.ClienteRootAsync();
+        var vistaDeRoot = await root.GetAsync(RutaLogo(comercio.IdEmpresa));
+        Assert.Equal(HttpStatusCode.OK, vistaDeRoot.StatusCode);
+        Assert.Equal(logo, await vistaDeRoot.Content.ReadAsByteArrayAsync());
+
+        using var admin = await apoyo.ClienteAdminAsync(comercio);
+        foreach (var solicitud in Solicitudes())
+        {
+            Assert.True((await admin.SendAsync(solicitud)).IsSuccessStatusCode, solicitud.RequestUri!.ToString());
+        }
+
+        Assert.NotNull((await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!.DeletedAt);
+    }
+
     // ---- reintentos -------------------------------------------------------------------------------
 
     /// <summary>Un fallo transitorio (40001) en el INSERT no se reintenta: guardar corre bajo
@@ -724,6 +933,29 @@ public class VitrinaAdminTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
         Assert.Equal(1, interceptor.Intentos);
         Assert.Equal(logo, (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!.Logo);
+    }
+
+    [Fact]
+    public async Task UnaFallaTransitoriaAlDarDeBajaLaVitrinaNoSeReintentaYLaVitrinaSigueViva()
+    {
+        var comercio = await apoyo.SembrarComercioAsync("reintento-baja");
+        await apoyo.SembrarVitrinaAsync(comercio.IdTenant, comercio.IdEmpresa, publicada: true, tagline: "Sigue");
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("vitrinas", "40001", ClaseDeSentencia.Update);
+
+        await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
+        {
+            var servicio = new ServicioDeVitrinas(db, new RelojDelSistema());
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.EliminarAsync(comercio.IdEmpresa));
+
+            var postgres = error as PostgresException ?? error.InnerException as PostgresException;
+            Assert.Equal("40001", Assert.IsType<PostgresException>(postgres).SqlState);
+        }
+
+        Assert.Equal(1, interceptor.Intentos);
+        var enBase = (await apoyo.LeerVitrinaAsync(comercio.IdEmpresa))!;
+        Assert.Null(enBase.DeletedAt);
+        Assert.True(enBase.Publicada);
     }
 
     // ---- apoyo ------------------------------------------------------------------------------------

@@ -130,13 +130,21 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
 - **Backstops** (`ManejadorDeErrores`): `ux_vitrinas_publicada_por_tenant` → `409 vitrina_ya_publicada`
   (es el camino normal de ese 409: la API no hace pre-chequeo, serializa las escrituras del tenant con el
   lock de las bajas de organización y la segunda publicación llega al índice); `ux_vitrinas_empresa` →
-  `409 vitrina_duplicada` (inalcanzable por la API); los cinco CHECK → `400` con `tema_invalido`,
-  `color_invalido`, `texto_demasiado_largo` y `logo_no_admitido` (la API valida antes con
-  `Vitrina.Normalizar*` y `Vitrina.ValidarLogo`).
+  `409 vitrina_duplicada` (inalcanzable por la API); los CHECK → `400` con `tema_invalido`,
+  `color_invalido`, `texto_demasiado_largo` y `logo_no_admitido`. Son backstops de esquema para una
+  escritura cruda: la API valida antes con `Vitrina.Normalizar*` y `Vitrina.ValidarLogo` y nunca llega a
+  ellos. En particular, `ValidarLogo` contesta `413 logo_demasiado_grande` y `415 logo_no_admitido`, y el
+  CHECK `ck_vitrinas_logo` (que nadie alcanza por la API) contesta `400 logo_no_admitido`.
 - **Escritura**: solo `ServicioDeVitrinas` (admin del tenant o plataforma, `GestionDeOrganizacion`), sin
   reintento (`FabricaDeEstrategiaSinReintento`). El logo se sube como cuerpo crudo de la request y se
   valida por sus primeros bytes: 413 `logo_demasiado_grande` por encima de 1 MB, 415 `logo_no_admitido`
-  para cualquier otra cosa.
+  para cualquier otra cosa. `DELETE /api/empresas/{id}/vitrina` es la baja lógica de la fila (la
+  despublica) y es idempotente: sin vitrina también contesta 204.
+- **Lectura**: pública (`GET /api/publico/vitrina` y `/logo`, solo de un tenant que puede operar: uno
+  suspendido contesta 404 como un comercio sin vitrina) y del admin (`GET /api/empresas/{id}/vitrina` y
+  `/vitrina/logo`, esta última también para una vitrina sin publicar, con `Cache-Control: private,
+  no-store`). Los dos logos llevan ETag derivado de `logo_actualizado_en` y contestan 304 a un
+  `If-None-Match` que coincide sin leer la columna `logo`.
 - **Baja de tenant y de empresa**: tabla `marcado` en el inventario de dependientes (guard de uso de la
   etapa 20): una empresa o un tenant con vitrina cargada no se puede dar de baja, igual que con dominios.
 
