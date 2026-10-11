@@ -284,7 +284,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
         try {
           cajaDeEscritorio?.encolarImpresion('la apertura de cajón', pulsoDeCajon())
         } catch {
-          // La cola de impresión avisa sus propios fallos; un fallo del seam no desmiente el alta.
+          // Un fallo sincrónico del seam no desmiente el alta ya confirmada.
         }
       }
       if (generacionRef.current !== miGeneracion) return

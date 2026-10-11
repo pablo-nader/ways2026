@@ -560,23 +560,24 @@ describe('GastosDelTurno — efectivo en caja', () => {
     })
 
     it('si el seam del cajón lanza, el alta ya confirmada no se informa como fallida, el formulario se limpia y hay un solo POST', async () => {
-    mockearEfectivo(400)
-    apiPostMock.mockResolvedValue({ id: 1 })
-    const cajaDeEscritorio = cajaDeEscritorioFixture()
-    vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation(() => {
-      throw new Error('cola caída')
+      mockearEfectivo(400)
+      apiPostMock.mockResolvedValue({ id: 1 })
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation(() => {
+        throw new Error('cola caída')
+      })
+      render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+      await registrar('Efectivo')
+
+      await screen.findByText('Gasto registrado.')
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText('No se pudo registrar el gasto.')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Importe')).toHaveValue('')
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
     })
-    render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
 
-    await registrar('Efectivo')
-
-    await screen.findByText('Gasto registrado.')
-    expect(screen.queryByText('No se pudo registrar el gasto.')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Importe')).toHaveValue('')
-    expect(apiPostMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('el pulso se encola recién cuando el POST confirma', async () => {
+    it('el pulso se encola recién cuando el POST confirma', async () => {
       mockearEfectivo(400)
       let resolverPost: (valor: unknown) => void = () => undefined
       apiPostMock.mockImplementationOnce(
