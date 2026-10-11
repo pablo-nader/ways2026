@@ -155,6 +155,35 @@ dominios (                    -- scoping de organización: id_tenant, como empre
   alguna vez tuvo un dominio cargado no se puede dar de baja, incluso si el dominio ya fue dado
   de baja.
 
+## Modo de acceso público (vitrinas)
+
+La landing de un comercio la ve cualquiera, sin sesión. Lo que muestra vive en `vitrinas` (doc 10), una
+tabla con scoping `id_tenant` + `id_empresa NOT NULL`: la misma desviación documentada de
+`certificados_fiscales` respecto de las tres categorías de la regla de scoping. Para leerla hay un cuarto
+modo de acceso,
+`publico` (`ModoDeAcceso.Publico`, GUC `app.acceso = 'publico'`), además de `tenant`, `plataforma` y
+`login`:
+
+- **Qué puede**: `SELECT`, nada más, sobre exactamente tres tablas — `vitrinas` (solo la `publicada`
+  y viva), `empresas` y `puntos_venta` — y solo las filas del tenant del host. Las tres policies se
+  llaman `{tabla}_publico_lectura`; ninguna otra tabla tiene una, y ninguna es de escritura (la prueba
+  `SoloVitrinasEmpresasYPuntosVentaTienenPolicyDeModoPublicoYSonDeSoloLectura` lista `pg_policies`).
+- **Dónde viaja el tenant**: en su propio GUC, `app.tenant_publico` (función `app_tenant_publico()`), y
+  NO en `app.tenant_id`. Las policies estándar `{tabla}_tenant` de `HabilitarRlsDeTenant` comparan
+  `id_tenant = app_tenant_actual()` sin mirar el modo: con el tenant del host en `app.tenant_id`, el modo
+  público habría leído y escrito todas las tablas del comercio (usuarios, artículos, clientes). Con el GUC
+  separado, `app_tenant_actual()` es `NULL` en este modo y las policies estándar no ven nada;
+  `InterceptorDeContextoDeTenant` y `ReaplicarSobreConexionAsync` ponen los tres GUC desde
+  `ModoDeAccesoExtensions.ComoGucs`.
+- **Quién lo usa**: `LectorDeVitrinaPublica`, para `GET /api/publico/vitrina` y `/logo`. Abre un
+  alcance de DI propio y fija el modo ahí (igual que `ResolvedorDeDominios` con el modo `login`): el
+  `ITenantActual` de la request no se toca, así que el modo no llega a nada más de esa request (por
+  ejemplo, a una cookie de sesión que viniera con ella). El tenant sale del host (`IDominioActual`), nunca
+  de un parámetro del cliente.
+- **Lo que RLS no hace**: la policy es por fila, no por columna. `empresas` y `puntos_venta` se leen
+  enteras en este modo (CUIT, alícuotas, modo), así que el lector proyecta solo los campos del contrato
+  público. Todo código nuevo que lea en este modo tiene que hacer lo mismo.
+
 ## Regla de scoping por tipo de tabla
 
 Toda tabla del sistema cae en una de estas tres categorías. Al crear una tabla nueva,

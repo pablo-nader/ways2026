@@ -77,6 +77,7 @@ public static class EtiquetasDeTablas
             ["stock_lotes"] = "stock por lote",
             ["turnos_caja"] = "turnos de caja",
             ["usuarios"] = "usuarios",
+            ["vitrinas"] = "vitrinas",
         }.ToFrozenDictionary(StringComparer.Ordinal);
 
     /// <summary>La etiqueta de una tabla, o <see cref="Generica"/> si no tiene una propia.</summary>
