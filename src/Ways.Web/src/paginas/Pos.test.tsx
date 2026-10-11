@@ -5452,12 +5452,12 @@ describe('Pos — ajuste manual por línea', () => {
 
     await aplicarAjusteManual('+12,5')
 
-    await waitFor(() => expect(screen.getByText('$ 112,50', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 113,00', { selector: 'strong' })).toBeInTheDocument())
     expect(campoDeAjuste()).toHaveValue('12,5')
-    expect(screen.getByText('Recargo 12,5% +$ 12,50')).toBeInTheDocument()
+    expect(screen.getByText('Recargo 12,5% +$ 13,00')).toBeInTheDocument()
 
     await aplicarAjusteManual('-0.5')
-    await waitFor(() => expect(screen.getByText('$ 99,50', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 99,00', { selector: 'strong' })).toBeInTheDocument())
     expect(campoDeAjuste()).toHaveValue('-0,5')
   })
 
@@ -5496,8 +5496,8 @@ describe('Pos — ajuste manual por línea', () => {
     expect(campo).not.toHaveClass('is-invalid')
     expect(campo).not.toHaveAttribute('aria-invalid')
     await userEvent.tab()
-    await waitFor(() => expect(screen.getByText('$ 87,50', { selector: 'strong' })).toBeInTheDocument())
-    expect(screen.getByText('Desc. manual 12,5% -$ 12,50')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('$ 87,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Desc. manual 12,5% -$ 13,00')).toBeInTheDocument()
     expect(screen.queryByText('Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.')).not.toBeInTheDocument()
   })
 
