@@ -2839,16 +2839,45 @@ describe('Articulos — sección Costos', () => {
     expect(screen.getByLabelText('Costo nominal')).toHaveValue('121,00')
   })
 
-  it('quien no ve los costos no ve ningún costo nominal y su edición conserva la base y el IVA guardados', async () => {
-    await abrirEdicion(
-      articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null }),
-    )
+  const CONTROLES_DE_COSTO = [
+    'Costo de lista sin IVA',
+    'Costo de lista con IVA',
+    'Costo por',
+    'Descuento de proveedor (%)',
+    'Costo nominal',
+  ]
+  const sinCostos = () =>
+    articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null })
 
-    expect(screen.getByLabelText('Costo nominal')).toHaveValue('—')
-    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('')
+  /** Cláusula bajo prueba: `!valor.costosOcultos` que envuelve la sección Costos. Quien no recibe costos no ve ningún
+   * control de costo y guardar manda esos campos en `null`.
+   * Evidencia de mutación (mutation-proof-tests): sacar el envoltorio vuelve a mostrar los cinco controles y hace fallar la prueba. */
+  it('quien no ve los costos no tiene ningún control de costo y su edición conserva la base y el IVA guardados', async () => {
+    await abrirEdicion(sinCostos())
+
+    for (const etiqueta of CONTROLES_DE_COSTO) {
+      expect(screen.queryByLabelText(etiqueta), etiqueta).not.toBeInTheDocument()
+    }
+    expect(screen.queryByText('Costos', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/El costo nominal es el costo por unidad/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    expect(cuerpoDelPedido(apiPutMock)).toMatchObject({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null })
+    expect(cuerpoDelPedido(apiPutMock)).toMatchObject({
+      costoLista: null,
+      costoListaPor: null,
+      costoListaIncluyeIva: null,
+      descuentoProveedor: null,
+    })
+  })
+
+  it('quien recibe los costos ve la sección completa', async () => {
+    await abrirEdicion(articuloFixture({ costoLista: 100, costoNominal: 73.5 }))
+
+    for (const etiqueta of CONTROLES_DE_COSTO) {
+      expect(screen.getByLabelText(etiqueta), etiqueta).toBeInTheDocument()
+    }
+    expect(screen.getByText('Costos', { selector: 'strong' })).toBeInTheDocument()
   })
 })
