@@ -28,6 +28,7 @@ type Props = {
   alicuotas: AlicuotaIvaListado[]
   disabled: boolean
   idProveedor: number | null
+  puedeCrearArticulos: boolean
   /** Pinta como inválidas las celdas que le faltan a una fila con datos (tras un intento de guardar). */
   marcarFaltantes: boolean
   /** Total de la línea ya calculado por la pantalla (misma cuenta que los totales del pie). */
@@ -56,6 +57,7 @@ export function FilaDeGrilla({
   alicuotas,
   disabled,
   idProveedor,
+  puedeCrearArticulos,
   marcarFaltantes,
   total,
   consulta,
@@ -109,6 +111,7 @@ export function FilaDeGrilla({
             soloLectura={linea.resueltaPorCodigo}
             disabled={disabled}
             idProveedor={idProveedor}
+            puedeCrear={puedeCrearArticulos}
             invalido={marca('detalle')}
             onTexto={(texto) => onCambio(clave, cambiosAlEscribirDetalle(linea, texto))}
             onElegir={(articulo) => onElegir(clave, articulo)}

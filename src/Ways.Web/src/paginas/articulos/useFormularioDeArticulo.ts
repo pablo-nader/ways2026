@@ -44,6 +44,9 @@ type Opciones = {
   alCrear: (creado: ArticuloListado, codigoProveedor: string | null) => void
   /** Un guardado (alta o edición) tuvo éxito, aunque el modal ya muestre otro artículo. */
   alGuardar?: () => void
+  /** Abre ya con un alta precargada, sin pasar por un primer render sin formulario (quien lo aloja en un modal no
+   * quiere mostrar "Cargando artículo…" para algo que ya tiene). Solo se lee al montar. */
+  precargaInicial?: PrecargaDeAlta
 }
 
 /** El código que viaja con un alta: solo si el formulario lo ofrece, hay proveedor habitual y se tipeó algo. */
@@ -61,11 +64,15 @@ export function codigoDeProveedorDeAlta(formulario: Formulario, codigoProveedor:
  * Todas las escrituras comparten una única guarda de reentrancia (`escrituraEnCursoRef`) y un token
  * (`tokenEdicionRef`) que abrir, cerrar y guardar invalidan: la respuesta de una escritura superada no se aplica.
  */
-export function useFormularioDeArticulo({ alCrear, alGuardar }: Opciones) {
+export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }: Opciones) {
   const catalogos = useCatalogosDeArticulo()
   const { areaPorDefecto, alicuotaPorDefecto } = catalogos
 
-  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  // El área y la alícuota por defecto de una alta precargada las completa el efecto de más abajo cuando llegan los catálogos.
+  const [inicial] = useState<Formulario | null>(() =>
+    precargaInicial === undefined ? null : { ...formularioVacio(), ...precargaInicial.campos },
+  )
+  const [formulario, setFormulario] = useState<Formulario | null>(inicial)
   const [claveFormulario, setClaveFormulario] = useState<number | 'nuevo'>('nuevo')
   const [cargandoDetalle, setCargandoDetalle] = useState(false)
   const [errorDetalle, setErrorDetalle] = useState('')
@@ -74,7 +81,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar }: Opciones) {
   const [errorGuardado, setErrorGuardado] = useState('')
   const [escriturasHijas, setEscriturasHijas] = useState(0)
   // `null`: el formulario no ofrece el código del proveedor (siempre en la pantalla de artículos).
-  const [codigoProveedor, setCodigoProveedor] = useState<string | null>(null)
+  const [codigoProveedor, setCodigoProveedor] = useState<string | null>(precargaInicial?.codigoProveedor ?? null)
   // Familias (doc 10 §3): las que se ofrecen en un alta y el detalle de la familia del formulario.
   const familias = useFamiliasDelFormulario()
   const [decisionDeAlcance, setDecisionDeAlcance] = useState<DecisionDeAlcance | null>(null)
@@ -85,10 +92,12 @@ export function useFormularioDeArticulo({ alCrear, alGuardar }: Opciones) {
   const tokenEdicionRef = useRef(0)
   // Snapshot del formulario tal como quedó cargado/guardado por última vez — la base contra la que
   // se compara para saber si hay cambios sin guardar al intentar cerrar.
-  const formularioOriginalRef = useRef<Formulario | null>(null)
+  const formularioOriginalRef = useRef<Formulario | null>(inicial)
+  // Lo mismo para el código del proveedor, que no es un campo del formulario.
+  const codigoOriginalRef = useRef<string | null>(precargaInicial?.codigoProveedor ?? null)
   // El artículo que el modal muestra ahora: `'nuevo'` (alta), el id de la edición en curso o `null` (nada). Lo usan
   // las acciones que pueden llegar tarde (el editor de precios de uno que ya se cerró) para no tocar a otro.
-  const articuloEnModalRef = useRef<number | 'nuevo' | null>(null)
+  const articuloEnModalRef = useRef<number | 'nuevo' | null>(inicial === null ? null : 'nuevo')
   const ocupado = guardando || escriturasHijas > 0 || saliendoDeFamilia
 
   // Token del fetch de edición en curso: protege contra la staleness del fetch de detalle (abrir
@@ -171,6 +180,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar }: Opciones) {
     const nuevo = { ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto, ...precarga.campos }
     articuloEnModalRef.current = 'nuevo'
     setCodigoProveedor(precarga.codigoProveedor ?? null)
+    codigoOriginalRef.current = precarga.codigoProveedor ?? null
     setFormulario(nuevo)
     formularioOriginalRef.current = nuevo
     setClaveFormulario('nuevo')
@@ -499,7 +509,8 @@ export function useFormularioDeArticulo({ alCrear, alGuardar }: Opciones) {
     return (
       formulario !== null &&
       formularioOriginalRef.current !== null &&
-      JSON.stringify(normalizarParaComparar(formulario)) !== JSON.stringify(normalizarParaComparar(formularioOriginalRef.current))
+      (JSON.stringify(normalizarParaComparar(formulario)) !== JSON.stringify(normalizarParaComparar(formularioOriginalRef.current)) ||
+        codigoProveedor !== codigoOriginalRef.current)
     )
   }
 

@@ -19,6 +19,8 @@ type Props = {
   disabled: boolean
   /** Con proveedor, la búsqueda prioriza los artículos cuyo código de ese proveedor coincide. */
   idProveedor: number | null
+  /** Sin permiso para crear artículos no se ofrece el "+" ni el atajo. */
+  puedeCrear?: boolean
   invalido?: boolean
   onTexto: (texto: string) => void
   onElegir: (articulo: ArticuloListado) => void
@@ -46,6 +48,7 @@ export function ComboboxDeArticulos({
   soloLectura,
   disabled,
   idProveedor,
+  puedeCrear = true,
   invalido = false,
   onTexto,
   onElegir,
@@ -149,7 +152,7 @@ export function ComboboxDeArticulos({
   }
 
   function alTeclear(evento: KeyboardEvent<HTMLInputElement>) {
-    if (evento.key === 'Enter' && evento.ctrlKey && !conArticulo) {
+    if (evento.key === 'Enter' && evento.ctrlKey && !conArticulo && puedeCrear) {
       evento.preventDefault()
       onCrear()
       return
@@ -218,7 +221,7 @@ export function ComboboxDeArticulos({
           onKeyDown={alTeclear}
           onBlur={() => setAbierta(false)}
         />
-        {!conArticulo && (
+        {!conArticulo && puedeCrear && (
           <button
             type="button"
             className="btn btn-outline-secondary btn-sm"

@@ -36,6 +36,7 @@ const ALICUOTAS: AlicuotaIvaListado[] = [
 ]
 const PORCENTAJES = { 3: 21, 4: 10.5 }
 const AREA = { id: 4, nombre: 'Almacén', activo: true, orden: 1 }
+const PROVEEDOR = { id: 1, razonSocial: 'Proveedor Uno SA', nombreFantasia: null, activo: true }
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
@@ -112,7 +113,7 @@ function busquedasConProveedor(): string[] {
     .map((r) => decodeURIComponent(r.slice('/articulos?busqueda='.length)))
 }
 
-type Captura = { lineas: LineaDeCompraFormulario[]; consultando: boolean[] }
+type Captura = { lineas: LineaDeCompraFormulario[]; consultando: boolean[]; creando: boolean[] }
 
 /** Arnés con el mismo manejo de estado que la pantalla: cambios y bajas pasan por `normalizarFilas`. */
 function Arnes({
@@ -123,6 +124,7 @@ function Arnes({
   marcarFaltantes = false,
   discriminaIva = false,
   preciosFinales = false,
+  puedeCrearArticulos = true,
 }: {
   captura: Captura
   inicial?: LineaDeCompraFormulario[]
@@ -131,6 +133,7 @@ function Arnes({
   marcarFaltantes?: boolean
   discriminaIva?: boolean
   preciosFinales?: boolean
+  puedeCrearArticulos?: boolean
 }) {
   const claveRef = useRef(100)
   const [idProveedor, setIdProveedor] = useState(idProveedorInicial)
@@ -157,10 +160,11 @@ function Arnes({
         preciosFinales={preciosFinales}
         porcentajePorAlicuota={PORCENTAJES}
         idProveedor={idProveedor}
-        nombreProveedor="Proveedor Uno SA"
+        puedeCrearArticulos={puedeCrearArticulos}
         marcarFaltantes={marcarFaltantes}
         cambiosDeProveedor={cambiosDeProveedor}
         onConsultando={(hay) => captura.consultando.push(hay)}
+        onCreandoArticulo={(abierta) => captura.creando.push(abierta)}
         onCambio={cambiar}
         onQuitar={quitar}
       />
@@ -176,13 +180,16 @@ function Arnes({
         <option value="1">Uno</option>
         <option value="2">Dos</option>
       </select>
+      <button type="button" onClick={() => quitar(lineas[0].clave)}>
+        Quitar la primera fila de prueba
+      </button>
       <button type="button">Fuera de la grilla</button>
     </div>
   )
 }
 
 function montar(props: Partial<Parameters<typeof Arnes>[0]> = {}) {
-  const captura: Captura = { lineas: [], consultando: [] }
+  const captura: Captura = { lineas: [], consultando: [], creando: [] }
   const vista = render(<Arnes captura={captura} {...props} />)
   const enviadas = () => captura.lineas.filter(lineaCompletaParaEnvio).map(aLineaSolicitada)
   return { captura, enviadas, ...vista }
@@ -195,6 +202,21 @@ async function escribirCodigoYSalir(usuario: ReturnType<typeof userEvent.setup>,
   await usuario.tab()
 }
 
+async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
+  await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+  const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+  // Los catálogos del formulario llegan después de que el diálogo se pinta: la opción es la única prueba de que aterrizaron.
+  await within(dialogo).findByRole('option', { name: 'Almacén' })
+  await within(dialogo).findByRole('option', { name: '21% (21%)' })
+  await within(dialogo).findByRole('option', { name: 'Proveedor Uno SA' })
+  return dialogo
+}
+
+async function guardarAlta(usuario: ReturnType<typeof userEvent.setup>, dialogo: HTMLElement) {
+  await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+  await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+}
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
@@ -205,7 +227,11 @@ beforeEach(() => {
       const termino = decodeURIComponent(busqueda[1])
       return (respuestas[`${termino}@${busqueda[2]}`] ?? respuestas[termino] ?? (() => pagina([])))()
     }
-    if (ruta === '/catalogos/areas') return Promise.resolve([AREA])
+    if (ruta.startsWith('/catalogos/areas')) return Promise.resolve([AREA])
+    if (/^\/catalogos\/(categorias|marcas|grupos)/.test(ruta)) return Promise.resolve([])
+    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [PROVEEDOR], total: 1, pagina: 1, tamanio: 200 })
+    if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve(ALICUOTAS)
+    if (ruta === '/empresas' || ruta === '/catalogos/listas-precio' || ruta === '/familias') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 })
@@ -1144,17 +1170,9 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
   })
 
   describe('crear un artículo desde la fila', () => {
-    async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
-      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
-      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-      await within(dialogo).findByRole('option', { name: 'Almacén' })
-      return dialogo
-    }
-
-    it('abre el alta con el texto del Detalle y el código de la fila, y al crear la fila queda resuelta al artículo nuevo', async () => {
-      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva', idAlicuotaIva: 4 }))
+    it('abre el formulario completo del ABM con lo que la fila ya tiene, todo editable', async () => {
       const usuario = userEvent.setup()
-      const { enviadas } = montar()
+      montar()
 
       await usuario.type(campo(0, 'Código'), 'AB-1234')
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
@@ -1164,11 +1182,47 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
 
       expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Yerba nueva')
       expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('AB-1234')
+      expect(within(dialogo).getByLabelText('Proveedor habitual')).toHaveValue('1')
       expect(within(dialogo).getByLabelText('Alícuota de IVA')).toHaveValue('4')
-      expect(within(dialogo).getByLabelText('Costo de lista')).toHaveValue('12,35')
+      expect(within(dialogo).getByLabelText('Costo de lista con IVA')).toHaveValue('12,35')
+      expect(within(dialogo).getByLabelText('Costo por')).toHaveValue('Unidad')
+      // lo que el alta reducida no tenía: es el formulario del ABM
+      for (const etiqueta of [
+        'Código interno',
+        'Unidad de venta',
+        'Unidades por bulto',
+        'Descripción',
+        'Categoría',
+        'Marca',
+        'Grupo',
+        'Descuento de proveedor (%)',
+        'Controla lote / vencimiento',
+        'Acumula en una sola línea al vender',
+        'Disponible para todas las empresas del tenant',
+      ]) {
+        expect(within(dialogo).getByLabelText(etiqueta)).toBeEnabled()
+      }
+      expect(within(dialogo).getByRole('button', { name: 'Nuevo proveedor' })).toBeEnabled()
+      expect(within(dialogo).getByText(/Guardá el artículo para poder cargar códigos de barra y precios/)).toBeInTheDocument()
+      // sigue siendo editable
+      await usuario.clear(within(dialogo).getByLabelText('Nombre'))
+      await usuario.type(within(dialogo).getByLabelText('Nombre'), 'Yerba corregida')
+      expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Yerba corregida')
+    })
 
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+    it('al guardar manda el alta completa y la fila queda resuelta al artículo nuevo, con lo tipeado intacto', async () => {
+      apiPostMock.mockResolvedValue(
+        articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva', idAlicuotaIva: 4, idProveedorHabitual: 1 }),
+      )
+      const usuario = userEvent.setup()
+      const { enviadas } = montar()
+
+      await usuario.type(campo(0, 'Código'), 'AB-1234')
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.type(campo(0, 'Importe'), '12,3456')
+      await usuario.selectOptions(campo(0, 'IVA'), '4')
+      const dialogo = await abrirAlta(usuario)
+      await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
       const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1183,6 +1237,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         costoListaPor: 'Unidad',
         costoListaIncluyeIva: true,
         codigoInterno: null,
+        unidadVenta: 'Unidad',
+        controlaLote: false,
       })
 
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
@@ -1210,8 +1266,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       const dialogo = await abrirAlta(usuario)
       expect(within(dialogo).getByLabelText('Alícuota de IVA')).toHaveValue('3')
       await usuario.selectOptions(within(dialogo).getByLabelText('Alícuota de IVA'), '4')
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1]).toMatchObject({ idAlicuotaIva: 4 })
@@ -1223,8 +1278,25 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       expect(enviadas()[0]).toMatchObject({ idArticulo: 77, idAlicuotaIva: 4, costoUnitario: 12.3456 })
     })
 
+    it('un artículo creado con control de lote hace aparecer los campos de lote y uno con bultos habilita la UM Bulto', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yogur', controlaLote: true, unidadesPorBulto: 6 }))
+      const usuario = userEvent.setup()
+      montar()
+
+      await usuario.type(campo(0, 'Detalle'), 'Yogur')
+      const dialogo = await abrirAlta(usuario)
+      await usuario.click(within(dialogo).getByLabelText('Controla lote / vencimiento'))
+      await usuario.type(within(dialogo).getByLabelText('Unidades por bulto'), '6')
+      await guardarAlta(usuario, dialogo)
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1]).toMatchObject({ controlaLote: true, unidadesPorBulto: 6 })
+      expect(screen.getByLabelText(/^Fecha de vencimiento, línea \d+$/)).toBeInTheDocument()
+      expect(campo(0, 'UM')).toBeEnabled()
+    })
+
     it('si el operador corrigió el código en el alta, la fila queda con el código que se asoció', async () => {
-      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1 }))
       const usuario = userEvent.setup()
       const { captura } = montar()
 
@@ -1233,11 +1305,28 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       const dialogo = await abrirAlta(usuario)
       await usuario.clear(within(dialogo).getByLabelText('Código del proveedor'))
       await usuario.type(within(dialogo).getByLabelText('Código del proveedor'), 'AB-2')
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(campo(0, 'Código')).toHaveValue('AB-2'))
       expect(captura.lineas[0].codigoConsultado).toBe('AB-2')
+    })
+
+    it('si el operador quitó el proveedor habitual, el código no viaja y la fila conserva el suyo', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: null }))
+      const usuario = userEvent.setup()
+      const { captura } = montar()
+
+      await usuario.type(campo(0, 'Código'), 'AB-1')
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      await usuario.selectOptions(within(dialogo).getByLabelText('Proveedor habitual'), '')
+      await guardarAlta(usuario, dialogo)
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+      expect(cuerpo).toMatchObject({ idProveedorHabitual: null, codigoProveedor: null })
+      expect(campo(0, 'Código')).toHaveValue('AB-1')
+      expect(captura.lineas[0].codigoConsultado).toBe('')
     })
 
     it('con precios netos de un comprobante que discrimina IVA, el costo se guarda declarado sin IVA', async () => {
@@ -1248,9 +1337,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
       await usuario.type(campo(0, 'Importe'), '100')
       const dialogo = await abrirAlta(usuario)
-      expect(within(dialogo).getByText('Se guarda sin IVA, tal como se cargó en la compra.')).toBeInTheDocument()
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      expect(within(dialogo).getByLabelText('Costo de lista sin IVA')).toHaveValue('100,00')
+      await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
       const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1265,8 +1353,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
       await usuario.type(campo(0, 'Importe'), '121')
       const dialogo = await abrirAlta(usuario)
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      expect(within(dialogo).getByLabelText('Costo de lista con IVA')).toHaveValue('121,00')
+      await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
       const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -1284,7 +1372,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Cosa nueva')
     })
 
-    it('cancelar el alta deja la fila como estaba', async () => {
+    it('cancelar el alta deja la fila como estaba y devuelve el foco al "+"', async () => {
       const usuario = userEvent.setup()
       montar()
 
@@ -1294,36 +1382,97 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(campo(0, 'Detalle')).toHaveValue('Cosa nueva')
-      expect(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ })).toBeInTheDocument()
+      const mas = within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ })
+      expect(mas).toHaveFocus()
+      expect(apiPostMock).not.toHaveBeenCalled()
     })
 
-    it('sin proveedor el código del alta queda deshabilitado con una pista', async () => {
+    describe('cancelar un alta con cambios', () => {
+      it('pide confirmar antes de descartar lo editado en el formulario, y si se rechaza el formulario sigue abierto', async () => {
+        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
+        const usuario = userEvent.setup()
+        montar()
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        const dialogo = await abrirAlta(usuario)
+        await usuario.type(within(dialogo).getByLabelText('Descripción'), 'algo')
+
+        await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+        expect(confirmar).toHaveBeenCalledTimes(1)
+        expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+        expect(within(dialogo).getByLabelText('Descripción')).toHaveValue('algo')
+        confirmar.mockRestore()
+      })
+
+      it('corregir solo el código del proveedor también cuenta como un cambio sin guardar', async () => {
+        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(false)
+        const usuario = userEvent.setup()
+        montar()
+        await usuario.type(campo(0, 'Código'), 'AB-1')
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        const dialogo = await abrirAlta(usuario)
+        await usuario.type(within(dialogo).getByLabelText('Código del proveedor'), '9')
+
+        await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+        expect(confirmar).toHaveBeenCalledTimes(1)
+        expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+        confirmar.mockRestore()
+      })
+
+      it('si se acepta, cierra sin crear nada y la fila conserva todo lo tipeado en la compra', async () => {
+        const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(true)
+        const usuario = userEvent.setup()
+        const { captura } = montar()
+        await usuario.type(campo(0, 'Código'), 'AB-1')
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        await usuario.type(campo(0, 'Importe'), '7,5')
+        const dialogo = await abrirAlta(usuario)
+        await usuario.type(within(dialogo).getByLabelText('Descripción'), 'algo')
+
+        await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(apiPostMock).not.toHaveBeenCalled()
+        expect(campo(0, 'Código')).toHaveValue('AB-1')
+        expect(campo(0, 'Detalle')).toHaveValue('Cosa nueva')
+        expect(campo(0, 'Importe')).toHaveValue('7,5000')
+        expect(captura.lineas[0].idArticulo).toBe('')
+        confirmar.mockRestore()
+      })
+    })
+
+    it('sin proveedor en la compra el código del alta queda deshabilitado con una pista', async () => {
       const usuario = userEvent.setup()
       montar({ idProveedor: null })
 
       await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
-      const dialogo = await abrirAlta(usuario)
+      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+      await within(dialogo).findByRole('option', { name: 'Almacén' })
 
+      expect(within(dialogo).getByLabelText('Proveedor habitual')).toHaveValue('')
       expect(within(dialogo).getByLabelText('Código del proveedor')).toBeDisabled()
-      expect(within(dialogo).getByText('Elegí un proveedor en la compra para poder cargar su código.')).toBeInTheDocument()
+      expect(within(dialogo).getByText('Elegí un proveedor habitual para cargar su código.')).toBeInTheDocument()
     })
 
-    it('un 409 codigo_proveedor_duplicado se muestra en el alta y la fila no cambia', async () => {
+    it('un 409 codigo_proveedor_duplicado se muestra en el formulario y la fila no cambia', async () => {
       apiPostMock.mockRejectedValue(new ErrorApi(409, 'codigo_proveedor_duplicado', 'Ese código ya pertenece a otro artículo del proveedor.'))
       const usuario = userEvent.setup()
-      montar()
+      const { captura } = montar()
 
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
       const dialogo = await abrirAlta(usuario)
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await guardarAlta(usuario, dialogo)
 
       expect(await within(dialogo).findByText('Ese código ya pertenece a otro artículo del proveedor.')).toBeInTheDocument()
       expect(within(dialogo).getByLabelText('Nombre')).toBeEnabled()
+      expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
       expect(campo(0, 'Detalle')).toHaveValue('Yerba nueva')
+      expect(captura.lineas[0].idArticulo).toBe('')
     })
 
-    it('un doble clic síncrono en Crear emite una sola request', async () => {
+    it('un doble clic síncrono en Guardar emite una sola request', async () => {
       let resolver: (a: ArticuloListado) => void = () => {}
       apiPostMock.mockImplementation(() => new Promise<ArticuloListado>((r) => (resolver = r)))
       const usuario = userEvent.setup()
@@ -1333,10 +1482,10 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       const dialogo = await abrirAlta(usuario)
       await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
 
-      const crear = within(dialogo).getByRole('button', { name: 'Crear' })
+      const guardar = within(dialogo).getByRole('button', { name: 'Guardar' })
       act(() => {
-        crear.click()
-        crear.click()
+        guardar.click()
+        guardar.click()
       })
       expect(apiPostMock).toHaveBeenCalledTimes(1)
 
@@ -1344,6 +1493,89 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
       })
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    })
+
+    it('mientras el alta se está guardando no se puede cerrar el formulario', async () => {
+      apiPostMock.mockImplementation(() => new Promise<ArticuloListado>(() => {}))
+      const usuario = userEvent.setup()
+      montar()
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      await guardarAlta(usuario, dialogo)
+
+      expect(within(dialogo).getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+      expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+      await usuario.keyboard('{Escape}')
+      expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+    })
+
+    it('avisa a la pantalla mientras el alta está abierta, para que no se pueda guardar la compra', async () => {
+      const usuario = userEvent.setup()
+      const { captura } = montar()
+      expect(captura.creando.at(-1)).toBe(false)
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      expect(captura.creando.at(-1)).toBe(true)
+
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+      expect(captura.creando.at(-1)).toBe(false)
+    })
+
+    it('una respuesta que llega con el alta ya cerrada por la pantalla no toca la fila', async () => {
+      let resolver: (a: ArticuloListado) => void = () => {}
+      apiPostMock.mockImplementation(() => new Promise<ArticuloListado>((r) => (resolver = r)))
+      const usuario = userEvent.setup()
+      const { captura, rerender } = montar()
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      await guardarAlta(usuario, dialogo)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+
+      // la pantalla pierde el permiso con la request en vuelo: el alta se desmonta y la fila sigue ahí
+      rerender(<Arnes captura={captura} puedeCrearArticulos={false} />)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      await act(async () => {
+        resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      })
+
+      expect(captura.lineas[0].idArticulo).toBe('')
+      expect(captura.lineas[0].descripcion).toBe('Yerba nueva')
+    })
+
+    it('si la fila se quita con el alta en vuelo, la respuesta no crea ni resuelve ninguna fila', async () => {
+      let resolver: (a: ArticuloListado) => void = () => {}
+      apiPostMock.mockImplementation(() => new Promise<ArticuloListado>((r) => (resolver = r)))
+      const usuario = userEvent.setup()
+      const { captura } = montar()
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      await guardarAlta(usuario, dialogo)
+      await usuario.click(screen.getByRole('button', { name: 'Quitar la primera fila de prueba' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+      await act(async () => {
+        resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      })
+
+      expect(filasDeItems()).toHaveLength(1)
+      expect(captura.lineas.every((l) => l.idArticulo === '' && l.descripcion === '')).toBe(true)
+    })
+
+    describe('permisos', () => {
+      it('sin permiso para crear artículos no se ofrece el "+" ni el atajo', async () => {
+        const usuario = userEvent.setup()
+        montar({ puedeCrearArticulos: false })
+
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        await usuario.keyboard('{Control>}{Enter}{/Control}')
+
+        expect(within(filaDeItems(0)).queryByRole('button', { name: /^Crear artículo, línea \d+$/ })).not.toBeInTheDocument()
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      })
     })
   })
 
@@ -1417,17 +1649,13 @@ describe('GrillaDeItemsDeCompra — editar el código de una fila ya resuelta', 
   })
 
   it('en una fila cuyo artículo se CREÓ con "+", editar el código conserva el artículo', async () => {
-    apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+    apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1 }))
     const usuario = userEvent.setup()
     const { enviadas } = montar()
 
     await usuario.type(campo(0, 'Código'), 'AB-1')
     await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
-    await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-    await within(dialogo).findByRole('option', { name: 'Almacén' })
-    await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+    await guardarAlta(usuario, await abrirAlta(usuario))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     await usuario.clear(campo(0, 'Código'))
@@ -1707,16 +1935,12 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     })
 
     it('una fila creada con "+" conserva su artículo y su código, y no se consulta', async () => {
-      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1 }))
       const usuario = userEvent.setup()
       montar()
       await usuario.type(campo(0, 'Código'), 'AB-1')
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
-      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
-      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-      await within(dialogo).findByRole('option', { name: 'Almacén' })
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await guardarAlta(usuario, await abrirAlta(usuario))
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       const antes = busquedasConProveedor().length
 
@@ -1747,16 +1971,12 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     })
 
     it('un artículo creado con "+" avisa solo cuando el código se cambia después de crearlo', async () => {
-      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1 }))
       const usuario = userEvent.setup()
       montar()
       await usuario.type(campo(0, 'Código'), 'AB-1')
       await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
-      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
-      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
-      await within(dialogo).findByRole('option', { name: 'Almacén' })
-      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
-      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await guardarAlta(usuario, await abrirAlta(usuario))
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
 
