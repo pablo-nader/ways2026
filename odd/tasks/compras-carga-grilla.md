@@ -52,12 +52,14 @@ Slice 3 — items grid (web):
 - 2026-10-10 (slice 3): UM Bulto takes the price per bulto, with a visible warning when the 4-decimal unit cost does not divide exactly.
 - 2026-10-10 (slice 3): article costs are IVA-inclusive, so the prefilled Importe is netted when the receipt discriminates IVA and prices are net.
 - 2026-10-10 (slice 3): a loaded line keeps its stored `actualizaCosto`.
+- 2026-10-10 (owner): on a supplier change, rows resolved by code are cleared (article, Importe, Descuento, IVA) and looked up again from scratch after an explicit confirmation, replacing the per-cell snapshot (`prefillDeCodigo`). Rows chosen by search or created with "+", loaded-draft rows and conceptos are untouched; with no code-resolved row there is no prompt.
 
 ## Review
 
 - Slice 1: judgment-day round 1 (main..15ed8859) no severe findings, 4 warnings confirmed by both judges, fixed in d70a0d40; scoped re-judgment of the delta clean. Native picker on the `inert` hidden input verified in Chromium. JUDGMENT: APPROVED.
 - Slice 2 (T5): judgment-day (a29232a3..fb4cb1eb) no severe findings. Both judges suspected a race between confirm and the article soft delete; it was disproved (the stock movement FK already takes FOR KEY SHARE on the article before the association) and pinned with a deterministic test plus mutation evidence in 04878b3c. JUDGMENT: APPROVED.
 - Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057; the second scoped re-judgment (d8de8057) left two issues confirmed by both judges (wrong price carried across a supplier change, missing association hint), the judgment was escalated, and the owner authorized a third fix round applied in 880c06a7.
+- Slice 3, third re-judgment (880c06a7): left two warnings confirmed by both judges in the supplier-change path; the owner chose to replace the snapshot design with the simple clear-and-look-up-again rule, applied in 97608511.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
