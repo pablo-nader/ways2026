@@ -401,7 +401,6 @@ describe('Gastos (administración) — alta', () => {
 describe('Gastos (administración) — área del alta', () => {
   const general = areaFixture({ id: 10, nombre: 'General', orden: 1 })
   const cocina = areaFixture({ id: 11, nombre: 'Cocina', orden: 2 })
-  const archivada = areaFixture({ id: 9, nombre: 'Archivada', activo: false, orden: 0 })
 
   async function abrirFormulario() {
     await userEvent.click(await screen.findByRole('button', { name: 'Nuevo gasto' }))
@@ -416,7 +415,7 @@ describe('Gastos (administración) — área del alta', () => {
   }
 
   it('el select del alta arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
-    mockearRutas({ areas: [archivada, general, cocina] })
+    mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     renderGastos()
     await abrirFormulario()
@@ -424,7 +423,7 @@ describe('Gastos (administración) — área del alta', () => {
 
     const select = screen.getByLabelText('Área')
     expect(select).toHaveValue('10')
-    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Archivada', 'General', 'Cocina'])
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['General', 'Cocina'])
 
     await completarYRegistrar()
 

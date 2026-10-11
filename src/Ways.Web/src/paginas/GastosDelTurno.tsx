@@ -97,6 +97,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const [errorProveedores, setErrorProveedores] = useState('')
 
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
+  const [errorAreas, setErrorAreas] = useState('')
 
   const [edicion, setEdicion] = useState<GastoDeTurno | null>(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
@@ -148,8 +149,8 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
         setErrorProveedores(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
       })
 
-    // El área solo se usa para precargar la edición: si no carga, el formulario conserva el valor
-    // del gasto rotulado como no disponible, así que no hace falta un aviso aparte.
+    // Hasta que responde (`areas === null`) el alta queda deshabilitada; si falla, queda en `[]` y
+    // el aviso dice que los gastos se registran sin área.
     clienteAreas
       .listar(false)
       .then((lista) => {
@@ -159,6 +160,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
       .catch(() => {
         if (!vigente) return
         setAreas([])
+        setErrorAreas('No se pudieron cargar las áreas: los gastos se registran sin área.')
       })
 
     return () => {
@@ -278,7 +280,13 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
         }),
       )
       // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
-      if (abreElCajon) cajaDeEscritorio?.encolarImpresion('la apertura de cajón', pulsoDeCajon())
+      if (abreElCajon) {
+        try {
+          cajaDeEscritorio?.encolarImpresion('la apertura de cajón', pulsoDeCajon())
+        } catch {
+          // La cola de impresión avisa sus propios fallos; un fallo del seam no desmiente el alta.
+        }
+      }
       if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
       setAviso('Gasto registrado.')
@@ -384,6 +392,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
           <>
             {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
             {errorProveedores && <div className="alert alert-warning py-1 px-2 small">{errorProveedores}</div>}
+            {errorAreas && <div className="alert alert-warning py-1 px-2 small">{errorAreas}</div>}
             {aviso && <div className="alert alert-success">{aviso}</div>}
             {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
@@ -492,12 +501,6 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                 </select>
               </div>
 
-              <div className="col-md-2">
-                <button type="button" className="btn btn-primary w-100" onClick={() => void registrarGasto()}>
-                  {guardando ? 'Guardando…' : 'Registrar'}
-                </button>
-              </div>
-
               {saleDeLaCaja && efectivoDisponible !== null && (
                 <div className="col-12">
                   <div className="small text-muted">Disponible en caja: {formatearMoneda(efectivoDisponible)}</div>
@@ -509,7 +512,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                 </div>
               )}
 
-              <div className="col-12">
+              <div className="col-md-10">
                 <label className="form-label" htmlFor="gasto-observaciones">
                   Observaciones (opcional)
                 </label>
@@ -520,6 +523,12 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
                 />
+              </div>
+
+              <div className="col-md-2">
+                <button type="button" className="btn btn-primary w-100" disabled={areas === null} onClick={() => void registrarGasto()}>
+                  {guardando ? 'Guardando…' : 'Registrar'}
+                </button>
               </div>
             </fieldset>
 

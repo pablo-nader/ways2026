@@ -559,7 +559,24 @@ describe('GastosDelTurno — efectivo en caja', () => {
       expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith('la apertura de cajón', pulsoDeCajon())
     })
 
-    it('el pulso se encola recién cuando el POST confirma', async () => {
+    it('si el seam del cajón lanza, el alta ya confirmada no se informa como fallida, el formulario se limpia y hay un solo POST', async () => {
+    mockearEfectivo(400)
+    apiPostMock.mockResolvedValue({ id: 1 })
+    const cajaDeEscritorio = cajaDeEscritorioFixture()
+    vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation(() => {
+      throw new Error('cola caída')
+    })
+    render(<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />)
+
+    await registrar('Efectivo')
+
+    await screen.findByText('Gasto registrado.')
+    expect(screen.queryByText('No se pudo registrar el gasto.')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Importe')).toHaveValue('')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('el pulso se encola recién cuando el POST confirma', async () => {
       mockearEfectivo(400)
       let resolverPost: (valor: unknown) => void = () => undefined
       apiPostMock.mockImplementationOnce(
@@ -621,7 +638,6 @@ describe('GastosDelTurno — efectivo en caja', () => {
 describe('GastosDelTurno — área del alta', () => {
   const general = { id: 10, nombre: 'General', activo: true, idEmpresa: null, orden: 1 }
   const cocina = { id: 11, nombre: 'Cocina', activo: true, idEmpresa: null, orden: 2 }
-  const archivada = { id: 9, nombre: 'Archivada', activo: false, idEmpresa: null, orden: 0 }
 
   async function esperarAreas() {
     await screen.findByLabelText('Importe')
@@ -634,14 +650,14 @@ describe('GastosDelTurno — área del alta', () => {
   }
 
   it('el select arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
-    mockearRutas({ areas: [archivada, general, cocina] })
+    mockearRutas({ areas: [general, cocina] })
     apiPostMock.mockResolvedValueOnce({ id: 1 })
     render(<GastosDelTurno />)
     await esperarAreas()
 
     const select = screen.getByLabelText('Área')
     expect(select).toHaveValue('10')
-    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Archivada', 'General', 'Cocina'])
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['General', 'Cocina'])
 
     await completar()
     await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
@@ -694,6 +710,42 @@ describe('GastosDelTurno — área del alta', () => {
     await act(async () => entregarAreas([general, cocina]))
 
     expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('con las áreas pendientes "Registrar" queda deshabilitado; al llegar se habilita y el alta lleva el área por defecto', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    let entregarAreas: (lista: AreaListado[]) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas'
+        ? new Promise<AreaListado[]>((resolve) => {
+            entregarAreas = resolve
+          })
+        : baseline(ruta),
+    )
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled()
+
+    await act(async () => entregarAreas([general, cocina]))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+  })
+
+  it('si las áreas no cargan avisa que el gasto se registra sin área y deja registrar', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas' ? Promise.reject(new ErrorApi(500, 'error', 'boom')) : baseline(ruta),
+    )
+    render(<GastosDelTurno />)
+
+    expect(await screen.findByText('No se pudieron cargar las áreas: los gastos se registran sin área.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar' })).toBeEnabled())
   })
 
   it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {

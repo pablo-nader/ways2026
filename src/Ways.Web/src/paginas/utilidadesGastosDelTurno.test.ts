@@ -254,6 +254,15 @@ describe('faltanteDeEfectivo', () => {
     expect(faltanteDeEfectivo(null, 400)).toBe(0)
   })
 
+  it('es 0 con un importe cero o negativo, aunque el disponible sea negativo', () => {
+    expect(faltanteDeEfectivo(0, -50)).toBe(0)
+    expect(faltanteDeEfectivo(-10, -50)).toBe(0)
+  })
+
+  it('con efectivo disponible negativo y un importe positivo, falta el importe más el descubierto', () => {
+    expect(faltanteDeEfectivo(100, -50)).toBe(150)
+  })
+
   it('resuelve los centavos sin arrastrar error de coma flotante', () => {
     expect(faltanteDeEfectivo(0.3, 0.1)).toBe(0.2)
   })

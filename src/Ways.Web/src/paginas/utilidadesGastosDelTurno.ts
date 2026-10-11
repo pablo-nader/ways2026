@@ -111,7 +111,7 @@ export function salidaDeEfectivoDeCaja(medio: MedioPagoListado | undefined, orig
 
 /** Cuánto efectivo falta en el cajón para cubrir el importe; 0 si alcanza o no hay importe. */
 export function faltanteDeEfectivo(importe: number | null, disponible: number): number {
-  if (importe === null) return 0
+  if (importe === null || importe <= 0) return 0
   return Math.max(0, redondearImporte(importe - disponible))
 }
 
