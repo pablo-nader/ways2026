@@ -170,7 +170,10 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     /// <summary>Siembra directa de un movimiento del ledger (mismo criterio que
     /// <c>ComprasAnulacionYConcurrenciaTests.ReducirStockComoVentaAsync</c>) — <c>id_empleado</c>
     /// es cualquier usuario del tenant, <c>id_comprobante_venta</c>/<c>id_comprobante_compra</c>
-    /// no llevan FK obligatoria cuando son <c>null</c>.</summary>
+    /// no llevan FK obligatoria cuando son <c>null</c>. En los tests que corren con el reloj real,
+    /// <paramref name="creadoEl"/> no debe ser posterior a "ahora": la ventana cierra en la
+    /// medianoche local del punto de venta, y un movimiento posterior queda afuera si la corrida
+    /// cae en el último minuto del día. Las secuencias se ordenan hacia atrás y terminan en "ahora".</summary>
     private async Task SembrarMovimientoAsync(
         Contexto ctx, int idArticulo, decimal cantidad, MotivoStock motivo, DateTimeOffset creadoEl,
         int? idComprobanteCompra = null)
@@ -290,8 +293,8 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await CrearConfirmarYAnularCompraAsync(ctx, idProveedor, idTipoCFA, idArticulo, unidades: 15m, costoUnitario: 100m);
 
         var ahora = DateTimeOffset.UtcNow;
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -8m, MotivoStock.Venta, ahora);
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 3m, MotivoStock.Anulacion, ahora.AddMinutes(1), idComprobanteCompra: null);
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -8m, MotivoStock.Venta, ahora.AddMinutes(-1));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 3m, MotivoStock.Anulacion, ahora, idComprobanteCompra: null);
 
         var rotacion = await ObtenerRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
 
@@ -370,12 +373,12 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await SembrarStockAsync(ctx, idArticulo, cantidad: 50m, minimo: null);
 
         var ahora = DateTimeOffset.UtcNow;
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -20m, MotivoStock.Venta, ahora);
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 1m, MotivoStock.Ajuste, ahora.AddMinutes(1));
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 2m, MotivoStock.Inventario, ahora.AddMinutes(2));
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -3m, MotivoStock.Decomiso, ahora.AddMinutes(3));
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 4m, MotivoStock.Transferencia, ahora.AddMinutes(4));
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 5m, MotivoStock.Reclasificacion, ahora.AddMinutes(5));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -20m, MotivoStock.Venta, ahora.AddMinutes(-5));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 1m, MotivoStock.Ajuste, ahora.AddMinutes(-4));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 2m, MotivoStock.Inventario, ahora.AddMinutes(-3));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -3m, MotivoStock.Decomiso, ahora.AddMinutes(-2));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 4m, MotivoStock.Transferencia, ahora.AddMinutes(-1));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 5m, MotivoStock.Reclasificacion, ahora);
 
         var rotacion = await ObtenerRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
 
@@ -587,8 +590,8 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await SembrarStockAsync(ctx, idArticulo, cantidad: 20m, minimo: null);
 
         var ahora = DateTimeOffset.UtcNow;
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -3m, MotivoStock.Venta, ahora);
-        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 8m, MotivoStock.Anulacion, ahora.AddMinutes(1), idComprobanteCompra: null);
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -3m, MotivoStock.Venta, ahora.AddMinutes(-1));
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 8m, MotivoStock.Anulacion, ahora, idComprobanteCompra: null);
 
         var rotacion = await ObtenerRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
 
