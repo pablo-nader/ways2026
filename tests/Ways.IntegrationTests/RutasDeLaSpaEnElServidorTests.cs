@@ -204,6 +204,45 @@ public class RutasDeLaSpaEnElServidorTests(WaysApiFixture fixture) : IClassFixtu
         });
 
     [Theory]
+    [InlineData("/admin.html", "/admin")]
+    [InlineData("/online.html", "/online")]
+    [InlineData("/index.html", "/")]
+    [InlineData("/Admin.html", "/admin")]
+    [InlineData("/admin.html?idTurno=7", "/admin?idTurno=7")]
+    public Task LosArchivosDeEntradaRedirigenASuPrefijo(string ruta, string destino) =>
+        ConElFrontAsync(async host =>
+        {
+            using var cliente = ClienteEn(host);
+
+            AssertRedireccion(await cliente.GetAsync(ruta), destino);
+            AssertRedireccion(await cliente.SendAsync(new HttpRequestMessage(HttpMethod.Head, ruta)), destino);
+        });
+
+    [Fact]
+    public Task LosArchivosDeEntradaTambienRedirigenEnElDominioDeUnComercio() =>
+        ConElFrontAsync(async host =>
+        {
+            var tenant = await apoyo.SembrarTenantAsync("entradas");
+            var dominio = ApoyoDeDominios.HostUnico("entradas");
+            await apoyo.SembrarDominioAsync(tenant.IdTenant, dominio);
+            using var cliente = ClienteEn(host, dominio);
+
+            AssertRedireccion(await cliente.GetAsync("/online.html"), "/online");
+            AssertRedireccion(await cliente.GetAsync("/index.html"), "/");
+        });
+
+    [Fact]
+    public Task UnPostAUnArchivoDeEntradaNoSeRedirige() =>
+        ConElFrontAsync(async host =>
+        {
+            using var cliente = ClienteEn(host);
+
+            var respuesta = await cliente.PostAsync("/admin.html", new StringContent("{}"));
+
+            Assert.NotEqual(HttpStatusCode.Found, respuesta.StatusCode);
+        });
+
+    [Theory]
     [InlineData("/admin/pos")]
     [InlineData("/admin/login")]
     [InlineData("/online/pos")]

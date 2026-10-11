@@ -117,9 +117,16 @@ not stored.
     otherwise serve the landing on the platform root), not part of `MapFallback`; the only raw anchor to
     the back office, in `Gastos.tsx`, became a router `Link`; the dev server and `vite preview` rewrite
     `/admin/*` and `/online/*` with a plugin whose rule lives in `src/config/entradasDeVite.ts`.
-  - Open for the desktop app (`src/Ways.Desktop/scripts/sync-frontend-local.mjs`, not touched): it
-    copies everything in `dist/` except `index.html`, so `admin.html` and `online.html` now also land in
-    `ui/` (not ignored by that `.gitignore`, harmless at runtime). Skip them in that script.
+  - Desktop app (`src/Ways.Desktop/scripts/sync-frontend-local.mjs`): it copied everything in `dist/`
+    except `index.html`, so `admin.html` and `online.html` would have landed in `ui/`. Resolved by commit
+    `de41a31e`: the script now skips `index.html`, `admin.html` and `online.html`.
+  - Judgment-day informational findings, fixed in one commit (hash in the verification evidence below):
+    dropped the unreachable `valor[0] != '/'` clause of `EsRutaHeredada` (a non-empty `PathString` always
+    starts with `/`); kept `!Path.HasValue` in the redirect middleware because an empty `Path` is reachable
+    when the request is exactly the `PathBase` (covered by a direct middleware test); `GET`/`HEAD` to
+    `/admin.html`, `/online.html` and `/index.html` now redirect (302, query kept) to `/admin`, `/online` and
+    `/` instead of serving a blank page (`/pos.html` is still served); the Vite dev/preview rewrite compares
+    the first segment case-insensitively, like the server.
 
 ## Verification evidence
 
@@ -248,6 +255,18 @@ Mutation evidence (mutate the clause, run the 86 `RutasDeLaSpa*` tests, watch th
 | redirect without the GET/HEAD gate | POST `/login` and POST `/` redirect tests (2) |
 | fallback without the `/api` guard | `/api/no-existe`, `/api/pos`, `/api/login` and the three old `RutaDeRespaldoTests` (6) |
 | `basename` removed from `BrowserRouter` | both `App.test.tsx` cases |
+
+Fix commit `fix(api): redirigir las entradas .html y quitar guardas inalcanzables en las rutas de la SPA`
+(judgment-day informational findings; it sits right after `de41a31e` on the branch):
+
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~RutasDeLaSpa|FullyQualifiedName~RutaDeRespaldo"`:
+  108 passed. First run of the new tests found a real bug in the first draft of `DestinoDeEntradaCruda`
+  (`cond ? "/" : null` converts the null string to a non-null `PathString`), fixed before the commit.
+- In `src/Ways.Web`: `npx tsc -b` clean; `npx vitest run src/config/entradasDeVite.test.ts`: 24 passed.
+- Mutants, reverted byte-exact (md5 checked): deleting the `/admin.html` arm of `DestinoDeEntradaCruda` turns
+  red the 2 unit cases and the 3 server cases for `/admin.html` (plain, `/Admin.html`, with query);
+  `esLaRaiz` without `!Path.HasValue` turns red `LaRaizDeLaPlataformaConPathBaseTieneElPathVacioYVaAAdmin`.
 
 Not covered and left honest: no end-to-end check against a real `vite build` output served by the API
 (the tests write their own `wwwroot`); the dev plugin is proven by its pure function plus a manual smoke,

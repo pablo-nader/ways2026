@@ -9,6 +9,10 @@ describe('reescribirUrlDeDesarrollo', () => {
     ['/admin/articulos/edit/12', '/admin.html'],
     ['/online', '/online.html'],
     ['/online/producto/3', '/online.html'],
+    ['/Admin', '/admin.html'],
+    ['/ADMIN/Articulos/edit/12', '/admin.html'],
+    ['/Online', '/online.html'],
+    ['/ONLINE/producto/3', '/online.html'],
   ])('%s sale de %s', (url, esperado) => {
     expect(reescribirUrlDeDesarrollo(url)).toBe(esperado)
   })
@@ -25,6 +29,8 @@ describe('reescribirUrlDeDesarrollo', () => {
     '/admin.html',
     '/online.html',
     '/administrador',
+    '/Administrador',
+    '/ONLINEX/abc',
     '/onlinex/abc',
     '/api/admin/algo',
     '/src/main.tsx',

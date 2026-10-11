@@ -60,15 +60,42 @@ public static class RutasDeLaSpa
     {
         var valor = ruta.Value;
 
-        if (string.IsNullOrEmpty(valor) || valor[0] != '/')
+        if (string.IsNullOrEmpty(valor))
         {
             return false;
         }
 
+        // Un PathString no vacío siempre empieza con '/'.
         var fin = valor.IndexOf('/', 1);
         var segmento = fin < 0 ? valor.AsSpan(1) : valor.AsSpan(1, fin - 1);
 
         return Heredadas.GetAlternateLookup<ReadOnlySpan<char>>().Contains(segmento);
+    }
+
+    /// <summary>
+    /// Adónde manda el pedido directo al archivo de una entrada (<c>/admin.html</c>, <c>/online.html</c>,
+    /// <c>/index.html</c>): esos HTML están pensados para servirse desde su prefijo, y abiertos por el nombre del
+    /// archivo el router no reconoce la ruta y la página queda en blanco. <c>null</c> si la ruta es otra
+    /// (<c>/pos.html</c> incluida).
+    /// </summary>
+    public static PathString? DestinoDeEntradaCruda(PathString ruta)
+    {
+        if (ruta == "/" + EntradaDeAdmin)
+        {
+            return new PathString(PrefijoAdmin);
+        }
+
+        if (ruta == "/" + EntradaDeOnline)
+        {
+            return new PathString(PrefijoOnline);
+        }
+
+        if (ruta == "/" + EntradaDeLaLanding)
+        {
+            return new PathString("/");
+        }
+
+        return null;
     }
 
     /// <summary>El archivo de <c>wwwroot</c> que resuelve el router de React para esa ruta.</summary>

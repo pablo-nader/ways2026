@@ -105,7 +105,10 @@ redirigen (302, conservando el query) a la misma ruta bajo `/admin`: `/pos?idPre
 `/admin/pos?idPresupuesto=5`. La lista vive en `RutasDeLaSpa.RutasHeredadasDelBackOffice`
 ([RutasDeLaSpa.cs](../src/Ways.Api/Spa/RutasDeLaSpa.cs)) y la fuente de verdad es
 [App.tsx](../src/Ways.Web/src/App.tsx): una prueba falla si las dos se desvían. `/api`, `/assets`,
-`/online`, `/admin` y los archivos nunca se redirigen.
+`/online`, `/admin` y los archivos nunca se redirigen, salvo los de entrada: un `GET` o `HEAD` directo a
+`/admin.html`, `/online.html` o `/index.html` redirige (302, conservando el query) a `/admin`, `/online` o `/`,
+porque abiertos por el nombre del archivo el router de React no reconoce la ruta y la página queda en blanco.
+`/pos.html` sigue sirviéndose tal cual.
 
 En desarrollo (`npm run dev`, `vite preview`) un plugin de `vite.config.ts` aplica el mismo reparto:
 `/admin/*` sale de `admin.html`, `/online/*` de `online.html` y el resto de `index.html`.
