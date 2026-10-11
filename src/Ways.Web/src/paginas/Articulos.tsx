@@ -672,7 +672,7 @@ export function Articulos() {
     return true
   }
 
-  /** Elegir una familia en un alta: el artículo toma sus trece campos compartidos, que quedan bloqueados. Dejarla
+  /** Elegir una familia en un alta: el artículo toma sus quince campos compartidos, que quedan bloqueados. Dejarla
    * en "Sin familia" los desbloquea y conserva lo que tenían. */
   function elegirFamilia(idFamilia: number | '') {
     // Elegir otra familia supera todo lo que estaba en vuelo sobre la anterior, incluido el seguimiento de un

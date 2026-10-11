@@ -58,8 +58,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: 100,
-    costoListaPor: null,
-    costoListaIncluyeIva: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -2673,5 +2673,168 @@ describe('Articulos — advertencia de código de barras que no parece un GTIN (
     })
 
     expect(llamadasDeAlta()).toHaveLength(1)
+  })
+})
+
+// ---- sección Costos: costo de lista con y sin IVA, base Unidad/Bulto y costo nominal de solo lectura --------
+
+describe('Articulos — sección Costos', () => {
+  const dosAlicuotas: AlicuotaIvaListado[] = [
+    { id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true },
+    { id: 2, nombre: 'IVA 10,5%', porcentaje: 10.5, codigoAfip: 4, activo: true },
+  ]
+
+  async function abrirAltaConAlicuota() {
+    mockearApiGet({ alicuotas: dosAlicuotas })
+    apiPostMock.mockResolvedValue(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo' }))
+    await abrirFormularioNuevo()
+    await waitFor(() => expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('1'))
+  }
+
+  async function abrirEdicion(articulo: ArticuloListado) {
+    mockearApiGet({ alicuotas: dosAlicuotas, articulos: [articulo] })
+    apiPutMock.mockResolvedValue(articulo)
+    renderArticulos()
+    const fila = (await screen.findByText(articulo.nombre)).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('link', { name: 'Editar' }))
+    await screen.findByText(`Editando artículo ${articulo.codigoInterno}`)
+    await waitFor(() => expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue(String(articulo.idAlicuotaIva)))
+  }
+
+  function cuerpoDelPedido(mock: typeof apiPostMock) {
+    return mock.mock.calls[0][1] as Record<string, unknown>
+  }
+
+  it('lo tipeado sin IVA deriva el costo con IVA y viaja como costo de lista sin IVA', async () => {
+    await abrirAltaConAlicuota()
+
+    await userEvent.type(screen.getByLabelText('Costo de lista sin IVA'), '100')
+
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('121,00')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('121,00')
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: false })
+    expect(cuerpoDelPedido(apiPostMock)).not.toHaveProperty('costoNominal')
+  })
+
+  it('lo tipeado con IVA deriva el costo sin IVA y viaja como costo de lista con IVA', async () => {
+    await abrirAltaConAlicuota()
+
+    await userEvent.type(screen.getByLabelText('Costo de lista con IVA'), '121')
+
+    expect(screen.getByLabelText('Costo de lista sin IVA')).toHaveValue('100,00')
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoLista: 121, costoListaIncluyeIva: true })
+  })
+
+  it('pasar por el campo derivado sin tipear no lo vuelve la fuente del costo de lista', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Costo de lista sin IVA'), '100')
+
+    await userEvent.click(screen.getByLabelText('Costo de lista con IVA'))
+    await userEvent.tab()
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoLista: 100, costoListaIncluyeIva: false })
+  })
+
+  it('cambiar la alícuota recalcula el campo derivado y deja intacto el que se tipeó', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Costo de lista sin IVA'), '100')
+
+    await userEvent.selectOptions(screen.getByLabelText('Alícuota de IVA'), '2')
+
+    expect(screen.getByLabelText('Costo de lista sin IVA')).toHaveValue('100,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('110,50')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('110,50')
+  })
+
+  it('el costo nominal es de solo lectura y aplica el descuento de proveedor', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Costo de lista con IVA'), '100')
+
+    await userEvent.type(screen.getByLabelText('Descuento de proveedor (%)'), '10')
+
+    expect(screen.getByLabelText('Costo nominal')).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('90,00')
+  })
+
+  it('un costo por bulto sin unidades por bulto bloquea el guardado con un aviso junto a los costos', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await userEvent.type(screen.getByLabelText('Costo de lista con IVA'), '300')
+
+    await userEvent.selectOptions(screen.getByLabelText('Costo por'), 'Bulto')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Un costo por bulto necesita las unidades por bulto')
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('—')
+
+    await userEvent.type(screen.getByLabelText('Unidades por bulto'), '12')
+
+    expect(screen.queryByText(/Un costo por bulto necesita/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('25,00')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoListaPor: 'Bulto', unidadesPorBulto: 12, costoLista: 300 })
+  })
+
+  it('la base por unidad no exige unidades por bulto', async () => {
+    await abrirAltaConAlicuota()
+
+    expect(screen.getByLabelText('Costo por')).toHaveValue('Unidad')
+    expect(screen.queryByText(/Un costo por bulto necesita/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('un artículo cargado sin cambios muestra el costo nominal guardado, que puede ser el de una compra', async () => {
+    await abrirEdicion(articuloFixture({ costoLista: 100, costoNominal: 73.5 }))
+
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('100,00')
+    expect(screen.getByLabelText('Costo de lista sin IVA')).toHaveValue('82,64')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('73,50')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPutMock)).toMatchObject({ costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: true })
+    expect(cuerpoDelPedido(apiPutMock)).not.toHaveProperty('costoNominal')
+  })
+
+  it('al cambiar una entrada del cálculo el costo nominal pasa a ser la vista previa', async () => {
+    await abrirEdicion(articuloFixture({ costoLista: 100, costoNominal: 73.5 }))
+
+    await userEvent.type(screen.getByLabelText('Descuento de proveedor (%)'), '10')
+
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('90,00')
+  })
+
+  it('un artículo guardado sin IVA abre con ese campo como fuente y el otro derivado', async () => {
+    await abrirEdicion(articuloFixture({ costoLista: 100, costoListaIncluyeIva: false, costoNominal: 121 }))
+
+    expect(screen.getByLabelText('Costo de lista sin IVA')).toHaveValue('100,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('121,00')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('121,00')
+  })
+
+  it('quien no ve los costos no ve ningún costo nominal y su edición conserva la base y el IVA guardados', async () => {
+    await abrirEdicion(
+      articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null }),
+    )
+
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('—')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPutMock)).toMatchObject({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null })
   })
 })

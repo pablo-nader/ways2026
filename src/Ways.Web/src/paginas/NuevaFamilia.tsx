@@ -32,7 +32,7 @@ function listaParaCrear(referencia: ArticuloElegido | null, sinProblemas: boolea
 
 /**
  * Nueva familia (doc 10 §3, "Gestión de familias"): el nombre, el artículo de referencia y los demás artículos. Todos
- * toman de la referencia los trece campos compartidos y el precio de cada lista fija. Antes de crear se previsualiza
+ * toman de la referencia los quince campos compartidos y el precio de cada lista fija. Antes de crear se previsualiza
  * qué cambia en cada uno; los problemas de la previsualización bloquean "Crear familia", y cualquier cambio de la
  * referencia o de los artículos elegidos descarta lo previsualizado. Crear es todo o nada, en el servidor.
  */

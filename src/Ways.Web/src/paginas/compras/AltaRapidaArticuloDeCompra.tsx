@@ -126,7 +126,6 @@ export function AltaRapidaArticuloDeCompra({
         costoListaPor: 'Unidad',
         costoListaIncluyeIva: !costoSinIva,
         descuentoProveedor: null,
-        costoNominal: null,
         disponibleParaTodas: true,
         idsEmpresas: null,
         activo: true,

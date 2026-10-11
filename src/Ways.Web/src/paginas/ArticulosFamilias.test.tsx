@@ -65,13 +65,18 @@ const referencia: ValoresCompartidosDeLaFamilia = {
   controlaLote: true,
   acumulaEnVenta: false,
   costoLista: 150,
+  costoListaPor: 'Unidad',
+  costoListaIncluyeIva: true,
   descuentoProveedor: 5,
   costoNominal: 120,
 }
 
-/** Los trece valores como los guarda un artículo: el área es obligatoria en él, aunque el detalle de una familia la
+/** Los quince valores como los guarda un artículo: el área es obligatoria en él, aunque el detalle de una familia la
  * presente como `null` cuando está dada de baja. */
 const compartidosDelArticulo = { ...referencia, idArea: 1 }
+
+/** Lo que un alta manda de la referencia: el costo nominal lo calcula el servidor y no viaja. */
+const referenciaEnviada = Object.fromEntries(Object.entries(referencia).filter(([clave]) => clave !== 'costoNominal'))
 
 function miembros(cantidad: number) {
   const nombres = ['Vainilla', 'Frutilla', 'Chocolate', 'Limón', 'Menta']
@@ -119,8 +124,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: 100,
-    costoListaPor: null,
-    costoListaIncluyeIva: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -133,7 +138,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
   }
 }
 
-/** Vainilla, el miembro que se edita: sus trece campos compartidos son los de la referencia. */
+/** Vainilla, el miembro que se edita: sus quince campos compartidos son los de la referencia. */
 function miembro(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return articuloFixture({
     id: 31,
@@ -321,7 +326,7 @@ async function abrirAlta() {
 async function abrirAltaEnLaFamilia(idFamilia = '7') {
   await abrirAlta()
   await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), idFamilia)
-  await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('150,00'))
+  await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
 }
 
 async function abrirEdicion(id = 31, codigo = 'A0031') {
@@ -352,9 +357,10 @@ const CAMPOS_COMPARTIDOS_DEL_FORMULARIO = [
   /^Grupo/,
   /^Proveedor habitual/,
   /^Alícuota de IVA/,
-  /^Costo de lista/,
+  /^Costo de lista sin IVA/,
+  /^Costo de lista con IVA/,
+  /^Costo por/,
   /^Descuento de proveedor/,
-  /^Costo nominal/,
   /^Controla lote/,
   /^Acumula en una sola línea/,
 ]
@@ -440,7 +446,7 @@ describe('Articulos — alta: elegir una familia', () => {
     mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores() } })
   })
 
-  it('pide el detalle de la familia y prellena los trece campos compartidos con sus valores', async () => {
+  it('pide el detalle de la familia y prellena los quince campos compartidos con sus valores', async () => {
     await abrirAltaEnLaFamilia()
 
     expect(apiGetMock).toHaveBeenCalledWith('/familias/7')
@@ -454,12 +460,13 @@ describe('Articulos — alta: elegir una familia', () => {
     expect(screen.getByLabelText(/^Es producto/)).toBeChecked()
     expect(screen.getByLabelText(/^Controla lote/)).toBeChecked()
     expect(screen.getByLabelText(/^Acumula en una sola línea/)).not.toBeChecked()
-    expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('150,00')
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00')
     expect(screen.getByLabelText(/^Descuento de proveedor/)).toHaveValue(5)
-    expect(screen.getByLabelText(/^Costo nominal/)).toHaveValue('120,00')
+    expect(screen.getByLabelText(/^Costo por/)).toHaveValue('Unidad')
+    expect(screen.getByLabelText(/^Costo de lista sin IVA/)).toHaveValue('123,97')
   })
 
-  it('los trece campos compartidos quedan bloqueados y su etiqueta lo dice: "(de la familia)"', async () => {
+  it('los quince campos compartidos quedan bloqueados y su etiqueta lo dice: "(de la familia)"', async () => {
     await abrirAltaEnLaFamilia()
 
     for (const etiqueta of CAMPOS_COMPARTIDOS_DEL_FORMULARIO) {
@@ -528,7 +535,7 @@ describe('Articulos — alta: elegir una familia', () => {
     await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
 
     expect(await screen.findByText('Cargando la familia…')).toBeInTheDocument()
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeDisabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
 
     await act(async () => {
@@ -570,7 +577,7 @@ describe('Articulos — alta: elegir una familia', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
 
-    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('150,00'))
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(screen.queryByText(/Se cayó la lectura/)).not.toBeInTheDocument()
     expect(unaFamiliaPidioSuDetalle()).toHaveLength(2)
@@ -611,7 +618,7 @@ describe('Articulos — alta: elegir una familia', () => {
     for (const etiqueta of CAMPOS_COMPARTIDOS_DEL_FORMULARIO) {
       expect(screen.getByLabelText(etiqueta), String(etiqueta)).toBeEnabled()
     }
-    expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('150,00')
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00')
     expect(screen.getByLabelText(/^Unidad de venta/)).toHaveValue('Peso')
     expect(screen.queryByRole('table', { name: 'Precios que se copian de la familia' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Nueva categoría' })).toBeEnabled()
@@ -634,13 +641,13 @@ describe('Articulos — alta: elegir una familia', () => {
     await act(async () => {
       segunda.resolver(detalleSabores({ id: 8, nombre: 'Talles', valores: { ...referencia, costoLista: 999 } }))
     })
-    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('999,00'))
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('999,00'))
 
     await act(async () => {
       primera.resolver(detalleSabores({ id: 7, nombre: 'Sabores', valores: { ...referencia, costoLista: 111 } }))
     })
 
-    expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('999,00')
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('999,00')
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('8')
   })
 
@@ -663,8 +670,8 @@ describe('Articulos — alta: elegir una familia', () => {
       lectura.resolver(detalleSabores())
     })
 
-    expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('')
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeEnabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('')
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
     expect(screen.queryByText('Cargando la familia…')).not.toBeInTheDocument()
   })
 })
@@ -682,7 +689,7 @@ describe('Articulos — alta: guardar dentro de una familia', () => {
     apiPostMock.mockResolvedValue(creado)
   })
 
-  it('manda idFamilia y los trece valores de la familia, junto con lo propio del artículo', async () => {
+  it('manda idFamilia y los quince valores de la familia, junto con lo propio del artículo', async () => {
     await abrirAltaEnLaFamilia()
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla')
@@ -691,7 +698,8 @@ describe('Articulos — alta: guardar dentro de una familia', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [ruta, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
     expect(ruta).toBe('/articulos')
-    expect(cuerpo).toMatchObject({ idFamilia: 7, nombre: 'Frutilla', codigoInterno: null, ...referencia })
+    expect(cuerpo).toMatchObject({ idFamilia: 7, nombre: 'Frutilla', codigoInterno: null, ...referenciaEnviada })
+    expect(cuerpo).not.toHaveProperty('costoNominal')
   })
 
   it('avisa que tomó los valores y los precios de la familia, y pasa a mostrarla como su familia con un miembro más', async () => {
@@ -716,7 +724,7 @@ describe('Articulos — alta: guardar dentro de una familia', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
     await screen.findByText('Editando artículo A0040')
 
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeEnabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
     expect(screen.queryByText('(de la familia)')).not.toBeInTheDocument()
   })
 
@@ -787,11 +795,11 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
         'Los valores del artículo no coinciden con los de la familia en: Área, Costo de lista. Se volvieron a cargar los de la familia: revisalos y guardá de nuevo.',
       ),
     ).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('200,00'))
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('200,00'))
     expect(unaFamiliaPidioSuDetalle()).toHaveLength(2)
     // La familia sigue elegida y sus campos bloqueados: el artículo todavía quiere entrar a ella.
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('7')
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeDisabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 
@@ -804,7 +812,7 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_valores_distintos', MENSAJE_DISTINTOS))
     apiPostMock.mockResolvedValueOnce(articuloFixture({ id: 40, codigoInterno: 'A0040', nombre: 'Frutilla', idFamilia: 7 }))
     await guardarAltaEnLaFamilia()
-    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('200,00'))
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('200,00'))
 
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
@@ -830,14 +838,14 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
     await waitFor(() => expect(unaFamiliaPidioSuDetalle()).toHaveLength(2))
 
     await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '8')
-    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('999,00'))
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('999,00'))
     await act(async () => {
       relectura.resolver(detalleSabores({ valores: { ...referencia, costoLista: 111 } }))
     })
 
     expect(screen.queryByText(/Los valores del artículo no coinciden/)).not.toBeInTheDocument()
     expect(screen.queryByText(MENSAJE_DISTINTOS)).not.toBeInTheDocument()
-    expect(screen.getByLabelText(/^Costo de lista/)).toHaveValue('999,00')
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('999,00')
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('8')
   })
 
@@ -912,7 +920,7 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
       await screen.findByText('La familia "Sabores" está inactiva: no se le pueden agregar artículos. Elegí otra familia o creá el artículo sin familia.'),
     ).toBeInTheDocument()
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeEnabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
   })
 
   it.each([
@@ -932,7 +940,7 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
     await waitFor(() => expect(lecturasDeFamilias).toBe(2))
     // Ya no queda ninguna familia para elegir, y la que se había elegido dejó de bloquear los campos.
     await waitFor(() => expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument())
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeEnabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 
@@ -990,7 +998,7 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
     await guardarAltaEnLaFamilia()
 
     expect(await screen.findByText('No existe la familia 7. Elegí otra familia o creá el artículo sin familia.')).toBeInTheDocument()
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeEnabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
   })
 
   it('cualquier otro rechazo se muestra tal cual y la familia sigue elegida', async () => {
@@ -1001,7 +1009,7 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
 
     expect(await screen.findByText('No existe el área 1.')).toBeInTheDocument()
     expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('7')
-    expect(screen.getByLabelText(/^Costo de lista/)).toBeDisabled()
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
     expect(unaFamiliaPidioSuDetalle()).toHaveLength(1)
   })
 
@@ -1030,7 +1038,7 @@ function escenarioDelMiembro(extra: Escenario = {}) {
 }
 
 async function cambiarCostoDeLista(texto: string) {
-  const campo = screen.getByLabelText('Costo de lista')
+  const campo = screen.getByLabelText('Costo de lista con IVA')
   await userEvent.clear(campo)
   await userEvent.type(campo, texto)
 }
@@ -1257,7 +1265,7 @@ describe('Articulos — edición de un miembro: el alcance de un cambio', () => 
 
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
     expect(apiPutMock).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('Costo de lista')).toHaveValue('175,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('175,00')
 
     await guardar()
     expect(await screen.findByRole('dialog', { name: 'Cambio en una familia' })).toBeInTheDocument()
@@ -1273,7 +1281,7 @@ describe('Articulos — edición de un miembro: el alcance de un cambio', () => 
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument())
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0031' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Costo de lista')).toHaveValue('175,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('175,00')
     expect(apiPutMock).not.toHaveBeenCalled()
   })
 
@@ -1471,7 +1479,7 @@ describe('Articulos — edición de un miembro: lo que el servidor dice de la fa
     expect(lecturasDelArticulo(31)).toBe(2)
     expect(unaFamiliaPidioSuDetalle()).toHaveLength(2)
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Costo de lista')).toHaveValue('150,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('150,00')
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(botonNuevo()).toBeEnabled()
     // Operable de verdad: se puede cambiar algo y guardar otra vez.
@@ -1526,7 +1534,7 @@ describe('Articulos — edición de un miembro: lo que el servidor dice de la fa
     ).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Cambio en una familia' })).not.toBeInTheDocument()
     expect(lecturasDelArticulo(31)).toBe(2)
-    expect(screen.getByLabelText('Costo de lista')).toHaveValue('175,00')
+    expect(screen.getByLabelText('Costo de lista con IVA')).toHaveValue('175,00')
     expect(screen.getByLabelText('Nombre')).toHaveValue('Vainilla')
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
     expect(botonNuevo()).toBeEnabled()
@@ -1578,7 +1586,7 @@ describe('Articulos — edición de un miembro: sacarlo de su familia', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
 
     expect(screen.getByLabelText('Nombre')).toBeDisabled()
-    expect(screen.getByLabelText('Costo de lista')).toBeDisabled()
+    expect(screen.getByLabelText('Costo de lista con IVA')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeDisabled()
     expect(within(confirmacionDeSalida()).getByRole('button', { name: 'Confirmar salida' })).toBeEnabled()

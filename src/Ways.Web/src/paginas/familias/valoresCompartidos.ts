@@ -64,6 +64,10 @@ export function formatearValorCompartido(clave: ClaveCompartida, valores: Valore
       return siONo(valores.acumulaEnVenta)
     case 'costoLista':
       return formatearImporte(valores.costoLista, { simbolo: true })
+    case 'costoListaPor':
+      return valores.costoListaPor ?? SIN_VALOR
+    case 'costoListaIncluyeIva':
+      return valores.costoListaIncluyeIva === null ? SIN_VALOR : siONo(valores.costoListaIncluyeIva)
     case 'descuentoProveedor':
       return valores.descuentoProveedor === null ? SIN_VALOR : `${valores.descuentoProveedor}%`
     case 'costoNominal':

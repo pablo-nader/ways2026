@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { calcularTotalesDeCompra, lineaFormularioACalculo } from '../../api/compras'
+import { calcularTotalesDeCompra, costoDeLineaIncluyeIva, lineaFormularioACalculo } from '../../api/compras'
 import { cambiosAlElegirArticulo, lineaTieneDatos, type LineaDeCompraFormulario } from '../../api/lineaDeCompra'
 import type { AlicuotaIvaListado, ArticuloListado } from '../../api/tipos'
 import { AltaRapidaArticuloDeCompra } from './AltaRapidaArticuloDeCompra'
@@ -212,7 +212,7 @@ export function GrillaDeItemsDeCompra({
           alicuotas={alicuotas}
           idAlicuotaIvaDeLaLinea={filaEnAlta.idAlicuotaIva}
           costoDeLaLinea={filaEnAlta.importe}
-          costoSinIva={modoDePrecios.discriminaIva && !modoDePrecios.preciosIncluyenIva}
+          costoSinIva={!costoDeLineaIncluyeIva(modoDePrecios.discriminaIva, modoDePrecios.preciosIncluyenIva)}
           onCreado={(articulo, codigoProveedor) => {
             const clave = filaEnAlta.clave
             cambiar(clave, {

@@ -19,8 +19,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
-    costoListaPor: null,
-    costoListaIncluyeIva: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -96,7 +96,7 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
   it.each<Pick<ArticuloListado, 'esProducto' | 'controlaLote' | 'acumulaEnVenta'>>([
     { esProducto: false, controlaLote: true, acumulaEnVenta: false },
     { esProducto: true, controlaLote: false, acumulaEnVenta: false },
-  ])('ida y vuelta: editar un miembro conserva sus trece campos compartidos y no manda su familia (booleanos %j)', (booleanos) => {
+  ])('ida y vuelta: editar un miembro conserva sus quince campos compartidos y no manda su familia (booleanos %j)', (booleanos) => {
     const compartidos = {
       idArea: 11,
       idCategoria: 12,
@@ -107,14 +107,104 @@ describe('FormularioArticulo — familia (doc 10 §3)', () => {
       unidadesPorBulto: 6,
       ...booleanos,
       costoLista: 250,
+      costoListaPor: 'Bulto',
+      costoListaIncluyeIva: false,
       descuentoProveedor: 7,
       costoNominal: 200,
     } satisfies Partial<ArticuloListado>
+    const { costoNominal, ...enviados } = compartidos
 
-    const edicion = aEdicion(aFormulario(articuloFixture({ idFamilia: 7, ...compartidos })))
+    const formulario = aFormulario(articuloFixture({ idFamilia: 7, ...compartidos }))
+    const edicion = aEdicion(formulario)
 
     expect(Object.keys(compartidos).sort()).toEqual(CAMPOS_COMPARTIDOS.map((campo) => campo.clave).sort())
-    expect(edicion).toMatchObject(compartidos)
+    expect(edicion).toMatchObject(enviados)
+    expect(formulario.costoNominal).toBe(String(costoNominal))
+    expect('costoNominal' in edicion).toBe(false)
     expect('idFamilia' in edicion).toBe(false)
+  })
+})
+
+describe('FormularioArticulo — costos (doc 10 §3)', () => {
+  it('un formulario vacío arranca con el costo por unidad y con IVA, sin costo nominal ni entradas guardadas', () => {
+    expect(formularioVacio()).toMatchObject({
+      costoListaPor: 'Unidad',
+      costoListaIncluyeIva: true,
+      costoNominal: '',
+      costoGuardado: null,
+      costosOcultos: false,
+    })
+  })
+
+  it('aFormulario copia la base, el IVA y el nominal guardado, y deja las entradas con las que se cargó', () => {
+    const formulario = aFormulario(
+      articuloFixture({
+        costoLista: 300,
+        costoListaPor: 'Bulto',
+        costoListaIncluyeIva: false,
+        unidadesPorBulto: 12,
+        descuentoProveedor: 5,
+        costoNominal: 27.5,
+        idAlicuotaIva: 3,
+      }),
+    )
+
+    expect(formulario).toMatchObject({
+      costoLista: '300',
+      costoListaPor: 'Bulto',
+      costoListaIncluyeIva: false,
+      costoNominal: '27.5',
+      costosOcultos: false,
+      costoGuardado: {
+        costoLista: '300',
+        costoListaPor: 'Bulto',
+        costoListaIncluyeIva: false,
+        unidadesPorBulto: '12',
+        descuentoProveedor: '5',
+        idAlicuotaIva: 3,
+      },
+    })
+  })
+
+  it('un artículo que llega sin costos queda marcado y con los valores por defecto', () => {
+    const formulario = aFormulario(
+      articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null }),
+    )
+
+    expect(formulario).toMatchObject({ costosOcultos: true, costoListaPor: 'Unidad', costoListaIncluyeIva: true, costoNominal: '' })
+  })
+
+  it('aAlta manda la base y el IVA tal cual y nunca el costo nominal', () => {
+    const alta = aAlta({ ...formularioVacio(), costoLista: '300', costoListaPor: 'Bulto', costoListaIncluyeIva: false, costoNominal: '99' })
+
+    expect(alta).toMatchObject({ costoLista: 300, costoListaPor: 'Bulto', costoListaIncluyeIva: false })
+    expect('costoNominal' in alta).toBe(false)
+  })
+
+  it('aAlta sin costo manda los valores por defecto explícitos: Unidad y con IVA', () => {
+    expect(aAlta(formularioVacio())).toMatchObject({ costoLista: null, costoListaPor: 'Unidad', costoListaIncluyeIva: true })
+  })
+
+  it('aEdicion manda la base y el IVA explícitos, aun sin tocarlos, y nunca el costo nominal', () => {
+    const edicion = aEdicion(
+      aFormulario(articuloFixture({ costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: true, costoNominal: 73.5 })),
+    )
+
+    expect(edicion).toMatchObject({ costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: true })
+    expect('costoNominal' in edicion).toBe(false)
+  })
+
+  it('aEdicion de un artículo sin costos manda null en la base y el IVA: el servidor conserva lo guardado', () => {
+    const edicion = aEdicion(
+      aFormulario(articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, costoNominal: null })),
+    )
+
+    expect(edicion).toMatchObject({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null })
+  })
+
+  it('aEdicion con alcance conserva la base y el IVA', () => {
+    const formulario = { ...formularioVacio(), id: 1, costoListaPor: 'Bulto' as const, costoListaIncluyeIva: false }
+
+    expect(aEdicion(formulario, 'Familia')).toMatchObject({ costoListaPor: 'Bulto', costoListaIncluyeIva: false, alcance: 'Familia' })
   })
 })
