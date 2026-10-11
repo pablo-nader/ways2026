@@ -260,11 +260,50 @@ render.
 | M2b | failure path without the generation check | `un fallo viejo que llega tarde tampoco pisa a la recarga más nueva` |
 | M3 | accent fallback removed (`colorAcento ?? ''`) | 3 in `tema.test.ts` and `sin color de acento rige el naranja de Ways` |
 
+### Judgment-day of T2 (target 1c866621, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident items fixed in
+`9f58884b` (branch `pnader/vitrina-web-ajustes`, PR #385): a stale read error is cleared by a
+successful write; the "verificá el listado" copy replaced by vitrina-specific copy and honest
+"…, pero no se pudo actualizar la vista" notices; the sitio read distinguishes pending, failed
+and platform; switching empresa with unsaved changes asks (Descartar / Seguir editando); the
+draft-preservation test now discriminates; options memoized; `role="status"`/`role="alert"`,
+new-tab hint on the link, `onError` fallback on the preview. One judge-B claim was wrong: `/`
+is already the landing (router basename `/admin`), so "Ver la página" points at the right place.
+Verified with `tsc`, `oxlint` and the full `vitest run` (183 files, 4750 tests) plus mutation
+evidence; no new judge round. Follow-ups: `logoVersion` in unix seconds; `aria-invalid` on the
+Host field for non-host errors.
+
+### Judgment-day of T3 (target f8d4b5bd → fix delta 16ca1a85, rounds 0 and 1, 2026-10-11)
+
+Round 0: both judges confirmed one severe finding (HIGH): `enlaceWhatsapp` turned local-format
+numbers into invalid or foreign `wa.me` links. Coincident warnings: text on a dark accent
+illegible, header logo overlapping the action at 375 px, free text without `overflow-wrap`,
+cart panel not modal, theme applied after paint, loading state unkillable; suggestions: title
+and meta overwritten, bare domains treated as handles, any 404 read as unpublished. Correction
+round 1 (`173ee3e0`, `3e2c9168`, `16ca1a85`): WhatsApp rule (`+`/`00` international 10–15
+digits; `54…` of 12–13 digits accepted; one leading `0` stripped then exactly 10 digits →
+`549`; else no CTA), `tintaSobreAcento` by WCAG luminance, logo fits its flex item, `overflow-wrap:
+anywhere` on free text, real modal (aria-modal, document Escape, Tab trap, scroll lock, veil
+click), `useLayoutEffect`, loading test, title/meta only with data and `Tienda online · nombre`,
+domain-shaped values through the URL branch, only `vitrina_no_publicada` is "sin publicar".
+Scoped re-judgment: no severe finding → `JUDGMENT: APPROVED`. Two informational coincidences
+fixed in `07b950c7` without a new round: no `overflow: hidden` on the header brand (it clipped
+accents of the uppercase name), `@` escape for dotted Facebook page names, plus the calm-message
+wrap test and the Shift+Tab-from-outside trap test. Visual check by the orchestrator against a
+mock of the API at 1280 px and 375 px: on-brand, no horizontal overflow, cart panel opens.
+Follow-ups: the commerce logo `<img>` has no width hint (small shift on load); the dark skeleton
+before data on a light-theme commerce; render-blocking Google Fonts; no per-branch opt-out.
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
 
 ## Next step
+
+Feature complete once PR 6 merges. Next: article publication for the storefront (owner decision).
+
+<!-- previous: -->
 
 Feature complete; next: article publication (owner decision). Open for the owner: the Vitrina page is wired as `Root`
 and `Admin`; the "Ver la página" link assumes the landing is served at `/` of the tenant domain.
