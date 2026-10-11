@@ -61,7 +61,8 @@ Strategy: chained PRs, stacked-to-main (cached owner preference). Forecast ~700 
 ## Progress
 
 - 2026-10-11: explored; current per-line behavior confirmed from code.
-- 2026-10-11: T1 done (commit: hash in git log, `feat(ofertas)` on this branch). `LineaAResolver.CantidadDeFamilia` is required; `ServicioDeOfertas.ResolverAsync` sums per family over the batch; `ResolverConEscalonesAsync` and the legacy curve keep the line's own quantity (delta-shifted aggregate). Checks green: build, Domain Ofertas (114), Application Ofertas|Pos (136), integration VentasCheckout|OfertasResolucion|InstantaneaDePos (67). Open: `ServicioDeEtiquetas` resolves N articles at quantity 1 in one batch, so same-family labels now sum.
+- 2026-10-11: T1 done (commit `ed19a3be`). `LineaAResolver.CantidadDeFamilia` is required; `ServicioDeOfertas.ResolverAsync` sums per family over the batch; `ResolverConEscalonesAsync` and the legacy curve keep the line's own quantity (delta-shifted aggregate). Checks green: build, Domain Ofertas (114), Application Ofertas|Pos (136), integration VentasCheckout|OfertasResolucion|InstantaneaDePos (67).
+- 2026-10-11: fix(etiquetas): `ServicioDeOfertas.ResolverAsync` is now private; callers choose `ResolverDocumentoAsync` (sums by family: ventas, remitos, presupuestos, `POST /api/ofertas/resolver`) or `ResolverPorLineaAsync` (own quantity: labels). Offline discrepancy recomputation reads the same batch call as the sale (`ServicioDeVentas.cs:169`), so it is already family-aggregated.
 
 ## Next step
 

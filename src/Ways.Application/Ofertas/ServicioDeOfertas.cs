@@ -357,8 +357,20 @@ public class ServicioDeOfertas(
     /// <paramref name="momento"/> del lote se descompone UNA vez con <see cref="TimeZoneInfo.Local"/>
     /// — no hay huso horario de tenant modelado todavía.</para>
     /// </summary>
-    public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
-        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverDocumentoAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
+        ResolverAsync(lineas, momento, agregarPorFamilia: true, ct);
+
+    /// <summary>Igual que <see cref="ResolverDocumentoAsync"/> pero cada línea se resuelve con SU
+    /// cantidad, sin sumar la familia: para lotes que no son un documento (una etiqueta precia UNA
+    /// unidad de UN artículo). Elegir entre las dos es decisión explícita del llamador.</summary>
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverPorLineaAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
+        ResolverAsync(lineas, momento, agregarPorFamilia: false, ct);
+
+    private async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
+        CancellationToken ct)
     {
         var lineasPedidas = ExigirLineas(lineas);
         if (lineasPedidas.Count == 0)
@@ -367,7 +379,7 @@ public class ServicioDeOfertas(
         }
 
         var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
-        var cantidadPorFamilia = CantidadesPorFamilia(contexto, lineasPedidas);
+        var cantidadPorFamilia = agregarPorFamilia ? CantidadesPorFamilia(contexto, lineasPedidas) : null;
         var resultado = new List<ResultadoDeResolucion>(lineasPedidas.Count);
 
         foreach (var linea in lineasPedidas)
@@ -386,7 +398,7 @@ public class ServicioDeOfertas(
     }
 
     /// <summary>
-    /// Igual que <see cref="ResolverAsync"/> (mismo contexto, mismas consultas, mismo resultado
+    /// Igual que <see cref="ResolverDocumentoAsync"/> (mismo contexto, mismas consultas, mismo resultado
     /// plano por línea) más la CURVA de precio por cantidad de cada línea: un
     /// <see cref="EscalonDeCantidad"/> por cada <c>cantidad_minima</c> mayor a la cantidad pedida
     /// que efectivamente cambia el resultado, ascendente, ya resuelto por el motor real
@@ -398,7 +410,7 @@ public class ServicioDeOfertas(
     /// oferta por volumen sin red. El dispositivo solo elige el último escalón cuyo umbral entra
     /// en la cantidad del carrito — nunca reimplementa el matching.</para>
     ///
-    /// <para>CERO consultas extra respecto de <see cref="ResolverAsync"/>: los escalones salen de
+    /// <para>CERO consultas extra respecto de <see cref="ResolverDocumentoAsync"/>: los escalones salen de
     /// las MISMAS <see cref="OfertaCandidata"/> ya materializadas por
     /// <see cref="ConstruirContextoAsync"/> (la <c>cantidad_minima</c> de cada candidata ya viaja
     /// ahí), resueltas en memoria a cada umbral. Un artículo sin ninguna candidata con umbral
@@ -460,7 +472,7 @@ public class ServicioDeOfertas(
     private sealed record CandidataConEmpresa(int? IdEmpresa, OfertaCandidata Candidata);
 
     /// <summary>Todo lo que las consultas del lote produjeron, ya indexado: lo consumen por igual
-    /// <see cref="ResolverAsync"/> y <see cref="ResolverConEscalonesAsync"/>, sin volver a la base
+    /// <see cref="ResolverDocumentoAsync"/> y <see cref="ResolverConEscalonesAsync"/>, sin volver a la base
     /// ninguno de los dos.</summary>
     private sealed record ContextoDeResolucion(
         IReadOnlyDictionary<int, AlcanceDeArticulo> AlcancePorArticulo,

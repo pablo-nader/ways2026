@@ -788,7 +788,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         }
         else
         {
-            await servicioDeOfertas.ResolverAsync(lineas, momento: null);
+            await servicioDeOfertas.ResolverDocumentoAsync(lineas, momento: null);
         }
 
         return contador.Consultas;

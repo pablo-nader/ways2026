@@ -15,7 +15,7 @@ namespace Ways.Application.Tests.Ofertas;
 
 /// <summary>
 /// La <c>cantidad_minima</c> de una oferta de familia se compara contra la suma de cantidades de
-/// TODAS las líneas de esa familia en el lote de <see cref="ServicioDeOfertas.ResolverAsync"/>, no
+/// TODAS las líneas de esa familia en el lote de <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/>, no
 /// contra la cantidad de una sola línea. Sobre InMemory, como <see cref="ResolucionConEscalonesTests"/>
 /// (la resolución es query-only).
 /// </summary>
@@ -115,7 +115,7 @@ public class ResolucionPorFamiliaTests
     private static async Task<IReadOnlyList<decimal?>> PreciosFinalesAsync(
         string nombreDeBase, int idLista, params (int IdArticulo, decimal Cantidad)[] lineas)
     {
-        var resultado = await CrearServicio(nombreDeBase).ResolverAsync(
+        var resultado = await CrearServicio(nombreDeBase).ResolverDocumentoAsync(
             lineas.Select(l => new LineaDeResolucion(l.IdArticulo, null, idLista, l.Cantidad)).ToList(),
             momento: null);
 
