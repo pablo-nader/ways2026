@@ -170,6 +170,19 @@ filter 168 passed; `dotnet format --verify-no-changes` on the changed files: onl
 Open for the owner: `vitrinas` is a `marcado` dependent in the usage guard (same as `dominios`), so a tenant or empresa
 that ever had a vitrina saved cannot be deleted, even after the vitrina itself is soft-deleted.
 
+### Judgment-day of T1 (target a94c9cb3, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident items fixed in
+`f87efc49`: the public logo answers 304 without loading the bytea (version probe first), a
+suspended tenant is not served publicly (404 on both endpoints, domain still resolves, 60 s
+resolver cache applies), `DELETE /api/empresas/{id}/vitrina` (soft delete, idempotent) so the
+admin is not locked, `GET /api/empresas/{id}/vitrina/logo` for the admin preview, and the
+backstop comment/docs now match the codes. Verified with build `-warnaserror`, Application tests
+and the `Vitrina|Dominios|SuperficieDeAutorizacion|Publico` integration filter (168 tests) plus
+mutants M18–M22; no new judge round. Follow-ups: no server-side cache on the public endpoints
+(negative caching), the empresa/tenant baja guard ignores `deleted_at` so a deleted vitrina
+still counts, no per-branch opt-out of the public listing, PUT loads the logo bytea.
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
