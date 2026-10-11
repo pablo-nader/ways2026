@@ -23,9 +23,18 @@ public class ReglaDeCombosTests
     }
 
     [Fact]
-    public void UnSoloComponenteConCantidadDosAlcanzaPorqueLaRegla3EsSobreLaCantidadTotal()
+    public void UnSoloComponenteConCantidadDosAlcanzaPorqueElMinimoEsSobreLaCantidadTotal()
     {
         ReglaDeCombos.Validar(5000m, [Art(1, 2m)]);
+    }
+
+    [Fact]
+    public void LosTopesDeCantidadYPrecioSeAceptanYUnoMasSeRechaza()
+    {
+        ReglaDeCombos.Validar(ReglaDeCombos.PrecioMaximo, [Art(1, ReglaDeCombos.CantidadMaxima), Art(2)]);
+
+        AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, ReglaDeCombos.CantidadMaxima + 1m), Art(2));
+        AssertCodigo("combo_precio_invalido", ReglaDeCombos.PrecioMaximo + 0.01m, Art(1), Art(2));
     }
 
     [Fact]

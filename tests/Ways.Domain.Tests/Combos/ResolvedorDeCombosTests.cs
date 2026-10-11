@@ -233,9 +233,16 @@ public class ResolvedorDeCombosTests
             Combo(1, 4800m, Art(Pancho), Art(Coca)));
 
         var pancho = DeLinea(resolucion, 0);
+        var coca = DeLinea(resolucion, 1);
         Assert.Equal(1, pancho.UnidadesConsumidas);
         Assert.Equal(381.82m, pancho.AhorroDeCombo);
-        Assert.Equal(318.18m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(318.18m, coca.AhorroDeCombo);
+
+        // Fórmula documentada para quien llama: oferta × unidades no consumidas + parte del combo.
+        var descuentoPancho = (500m * (2m - pancho.UnidadesConsumidas)) + pancho.AhorroDeCombo;
+        var descuentoCoca = coca.AhorroDeCombo;
+        Assert.Equal(881.82m, descuentoPancho);
+        Assert.Equal(4800m + 2500m, (3000m * 2m - descuentoPancho) + (2500m - descuentoCoca));
     }
 
     [Theory]
@@ -269,13 +276,85 @@ public class ResolvedorDeCombosTests
     public void ElEmpateDeAhorroLoGanaElMenorIdSinImportarElOrdenDeEntrada()
     {
         LineaParaCombos[] lineas = [Linea(0, Pancho, 3000m), Linea(1, Coca, 2500m), Linea(2, Sprite, 2000m)];
+        var cinco = Combo(5, 5000m, Art(Pancho), Art(Coca));
+        var tres = Combo(3, 4500m, Art(Pancho), Art(Sprite));
+
+        Assert.Equal(3, Assert.Single(Resolver(lineas, cinco, tres).Combos).IdCombo);
+        Assert.Equal(3, Assert.Single(Resolver(lineas, tres, cinco).Combos).IdCombo);
+    }
+
+    [Fact]
+    public void ElRankingUsaLaGananciaRealFrenteAlCostoConOfertasYNoElAhorroContraLista()
+    {
+        var resolucion = Resolver(
+            [
+                Linea(0, Pancho, 60m),
+                Linea(1, Coca, 40m),
+                Linea(2, Sprite, 100m, descuentoDeOferta: 20m)
+            ],
+            Combo(1, 79m, Art(Pancho), Art(Sprite)),
+            Combo(2, 30m, Art(Coca), Art(Pancho)));
+
+        var aplicado = Assert.Single(resolucion.Combos);
+        Assert.Equal(2, aplicado.IdCombo);
+    }
+
+    [Fact]
+    public void UnaCantidadEnormeSeAplicaEnUnSoloPasoYCadaConjuntoSumaElPrecio()
+    {
+        const int conjuntos = 500_000;
 
         var resolucion = Resolver(
-            lineas,
-            Combo(5, 5000m, Art(Pancho), Art(Coca)),
-            Combo(3, 4500m, Art(Pancho), Art(Sprite)));
+            [Linea(0, Pancho, 3000m, cantidad: conjuntos), Linea(1, Coca, 2500m, cantidad: conjuntos)],
+            Combo(1, 5000m, Art(Pancho), Art(Coca)));
 
-        Assert.Equal(3, Assert.Single(resolucion.Combos).IdCombo);
+        var aplicado = Assert.Single(resolucion.Combos);
+        Assert.Equal(conjuntos, aplicado.Veces);
+        Assert.Equal(conjuntos * 500m, aplicado.Ahorro);
+        Assert.Equal(conjuntos * 272.73m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(conjuntos * 227.27m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(aplicado.Ahorro, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
+    }
+
+    [Fact]
+    public void UnaLineaDePrecioCeroNoRecibeUnaParteNegativaDelRedondeo()
+    {
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 10m), Linea(1, Coca, 10m), Linea(2, Sprite, 0m)],
+            Combo(1, 19.99m, Art(Pancho), Art(Coca), Art(Sprite)));
+
+        Assert.All(resolucion.Lineas, l => Assert.InRange(l.AhorroDeCombo, 0m, 10m));
+        Assert.Equal(0.01m, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
+    }
+
+    [Fact]
+    public void LaParteDeCadaLineaNuncaSuperaSuImporteDeListaYElConjuntoSumaElPrecio()
+    {
+        var lineas = Enumerable.Range(0, 10)
+            .Select(i => Linea(i, 100 + i, 1m))
+            .Append(Linea(10, 200, 0.01m))
+            .ToArray();
+        var combo = Combo(1, 0.06m, lineas.Select(l => Art(l.IdArticulo)).ToArray());
+
+        var resolucion = Resolver(lineas, combo);
+
+        Assert.Equal(11, resolucion.Lineas.Count);
+        foreach (var consumo in resolucion.Lineas)
+        {
+            Assert.InRange(consumo.AhorroDeCombo, 0m, lineas[consumo.Indice].PrecioLista);
+        }
+
+        Assert.Equal(0.06m, lineas.Sum(l => l.PrecioLista) - resolucion.Lineas.Sum(l => l.AhorroDeCombo));
+    }
+
+    [Fact]
+    public void UnComboConUnComponenteSobreElTopeDeCantidadNoSeAplicaYNoDesborda()
+    {
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 1m, cantidad: int.MaxValue), Linea(1, Coca, 1m)],
+            Combo(1, 1m, Art(Pancho, 3_000_000_000m), Art(Coca)));
+
+        Assert.Empty(resolucion.Combos);
     }
 
     [Fact]

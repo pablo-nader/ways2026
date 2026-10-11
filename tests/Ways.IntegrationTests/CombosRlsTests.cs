@@ -13,7 +13,8 @@ namespace Ways.IntegrationTests;
 /// Aislamiento por tenant de <c>combos</c> y <c>combos_componentes</c>, mismo patrón que
 /// <c>OfertasRlsTests</c>: SQL crudo sobre la conexión NOBYPASSRLS de la app (0 filas para
 /// SELECT/UPDATE cross-tenant, 42501 para el INSERT que viola <c>WITH CHECK</c>) más una prueba
-/// a nivel EF de que el filtro de tenant también bloquea la lectura por el ORM.
+/// a nivel EF: la lectura por el ORM no cruza tenants (RLS y filtro juntos) y, aparte, el SQL de
+/// cada DbSet lleva el predicado de tenant del filtro de EF (RLS por sí sola no lo probaría).
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CombosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -162,10 +163,27 @@ public class CombosRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     }
 
     [Fact]
-    public async Task ElFiltroDeEfNuncaDevuelveCombosNiComponentesDeOtroTenant()
+    public void ElSqlDeEfDeCombosYComponentesLlevaElPredicadoDeTenantDelFiltro()
+    {
+        using var _ = fixture.CreateClient();
+        using var sesion = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+
+        foreach (var sql in new[]
+        {
+            sesion.Combos.Where(c => c.Id == 1).ToQueryString(),
+            sesion.CombosComponentes.Where(c => c.IdCombo == 1).ToQueryString()
+        })
+        {
+            var donde = sql[sql.IndexOf("WHERE", StringComparison.Ordinal)..];
+            Assert.Contains("id_tenant", donde, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task LaLecturaPorEfNoDevuelveCombosNiComponentesDeOtroTenant()
     {
         var (idTenantA, idComboDeA, idTenantB, _) = await SembrarFilaDeTenantAAsync(
-            "combos", nameof(ElFiltroDeEfNuncaDevuelveCombosNiComponentesDeOtroTenant));
+            "combos", nameof(LaLecturaPorEfNoDevuelveCombosNiComponentesDeOtroTenant));
 
         await using var sesionA = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenantA));
         Assert.Single(await sesionA.Combos.Where(c => c.Id == idComboDeA).ToListAsync());

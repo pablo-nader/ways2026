@@ -3,14 +3,25 @@ namespace Ways.Domain.Combos;
 /// <summary>
 /// Motor de combos puro y determinista (D1-D6 del feature). Detecta conjuntos completos en las
 /// líneas de un documento y reparte el ahorro de cada aplicación entre las líneas consumidas.
-/// Es voraz: en cada vuelta aplica el combo de mayor ahorro por aplicación (empate: menor id) y
-/// repite hasta que ninguno cabe; no busca el óptimo global entre combos que se pisan.
+/// Es voraz y se define así: en cada vuelta se elige, entre los combos que caben con las unidades
+/// restantes, el de mayor ganancia real por aplicación (costo de esas unidades con sus ofertas
+/// menos el precio del combo, la misma cantidad que decide si el combo es aplicable; empate: menor
+/// id). Con la asignación de líneas de esa vuelta, el combo se aplica de una vez k veces, con
+/// k = mínimo, entre las líneas asignadas, de (unidades restantes / unidades tomadas por
+/// aplicación) redondeado hacia abajo, y recién entonces se reevalúa. El reparto por línea se
+/// calcula para UNA aplicación y se multiplica por k, de modo que cada conjunto suma exacto el
+/// precio del combo. El ahorro se reparte según el importe de lista de cada línea, y la parte de
+/// cada línea queda entre cero y el importe de lista de las unidades que aporta. Un componente
+/// familia toma líneas en orden de documento (el orden de entrada es el orden del documento), así
+/// que un combo puede descartarse aunque otro emparejamiento del documento lo completaría. No
+/// busca el óptimo global entre combos que se pisan.
 /// </summary>
 public static class ResolvedorDeCombos
 {
     private readonly record struct Toma(int Posicion, int Unidades);
 
-    private readonly record struct Aplicacion(ComboCandidato Combo, decimal Ahorro, IReadOnlyList<(int Posicion, int Unidades, decimal Ahorro)> Reparto);
+    private readonly record struct Aplicacion(
+        ComboCandidato Combo, decimal Ganancia, decimal Ahorro, IReadOnlyList<(int Posicion, int Unidades, decimal Ahorro)> Reparto);
 
     public static ResolucionDeCombos Resolver(
         IReadOnlyList<LineaParaCombos> lineas, IReadOnlyList<ComboCandidato> combos)
@@ -38,8 +49,8 @@ public static class ResolvedorDeCombos
                 }
 
                 if (mejor is null
-                    || candidata.Ahorro > mejor.Value.Ahorro
-                    || (candidata.Ahorro == mejor.Value.Ahorro && combo.Id < mejor.Value.Combo.Id))
+                    || candidata.Ganancia > mejor.Value.Ganancia
+                    || (candidata.Ganancia == mejor.Value.Ganancia && combo.Id < mejor.Value.Combo.Id))
                 {
                     mejor = candidata;
                 }
@@ -50,16 +61,22 @@ public static class ResolvedorDeCombos
                 break;
             }
 
+            var veces = int.MaxValue;
+            foreach (var (posicion, unidades, _) in elegida.Reparto)
+            {
+                veces = Math.Min(veces, restantes[posicion] / unidades);
+            }
+
             foreach (var (posicion, unidades, ahorro) in elegida.Reparto)
             {
-                restantes[posicion] -= unidades;
-                consumidas[posicion] += unidades;
-                ahorroPorLinea[posicion] += ahorro;
+                restantes[posicion] -= unidades * veces;
+                consumidas[posicion] += unidades * veces;
+                ahorroPorLinea[posicion] += ahorro * veces;
                 (combosPorLinea[posicion] ??= []).Add(elegida.Combo.Id);
             }
 
             vecesPorCombo.TryGetValue(elegida.Combo.Id, out var acumulado);
-            vecesPorCombo[elegida.Combo.Id] = (acumulado.Veces + 1, acumulado.Ahorro + elegida.Ahorro);
+            vecesPorCombo[elegida.Combo.Id] = (acumulado.Veces + veces, acumulado.Ahorro + (elegida.Ahorro * veces));
         }
 
         if (vecesPorCombo.Count == 0)
@@ -103,6 +120,11 @@ public static class ResolvedorDeCombos
             if ((componente.IdArticulo is null) == (componente.IdFamilia is null)
                 || componente.Cantidad <= 0
                 || componente.Cantidad != decimal.Truncate(componente.Cantidad))
+            {
+                return false;
+            }
+
+            if (componente.Cantidad > ReglaDeCombos.CantidadMaxima)
             {
                 return false;
             }
@@ -158,21 +180,30 @@ public static class ResolvedorDeCombos
         }
 
         var ahorro = totalDeLista - combo.Precio;
-        var reparto = new List<(int Posicion, int Unidades, decimal Ahorro)>(posiciones.Count);
-        var repartido = 0m;
-        for (var k = 0; k < posiciones.Count; k++)
+        var topes = posiciones.Select(p => tomado[p] * lineas[p].PrecioLista).ToArray();
+        var partes = new decimal[posiciones.Count];
+        for (var k = 0; k < partes.Length; k++)
         {
-            var posicion = posiciones[k];
-            var parte = k == posiciones.Count - 1
-                ? ahorro - repartido
-                : Math.Round(
-                    ahorro * (tomado[posicion] * lineas[posicion].PrecioLista) / totalDeLista,
-                    2,
-                    MidpointRounding.AwayFromZero);
-            repartido += parte;
-            reparto.Add((posicion, tomado[posicion], parte));
+            var proporcional = Math.Round(ahorro * topes[k] / totalDeLista, 2, MidpointRounding.AwayFromZero);
+            partes[k] = Math.Clamp(proporcional, 0m, topes[k]);
         }
 
-        return new Aplicacion(combo, ahorro, reparto);
+        var resto = ahorro - partes.Sum();
+        for (var k = partes.Length - 1; k >= 0 && resto != 0; k--)
+        {
+            var ajuste = resto > 0
+                ? Math.Min(resto, topes[k] - partes[k])
+                : -Math.Min(-resto, partes[k]);
+            partes[k] += ajuste;
+            resto -= ajuste;
+        }
+
+        var reparto = new List<(int Posicion, int Unidades, decimal Ahorro)>(posiciones.Count);
+        for (var k = 0; k < partes.Length; k++)
+        {
+            reparto.Add((posiciones[k], tomado[posiciones[k]], partes[k]));
+        }
+
+        return new Aplicacion(combo, costoConOfertas - combo.Precio, ahorro, reparto);
     }
 }

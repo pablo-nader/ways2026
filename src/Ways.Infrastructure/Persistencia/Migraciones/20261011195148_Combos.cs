@@ -33,6 +33,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 {
                     table.PrimaryKey("PK_combos", x => x.id_combo);
                     table.UniqueConstraint("ak_combos_id_combo_id_tenant", x => new { x.id_combo, x.id_tenant });
+                    table.CheckConstraint("ck_combos_codigo_positivo", "codigo > 0");
                     table.CheckConstraint("ck_combos_precio_positivo", "precio > 0");
                     table.ForeignKey(
                         name: "fk_combos_empresa",

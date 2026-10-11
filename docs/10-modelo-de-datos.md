@@ -856,6 +856,7 @@ combos (                      -- [catálogo]
     precio     numeric(14,2) NOT NULL,       -- precio fijo del conjunto, no depende de la lista de precios
     activo
 );
+CHECK (codigo > 0);                          -- ck_combos_codigo_positivo
 CHECK (precio > 0);                          -- ck_combos_precio_positivo
 UNIQUE (id_tenant, codigo) WHERE deleted_at IS NULL;   -- ux_combos_codigo
 
@@ -873,24 +874,36 @@ UNIQUE (id_combo, id_familia)  WHERE id_familia  IS NOT NULL;  -- ux_combos_comp
 ```
 
 Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conjunto suma al menos dos unidades en
-total y las cantidades son enteros (los artículos pesables no pueden ser componentes). `ResolvedorDeCombos` (dominio
-puro) detecta los conjuntos completos en el documento y reparte el ahorro entre las líneas consumidas:
+total, las cantidades son enteros entre 1 y 999.999 (`combo_cantidad_invalida`) y el precio no supera
+999.999.999.999,99 (`combo_precio_invalido`), para que ningún valor llegue a la base como 22003. Que los artículos
+pesables no sean componentes (solo `UnidadVenta.Unidad`) NO lo valida `ReglaDeCombos`, que no recibe la unidad de
+venta: lo exige el servicio de alta (T2). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
+documento y reparte el ahorro entre las líneas consumidas:
 
-- Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. Entre combos que
-  compiten gana el de mayor ahorro por aplicación, y a igual ahorro el de menor `id_combo`. El algoritmo es voraz:
-  no busca el óptimo global cuando varios combos se pisan.
+- Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. El algoritmo es
+  voraz y esta es su definición: en cada vuelta gana, entre los combos que caben, el de mayor ganancia real por
+  aplicación (lo que cuestan esas unidades con sus ofertas menos el precio del combo, la misma cantidad que decide si
+  el combo es aplicable), y a igual ganancia el de menor `id_combo`. Con la asignación de líneas de esa vuelta, el
+  combo se aplica de una vez k veces, con k = mínimo entre las líneas asignadas de (unidades restantes / unidades
+  tomadas por aplicación) redondeado hacia abajo, y recién entonces se reevalúa. El reparto por línea se calcula para
+  una aplicación y se multiplica por k. No busca el óptimo global cuando varios combos se pisan.
 - Dentro de un combo se cubren primero los componentes artículo y después los familia; entre líneas que pueden
-  cubrir un mismo componente se elige por orden de documento.
+  cubrir un mismo componente se elige por orden de documento (el orden de entrada). Por eso un combo puede
+  descartarse aunque otro emparejamiento de las líneas del documento lo completaría.
 - Las unidades consumidas se cobran a precio de lista menos su parte del combo; la oferta no se apila sobre ellas, y
   el combo solo aplica si queda estrictamente más barato que esas mismas unidades con su oferta. Las unidades de la
   misma línea que no entran al combo conservan su oferta.
 - El ahorro de una aplicación (lista de las unidades consumidas − precio del combo) se reparte entre las líneas en
-  proporción a su importe de lista, redondeado a centavos (`AwayFromZero`), y el resto de redondeo cae en la última
-  línea: las unidades consumidas suman exactamente el precio del combo. Es un importe de línea, no unitario.
+  proporción a su importe de lista, redondeado a centavos (`AwayFromZero`). La parte de cada línea queda entre cero y
+  el importe de lista de las unidades que aporta: el resto de redondeo se coloca en la última línea que puede
+  absorberlo y, si no cabe, retrocede a las anteriores. Las unidades consumidas de cada conjunto suman exactamente el
+  precio del combo. Es un importe de línea, no unitario.
 - Las líneas con cantidad no entera o no positiva (pesables, notas de crédito) se ignoran en la detección.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
-sus componentes (`Cascade`), aunque la baja de negocio es lógica (`deleted_at`).
+sus componentes (`Cascade`), aunque la baja de negocio es lógica (`deleted_at`). Los componentes de un combo dado de
+baja lógica permanecen y conservan sus FK `Restrict`: las guardas de baja de artículos y familias (T2) tienen que
+ignorarlos.
 
 ---
 

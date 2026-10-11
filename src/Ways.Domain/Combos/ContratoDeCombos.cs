@@ -10,8 +10,8 @@ public readonly record struct ComboCandidato(
     int Id, string Nombre, decimal Precio, IReadOnlyList<ComponenteDeCombo> Componentes);
 
 /// <summary>
-/// Línea del documento para detectar combos. <see cref="Indice"/> identifica la línea en la
-/// salida y define el orden del documento. <see cref="DescuentoUnitarioDeOferta"/> es el
+/// Línea del documento para detectar combos. El orden de entrada es el orden del documento;
+/// <see cref="Indice"/> solo identifica la línea en la salida. <see cref="DescuentoUnitarioDeOferta"/> es el
 /// descuento por unidad que las ofertas ya resolvieron para esa línea.
 /// </summary>
 public readonly record struct LineaParaCombos(

@@ -134,6 +134,19 @@ public class CombosEsquemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             "23514", "ck_combos_precio_positivo");
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UnComboConCodigoNoPositivoViolaLaCheckDeCodigo(int codigo)
+    {
+        var s = await SembrarAsync(nameof(UnComboConCodigoNoPositivoViolaLaCheckDeCodigo) + codigo);
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", s.IdTenantA);
+
+        await AssertViolacionAsync(
+            () => InsertarComboAsync(cruda, s.IdTenantA, codigo),
+            "23514", "ck_combos_codigo_positivo");
+    }
+
     [Fact]
     public async Task DosCombosVivosConElMismoCodigoDelTenantViolanElUnico()
     {

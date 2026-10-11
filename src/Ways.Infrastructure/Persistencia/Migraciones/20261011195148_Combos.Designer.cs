@@ -1818,6 +1818,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.ToTable("combos", null, t =>
                         {
+                            t.HasCheckConstraint("ck_combos_codigo_positivo", "codigo > 0");
                             t.HasCheckConstraint("ck_combos_precio_positivo", "precio > 0");
                         });
                 });

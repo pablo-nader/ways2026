@@ -16,6 +16,7 @@ public class ComboConfiguration : IEntityTypeConfiguration<Combo>
     {
         builder.ToTable("combos", t =>
         {
+            t.HasCheckConstraint("ck_combos_codigo_positivo", "codigo > 0");
             t.HasCheckConstraint("ck_combos_precio_positivo", "precio > 0");
         });
 
