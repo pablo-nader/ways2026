@@ -292,6 +292,7 @@ app.MapearArticulos();
 // Familias de artículos (doc 10 §3): gestión, solo admin.
 app.MapearFamilias();
 app.MapearOfertas();
+app.MapearCombos();
 app.MapearEtiquetas();
 app.MapearVentas();
 // stage-pos-venta-offline-backend (Parte A): instantánea de venta offline, device-only.

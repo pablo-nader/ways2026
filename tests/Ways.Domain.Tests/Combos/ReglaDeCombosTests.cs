@@ -80,4 +80,24 @@ public class ReglaDeCombosTests
     {
         ReglaDeCombos.Validar(5000m, [Art(7), Fam(7)]);
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(ReglaDeCombos.CodigoMaximo)]
+    public void UnCodigoEntreUnoYElTopeEsValido(int codigo)
+    {
+        ReglaDeCombos.ValidarCodigo(codigo);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(ReglaDeCombos.CodigoMaximo + 1)]
+    [InlineData(int.MaxValue)]
+    public void UnCodigoFueraDeRangoSeRechazaConSuPropioCodigo(int codigo)
+    {
+        var error = Assert.Throws<ErrorDominio>(() => ReglaDeCombos.ValidarCodigo(codigo));
+        Assert.Equal("combo_codigo_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
 }

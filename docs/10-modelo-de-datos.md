@@ -877,7 +877,7 @@ Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conju
 total, las cantidades son enteros entre 1 y 999.999 (`combo_cantidad_invalida`) y el precio no supera
 999.999.999.999,99 (`combo_precio_invalido`), para que ningún valor llegue a la base como 22003. Que los artículos
 pesables no sean componentes (solo `UnidadVenta.Unidad`) NO lo valida `ReglaDeCombos`, que no recibe la unidad de
-venta: lo exige el servicio de alta (T2). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
+venta: lo exige `ServicioDeCombos` (ver "API" más abajo). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
 documento y reparte el ahorro entre las líneas consumidas:
 
 - Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. El algoritmo es
@@ -901,9 +901,42 @@ documento y reparte el ahorro entre las líneas consumidas:
 - Las líneas con cantidad no entera o no positiva (pesables, notas de crédito) se ignoran en la detección.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
-sus componentes (`Cascade`), aunque la baja de negocio es lógica (`deleted_at`). Los componentes de un combo dado de
-baja lógica permanecen y conservan sus FK `Restrict`: las guardas de baja de artículos y familias (T2) tienen que
-ignorarlos.
+sus componentes (`Cascade`). La baja de negocio del combo es lógica (`deleted_at`) y borra físicamente sus componentes
+en la misma transacción: la guarda de referencias cuenta cualquier fila que exista, así que un combo dado de baja no
+bloquea la baja de las familias que usaba.
+
+#### API (`/api/combos`)
+
+Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `GestionDeCatalogo` (Admin).
+
+- `GET /api/combos` lista los combos vivos ordenados por `codigo`; `GET /api/combos/{id}` devuelve uno. Cada combo trae
+  `{ id, codigo, nombre, precio, idEmpresa, activo, componentes[] }` y cada componente
+  `{ idArticulo, idFamilia, nombre, cantidad, disponible }`. Si el artículo o la familia de un componente fue dado de baja
+  después, el componente sigue en el combo con `nombre = null` y `disponible = false` (el id se conserva para poder
+  quitarlo); un PUT que lo repita se rechaza con `referencia_invalida`.
+- `POST` y `PUT /api/combos/{id}` reciben `{ codigo?, nombre, precio, idEmpresa?, activo, componentes[] }` con
+  componentes `{ idArticulo?, idFamilia?, cantidad }`. El PUT reemplaza todo, incluido el conjunto de componentes, en una
+  transacción. `activo` omitido vale `true`. `codigo` omitido: en el alta el servidor asigna el máximo `codigo` vivo del
+  tenant + 1 (los combos dados de baja no cuentan, así que su código se reutiliza); en el PUT se conserva el actual.
+  `codigo` informado tiene que estar entre 1 y 999.999 (`ReglaDeCombos.CodigoMaximo`). `DELETE` da la baja lógica.
+- Un PUT o DELETE sobre un id inexistente, dado de baja o de otro tenant responde `404` antes de validar el cuerpo.
+- Errores `400`: los de `ReglaDeCombos` (`combo_precio_invalido`, `combo_componente_invalido`, `combo_cantidad_invalida`,
+  `combo_componente_duplicado`, `combo_unidades_insuficientes`), `combo_codigo_invalido`, `nombre_requerido`,
+  `nombre_muy_largo` (150), `referencia_invalida` (artículo, familia o empresa que no existe, está dada de baja o es de
+  otro tenant) y `combo_componente_no_unitario` (un componente artículo con `UnidadVenta.Peso`, o una familia con algún
+  miembro vivo `Peso`; los servicios, `es_producto = false`, sí se aceptan). `409`: `combo_codigo_duplicado` (código en
+  uso por otro combo vivo) y `combo_codigo_agotado` (alta sin código con el 999.999 ya ocupado).
+- Toda escritura toma un lock advisory por tenant como primera sentencia de su transacción: serializa la asignación del
+  código, el pre-chequeo de código y el reemplazo del conjunto. Cada artículo o familia referenciado se toma `FOR KEY
+  SHARE` sobre su fila viva en esa transacción, de modo que una baja que ya tiene la fila hace fallar el alta o la
+  edición con `referencia_invalida` en vez de dejar un componente colgante. Que el artículo no sea pesable se comprueba
+  en ese momento; cambiarlo después a pesable no se bloquea (el resolvedor ignora las líneas de cantidad no entera).
+- Respaldos de esquema (`ManejadorDeErrores`): `ux_combos_codigo` → `409 combo_codigo_duplicado`;
+  `ux_combos_componentes_articulo` y `ux_combos_componentes_familia` → `409 combo_componente_duplicado`. Solo una
+  escritura fuera de banda las alcanza, porque el lock por tenant serializa las del servicio.
+- Disolver una familia que es componente de un combo vivo responde `409 familia_en_uso` ("tiene combos"). La baja de un
+  artículo que es componente de un combo vivo responde `409 articulo_en_uso` ("tiene combos"); la de un combo dado de
+  baja no bloquea.
 
 ---
 

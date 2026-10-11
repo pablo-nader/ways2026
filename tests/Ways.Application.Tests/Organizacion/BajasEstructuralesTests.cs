@@ -31,6 +31,7 @@ public class BajasEstructuralesTests
     [
         "AlicuotasComprobanteCompra",
         "ArticulosEmpresas",
+        "CombosComponentes",
         "ItemsComprobanteCompra",
         "ItemsOrdenCompra",
         "ItemsPresupuesto",
