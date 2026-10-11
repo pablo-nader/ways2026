@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { lineaDeCompraVacia, type LineaDeCompraFormulario } from '../../api/lineaDeCompra'
 import type { ArticuloListado } from '../../api/tipos'
@@ -63,8 +63,8 @@ describe('useConsultaDeCodigos — respuesta sobre una fila que ya tiene artícu
     const sinArticulo = { ...lineaDeCompraVacia(1), codigoProveedor: 'AB-1' }
     const { result } = renderHook(() => useConsultaDeCodigos(opciones([sinArticulo], aplicar)))
 
-    await act(async () => result.current.alSalirDelCodigo(1))
+    act(() => result.current.alSalirDelCodigo(1))
 
-    expect(aplicar).toHaveBeenCalledWith(1, expect.objectContaining({ idArticulo: 20 }))
+    await waitFor(() => expect(aplicar).toHaveBeenCalledWith(1, expect.objectContaining({ idArticulo: 20 })))
   })
 })

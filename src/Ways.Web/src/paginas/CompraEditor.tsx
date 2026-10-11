@@ -653,6 +653,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const [intentoFallido, setIntentoFallido] = useState<'guardar' | 'borrador' | null>(null)
   const [descartarAbierto, setDescartarAbierto] = useState(false)
   const [disparadorDeDescartar, setDisparadorDeDescartar] = useState<HTMLElement | null>(null)
+  // Proveedor elegido que espera confirmación porque hay filas resueltas por código que se van a perder.
+  const [proveedorPendiente, setProveedorPendiente] = useState<string | null>(null)
+  const [disparadorDeProveedor, setDisparadorDeProveedor] = useState<HTMLElement | null>(null)
 
   useEffect(() => {
     if (ubicacion.state !== null) navigate(`${ubicacion.pathname}${ubicacion.search}`, { replace: true, state: null })
@@ -719,8 +722,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   // todavía en curso — el gate queda asimétrico.
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
-  // La puerta de "descartar cambios" deja inerte el resto de la pantalla mientras está abierta.
-  const ocupado = guardando || anulando || aplicandoPrecios || vinculandoGasto || descartarAbierto
+  // Las puertas de "descartar cambios" y de "cambiar el proveedor" dejan inerte el resto de la
+  // pantalla mientras están abiertas.
+  const ocupado = guardando || anulando || aplicandoPrecios || vinculandoGasto || descartarAbierto || proveedorPendiente !== null
 
   function cambiarTipo(valor: string) {
     if (ocupado) return
@@ -752,8 +756,17 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     )
   }
 
-  function cambiarProveedor(valor: string) {
+  function cambiarProveedor(valor: string, disparador: HTMLElement) {
     if (ocupado) return
+    if (lineas.some((l) => l.resueltaPorCodigo)) {
+      setDisparadorDeProveedor(disparador)
+      setProveedorPendiente(valor)
+      return
+    }
+    aplicarProveedor(valor)
+  }
+
+  function aplicarProveedor(valor: string) {
     const hayCostoTipeado = lineas.some((l) => l.importe !== null)
     setEncabezado((prev) =>
       alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
@@ -836,6 +849,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const impedimentoParaGuardar =
     intentoFallido === null ? null : mensajeDeLoQueImpideGuardar(encabezado, lineas, intentoFallido === 'guardar')
   const hayCambios = hayCambiosSinGuardar({ esNuevo, encabezado, lineas, huellaGuardada })
+
+  const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
 
   function pedirCancelar(evento: MouseEvent<HTMLButtonElement>) {
     if (!hayCambios) {
@@ -1086,7 +1101,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               className="form-select"
               value={encabezado.idProveedor}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
-              onChange={(e) => cambiarProveedor(e.target.value)}
+              onChange={(e) => cambiarProveedor(e.target.value, e.currentTarget)}
             >
               <option value="">Elegir…</option>
               {(proveedores ?? []).map((p) => (
@@ -1316,6 +1331,22 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
                   Para dejarla pendiente, use Guardar borrador.
                 </div>
               </>
+            )}
+
+            {proveedorPendiente !== null && (
+              <ConfirmacionDeBaja
+                titulo="el proveedor"
+                pregunta="Cambiar"
+                nota={`Cambiar el proveedor vuelve a buscar ${cantidadPorCodigo} ${cantidadPorCodigo === 1 ? 'línea' : 'líneas'} por su código y borra sus precios.`}
+                etiquetaConfirmar="Cambiar proveedor"
+                ocupado={false}
+                disparador={disparadorDeProveedor}
+                onConfirmar={() => {
+                  aplicarProveedor(proveedorPendiente)
+                  setProveedorPendiente(null)
+                }}
+                onCancelar={() => setProveedorPendiente(null)}
+              />
             )}
 
             {descartarAbierto && (

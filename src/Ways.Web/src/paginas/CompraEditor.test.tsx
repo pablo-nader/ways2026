@@ -2300,16 +2300,162 @@ describe('CompraEditor — guardar espera a las consultas de código', () => {
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, { items: Record<string, unknown>[] }]
     expect(cuerpo.items[0]).toMatchObject({ idArticulo: null, descripcion: 'Flete', codigoProveedor: 'AB-1' })
   })
+})
 
-  it('cambiar el proveedor del encabezado vuelve a consultar los códigos de las filas contra el proveedor nuevo', async () => {
+describe('CompraEditor — cambiar el proveedor con líneas resueltas por código', () => {
+  const pagina = (items: ArticuloListado[]) => Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 25 })
+  const DEL_UNO = articuloFixture({ id: 20, nombre: 'Del uno', codigoProveedor: 'AB-1', costoLista: 242, descuentoProveedor: 10, idAlicuotaIva: 3 })
+  const DEL_DOS = articuloFixture({ id: 51, nombre: 'Del dos', codigoProveedor: 'AB-1', costoLista: 363, descuentoProveedor: 20, idAlicuotaIva: 3 })
+  const OTRO_DEL_UNO = articuloFixture({ id: 21, nombre: 'Otro del uno', codigoProveedor: 'CD-2', costoLista: 60.5, idAlicuotaIva: 3 })
+
+  let porBusqueda: Record<string, () => Promise<unknown>> = {}
+
+  const celda = (fila: number, etiqueta: string) => within(filaDeItems(fila)).getByLabelText(new RegExp(`^${etiqueta.replace(/[()]/g, '\\$&')}, línea \\d+$`))
+  const busquedasDelProveedorDos = () =>
+    apiGetMock.mock.calls.map((c: unknown[]) => String(c[0])).filter((r) => r.startsWith('/articulos?busqueda=') && r.includes('idProveedor=2'))
+
+  async function montarConDosProveedores(usuario: ReturnType<typeof userEvent.setup>) {
     mockearReferencia(
       (ruta) => {
-        if (ruta.startsWith('/articulos?busqueda=AB-1&idProveedor=1')) {
-          return Promise.resolve({ items: [articuloFixture({ id: 20, nombre: 'Del uno', codigoProveedor: 'AB-1' })], total: 1, pagina: 1, tamanio: 25 })
-        }
-        if (ruta.startsWith('/articulos?busqueda=AB-1&idProveedor=2')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 25 })
-        return undefined
+        const m = /^\/articulos\?busqueda=([^&]+)&idProveedor=(\d+)/.exec(ruta)
+        if (!m) return undefined
+        return (porBusqueda[`${decodeURIComponent(m[1])}@${m[2]}`] ?? (() => pagina([])))()
       },
+      undefined,
+      undefined,
+      [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })],
+    )
+    renderEditor('nueva')
+    await completarEncabezadoDeCompraNueva(usuario)
+    await screen.findByRole('option', { name: 'Proveedor Dos SA' })
+  }
+
+  async function resolverPorCodigo(usuario: ReturnType<typeof userEvent.setup>, fila: number, codigo: string, detalle: string) {
+    await usuario.type(celda(fila, 'Código'), codigo)
+    await usuario.tab()
+    await waitFor(() => expect(celda(fila, 'Detalle')).toHaveValue(detalle))
+  }
+
+  beforeEach(() => {
+    porBusqueda = {
+      'AB-1@1': () => pagina([DEL_UNO]),
+      'CD-2@1': () => pagina([OTRO_DEL_UNO]),
+      'AB-1@2': () => pagina([DEL_DOS]),
+    }
+  })
+
+  it('con una línea resuelta por código pregunta antes de cambiar, en singular; confirmar vuelve a buscarla contra el proveedor nuevo y borra sus precios', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    await usuario.type(celda(0, 'Cantidad'), '3')
+    expect(celda(0, 'Importe')).toHaveValue('200,0000')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    const puerta = await screen.findByRole('alertdialog')
+    expect(within(puerta).getByText('Cambiar el proveedor vuelve a buscar 1 línea por su código y borra sus precios.')).toBeInTheDocument()
+    expect(busquedasDelProveedorDos()).toEqual([])
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue('Del dos'))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Proveedor')).toHaveValue('2')
+    expect(celda(0, 'Código')).toHaveValue('AB-1')
+    expect(celda(0, 'Cantidad')).toHaveDisplayValue('3')
+    expect(celda(0, 'Importe')).toHaveValue('300,0000')
+    expect(celda(0, 'Descuento (%)')).toHaveValue('20,00')
+  })
+
+  it('con varias líneas resueltas por código el aviso cuenta cuántas son, en plural', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    await resolverPorCodigo(usuario, 1, 'CD-2', 'Otro del uno')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    const puerta = await screen.findByRole('alertdialog')
+    expect(within(puerta).getByText('Cambiar el proveedor vuelve a buscar 2 líneas por su código y borra sus precios.')).toBeInTheDocument()
+  })
+
+  it('cancelar deja el proveedor y todas las líneas como estaban y no consulta nada; mientras la puerta está abierta el resto de la pantalla está inerte', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+    const puerta = await screen.findByRole('alertdialog')
+    expect(screen.getByLabelText('Proveedor')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(celda(0, 'Cantidad')).toBeDisabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Proveedor')).toHaveValue('1')
+    expect(celda(0, 'Detalle')).toHaveValue('Del uno')
+    expect(celda(0, 'Código')).toHaveValue('AB-1')
+    expect(celda(0, 'Importe')).toHaveValue('200,0000')
+    expect(celda(0, 'Descuento (%)')).toHaveValue('10,00')
+    await act(async () => {})
+    expect(busquedasDelProveedorDos()).toEqual([])
+  })
+
+  it('si el proveedor nuevo no tiene el código, la línea queda pendiente de asociar y sin ningún precio', async () => {
+    porBusqueda['AB-1@2'] = () => pagina([])
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await within(filaDeItems(0)).findByText('Pendiente de asociar')
+    expect(celda(0, 'Detalle')).toHaveValue('')
+    expect(celda(0, 'Importe')).toHaveValue('')
+    expect(celda(0, 'Descuento (%)')).toHaveValue('')
+    expect(celda(0, 'IVA')).toHaveValue('')
+  })
+
+  it('quedarse sin proveedor sigue la misma regla: pregunta, y al confirmar suelta las líneas sin consultar nada', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    const antes = apiGetMock.mock.calls.length
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '')
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue(''))
+    expect(screen.getByLabelText('Proveedor')).toHaveValue('')
+    expect(celda(0, 'Código')).toHaveValue('AB-1')
+    expect(celda(0, 'Importe')).toHaveValue('')
+    expect(apiGetMock.mock.calls.slice(antes).some((c: unknown[]) => String(c[0]).startsWith('/articulos?busqueda='))).toBe(false)
+  })
+
+  it('sin ninguna línea resuelta por código no hay pregunta: un concepto no se toca y un código pendiente se busca de nuevo', async () => {
+    porBusqueda['ZZ-9@2'] = () => pagina([articuloFixture({ id: 52, nombre: 'Aparece en el dos', codigoProveedor: 'ZZ-9' })])
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await cargarFila(usuario, 0, { detalle: 'Flete', cantidad: '1', importe: '500', iva: '3' })
+    await usuario.type(celda(1, 'Código'), 'ZZ-9')
+    await usuario.tab()
+    await within(filaDeItems(1)).findByText('Pendiente de asociar')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Proveedor')).toHaveValue('2')
+    await waitFor(() => expect(celda(1, 'Detalle')).toHaveValue('Aparece en el dos'))
+    expect(celda(0, 'Detalle')).toHaveValue('Flete')
+    expect(celda(0, 'Importe')).toHaveValue('500,0000')
+  })
+
+  it('una línea cuyo artículo se eligió buscando no cuenta: cambiar el proveedor no pregunta ni la toca', async () => {
+    mockearReferencia(
+      (ruta) => (ruta.startsWith('/articulos?busqueda=yerba') ? pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40', costoLista: 80 })]) : undefined),
       undefined,
       undefined,
       [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })],
@@ -2317,15 +2463,17 @@ describe('CompraEditor — guardar espera a las consultas de código', () => {
     const usuario = userEvent.setup()
     renderEditor('nueva')
     await completarEncabezadoDeCompraNueva(usuario)
-    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Código, línea \d+$/), 'AB-1')
-    await usuario.tab()
-    await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('Del uno'))
-
     await screen.findByRole('option', { name: 'Proveedor Dos SA' })
+    await usuario.type(celda(0, 'Código'), 'ZZ-9')
+    await usuario.type(celda(0, 'Detalle'), 'yerba')
+    await usuario.click(await screen.findByRole('option', { name: /Yerba 1kg/ }))
+
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
 
-    await within(filaDeItems(0)).findByText('Pendiente de asociar')
-    expect(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/)).toHaveValue('')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(celda(0, 'Detalle')).toHaveValue('Yerba 1kg')
+    expect(celda(0, 'Código')).toHaveValue('ZZ-9')
+    expect(celda(0, 'Importe')).toHaveValue('66,1157')
   })
 })
 

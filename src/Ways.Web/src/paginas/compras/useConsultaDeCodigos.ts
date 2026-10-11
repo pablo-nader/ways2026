@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import {
-  cambiosAlDesresolver,
-  cambiosAlNoEncontrarTrasCambioDeProveedor,
+  cambiosAlCambiarDeProveedor,
   cambiosAlResolverPorCodigo,
   type LineaDeCompraFormulario,
   type ModoDePreciosDeCompra,
@@ -154,11 +153,9 @@ export function useConsultaDeCodigos({
     [soltar],
   )
 
-  /** `fila` es la fila tal como está al lanzar la consulta; ya no depende del último código consultado.
-   * `soloCeldasVacias`: la re-consulta por cambio de proveedor refresca solo las celdas vacías o que
-   * todavía valen la precarga del artículo anterior, y no pisa lo que el operador cambió. */
+  /** `fila` es la fila tal como está al lanzar la consulta; ya no depende del último código consultado. */
   const consultar = useCallback(
-    async (fila: LineaDeCompraFormulario, idProveedorConsultado: number, soloCeldasVacias = false) => {
+    async (fila: LineaDeCompraFormulario, idProveedorConsultado: number) => {
       const clave = fila.clave
       const codigo = fila.codigoProveedor.trim()
       if (enVueloRef.current.get(clave)?.codigo === codigo) return
@@ -201,12 +198,11 @@ export function useConsultaDeCodigos({
       }
 
       if (articulo === null) {
-        const cambios = soloCeldasVacias ? cambiosAlNoEncontrarTrasCambioDeProveedor(fila, actual) : {}
-        aplicarRef.current(clave, { ...cambios, codigoConsultado: codigo })
+        aplicarRef.current(clave, { codigoConsultado: codigo })
         return
       }
       aplicarRef.current(clave, {
-        ...cambiosAlResolverPorCodigo(fila, actual, articulo, alicuotasRef.current, modoRef.current, soloCeldasVacias),
+        ...cambiosAlResolverPorCodigo(fila, actual, articulo, alicuotasRef.current, modoRef.current),
         codigoConsultado: codigo,
       })
       alResolverRef.current(clave)
@@ -226,9 +222,9 @@ export function useConsultaDeCodigos({
     [consultar],
   )
 
-  // El proveedor lo cambió el operador: ninguna fila queda atada al anterior. Las resueltas por
-  // código pierden el artículo, los marcadores de "ya consultado" se reinician y toda fila con
-  // código y sin artículo se consulta de nuevo. Una fila con artículo elegido buscando o creado
+  // El proveedor lo cambió el operador: las filas resueltas por código pierden el artículo y sus
+  // precios, los marcadores de "ya consultado" se reinician y toda fila con código y sin artículo
+  // se consulta de nuevo como una primera consulta. Una fila con artículo elegido buscando o creado
   // conserva su artículo y su código.
   const cambiosPrevios = useRef(cambiosDeProveedor)
   useEffect(() => {
@@ -242,10 +238,10 @@ export function useConsultaDeCodigos({
 
     const idProv = idProveedorRef.current
     for (const fila of lineasRef.current) {
-      const cambios = fila.resueltaPorCodigo ? cambiosAlDesresolver() : fila.codigoConsultado !== '' ? { codigoConsultado: '' } : null
+      const cambios = fila.resueltaPorCodigo ? cambiosAlCambiarDeProveedor() : fila.codigoConsultado !== '' ? { codigoConsultado: '' } : null
       if (cambios) aplicarRef.current(fila.clave, cambios)
       const despues = cambios ? { ...fila, ...cambios } : fila
-      if (idProv !== null && despues.idArticulo === '' && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv, true)
+      if (idProv !== null && despues.idArticulo === '' && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv)
     }
   }, [cambiosDeProveedor, avisar, consultar])
 

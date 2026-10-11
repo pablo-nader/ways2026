@@ -3,11 +3,11 @@ import {
   aLineaSolicitada,
   alicuotaParaArticulo,
   brutoDeLinea,
+  cambiosAlCambiarDeProveedor,
   cambiosAlDesresolver,
   cambiosAlElegirArticulo,
   cambiosAlEscribirCodigo,
   cambiosAlEscribirDetalle,
-  cambiosAlNoEncontrarTrasCambioDeProveedor,
   cambiosAlResolverPorCodigo,
   camposInvalidosDeLinea,
   cantidadDeLinea,
@@ -824,127 +824,50 @@ describe('cambiosAlResolverPorCodigo respeta lo tipeado mientras la consulta est
     expect(cambios).not.toHaveProperty('idAlicuotaIva')
     expect(cambios.importe).toBe(100)
   })
+})
 
-  it('con soloCeldasVacias no se pisa un par ni un IVA que la fila ya carga, pero sí lo que está vacío', () => {
-    const cargada = lineaFixture({ idArticulo: '', importe: 90, descuentoPorcentaje: 2, idAlicuotaIva: 3 })
-    const sobreCargada = cambiosAlResolverPorCodigo(cargada, cargada, articulo, ALICUOTAS, undefined, true)
-    expect(sobreCargada).not.toHaveProperty('importe')
-    expect(sobreCargada).not.toHaveProperty('descuentoPorcentaje')
-    expect(sobreCargada).not.toHaveProperty('idAlicuotaIva')
-
-    const vacia = alLanzar()
-    expect(cambiosAlResolverPorCodigo(vacia, vacia, articulo, ALICUOTAS, undefined, true)).toMatchObject({
+describe('cambiosAlCambiarDeProveedor', () => {
+  it('suelta el artículo y todo lo que su precarga escribió, y no toca Código ni Cantidad', () => {
+    const resuelta = lineaFixture({
+      resueltaPorCodigo: true,
+      codigoProveedor: 'AB-1',
+      codigoConsultado: 'AB-1',
+      cantidad: '4',
       importe: 200,
       descuentoPorcentaje: 10,
       idAlicuotaIva: 4,
+      unidadDeMedida: 'Bulto',
+      unidadesPorBulto: 12,
+      controlaLote: true,
+      codigoLote: 'L1',
+      fechaVencimiento: '2027-01-01',
     })
-  })
-})
-
-describe('precarga por código recordada (prefillDeCodigo) y re-consulta por cambio de proveedor', () => {
-  const articuloUno = articuloFixture({ id: 20, costoLista: 200, descuentoProveedor: 10, idAlicuotaIva: 4 })
-  const articuloDos = articuloFixture({ id: 51, costoLista: 300, descuentoProveedor: 20, idAlicuotaIva: 3 })
-  const vacia = () => lineaFixture({ idArticulo: '', descripcion: '', importe: null, descuentoPorcentaje: null, idAlicuotaIva: '', cantidad: '' })
-
-  /** La fila tal como queda tras resolver por código con `articuloUno` y soltarla al cambiar de proveedor. */
-  function sueltaConLaPrecargaDelUno(sobrescribir: Partial<LineaDeCompraFormulario> = {}) {
-    const resuelta = { ...vacia(), ...cambiosAlResolverPorCodigo(vacia(), vacia(), articuloUno, ALICUOTAS) }
-    return lineaFixture({ ...resuelta, ...cambiosAlDesresolver(), codigoProveedor: 'AB-1', ...sobrescribir })
-  }
-
-  it('resolver por código recuerda lo que se escribió en la fila, ya neteado', () => {
-    const neto = { discriminaIva: true, preciosIncluyenIva: false }
-    const delArticulo = articuloFixture({ costoLista: 121, descuentoProveedor: 5, idAlicuotaIva: 3 })
-    expect(cambiosAlResolverPorCodigo(vacia(), vacia(), delArticulo, ALICUOTAS, neto).prefillDeCodigo).toEqual({
-      importe: 100,
-      descuentoPorcentaje: 5,
-      idAlicuotaIva: 3,
-    })
-  })
-
-  it('elegir buscando o crear con "+" olvida la precarga; desresolver la conserva', () => {
-    const suelta = sueltaConLaPrecargaDelUno()
-    expect(suelta.prefillDeCodigo).toEqual({ importe: 200, descuentoPorcentaje: 10, idAlicuotaIva: 4 })
-    expect(cambiosAlElegirArticulo(suelta, articuloDos, ALICUOTAS, 'busqueda').prefillDeCodigo).toBeNull()
-    expect(cambiosAlElegirArticulo(suelta, articuloDos, ALICUOTAS, 'alta').prefillDeCodigo).toBeNull()
-    expect(cambiosAlDesresolver()).not.toHaveProperty('prefillDeCodigo')
-  })
-
-  it('una fila que quedó sin datos pierde la precarga recordada al normalizar', () => {
-    const vaciada = { ...vacia(), prefillDeCodigo: { importe: 200, descuentoPorcentaje: null, idAlicuotaIva: 4 as const } }
-    expect(normalizarFilas([vaciada], 9)[0].prefillDeCodigo).toBeNull()
-    const conDatos = lineaFixture({ clave: 3, prefillDeCodigo: vaciada.prefillDeCodigo })
-    expect(normalizarFilas([conDatos], 9)[0].prefillDeCodigo).toEqual(vaciada.prefillDeCodigo)
-  })
-
-  it('tras el cambio de proveedor, las celdas que siguen valiendo la precarga se refrescan con el artículo nuevo', () => {
-    const suelta = sueltaConLaPrecargaDelUno()
-    const cambios = cambiosAlResolverPorCodigo(suelta, suelta, articuloDos, ALICUOTAS, undefined, true)
-    expect(cambios).toMatchObject({ idArticulo: 51, importe: 300, descuentoPorcentaje: 20, idAlicuotaIva: 3 })
-    expect(cambios.prefillDeCodigo).toEqual({ importe: 300, descuentoPorcentaje: 20, idAlicuotaIva: 3 })
-  })
-
-  it('un Importe cambiado por el operador se conserva y arrastra a su Descuento; el IVA sin tocar sí se refresca', () => {
-    const suelta = sueltaConLaPrecargaDelUno({ importe: 150 })
-    const cambios = cambiosAlResolverPorCodigo(suelta, suelta, articuloDos, ALICUOTAS, undefined, true)
-    expect(cambios).not.toHaveProperty('importe')
-    expect(cambios).not.toHaveProperty('descuentoPorcentaje')
-    expect(cambios).toMatchObject({ idAlicuotaIva: 3 })
-    expect(cambios.prefillDeCodigo).toEqual({ importe: 200, descuentoPorcentaje: 10, idAlicuotaIva: 3 })
-  })
-
-  it('un IVA cambiado por el operador se conserva y el importe refrescado se neta con ESE IVA', () => {
-    const neto = { discriminaIva: true, preciosIncluyenIva: false }
-    const suelta = sueltaConLaPrecargaDelUno({ idAlicuotaIva: 3 })
-    const delDos = articuloFixture({ id: 51, costoLista: 121, descuentoProveedor: null, idAlicuotaIva: 4 })
-    const cambios = cambiosAlResolverPorCodigo(suelta, suelta, delDos, ALICUOTAS, neto, true)
-    expect(cambios).not.toHaveProperty('idAlicuotaIva')
-    expect(cambios.importe).toBe(100)
-    expect(cambios.prefillDeCodigo?.idAlicuotaIva).toBe(4)
-  })
-
-  it('el mismo artículo en los dos proveedores deja los mismos valores', () => {
-    const suelta = sueltaConLaPrecargaDelUno()
-    const cambios = cambiosAlResolverPorCodigo(suelta, suelta, articuloUno, ALICUOTAS, undefined, true)
-    expect(cambios).toMatchObject({ importe: 200, descuentoPorcentaje: 10, idAlicuotaIva: 4 })
-    expect(cambios.prefillDeCodigo).toEqual(suelta.prefillDeCodigo)
-  })
-
-  it('sin precarga recordada toda celda con valor se trata como tipeada', () => {
-    const tipeada = lineaFixture({ idArticulo: '', importe: 90, descuentoPorcentaje: 2, idAlicuotaIva: 3 })
-    const cambios = cambiosAlResolverPorCodigo(tipeada, tipeada, articuloDos, ALICUOTAS, undefined, true)
-    expect(cambios).not.toHaveProperty('importe')
-    expect(cambios).not.toHaveProperty('idAlicuotaIva')
-  })
-
-  it('un artículo sin costo visible no convierte el importe tipeado en precarga', () => {
-    const tipeada = vacia()
-    const cambios = cambiosAlResolverPorCodigo(tipeada, { ...tipeada, importe: 77 }, articuloFixture({ costoLista: null, costoNominal: null }), ALICUOTAS)
-    expect(cambios.prefillDeCodigo?.importe).toBeNull()
-  })
-
-  it('si el proveedor nuevo no tiene el código, se vacían las celdas que valen la precarga vieja y se conservan las cambiadas', () => {
-    const intacta = sueltaConLaPrecargaDelUno()
-    expect(cambiosAlNoEncontrarTrasCambioDeProveedor(intacta, intacta)).toEqual({
+    const cambios = cambiosAlCambiarDeProveedor()
+    expect(cambios).toMatchObject({
+      idArticulo: '',
+      descripcion: '',
+      resueltaPorCodigo: false,
+      codigoConsultado: '',
+      unidadDeMedida: 'Unidad',
+      unidadesPorBulto: null,
+      controlaLote: false,
+      codigoLote: '',
+      fechaVencimiento: '',
       importe: null,
       descuentoPorcentaje: null,
       idAlicuotaIva: '',
-      prefillDeCodigo: null,
     })
-
-    const editada = sueltaConLaPrecargaDelUno({ importe: 150, idAlicuotaIva: 3 })
-    const cambios = cambiosAlNoEncontrarTrasCambioDeProveedor(editada, editada)
-    expect(cambios).toEqual({ descuentoPorcentaje: null, prefillDeCodigo: null })
+    expect(cambios).not.toHaveProperty('codigoProveedor')
+    expect(cambios).not.toHaveProperty('cantidad')
+    expect({ ...resuelta, ...cambios }).toMatchObject({ codigoProveedor: 'AB-1', cantidad: '4' })
   })
+})
 
-  it('sin precarga recordada no se vacía nada', () => {
-    const tipeada = lineaFixture({ idArticulo: '', importe: 90 })
-    expect(cambiosAlNoEncontrarTrasCambioDeProveedor(tipeada, tipeada)).toEqual({})
-  })
-
-  it('la precarga recordada no viaja a la API', () => {
-    const l = lineaFixture({ prefillDeCodigo: { importe: 100, descuentoPorcentaje: 5, idAlicuotaIva: 3 } })
-    expect(aLineaSolicitada(l)).toEqual(aLineaSolicitada({ ...l, prefillDeCodigo: null }))
-    expect(JSON.stringify(aLineaSolicitada(l))).not.toContain('prefill')
+describe('código ya consultado y elección del artículo', () => {
+  it('elegir buscando deja el código sin consultar (pendiente de asociar); crear con "+" y resolver por código no lo tocan', () => {
+    const consultada = lineaFixture({ idArticulo: '', codigoProveedor: 'ZZ-9', codigoConsultado: 'ZZ-9' })
+    expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'busqueda')).toMatchObject({ codigoConsultado: '' })
+    expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'alta')).not.toHaveProperty('codigoConsultado')
+    expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'codigo')).not.toHaveProperty('codigoConsultado')
   })
 })

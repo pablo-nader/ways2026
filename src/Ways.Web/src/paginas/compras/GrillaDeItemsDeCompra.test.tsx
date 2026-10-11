@@ -1427,7 +1427,7 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     expect(campo(0, 'Detalle')).toHaveValue('Yerba 1kg')
   })
 
-  it('una fila resuelta por código cuyo importe, descuento e IVA el operador ajustó los conserva al re-consultarse contra el proveedor nuevo', async () => {
+  it('una fila resuelta por código pierde lo que el operador ajustó: se vuelve a buscar desde cero y toma los valores del artículo nuevo', async () => {
     respuestas['AB-1@1'] = () => pagina([{ ...DEL_UNO, idAlicuotaIva: 4 }])
     respuestas['AB-1@2'] = () => pagina([{ ...DEL_DOS, descuentoProveedor: 20, idAlicuotaIva: 4 }])
     const usuario = userEvent.setup()
@@ -1442,12 +1442,12 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     await proveedor(usuario, '2')
 
     await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
-    expect(campo(0, 'Importe')).toHaveValue('150,0000')
-    expect(campo(0, 'Descuento (%)')).toHaveValue('5,00')
-    expect(campo(0, 'IVA')).toHaveValue('3')
+    expect(campo(0, 'Importe')).toHaveValue('300,0000')
+    expect(campo(0, 'Descuento (%)')).toHaveValue('20,00')
+    expect(campo(0, 'IVA')).toHaveValue('4')
   })
 
-  describe('la precarga del artículo anterior no viaja al artículo nuevo (T1)', () => {
+  describe('una fila resuelta por código se busca de nuevo como una fila nueva', () => {
     const UNO = articuloFixture({ id: 20, nombre: 'Leche del uno', codigoProveedor: 'AB-1', costoLista: 200, descuentoProveedor: 10, idAlicuotaIva: 4 })
     const DOS = articuloFixture({ id: 51, nombre: 'Leche del dos', codigoProveedor: 'AB-1', costoLista: 300, descuentoProveedor: 20, idAlicuotaIva: 3 })
 
@@ -1458,40 +1458,39 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       return vista
     }
 
-    it('un importe, un descuento y un IVA que siguen valiendo la precarga se reemplazan por los del artículo nuevo, y la precarga no viaja a la API', async () => {
+    it('conserva Código y Cantidad, y el artículo nuevo trae su importe, descuento e IVA', async () => {
       respuestas['AB-1@1'] = () => pagina([UNO])
       respuestas['AB-1@2'] = () => pagina([DOS])
       const usuario = userEvent.setup()
       const { enviadas } = await resolverConElUno(usuario)
+      await usuario.type(campo(0, 'Cantidad'), '3')
 
       await proveedor(usuario, '2')
 
       await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+      expect(campo(0, 'Código')).toHaveValue('AB-1')
+      expect(campo(0, 'Cantidad')).toHaveDisplayValue('3')
       expect(campo(0, 'Importe')).toHaveValue('300,0000')
       expect(campo(0, 'Descuento (%)')).toHaveValue('20,00')
       expect(campo(0, 'IVA')).toHaveValue('3')
-      await usuario.type(campo(0, 'Cantidad'), '1')
-      expect(enviadas()[0]).toMatchObject({ idArticulo: 51, costoUnitario: 300, descuento: 60, idAlicuotaIva: 3, actualizaCosto: true })
-      expect(JSON.stringify(enviadas())).not.toContain('prefill')
+      expect(enviadas()[0]).toMatchObject({ idArticulo: 51, unidades: 3, costoUnitario: 300, descuento: 180, idAlicuotaIva: 3, actualizaCosto: true })
     })
 
-    it('un importe que el operador cambió se conserva y su descuento tampoco se refresca; el IVA sin tocar sí', async () => {
+    it('un artículo nuevo sin costo deja Importe y Descuento vacíos: nunca los del artículo anterior', async () => {
       respuestas['AB-1@1'] = () => pagina([UNO])
-      respuestas['AB-1@2'] = () => pagina([DOS])
+      respuestas['AB-1@2'] = () => pagina([{ ...DOS, costoLista: null, costoNominal: null, descuentoProveedor: null }])
       const usuario = userEvent.setup()
       await resolverConElUno(usuario)
-      await usuario.clear(campo(0, 'Importe'))
-      await usuario.type(campo(0, 'Importe'), '150')
 
       await proveedor(usuario, '2')
 
       await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
-      expect(campo(0, 'Importe')).toHaveValue('150,0000')
-      expect(campo(0, 'Descuento (%)')).toHaveValue('10,00')
+      expect(campo(0, 'Importe')).toHaveValue('')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('')
       expect(campo(0, 'IVA')).toHaveValue('3')
     })
 
-    it('un IVA que el operador cambió se conserva y el importe refrescado se neta con ESE IVA', async () => {
+    it('el importe del artículo nuevo se neta con la alícuota del artículo nuevo, no con la que el operador había elegido', async () => {
       respuestas['AB-1@1'] = () => pagina([UNO])
       respuestas['AB-1@2'] = () => pagina([{ ...DOS, costoLista: 221, descuentoProveedor: null, idAlicuotaIva: 4 }])
       const usuario = userEvent.setup()
@@ -1501,11 +1500,11 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       await proveedor(usuario, '2')
 
       await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
-      expect(campo(0, 'IVA')).toHaveValue('3')
-      expect(campo(0, 'Importe')).toHaveValue('182,6446')
+      expect(campo(0, 'IVA')).toHaveValue('4')
+      expect(campo(0, 'Importe')).toHaveValue('200,0000')
     })
 
-    it('si el proveedor nuevo no tiene el código, se vacían las celdas que valían la precarga y se conservan las que el operador cambió', async () => {
+    it('si el proveedor nuevo no tiene el código, la fila queda pendiente y sin ningún valor: ni del artículo anterior ni del operador', async () => {
       respuestas['AB-1@1'] = () => pagina([UNO])
       respuestas['AB-1@2'] = () => pagina([])
       const usuario = userEvent.setup()
@@ -1516,20 +1515,7 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       await proveedor(usuario, '2')
 
       await within(filaDeItems(0)).findByText('Pendiente de asociar')
-      expect(campo(0, 'Importe')).toHaveValue('150,0000')
-      expect(campo(0, 'Descuento (%)')).toHaveValue('')
-      expect(campo(0, 'IVA')).toHaveValue('')
-    })
-
-    it('si el proveedor nuevo no tiene el código y nada se tocó, la fila queda sin ningún valor del artículo anterior', async () => {
-      respuestas['AB-1@1'] = () => pagina([UNO])
-      respuestas['AB-1@2'] = () => pagina([])
-      const usuario = userEvent.setup()
-      await resolverConElUno(usuario)
-
-      await proveedor(usuario, '2')
-
-      await within(filaDeItems(0)).findByText('Pendiente de asociar')
+      expect(campo(0, 'Detalle')).toHaveValue('')
       expect(campo(0, 'Importe')).toHaveValue('')
       expect(campo(0, 'Descuento (%)')).toHaveValue('')
       expect(campo(0, 'IVA')).toHaveValue('')
@@ -1553,7 +1539,31 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       expect(enviadas()[0]).toMatchObject({ idArticulo: 20, costoUnitario: 200, descuento: 20, idAlicuotaIva: 4 })
     })
 
-    it('un artículo elegido buscando después de resolver por código olvida la precarga y no se vuelve a consultar al cambiar de proveedor', async () => {
+    it('si la nueva consulta falla, la fila queda sin valores y el reintento al salir de la celda se comporta como una primera consulta', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => Promise.reject(new Error('sin red'))
+      const usuario = userEvent.setup()
+      await resolverConElUno(usuario)
+
+      await proveedor(usuario, '2')
+
+      await within(filaDeItems(0)).findByText('No se pudo buscar el código.')
+      expect(campo(0, 'Detalle')).toHaveValue('')
+      expect(campo(0, 'Importe')).toHaveValue('')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('')
+      expect(campo(0, 'IVA')).toHaveValue('')
+
+      respuestas['AB-1@2'] = () => pagina([DOS])
+      await usuario.click(campo(0, 'Código'))
+      await usuario.tab()
+
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+      expect(campo(0, 'Importe')).toHaveValue('300,0000')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('20,00')
+      expect(campo(0, 'IVA')).toHaveValue('3')
+    })
+
+    it('un artículo elegido buscando después de resolver por código ya no cuenta como resuelto por código: no se consulta ni se borra', async () => {
       respuestas['AB-1@1'] = () => pagina([UNO])
       respuestas['AB-1@2'] = () => pagina([DOS])
       respuestas['yerba'] = () => pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40', costoLista: 80 })])
@@ -1571,6 +1581,50 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       expect(busquedasConProveedor()).toHaveLength(antes)
       await usuario.type(campo(0, 'Cantidad'), '1')
       expect(enviadas()[0]).toMatchObject({ idArticulo: 40, costoUnitario: 80 })
+    })
+  })
+
+  describe('lo que no se resolvió por código no se toca al cambiar de proveedor', () => {
+    it('una línea cargada de un borrador y un concepto conservan artículo, código y precios, y no se consultan', async () => {
+      const usuario = userEvent.setup()
+      montar({
+        inicial: [
+          itemAFormulario(1, itemFixture({ idArticulo: 10, descripcion: 'Fideos 500g', codigoProveedor: 'DR-1', costoUnitario: 100, descuento: 0 })),
+          itemAFormulario(2, itemFixture({ idArticulo: null, descripcion: 'Flete', codigoProveedor: null, costoUnitario: 50, descuento: 0 })),
+        ],
+      })
+
+      await proveedor(usuario, '2')
+      await act(async () => {})
+
+      expect(busquedasConProveedor()).toEqual([])
+      expect(campo(0, 'Detalle')).toHaveValue('Fideos 500g')
+      expect(campo(0, 'Código')).toHaveValue('DR-1')
+      expect(campo(0, 'Importe')).toHaveValue('100,0000')
+      expect(campo(1, 'Detalle')).toHaveValue('Flete')
+      expect(campo(1, 'Importe')).toHaveValue('50,0000')
+    })
+
+    it('una fila creada con "+" conserva su artículo y su código, y no se consulta', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      const usuario = userEvent.setup()
+      montar()
+      await usuario.type(campo(0, 'Código'), 'AB-1')
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+      await within(dialogo).findByRole('option', { name: 'Almacén' })
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      const antes = busquedasConProveedor().length
+
+      await proveedor(usuario, '2')
+      await act(async () => {})
+
+      expect(busquedasConProveedor()).toHaveLength(antes)
+      expect(campo(0, 'Detalle')).toHaveValue('Yerba nueva')
+      expect(campo(0, 'Código')).toHaveValue('AB-1')
     })
   })
 
@@ -1622,6 +1676,27 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
       expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
     })
 
+    it('un código que no se encontró y DESPUÉS un artículo elegido buscando: avisa que se asociará, sin importar el orden', async () => {
+      respuestas['yerba'] = () => pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40' })])
+      const usuario = userEvent.setup()
+      montar()
+      await escribirCodigoYSalir(usuario, 0, 'ZZ-9')
+      await within(filaDeItems(0)).findByText('Pendiente de asociar')
+
+      await usuario.type(campo(0, 'Detalle'), 'yerba')
+      await usuario.click(await screen.findByRole('option', { name: /Yerba 1kg/ }))
+
+      expect(within(filaDeItems(0)).getByText('Se asociará al artículo al confirmar.')).toBeInTheDocument()
+      expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
+    })
+
+    it('una línea cargada de un borrador con su código guardado no muestra ninguna pista mientras no se toque', () => {
+      montar({ inicial: [itemAFormulario(1, itemFixture({ codigoProveedor: 'DR-1' }))] })
+
+      expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
+      expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
+    })
+
     it('un código sin artículo sigue diciendo "Pendiente de asociar"', async () => {
       const usuario = userEvent.setup()
       montar()
@@ -1649,7 +1724,7 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     await waitFor(() => expect(campo(1, 'Detalle')).toHaveValue('Otra del uno'))
   })
 
-  it('quedarse sin proveedor suelta las filas resueltas por código y no consulta nada', async () => {
+  it('quedarse sin proveedor suelta las filas resueltas por código, borra sus precios y no consulta nada', async () => {
     respuestas['AB-1@1'] = () => pagina([DEL_UNO])
     const usuario = userEvent.setup()
     montar()
@@ -1659,6 +1734,8 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     await proveedor(usuario, '')
 
     expect(campo(0, 'Detalle')).toHaveValue('')
+    expect(campo(0, 'Código')).toHaveValue('AB-1')
+    expect(campo(0, 'Importe')).toHaveValue('')
     expect(within(filaDeItems(0)).getByText('Elegí un proveedor para buscar el código.')).toBeInTheDocument()
     expect(busquedasConProveedor()).toEqual(['AB-1&idProveedor=1'])
   })
