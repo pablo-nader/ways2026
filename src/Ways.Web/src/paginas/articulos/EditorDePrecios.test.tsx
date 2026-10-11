@@ -72,6 +72,7 @@ function montar(props: Partial<ComponentProps<typeof EditorDePrecios>> = {}) {
       alDeEscribir={alDeEscribir}
       familia={sabores}
       alSalirDeLaFamilia={alSalirDeLaFamilia}
+      alEscribirPrecio={vi.fn()}
       alCambiarLaFamilia={alCambiarLaFamilia}
       {...props}
     />,
@@ -383,6 +384,7 @@ describe('EditorDePrecios — un miembro de una familia pregunta el alcance ante
         alDeEscribir={alDeEscribir}
         familia={sabores}
         alSalirDeLaFamilia={alSalirDeLaFamilia}
+        alEscribirPrecio={vi.fn()}
         alCambiarLaFamilia={alCambiarLaFamilia}
       />,
     )
@@ -667,6 +669,7 @@ describe('EditorDePrecios — sugerencia con la empresa de la sesión', () => {
           alDeEscribir={vi.fn()}
           familia={null}
           alSalirDeLaFamilia={vi.fn()}
+          alEscribirPrecio={vi.fn()}
           alCambiarLaFamilia={vi.fn()}
         />
       </PuntoVentaContext.Provider>,

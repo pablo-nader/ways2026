@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { FamiliaDetalle, FamiliaListado, ValoresCompartidosDeLaFamilia } from '../../api/tipos'
 import {
+  advertenciaDeUnion,
   altaConFamiliaLista,
   avisoDeValoresDistintos,
   camposCompartidosModificados,
   camposNombradosEnMensaje,
   CAMPOS_COMPARTIDOS,
+  CAMPOS_PROPIOS,
   CODIGOS_DE_CONFLICTO_DE_ALTA,
   cantidadDeArticulos,
   contextoDeAlcance,
@@ -17,7 +19,11 @@ import {
   mensajeDeAlta,
   mensajeDeEdicion,
   mensajeDePrecioParaToda,
+  motivoDeFamiliaNoElegible,
   opcionesDeFamilia,
+  previsualizacionDeUnionVigente,
+  rechazoDeLaFamiliaNuevaEnElAlta,
+  validarNombreDeFamilia,
   valoresDeFamiliaAFormulario,
   type CampoCompartido,
 } from './familia'
@@ -495,5 +501,112 @@ describe('mensajes de un guardado con familia', () => {
 describe('CODIGOS_DE_CONFLICTO_DE_ALTA', () => {
   it('son los tres rechazos que el servidor da cuando un artículo no puede entrar a la familia elegida', () => {
     expect([...CODIGOS_DE_CONFLICTO_DE_ALTA]).toEqual(['familia_valores_distintos', 'familia_inactiva', 'familia_sin_articulos'])
+  })
+})
+
+describe('validarNombreDeFamilia', () => {
+  const familias: FamiliaListado[] = [
+    { id: 7, nombre: 'Sabores', activo: true, cantidadArticulos: 3 },
+    { id: 8, nombre: 'Apagada', activo: false, cantidadArticulos: 2 },
+    { id: 9, nombre: 'Vacía', activo: true, cantidadArticulos: 0 },
+  ]
+
+  it('un nombre libre es válido', () => {
+    expect(validarNombreDeFamilia('Talles', familias)).toBe('')
+    expect(validarNombreDeFamilia('Talles', [])).toBe('')
+  })
+
+  it.each(['', '   ', '\t'])('el nombre %j es obligatorio', (nombre) => {
+    expect(validarNombreDeFamilia(nombre, familias)).toBe('Escribí el nombre de la familia.')
+  })
+
+  /** Cláusula bajo prueba: el límite de 150 se mide sobre el nombre recortado, igual que en el servidor. */
+  it('acepta 150 caracteres y rechaza 151, sin contar los espacios de los extremos', () => {
+    expect(validarNombreDeFamilia('a'.repeat(150), familias)).toBe('')
+    expect(validarNombreDeFamilia(`  ${'a'.repeat(150)}  `, familias)).toBe('')
+    expect(validarNombreDeFamilia('a'.repeat(151), familias)).toBe('El nombre de la familia no puede superar los 150 caracteres.')
+  })
+
+  /** Cláusula bajo prueba: la comparación recorta y no distingue mayúsculas. */
+  it('rechaza el nombre de una familia viva, sin distinguir mayúsculas ni espacios de los extremos', () => {
+    for (const nombre of ['Sabores', 'sabores', 'SABORES', '  sabores  ']) {
+      expect(validarNombreDeFamilia(nombre, familias), nombre).toContain('Ya existe una familia con ese nombre')
+    }
+  })
+
+  /** Cláusula bajo prueba: la lista incluye inactivas y vacías, que no se ofrecen para elegir pero conservan su nombre. */
+  it('rechaza también el nombre de una familia inactiva o sin artículos, y lo explica', () => {
+    for (const nombre of ['Apagada', 'vacía']) {
+      const mensaje = validarNombreDeFamilia(nombre, familias)
+      expect(mensaje, nombre).toContain('Puede estar inactiva o no tener artículos')
+      expect(mensaje, nombre).toContain('pantalla de Familias')
+    }
+  })
+
+  it('un nombre que solo contiene a otro no es un duplicado', () => {
+    expect(validarNombreDeFamilia('Sabores dulces', familias)).toBe('')
+  })
+})
+
+describe('rechazoDeLaFamiliaNuevaEnElAlta', () => {
+  it('familia_nombre_duplicado (409) es de la familia, y dice que el artículo no se creó', () => {
+    const mensaje = rechazoDeLaFamiliaNuevaEnElAlta(409, 'familia_nombre_duplicado', 'Vainilla')
+
+    expect(mensaje).toContain('Ya existe una familia con ese nombre')
+    expect(mensaje).toContain('El artículo no se creó.')
+  })
+
+  it('nombre_requerido y nombre_muy_largo son de la familia solo cuando el nombre del artículo es válido', () => {
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(400, 'nombre_requerido', 'Vainilla')).toContain('Escribí el nombre de la familia.')
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(400, 'nombre_requerido', '   ')).toBeNull()
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(400, 'nombre_muy_largo', 'a'.repeat(150))).toContain('150 caracteres')
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(400, 'nombre_muy_largo', 'a'.repeat(151))).toBeNull()
+  })
+
+  it('cualquier otro rechazo no es de la familia', () => {
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(400, 'familia_existente_y_nueva', 'Vainilla')).toBeNull()
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(409, 'familia_valores_distintos', 'Vainilla')).toBeNull()
+    expect(rechazoDeLaFamiliaNuevaEnElAlta(500, 'familia_nombre_duplicado', 'Vainilla')).toBeNull()
+  })
+})
+
+describe('mensajeDeAlta con una familia nueva', () => {
+  it('dice que se creó la familia y que el artículo es su referencia, en vez de decir que tomó valores', () => {
+    expect(mensajeDeAlta('Vainilla', 'A0007', { id: 9, nombre: null, cantidad: null }, 'Sabores')).toBe(
+      'Artículo "Vainilla" creado con código interno A0007. Creó la familia "Sabores" y es su artículo de referencia.',
+    )
+  })
+
+  it('sin familia nueva el mensaje es el de siempre', () => {
+    expect(mensajeDeAlta('Vainilla', 'A0007', null, '')).toBe('Artículo "Vainilla" creado con código interno A0007.')
+  })
+})
+
+describe('unión de un artículo existente a una familia', () => {
+  it('advertenciaDeUnion dice que se reemplazan los valores y los precios y lista lo propio', () => {
+    const texto = advertenciaDeUnion('Sabores')
+
+    expect(texto).toContain('familia "Sabores"')
+    expect(texto).toContain('quince campos compartidos')
+    expect(texto).toContain('se reemplazan')
+    expect(texto).toContain(CAMPOS_PROPIOS)
+  })
+
+  it('previsualizacionDeUnionVigente: solo si el servidor ve la referencia en la familia elegida', () => {
+    const foto = { idArticuloReferencia: 31, idFamilia: 7, articulos: [], problemas: [] }
+
+    expect(previsualizacionDeUnionVigente(foto, 7)).toBe(true)
+    expect(previsualizacionDeUnionVigente(foto, 8)).toBe(false)
+    expect(previsualizacionDeUnionVigente({ ...foto, idFamilia: null }, 7)).toBe(false)
+    expect(previsualizacionDeUnionVigente(null, 7)).toBe(false)
+  })
+
+  it('motivoDeFamiliaNoElegible: inactiva, sin referencia, o ninguno', () => {
+    expect(motivoDeFamiliaNoElegible(detalleFixture())).toBe('')
+    expect(motivoDeFamiliaNoElegible(detalleFixture({ activo: false }))).toBe(
+      'La familia "Sabores" está inactiva: no se le pueden agregar artículos.',
+    )
+    expect(motivoDeFamiliaNoElegible(detalleFixture({ articulos: [], valores: null }))).toContain('no tiene artículos vivos')
+    expect(motivoDeFamiliaNoElegible(detalleFixture({ valores: null }))).toContain('no tiene artículos vivos')
   })
 })

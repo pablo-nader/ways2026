@@ -70,6 +70,7 @@ export function EditorDePrecios({
   alDeEscribir,
   familia,
   alSalirDeLaFamilia,
+  alEscribirPrecio,
   alCambiarLaFamilia,
 }: {
   idArticulo: number
@@ -80,6 +81,8 @@ export function EditorDePrecios({
   familia: FamiliaDelArticulo | null
   /** El precio se escribió con `SoloEste`: el artículo ya no es miembro. */
   alSalirDeLaFamilia: (nombre: string | null) => void
+  /** Un precio del artículo se escribió bien (con cualquier alcance). */
+  alEscribirPrecio: () => void
   alCambiarLaFamilia: () => void
 }) {
   // Empresa del punto de venta de la sesión: la sugerencia redondea según su parámetro. Sin punto de venta
@@ -271,6 +274,7 @@ export function EditorDePrecios({
         return
       }
 
+      alEscribirPrecio()
       const nombreDeLaFamilia = familia?.nombre ?? null
       if (alcance === 'SoloEste') alSalirDeLaFamilia(nombreDeLaFamilia)
       if (alcance === 'Familia') setAviso(mensajeDePrecioParaToda(estado.programado, nombreDeLaFamilia))

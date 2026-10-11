@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { COSTOS_LISTA_POR, UNIDADES_VENTA } from '../../api/tipos'
 import type {
   AlcanceDeFamilia,
@@ -19,6 +19,7 @@ import type {
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { IconoDeAyuda } from '../../componentes/IconoDeAyuda'
 import { formatearImporte } from '../../formato/importes'
+import { mapaDeNombres, type NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaCategoria } from './AltaRapidaCategoria'
 import { AltaRapidaGrupo } from './AltaRapidaGrupo'
 import { AltaRapidaMarca } from './AltaRapidaMarca'
@@ -36,6 +37,7 @@ import {
   familiaDelArticulo,
   type AccionesDeFamiliaDelFormulario,
   type EstadoDeFamiliaDelFormulario,
+  type EstadoDeUnionAFamilia,
 } from './familia'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
@@ -77,6 +79,9 @@ export type Formulario = {
   /** En un alta, la familia elegida (`''` = sin familia); al editar, la familia a la que pertenece el
    * artículo. No se cambia editando: sale con `sacar` o con el alcance de un cambio. */
   idFamilia: number | ''
+  /** En un alta, el nombre de la familia que el servidor crea junto con el artículo (él queda como su referencia); `''` si no
+   * se pidió ninguna. Excluyente con `idFamilia`. */
+  nombreFamiliaNueva: string
 }
 
 export function formularioVacio(): Formulario {
@@ -107,6 +112,7 @@ export function formularioVacio(): Formulario {
     controlaLote: false,
     acumulaEnVenta: true,
     idFamilia: '',
+    nombreFamiliaNueva: '',
   }
 }
 
@@ -147,6 +153,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     controlaLote: a.controlaLote,
     acumulaEnVenta: a.acumulaEnVenta,
     idFamilia: a.idFamilia ?? '',
+    nombreFamiliaNueva: '',
   }
 }
 
@@ -184,13 +191,16 @@ function camposComunes(f: Formulario) {
 }
 
 export function aAlta(f: Formulario): AltaArticulo {
-  return {
+  const alta = {
     codigoInterno: aVacioNulo(f.codigoInterno),
     ...camposComunes(f),
     costoListaPor: f.costoListaPor,
     costoListaIncluyeIva: f.costoListaIncluyeIva,
     idFamilia: f.idFamilia === '' ? null : f.idFamilia,
   }
+  const nombreFamiliaNueva = f.nombreFamiliaNueva.trim()
+  // El servidor rechaza una familia existente y una nueva a la vez: la nueva solo viaja cuando no hay una elegida.
+  return f.idFamilia === '' && nombreFamiliaNueva !== '' ? { ...alta, nombreFamiliaNueva } : alta
 }
 
 /** Una edición manda la base y el IVA del costo de lista explícitos; solo si el artículo llegó sin costos manda
@@ -226,6 +236,9 @@ export function FormularioArticulo({
   bloqueadoPorCatalogos,
   familia,
   accionesDeFamilia,
+  union,
+  errorDeFamiliaNueva,
+  sinGuardar,
   preguntaDeAlcanceAbierta,
   onCambio,
   actualizarFormulario,
@@ -253,6 +266,11 @@ export function FormularioArticulo({
   /** La familia del artículo (la elegida en un alta o la del miembro que se edita) y qué hacer con ella. */
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  union: EstadoDeUnionAFamilia
+  /** El rechazo del servidor a la familia nueva de un alta: se muestra junto a la sección de la familia. */
+  errorDeFamiliaNueva: string
+  /** El formulario tiene cambios sin guardar: el servidor lee los valores guardados, así que con ellos no se elige ni se crea una familia de un artículo existente. */
+  sinGuardar: boolean
   /** La pregunta de alcance (un modal hermano de este, no hijo) está abierta: al cerrarse, si el foco se perdió, vuelve acá. */
   preguntaDeAlcanceAbierta: boolean
   onCambio: (f: Formulario) => void
@@ -283,6 +301,17 @@ export function FormularioArticulo({
   const [salida, setSalida] = useState<{ disparador: HTMLElement } | null>(null)
   const focoDeSalidaRef = useRef<HTMLElement | null>(null)
   const refNombre = useRef<HTMLInputElement>(null)
+  const nombresDeCatalogo = useMemo<NombresDeCatalogo>(
+    () => ({
+      areas: mapaDeNombres(areas, (a) => a.nombre),
+      categorias: mapaDeNombres(categorias, (c) => c.nombre),
+      grupos: mapaDeNombres(grupos, (g) => g.nombre),
+      proveedores: mapaDeNombres(proveedores, etiquetaDeProveedor),
+      alicuotas: mapaDeNombres(alicuotasIva, (a) => a.nombre),
+    }),
+    [areas, categorias, grupos, proveedores, alicuotasIva],
+  )
+  const nombresDeListas = useMemo(() => mapaDeNombres(listasPrecio, (l) => l.nombre), [listasPrecio])
   const confirmandoSalida = salida !== null
   const bloqueado = ocupado || confirmandoSalida
 
@@ -380,11 +409,19 @@ export function FormularioArticulo({
       <SeccionDeFamilia
         esNuevo={esNuevo}
         idFamilia={valor.idFamilia}
+        nombreFamiliaNueva={valor.nombreFamiliaNueva}
+        idDelArticulo={valor.id}
+        codigoInterno={valor.codigoInterno}
         nombreDelArticulo={valor.nombre}
         ocupado={ocupado}
         listasPrecio={listasPrecio}
         familia={familia}
         acciones={accionesDeFamilia}
+        union={union}
+        errorDeFamiliaNueva={errorDeFamiliaNueva}
+        sinGuardar={sinGuardar}
+        nombresDeCatalogo={nombresDeCatalogo}
+        nombresDeListas={nombresDeListas}
         confirmandoSalida={confirmandoSalida}
         onPedirSalida={(disparador) => setSalida({ disparador })}
         onCancelarSalida={cancelarSalida}
@@ -966,6 +1003,7 @@ export function FormularioArticulo({
             alDeEscribir={alDeEscribir}
             familia={familiaDelArticulo(valor.idFamilia, familia.detalle)}
             alSalirDeLaFamilia={accionesDeFamilia.alSalirDeLaFamilia}
+            alEscribirPrecio={accionesDeFamilia.alEscribirPrecio}
             alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
           />
         </>

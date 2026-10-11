@@ -59,7 +59,7 @@ describe('useFamiliasDelFormulario — familias que se ofrecen', () => {
 
     await waitFor(() =>
       expect(result.current.errorOpciones).toBe(
-        'No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.',
+        'No se pudieron cargar las familias: no se puede elegir una existente y no se comprueba si el nombre de una nueva ya está en uso.',
       ),
     )
     expect(result.current.opciones).toEqual([])
@@ -96,7 +96,7 @@ describe('useFamiliasDelFormulario — familias que se ofrecen', () => {
     })
 
     expect(result.current.errorOpciones).toBe(
-      'No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.',
+      'No se pudieron cargar las familias: no se puede elegir una existente y no se comprueba si el nombre de una nueva ya está en uso.',
     )
   })
 
