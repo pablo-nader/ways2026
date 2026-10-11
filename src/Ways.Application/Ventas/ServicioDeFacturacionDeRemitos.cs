@@ -82,28 +82,27 @@ public class ServicioDeFacturacionDeRemitos(
             .Where(i => idsRemitoDistintos.Contains(i.IdRemito))
             .ToListAsync(ct);
 
-        // totales := Σ headers, aserción contra Σ items congelados (design: Transactions —
-        // "FACTURAR REMITOS"). Defensa en profundidad, nunca un caso de negocio alcanzable bajo
-        // operación normal: cada header ya fue computado por CalculadorDeTotales al crear/editar/
-        // emitir su propio remito — un desacuerdo acá solo puede significar una escritura cruda
-        // que desincronizó remitos.total de items_remito (mismo criterio que el
+        // totales := Σ headers, aserción contra Σ importes guardados de los items congelados
+        // (design: Transactions — "FACTURAR REMITOS"). Defensa en profundidad, nunca un caso de
+        // negocio alcanzable bajo operación normal: un desacuerdo acá solo puede significar una
+        // escritura cruda que desincronizó remitos.total de items_remito (mismo criterio que el
         // presupuesto_inconsistente de Slice 3, pero sin domain code propio — esta clase nunca
-        // recibió un test dedicado que lo exija, mismo criterio de tasks.md).
-        var lineasParaCalcular = items
-            .Select(i => new LineaParaCalcular(i.Cantidad, i.PrecioUnitario, i.Cantidad == 0m ? 0m : i.Descuento / i.Cantidad))
-            .ToList();
-        var totalesRecomputados = CalculadorDeTotales.Calcular(lineasParaCalcular);
+        // recibió un test dedicado que lo exija, mismo criterio de tasks.md). Los items no se
+        // recalculan con CalculadorDeTotales: un remito emitido antes del redondeo a peso entero
+        // conserva centavos que la fórmula vigente cambiaría.
+        var totalesGuardados = TotalesGuardados.Sumar(
+            items.Select(i => new ItemCalculado(i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total)).ToList());
 
         var subtotal = remitos.Sum(r => r.Subtotal);
         var descuentoTotal = remitos.Sum(r => r.DescuentoTotal);
         var total = remitos.Sum(r => r.Total);
 
-        if (totalesRecomputados.Subtotal != subtotal
-            || totalesRecomputados.DescuentoTotal != descuentoTotal
-            || totalesRecomputados.Total != total)
+        if (totalesGuardados.Subtotal != subtotal
+            || totalesGuardados.DescuentoTotal != descuentoTotal
+            || totalesGuardados.Total != total)
         {
             throw new InvalidOperationException(
-                $"Los totales recomputados de los items de los remitos [{string.Join(",", idsRemitoDistintos)}] " +
+                $"Los importes guardados de los items de los remitos [{string.Join(",", idsRemitoDistintos)}] " +
                 "no coinciden con la suma de sus headers — invariante de escritura violado.");
         }
 

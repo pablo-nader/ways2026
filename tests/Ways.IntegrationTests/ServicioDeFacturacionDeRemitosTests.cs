@@ -323,6 +323,113 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     }
 
     // =============================================================================================
+    // la facturación respeta lo guardado: el remito no se recalcula con la fórmula vigente
+    // =============================================================================================
+
+    /// <summary>Deja el único item del remito y su encabezado con los importes dados (el subtotal
+    /// del encabezado es <c>total + descuento</c>), tal como los habría guardado una versión que no
+    /// redondeaba al peso.</summary>
+    private async Task SembrarImportesGuardadosAsync(
+        Contexto ctx, int idRemito, decimal cantidad, decimal precioUnitario, decimal descuento, decimal total)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var item = await db.ItemsRemito.SingleAsync(i => i.IdRemito == idRemito);
+        item.Cantidad = cantidad;
+        item.PrecioUnitario = precioUnitario;
+        item.Descuento = descuento;
+        item.Total = total;
+
+        var remito = await db.Remitos.FirstAsync(r => r.Id == idRemito);
+        remito.Subtotal = total + descuento;
+        remito.DescuentoTotal = descuento;
+        remito.Total = total;
+
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task RemitosGuardadosConCentavosOConUnEmpateQueElRecalculoRedondearaDistintoSeFacturanConSusMismosImportes()
+    {
+        var ctx = await PrepararAsync(
+            nameof(RemitosGuardadosConCentavosOConUnEmpateQueElRecalculoRedondearaDistintoSeFacturanConSusMismosImportes));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Guardado", 100m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+
+        var remitoConCentavos = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        var remitoConEmpate = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        // 3 x 10.50 con 1.25 de descuento: centavos en el precio, el descuento y el total.
+        await SembrarImportesGuardadosAsync(ctx, remitoConCentavos.Id, 3m, 10.50m, 1.25m, 30.25m);
+        // 3 x 33.50 con 32 de descuento: cantidad x precio = 100.50 cae en un medio peso exacto, y
+        // el descuento por unidad (32 / 3) no es exacto; el recálculo daba otro descuento y otro total.
+        await SembrarImportesGuardadosAsync(ctx, remitoConEmpate.Id, 3m, 33.50m, 32m, 69m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion",
+            SolicitudFacturacion(ctx, [remitoConCentavos.Id, remitoConEmpate.Id], 99.25m));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(132.50m, txr.Subtotal);
+        Assert.Equal(33.25m, txr.DescuentoTotal);
+        Assert.Equal(99.25m, txr.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().SingleAsync(c => c.Id == txr.Id);
+        Assert.Equal(132.50m, fila.Subtotal);
+        Assert.Equal(33.25m, fila.DescuentoTotal);
+        Assert.Equal(99.25m, fila.Total);
+    }
+
+    /// <summary>Un encabezado o un item desincronizado por un UPDATE crudo sigue rompiendo la
+    /// facturación (500, invariante de escritura violado) y no deja ningún comprobante: cada caso
+    /// rompe una de las tres igualdades (subtotal, descuento, total) o desacopla un item de su
+    /// encabezado.</summary>
+    [Theory]
+    [InlineData("subtotal")]
+    [InlineData("descuento")]
+    [InlineData("total")]
+    [InlineData("itemTotal")]
+    [InlineData("itemDescuento")]
+    public async Task UnRawUpdateQueDesincronizaUnImporteGuardadoDelRemitoImpideFacturarlo(string desincronizado)
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnRawUpdateQueDesincronizaUnImporteGuardadoDelRemitoImpideFacturarlo) + desincronizado);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Desincronizado", 100m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 2m));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var fila = await db.Remitos.FirstAsync(r => r.Id == remito.Id);
+            var item = await db.ItemsRemito.SingleAsync(i => i.IdRemito == remito.Id);
+            switch (desincronizado)
+            {
+                case "subtotal": fila.Subtotal += 1m; break;
+                case "descuento": fila.DescuentoTotal += 1m; break;
+                case "total": fila.Total += 1m; break;
+                case "itemTotal": item.Total += 1m; break;
+                case "itemDescuento": item.Descuento += 1m; break;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+
+        await using var dbFinal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await dbFinal.ComprobantesVenta.CountAsync());
+        var remitoFinal = await dbFinal.Remitos.AsNoTracking().FirstAsync(r => r.Id == remito.Id);
+        Assert.Equal(EstadoRemito.Emitido, remitoFinal.Estado);
+        Assert.Null(remitoFinal.IdComprobanteVenta);
+    }
+
+    // =============================================================================================
     // mutation target 48 — FINDING REGISTERED (mutation-proof-tests regla 2/3, "run it, don't
     // reason it" + "route below the confound"). La rendezvous pausada-vs-libre de task 6.14 (más
     // abajo) NO discrimina el orden: corrida bajo la mutación REAL (ORDER BY id_remito DESC en

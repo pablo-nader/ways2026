@@ -656,6 +656,111 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(0, await dbFinal.ComprobantesVenta.CountAsync());
     }
 
+    // ---- la conversión respeta lo guardado: el presupuesto no se recalcula con la fórmula vigente ----
+
+    /// <summary>Deja el único item del presupuesto y su encabezado con los importes dados, tal como
+    /// los habría guardado una versión que no redondeaba al peso (o cualquier combinación que el
+    /// encabezado y los items compartan). El subtotal del encabezado es <c>total + descuento</c>.</summary>
+    private async Task SembrarImportesGuardadosAsync(
+        Contexto ctx, int idPresupuesto, decimal cantidad, decimal precioUnitario, decimal descuento, decimal total)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var item = await db.ItemsPresupuesto.SingleAsync(i => i.IdPresupuesto == idPresupuesto);
+        item.Cantidad = cantidad;
+        item.PrecioUnitario = precioUnitario;
+        item.Descuento = descuento;
+        item.Total = total;
+
+        var presupuesto = await db.Presupuestos.FirstAsync(p => p.Id == idPresupuesto);
+        presupuesto.Subtotal = total + descuento;
+        presupuesto.DescuentoTotal = descuento;
+        presupuesto.Total = total;
+
+        await db.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(3, 10.50, 1.25, 30.25)]
+    [InlineData(3, 33.50, 32, 69)]
+    public async Task UnPresupuestoGuardadoSeConvierteConSusMismosImportesAunSiLaFormulaVigenteRedondearaDistinto(
+        double cantidadGuardada, double precioGuardado, double descuentoGuardado, double totalGuardado)
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnPresupuestoGuardadoSeConvierteConSusMismosImportesAunSiLaFormulaVigenteRedondearaDistinto)
+            + (int)(precioGuardado * 100));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx, cantidad: 1m);
+
+        var cantidad = (decimal)cantidadGuardada;
+        var precio = (decimal)precioGuardado;
+        var descuento = (decimal)descuentoGuardado;
+        var total = (decimal)totalGuardado;
+        await SembrarImportesGuardadosAsync(ctx, enviado.Id, cantidad, precio, descuento, total);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudDeConversion(ctx, enviado.Id, importe: total));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(total + descuento, emitido.Subtotal);
+        Assert.Equal(descuento, emitido.DescuentoTotal);
+        Assert.Equal(total, emitido.Total);
+        var itemEmitido = Assert.Single(emitido.Items);
+        Assert.Equal(cantidad, itemEmitido.Cantidad);
+        Assert.Equal(precio, itemEmitido.PrecioUnitario);
+        Assert.Equal(descuento, itemEmitido.Descuento);
+        Assert.Equal(total, itemEmitido.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().SingleAsync(c => c.Id == emitido.Id);
+        Assert.Equal(total + descuento, fila.Subtotal);
+        Assert.Equal(descuento, fila.DescuentoTotal);
+        Assert.Equal(total, fila.Total);
+        var itemPersistido = await db.ItemsComprobanteVenta.AsNoTracking().SingleAsync(i => i.IdComprobanteVenta == emitido.Id);
+        Assert.Equal(descuento, itemPersistido.Descuento);
+        Assert.Equal(total, itemPersistido.Total);
+    }
+
+    /// <summary>Un conjunto del encabezado o de los items desincronizado por un UPDATE crudo tiene
+    /// que seguir dando 409 aunque la comparación ya no pase por la fórmula de redondeo: cada caso
+    /// rompe una de las tres igualdades (subtotal, descuento, total) o desacopla un item de su
+    /// encabezado.</summary>
+    [Theory]
+    [InlineData("subtotal")]
+    [InlineData("descuento")]
+    [InlineData("itemTotal")]
+    [InlineData("itemDescuento")]
+    public async Task UnRawUpdateQueDesincronizaOtroImporteGuardadoEsRechazado409PresupuestoInconsistente(string desincronizado)
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnRawUpdateQueDesincronizaOtroImporteGuardadoEsRechazado409PresupuestoInconsistente) + desincronizado);
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var presupuesto = await db.Presupuestos.FirstAsync(p => p.Id == enviado.Id);
+            var item = await db.ItemsPresupuesto.SingleAsync(i => i.IdPresupuesto == enviado.Id);
+            switch (desincronizado)
+            {
+                case "subtotal": presupuesto.Subtotal += 1m; break;
+                case "descuento": presupuesto.DescuentoTotal += 1m; break;
+                case "itemTotal": item.Total += 1m; break;
+                case "itemDescuento": item.Descuento += 1m; break;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudDeConversion(ctx, enviado.Id, importe: 200m));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("presupuesto_inconsistente", problema.GetProperty("codigo").GetString());
+
+        await using var dbFinal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await dbFinal.ComprobantesVenta.CountAsync());
+    }
+
     // ---- task 3.21: cero statements extra — RED 1, estructural (mutation target 34) ----------------
 
     private sealed class ContadorDeComandos : DbCommandInterceptor

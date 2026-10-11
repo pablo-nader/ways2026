@@ -6,7 +6,6 @@ import {
   parsearImporte,
   productoAPeso,
   productoDeDiferenciaAPeso,
-  productoDeDiferenciaRedondeado,
   productoRedondeado,
   redondearAPeso,
   redondearImporte,
@@ -337,25 +336,6 @@ describe('productoAPeso', () => {
   })
 })
 
-describe('productoDeDiferenciaRedondeado', () => {
-  it('es factor × (minuendo − sustraendo) exacto: 3 × (1500 − 333,34) = 3499,98', () => {
-    expect(productoDeDiferenciaRedondeado(3, 1500, 333.34)).toBe(3499.98)
-  })
-
-  it('la resta no arrastra ruido de flotante: un empate exacto sube', () => {
-    // 1 × (2,3 − 0,8) = 1,5 exacto; la resta flotante da 1.4999999999999998.
-    expect(2.3 - 0.8).toBeLessThan(1.5)
-    expect(productoDeDiferenciaRedondeado(1, 2.3, 0.8, 0)).toBe(2)
-    expect(productoDeDiferenciaRedondeado(-1, 2.3, 0.8, 0)).toBe(-2)
-    expect(productoDeDiferenciaRedondeado(1, 0.3, 0.1, 2)).toBe(0.2)
-  })
-
-  it('devuelve NaN con un operando no finito y nunca -0', () => {
-    expect(productoDeDiferenciaRedondeado(Number.NaN, 1, 1)).toBeNaN()
-    expect(Object.is(productoDeDiferenciaRedondeado(-1, 1, 1, 0), -0)).toBe(false)
-  })
-})
-
 describe('productoDeDiferenciaAPeso', () => {
   it('la oferta x3 por 3500: 3 × (1500 − 333,34) da 3500', () => {
     expect(productoDeDiferenciaAPeso(3, 1500, 333.34)).toBe(3500)
@@ -364,5 +344,17 @@ describe('productoDeDiferenciaAPeso', () => {
   it('el medio se aleja de cero con cantidad positiva y negativa', () => {
     expect(productoDeDiferenciaAPeso(1, 10, 1.5)).toBe(9)
     expect(productoDeDiferenciaAPeso(-1, 10, 1.5)).toBe(-9)
+  })
+
+  it('la resta no arrastra ruido de flotante: un empate exacto sube', () => {
+    // 1 × (2,3 − 0,8) = 1,5 exacto; la resta flotante da 1.4999999999999998.
+    expect(2.3 - 0.8).toBeLessThan(1.5)
+    expect(productoDeDiferenciaAPeso(1, 2.3, 0.8)).toBe(2)
+    expect(productoDeDiferenciaAPeso(-1, 2.3, 0.8)).toBe(-2)
+  })
+
+  it('devuelve NaN con un operando no finito y nunca -0', () => {
+    expect(productoDeDiferenciaAPeso(Number.NaN, 1, 1)).toBeNaN()
+    expect(Object.is(productoDeDiferenciaAPeso(-1, 1, 1), -0)).toBe(false)
   })
 })

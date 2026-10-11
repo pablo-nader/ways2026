@@ -48,7 +48,8 @@ public class ResolvedorDePreciosTests
     public void ElPrecioDerivadoSeRedondeaAlPesoEnteroYUnEmpateVaLejosDeCero(
         double precioBase, double porcentaje, double esperado)
     {
-        // 100 * 1.125 = 112.5 -> 113 (banker's daría 112, el par más cercano).
+        // Filas de empate: 100 con +12.5 % da 112.5 -> 113 (el redondeo bancario daría 112) y
+        // 100 con -12.5 % da 87.5 -> 88 (el redondeo bancario daría 88: el empate de esa fila no lo distingue).
         var resuelto = ResolvedorDePrecios.ResolverPrecioDerivado((decimal)precioBase, (decimal)porcentaje);
 
         Assert.Equal((decimal)esperado, resuelto);

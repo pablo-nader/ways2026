@@ -428,6 +428,13 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(0m, minimoPositivo.Items[0].AjusteManual);
         Assert.Equal(100m, minimoPositivo.Total);
 
+        // 0,5 % de 100 = 0,5 exacto: el medio peso se aleja de cero y el total se mueve un peso.
+        var medioPeso = await EmitirOkAsync(
+            ctx.Cliente, VentaOnline(ctx, 101m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: 0.5m)));
+        Assert.Equal(1m, medioPeso.Items[0].AjusteManual);
+        Assert.Equal(1m, medioPeso.RecargoManualTotal);
+        Assert.Equal(101m, medioPeso.Total);
+
         var casiTodo = await EmitirOkAsync(
             ctx.Cliente, VentaOnline(ctx, 0m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -99.99m)));
         Assert.Equal(-100m, casiTodo.Items[0].AjusteManual);

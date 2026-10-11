@@ -378,7 +378,7 @@ public class CalculadorDeTotalesTests
     }
 
     [Fact]
-    public void ElAjusteManualRedondeadoNoPuedeAlejarseDeCeroEnLaLineaNegativaDeNcx()
+    public void ElAjusteManualDeUnaLineaNegativaDeNcxSeRedondeaAlejandoseDeCeroEnElMedioPeso()
     {
         // Neto -1000, +0.15 % = -1.5 -> -2 (away from zero), total -1002.
         var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(-1m, 1000m, 0m, 0.15m)]);

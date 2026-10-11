@@ -143,27 +143,6 @@ function redondearMantisa(mantisa: bigint, escala: number, decimales: number): n
 }
 
 /**
- * `factor × (minuendo − sustraendo)` con aritmética decimal exacta, redondeado half-away-from-zero
- * a `decimales` dígitos. Es el neto de una línea (`cantidad × (precio − descuento unitario)`): la
- * resta en punto flotante (`1166.66` menos algo) mete ruido de último dígito que, sobre un empate
- * exacto, decide el redondeo para el lado equivocado. `NaN` si algún operando no es finito.
- */
-export function productoDeDiferenciaRedondeado(
-  factor: number,
-  minuendo: number,
-  sustraendo: number,
-  decimales = 2,
-): number {
-  if (![factor, minuendo, sustraendo].every(Number.isFinite)) return Number.NaN
-  const a = aDecimalExacto(minuendo)
-  const b = aDecimalExacto(sustraendo)
-  const escalaComun = Math.max(a.escala, b.escala)
-  const diferencia = a.mantisa * 10n ** BigInt(escalaComun - a.escala) - b.mantisa * 10n ** BigInt(escalaComun - b.escala)
-  const multiplicador = aDecimalExacto(factor)
-  return redondearMantisa(diferencia * multiplicador.mantisa, escalaComun + multiplicador.escala, decimales)
-}
-
-/**
  * Los importes de venta calculados (líneas, ajustes, totales) son pesos enteros, igual que en el
  * servidor (`RedondeoDePeso`): half-away-from-zero al peso. Las tres funciones son la forma de
  * pedir ese redondeo; compras, costos y el desglose fiscal siguen usando centavos.
@@ -176,8 +155,20 @@ export function productoAPeso(factores: readonly number[]): number {
   return productoRedondeado(factores, 0)
 }
 
+/**
+ * `factor × (minuendo − sustraendo)` con aritmética decimal exacta, redondeado al peso. Es el neto
+ * de una línea (`cantidad × (precio − descuento unitario)`): la resta en punto flotante
+ * (`1166.66` menos algo) mete ruido de último dígito que, sobre un empate exacto, decide el
+ * redondeo para el lado equivocado. `NaN` si algún operando no es finito.
+ */
 export function productoDeDiferenciaAPeso(factor: number, minuendo: number, sustraendo: number): number {
-  return productoDeDiferenciaRedondeado(factor, minuendo, sustraendo, 0)
+  if (![factor, minuendo, sustraendo].every(Number.isFinite)) return Number.NaN
+  const a = aDecimalExacto(minuendo)
+  const b = aDecimalExacto(sustraendo)
+  const escalaComun = Math.max(a.escala, b.escala)
+  const diferencia = a.mantisa * 10n ** BigInt(escalaComun - a.escala) - b.mantisa * 10n ** BigInt(escalaComun - b.escala)
+  const multiplicador = aDecimalExacto(factor)
+  return redondearMantisa(diferencia * multiplicador.mantisa, escalaComun + multiplicador.escala, 0)
 }
 
 export interface OpcionesFormatearImporte {
