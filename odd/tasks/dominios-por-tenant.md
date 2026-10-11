@@ -59,7 +59,7 @@ not stored.
 
 ## Tasks
 
-- [ ] **T1 — Backend: `dominios`, host resolution, session guard, login by username.**
+- [x] **T1 — Backend: `dominios`, host resolution, session guard, login by username.**
   Route: delegated (writer trigger: domain, infrastructure, API, tests). PR 1.
   - Entity `Dominio` + EF configuration + migration with RLS policies.
   - `IDominioActual` (scoped): `EsPlataforma`, `Host`, `IdTenant?`, `NombreComercio?`; resolved by
@@ -79,6 +79,16 @@ not stored.
     23505 backstop for the unique host.
   - Tests: unit for host normalization/validation and the guard decision; integration for the
     resolution, the guard, the login by username and the platform endpoints.
+  - Done as two work-unit commits (route: delegated writer; triggers: 2+ non-trivial files and
+    preparation reading): `c1a1586a` (table, RLS, platform ABM, resolver, backstops) and `d84153a6`
+    (middleware, `IDominioActual`, guard, login by username, `GET /api/publico/sitio`).
+  - Implementation notes that differ from the plan above: `ux_dominios_host` is UNIQUE only among live
+    rows (`WHERE deleted_at IS NULL`, like `ux_usuarios_usuario`), so a deleted host can be loaded
+    again; the middleware answers its own errors (it runs before `UseExceptionHandler` and before the
+    MCP connector, which rewrites `Request.Host` on its routes); `/api/salud` and `tauri.localhost`
+    are exempt/platform; `GET /api/publico/sitio` only reads `IDominioActual`, it does no query of its
+    own; the resolver reads `dominios` in Login mode from its own DI scope and the tenant name with the
+    platform context.
 - [ ] **T2 — Web: login by username or mail, platform screen for domains.**
   Route: delegated (writer trigger: Login page, api client, platform page, tests). PR 2.
   - Login reads `GET /api/publico/sitio` and shows "Usuario o mail" under a tenant host.
@@ -94,7 +104,49 @@ not stored.
 
 ## Verification evidence
 
-(recorded per task as commits land)
+T1 (commits `c1a1586a`, `d84153a6`):
+
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror --no-incremental`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.Domain.Tests`: 1124 passed (RED observed first: the new tests did not compile
+  before `Dominio` / `PoliticaDeDominio` existed).
+- `dotnet test tests/Ways.Application.Tests`: 785 passed (golden `inventario-de-dependientes.txt` gains
+  `Tenant | dominios | id_tenant | marcado`; the three `ServicioDeDominios` writes join the frozen
+  list of non-retrying writes).
+- `dotnet test tests/Ways.IntegrationTests` (the integration project is `Ways.IntegrationTests`, there
+  is no `Ways.Api.Tests`): 3214 passed, 0 failed, 26 m 45 s, run once, no other suite in parallel.
+  First run had 32 red in `ConectorMcpFlujoTests`: the connector rewrites `Request.Host` to its public
+  URL on its own routes, so the first placement of the middleware (after `UseExceptionHandler`) saw an
+  unknown host. Fixed by running it right after `UseForwardedHeaders`, as planned.
+- `dotnet format --verify-no-changes` over the changed `.cs` files: only the known baseline noise
+  (IDE0008, ENDOFLINE, IMPORTS, and WHITESPACE on lines this task did not write).
+- Commit 1 checked on its own in a detached worktree: builds, Domain/Application tests green, and the
+  `DominiosPlataforma`, `SuperficieDeAutorizacion` and `UsuariosYLogin` integration tests green.
+
+Mutation evidence (mutate the clause, run the 61 `Dominios`/`SuperficieDeAutorizacion`/
+`PlataformaHostsConfigurados` tests, watch it go red, revert; the Domain mutants ran on the 1124):
+
+| Mutant | Red tests |
+|---|---|
+| guard: `idTenantDeLaSesion == idTenantDelHost` -> `true` | cookie cross-tenant, bearer cross-tenant (Domain: 2) |
+| guard: `... == ...` -> `false` | cookie, bearer, login by usuario (same tenant rejected) |
+| guard: drop `esSesionDePlataforma` / drop `idTenantDelHost is null` | Domain: 2 / 1 |
+| resolver: drop `VerificadoEn != null` | unverified host, verify-then-resolve |
+| resolver: drop `IgnoreQueryFilters(["Tenant"])` | 13 (every resolution) |
+| resolver: tenant dado de baja still resolves | tenant-de-baja |
+| migration: drop `dominios_login_lectura` | 14 (resolution + RLS login test) |
+| no `Invalidar` on verify / on delete | verify-then-resolve / delete-then-404 (one each) |
+| login by usuario without `id_tenant` | login por usuario (two tenants, same usuario) |
+| login by mail not scoped to the host tenant | mail of another tenant, root at a tenant host |
+| `AgregarAsync` with the retrying strategy | transient `40001` test (`Intentos` 2) |
+| invalid body validated before the tenant 404 | 404-first test |
+| no `host_duplicado` translation | two concurrent altas of the same host (rendezvous) |
+| principal flag not moved | move-principal test |
+| `/api/salud` not exempt | health test |
+| endpoints without `SoloPlataforma` | authorization test + `SuperficieDeAutorizacion` GET walker |
+
+Not covered and left honest: no audit rows for domain changes; the 60 s cache lifetime itself is not
+tested (only its invalidation), and with several instances another one can serve a stale answer for up
+to 60 s.
 
 ## Delivery slices
 
@@ -102,4 +154,4 @@ not stored.
 
 ## Next step
 
-T1.
+T2 (web: login by usuario or mail reading `GET /api/publico/sitio`, platform screen for domains).
