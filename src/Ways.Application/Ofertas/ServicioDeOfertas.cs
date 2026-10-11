@@ -85,7 +85,21 @@ public class ServicioDeOfertas(
 
         var items = await query.OrderBy(o => o.Nombre).ToListAsync(ct);
 
-        return items.Select(o => Proyectar(o, Array.Empty<int>())).ToList();
+        var idsArticulo = items.Where(o => o.IdArticulo is not null).Select(o => o.IdArticulo!.Value).Distinct().ToList();
+        var nombresDeArticulo = idsArticulo.Count == 0
+            ? new Dictionary<int, string>()
+            : await db.Articulos
+                .Where(a => idsArticulo.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.Nombre, ct);
+
+        return items
+            .Select(o => Proyectar(o, Array.Empty<int>()) with
+            {
+                NombreArticulo = o.IdArticulo is { } idArticulo && nombresDeArticulo.TryGetValue(idArticulo, out var nombre)
+                    ? nombre
+                    : null
+            })
+            .ToList();
     }
 
     public async Task<OfertaListado> ObtenerAsync(int id, CancellationToken ct = default)

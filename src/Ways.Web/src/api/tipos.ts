@@ -904,7 +904,8 @@ export const DIAS_SEMANA: { valor: number; etiqueta: string }[] = [
 /** `idsListas` vacío ⇒ la oferta aplica a todas las listas del tenant (spec: Multi-Lista
  * Targeting via ofertas_listas). El listado no completa `idsListas` por fila (evita el N+1,
  * mismo criterio que `ArticuloListado.idsEmpresas`) — solo `obtener`/`crear`/`actualizar` lo
- * completan con el subconjunto real. */
+ * completan con el subconjunto real. `nombreArticulo` es el caso inverso: solo lo completa el
+ * listado, y viene nulo si la oferta no es de artículo o el artículo está dado de baja. */
 export type OfertaListado = {
   id: number
   nombre: string
@@ -926,6 +927,7 @@ export type OfertaListado = {
   acumulable: boolean
   activo: boolean
   idsListas: number[]
+  nombreArticulo?: string | null
 }
 
 /** Mismo shape para alta y edición: a diferencia de `ArticuloListado.codigoInterno`, acá no hay

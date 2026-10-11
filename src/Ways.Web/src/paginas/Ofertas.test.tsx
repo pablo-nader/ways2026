@@ -278,6 +278,21 @@ describe('Ofertas — alcance por familia', () => {
     expect(within(filaSinCargar).getByText('Familia: 99')).toBeInTheDocument()
   })
 
+  it('el listado nombra el artículo de la oferta, o su id si el servidor no trae el nombre', async () => {
+    mockearApiGet({
+      ofertas: [
+        ofertaFixture({ id: 2, nombre: 'Con nombre', idArticulo: 357, nombreArticulo: 'Alfajor maizena' }),
+        ofertaFixture({ id: 3, nombre: 'Sin nombre', idArticulo: 358, nombreArticulo: null }),
+      ],
+    })
+    render(<Ofertas />)
+
+    const filaConNombre = (await screen.findByText('Con nombre')).closest('tr')!
+    expect(within(filaConNombre).getByText('Artículo: Alfajor maizena')).toBeInTheDocument()
+    const filaSinNombre = screen.getByText('Sin nombre').closest('tr')!
+    expect(within(filaSinNombre).getByText('Artículo #358')).toBeInTheDocument()
+  })
+
   it('editar una oferta de familia abre el radio Familia con su familia elegida y el PUT reenvía idFamilia', async () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
@@ -470,5 +485,131 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     await screen.findByText('Oferta "Oferta nueva" creada.')
 
     confirmSpy.mockRestore()
+  })
+})
+
+describe('Ofertas — alta y edición en modal', () => {
+  async function completarOfertaDeGrupo() {
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await userEvent.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+  }
+
+  it('al entrar muestra solo la grilla: sin formulario ni diálogo', async () => {
+    mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })] })
+    render(<Ofertas />)
+
+    expect(await screen.findByText('Oferta existente')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
+  })
+
+  it('Agregar abre el modal "Nueva oferta" con el formulario vacío', async () => {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva oferta' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('')
+  })
+
+  it('Editar abre el modal "Editar oferta" con la oferta cargada', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1 })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Editar oferta' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Oferta existente')
+    expect(within(dialogo).getByRole('radio', { name: 'Grupo' })).toBeChecked()
+  })
+
+  it('Cancelar cierra el modal sin escribir nada', async () => {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('un guardado exitoso cierra el modal, avisa en la pantalla y refresca el listado', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+    const listadosAntes = apiGetMock.mock.calls.filter((c) => c[0] === '/ofertas').length
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Oferta "Oferta nueva" creada.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/ofertas').length).toBe(listadosAntes + 1)
+  })
+
+  it('un error de validación se muestra dentro del modal, que sigue abierto', async () => {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva oferta' })
+    expect(within(dialogo).getByText('Elegí un artículo para el alcance.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('un guardado que falla muestra el error dentro del modal, lo deja abierto y conserva lo escrito', async () => {
+    apiPostMock.mockRejectedValue(new Error('boom'))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva oferta' })
+    expect(await within(dialogo).findByText('No se pudo guardar la oferta.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Oferta nueva')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('si el guardado salió bien pero el refresco falla, cierra el modal y lo avisa en la pantalla', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+    const listadoOk = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas' ? Promise.reject(new Error('sin red')) : listadoOk(ruta),
+    )
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText('La oferta se guardó, pero no se pudo actualizar el listado. Volvé a entrar para verla.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('un error al abrir la oferta se muestra en la pantalla y no abre el modal', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
+    mockearApiGet({ ofertas: [oferta] })
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/2' ? Promise.reject(new Error('boom')) : base(ruta),
+    )
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+
+    expect(await screen.findByText('No se pudo abrir la oferta.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
