@@ -21,6 +21,8 @@ import type {
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 import type { PreciosPorLinea } from '../api/ventas'
+import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
+import { redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
@@ -284,6 +286,9 @@ export function preciosVigentesDeLasLineas(
     const idFamilia = porId.get(linea.idArticulo)?.idFamilia
     if (idFamilia != null) cantidadPorFamilia.set(idFamilia, (cantidadPorFamilia.get(idFamilia) ?? 0) + linea.cantidad)
   }
+  // El servidor suma en decimal: 0,1 + 0,7 llega a 0,8, y en punto flotante da 0.7999999999999999.
+  // Redondear la suma a la precisión de las cantidades evita quedar apenas debajo de un umbral.
+  for (const [idFamilia, cantidad] of cantidadPorFamilia) cantidadPorFamilia.set(idFamilia, redondearImporte(cantidad, DECIMALES_DE_PESO))
 
   return lineas.map((linea) => {
     const articulo = porId.get(linea.idArticulo)

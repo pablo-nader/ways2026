@@ -733,9 +733,38 @@ describe('resolverPreciosOffline — cantidad agregada por familia', () => {
     expect(descuentos(lineas, vieja)).toEqual([0, 0])
   })
 
-  it('una línea cuyo artículo no está en la instantánea queda sin precio y no suma a la familia de las otras', () => {
+  it('una línea cuyo artículo no está en la instantánea queda sin precio y no altera el precio de las demás', () => {
     const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: 999, cantidad: 1 })]
     expect(descuentos(lineas, instantaneaDeFamiliaFixture())).toEqual([0, undefined])
+  })
+})
+
+describe('resolverPreciosOffline — la suma por familia es exacta a 3 decimales', () => {
+  const celdaDe = (cantidadDeFamiliaDesde: number): EscalonDeFamilia => ({ ...CELDA_FAMILIA_2, cantidadDeFamiliaDesde })
+  const instantaneaConUmbral = (umbral: number) =>
+    instantaneaFixture({ articulos: [A, B, C_SIN_FAMILIA].map((id) => alfajorFixture(id, [celdaDe(umbral)], id === C_SIN_FAMILIA ? null : FAMILIA_ALFAJORES)) })
+  const lineasDe = (...cantidades: number[]) => cantidades.map((cantidad, i) => lineaFixture({ idLinea: `p${i}`, idArticulo: i === 2 ? C_SIN_FAMILIA : i === 0 ? A : B, cantidad }))
+
+  it.each([
+    [0.1, 0.7, 0.8],
+    [0.3, 0.6, 0.9],
+  ])('%s + %s alcanza el umbral %s aunque en punto flotante quede por debajo', (x, y, umbral) => {
+    expect(x + y).toBeLessThan(umbral)
+    expect(descuentos(lineasDe(x, y), instantaneaConUmbral(umbral))).toEqual([250, 250])
+  })
+
+  it('tres líneas de la familia que suman exactamente 2,000 alcanzan el umbral 2', () => {
+    const lineas = [
+      lineaFixture({ idLinea: 'x', idArticulo: A, cantidad: 0.6 }),
+      lineaFixture({ idLinea: 'y', idArticulo: B, cantidad: 0.7 }),
+      lineaFixture({ idLinea: 'z', idArticulo: B, cantidad: 0.7 }),
+    ]
+    expect(0.6 + 0.7 + 0.7).toBeLessThan(2)
+    expect(descuentos(lineas, instantaneaConUmbral(2))).toEqual([250, 250, 250])
+  })
+
+  it('0,1 + 0,699 queda por debajo del umbral 0,8: el redondeo no empuja una suma que no llega', () => {
+    expect(descuentos(lineasDe(0.1, 0.699), instantaneaConUmbral(0.8))).toEqual([0, 0])
   })
 })
 
