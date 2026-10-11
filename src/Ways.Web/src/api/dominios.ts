@@ -27,7 +27,7 @@ export function textoDeVerificacion(verificadoEn: string | null): string {
  */
 const COPIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   ['host_duplicado', 'Ese host ya está cargado en otro dominio.'],
-  ['host_invalido', 'El host no es válido: indica solo el nombre de dominio, sin https:// ni rutas.'],
+  ['host_invalido', 'El host no es válido: indicá solo el nombre de dominio, sin https:// ni rutas.'],
 ])
 
 /**
@@ -46,7 +46,7 @@ export function copiaDeFalloDeDominio(error: unknown, encabezado: string): strin
   const propia = COPIA_POR_CODIGO.get(error.codigo)
   if (propia) return propia
 
-  if (error.estado === 404) return `${encabezado} El tenant o el dominio ya no existe. Actualiza la pantalla.`
+  if (error.estado === 404) return `${encabezado} El tenant o el dominio ya no existe. Actualizá la pantalla.`
 
   if (error.estado >= 500) {
     const delServidor = error.message.trim()
@@ -56,4 +56,15 @@ export function copiaDeFalloDeDominio(error: unknown, encabezado: string): strin
   }
 
   return error.message.trim() || encabezado
+}
+
+/**
+ * Si tras este fallo de escritura conviene volver a leer la lista: un 404 (el tenant o el dominio
+ * cambió) o un resultado incierto (5xx o error que no es de la API, pudo haberse escrito). Un
+ * rechazo de validación (400, 409) no cambió nada y no relee.
+ */
+export function debeReleerTrasFallo(error: unknown): boolean {
+  if (!(error instanceof ErrorApi)) return true
+
+  return error.estado === 404 || error.estado >= 500
 }

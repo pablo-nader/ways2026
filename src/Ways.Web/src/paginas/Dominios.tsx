@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { copiaDeFalloDeBaja } from '../api/bajas'
-import { AYUDA_DE_VERIFICACION, copiaDeFalloDeDominio, textoDeVerificacion } from '../api/dominios'
+import {
+  AYUDA_DE_VERIFICACION,
+  copiaDeFalloDeDominio,
+  debeReleerTrasFallo,
+  textoDeVerificacion,
+} from '../api/dominios'
 import { clienteDeOrganizacion, opcionesDeTenantAsignable } from '../api/organizacion'
 import type { DominioListado, TenantListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
@@ -10,7 +15,7 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 
-const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recarga la pantalla.'
+const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /**
  * Dominios propios de un tenant — solo plataforma (`Politicas.SoloPlataforma`). El dominio decide a
@@ -38,7 +43,8 @@ export function Dominios() {
   const [host, setHost] = useState('')
   const [esPrincipal, setEsPrincipal] = useState(false)
 
-  // Un slot por fuente: cada una borra solo lo suyo (regla 14).
+  // `limpiarMensajes` borra el rechazo del alta, el de la acción (verificar y eliminar comparten ese
+  // slot) y el aviso. El error de lectura solo lo escriben `elegirTenant` y `cargarDominios`.
   const [errorDeLectura, setErrorDeLectura] = useState('')
   const [errorDeAlta, setErrorDeAlta] = useState('')
   const [errorDeAccion, setErrorDeAccion] = useState('')
@@ -105,13 +111,7 @@ export function Dominios() {
     setEsPrincipal(false)
     setDominios(null)
 
-    if (valor === '') {
-      setCargandoDominios(false)
-
-      return
-    }
-
-    void cargarDominios(Number(valor), token)
+    if (valor !== '') void cargarDominios(Number(valor), token)
   }
 
   /** El refresco va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
@@ -123,6 +123,12 @@ export function Dominios() {
     } catch {
       setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     }
+  }
+
+  /** Tras un fallo que no dice qué quedó escrito se relee la lista para mostrar el estado real. No
+   * toca los mensajes: el del fallo sigue visible. Un fallo de la relectura queda en `errorDeLectura`. */
+  async function releerTrasFallo(id: number) {
+    await cargarDominios(id, ++generacionDominios.current)
   }
 
   async function agregar(evento: FormEvent) {
@@ -140,6 +146,7 @@ export function Dominios() {
         creado = await clienteDeOrganizacion.agregarDominio(id, { host: host.trim(), esPrincipal })
       } catch (e) {
         setErrorDeAlta(copiaDeFalloDeDominio(e, 'No se pudo agregar el dominio.'))
+        if (debeReleerTrasFallo(e)) await releerTrasFallo(id)
 
         return
       }
@@ -168,6 +175,7 @@ export function Dominios() {
         await clienteDeOrganizacion.verificarDominio(dominio.idTenant, dominio.id)
       } catch (e) {
         setErrorDeAccion(copiaDeFalloDeDominio(e, `No se pudo marcar "${dominio.host}" como verificado.`))
+        if (debeReleerTrasFallo(e)) await releerTrasFallo(dominio.idTenant)
 
         return
       }
@@ -192,6 +200,7 @@ export function Dominios() {
         // La puerta queda abierta con el motivo al lado: el operador ve por qué no se pudo sin
         // perder de vista qué estaba por eliminar.
         setErrorDeAccion(copiaDeFalloDeBaja(e, 'el dominio'))
+        if (debeReleerTrasFallo(e)) await releerTrasFallo(dominio.idTenant)
 
         return
       }
@@ -356,7 +365,7 @@ export function Dominios() {
                                 <button
                                   type="button"
                                   className="btn btn-sm btn-outline-success me-1"
-                                  aria-label={`Marcar ${d.host} como verificado`}
+                                  aria-label={`Marcar verificado: ${d.host}`}
                                   onClick={() => void verificar(d)}
                                   disabled={inerte}
                                 >

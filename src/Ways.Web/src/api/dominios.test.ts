@@ -4,6 +4,7 @@ import { COPIA_RESULTADO_INCIERTO } from './bajas'
 import {
   AYUDA_DE_VERIFICACION,
   copiaDeFalloDeDominio,
+  debeReleerTrasFallo,
   TEXTO_SIN_VERIFICAR,
   textoDeVerificacion,
 } from './dominios'
@@ -33,7 +34,7 @@ describe('copiaDeFalloDeDominio', () => {
     const error = new ErrorApi(400, 'host_invalido', 'texto crudo del servidor')
 
     expect(copiaDeFalloDeDominio(error, encabezado)).toBe(
-      'El host no es válido: indica solo el nombre de dominio, sin https:// ni rutas.',
+      'El host no es válido: indicá solo el nombre de dominio, sin https:// ni rutas.',
     )
   })
 
@@ -41,7 +42,7 @@ describe('copiaDeFalloDeDominio', () => {
     const error = new ErrorApi(404, 'no_encontrado', 'texto crudo del servidor')
 
     expect(copiaDeFalloDeDominio(error, encabezado)).toBe(
-      'No se pudo agregar el dominio. El tenant o el dominio ya no existe. Actualiza la pantalla.',
+      'No se pudo agregar el dominio. El tenant o el dominio ya no existe. Actualizá la pantalla.',
     )
   })
 
@@ -77,6 +78,19 @@ describe('copiaDeFalloDeDominio', () => {
     const error = new ErrorApi(400, 'constructor', 'Mensaje del servidor.')
 
     expect(copiaDeFalloDeDominio(error, encabezado)).toBe('Mensaje del servidor.')
+  })
+})
+
+describe('debeReleerTrasFallo', () => {
+  it('un 404 y un resultado incierto piden releer', () => {
+    expect(debeReleerTrasFallo(new ErrorApi(404, 'no_encontrado', 'x'))).toBe(true)
+    expect(debeReleerTrasFallo(new ErrorApi(503, 'resultado_incierto', 'x'))).toBe(true)
+    expect(debeReleerTrasFallo(new TypeError('boom'))).toBe(true)
+  })
+
+  it('un rechazo de validación no relee', () => {
+    expect(debeReleerTrasFallo(new ErrorApi(400, 'host_invalido', 'x'))).toBe(false)
+    expect(debeReleerTrasFallo(new ErrorApi(409, 'host_duplicado', 'x'))).toBe(false)
   })
 })
 

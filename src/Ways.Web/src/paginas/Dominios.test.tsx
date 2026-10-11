@@ -131,7 +131,7 @@ describe('Dominios — lista', () => {
     const sinVerificar = within(screen.getByRole('row', { name: /www\.sur\.com/ }))
     expect(sinVerificar.queryByText('Principal')).not.toBeInTheDocument()
     expect(sinVerificar.getByText('Sin verificar')).toBeInTheDocument()
-    expect(sinVerificar.getByRole('button', { name: 'Marcar www.sur.com como verificado' })).toBeEnabled()
+    expect(sinVerificar.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeEnabled()
 
     expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(1)
   })
@@ -291,6 +291,26 @@ describe('Dominios — alta', () => {
     expect(screen.getByLabelText('Host')).toHaveValue('https://x.com/ruta')
   })
 
+  it('un fallo incierto del alta relee la lista y deja el mensaje a la vista', async () => {
+    const usuario = userEvent.setup()
+    const { listas } = montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('tienda.sur.com')
+    const nuevo = dominio({ id: 13, idTenant: 1, host: 'nuevo.sur.com' })
+    apiPostMock.mockImplementation(() => {
+      listas[1] = [principalVerificado, secundarioSinVerificar, nuevo]
+
+      return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar.'))
+    })
+
+    await usuario.type(screen.getByLabelText('Host'), 'nuevo.sur.com')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar dominio' }))
+
+    expect(await screen.findByRole('row', { name: /nuevo\.sur\.com/ })).toBeInTheDocument()
+    expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(2)
+    expect(screen.getByLabelText('Host')).toHaveAccessibleDescription(/No se pudo agregar el dominio\. No se pudo confirmar\./)
+  })
+
   it('si el alta commiteó pero el refresco falla, no se informa como fallida', async () => {
     const usuario = userEvent.setup()
     montar()
@@ -340,7 +360,7 @@ describe('Dominios — verificación', () => {
       return Promise.resolve(verificado)
     })
 
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
     await waitFor(() => {
       const fila = within(screen.getByRole('row', { name: /www\.sur\.com/ }))
@@ -358,10 +378,28 @@ describe('Dominios — verificación', () => {
     await screen.findByText('www.sur.com')
     apiPostMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'texto crudo'))
 
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
     expect(await screen.findByText(/No se pudo marcar "www\.sur\.com" como verificado\./)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeEnabled()
+  })
+
+  it('un 404 relee la lista, que ya no trae la fila, y el mensaje queda a la vista', async () => {
+    const usuario = userEvent.setup()
+    const { listas } = montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('www.sur.com')
+    apiPostMock.mockImplementation(() => {
+      listas[1] = [principalVerificado]
+
+      return Promise.reject(new ErrorApi(404, 'no_encontrado', 'texto crudo'))
+    })
+
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
+
+    await waitFor(() => expect(screen.queryByText('www.sur.com')).not.toBeInTheDocument())
+    expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(2)
+    expect(screen.getByText(/No se pudo marcar "www\.sur\.com" como verificado\./)).toBeInTheDocument()
   })
 
   it('dos clics del mismo tick salen como una sola request', async () => {
@@ -370,7 +408,7 @@ describe('Dominios — verificación', () => {
     await elegirTenant(usuario, 1)
     await screen.findByText('www.sur.com')
     apiPostMock.mockReturnValue(new Promise(() => {}))
-    const boton = screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' })
+    const boton = screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })
 
     act(() => {
       boton.click()
@@ -388,13 +426,13 @@ describe('Dominios — verificación', () => {
     const pendiente = diferida<DominioListado>()
     apiPostMock.mockReturnValue(pendiente.promesa)
 
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
     expect(screen.getByLabelText('Tenant')).toBeDisabled()
     expect(screen.getByLabelText('Host')).toBeDisabled()
     expect(screen.getByLabelText('Principal')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Agregar dominio' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Eliminar tienda.sur.com' })).toBeDisabled()
 
     await act(async () => pendiente.resolver(secundarioSinVerificar))
@@ -448,7 +486,7 @@ describe('Dominios — baja', () => {
 
     expect(screen.getByLabelText('Tenant')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Agregar dominio' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Eliminar tienda.sur.com' })).toBeDisabled()
   })
 
@@ -462,6 +500,26 @@ describe('Dominios — baja', () => {
     await usuario.click(screen.getByRole('button', { name: 'Eliminar www.sur.com' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar eliminación' }))
 
+    expect(await screen.findByText(/No se pudo dar de baja el dominio\./)).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('un 404 relee la lista, que ya no trae la fila, y el motivo queda junto a la puerta', async () => {
+    const usuario = userEvent.setup()
+    const { listas } = montar()
+    await elegirTenant(usuario, 1)
+    await screen.findByText('www.sur.com')
+    apiDeleteMock.mockImplementation(() => {
+      listas[1] = [principalVerificado]
+
+      return Promise.reject(new ErrorApi(404, 'no_encontrado', 'texto crudo'))
+    })
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar www.sur.com' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar eliminación' }))
+
+    await waitFor(() => expect(llamadasA(apiGetMock, RUTA_UNO)).toHaveLength(2))
+    await waitFor(() => expect(screen.queryByRole('row', { name: /www\.sur\.com/ })).not.toBeInTheDocument())
     expect(await screen.findByText(/No se pudo dar de baja el dominio\./)).toBeInTheDocument()
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
   })
@@ -498,7 +556,7 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     )
 
     apiPostMock.mockReturnValue(new Promise(() => {}))
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
 
     expect(screen.getByLabelText('Host')).not.toHaveAccessibleDescription()
   })
@@ -508,7 +566,7 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     montar()
     await elegirTenant(usuario, 1)
     await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
     expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
 
     apiPostMock.mockReturnValue(new Promise(() => {}))
@@ -523,7 +581,7 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     montar()
     await elegirTenant(usuario, 1)
     await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
     expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
     const original = apiGetMock.getMockImplementation()!
     apiGetMock.mockImplementation((ruta: string) =>
@@ -540,7 +598,7 @@ describe('Dominios — cada acción borra lo que dijo la anterior', () => {
     montar()
     await elegirTenant(usuario, 1)
     await screen.findByText('www.sur.com')
-    await usuario.click(screen.getByRole('button', { name: 'Marcar www.sur.com como verificado' }))
+    await usuario.click(screen.getByRole('button', { name: 'Marcar verificado: www.sur.com' }))
     expect(await screen.findByText('Se marcó como verificado "www.sur.com".')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Eliminar www.sur.com' }))
