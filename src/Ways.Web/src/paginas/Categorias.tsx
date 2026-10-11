@@ -312,7 +312,7 @@ export function Categorias() {
   )
 
   return (
-    <div ref={contenedorRef} tabIndex={-1} className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Categorías" variante="inverse" herramientas={herramientas}>
         <p className="text-muted">
           Taxonomía jerárquica, máximo {PROFUNDIDAD_MAXIMA} niveles (Bebidas → Gaseosas → Cola). El servidor

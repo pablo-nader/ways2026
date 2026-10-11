@@ -300,7 +300,7 @@ export function Ofertas() {
   )
 
   return (
-    <div ref={contenedorRef} tabIndex={-1} className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Ofertas" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
