@@ -22,12 +22,13 @@ Solo Ways.Web. Sin cambios de API ni de esquema, salvo `nombreArticulo` en el li
 - [x] T1 — Ofertas: nombre del artículo en el alcance. Ruta: delegada (2+ archivos). Commit `84e3da70`. PR #377.
 - [x] T2 — Ofertas: alta y edición en modal. Ruta: delegada. Commits `c5da1f53`, `9a7f3b74`. PR #377.
 - [x] T3 — `PaginaCatalogo` (áreas, marcas, grupos, medios de pago, listas de precio). Ruta: delegada. Commit `6d4b32c1`. PR #378.
-- [ ] T4 — Categorías (`Categorias.tsx`). Ruta: delegada.
-- [ ] T5 — Proveedores (`Proveedores.tsx`). Ruta: delegada.
+- [x] T4 — Categorías (`Categorias.tsx`). Ruta: delegada. Commit `e5a62593`.
+- [x] T5 — Proveedores (`Proveedores.tsx`). Ruta: delegada. Commit `b6cdc37b`.
 
 ## Verificación
 - T1–T2: `ServicioDeOfertasTests` 25 en verde; suite web 4448 en verde; judgment-day sin severos.
 - T3: suite web 4458 en verde; judgment-day sin severos ni advertencias.
+- T4–T5: RED observado antes de implementar (8 tests en rojo en cada pantalla); Categorías 20/20 y Proveedores 26/26 en verde; `tsc` y `oxlint` limpios; suite web 4479 en verde.
 - RED no observado en T2 y T3: los tests se escribieron después del cambio.
 - No se corrió la revisión nativa (`gentle-ai review`) en T1–T3.
 
