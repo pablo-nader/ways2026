@@ -100,7 +100,7 @@ not stored.
     (the server does not forbid `@` in a username, so such a user logs in with the mail); if
     `GET /api/publico/sitio` fails the form falls back to mail-only with a notice; `AuthContext.iniciarSesion`
     now takes `{ mail } | { usuario }`.
-- [ ] **T3 — Web: routes `/admin` (current app), `/online` (storefront shell) and `/` (landing shell).**
+- [x] **T3 — Web: routes `/admin` (current app), `/online` (storefront shell) and `/` (landing shell).**
   Route: delegated (writer trigger: Vite entries, router basename, API fallback, redirects, tests).
   PR 3.
   - Vite entries: `index.html` → landing shell, `admin.html` → current app with
@@ -108,6 +108,18 @@ not stored.
   - API: `MapFallback` serves the entry by path prefix; old paths (`/login`, `/pos`, `/descargar`,
     and every back-office route) redirect to `/admin/...` for a transition period.
   - Platform host (`aipos.site`): `/` redirects to `/admin`.
+  - Done as two work-unit commits (route: delegated writer; triggers: 2+ non-trivial files and
+    preparation reading): `5f414fbf` (web: entries, basename, dev rewrite, shells) and `d484920f` (API:
+    fallback by prefix, redirects, docs 07 and 08). Implementation notes that differ from the plan above:
+    the list of old top-level routes is `RutasDeLaSpa.RutasHeredadasDelBackOffice` (26 segments) and
+    `App.tsx` is its source of truth, enforced by `RutasDeLaSpaTests` (it parses the `path="/..."` of
+    `App.tsx`); the redirect is a middleware before `UseStaticFiles` (the static default file would
+    otherwise serve the landing on the platform root), not part of `MapFallback`; the only raw anchor to
+    the back office, in `Gastos.tsx`, became a router `Link`; the dev server and `vite preview` rewrite
+    `/admin/*` and `/online/*` with a plugin whose rule lives in `src/config/entradasDeVite.ts`.
+  - Open for the desktop app (`src/Ways.Desktop/scripts/sync-frontend-local.mjs`, not touched): it
+    copies everything in `dist/` except `index.html`, so `admin.html` and `online.html` now also land in
+    `ui/` (not ignored by that `.gitignore`, harmless at runtime). Skip them in that script.
 
 ## Verification evidence
 
@@ -211,10 +223,42 @@ new judge round. Left as follow-ups: the server allows `@` in a username, so a u
 `@` can only log in by mail (document or forbid server-side); a failed add leaves `aria-invalid`
 on the Host field for non-host errors; "Reintentar" after a failed list read clears a typed host.
 
+T3 (commits `5f414fbf`, `d484920f`):
+
+- `npx tsc -b`: exit 0, no output. `npx oxlint`: exit 0, only the `only-export-components` warnings
+  already on the branch. `npx vite build`: `dist/` holds `index.html`, `admin.html`, `online.html`,
+  `pos.html`; `pos.html` is byte-identical in source and still loads `/src/pos/main.tsx`.
+- `npx vitest run` (whole suite, once, no other run in parallel): 180 files, 4527 tests passed, 125 s.
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~Fallback|...~Rutas|...~Dominios|...~Salud"`:
+  196 passed. Full `dotnet test tests/Ways.IntegrationTests` (once, alone): 3300 passed, 0 failed, 28 m 18 s
+  (3214 of T1 plus the 86 new).
+- Smoke: `vite` dev and `vite preview` answer `/` with the landing entry, `/admin`, `/admin/articulos/edit/3`
+  with `admin.html`, `/online/x` with `online.html`, `/pos.html` with the POS entry.
+- `dotnet format --verify-no-changes` over the new `.cs` files: only the known baseline noise (IDE0008,
+  ENDOFLINE, IMPORTS); the one real hit (IDE0047) was fixed.
+
+Mutation evidence (mutate the clause, run the 86 `RutasDeLaSpa*` tests, watch them go red, revert):
+
+| Mutant | Red tests |
+|---|---|
+| root redirect without `EsPlataforma` | tenant root serves the landing (1) |
+| root redirect with `!EsPlataforma` | platform root x3 methods/queries, every platform host, tenant root (7) |
+| `EsRutaHeredada` matches any segment, not the first | `/api/pos`, `/api/login`, `/admin/pos`, `/online/pos`, `/assets/pos`, `/admin/login`, prefix-served entries (13+) |
+| redirect without the GET/HEAD gate | POST `/login` and POST `/` redirect tests (2) |
+| fallback without the `/api` guard | `/api/no-existe`, `/api/pos`, `/api/login` and the three old `RutaDeRespaldoTests` (6) |
+| `basename` removed from `BrowserRouter` | both `App.test.tsx` cases |
+
+Not covered and left honest: no end-to-end check against a real `vite build` output served by the API
+(the tests write their own `wwwroot`); the dev plugin is proven by its pure function plus a manual smoke,
+not by a Vitest run of the server; a missing static file with an extension (`/assets/x.js`) still gets
+the framework's 401 and not the landing, as before.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
 
 ## Next step
 
-T3 (web: routes `/admin`, `/online` and `/`). T2 waits for its judgment-day round before PR 2.
+Feature `landing-del-comercio` (the real landing and the storefront content). T3 waits for its
+judgment-day round before PR 3.
