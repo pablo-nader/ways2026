@@ -171,6 +171,16 @@ describe('Landing', () => {
       expect(getComputedStyle(screen.getByRole('listitem')).minWidth).toBe('0px')
     })
 
+    it('el nombre de la cabecera se parte si es largo y la marca no recorta con overflow oculto', async () => {
+      await verPublicada({ tieneLogo: false, nombre: 'N'.repeat(80) })
+
+      const nombre = within(screen.getByRole('banner')).getByText('N'.repeat(80))
+      expect(getComputedStyle(nombre).overflowWrap).toBe('anywhere')
+      const marca = nombre.closest('a') as HTMLElement
+      expect(getComputedStyle(marca).overflow).not.toBe('hidden')
+      expect(getComputedStyle(marca).minWidth).toBe('0px')
+    })
+
     it('sin descripción no hay sección de descripción', async () => {
       await verPublicada({ descripcion: '  ' })
 
@@ -262,6 +272,7 @@ describe('Landing', () => {
       expect(await screen.findByText('Este comercio todavía no publicó su página.')).toBeInTheDocument()
       expect(screen.getByRole('img', { name: 'Ways' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+      expect(getComputedStyle(screen.getByText('Este comercio todavía no publicó su página.')).overflowWrap).toBe('anywhere')
       expect(document.title).toBe('Ways')
       expect(document.head.querySelector('meta[name="description"]')).toBeNull()
     })

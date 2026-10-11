@@ -89,13 +89,19 @@ export function enlaceInstagram(valor: string | null | undefined): string | null
 }
 
 /**
- * Acepta la URL de la página o su nombre de usuario (`FerreteriaSur`). Un valor con forma de
- * dominio (`www.facebook.com`, `sur.com.ar`) se trata como URL, de modo que un nombre de página con
- * puntos solo se acepta dentro de una URL.
+ * Acepta la URL de la página o su nombre de usuario (`FerreteriaSur`). Un valor sin `@` con forma de
+ * dominio (`www.facebook.com`, `sur.com.ar`) se trata como URL; un nombre de página con puntos que
+ * parezca dominio se escribe con `@` (`@ferreteria.sur`) o dentro de una URL.
  */
 export function enlaceFacebook(valor: string | null | undefined): string | null {
   const texto = (valor ?? '').trim()
   if (texto === '') return null
+
+  if (texto.startsWith('@')) {
+    const pagina = texto.slice(1)
+
+    return PATRON_DE_PAGINA_DE_FACEBOOK.test(pagina) ? `https://www.facebook.com/${pagina}` : null
+  }
 
   if (!PATRON_DE_DOMINIO.test(texto) && PATRON_DE_PAGINA_DE_FACEBOOK.test(texto)) return `https://www.facebook.com/${texto}`
 

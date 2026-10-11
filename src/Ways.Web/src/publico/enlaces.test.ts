@@ -79,11 +79,13 @@ describe('enlaceFacebook', () => {
     ['FerreteriaSur', 'https://www.facebook.com/FerreteriaSur'],
     ['www.facebook.com', 'https://www.facebook.com/'],
     ['fb.com/sur', 'https://fb.com/sur'],
+    ['@ferreteria.sur', 'https://www.facebook.com/ferreteria.sur'],
+    ['@FerreteriaSur', 'https://www.facebook.com/FerreteriaSur'],
   ])('%s', (entrada, esperado) => {
     expect(enlaceFacebook(entrada)).toBe(esperado)
   })
 
-  it.each([[null], [''], ['Ferretería Sur'], ['https://otro-sitio.com/sur'], ['data:text/html,x'], ['sur.com.ar']])(
+  it.each([[null], [''], ['Ferretería Sur'], ['https://otro-sitio.com/sur'], ['data:text/html,x'], ['sur.com.ar'], ['ferreteria.sur'], ['@'], ['@dos palabras'], ['@sur']])(
     '%s no genera enlace',
     (entrada) => {
       expect(enlaceFacebook(entrada)).toBeNull()

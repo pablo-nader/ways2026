@@ -69,13 +69,8 @@
 .publico-cabecera-marca {
   flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
   color: var(--pub-texto);
   text-decoration: none;
-}
-
-.publico-cabecera-marca:focus-visible {
-  outline-offset: -3px;
 }
 
 .publico-logo {

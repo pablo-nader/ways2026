@@ -141,6 +141,23 @@ describe('Tienda', () => {
       expect(cerrar).toHaveFocus()
     })
 
+    it('con el foco fuera del panel, Shift+Tab lo lleva al último elemento del panel', async () => {
+      const { panel } = await abrirPanel()
+      const ultimo = document.createElement('button')
+      ultimo.textContent = 'Último'
+      panel.appendChild(ultimo)
+      const fuera = document.createElement('button')
+      fuera.textContent = 'Fuera del panel'
+      document.body.appendChild(fuera)
+      ;(document.activeElement as HTMLElement).blur()
+      expect(document.body).toHaveFocus()
+
+      await userEvent.tab({ shift: true })
+
+      expect(ultimo).toHaveFocus()
+      fuera.remove()
+    })
+
     it('con varios elementos, Tab desde el último vuelve al primero y Shift+Tab desde el primero va al último', async () => {
       const { panel } = await abrirPanel()
       const cerrar = within(panel).getByRole('button', { name: 'Cerrar' })
