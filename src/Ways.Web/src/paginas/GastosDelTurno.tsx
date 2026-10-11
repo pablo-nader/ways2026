@@ -18,6 +18,7 @@ import type {
   SolicitudDeEdicionDeGasto,
   TurnoResumen,
 } from '../api/tipos'
+import { pulsoDeCajon } from '../impresion/plantillas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -25,14 +26,18 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import type { CajaDeEscritorio } from './Pos'
 import {
   aSolicitudDeGasto,
   categoriaAlElegirProveedor,
+  efectivoDisponibleEnCaja,
   etiquetaDeCategoriaGasto,
   etiquetaDeOrigenFondos,
+  faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
   mediosValidosParaGasto,
+  salidaDeEfectivoDeCaja,
   totalDeGastos,
 } from './utilidadesGastosDelTurno'
 
@@ -65,8 +70,13 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
  * generación del detalle: mientras la edición está abierta o en vuelo, el resto de la pantalla
  * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
  * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
+ *
+ * Efectivo de caja: un gasto en medio Efectivo pagado desde la caja del turno
+ * (`salidaDeEfectivoDeCaja`) muestra el efectivo disponible del resumen del turno y, si el importe
+ * lo supera, avisa cuánto falta sin impedir el registro. Con el seam de escritorio
+ * (`cajaDeEscritorio`), un alta confirmada de ese tipo encola el pulso del cajón.
  */
-export function GastosDelTurno() {
+export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
   const { puntoVenta } = usePuntoVenta()
 
   const [turno, setTurno] = useState<TurnoResumen | null>(null)
@@ -238,6 +248,11 @@ export function GastosDelTurno() {
       return
     }
 
+    const abreElCajon = salidaDeEfectivoDeCaja(
+      medios?.find((m) => m.id === idMedioPago),
+      origenFondos,
+    )
+
     guardandoRef.current = true
     setGuardando(true)
     setErrorGuardar('')
@@ -258,6 +273,8 @@ export function GastosDelTurno() {
           origenFondos,
         }),
       )
+      // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
+      if (abreElCajon) cajaDeEscritorio?.encolarImpresion('la apertura de cajón', pulsoDeCajon())
       if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
       setAviso('Gasto registrado.')
@@ -327,6 +344,12 @@ export function GastosDelTurno() {
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const gastos = detalle?.gastos ?? []
   const total = totalDeGastos(gastos)
+  const saleDeLaCaja = salidaDeEfectivoDeCaja(
+    medios?.find((m) => m.id === idMedioPago),
+    origenFondos,
+  )
+  const efectivoDisponible = detalle ? efectivoDisponibleEnCaja(detalle.resumen) : null
+  const faltante = efectivoDisponible === null ? 0 : faltanteDeEfectivo(importe, efectivoDisponible)
 
   const herramientas = (
     <button
@@ -446,6 +469,17 @@ export function GastosDelTurno() {
                   {guardando ? 'Guardando…' : 'Registrar'}
                 </button>
               </div>
+
+              {saleDeLaCaja && efectivoDisponible !== null && (
+                <div className="col-12">
+                  <div className="small text-muted">Disponible en caja: {formatearMoneda(efectivoDisponible)}</div>
+                  {faltante > 0 && (
+                    <div className="alert alert-warning py-1 px-2 small mt-1 mb-0" role="alert">
+                      Falta {formatearMoneda(faltante)} en la caja para pagar este gasto.
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="col-12">
                 <label className="form-label" htmlFor="gasto-observaciones">

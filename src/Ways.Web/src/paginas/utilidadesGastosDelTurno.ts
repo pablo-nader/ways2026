@@ -4,8 +4,15 @@
  * `mutation-proof-tests`), mismo criterio que `utilidadesVentasDelTurno.ts`.
  */
 import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
-import type { CategoriaGasto, GastoDeTurno, MedioPagoListado, OrigenFondosGasto, SolicitudDeGasto } from '../api/tipos'
-import { formatearImporte } from '../formato/importes'
+import type {
+  CategoriaGasto,
+  GastoDeTurno,
+  MedioPagoListado,
+  OrigenFondosGasto,
+  ResumenDeTurno,
+  SolicitudDeGasto,
+} from '../api/tipos'
+import { formatearImporte, redondearImporte } from '../formato/importes'
 
 export function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -86,4 +93,22 @@ export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
  * diferencia de `totalesDeVentas`: un gasto registrado no tiene estado de anulación). */
 export function totalDeGastos(gastos: GastoDeTurno[]): number {
   return gastos.reduce((acumulado, g) => acumulado + g.importe, 0)
+}
+
+/** Efectivo esperado en el cajón: la línea del medio ancla del resumen (ventas en efectivo + fondo
+ * + refuerzos − retiros − gastos en efectivo − vueltos). Sin línea para el ancla, 0. */
+export function efectivoDisponibleEnCaja(resumen: ResumenDeTurno): number {
+  return resumen.medios.find((m) => m.idMedioPago === resumen.idMedioAncla)?.importeEsperado ?? 0
+}
+
+/** Un gasto saca efectivo del cajón solo si el medio es Efectivo Y se paga desde la caja del
+ * turno: el efectivo pagado desde Tesorería no pasa por el cajón. */
+export function salidaDeEfectivoDeCaja(medio: MedioPagoListado | undefined, origenFondos: OrigenFondosGasto): boolean {
+  return medio?.comportamiento === 'Efectivo' && origenFondos === 'CajaTurno'
+}
+
+/** Cuánto efectivo falta en el cajón para cubrir el importe; 0 si alcanza o no hay importe. */
+export function faltanteDeEfectivo(importe: number | null, disponible: number): number {
+  if (importe === null) return 0
+  return Math.max(0, redondearImporte(importe - disponible))
 }
