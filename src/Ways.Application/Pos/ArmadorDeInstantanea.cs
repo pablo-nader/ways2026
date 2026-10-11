@@ -15,7 +15,7 @@ public static class ArmadorDeInstantanea
     public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase, decimal? Porcentaje);
 
     /// <summary>Un artículo activo, antes de resolverle precios.</summary>
-    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta);
+    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta, int? IdFamilia = null);
 
     /// <summary>
     /// Listas a resolver, ascendentes por id: las activas compartidas o de la empresa del punto de
@@ -114,7 +114,8 @@ public static class ArmadorDeInstantanea
                     linea.Resultado.PrecioFinal ?? precioOriginal,
                     linea.Resultado.DescuentoUnitario,
                     linea.Resultado.Aplicadas,
-                    linea.Escalones.Count == 0 ? null : linea.Escalones));
+                    linea.Escalones.Count == 0 ? null : linea.Escalones,
+                    linea.EscalonesDeFamilia is { Count: > 0 } ? linea.EscalonesDeFamilia : null));
             }
 
             if (precios.Count == 0)
@@ -132,7 +133,8 @@ public static class ArmadorDeInstantanea
                 porcentajePorAlicuota[articulo.IdAlicuotaIva],
                 articulo.AcumulaEnVenta,
                 articulo.UnidadVenta,
-                precios));
+                precios,
+                articulo.IdFamilia));
         }
 
         return resultado;

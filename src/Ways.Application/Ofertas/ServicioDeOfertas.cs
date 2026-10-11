@@ -445,8 +445,17 @@ public class ServicioDeOfertas(
                     ProyectarAplicadas(e.Resolucion.Aplicadas)))
                 .ToList();
 
+            var celdas = EscalonesDeCantidad.ConstruirGrillaDeFamilia(preparada.Linea, preparada.Candidatas);
+            var escalonesDeFamilia = celdas.Count == 0
+                ? null
+                : celdas
+                    .Select(c => new EscalonDeFamilia(
+                        c.CantidadDeFamiliaDesde, c.CantidadDesde, c.Resolucion.PrecioFinal,
+                        c.Resolucion.DescuentoUnitario, ProyectarAplicadas(c.Resolucion.Aplicadas)))
+                    .ToList();
+
             resultado.Add(new ResultadoDeResolucionConEscalones(
-                ProyectarResultado(linea, curva.Base), escalones));
+                ProyectarResultado(linea, curva.Base), escalones, escalonesDeFamilia));
         }
 
         return resultado;

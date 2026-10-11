@@ -56,6 +56,37 @@ public class ContratoDeArticuloDeInstantaneaTests
         Assert.Contains("\"idListaPrecio\":2", json);
     }
 
+    /// <summary>Cláusulas: los <c>JsonIgnore(WhenWritingNull)</c> de
+    /// <see cref="PrecioDeListaDeInstantanea.EscalonesDeFamilia"/> y
+    /// <see cref="ArticuloDeInstantanea.IdFamilia"/> — sin oferta de familia ni familia el JSON es
+    /// el de siempre, byte por byte.</summary>
+    [Fact]
+    public void SinFamiliaNiGrillaLasClavesNuevasNoViajan()
+    {
+        var articulo = new ArticuloDeInstantanea(
+            7, "art-7", "Artículo", [], 3, 21m, true, Ways.Domain.Articulos.UnidadVenta.Unidad, [CrearPrecio(null)]);
+
+        var json = JsonSerializer.Serialize(articulo, Opciones);
+
+        Assert.DoesNotContain("idFamilia", json);
+        Assert.DoesNotContain("escalonesDeFamilia", json);
+    }
+
+    [Fact]
+    public void ConFamiliaYGrillaViajanConNombreEnCamelCase()
+    {
+        var celda = new EscalonDeFamilia(2m, 1m, 1750m, 250m, [new OfertaAplicadaDto(4, "2 x 3500", 250m)]);
+        var precio = new PrecioDeListaDeInstantanea(2, 2000m, 2000m, 0m, [], null, [celda]);
+        var articulo = new ArticuloDeInstantanea(
+            7, "art-7", "Artículo", [], 3, 21m, true, Ways.Domain.Articulos.UnidadVenta.Unidad, [precio], 9);
+
+        var json = JsonSerializer.Serialize(articulo, Opciones);
+
+        Assert.Contains("\"idFamilia\":9", json);
+        Assert.Contains(
+            "\"escalonesDeFamilia\":[{\"cantidadDeFamiliaDesde\":2,\"cantidadDesde\":1,\"precioFinal\":1750,\"descuentoUnitario\":250", json);
+    }
+
     [Fact]
     public void ConEscalonesLaCurvaViajaEnElPrecioDeLista()
     {

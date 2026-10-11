@@ -13,6 +13,14 @@ namespace Ways.Application.Pos;
 /// <c>ServicioDeOfertas.ResolverConEscalonesAsync</c> a <c>cantidad = 1</c> contra esa lista y la
 /// empresa del punto de venta. El dispositivo nunca vuelve a evaluar ofertas (decisión del dueño).
 ///
+/// <see cref="EscalonesDeFamilia"/> es la grilla para una oferta de familia con cantidad mínima: el
+/// dispositivo suma las cantidades del carrito por <see cref="ArticuloDeInstantanea.IdFamilia"/> y
+/// elige la celda con la mayor <see cref="EscalonDeFamilia.CantidadDeFamiliaDesde"/> que entra en
+/// esa suma y, dentro de ella, el mayor <see cref="EscalonDeFamilia.CantidadDesde"/> que entra en la
+/// cantidad de la línea. Es un campo aparte, ausente si ninguna oferta de familia llega al
+/// artículo, para que <see cref="Escalones"/> y los campos planos conserven su significado en los
+/// POS ya instalados.
+///
 /// <see cref="Escalones"/> es la curva de precio por cantidad: un escalón por cada
 /// <c>cantidadMinima &gt; 1</c> que cambia el resultado, ascendente por
 /// <see cref="EscalonDeCantidad.CantidadDesde"/>; el dispositivo solo elige el último escalón cuyo
@@ -29,7 +37,9 @@ public sealed record PrecioDeListaDeInstantanea(
     decimal DescuentoUnitario,
     IReadOnlyList<OfertaAplicadaDto> Aplicadas,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<EscalonDeCantidad>? Escalones = null);
+    IReadOnlyList<EscalonDeCantidad>? Escalones = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<EscalonDeFamilia>? EscalonesDeFamilia = null);
 
 /// <summary>
 /// Un artículo dentro de <see cref="InstantaneaDePos"/>: identidad, códigos, IVA y su precio en
@@ -38,7 +48,8 @@ public sealed record PrecioDeListaDeInstantanea(
 /// no viaja (online ya rechazaría <c>articulo_sin_precio_vigente</c>). <see cref="UnidadVenta"/>
 /// le dice al carrito offline si la línea admite fracciones; es parte del contenido de la
 /// etiqueta de <see cref="InstantaneaDePos"/>, así que un dispositivo con una instantánea anterior
-/// recibe el cambio como contenido nuevo. <c>IdArea</c>,
+/// recibe el cambio como contenido nuevo. <see cref="IdFamilia"/> le permite al carrito sumar las
+/// cantidades de una familia; ausente si el artículo no tiene. <c>IdArea</c>,
 /// <c>EsProducto</c> y <c>ControlaLote</c> quedan afuera: el servidor los resuelve del artículo
 /// fresco al sincronizar (<c>ServicioDeVentas.MaterializarItems</c>), nunca del request.
 /// </summary>
@@ -51,7 +62,9 @@ public sealed record ArticuloDeInstantanea(
     decimal PorcentajeIva,
     bool AcumulaEnVenta,
     UnidadVenta UnidadVenta,
-    IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista);
+    IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? IdFamilia = null);
 
 /// <summary>
 /// Un cliente visible para el punto de venta: activo y compartido o de la empresa del punto de

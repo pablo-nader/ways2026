@@ -137,6 +137,26 @@ public class ResolucionPorFamiliaTests
     }
 
     [Fact]
+    public async Task LaCurvaTraeLaGrillaDeFamiliaDeUnaOfertaConCantidadMinima()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idLista = await SembrarListaAsync(nombreDeBase);
+        var a = await SembrarArticuloAsync(nombreDeBase, idLista, idFamilia: 7);
+        var sinFamilia = await SembrarArticuloAsync(nombreDeBase, idLista, idFamilia: null);
+        await SembrarOfertaAsync(nombreDeBase, idFamilia: 7);
+
+        var resolucion = await CrearServicio(nombreDeBase).ResolverConEscalonesAsync(
+            [new LineaDeResolucion(a, null, idLista, 1m), new LineaDeResolucion(sinFamilia, null, idLista, 1m)],
+            momento: null);
+
+        Assert.Equal(Lista, resolucion[0].Resultado.PrecioFinal);
+        Assert.Equal(
+            [(2m, 1m, PrecioConOferta)],
+            resolucion[0].EscalonesDeFamilia!.Select(e => (e.CantidadDeFamiliaDesde, e.CantidadDesde, e.PrecioFinal)));
+        Assert.Null(resolucion[1].EscalonesDeFamilia);
+    }
+
+    [Fact]
     public async Task UnSoloArticuloDeLaFamiliaConCantidadUnoNoCompletaElMinimo()
     {
         var nombreDeBase = Guid.NewGuid().ToString();
