@@ -102,4 +102,18 @@ public class PoliticasTests
 
         Assert.Equal(admitido, resultado.Succeeded);
     }
+
+    [Theory]
+    [InlineData(RolConocido.Vendedor, false)]
+    [InlineData(RolConocido.Root, false)]
+    [InlineData(RolConocido.Supervisor, true)]
+    [InlineData(RolConocido.Admin, true)]
+    public async Task LecturaDeCostosAdmiteSupervisorYAdminUnicamente(RolConocido rol, bool admitido)
+    {
+        var servicio = ConstruirServicioDeAutorizacion();
+
+        var resultado = await servicio.AuthorizeAsync(Usuario(rol), Politicas.LecturaDeCostos);
+
+        Assert.Equal(admitido, resultado.Succeeded);
+    }
 }
