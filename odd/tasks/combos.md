@@ -80,17 +80,22 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
 - [x] T2 — ABM API. `GET/POST/PUT/DELETE /api/combos`, validation (≥ 2 units, Unidad-only,
   live references, unique code with 23505 backstop, 404-first), dissolve/baja guards for a
   family or article used by a combo, integration tests. Route: delegated (writer).
-- [ ] T3 — Sale integration. `id_combo` on the item; combos applied in the decide phase of
+- [x] T3 — Online sale. `id_combo` on the item; combos applied in the decide phase of
   `ServicioDeVentas.EmitirAsync` after ofertas (D1); line-amount discount through
-  `CalculadorDeTotales`; `POST /api/ofertas/resolver` (document aggregation) returns the combo
-  share for the POS preview; offline request line carries the combo fields and the discrepancy
-  audit understands them; query-budget guard updated on purpose. Route: delegated (writer).
-- [ ] T4 — Back office. "Combos" screen (list, create, edit, baja) with component editor
-  (article or family + quantity), menu entry, Vitest tests. Route: delegated (writer).
+  `CalculadorDeTotales`; query-budget guard updated on purpose. Route: delegated (writer).
+- [ ] T3b — Preview and offline (split out of T3, 2026-10-11). `POST /api/ofertas/resolver`
+  (document aggregation) returns the combo share so the POS cart shows the same total the
+  server will charge; offline request line carries the combo fields, and the discrepancy audit
+  and `ExigirMismoContenido` understand them. Route: delegated (writer).
 - [ ] T5 — POS. Snapshot carries combos; TypeScript port of the engine for offline with parity
   tests against the C# cases; "Buscar combo" button; `C` + digits; member picker when a
-  component is a family; ticket shows the combo name; Desktop bump + `pos-v*` tag.
-  Route: delegated (writer).
+  component is a family; ticket shows the combo name (the sale response carries only
+  `idCombo`); Desktop bump + `pos-v*` tag. Route: delegated (writer).
+- [ ] T4 — Back office, LAST on purpose. "Combos" screen (list, create, edit, baja) with
+  component editor (article or family + quantity), menu entry, Vitest tests. Until it ships no
+  combo can exist without calling the API by hand, which keeps the server-side detection
+  dormant while the POS cannot yet preview it (an online client unaware of combos would show
+  the list total and the server would charge the combo total). Route: delegated (writer).
 
 ## Progress
 
@@ -154,6 +159,36 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
   (the ABM check is point-in-time); keep oferta discounts non-negative into the engine; the
   `C` + digits parser accepts 1..999999.
 
+- T2 delivered: PR pablo-nader/ways2026#381 (auto-merge + Auto-fix).
+- T3 implemented on `pnader/combos-venta` — commits `23853064` and `4f8ff1d8` (judgment
+  fixes). Route: delegated writer. Migration `20261011211019_ItemsDeVentaConCombo`
+  (`items_comprobante_venta.id_combo`, composite FK Restrict, index). Gate:
+  `presupuestoOrigen is null && NumeroPreasignado is null && tipo.Signo > 0`. The plan carries
+  discount, `IdCombo` (lowest id among the combos consuming the line) and `IdOferta` (nulled
+  only when every unit is consumed); the retried lambda never queries combos. One extra
+  constant query (candidates pre-filtered by the cart's articles and families), skipped under
+  2 units: checkout budget 16 → 17, one-unit sale pinned at 16. Excluded from detection:
+  non-Unidad articles (by unit of sale), lines without list price, negative oferta discount.
+  `ajuste_manual_porcentaje` applies over the net that already includes the combo share.
+  Response: `ItemEmitido.IdCombo`. Observed (fix actor): build 0 errors; Domain 1203/1203;
+  Application 805/805; integration `Combos|Ventas` 330/330; `has-pending-model-changes` clean
+  (writer run). Parent spot check: `CalculadorDeTotales` 25/25. RED observed only for the
+  calculator; the rest is backed by mutation evidence (9 clause mutants + P1, P3, P5).
+- Judgment-day, T3: round 1 — 0 CRITICAL. Confirmed and fixed in `4f8ff1d8`: P1 candidates
+  pre-filtered by cart, P2 single discount formula + literal test, P3 FK backstop tests, P4
+  manual adjustment documented and tested, P5 lowest-id test, P6 lot and repeated-line tests.
+  Scoped re-judgment: both judges, all resolved, 0 CRITICAL → APPROVED. Delivery-order finding
+  (one judge) accepted: T4 moved last, T3b split out.
+- Consumers of sale lines checked (writer): fiscal composition, libro IVA, profitability,
+  article reports, cash summaries and annulment read persisted `total`/movements → safe.
+- OPEN, owner decisions pending:
+  1. Credit note of a combo sale credits list price (5500 against 5000 paid): NCX prices
+     today's list, not the associated sale's lines.
+  2. Account-consumption reliquidation reprices lines at current list and ignores discounts,
+     so a combo sale on account gets its saving charged back (same as ofertas today).
+  3. Quantity-tier and family-minimum ofertas are resolved over the full quantity before the
+     combo removes units (consequence of D1).
+
 ## Next step
 
-PR for T2 (slice 2), then T3.
+PR for T3 (slice 3); owner answer on the credit-note question; then T3b.
