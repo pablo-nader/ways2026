@@ -61,3 +61,11 @@ auto-merge (owner protocol).
   Actualizar coercion removed → PUT-null test red. Domain 1077/1077, Application 779/779, Integration
   (Articulos|Migracion|DescuentoProveedor) 443/443. Only Admin writes articles (`GestionDeCatalogo`),
   so the coercion never overwrites a discount the writer could not see.
+
+## Judgment Day (round 1, target main...97fbf37b)
+- Judge A: 2 SUGGESTION (nominal overflow guard in backfill; hidden-cost test title wording).
+- Judge B: 1 WARNING (backfill writes a negative nominal for a legacy discount > 100; no CHECK on
+  costo_nominal), 1 SUGGESTION (Spanish comment inside the SQL block; Down() does not revert data).
+- Confirmed severe: 0. Suspect: 0. Contradictions: 0. Info: 4 (both judges flag the unguarded
+  result range of the backfill; only Admin writes articles so the null→0 path cannot hide a discount).
+- JUDGMENT: APPROVED. Follow-up: range guard / CHECK on costo_nominal if legacy data shows discounts > 100.
