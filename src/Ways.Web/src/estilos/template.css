@@ -150,3 +150,12 @@ body.login,
   margin: 0;
   font-size: 12px;
 }
+
+/* ----- Modal ----- */
+
+/* El modal xl de Bootstrap se queda en 1140px: en pantallas anchas el formulario de artículo usa ~90% del ancho. */
+@media (min-width: 1200px) {
+  .modal-xl {
+    --bs-modal-width: max(1140px, 90vw);
+  }
+}

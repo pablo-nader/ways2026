@@ -46,7 +46,7 @@ export const CAMPOS_COMPARTIDOS: readonly CampoCompartido[] = [
   { clave: 'costoLista', columna: 'costo_lista', etiqueta: 'Costo de lista', tipo: 'decimal' },
   { clave: 'costoListaPor', columna: 'costo_lista_por', etiqueta: 'Costo de lista por', tipo: 'otro' },
   { clave: 'costoListaIncluyeIva', columna: 'costo_lista_incluye_iva', etiqueta: 'Costo de lista incluye IVA', tipo: 'otro' },
-  { clave: 'descuentoProveedor', columna: 'descuento_proveedor', etiqueta: 'Descuento de proveedor', tipo: 'decimal' },
+  { clave: 'descuentoProveedor', columna: 'descuento_proveedor', etiqueta: 'Descuento', tipo: 'decimal' },
   { clave: 'costoNominal', columna: 'costo_nominal', etiqueta: 'Costo nominal', tipo: 'decimal' },
 ]
 

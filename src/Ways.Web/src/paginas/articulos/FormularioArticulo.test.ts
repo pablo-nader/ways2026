@@ -54,6 +54,55 @@ describe('FormularioArticulo — acumulaEnVenta', () => {
   })
 })
 
+describe('FormularioArticulo — descuento por defecto 0', () => {
+  it('un formulario vacío (artículo nuevo) arranca con descuento 0', () => {
+    expect(formularioVacio().descuentoProveedor).toBe('0')
+  })
+
+  it('aFormulario con costos visibles lee un descuento guardado nulo como 0', () => {
+    expect(aFormulario(articuloFixture({ costoLista: 100, costoListaPor: 'Unidad', descuentoProveedor: null })).descuentoProveedor).toBe('0')
+  })
+
+  it('aFormulario con costos visibles conserva el descuento guardado', () => {
+    expect(aFormulario(articuloFixture({ costoListaPor: 'Unidad', descuentoProveedor: 7.5 })).descuentoProveedor).toBe('7.5')
+    expect(aFormulario(articuloFixture({ costoListaPor: 'Unidad', descuentoProveedor: 0 })).descuentoProveedor).toBe('0')
+  })
+
+  it('aFormulario con costos ocultos deja el descuento vacío', () => {
+    const formulario = aFormulario(
+      articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null }),
+    )
+
+    expect(formulario.descuentoProveedor).toBe('')
+    expect(formulario.costoGuardado?.descuentoProveedor).toBe('')
+  })
+
+  it.each([
+    ['vacío', '', 0],
+    ['solo espacios', '  ', 0],
+    ['cero', '0', 0],
+    ['un valor tipeado', '5', 5],
+    ['un valor con decimales', '12.5', 12.5],
+  ])('aAlta y aEdicion mandan el descuento %s como %s', (_nombre, texto, esperado) => {
+    const formulario = { ...formularioVacio(), id: 1, descuentoProveedor: texto }
+
+    expect(aAlta(formulario).descuentoProveedor).toBe(esperado)
+    expect(aEdicion(formulario).descuentoProveedor).toBe(esperado)
+  })
+
+  it('un alta sin tocar el descuento manda 0, no null', () => {
+    expect(aAlta(formularioVacio()).descuentoProveedor).toBe(0)
+  })
+
+  it('aEdicion de un artículo con costos ocultos manda null en el descuento, como el resto de los campos de costo que no ve', () => {
+    const edicion = aEdicion(
+      aFormulario(articuloFixture({ costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null })),
+    )
+
+    expect(edicion.descuentoProveedor).toBeNull()
+  })
+})
+
 describe('FormularioArticulo — familia (doc 10 §3)', () => {
   it('un formulario vacío (artículo nuevo) no tiene familia', () => {
     expect(formularioVacio().idFamilia).toBe('')

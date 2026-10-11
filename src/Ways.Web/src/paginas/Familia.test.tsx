@@ -289,7 +289,7 @@ describe('Familia — el detalle', () => {
         ['Costo de lista', '$ 150,00'],
         ['Costo de lista por', 'Unidad'],
         ['Costo de lista incluye IVA', 'Sí'],
-        ['Descuento de proveedor', '5%'],
+        ['Descuento', '5%'],
         ['Costo nominal', '—'],
       ]),
     )

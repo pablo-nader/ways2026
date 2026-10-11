@@ -111,7 +111,7 @@ export function formularioVacio(): Formulario {
     costoLista: '',
     costoListaPor: 'Unidad',
     costoListaIncluyeIva: true,
-    descuentoProveedor: '',
+    descuentoProveedor: '0',
     costoNominal: '',
     costoGuardado: null,
     costosOcultos: false,
@@ -131,7 +131,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     costoListaPor: a.costoListaPor ?? 'Unidad',
     costoListaIncluyeIva: a.costoListaIncluyeIva ?? true,
     unidadesPorBulto: a.unidadesPorBulto === null ? '' : String(a.unidadesPorBulto),
-    descuentoProveedor: a.descuentoProveedor === null ? '' : String(a.descuentoProveedor),
+    descuentoProveedor: a.descuentoProveedor === null ? (a.costoListaPor === null ? '' : '0') : String(a.descuentoProveedor),
     idAlicuotaIva: a.idAlicuotaIva,
   }
 
@@ -190,7 +190,7 @@ function camposComunes(f: Formulario) {
     unidadesPorBulto: numeroOpcional(f.unidadesPorBulto),
     esProducto: f.esProducto,
     costoLista: numeroOpcional(f.costoLista),
-    descuentoProveedor: numeroOpcional(f.descuentoProveedor),
+    descuentoProveedor: f.costosOcultos ? null : (numeroOpcional(f.descuentoProveedor) ?? 0),
     disponibleParaTodas: f.disponibleParaTodas,
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
@@ -814,7 +814,7 @@ export function FormularioArticulo({
 
             <div className="col-md-2">
               <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
-                Descuento de proveedor (%)
+                Descuento (%)
               </Etiqueta>
               <input
                 id="art-descuento-proveedor"
