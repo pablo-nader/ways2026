@@ -11,7 +11,10 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { Modal } from '../componentes/Modal'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedorFormulario'
+
+const ID_FORMULARIO_PROVEEDOR = 'formulario-proveedor'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -130,6 +133,11 @@ function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSal
  * (`react-async-state` regla 10): puerta modal (`ConfirmacionDeBaja`), token de generación +
  * `ocupadoRef` de re-entrancia compartidos entre guardado y baja, `bloqueado` deja inerte toda la
  * pantalla mientras cualquiera de las dos está en vuelo.
+ *
+ * El alta y la edición viven en un `Modal` (mismo criterio que `PaginaCatalogo.tsx`): un guardado
+ * exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra adentro
+ * (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores de la
+ * carga del listado y de la baja siguen en la pantalla.
  */
 export function Proveedores() {
   const [pagina, setPagina] = useState<PaginaDe<ProveedorListado> | null>(null)
@@ -137,6 +145,7 @@ export function Proveedores() {
   const [busqueda, setBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
@@ -194,6 +203,7 @@ export function Proveedores() {
     ocupadoRef.current = true
     setGuardando(true)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
       try {
@@ -204,7 +214,7 @@ export function Proveedores() {
           await clienteDeProveedores.actualizar(datos.id, alta)
         }
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
@@ -223,6 +233,20 @@ export function Proveedores() {
       ocupadoRef.current = false
       setGuardando(false)
     }
+  }
+
+  function abrirFormulario(valor: Formulario) {
+    setFormulario(valor)
+    setAviso('')
+    setError('')
+    setErrorFormulario('')
+  }
+
+  /** La modal no ofrece cancelar con una escritura en vuelo (`ocupado`), así que cerrar no supersede
+   * ninguna escritura y no acuña generación. */
+  function cancelarFormulario() {
+    setFormulario(null)
+    setErrorFormulario('')
   }
 
   /** Ver `Empresas.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma
@@ -301,11 +325,7 @@ export function Proveedores() {
       <BotonIcono
         icono="agregar"
         className="text-nowrap"
-        onClick={() => {
-          setFormulario(formularioVacio())
-          setAviso('')
-          setError('')
-        }}
+        onClick={() => abrirFormulario(formularioVacio())}
         disabled={bloqueado}
       />
     </nav>
@@ -328,14 +348,15 @@ export function Proveedores() {
         )}
 
         {formulario && (
-          <FormularioProveedor
+          <ModalDeProveedor
             valor={formulario}
             condiciones={condiciones}
             guardando={guardando}
             bloqueado={bloqueado}
+            error={errorFormulario}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
+            onCancelar={cancelarFormulario}
           />
         )}
 
@@ -392,11 +413,7 @@ export function Proveedores() {
                       <BotonIcono
                         icono="editar"
                         className="me-1"
-                        onClick={() => {
-                          setFormulario(aFormulario(p))
-                          setAviso('')
-                          setError('')
-                        }}
+                        onClick={() => abrirFormulario(aFormulario(p))}
                         disabled={bloqueado}
                       />
                       <BotonIcono
@@ -423,11 +440,12 @@ export function Proveedores() {
   )
 }
 
-function FormularioProveedor({
+function ModalDeProveedor({
   valor,
   condiciones,
   guardando,
   bloqueado,
+  error,
   onCambio,
   onGuardar,
   onCancelar,
@@ -436,309 +454,314 @@ function FormularioProveedor({
   condiciones: CondicionFiscalListado[]
   guardando: boolean
   bloqueado: boolean
+  error: string
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
 }) {
   const esNuevo = valor.id === null
 
+  const pie = (
+    <>
+      <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
+        Cancelar
+      </button>
+      <button type="submit" form={ID_FORMULARIO_PROVEEDOR} className="btn btn-success" disabled={bloqueado}>
+        {guardando ? 'Guardando…' : 'Guardar'}
+      </button>
+    </>
+  )
+
   return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
+    <Modal
+      titulo={esNuevo ? 'Nuevo proveedor' : 'Editar proveedor'}
+      tamano="xl"
+      desplazable
+      ocupado={bloqueado}
+      pie={pie}
+      onCerrar={onCancelar}
     >
-      <div className="col-12">
-        <strong>{esNuevo ? 'Nuevo proveedor' : `Editando proveedor ${valor.id}`}</strong>
-      </div>
+      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
+      <form
+        id={ID_FORMULARIO_PROVEEDOR}
+        className="row g-3"
+        autoComplete="off"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onGuardar()
+        }}
+      >
+        <div className="col-12">
+          <strong>Datos fiscales</strong>
+        </div>
 
-      <div className="col-12">
-        <strong>Datos fiscales</strong>
-      </div>
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="p-razon-social">
+            Razón social
+          </label>
+          <input
+            id="p-razon-social"
+            className="form-control"
+            maxLength={150}
+            value={valor.razonSocial}
+            onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
+            disabled={bloqueado}
+            required
+          />
+        </div>
 
-      <div className="col-md-4">
-        <label className="form-label" htmlFor="p-razon-social">
-          Razón social
-        </label>
-        <input
-          id="p-razon-social"
-          className="form-control"
-          maxLength={150}
-          value={valor.razonSocial}
-          onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="p-nombre-fantasia">
+            Nombre de fantasía
+          </label>
+          <input
+            id="p-nombre-fantasia"
+            className="form-control"
+            maxLength={150}
+            value={valor.nombreFantasia}
+            onChange={(e) => onCambio({ ...valor, nombreFantasia: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
 
-      <div className="col-md-4">
-        <label className="form-label" htmlFor="p-nombre-fantasia">
-          Nombre de fantasía
-        </label>
-        <input
-          id="p-nombre-fantasia"
-          className="form-control"
-          maxLength={150}
-          value={valor.nombreFantasia}
-          onChange={(e) => onCambio({ ...valor, nombreFantasia: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="p-cuit">
+            CUIT
+          </label>
+          <input
+            id="p-cuit"
+            className="form-control"
+            maxLength={13}
+            value={valor.cuit}
+            onChange={(e) => onCambio({ ...valor, cuit: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
 
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="p-cuit">
-          CUIT
-        </label>
-        <input
-          id="p-cuit"
-          className="form-control"
-          maxLength={13}
-          value={valor.cuit}
-          onChange={(e) => onCambio({ ...valor, cuit: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="p-condicion-fiscal">
-          Condición fiscal
-        </label>
-        <select
-          id="p-condicion-fiscal"
-          className="form-select"
-          value={valor.idCondicionFiscal}
-          onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
-          disabled={bloqueado}
-          required
-        >
-          <option value="" disabled>
-            Elegir…
-          </option>
-          {condiciones.map((cf) => (
-            <option key={cf.id} value={cf.id}>
-              {cf.nombre}
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="p-condicion-fiscal">
+            Condición fiscal
+          </label>
+          <select
+            id="p-condicion-fiscal"
+            className="form-select"
+            value={valor.idCondicionFiscal}
+            onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
+            disabled={bloqueado}
+            required
+          >
+            <option value="" disabled>
+              Elegir…
             </option>
-          ))}
-        </select>
-      </div>
+            {condiciones.map((cf) => (
+              <option key={cf.id} value={cf.id}>
+                {cf.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <div className="col-12">
-        <strong>Contacto</strong>
-      </div>
+        <div className="col-12">
+          <strong>Contacto</strong>
+        </div>
 
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-domicilio">
-          Domicilio
-        </label>
-        <input
-          id="p-domicilio"
-          className="form-control"
-          maxLength={255}
-          value={valor.domicilio}
-          onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-telefono">
-          Teléfono
-        </label>
-        <input
-          id="p-telefono"
-          className="form-control"
-          maxLength={50}
-          value={valor.telefono}
-          onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-email">
-          Email
-        </label>
-        <input
-          id="p-email"
-          type="email"
-          className="form-control"
-          maxLength={255}
-          value={valor.email}
-          onChange={(e) => onCambio({ ...valor, email: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-margen">
-          Margen (%)
-        </label>
-        <input
-          id="p-margen"
-          type="number"
-          step="0.01"
-          min="0"
-          className="form-control"
-          value={valor.margen}
-          onChange={(e) => onCambio({ ...valor, margen: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-vendedor">
-          Vendedor
-        </label>
-        <input
-          id="p-vendedor"
-          className="form-control"
-          maxLength={150}
-          value={valor.vendedor}
-          onChange={(e) => onCambio({ ...valor, vendedor: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-celular-vendedor">
-          Celular del vendedor
-        </label>
-        <input
-          id="p-celular-vendedor"
-          className="form-control"
-          maxLength={50}
-          value={valor.celularVendedor}
-          onChange={(e) => onCambio({ ...valor, celularVendedor: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-supervisor">
-          Supervisor
-        </label>
-        <input
-          id="p-supervisor"
-          className="form-control"
-          maxLength={150}
-          value={valor.supervisor}
-          onChange={(e) => onCambio({ ...valor, supervisor: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="p-celular-supervisor">
-          Celular del supervisor
-        </label>
-        <input
-          id="p-celular-supervisor"
-          className="form-control"
-          maxLength={50}
-          value={valor.celularSupervisor}
-          onChange={(e) => onCambio({ ...valor, celularSupervisor: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-12">
-        <label className="form-label" htmlFor="p-observaciones">
-          Observaciones
-        </label>
-        <textarea
-          id="p-observaciones"
-          className="form-control"
-          rows={2}
-          value={valor.observaciones}
-          onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
-          disabled={bloqueado}
-        />
-      </div>
-
-      <div className="col-12">
-        <strong>Impuestos de la compra</strong>
-      </div>
-
-      <div className="col-md-4">
-        <div className="form-check">
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-domicilio">
+            Domicilio
+          </label>
           <input
-            id="p-precios-incluyen-iva"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.preciosIncluyenIva}
-            onChange={(e) => onCambio({ ...valor, preciosIncluyenIva: e.target.checked })}
+            id="p-domicilio"
+            className="form-control"
+            maxLength={255}
+            value={valor.domicilio}
+            onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
             disabled={bloqueado}
           />
-          <label className="form-check-label" htmlFor="p-precios-incluyen-iva">
-            Sus precios incluyen IVA
-          </label>
         </div>
-      </div>
 
-      <div className="col-md-4">
-        <div className="form-check">
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-telefono">
+            Teléfono
+          </label>
           <input
-            id="p-percibe-iibb"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.percibeIibb}
-            onChange={(e) => onCambio({ ...valor, percibeIibb: e.target.checked })}
+            id="p-telefono"
+            className="form-control"
+            maxLength={50}
+            value={valor.telefono}
+            onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
             disabled={bloqueado}
           />
-          <label className="form-check-label" htmlFor="p-percibe-iibb">
-            Percibe IIBB
-          </label>
         </div>
-      </div>
 
-      <div className="col-md-4">
-        <div className="form-check">
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-email">
+            Email
+          </label>
           <input
-            id="p-percibe-iva"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.percibeIva}
-            onChange={(e) => onCambio({ ...valor, percibeIva: e.target.checked })}
+            id="p-email"
+            type="email"
+            className="form-control"
+            maxLength={255}
+            value={valor.email}
+            onChange={(e) => onCambio({ ...valor, email: e.target.value })}
             disabled={bloqueado}
           />
-          <label className="form-check-label" htmlFor="p-percibe-iva">
-            Percibe IVA
-          </label>
         </div>
-      </div>
 
-      <div className="col-md-3 d-flex align-items-end">
-        <div className="form-check">
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-margen">
+            Margen (%)
+          </label>
           <input
-            id="p-activo"
-            type="checkbox"
-            className="form-check-input"
-            checked={valor.activo}
-            onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
+            id="p-margen"
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control"
+            value={valor.margen}
+            onChange={(e) => onCambio({ ...valor, margen: e.target.value })}
             disabled={bloqueado}
           />
-          <label className="form-check-label" htmlFor="p-activo">
-            Activo
-          </label>
         </div>
-      </div>
 
-      <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success" disabled={bloqueado}>
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={bloqueado}
-        >
-          Cancelar
-        </button>
-      </div>
-    </form>
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-vendedor">
+            Vendedor
+          </label>
+          <input
+            id="p-vendedor"
+            className="form-control"
+            maxLength={150}
+            value={valor.vendedor}
+            onChange={(e) => onCambio({ ...valor, vendedor: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-celular-vendedor">
+            Celular del vendedor
+          </label>
+          <input
+            id="p-celular-vendedor"
+            className="form-control"
+            maxLength={50}
+            value={valor.celularVendedor}
+            onChange={(e) => onCambio({ ...valor, celularVendedor: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-supervisor">
+            Supervisor
+          </label>
+          <input
+            id="p-supervisor"
+            className="form-control"
+            maxLength={150}
+            value={valor.supervisor}
+            onChange={(e) => onCambio({ ...valor, supervisor: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="p-celular-supervisor">
+            Celular del supervisor
+          </label>
+          <input
+            id="p-celular-supervisor"
+            className="form-control"
+            maxLength={50}
+            value={valor.celularSupervisor}
+            onChange={(e) => onCambio({ ...valor, celularSupervisor: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
+
+        <div className="col-12">
+          <label className="form-label" htmlFor="p-observaciones">
+            Observaciones
+          </label>
+          <textarea
+            id="p-observaciones"
+            className="form-control"
+            rows={2}
+            value={valor.observaciones}
+            onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
+            disabled={bloqueado}
+          />
+        </div>
+
+        <div className="col-12">
+          <strong>Impuestos de la compra</strong>
+        </div>
+
+        <div className="col-md-4">
+          <div className="form-check">
+            <input
+              id="p-precios-incluyen-iva"
+              type="checkbox"
+              className="form-check-input"
+              checked={valor.preciosIncluyenIva}
+              onChange={(e) => onCambio({ ...valor, preciosIncluyenIva: e.target.checked })}
+              disabled={bloqueado}
+            />
+            <label className="form-check-label" htmlFor="p-precios-incluyen-iva">
+              Sus precios incluyen IVA
+            </label>
+          </div>
+        </div>
+
+        <div className="col-md-4">
+          <div className="form-check">
+            <input
+              id="p-percibe-iibb"
+              type="checkbox"
+              className="form-check-input"
+              checked={valor.percibeIibb}
+              onChange={(e) => onCambio({ ...valor, percibeIibb: e.target.checked })}
+              disabled={bloqueado}
+            />
+            <label className="form-check-label" htmlFor="p-percibe-iibb">
+              Percibe IIBB
+            </label>
+          </div>
+        </div>
+
+        <div className="col-md-4">
+          <div className="form-check">
+            <input
+              id="p-percibe-iva"
+              type="checkbox"
+              className="form-check-input"
+              checked={valor.percibeIva}
+              onChange={(e) => onCambio({ ...valor, percibeIva: e.target.checked })}
+              disabled={bloqueado}
+            />
+            <label className="form-check-label" htmlFor="p-percibe-iva">
+              Percibe IVA
+            </label>
+          </div>
+        </div>
+
+        <div className="col-md-3 d-flex align-items-end">
+          <div className="form-check">
+            <input
+              id="p-activo"
+              type="checkbox"
+              className="form-check-input"
+              checked={valor.activo}
+              onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
+              disabled={bloqueado}
+            />
+            <label className="form-check-label" htmlFor="p-activo">
+              Activo
+            </label>
+          </div>
+        </div>
+      </form>
+    </Modal>
   )
 }
