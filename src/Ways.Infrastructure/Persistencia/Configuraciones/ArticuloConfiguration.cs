@@ -88,7 +88,8 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 
         builder.Property(a => a.DescuentoProveedor)
             .HasColumnName("descuento_proveedor")
-            .HasColumnType("numeric(5,2)");
+            .HasColumnType("numeric(5,2)")
+            .HasDefaultValue(0m);
 
         builder.Property(a => a.CostoNominal)
             .HasColumnName("costo_nominal")

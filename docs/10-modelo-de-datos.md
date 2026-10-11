@@ -294,7 +294,8 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     costo_lista_por  text NOT NULL DEFAULT 'Unidad', -- base del costo_lista: 'Unidad' | 'Bulto'
                                              -- CHECK ck_articulos_costo_lista_por; 'Bulto' exige unidades_por_bulto > 0
     costo_lista_incluye_iva boolean NOT NULL DEFAULT true, -- el costo_lista se cargó con IVA incluido
-    descuento_proveedor numeric(5,2) NULL,
+    descuento_proveedor numeric(5,2) NULL DEFAULT 0, -- el servidor guarda 0 cuando no se carga; la lectura
+                                             -- devuelve null solo a quien no ve costos
     costo_nominal    numeric(14,2) NULL,     -- costo por unidad, con IVA y neto del descuento: el servidor lo
                                              -- calcula en el alta y cuando una edición cambia alguna entrada del
                                              -- cálculo; la compra lo pisa con el costo efectivo
