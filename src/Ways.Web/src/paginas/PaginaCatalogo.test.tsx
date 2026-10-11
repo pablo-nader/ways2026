@@ -52,6 +52,167 @@ beforeEach(() => {
   apiDeleteMock.mockReset()
 })
 
+describe('PaginaCatalogo — alta y edición en un modal', () => {
+  it('la primera pantalla es solo la grilla: ni formulario ni diálogo', async () => {
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
+    expect(document.querySelector('form')).toBeNull()
+  })
+
+  it('agregar abre el modal con el título de alta y el formulario vacío', async () => {
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva marca' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeInTheDocument()
+  })
+
+  it('editar abre el modal con el título de edición y la fila cargada', async () => {
+    apiGetMock.mockResolvedValue([marcaFixture({ activo: false })])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Editar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editar marca' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Nike')
+    expect(within(dialogo).getByLabelText('Estado')).toHaveValue('inactivo')
+  })
+
+  it('cancelar cierra el modal sin escribir nada', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('un guardado exitoso cierra el modal, deja el aviso en la pantalla y recarga el listado', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return Promise.resolve(
+        cargas === 1 ? [marcaFixture()] : [marcaFixture(), marcaFixture({ id: 2, nombre: 'Puma' })],
+      )
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Puma".')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock.mock.calls[0][0]).toBe('/catalogos/marcas')
+    expect(await screen.findByRole('cell', { name: 'Puma' })).toBeInTheDocument()
+  })
+
+  it('Enter en el campo envía el formulario del modal', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma{Enter}')
+
+    await screen.findByText('Se creó "Puma".')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un guardado rechazado muestra el error adentro del modal, lo deja abierto y conserva lo tipeado', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva marca' })
+    expect(await within(dialogo).findByText('Ya existe una marca con ese nombre.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Nike')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('el error de un guardado anterior no sobrevive a cancelar y reabrir', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una marca con ese nombre.'))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Ya existe una marca con ese nombre.')
+
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    expect(screen.queryByText('Ya existe una marca con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  it('un guardado ya hecho cuyo refresco falla cierra el modal y avisa en la pantalla', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return cargas === 1
+        ? Promise.resolve([marcaFixture()])
+        : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Puma". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('con el guardado en vuelo el modal no se cierra ni con la × ni con Escape, y un segundo envío se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiPostMock.mockImplementation(() => new Promise<void>(() => {}))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Puma')
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nueva marca' })).toBeInTheDocument()
+  })
+})
+
 describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje', () => {
   it('con modo Fija (default en un alta nueva) los campos idListaBase/porcentaje no están en el DOM', async () => {
     apiGetMock.mockResolvedValue([listaFixture({ id: 1, nombre: 'Fija A' })])
@@ -352,14 +513,15 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
    * click no dispara nada. La única ventana real es la que usa `Empresas.test.tsx` (líneas
    * 498-527): con el form de edición de OTRA fila todavía abierto (`bloqueado` lo deshabilita,
    * pero el `<form>` sigue montado), `fireEvent.submit(form)` dispara `onSubmit` sin pasar por el
-   * botón deshabilitado, y `guardar()` acuña su propia generación mientras la puerta de baja de
+   * botón deshabilitado (el modal del formulario vive en un portal, por eso se lo busca en el
+   * `document`), y `guardar()` acuña su propia generación mientras la puerta de baja de
    * Adidas sigue abierta.
    */
   it('una generación acuñada entre abrir la puerta y confirmar no se traga el 204', async () => {
     const usuario = userEvent.setup()
     apiGetMock.mockResolvedValue([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
     apiPutMock.mockResolvedValue(undefined)
-    const { container } = render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
     await screen.findByText('Nike')
 
     // Editar Nike y, sin cerrarlo, abrir la puerta de baja de Adidas: `bloqueado` sigue en false
@@ -367,7 +529,7 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Editar' }))
     await usuario.click(within(screen.getByRole('row', { name: /Adidas/ })).getByRole('button', { name: 'Eliminar' }))
 
-    const form = container.querySelector('form')
+    const form = document.querySelector('form')
     if (!form) throw new Error('no hay formulario de edición abierto')
     await act(async () => {
       fireEvent.submit(form)
@@ -390,12 +552,12 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
 
     await screen.findByText('Nike')
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    expect(screen.getByText('Editando marca 1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editar marca' })).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Eliminar' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText('Se dio de baja "Nike".')
-    expect(screen.queryByText('Editando marca 1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
