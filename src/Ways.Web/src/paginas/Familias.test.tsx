@@ -692,7 +692,9 @@ describe('Familias — disolver', () => {
     expect(screen.getByText('Talles')).toBeInTheDocument()
   })
 
-  it('un 409 familia_en_uso (la familia tiene ofertas) muestra el motivo del servidor y la familia sigue en el listado', async () => {
+  /** Prueba solo que el mensaje de un DELETE rechazado se muestra tal cual (`copiaDeFalloDeBaja` devuelve el mensaje del
+   * servidor ante cualquier 4xx salvo 404) y que la familia sigue en el listado: no hay una guía propia para `familia_en_uso`. */
+  it('un 409 al disolver muestra el mensaje del servidor y la familia sigue en el listado', async () => {
     apiDeleteMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_en_uso', 'No se puede dar de baja la familia porque tiene ofertas.'))
     await montarYEsperar()
     await userEvent.click(screen.getByRole('button', { name: 'Disolver Sabores' }))

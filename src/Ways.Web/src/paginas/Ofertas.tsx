@@ -49,7 +49,7 @@ function validarFormulario(f: FormularioOferta): string | null {
 function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: CategoriaListado[], familias: FamiliaListado[]): string {
   if (o.idArticulo !== null) return `Artículo #${o.idArticulo}`
   if (o.idGrupo !== null) return `Grupo: ${grupos.find((g) => g.id === o.idGrupo)?.nombre ?? o.idGrupo}`
-  if (o.idFamilia !== null) return `Familia: ${familias.find((f) => f.id === o.idFamilia)?.nombre ?? o.idFamilia}`
+  if (o.idFamilia != null) return `Familia: ${familias.find((f) => f.id === o.idFamilia)?.nombre ?? o.idFamilia}`
   return `Categoría: ${categorias.find((c) => c.id === o.idCategoria)?.nombre ?? o.idCategoria}`
 }
 
@@ -131,7 +131,9 @@ export function Ofertas() {
       .then(setFamilias)
       .catch(() => {
         setFamilias([])
-        agregarAvisoCatalogo('No se pudieron cargar las familias: el alcance por familia no va a estar disponible hasta recargar la página.')
+        agregarAvisoCatalogo(
+          'No se pudieron cargar las familias: no hay familias para elegir hasta recargar la página. Una oferta que ya apunta a una familia se muestra por su número y se puede guardar sin cambiarla.',
+        )
       })
     clienteDeOrganizacion
       .listarEmpresas()
@@ -392,6 +394,9 @@ function FormularioOfertaCampos({
   const esNuevo = valor.id === null
   const opcionesLista = opcionesDeLista(listasPrecio)
   const opcionesFamilia = opcionesDeFamiliaDeOferta(familias)
+  // Una familia que no cargó (o no está en el listado) no puede cambiar el valor de la oferta en silencio: la
+  // opción actual se conserva rotulada como no disponible.
+  const familiaFaltante = valor.idFamilia !== '' && !familias.some((f) => f.id === valor.idFamilia)
 
   function alternarDia(dia: number) {
     const yaEsta = valor.diasSemana.includes(dia)
@@ -580,6 +585,7 @@ function FormularioOfertaCampos({
                 <option value="" disabled>
                   Elegir…
                 </option>
+                {familiaFaltante && <option value={valor.idFamilia}>Familia #{valor.idFamilia} (no disponible)</option>}
                 {opcionesFamilia.map((o) => (
                   <option key={o.valor} value={o.valor}>
                     {o.etiqueta}

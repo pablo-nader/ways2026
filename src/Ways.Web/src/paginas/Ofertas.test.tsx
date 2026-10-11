@@ -257,7 +257,7 @@ describe('Ofertas — alcance por familia', () => {
     render(<Ofertas />)
 
     expect(
-      await screen.findByText(/No se pudieron cargar las familias: el alcance por familia no va a estar disponible hasta recargar la página\./),
+      await screen.findByText(/No se pudieron cargar las familias: no hay familias para elegir hasta recargar la página\. Una oferta que ya apunta a una familia se muestra por su número y se puede guardar sin cambiarla\./),
     ).toBeInTheDocument()
     expect(screen.getByText('Oferta existente')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
@@ -298,8 +298,8 @@ describe('Ofertas — alcance por familia', () => {
     )
   })
 
-  /** Con el listado de familias caído el select no tiene la opción de la oferta, pero el estado conserva `idFamilia`: guardar no le
-   * quita el alcance a la oferta. */
+  /** Con el listado de familias caído la oferta no tiene su familia entre las opciones: el select muestra una opción de respaldo
+   * con el id, seleccionada, y el estado conserva `idFamilia`, así que guardar no le quita el alcance a la oferta. */
   it('editar una oferta de familia con el listado de familias caído no le quita la familia al guardar', async () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta }, familias: null })
@@ -310,6 +310,9 @@ describe('Ofertas — alcance por familia', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
     expect(await screen.findByRole('radio', { name: 'Familia' })).toBeChecked()
+    const select = screen.getByLabelText('Familia objetivo')
+    expect(select).toHaveValue('7')
+    expect(within(select).getByRole('option', { name: 'Familia #7 (no disponible)' })).toHaveProperty('selected', true)
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
     await screen.findByText('Oferta "Oferta existente" actualizada.')

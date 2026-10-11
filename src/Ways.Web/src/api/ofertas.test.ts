@@ -207,6 +207,28 @@ describe('aValoresOferta — deriva alcance y beneficio', () => {
     expect(aValoresOferta(ofertaFixture({ idGrupo: 3 })).idFamilia).toBe('')
   })
 
+  /** Cláusula bajo prueba: `idFamilia != null` (y no `!== null`) trata el campo ausente como "sin familia" — una API
+   * desplegada antes que este cambio no manda `idFamilia`, y `undefined !== null` abriría una oferta de categoría como Familia. */
+  it('un payload sin el campo idFamilia y con idCategoria deriva Categoria', () => {
+    const payload: Record<string, unknown> = { ...ofertaFixture({ idCategoria: 9 }) }
+    delete payload.idFamilia
+
+    const valores = aValoresOferta(payload as unknown as OfertaListado)
+
+    expect(valores.alcance).toBe('Categoria')
+    expect(valores.idFamilia).toBe('')
+  })
+
+  it('con dos columnas de alcance cargadas a la vez gana la primera de Artículo, Grupo, Familia, Categoría', () => {
+    expect(aValoresOferta(ofertaFixture({ idArticulo: 1, idGrupo: 2, idFamilia: 3, idCategoria: 4 })).alcance).toBe('Articulo')
+    expect(aValoresOferta(ofertaFixture({ idGrupo: 2, idFamilia: 3, idCategoria: 4 })).alcance).toBe('Grupo')
+    expect(aValoresOferta(ofertaFixture({ idFamilia: 3, idCategoria: 4 })).alcance).toBe('Familia')
+  })
+
+  it('con todas las columnas de alcance en null cae en Categoria', () => {
+    expect(aValoresOferta(ofertaFixture()).alcance).toBe('Categoria')
+  })
+
   it('deriva beneficio PrecioUnitario cuando precioUnitario no es null', () => {
     const valores = aValoresOferta(ofertaFixture({ idArticulo: 1, precioUnitario: 50 }))
     expect(valores.beneficio).toBe('PrecioUnitario')

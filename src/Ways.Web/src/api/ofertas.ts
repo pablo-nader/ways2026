@@ -149,7 +149,7 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
  */
 export function aValoresOferta(o: OfertaListado): FormularioOferta {
   const alcance: AlcanceOferta =
-    o.idArticulo !== null ? 'Articulo' : o.idGrupo !== null ? 'Grupo' : o.idFamilia !== null ? 'Familia' : 'Categoria'
+    o.idArticulo !== null ? 'Articulo' : o.idGrupo !== null ? 'Grupo' : o.idFamilia != null ? 'Familia' : 'Categoria'
   const beneficio: BeneficioOferta =
     o.precioUnitario !== null ? 'PrecioUnitario' : o.porcentaje !== null ? 'Porcentaje' : 'ImporteFijo'
 
