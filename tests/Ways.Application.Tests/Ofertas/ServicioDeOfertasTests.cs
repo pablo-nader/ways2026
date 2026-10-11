@@ -622,7 +622,7 @@ public class ServicioDeOfertasTests
     }
 
     [Fact]
-    public async Task ListarDejaSinNombreUnArticuloDadoDeBajaAunIncluyendoOfertasEliminadas()
+    public async Task ListarDejaSinNombreUnArticuloDadoDeBajaConYSinIncluirEliminados()
     {
         var nombreDeBase = Guid.NewGuid().ToString();
         var idArticulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, "Dado de baja", dadoDeBaja: true);
