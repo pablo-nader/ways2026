@@ -260,6 +260,9 @@ public class ServicioDeArticulos(
     /// de una familia escriben auditoría propia, así que no hay filas de auditoría que agregar.</para></summary>
     public async Task<ArticuloListado> CrearAsync(AltaArticulo datos, CancellationToken ct = default)
     {
+        // Un descuento sin cargar es 0, nunca nulo: el cálculo y lo guardado coinciden.
+        datos = datos with { DescuentoProveedor = datos.DescuentoProveedor ?? 0m };
+
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
         var codigoInterno = NormalizarCodigoInternoOpcional(datos.CodigoInterno);
@@ -494,6 +497,9 @@ public class ServicioDeArticulos(
 
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var descripcion = NormalizarOpcional(datos.Descripcion, "descripcion", null);
+
+        // Un descuento sin cargar es 0, nunca nulo: el cálculo y lo guardado coinciden.
+        datos = datos with { DescuentoProveedor = datos.DescuentoProveedor ?? 0m };
 
         ExigirIdRequerido(datos.IdArea, "id_area");
         ExigirIdRequerido(datos.IdAlicuotaIva, "id_alicuota_iva");
