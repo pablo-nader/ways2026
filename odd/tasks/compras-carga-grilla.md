@@ -53,6 +53,7 @@ Slice 3 — items grid (web):
 - 2026-10-10 (slice 3): article costs are IVA-inclusive, so the prefilled Importe is netted when the receipt discriminates IVA and prices are net.
 - 2026-10-10 (slice 3): a loaded line keeps its stored `actualizaCosto`.
 - 2026-10-10 (owner): on a supplier change, rows resolved by code are cleared (article, Importe, Descuento, IVA) and looked up again from scratch after an explicit confirmation, replacing the per-cell snapshot (`prefillDeCodigo`). Rows chosen by search or created with "+", loaded-draft rows and conceptos are untouched; with no code-resolved row there is no prompt.
+- 2026-10-11 (backend #359): the prefilled Importe is derived from the list cost normalized to per unit and IVA-inclusive using `costoListaPor` and `costoListaIncluyeIva` (list cost is stored as loaded), then netted when the receipt discriminates IVA with net prices; the quick-create modal declares its cost per unit, without IVA when the Importe is a net price.
 
 ## Review
 
