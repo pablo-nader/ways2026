@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChangeEvent, FormEvent, MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent, MouseEvent, RefObject } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePublico } from '../api/publico'
@@ -11,7 +11,9 @@ import {
   LARGO_MAXIMO_DEL_TAGLINE,
   aBorrador,
   aEdicion,
+  borradorTieneCambios,
   colorParaElSelector,
+  copiaDeFalloDeLecturaDeVitrina,
   copiaDeFalloDeVitrina,
   debeReleerTrasFallo,
   eliminarVitrina,
@@ -29,7 +31,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 
-const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const COLA_DEL_REFRESCO_FALLIDO = 'pero no se pudo actualizar la vista. Recargá la pantalla.'
 const COPIA_COLOR_INVALIDO = 'Usá el formato #rrggbb, por ejemplo #f7991c.'
 
 type Rechazo = { codigo: string | null; texto: string }
@@ -43,7 +45,8 @@ type Puerta = 'logo' | 'vitrina'
  *
  * Lo guardado (`vitrina`) y lo que se está editando (`borrador`) son estados separados: subir o
  * quitar el logo es otra escritura y no pisa lo escrito en el formulario sin guardar. Solo elegir
- * empresa, guardar y eliminar reinician el borrador.
+ * empresa, guardar y eliminar reinician el borrador. Elegir otra empresa con cambios sin guardar
+ * pide confirmación antes (`empresaPendiente`); mientras se decide, la pantalla queda inerte.
  *
  * Contrato de invalidación (`react-async-state` reglas 2-4): tres lecturas, cada una con su
  * generación. `generacionEmpresas` y `generacionSitio` las acuña el montaje. `generacionVitrina` la
@@ -59,7 +62,8 @@ type Puerta = 'logo' | 'vitrina'
 export function Vitrina() {
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [errorDeEmpresas, setErrorDeEmpresas] = useState('')
-  const [sitio, setSitio] = useState<SitioPublico | null>(null)
+  /** `null` mientras se lee; `'fallo'` si no se pudo leer. */
+  const [sitio, setSitio] = useState<SitioPublico | 'fallo' | null>(null)
 
   const [idEmpresa, setIdEmpresa] = useState('')
   const [vitrina, setVitrina] = useState<VitrinaAdmin | null>(null)
@@ -80,6 +84,8 @@ export function Vitrina() {
   const [escribiendo, setEscribiendo] = useState<'guardar' | 'logo' | null>(null)
   /** Confirmación pendiente. La puerta es modal: ver `bloqueado`. */
   const [puerta, setPuerta] = useState<Puerta | null>(null)
+  /** Empresa elegida mientras se confirma descartar los cambios sin guardar. También bloquea. */
+  const [empresaPendiente, setEmpresaPendiente] = useState<string | null>(null)
   /** Control que abrió la puerta, capturado en su `onClick` (ver `ConfirmacionDeBaja.tsx`). */
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
@@ -89,6 +95,7 @@ export function Vitrina() {
   /** Espejo SÍNCRONO de `ocupado` y única guarda de re-entrancia: dos disparos del mismo tick leen
    * el mismo render. Se apaga en el `finally` de cada escritura, sin gate. */
   const ocupadoRef = useRef(false)
+  const selectorDeEmpresaRef = useRef<HTMLSelectElement>(null)
 
   const cargarVitrina = useCallback(
     async (id: number, token: number, opciones: { propagar?: boolean; reiniciarBorrador: boolean }) => {
@@ -102,7 +109,7 @@ export function Vitrina() {
       } catch (e) {
         if (generacionVitrina.current !== token) return
         if (opciones.propagar) throw e
-        setErrorDeLectura(copiaDeFalloDeVitrina(e, 'No se pudo cargar la vitrina.'))
+        setErrorDeLectura(copiaDeFalloDeLecturaDeVitrina(e))
       } finally {
         if (generacionVitrina.current === token) setCargandoVitrina(false)
       }
@@ -125,6 +132,7 @@ export function Vitrina() {
       setErrorDeAccion('')
       setAviso('')
       setErrorDeLectura('')
+      setEmpresaPendiente(null)
       setIdEmpresa(valor)
       setVitrina(null)
       setBorrador(null)
@@ -162,18 +170,19 @@ export function Vitrina() {
         if (generacionSitio.current === token) setSitio(conocido)
       })
       .catch(() => {
-        // Sin el sitio conocido no se ofrece el enlace: la ayuda genérica de abajo sigue siendo cierta.
+        if (generacionSitio.current === token) setSitio('fallo')
       })
   }, [])
 
   /** La relectura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (regla 6). */
-  async function refrescarTrasEscribir(id: number, mensajeOk: string, reiniciarBorrador: boolean) {
-    setAviso(mensajeOk)
+  async function refrescarTrasEscribir(id: number, frase: string, reiniciarBorrador: boolean) {
+    setErrorDeLectura('')
+    setAviso(`${frase}.`)
     try {
       await cargarVitrina(id, ++generacionVitrina.current, { propagar: true, reiniciarBorrador })
     } catch {
-      setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+      setAviso(`${frase}, ${COLA_DEL_REFRESCO_FALLIDO}`)
     }
   }
 
@@ -213,6 +222,7 @@ export function Vitrina() {
 
       setVitrina(guardada)
       setBorrador(aBorrador(guardada))
+      setErrorDeLectura('')
       setAviso('Se guardó la vitrina.')
     } finally {
       ocupadoRef.current = false
@@ -253,6 +263,7 @@ export function Vitrina() {
       // El servidor contesta la vitrina entera con el `logoVersion` nuevo: la vista previa se
       // refresca con eso. El borrador no se toca.
       setVitrina(actualizada)
+      setErrorDeLectura('')
       setAviso('Se subió el logo.')
     } finally {
       ocupadoRef.current = false
@@ -279,7 +290,7 @@ export function Vitrina() {
       }
 
       setPuerta(null)
-      await refrescarTrasEscribir(id, 'Se quitó el logo.', false)
+      await refrescarTrasEscribir(id, 'Se quitó el logo', false)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -303,7 +314,7 @@ export function Vitrina() {
       }
 
       setPuerta(null)
-      await refrescarTrasEscribir(id, 'Se eliminó la vitrina.', true)
+      await refrescarTrasEscribir(id, 'Se eliminó la vitrina', true)
     } finally {
       ocupadoRef.current = false
       setOcupado(false)
@@ -322,21 +333,36 @@ export function Vitrina() {
     setPuerta(null)
   }
 
+  /** Elegir otra empresa con cambios sin guardar pregunta antes de descartarlos. */
+  function pedirEmpresa(valor: string) {
+    if (vitrina !== null && borrador !== null && borradorTieneCambios(borrador, vitrina)) {
+      setEmpresaPendiente(valor)
+
+      return
+    }
+
+    elegirEmpresa(valor)
+  }
+
   /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo. */
-  const bloqueado = ocupado || puerta !== null
+  const bloqueado = ocupado || puerta !== null || empresaPendiente !== null
   /** Mientras la vitrina se lee no se escribe sobre ella; elegir otra empresa sí está permitido. */
   const inerte = bloqueado || cargandoVitrina
 
-  const opciones = opcionesDeEmpresaParaVitrina(empresas ?? [])
+  const opciones = useMemo(() => opcionesDeEmpresaParaVitrina(empresas ?? []), [empresas])
   const nombreElegido = opciones.find((o) => o.valor === idEmpresa)?.etiqueta ?? ''
   const idElegido = Number(idEmpresa)
 
   return (
     <div className="container-fluid py-4">
       <Box titulo="Vitrina" variante="inverse">
-        {errorDeEmpresas && <div className="alert alert-danger">{errorDeEmpresas}</div>}
+        {errorDeEmpresas && (
+          <div className="alert alert-danger" role="alert">
+            {errorDeEmpresas}
+          </div>
+        )}
         {errorDeLectura && (
-          <div className="alert alert-danger d-flex align-items-center justify-content-between gap-2">
+          <div className="alert alert-danger d-flex align-items-center justify-content-between gap-2" role="alert">
             <span>{errorDeLectura}</span>
             {vitrina === null && idEmpresa !== '' && (
               <button
@@ -350,8 +376,16 @@ export function Vitrina() {
             )}
           </div>
         )}
-        {errorDeAccion && <div className="alert alert-danger">{errorDeAccion}</div>}
-        {aviso && <div className="alert alert-success">{aviso}</div>}
+        {errorDeAccion && (
+          <div className="alert alert-danger" role="alert">
+            {errorDeAccion}
+          </div>
+        )}
+        {aviso && (
+          <div className="alert alert-success" role="status">
+            {aviso}
+          </div>
+        )}
 
         {puerta === 'logo' && (
           <ConfirmacionDeBaja
@@ -391,8 +425,9 @@ export function Vitrina() {
               <select
                 id="vit-empresa"
                 className="form-select"
+                ref={selectorDeEmpresaRef}
                 value={idEmpresa}
-                onChange={(e) => elegirEmpresa(e.target.value)}
+                onChange={(e) => pedirEmpresa(e.target.value)}
                 disabled={bloqueado}
               >
                 <option value="">Elegir una empresa…</option>
@@ -403,6 +438,15 @@ export function Vitrina() {
                 ))}
               </select>
             </div>
+
+            {empresaPendiente !== null && (
+              <ConfirmacionDeDescarte
+                nombre={nombreElegido}
+                retorno={selectorDeEmpresaRef}
+                onDescartar={() => elegirEmpresa(empresaPendiente)}
+                onSeguir={() => setEmpresaPendiente(null)}
+              />
+            )}
 
             {idEmpresa !== '' &&
               (vitrina === null || borrador === null ? (
@@ -436,6 +480,47 @@ export function Vitrina() {
           </>
         )}
       </Box>
+    </div>
+  )
+}
+
+type PropsDeLaConfirmacionDeDescarte = {
+  nombre: string
+  /** Selector de empresa, al que vuelve el foco cuando el aviso se cierra. */
+  retorno: RefObject<HTMLSelectElement | null>
+  onDescartar: () => void
+  onSeguir: () => void
+}
+
+/**
+ * Aviso en línea de que cambiar de empresa descarta lo escrito. No usa `ConfirmacionDeBaja` porque
+ * su etiqueta de cancelar y su pregunta son fijas. La pantalla queda inerte mientras está montado
+ * (`bloqueado`), así que no hace falta una trampa de foco. Al desmontarse devuelve el foco al
+ * selector, que para entonces ya está habilitado de nuevo.
+ */
+function ConfirmacionDeDescarte({ nombre, retorno, onDescartar, onSeguir }: PropsDeLaConfirmacionDeDescarte) {
+  const seguirRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    seguirRef.current?.focus()
+    const destino = retorno.current
+
+    return () => destino?.focus()
+  }, [retorno])
+
+  return (
+    <div className="alert alert-warning">
+      <p className="mb-2" role="alert">
+        Hay cambios sin guardar en la vitrina de "{nombre}". Si elegís otra empresa se pierden.
+      </p>
+      <div className="d-flex gap-2">
+        <button type="button" className="btn btn-danger" onClick={onDescartar}>
+          Descartar cambios
+        </button>
+        <button ref={seguirRef} type="button" className="btn btn-outline-secondary" onClick={onSeguir}>
+          Seguir editando
+        </button>
+      </div>
     </div>
   )
 }
@@ -634,17 +719,29 @@ type PropsDelLogo = {
 
 /** El logo se sube y se quita aparte del formulario: cada uno es su propia escritura. */
 function BloqueDeLogo({ idEmpresa, vitrina, error, inerte, subiendo, onElegir, onQuitar }: PropsDelLogo) {
+  /** URL que el navegador no pudo mostrar. Va por URL y no por booleano: subir otro logo cambia la
+   * versión y con ella la URL, así que la vista previa vuelve sola. */
+  const [urlRota, setUrlRota] = useState<string | null>(null)
+  const urlDelLogo = urlDelLogoAdmin(idEmpresa, vitrina.logoVersion)
+
   return (
     <section className="border p-3 mb-4 bg-body" aria-labelledby="vit-logo-titulo">
       <h6 id="vit-logo-titulo">Logo</h6>
 
       {vitrina.tieneLogo ? (
-        <img
-          src={urlDelLogoAdmin(idEmpresa, vitrina.logoVersion)}
-          alt="Logo actual"
-          className="d-block mb-3 border"
-          style={{ maxWidth: 240, maxHeight: 160 }}
-        />
+        urlRota === urlDelLogo ? (
+          <p className="text-muted" role="status">
+            No se pudo mostrar el logo.
+          </p>
+        ) : (
+          <img
+            src={urlDelLogo}
+            alt="Logo actual"
+            className="d-block mb-3 border"
+            style={{ maxWidth: 240, maxHeight: 160 }}
+            onError={() => setUrlRota(urlDelLogo)}
+          />
+        )
       ) : (
         <p className="text-muted">Todavía no hay un logo cargado.</p>
       )}
@@ -685,8 +782,14 @@ function BloqueDeLogo({ idEmpresa, vitrina, error, inerte, subiendo, onElegir, o
  * La página vive en `/` del dominio del comercio. Solo bajo ese dominio, y con la vitrina ya
  * publicada (la guardada, no el borrador), el enlace lleva a una página que existe.
  */
-function EnlaceALaPagina({ sitio, publicada }: { sitio: SitioPublico | null; publicada: boolean }) {
-  if (sitio === null || sitio.esPlataforma) {
+function EnlaceALaPagina({ sitio, publicada }: { sitio: SitioPublico | 'fallo' | null; publicada: boolean }) {
+  if (sitio === null) return null
+
+  if (sitio === 'fallo') {
+    return <p className="text-muted small mb-0">No pudimos comprobar el dominio del comercio.</p>
+  }
+
+  if (sitio.esPlataforma) {
     return (
       <p className="text-muted small mb-0">
         La página de la vitrina se ve bajo el dominio propio del comercio, no desde esta dirección.
@@ -700,7 +803,7 @@ function EnlaceALaPagina({ sitio, publicada }: { sitio: SitioPublico | null; pub
 
   return (
     <a href="/" target="_blank" rel="noopener noreferrer">
-      Ver la página
+      Ver la página <span className="visually-hidden">(se abre en una pestaña nueva)</span>
     </a>
   )
 }

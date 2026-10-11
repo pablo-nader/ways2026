@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi, ErrorDeRed } from './cliente'
-import { COPIA_RESULTADO_INCIERTO } from './bajas'
 import type { EmpresaListado, VitrinaAdmin } from './tipos'
 
 const apiMock = vi.hoisted(() => ({
@@ -19,10 +18,13 @@ vi.mock('./cliente', async (importarOriginal) => {
 const {
   ACEPTAR_LOGO,
   COLOR_DE_MARCA,
+  COPIA_RESULTADO_INCIERTO_DE_VITRINA,
   TAMANO_MAXIMO_DEL_LOGO,
   aBorrador,
   aEdicion,
+  borradorTieneCambios,
   colorParaElSelector,
+  copiaDeFalloDeLecturaDeVitrina,
   copiaDeFalloDeVitrina,
   debeReleerTrasFallo,
   eliminarVitrina,
@@ -287,9 +289,16 @@ describe('copiaDeFalloDeVitrina', () => {
     )
   })
 
+  it('el resultado incierto manda a revisar la vitrina, no un listado que esta pantalla no tiene', () => {
+    expect(COPIA_RESULTADO_INCIERTO_DE_VITRINA).toBe(
+      'No se pudo confirmar el resultado: revisá la vitrina antes de reintentar.',
+    )
+    expect(COPIA_RESULTADO_INCIERTO_DE_VITRINA).not.toMatch(/listado/)
+  })
+
   it('un 5xx sin marca manda a verificar', () => {
     expect(copiaDeFalloDeVitrina(new ErrorApi(500, 'error_interno', 'boom'), ENCABEZADO)).toBe(
-      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO}`,
+      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO_DE_VITRINA}`,
     )
   })
 
@@ -301,19 +310,67 @@ describe('copiaDeFalloDeVitrina', () => {
 
   it('un resultado_incierto sin texto cae en la copia genérica', () => {
     expect(copiaDeFalloDeVitrina(new ErrorApi(503, 'resultado_incierto', '  '), ENCABEZADO)).toBe(
-      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO}`,
+      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO_DE_VITRINA}`,
     )
   })
 
   it('un error que no es de la API tampoco dice si se escribió', () => {
     expect(copiaDeFalloDeVitrina(new ErrorDeRed(new TypeError('x')), ENCABEZADO)).toBe(
-      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO}`,
+      `${ENCABEZADO} ${COPIA_RESULTADO_INCIERTO_DE_VITRINA}`,
     )
   })
 
   it('cualquier otro rechazo rinde el mensaje de la API, o el encabezado si viene vacío', () => {
     expect(copiaDeFalloDeVitrina(new ErrorApi(400, 'otro', 'Algo salió mal.'), ENCABEZADO)).toBe('Algo salió mal.')
     expect(copiaDeFalloDeVitrina(new ErrorApi(400, 'otro', ' '), ENCABEZADO)).toBe(ENCABEZADO)
+  })
+})
+
+describe('copiaDeFalloDeLecturaDeVitrina', () => {
+  it('un 404 dice que la empresa ya no existe', () => {
+    expect(copiaDeFalloDeLecturaDeVitrina(new ErrorApi(404, 'no_encontrado', 'x'))).toBe(
+      'No se pudo cargar la vitrina. La empresa ya no existe. Actualizá la pantalla.',
+    )
+  })
+
+  it('cualquier otro fallo, también de red, invita a probar de nuevo sin hablar de reintentar una escritura', () => {
+    for (const error of [new ErrorApi(500, 'error_interno', 'boom'), new ErrorApi(400, 'otro', 'x'), new ErrorDeRed(new TypeError('x'))]) {
+      expect(copiaDeFalloDeLecturaDeVitrina(error)).toBe('No se pudo cargar la vitrina. Probá de nuevo.')
+    }
+  })
+})
+
+describe('borradorTieneCambios', () => {
+  const guardada = vitrina({ publicada: true, tagline: 'Siempre cerca', descripcion: null, colorAcento: '#336699', tema: 'claro' })
+  const igual = aBorrador(guardada)
+
+  it('el borrador recién armado desde lo guardado no tiene cambios', () => {
+    expect(borradorTieneCambios(igual, guardada)).toBe(false)
+  })
+
+  it('un espacio de más o un texto de solo espacios no es un cambio', () => {
+    expect(borradorTieneCambios({ ...igual, tagline: ' Siempre cerca ', descripcion: '   ', colorAcento: '#336699 ' }, guardada)).toBe(false)
+  })
+
+  it.each([
+    ['publicada', { publicada: false }],
+    ['slogan', { tagline: 'Otro' }],
+    ['descripción', { descripcion: 'Algo' }],
+    ['color', { colorAcento: '#000000' }],
+    ['tema', { tema: 'oscuro' as const }],
+  ])('cambiar %s es un cambio', (_campo, cambio) => {
+    expect(borradorTieneCambios({ ...igual, ...cambio }, guardada)).toBe(true)
+  })
+
+  it('vaciar un texto guardado es un cambio', () => {
+    expect(borradorTieneCambios({ ...igual, tagline: '' }, guardada)).toBe(true)
+  })
+
+  it('una empresa sin vitrina guardada compara contra el borrador vacío', () => {
+    const sinVitrina = vitrina({ existe: false, publicada: false, tagline: null, descripcion: null, colorAcento: null, tema: 'oscuro' })
+
+    expect(borradorTieneCambios(aBorrador(sinVitrina), sinVitrina)).toBe(false)
+    expect(borradorTieneCambios({ ...aBorrador(sinVitrina), tagline: 'Hola' }, sinVitrina)).toBe(true)
   })
 })
 

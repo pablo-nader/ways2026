@@ -5,7 +5,7 @@
  * rechazos, opciones del selector de empresa).
  */
 import { api, ErrorApi } from './cliente'
-import { COPIA_RESULTADO_INCIERTO, CODIGO_RESULTADO_INCIERTO } from './bajas'
+import { CODIGO_RESULTADO_INCIERTO } from './bajas'
 import { urlBaseApi } from './entornoTauri'
 import type { EmpresaListado, TemaDeVitrina, VitrinaAdmin, VitrinaEdicion } from './tipos'
 
@@ -115,6 +115,21 @@ export function aEdicion(borrador: BorradorDeVitrina): VitrinaEdicion {
   }
 }
 
+/** Compara el borrador con lo guardado tras la misma normalización que `aEdicion`: un espacio al
+ * final o un texto de solo espacios no cuentan como cambio. */
+export function borradorTieneCambios(borrador: BorradorDeVitrina, guardada: VitrinaAdmin): boolean {
+  const escrito = aEdicion(borrador)
+  const original = aEdicion(aBorrador(guardada))
+
+  return (
+    escrito.publicada !== original.publicada ||
+    escrito.tagline !== original.tagline ||
+    escrito.descripcion !== original.descripcion ||
+    escrito.colorAcento !== original.colorAcento ||
+    escrito.tema !== original.tema
+  )
+}
+
 /** Una opción del selector de empresa. */
 export type OpcionDeEmpresa = { valor: string; etiqueta: string }
 
@@ -168,9 +183,15 @@ const COPIA_POR_ESTADO: ReadonlyMap<number, string> = new Map([
   [415, COPIA_LOGO_NO_ADMITIDO],
 ])
 
+/** Esta pantalla no tiene listado: lo que se revisa es la propia vitrina. */
+export const COPIA_RESULTADO_INCIERTO_DE_VITRINA =
+  'No se pudo confirmar el resultado: revisá la vitrina antes de reintentar.'
+
+const COPIA_EMPRESA_INEXISTENTE = 'La empresa ya no existe. Actualizá la pantalla.'
+
 /**
- * Texto a mostrar ante el fallo de una lectura o escritura de la vitrina. `encabezado` nombra lo
- * que se intentaba ("No se pudo guardar la vitrina.").
+ * Texto a mostrar ante el fallo de una escritura de la vitrina. `encabezado` nombra lo que se
+ * intentaba ("No se pudo guardar la vitrina.").
  *
  * - Un código conocido (o un 413/415) rinde su copia propia.
  * - Un 404 ya no tiene nada que decir del servidor: la empresa dejó de existir.
@@ -179,21 +200,33 @@ const COPIA_POR_ESTADO: ReadonlyMap<number, string> = new Map([
  * - Cualquier otro rechazo rinde el mensaje de la API.
  */
 export function copiaDeFalloDeVitrina(error: unknown, encabezado: string): string {
-  if (!(error instanceof ErrorApi)) return `${encabezado} ${COPIA_RESULTADO_INCIERTO}`
+  if (!(error instanceof ErrorApi)) return `${encabezado} ${COPIA_RESULTADO_INCIERTO_DE_VITRINA}`
 
   const propia = COPIA_POR_CODIGO.get(error.codigo) ?? COPIA_POR_ESTADO.get(error.estado)
   if (propia) return propia
 
-  if (error.estado === 404) return `${encabezado} La empresa ya no existe. Actualizá la pantalla.`
+  if (error.estado === 404) return `${encabezado} ${COPIA_EMPRESA_INEXISTENTE}`
 
   if (error.estado >= 500) {
     const delServidor = error.message.trim()
     const esCommitAmbiguo = error.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
 
-    return `${encabezado} ${esCommitAmbiguo ? delServidor : COPIA_RESULTADO_INCIERTO}`
+    return `${encabezado} ${esCommitAmbiguo ? delServidor : COPIA_RESULTADO_INCIERTO_DE_VITRINA}`
   }
 
   return error.message.trim() || encabezado
+}
+
+/**
+ * Texto ante el fallo de leer la vitrina. Una lectura no escribe nada, así que no hay resultado que
+ * verificar: solo se distingue la empresa que dejó de existir (404) de cualquier otro fallo.
+ */
+export function copiaDeFalloDeLecturaDeVitrina(error: unknown): string {
+  const encabezado = 'No se pudo cargar la vitrina.'
+
+  if (error instanceof ErrorApi && error.estado === 404) return `${encabezado} ${COPIA_EMPRESA_INEXISTENTE}`
+
+  return `${encabezado} Probá de nuevo.`
 }
 
 /**

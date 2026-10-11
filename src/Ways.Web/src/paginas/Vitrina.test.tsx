@@ -219,7 +219,7 @@ describe('Vitrina — lectura', () => {
     apiGetMock.mockRejectedValue(new ErrorApi(500, 'error_interno', 'Falló la carga.'))
     render(<Vitrina />)
 
-    expect(await screen.findByText('Falló la carga.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Falló la carga.')
   })
 
   it('si falla la vitrina ofrece reintentar y el reintento la pide de nuevo', async () => {
@@ -230,7 +230,8 @@ describe('Vitrina — lectura', () => {
     )
     render(<Vitrina />)
 
-    expect(await screen.findByText(/No se pudo cargar la vitrina\./)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo cargar la vitrina. Probá de nuevo.')
+    expect(screen.queryByText(/listado/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Slogan')).not.toBeInTheDocument()
 
     apiGetMock.mockImplementation(original)
@@ -238,6 +239,19 @@ describe('Vitrina — lectura', () => {
 
     expect(await esperarFormulario()).toHaveValue('Siempre cerca')
     expect(screen.queryByText(/No se pudo cargar la vitrina\./)).not.toBeInTheDocument()
+  })
+
+  it('si la empresa de la vitrina ya no existe, la lectura lo dice', async () => {
+    prepararMundo()
+    const original = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_VITRINA ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'x')) : original(ruta),
+    )
+    render(<Vitrina />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No se pudo cargar la vitrina. La empresa ya no existe. Actualizá la pantalla.',
+    )
   })
 
   /**
@@ -425,9 +439,9 @@ describe('Vitrina — guardado', () => {
   it('un fallo incierto relee la vitrina, conserva lo escrito y deja el mensaje a la vista', async () => {
     const usuario = userEvent.setup()
     const { mundo } = montar()
-    await usuario.type(await esperarFormulario(), ' nuevo')
+    await usuario.type(await esperarFormulario(), ' mío')
     apiPutMock.mockImplementation(() => {
-      mundo.vitrinas[4] = { ...vitrinaNorte, tagline: 'Siempre cerca nuevo', publicada: false }
+      mundo.vitrinas[4] = { ...vitrinaNorte, tagline: 'Lo que quedó en el servidor', publicada: false }
 
       return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar.'))
     })
@@ -435,8 +449,11 @@ describe('Vitrina — guardado', () => {
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar la vitrina. No se pudo confirmar.')
-    await waitFor(() => expect(llamadasA(apiGetMock, RUTA_VITRINA)).toHaveLength(2))
-    expect(screen.getByLabelText('Slogan')).toHaveValue('Siempre cerca nuevo')
+    // La relectura aterrizó cuando lo guardado pasa a "sin publicar": el enlace ya no se ofrece.
+    expect(await screen.findByText(/todavía no está publicada/)).toBeInTheDocument()
+    expect(llamadasA(apiGetMock, RUTA_VITRINA)).toHaveLength(2)
+    expect(screen.getByLabelText('Slogan')).toHaveValue('Siempre cerca mío')
+    expect(screen.getByLabelText('Publicada')).toBeChecked()
   })
 
   it('un 404 relee y el mensaje de que la empresa ya no existe queda a la vista', async () => {
@@ -736,7 +753,9 @@ describe('Vitrina — logo', () => {
     await usuario.click(screen.getByRole('button', { name: 'Quitar logo' }))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
 
-    expect(await screen.findByText(/Se quitó el logo\..*no se pudo actualizar la vista/)).toBeInTheDocument()
+    expect(
+      await screen.findByText('Se quitó el logo, pero no se pudo actualizar la vista. Recargá la pantalla.'),
+    ).toBeInTheDocument()
     expect(screen.queryByText(/No se pudo quitar/)).not.toBeInTheDocument()
   })
 })
@@ -762,6 +781,24 @@ describe('Vitrina — eliminar', () => {
     expect(screen.queryByRole('button', { name: 'Eliminar vitrina' })).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.getByText('Se eliminó la vitrina.')).toBeInTheDocument()
+  })
+
+  it('si la baja commiteó pero la relectura falla, no se informa como fallida', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+    const original = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_VITRINA ? Promise.reject(new ErrorApi(500, 'error_interno', 'Falló.')) : original(ruta),
+    )
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar vitrina' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar eliminación' }))
+
+    expect(
+      await screen.findByText('Se eliminó la vitrina, pero no se pudo actualizar la vista. Recargá la pantalla.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/No se pudo eliminar/)).not.toBeInTheDocument()
   })
 
   it('cancelar la puerta no toca la API', async () => {
@@ -812,31 +849,38 @@ describe('Vitrina — enlace a la página', () => {
     montar()
     await esperarFormulario()
 
-    const enlace = await screen.findByRole('link', { name: 'Ver la página' })
+    const enlace = await screen.findByRole('link', { name: /^Ver la página/ })
     expect(enlace).toHaveAttribute('href', '/')
     expect(enlace).toHaveAttribute('target', '_blank')
     expect(enlace).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(enlace).toHaveAccessibleName('Ver la página (se abre en una pestaña nueva)')
   })
 
-  it('bajo la plataforma no hay enlace y la ayuda dice dónde se ve la página', async () => {
+  it('bajo la plataforma no hay enlace y la ayuda dice dónde se ve la página; mientras se lee el sitio no dice nada', async () => {
     const sitio = diferida<SitioPublico>()
     prepararMundo()
     const original = apiGetMock.getMockImplementation()!
     apiGetMock.mockImplementation((ruta: string) => (ruta === '/publico/sitio' ? sitio.promesa : original(ruta)))
     render(<Vitrina />)
     await esperarFormulario()
+
+    expect(screen.queryByText(/se ve bajo el dominio propio del comercio/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No pudimos comprobar el dominio/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Ver la página/ })).not.toBeInTheDocument()
+
     await act(async () => sitio.resolver(SITIO_DE_PLATAFORMA))
 
-    expect(screen.queryByRole('link', { name: 'Ver la página' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Ver la página/ })).not.toBeInTheDocument()
     expect(screen.getByText(/se ve bajo el dominio propio del comercio/)).toBeInTheDocument()
   })
 
-  it('si el sitio no se pudo leer tampoco hay enlace', async () => {
+  it('si el sitio no se pudo leer no hay enlace y lo dice, sin atribuirlo a la plataforma', async () => {
     montar({ sitio: 'falla' })
     await esperarFormulario()
 
-    expect(screen.queryByRole('link', { name: 'Ver la página' })).not.toBeInTheDocument()
-    expect(screen.getByText(/se ve bajo el dominio propio del comercio/)).toBeInTheDocument()
+    expect(await screen.findByText('No pudimos comprobar el dominio del comercio.')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Ver la página/ })).not.toBeInTheDocument()
+    expect(screen.queryByText(/se ve bajo el dominio propio del comercio/)).not.toBeInTheDocument()
   })
 
   it('con la vitrina sin publicar no hay enlace y la ayuda dice qué falta; publicarla y guardar lo habilita', async () => {
@@ -844,25 +888,222 @@ describe('Vitrina — enlace a la página', () => {
     montar({ vitrinas: { 4: vitrina(4, { tagline: 'Hola' }) } })
     await esperarFormulario()
     expect(await screen.findByText(/todavía no está publicada/)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Ver la página' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Ver la página/ })).not.toBeInTheDocument()
 
     await usuario.click(screen.getByLabelText('Publicada'))
-    expect(screen.queryByRole('link', { name: 'Ver la página' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Ver la página/ })).not.toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    expect(await screen.findByRole('link', { name: 'Ver la página' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /^Ver la página/ })).toBeInTheDocument()
   })
 
   it('desmarcar Publicada sin guardar no quita el enlace de lo que sigue publicado', async () => {
     const usuario = userEvent.setup()
     montar()
     await esperarFormulario()
-    await screen.findByRole('link', { name: 'Ver la página' })
+    await screen.findByRole('link', { name: /^Ver la página/ })
 
     await usuario.click(screen.getByLabelText('Publicada'))
 
-    expect(screen.getByRole('link', { name: 'Ver la página' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /^Ver la página/ })).toBeInTheDocument()
+  })
+})
+
+describe('Vitrina — el error de una relectura fallida no sobrevive a una escritura que sale bien', () => {
+  const ERROR_DE_LECTURA = 'No se pudo cargar la vitrina. Probá de nuevo.'
+
+  /** La relectura de la vitrina falla; todo lo demás sigue funcionando. Devuelve cómo repararla. */
+  function romperLaRelectura() {
+    const original = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_VITRINA ? Promise.reject(new ErrorApi(500, 'error_interno', 'boom')) : original(ruta),
+    )
+
+    return () => apiGetMock.mockImplementation(original)
+  }
+
+  const INCIERTO = new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar.')
+
+  it('un guardado que sale bien lo quita', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+    romperLaRelectura()
+    apiPutMock.mockRejectedValueOnce(INCIERTO)
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(await screen.findByText(ERROR_DE_LECTURA)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+    expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
+  })
+
+  it('una subida de logo que sale bien lo quita', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+    romperLaRelectura()
+    apiPutBinarioMock.mockRejectedValueOnce(INCIERTO)
+
+    await usuario.upload(screen.getByLabelText('Reemplazar el logo'), archivoDeLogo())
+    expect(await screen.findByText(ERROR_DE_LECTURA)).toBeInTheDocument()
+
+    await usuario.upload(screen.getByLabelText('Reemplazar el logo'), archivoDeLogo())
+
+    expect(await screen.findByText('Se subió el logo.')).toBeInTheDocument()
+    expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
+  })
+
+  it('quitar el logo bien lo quita, aunque la relectura de después vuelva a fallar', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+    romperLaRelectura()
+    apiDeleteMock.mockRejectedValueOnce(INCIERTO)
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar logo' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
+    expect(await screen.findByText(ERROR_DE_LECTURA)).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar logo' }))
+
+    expect(
+      await screen.findByText('Se quitó el logo, pero no se pudo actualizar la vista. Recargá la pantalla.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(ERROR_DE_LECTURA)).not.toBeInTheDocument()
+  })
+})
+
+describe('Vitrina — cambios sin guardar al elegir otra empresa', () => {
+  const vitrinaEste = vitrina(5, { tagline: 'Abierto todo el día' })
+
+  async function conCambiosSinGuardar() {
+    const usuario = userEvent.setup()
+    montar({ empresas: [empresaNorte, empresaEste], vitrinas: { 4: vitrinaNorte, 5: vitrinaEste } })
+    await elegirEmpresa(usuario, 4)
+    await usuario.type(await esperarFormulario(), ' mío')
+
+    return usuario
+  }
+
+  it('con cambios pregunta antes de cambiar, deja la pantalla inerte y no lee la otra vitrina', async () => {
+    const usuario = await conCambiosSinGuardar()
+
+    await elegirEmpresa(usuario, 5)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Hay cambios sin guardar en la vitrina de "Almacén Norte"')
+    expect(screen.getByLabelText('Empresa')).toHaveValue('4')
+    expect(screen.getByLabelText('Empresa')).toBeDisabled()
+    expect(screen.getByLabelText('Slogan')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Seguir editando' })).toHaveFocus()
+    expect(llamadasA(apiGetMock, '/empresas/5/vitrina')).toHaveLength(0)
+  })
+
+  it('descartar cambia de empresa y lee su vitrina', async () => {
+    const usuario = await conCambiosSinGuardar()
+    await elegirEmpresa(usuario, 5)
+
+    await usuario.click(screen.getByRole('button', { name: 'Descartar cambios' }))
+
+    expect(await screen.findByDisplayValue('Abierto todo el día')).toBeInTheDocument()
+    expect(screen.getByLabelText('Empresa')).toHaveValue('5')
+    expect(screen.queryByRole('button', { name: 'Descartar cambios' })).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Siempre cerca mío')).not.toBeInTheDocument()
+  })
+
+  it('seguir editando se queda en la empresa con lo escrito intacto y el foco en el selector', async () => {
+    const usuario = await conCambiosSinGuardar()
+    await elegirEmpresa(usuario, 5)
+
+    await usuario.click(screen.getByRole('button', { name: 'Seguir editando' }))
+
+    expect(screen.queryByRole('button', { name: 'Descartar cambios' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Empresa')).toHaveValue('4')
+    expect(screen.getByLabelText('Empresa')).toBeEnabled()
+    expect(screen.getByLabelText('Empresa')).toHaveFocus()
+    expect(screen.getByLabelText('Slogan')).toHaveValue('Siempre cerca mío')
+    expect(screen.getByLabelText('Slogan')).toBeEnabled()
+    expect(llamadasA(apiGetMock, '/empresas/5/vitrina')).toHaveLength(0)
+  })
+
+  it('sin cambios cambia de empresa sin preguntar', async () => {
+    const usuario = userEvent.setup()
+    montar({ empresas: [empresaNorte, empresaEste], vitrinas: { 4: vitrinaNorte, 5: vitrinaEste } })
+    await elegirEmpresa(usuario, 4)
+    await esperarFormulario()
+
+    await elegirEmpresa(usuario, 5)
+
+    expect(await screen.findByDisplayValue('Abierto todo el día')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descartar cambios' })).not.toBeInTheDocument()
+  })
+
+  it('un espacio al final no cuenta como cambio', async () => {
+    const usuario = userEvent.setup()
+    montar({ empresas: [empresaNorte, empresaEste], vitrinas: { 4: vitrinaNorte, 5: vitrinaEste } })
+    await elegirEmpresa(usuario, 4)
+    await usuario.type(await esperarFormulario(), ' ')
+
+    await elegirEmpresa(usuario, 5)
+
+    expect(await screen.findByDisplayValue('Abierto todo el día')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descartar cambios' })).not.toBeInTheDocument()
+  })
+
+  it('después de guardar ya no hay cambios que perder', async () => {
+    const usuario = await conCambiosSinGuardar()
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(await screen.findByText('Se guardó la vitrina.')).toBeInTheDocument()
+
+    await elegirEmpresa(usuario, 5)
+
+    expect(await screen.findByDisplayValue('Abierto todo el día')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descartar cambios' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Vitrina — accesibilidad', () => {
+  it('el aviso de éxito es un estado y los errores son alertas', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Se guardó la vitrina.')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('el rechazo de la baja es una alerta', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(400, 'otro', 'No se puede.'))
+
+    await usuario.click(screen.getByRole('button', { name: 'Eliminar vitrina' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar eliminación' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se puede.')
+  })
+
+  it('si la vista previa del logo no carga, se oculta la imagen rota y se dice; una subida nueva la trae de vuelta', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await esperarFormulario()
+
+    fireEvent.error(screen.getByRole('img', { name: 'Logo actual' }))
+
+    expect(screen.queryByRole('img', { name: 'Logo actual' })).not.toBeInTheDocument()
+    expect(screen.getByText('No se pudo mostrar el logo.')).toBeInTheDocument()
+
+    await usuario.upload(screen.getByLabelText('Reemplazar el logo'), archivoDeLogo())
+
+    expect(await screen.findByRole('img', { name: 'Logo actual' })).toHaveAttribute('src', '/api/empresas/4/vitrina/logo?v=101')
+    expect(screen.queryByText('No se pudo mostrar el logo.')).not.toBeInTheDocument()
   })
 })
 
