@@ -1,7 +1,7 @@
 /**
  * Helpers puros de familias de artículos en el formulario de artículo (doc 10 §3), separados de
  * `Articulos.tsx` y de `FormularioArticulo.tsx` para poder probarlos sin montar la pantalla
- * (web-descriptor-tests). Una familia agrupa artículos idénticos en sus trece campos compartidos y
+ * (web-descriptor-tests). Una familia agrupa artículos idénticos en sus quince campos compartidos y
  * en el estado de precios de cada lista fija; lo demás (nombre, descripción, códigos, marca,
  * activo y disponibilidad) es propio de cada artículo.
  */
@@ -16,7 +16,7 @@ import type {
 } from '../../api/tipos'
 import type { Formulario } from './FormularioArticulo'
 
-/** Las trece claves compartidas son las de `ValoresCompartidosDeLaFamilia`: un campo nuevo del
+/** Las quince claves compartidas son las de `ValoresCompartidosDeLaFamilia`: un campo nuevo del
  * contrato obliga a decidir acá si se comparte, y `Pick<Formulario, ClaveCompartida>` obliga a que el
  * formulario lo tenga. */
 export type ClaveCompartida = keyof ValoresCompartidosDeLaFamilia
@@ -44,6 +44,8 @@ export const CAMPOS_COMPARTIDOS: readonly CampoCompartido[] = [
   { clave: 'controlaLote', columna: 'controla_lote', etiqueta: 'Controla lote', tipo: 'otro' },
   { clave: 'acumulaEnVenta', columna: 'acumula_en_venta', etiqueta: 'Acumula en una sola línea al vender', tipo: 'otro' },
   { clave: 'costoLista', columna: 'costo_lista', etiqueta: 'Costo de lista', tipo: 'decimal' },
+  { clave: 'costoListaPor', columna: 'costo_lista_por', etiqueta: 'Costo de lista por', tipo: 'otro' },
+  { clave: 'costoListaIncluyeIva', columna: 'costo_lista_incluye_iva', etiqueta: 'Costo de lista incluye IVA', tipo: 'otro' },
   { clave: 'descuentoProveedor', columna: 'descuento_proveedor', etiqueta: 'Descuento de proveedor', tipo: 'decimal' },
   { clave: 'costoNominal', columna: 'costo_nominal', etiqueta: 'Costo nominal', tipo: 'decimal' },
 ]
@@ -56,7 +58,7 @@ function textoDeDecimal(valor: number | null): string {
 }
 
 /**
- * Los trece campos compartidos de una familia, con la forma del formulario (`''` por "sin valor", los
+ * Los quince campos compartidos de una familia, con la forma del formulario (`''` por "sin valor", los
  * decimales como texto): lo que prellena el alta de un artículo dentro de la familia. Un id de
  * catálogo dado de baja que el servidor presenta como `null` queda en `''`.
  */
@@ -73,6 +75,8 @@ export function valoresDeFamiliaAFormulario(valores: ValoresCompartidosDeLaFamil
     controlaLote: valores.controlaLote,
     acumulaEnVenta: valores.acumulaEnVenta,
     costoLista: textoDeDecimal(valores.costoLista),
+    costoListaPor: valores.costoListaPor ?? 'Unidad',
+    costoListaIncluyeIva: valores.costoListaIncluyeIva ?? true,
     descuentoProveedor: textoDeDecimal(valores.descuentoProveedor),
     costoNominal: textoDeDecimal(valores.costoNominal),
   }
@@ -181,7 +185,7 @@ export const AVISO_DE_UNION_DESACTUALIZADA =
 
 /** Lo que cambia el artículo al unirse, dicho antes de confirmar. */
 export function advertenciaDeUnion(nombreDeLaFamilia: string): string {
-  return `Al confirmar, el artículo toma de la familia "${nombreDeLaFamilia}" sus trece campos compartidos y los precios de cada lista fija: sus valores y precios actuales se reemplazan. Son propios del artículo y no cambian: ${CAMPOS_PROPIOS}.`
+  return `Al confirmar, el artículo toma de la familia "${nombreDeLaFamilia}" sus quince campos compartidos y los precios de cada lista fija: sus valores y precios actuales se reemplazan. Son propios del artículo y no cambian: ${CAMPOS_PROPIOS}.`
 }
 
 /** La previsualización de la unión habla de la familia elegida: si el servidor ve la referencia en otra (o en ninguna), la foto es vieja. */

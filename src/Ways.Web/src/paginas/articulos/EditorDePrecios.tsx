@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import { ErrorApi } from '../../api/cliente'
 import { clienteDePrecios } from '../../api/precios'
@@ -6,7 +6,9 @@ import type { AlcanceDeFamilia, HistorialDePrecio, ListaPrecioListado, PrecioVig
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { formatearImporte } from '../../formato/importes'
+import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
+import { ordenarListasParaTabla } from './ordenDeListas'
 import { PreguntaDeAlcance } from './PreguntaDeAlcance'
 
 type EstadoDeLista = {
@@ -54,7 +56,7 @@ function errorDelBorrador(estado: EstadoDeLista): string {
  * lista al cargar la pantalla) + sugerencia de margen (propone, nunca aplica sola) + alta/
  * programación con el flujo de `confirmarReemplazo` en el 409 `precio_pendiente_existe` +
  * historial. Las listas `derivada` no admiten alta propia (se resuelven en lectura): solo
- * muestran el precio vigente resuelto.
+ * muestran el precio vigente resuelto, sin acciones. Las manuales van primero en la tabla.
  *
  * Un artículo miembro de una familia (`familia`, doc 10 §3) no escribe un precio sin que se pregunte el
  * alcance: toda la familia, o solo este artículo, que sale de ella. El precio de un miembro que el cliente no
@@ -83,6 +85,10 @@ export function EditorDePrecios({
   alEscribirPrecio: () => void
   alCambiarLaFamilia: () => void
 }) {
+  // Empresa del punto de venta de la sesión: la sugerencia redondea según su parámetro. Sin punto de venta
+  // elegido (o fuera de la puerta de puntos de venta) se pide sin empresa y el servidor usa el redondeo por defecto.
+  const idEmpresaDeSesion = useContext(PuntoVentaContext)?.puntoVenta?.idEmpresa
+  const listasOrdenadas = ordenarListasParaTabla(listasPrecio)
   const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
   const [errorVigentes, setErrorVigentes] = useState('')
@@ -151,7 +157,7 @@ export function EditorDePrecios({
     const abrir = listaExpandida !== lista.id
     setListaExpandida(abrir ? lista.id : null)
 
-    if (abrir && lista.modo === 'Fija' && !historiales[lista.id]) {
+    if (abrir && !historiales[lista.id]) {
       const generacion = (generacionHistorialRef.current[lista.id] = (generacionHistorialRef.current[lista.id] ?? 0) + 1)
       try {
         const historial = await clienteDePrecios.historial(idArticulo, lista.id)
@@ -173,7 +179,7 @@ export function EditorDePrecios({
     setErrorSugerencia('')
     setSinSugerencia(false)
     try {
-      const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo)
+      const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo, idEmpresaDeSesion)
       if (generacionSugerenciaRef.current !== generacion) return
       setSugerencia(precioSugerido)
       setSinSugerencia(precioSugerido === null)
@@ -320,7 +326,7 @@ export function EditorDePrecios({
 
       {sugerencia !== null && (
         <div className="alert alert-info py-2 px-2 small mt-2">
-          Precio sugerido a partir de costo y margen: <strong>{formatearImporte(sugerencia, { simbolo: true })}</strong>. Usá "Usar sugerencia"
+          Precio sugerido a partir de costo y margen, redondeado al múltiplo configurado: <strong>{formatearImporte(sugerencia, { simbolo: true })}</strong>. Usá "Usar sugerencia"
           en la lista que corresponda — nunca se aplica sola.
         </div>
       )}
@@ -353,7 +359,7 @@ export function EditorDePrecios({
             </tr>
           </thead>
           <tbody>
-            {listasPrecio.map((lista) => {
+            {listasOrdenadas.map((lista) => {
               const vigente = vigentes[lista.id]
               const expandida = listaExpandida === lista.id
               const listaBase = lista.idListaBase !== null ? listasPrecio.find((l) => l.id === lista.idListaBase) : null
@@ -374,14 +380,16 @@ export function EditorDePrecios({
                     </td>
                     <td>{vigente?.precio !== null && vigente?.precio !== undefined ? formatearImporte(vigente.precio, { simbolo: true }) : '—'}</td>
                     <td className="text-end">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => alternarExpandida(lista)}
-                        disabled={bloqueadoPorPadre || estadoDe(lista.id).guardando || estadoDe(lista.id).refrescando}
-                      >
-                        {expandida ? 'Cerrar' : lista.modo === 'Fija' ? 'Gestionar' : 'Ver detalle'}
-                      </button>
+                      {lista.modo === 'Fija' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => alternarExpandida(lista)}
+                          disabled={bloqueadoPorPadre || estadoDe(lista.id).guardando || estadoDe(lista.id).refrescando}
+                        >
+                          {expandida ? 'Cerrar' : 'Gestionar'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                   {expandida && (
@@ -473,16 +481,6 @@ function PanelDeLista({
       disparadorRef.current?.focus()
     }
   }, [preguntaAbierta, enVuelo])
-
-  if (lista.modo !== 'Fija') {
-    return (
-      <div className="p-2">
-        <p className="mb-0 text-muted">
-          Lista derivada: el precio se resuelve solo a partir de la lista base, sin historial propio.
-        </p>
-      </div>
-    )
-  }
 
   return (
     <div className="p-2">

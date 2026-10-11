@@ -21,6 +21,8 @@ type Props = {
   alicuotas: AlicuotaIvaListado[]
   idAlicuotaIvaDeLaLinea: number | ''
   costoDeLaLinea: number | null
+  /** El costo unitario de la línea ya trae el IVA: es lo que el artículo guarda como `costoListaIncluyeIva`. */
+  costoIncluyeIva: boolean
   onCreado: (articulo: ArticuloListado) => void
   onCancelar: () => void
 }
@@ -29,7 +31,8 @@ type Props = {
  * Alta rápida de un artículo desde una línea de compra. Solo pide lo que `AltaArticulo` exige
  * (nombre, área, alícuota) más el código del proveedor y el costo; el resto viaja con los defaults
  * de un alta en blanco del ABM. El costo se guarda como `costoLista`, el campo de costo que el ABM
- * de artículos edita de forma directa (`costoNominal` es solo un override que lo pisa).
+ * de artículos edita de forma directa. Viaja por unidad (el costo de una línea es unitario) y con el IVA incluido o no
+ * según el modo de IVA de la compra (`costoIncluyeIva`); el servidor calcula el costo nominal.
  */
 export function AltaRapidaArticuloDeCompra({
   termino,
@@ -38,6 +41,7 @@ export function AltaRapidaArticuloDeCompra({
   alicuotas,
   idAlicuotaIvaDeLaLinea,
   costoDeLaLinea,
+  costoIncluyeIva,
   onCreado,
   onCancelar,
 }: Props) {
@@ -116,8 +120,9 @@ export function AltaRapidaArticuloDeCompra({
         unidadesPorBulto: null,
         esProducto: true,
         costoLista: costo,
+        costoListaPor: 'Unidad',
+        costoListaIncluyeIva: costoIncluyeIva,
         descuentoProveedor: null,
-        costoNominal: null,
         disponibleParaTodas: true,
         idsEmpresas: null,
         activo: true,

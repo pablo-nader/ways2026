@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { UNIDADES_VENTA } from '../../api/tipos'
+import { COSTOS_LISTA_POR, UNIDADES_VENTA } from '../../api/tipos'
 import type {
   AlcanceDeFamilia,
   AlicuotaIvaListado,
@@ -7,6 +7,7 @@ import type {
   AreaListado,
   ArticuloListado,
   CategoriaListado,
+  CostoListaPor,
   EdicionArticulo,
   EmpresaListado,
   GrupoListado,
@@ -16,11 +17,20 @@ import type {
   UnidadVenta,
 } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
+import { IconoDeAyuda } from '../../componentes/IconoDeAyuda'
+import { formatearImporte } from '../../formato/importes'
 import { mapaDeNombres, type NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaCategoria } from './AltaRapidaCategoria'
 import { AltaRapidaGrupo } from './AltaRapidaGrupo'
 import { AltaRapidaMarca } from './AltaRapidaMarca'
 import { AltaRapidaProveedor } from './AltaRapidaProveedor'
+import {
+  bultoSinUnidades,
+  costoDeListaSinYConIva,
+  costoNominalDelFormulario,
+  porcentajeDeAlicuota,
+  type CostoGuardado,
+} from './costoNominal'
 import { EditorDePrecios } from './EditorDePrecios'
 import {
   altaConFamiliaLista,
@@ -47,9 +57,20 @@ export type Formulario = {
   unidadVenta: UnidadVenta
   unidadesPorBulto: string
   esProducto: boolean
+  /** El costo de lista tal como se cargó: sin IVA o con IVA según `costoListaIncluyeIva`, por unidad o por bulto
+   * según `costoListaPor`. El otro valor (con/sin IVA) se deriva al mostrarlo y nunca se guarda. */
   costoLista: string
+  costoListaPor: CostoListaPor
+  costoListaIncluyeIva: boolean
   descuentoProveedor: string
+  /** El costo nominal guardado, solo de lectura: lo calcula el servidor y no viaja en un alta ni en una edición. */
   costoNominal: string
+  /** Las entradas de costo con las que se cargó el artículo; `null` en un alta. Con ellas se decide si se muestra
+   * el costo nominal guardado o el que daría el servidor al guardar. */
+  costoGuardado: CostoGuardado | null
+  /** El artículo llegó sin costos (quien lo lee no los ve): no se muestra ni se calcula ningún costo nominal y
+   * una edición conserva la base y el IVA guardados. */
+  costosOcultos: boolean
   disponibleParaTodas: boolean
   idsEmpresas: number[]
   activo: boolean
@@ -79,8 +100,12 @@ export function formularioVacio(): Formulario {
     unidadesPorBulto: '',
     esProducto: true,
     costoLista: '',
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: '',
     costoNominal: '',
+    costoGuardado: null,
+    costosOcultos: false,
     disponibleParaTodas: true,
     idsEmpresas: [],
     activo: true,
@@ -92,6 +117,15 @@ export function formularioVacio(): Formulario {
 }
 
 export function aFormulario(a: ArticuloListado): Formulario {
+  const costos = {
+    costoLista: a.costoLista === null ? '' : String(a.costoLista),
+    costoListaPor: a.costoListaPor ?? 'Unidad',
+    costoListaIncluyeIva: a.costoListaIncluyeIva ?? true,
+    unidadesPorBulto: a.unidadesPorBulto === null ? '' : String(a.unidadesPorBulto),
+    descuentoProveedor: a.descuentoProveedor === null ? '' : String(a.descuentoProveedor),
+    idAlicuotaIva: a.idAlicuotaIva,
+  }
+
   return {
     id: a.id,
     codigoInterno: a.codigoInterno,
@@ -104,11 +138,15 @@ export function aFormulario(a: ArticuloListado): Formulario {
     idProveedorHabitual: a.idProveedorHabitual ?? '',
     idAlicuotaIva: a.idAlicuotaIva,
     unidadVenta: a.unidadVenta,
-    unidadesPorBulto: a.unidadesPorBulto === null ? '' : String(a.unidadesPorBulto),
+    unidadesPorBulto: costos.unidadesPorBulto,
     esProducto: a.esProducto,
-    costoLista: a.costoLista === null ? '' : String(a.costoLista),
-    descuentoProveedor: a.descuentoProveedor === null ? '' : String(a.descuentoProveedor),
+    costoLista: costos.costoLista,
+    costoListaPor: costos.costoListaPor,
+    costoListaIncluyeIva: costos.costoListaIncluyeIva,
+    descuentoProveedor: costos.descuentoProveedor,
     costoNominal: a.costoNominal === null ? '' : String(a.costoNominal),
+    costoGuardado: costos,
+    costosOcultos: a.costoListaPor === null,
     disponibleParaTodas: a.disponibleParaTodas,
     idsEmpresas: a.idsEmpresas,
     activo: a.activo,
@@ -144,7 +182,6 @@ function camposComunes(f: Formulario) {
     esProducto: f.esProducto,
     costoLista: numeroOpcional(f.costoLista),
     descuentoProveedor: numeroOpcional(f.descuentoProveedor),
-    costoNominal: numeroOpcional(f.costoNominal),
     disponibleParaTodas: f.disponibleParaTodas,
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
@@ -154,17 +191,33 @@ function camposComunes(f: Formulario) {
 }
 
 export function aAlta(f: Formulario): AltaArticulo {
-  const alta = { codigoInterno: aVacioNulo(f.codigoInterno), ...camposComunes(f), idFamilia: f.idFamilia === '' ? null : f.idFamilia }
+  const alta = {
+    codigoInterno: aVacioNulo(f.codigoInterno),
+    ...camposComunes(f),
+    costoListaPor: f.costoListaPor,
+    costoListaIncluyeIva: f.costoListaIncluyeIva,
+    idFamilia: f.idFamilia === '' ? null : f.idFamilia,
+  }
   const nombreFamiliaNueva = f.nombreFamiliaNueva.trim()
   // El servidor rechaza una familia existente y una nueva a la vez: la nueva solo viaja cuando no hay una elegida.
   return f.idFamilia === '' && nombreFamiliaNueva !== '' ? { ...alta, nombreFamiliaNueva } : alta
+}
+
+/** Una edición manda la base y el IVA del costo de lista explícitos; solo si el artículo llegó sin costos manda
+ * `null`, que el servidor lee como "conservar lo guardado". */
+function camposDeCostoDeEdicion(f: Formulario) {
+  return {
+    costoListaPor: f.costosOcultos ? null : f.costoListaPor,
+    costoListaIncluyeIva: f.costosOcultos ? null : f.costoListaIncluyeIva,
+  }
 }
 
 /** La familia no viaja en una edición: la pertenencia no se cambia editando. Con `alcance` el servidor
  * decide qué escribir cuando el artículo es miembro y la edición cambia un campo compartido; sin él, un
  * miembro con cambios compartidos se rechaza con 409 `alcance_requerido`. */
 export function aEdicion(f: Formulario, alcance?: AlcanceDeFamilia): EdicionArticulo {
-  return alcance === undefined ? camposComunes(f) : { ...camposComunes(f), alcance }
+  const comunes = { ...camposComunes(f), ...camposDeCostoDeEdicion(f) }
+  return alcance === undefined ? comunes : { ...comunes, alcance }
 }
 
 export function FormularioArticulo({
@@ -322,6 +375,25 @@ export function FormularioArticulo({
     setPadronRapidoAbierto(padron)
   }
 
+  const porcentajeIva = porcentajeDeAlicuota(alicuotasIva, valor.idAlicuotaIva)
+  const costoDeLista = costoDeListaSinYConIva(
+    valor.costoLista === '' ? null : Number(valor.costoLista),
+    valor.costoListaIncluyeIva,
+    porcentajeIva,
+  )
+  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva)
+  const bultoSinUnidadesPorBulto = bultoSinUnidades(
+    valor.costoListaPor,
+    valor.unidadesPorBulto.trim() === '' ? null : Number(valor.unidadesPorBulto),
+  )
+
+  // El campo que se tipeó pasa a ser la fuente del costo de lista; el otro se deriva. `CampoImporte` también emite al
+  // perder el foco, y eso en el campo derivado repite su propio valor: no debe volverlo la fuente.
+  function cargarCostoDeLista(n: number | null, incluyeIva: boolean, mostrado: number | null) {
+    if (n === mostrado) return
+    onCambio({ ...valor, costoLista: n === null ? '' : String(n), costoListaIncluyeIva: incluyeIva })
+  }
+
   function alternarEmpresa(id: number) {
     const yaEsta = valor.idsEmpresas.includes(id)
     onCambio({
@@ -360,6 +432,7 @@ export function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
+          if (bultoSinUnidadesPorBulto) return
           onGuardar()
         }}
       >
@@ -658,20 +731,52 @@ export function FormularioArticulo({
             <strong className="text-muted small text-uppercase">Costos</strong>
           </div>
 
-          <div className="col-md-4">
-            <Etiqueta htmlFor="art-costo-lista" deFamilia={bloqueoDeFamilia}>
-              Costo de lista
+          <div className="col-md-3">
+            <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
+              Costo de lista sin IVA
             </Etiqueta>
             <CampoImporte
-              id="art-costo-lista"
+              id="art-costo-lista-sin-iva"
               className="form-control"
-              valor={valor.costoLista === '' ? null : Number(valor.costoLista)}
+              valor={costoDeLista.sinIva}
               disabled={bloqueoDeFamilia}
-              onChange={(n) => onCambio({ ...valor, costoLista: n === null ? '' : String(n) })}
+              onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
             />
           </div>
 
-          <div className="col-md-4">
+          <div className="col-md-3">
+            <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
+              Costo de lista con IVA
+            </Etiqueta>
+            <CampoImporte
+              id="art-costo-lista-con-iva"
+              className="form-control"
+              valor={costoDeLista.conIva}
+              disabled={bloqueoDeFamilia}
+              onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
+            />
+          </div>
+
+          <div className="col-md-2">
+            <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
+              Costo por
+            </Etiqueta>
+            <select
+              id="art-costo-lista-por"
+              className="form-select"
+              value={valor.costoListaPor}
+              disabled={bloqueoDeFamilia}
+              onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
+            >
+              {COSTOS_LISTA_POR.map((c) => (
+                <option key={c.valor} value={c.valor}>
+                  {c.etiqueta}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-2">
             <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
               Descuento de proveedor (%)
             </Etiqueta>
@@ -687,18 +792,29 @@ export function FormularioArticulo({
             />
           </div>
 
-          <div className="col-md-4">
-            <Etiqueta htmlFor="art-costo-nominal" deFamilia={bloqueoDeFamilia}>
+          <div className="col-md-2">
+            <label className="form-label" htmlFor="art-costo-nominal">
               Costo nominal
-            </Etiqueta>
-            <CampoImporte
+            </label>
+            <input
               id="art-costo-nominal"
-              className="form-control"
-              valor={valor.costoNominal === '' ? null : Number(valor.costoNominal)}
-              disabled={bloqueoDeFamilia}
-              onChange={(n) => onCambio({ ...valor, costoNominal: n === null ? '' : String(n) })}
+              className="form-control text-end"
+              readOnly
+              value={formatearImporte(costoNominal)}
             />
-            <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
+          </div>
+
+          <div className="col-12">
+            <div className="form-text mt-0">
+              El costo nominal es el costo por unidad con IVA y descuento aplicados. Se calcula al guardar; una compra
+              confirmada lo actualiza.
+            </div>
+            {bultoSinUnidadesPorBulto && (
+              <div id="art-costo-bulto-error" className="text-danger small mt-1" role="alert">
+                Un costo por bulto necesita las unidades por bulto: completá "Unidades por bulto" con un valor mayor que
+                cero.
+              </div>
+            )}
           </div>
 
           <div className="col-12">
@@ -793,14 +909,21 @@ export function FormularioArticulo({
               <Etiqueta htmlFor="art-acumula-en-venta" deFamilia={bloqueoDeFamilia} className="form-check-label">
                 Acumula en una sola línea al vender
               </Etiqueta>
-              <div id="art-acumula-en-venta-ayuda" className="form-text">
-                Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket.
-              </div>
+              <IconoDeAyuda
+                id="art-acumula-en-venta-ayuda"
+                texto="Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket."
+                etiqueta="Ayuda sobre acumular en una sola línea"
+              />
             </div>
           </div>
 
           <div className="col-12 d-flex gap-2">
-            <button type="submit" className="btn btn-success" disabled={bloqueado || bloqueadoPorCatalogos || !altaLista}>
+            <button
+              type="submit"
+              className="btn btn-success"
+              disabled={bloqueado || bloqueadoPorCatalogos || !altaLista || bultoSinUnidadesPorBulto}
+              aria-describedby={bultoSinUnidadesPorBulto ? 'art-costo-bulto-error' : undefined}
+            >
               {guardando ? 'Guardando…' : 'Guardar'}
             </button>
             <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
