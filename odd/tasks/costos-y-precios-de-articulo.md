@@ -74,3 +74,8 @@ All four tasks committed (2890 authored insertions / 413 deletions vs main, gene
 ## Next step
 
 T1.
+
+## Delivery
+
+- Slice 1 (backend, T1+T2): branch `pnader/costos-articulo-backend`, PR #359 → main. Judgment-day round 1: approved, 0 critical; info: tiny positive multiple can overflow the division (one judge), suggestion endpoint reachable by Vendedor (pre-existing).
+- Slice 2 (web, T3+T4): branch `pnader/article-pricing-logic-0f926d`, stacked on slice 1. Judgment-day round 1: approved, 0 critical; info: cost controls stay enabled for a user without cost visibility (both judges; only Admin can write articles and Admin always sees costs, so no save path reaches it), nominal preview in an alta inside a family can differ from the inherited nominal (both judges), unreachable submit guard for Bulto without units (one judge), tooltip accessibility gaps (both judges).
