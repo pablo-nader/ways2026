@@ -4,6 +4,7 @@ import {
   alicuotaParaArticulo,
   brutoDeLinea,
   cambiosAlCambiarDeProveedor,
+  cambiosAlCambiarUnidadDeMedida,
   cambiosAlDesresolver,
   cambiosAlElegirArticulo,
   cambiosAlEscribirCodigo,
@@ -576,10 +577,10 @@ describe('precarga desde un artículo', () => {
     expect(cambiosAlElegirArticulo(conLote, articuloFixture({ id: 20 }), ALICUOTAS, 'busqueda')).not.toHaveProperty('codigoLote')
   })
 
-  it('un artículo recién creado desde la fila conserva el importe, el descuento y el IVA ya tipeados', () => {
+  it('un artículo recién creado desde la fila conserva el importe y el descuento tipeados, pero toma la alícuota con la que se creó', () => {
     const cambios = cambiosAlElegirArticulo(
-      lineaFixture({ idArticulo: '', importe: 123.4567, descuentoPorcentaje: 2, idAlicuotaIva: 4 }),
-      articuloFixture({ costoLista: 123.46, descuentoProveedor: null, idAlicuotaIva: 3 }),
+      lineaFixture({ idArticulo: '', importe: 123.4567, descuentoPorcentaje: 2, idAlicuotaIva: 3 }),
+      articuloFixture({ costoLista: 123.46, descuentoProveedor: null, idAlicuotaIva: 4 }),
       ALICUOTAS,
       'alta',
     )
@@ -966,5 +967,74 @@ describe('código ya consultado y elección del artículo', () => {
     expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'busqueda')).toMatchObject({ codigoConsultado: '' })
     expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'alta')).not.toHaveProperty('codigoConsultado')
     expect(cambiosAlElegirArticulo(consultada, articuloFixture({ id: 40 }), ALICUOTAS, 'codigo')).not.toHaveProperty('codigoConsultado')
+  })
+})
+
+describe('cambiosAlCambiarUnidadDeMedida', () => {
+  const guardadaFixture = {
+    unidades: 12,
+    bultos: null,
+    unidadesPorBulto: null,
+    costoUnitario: 100,
+    descuento: 0,
+    vista: { cantidad: '12', unidadDeMedida: 'Unidad' as const, importe: 100, descuentoPorcentaje: null },
+  }
+  const enUnidad = (sobrescribir: Partial<LineaDeCompraFormulario> = {}) =>
+    lineaFixture({ idArticulo: 20, unidadDeMedida: 'Unidad', unidadesPorBulto: 12, importe: 100, cantidad: '3', ...sobrescribir })
+
+  it('de Unidad a Bulto multiplica el importe por las unidades por bulto y no toca la cantidad', () => {
+    const cambios = cambiosAlCambiarUnidadDeMedida(enUnidad({ importe: 100.8333 }), 'Bulto')
+    expect(cambios).toEqual({ unidadDeMedida: 'Bulto', importe: 1209.9996, guardada: null })
+  })
+
+  it('de Bulto a Unidad divide el importe entre las unidades por bulto, redondeado a 4 decimales', () => {
+    const l = enUnidad({ unidadDeMedida: 'Bulto', importe: 1200 })
+    expect(cambiosAlCambiarUnidadDeMedida(l, 'Unidad')).toMatchObject({ unidadDeMedida: 'Unidad', importe: 100 })
+    expect(cambiosAlCambiarUnidadDeMedida({ ...l, importe: 100, unidadesPorBulto: 3 }, 'Unidad')).toMatchObject({ importe: 33.3333 })
+  })
+
+  it('Unidad → Bulto → Unidad devuelve el valor de partida cuando divide exacto', () => {
+    const ida = cambiosAlCambiarUnidadDeMedida(enUnidad({ importe: 100.8333 }), 'Bulto')
+    const vuelta = cambiosAlCambiarUnidadDeMedida(enUnidad({ unidadDeMedida: 'Bulto', importe: ida.importe as number }), 'Unidad')
+    expect(vuelta.importe).toBe(100.8333)
+  })
+
+  it('un importe vacío sigue vacío y el cambio no inventa un valor', () => {
+    const cambios = cambiosAlCambiarUnidadDeMedida(enUnidad({ importe: null }), 'Bulto')
+    expect(cambios).toEqual({ unidadDeMedida: 'Bulto', guardada: null })
+    expect(cambios).not.toHaveProperty('importe')
+  })
+
+  it('sin unidades por bulto no convierte', () => {
+    const cambios = cambiosAlCambiarUnidadDeMedida(enUnidad({ unidadesPorBulto: null }), 'Bulto')
+    expect(cambios).not.toHaveProperty('importe')
+  })
+
+  it('elegir la UM que ya tiene la fila no cambia nada', () => {
+    expect(cambiosAlCambiarUnidadDeMedida(enUnidad(), 'Unidad')).toEqual({})
+  })
+
+  it('una línea guardada que cambia de UM deja de reenviar los valores guardados', () => {
+    const l = enUnidad({ guardada: guardadaFixture })
+    const tocada = { ...l, ...cambiosAlCambiarUnidadDeMedida(l, 'Bulto') }
+    expect(tocada.guardada).toBeNull()
+    expect(valoresParaApi(tocada)).toMatchObject({ bultos: 3, unidadesPorBulto: 12, costoUnitario: 100 })
+  })
+
+  it('el costo por unidad que viaja se conserva dentro de los 4 decimales y el aviso de división refleja lo enviado', () => {
+    const l = enUnidad({ importe: 100.8333 })
+    const tocada = { ...l, ...cambiosAlCambiarUnidadDeMedida(l, 'Bulto') }
+    expect(valoresParaApi(tocada).costoUnitario).toBe(100.8333)
+    expect(diferenciaDePrecioPorBulto(tocada)).toBeNull()
+
+    const tercio = enUnidad({ importe: 33.3333, unidadesPorBulto: 3 })
+    const conTercio = { ...tercio, ...cambiosAlCambiarUnidadDeMedida(tercio, 'Bulto'), cantidad: '1000' }
+    expect(conTercio.importe).toBe(99.9999)
+    expect(valoresParaApi(conTercio).costoUnitario).toBe(33.3333)
+    expect(diferenciaDePrecioPorBulto(conTercio)).toBeNull()
+
+    const redondo = { ...conTercio, importe: 100 }
+    expect(valoresParaApi(redondo).costoUnitario).toBe(33.3333)
+    expect(diferenciaDePrecioPorBulto(redondo)).not.toBeNull()
   })
 })

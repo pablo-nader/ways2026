@@ -1033,6 +1033,45 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
     expect(enviadas()[0]).toMatchObject({ idArticulo: 20, unidades: 2, costoUnitario: 200, descuento: 40, idAlicuotaIva: 4 })
   })
 
+  describe('cambiar la UM convierte el Importe para conservar el costo por unidad', () => {
+    async function precargar(usuario: ReturnType<typeof userEvent.setup>, costoLista: number) {
+      respuestas['leche'] = () => pagina([{ ...LECHE, costoLista, descuentoProveedor: null, idAlicuotaIva: 3 }])
+      await usuario.type(campo(0, 'Detalle'), 'leche')
+      await screen.findByRole('option', { name: /Leche en polvo 800g/ })
+      await usuario.keyboard('{ArrowDown}{Enter}')
+    }
+
+    it('un costo por unidad que no es redondo pasa a precio por bulto y el costo por unidad enviado se conserva', async () => {
+      const usuario = userEvent.setup()
+      const { enviadas } = montar()
+      await precargar(usuario, 100.8333)
+      expect(campo(0, 'Importe')).toHaveValue('100,8333')
+
+      await usuario.selectOptions(campo(0, 'UM'), 'Bulto')
+      expect(campo(0, 'Importe')).toHaveValue('1.209,9996')
+      await usuario.type(campo(0, 'Cantidad'), '2')
+
+      expect(enviadas()[0]).toMatchObject({ bultos: 2, unidadesPorBulto: 12, costoUnitario: 100.8333 })
+      expect(within(filaDeItems(0)).queryByText(/no se divide exacto/)).not.toBeInTheDocument()
+    })
+
+    it('un costo por unidad redondo da un precio por bulto redondo y vuelve al cambiar de nuevo a Unidad', async () => {
+      const usuario = userEvent.setup()
+      const { enviadas } = montar()
+      await precargar(usuario, 100)
+
+      await usuario.selectOptions(campo(0, 'UM'), 'Bulto')
+      expect(campo(0, 'Importe')).toHaveValue('1.200,0000')
+      await usuario.type(campo(0, 'Cantidad'), '1')
+      expect(enviadas()[0]).toMatchObject({ bultos: 1, costoUnitario: 100 })
+
+      await usuario.selectOptions(campo(0, 'UM'), 'Unidad')
+      expect(campo(0, 'Importe')).toHaveValue('100,0000')
+      expect(campo(0, 'Cantidad')).toHaveValue(1)
+      expect(enviadas()[0]).toMatchObject({ unidades: 1, bultos: null, costoUnitario: 100 })
+    })
+  })
+
   it('Tab sobre la opción resaltada la elige y el foco sigue a la celda siguiente', async () => {
     respuestas['leche'] = () => pagina([LECHE])
     const usuario = userEvent.setup()
@@ -1113,7 +1152,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
     }
 
     it('abre el alta con el texto del Detalle y el código de la fila, y al crear la fila queda resuelta al artículo nuevo', async () => {
-      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva' }))
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, codigoInterno: 'ART-77', nombre: 'Yerba nueva', idAlicuotaIva: 4 }))
       const usuario = userEvent.setup()
       const { enviadas } = montar()
 
@@ -1157,6 +1196,31 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
 
       await usuario.type(campo(0, 'Cantidad'), '2')
       expect(enviadas()[0]).toMatchObject({ idArticulo: 77, codigoProveedor: 'AB-1234', costoUnitario: 12.3456, unidades: 2 })
+    })
+
+    it('la fila toma la alícuota con la que se creó el artículo y conserva el importe y el descuento tipeados', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idAlicuotaIva: 4 }))
+      const usuario = userEvent.setup()
+      const { enviadas } = montar()
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.type(campo(0, 'Importe'), '12,3456')
+      await usuario.type(campo(0, 'Descuento (%)'), '5')
+      await usuario.selectOptions(campo(0, 'IVA'), '3')
+      const dialogo = await abrirAlta(usuario)
+      expect(within(dialogo).getByLabelText('Alícuota de IVA')).toHaveValue('3')
+      await usuario.selectOptions(within(dialogo).getByLabelText('Alícuota de IVA'), '4')
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect((apiPostMock.mock.calls[0] as [string, Record<string, unknown>])[1]).toMatchObject({ idAlicuotaIva: 4 })
+      expect(campo(0, 'IVA')).toHaveValue('4')
+      expect(campo(0, 'Importe')).toHaveValue('12,3456')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('5,00')
+
+      await usuario.type(campo(0, 'Cantidad'), '2')
+      expect(enviadas()[0]).toMatchObject({ idArticulo: 77, idAlicuotaIva: 4, costoUnitario: 12.3456 })
     })
 
     it('si el operador corrigió el código en el alta, la fila queda con el código que se asoció', async () => {

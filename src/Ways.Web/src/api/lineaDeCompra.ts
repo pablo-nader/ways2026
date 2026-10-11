@@ -511,7 +511,7 @@ export function costoDeArticuloParaCompra(
  * cantidad no se toca. Cambiar de artículo invalida el lote ya cargado (era del anterior) y la
  * línea guardada, y el `actualizaCosto` vuelve a ser `true` (elegir el mismo artículo que la fila ya
  * tiene lo conserva). Elegir buscando deja el código sin consultar (queda por asociar al confirmar, sin importar si antes no se encontró). Un artículo recién creado desde la
- * fila (`alta`) conserva lo que ya se tipeó en ella. Sin costo visible (rol sin permiso) el importe
+ * fila (`alta`) conserva el importe y el descuento tipeados, pero toma la alícuota con la que se creó. Sin costo visible (rol sin permiso) el importe
  * tipeado se respeta. El importe se precarga según el modo de precios (`importeSegunModoDePrecios`).
  */
 export function cambiosAlElegirArticulo(
@@ -524,7 +524,7 @@ export function cambiosAlElegirArticulo(
 ): Partial<LineaDeCompraFormulario> {
   const conservarLoTipeado = origen === 'alta'
   const idAlicuotaIva =
-    conservarIva || (conservarLoTipeado && l.idAlicuotaIva !== '') ? l.idAlicuotaIva : alicuotaParaArticulo(articulo, alicuotas)
+    conservarIva ? l.idAlicuotaIva : alicuotaParaArticulo(articulo, alicuotas)
   const porcentajeIva = alicuotas.find((a) => a.id === idAlicuotaIva)?.porcentaje ?? null
   const porcentajeDelArticulo = alicuotas.find((a) => a.id === articulo.idAlicuotaIva)?.porcentaje ?? null
   const costo = costoDeArticuloParaCompra(articulo, { delArticulo: porcentajeDelArticulo, deLaFila: porcentajeIva }, modo)
@@ -574,6 +574,25 @@ export function cambiosAlResolverPorCodigo(
   }
   if (ivaTocado) delete cambios.idAlicuotaIva
   return cambios
+}
+
+/**
+ * Cambiar la UM de una fila con Importe no cambia el costo por unidad: el Importe se convierte (por
+ * unidad ↔ por bulto, a los 4 decimales de la celda). La Cantidad no se toca: el operador cambia cómo
+ * cuenta y la vuelve a tipear. La fila deja de reenviar los valores guardados.
+ */
+export function cambiosAlCambiarUnidadDeMedida(
+  l: LineaDeCompraFormulario,
+  unidadDeMedida: UnidadDeMedidaDeLinea,
+): Partial<LineaDeCompraFormulario> {
+  if (unidadDeMedida === l.unidadDeMedida) return {}
+  const cambios: Partial<LineaDeCompraFormulario> = { unidadDeMedida, guardada: null }
+  if (l.importe === null || !tieneBulto(l)) return cambios
+
+  const porBulto = l.unidadesPorBulto as number
+  const importe =
+    unidadDeMedida === 'Bulto' ? productoRedondeado([l.importe, porBulto], 4) : redondearImporte(l.importe / porBulto, 4)
+  return { ...cambios, importe }
 }
 
 /** Escribir en el Detalle de una fila con artículo la deja sin artículo: pasa a ser un concepto con

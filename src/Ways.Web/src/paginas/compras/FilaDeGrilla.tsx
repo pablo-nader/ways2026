@@ -1,6 +1,7 @@
 import {
   camposInvalidosDeLinea,
   cambiosAlEscribirCodigo,
+  cambiosAlCambiarUnidadDeMedida,
   cambiosAlEscribirDetalle,
   cantidadDeLinea,
   diferenciaDePrecioPorBulto,
@@ -121,7 +122,7 @@ export function FilaDeGrilla({
             data-celda="um"
             value={linea.unidadDeMedida}
             disabled={disabled || !puedeBulto}
-            onChange={(e) => onCambio(clave, { unidadDeMedida: e.target.value as UnidadDeMedidaDeLinea })}
+            onChange={(e) => onCambio(clave, cambiosAlCambiarUnidadDeMedida(linea, e.target.value as UnidadDeMedidaDeLinea))}
           >
             <option value="Unidad">Unidad</option>
             <option value="Bulto" disabled={!puedeBulto}>
