@@ -781,7 +781,8 @@ Residual conocido: el pre-chequeo de existencia de la familia al crear o editar 
 un alta o edición que corre en paralelo con la disolución de esa familia puede dejar una oferta viva apuntando a
 una familia disuelta. Es inerte (la familia ya no tiene miembros, así que el resolvedor nunca la empareja) y es el
 mismo residual abierto que `GuardaDeReferencias` documenta para los grupos; cerrarlo
-(`BloquearSiEstaVivaAsync` en el escritor) es un seguimiento pendiente para todos los catálogos.
+(`BloquearSiEstaVivaAsync` en el escritor) es un seguimiento pendiente para los escritores que todavía no lo
+cierran, ofertas incluidas; los escritores de artículos ya lo tienen cerrado.
 
 Migración `OfertasPorFamilia`: revertirla (`Down`) aborta con `23514` mientras alguna oferta tenga alcance por
 familia, porque el CHECK anterior de tres columnas no admite esa fila; esas ofertas hay que eliminarlas o
