@@ -87,7 +87,7 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
   - react-async-state gating, descriptor tests, data gates.
   - Done as `/organizacion/vitrina` (Root and Admin), menu entry "Vitrina" under Organización. Publicar/Despublicar is
     the "Publicada" switch inside the single Guardar write. The empresa selection lives in component state (not the URL).
-- [ ] **T3 — Web public: landing at `/` and storefront shell at `/online`.** Delegated. PR 6.
+- [x] **T3 — Web public: landing at `/` and storefront shell at `/online`.** Delegated. PR 6. Commits `1220557a` (landing and shared `src/publico/`), `2499126f` (storefront shell), plus the final commit with the test tightening and this document.
   - `index.html` entry renders the landing from `/api/publico/vitrina`: hero (logo, name,
     tagline, chevrons, CTA "Comprar online" → `/online`, CTA WhatsApp), description block,
     branches grid (address, hours, WhatsApp button, Instagram/Facebook links), footer with
@@ -228,12 +228,43 @@ two lines in `componentes/menu.test.ts`.
 | M12 | Guardar enabled with an invalid color | `un color mal escrito se explica junto al campo y deshabilita Guardar` |
 | M13 | upload without the client-side validation | the three client-rejection tests |
 
+### T3 (commits `1220557a` landing and shared, `2499126f` storefront shell)
+
+Route/topology: delegated bounded writer (trigger: 2+ non-trivial files), branch `pnader/landing-web` on `pnader/vitrina-web`.
+
+- Shared `src/publico/`: `useVitrinaPublica` (generation-gated read; states `cargando`, `publicada`, `sin_publicar` on 404,
+  `error` otherwise; `recargar`; applies theme, `--vitrina-acento`, title and meta description), `PorEstadoDeVitrina`
+  (skeleton, calm screens), `CabeceraPublica`, `PiePublico`, `MarcaWays`, `Glifos` (triple chevron and social glyphs),
+  `enlaces.ts` (pure link builders, only http(s) and `wa.me` ever reach an `href`), `tema.ts`, `publico.css`.
+  `api/publico.ts` gained `obtenerVitrina` and `urlDelLogoPublico`; Ways wordmarks in `public/marca/`.
+- Landing: `Portada` (tagline or name as h1, CTAs), `Descripcion` (`white-space: pre-line`, plain text), `Sucursales`.
+  Tienda: `BotonCarrito`, `PanelCarrito` (non-modal dialog, Escape and Cerrar, focus returns to the button),
+  `CarritoContext` (`items: never[]`, `cantidad: 0`, no operations yet) and `CarritoProvider`.
+- Decisions: an unpublished or failed vitrina on `/online` shows the same calm screen as the landing; the error screen
+  carries a "Reintentar" button (it is what exercises the stale-response gate); a Facebook page name with spaces cannot
+  be linked and shows no button; the stored admin theme preference (`ways.tema`) is no longer read by these entries,
+  the commerce's `tema` rules.
+
+Verification (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` 16 warnings, all pre-existing, none in the new files;
+`npx vite build` ok (four entries, `dist/index.html` has `lang="es"` and the Bricolage Grotesque link, wordmarks copied
+to `dist/marca/`); `npx vitest run` 186 files, 4803 tests passed. New tests: 83 across `publico/enlaces.test.ts`,
+`publico/tema.test.ts`, `publico/useVitrinaPublica.test.tsx`, `landing/Landing.test.tsx`, `online/Tienda.test.tsx`.
+Looked at in the browser pane against a local mock of the API at phone width: no horizontal scroll, cards and cart panel
+render.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `Portada` shows the WhatsApp CTA unconditionally | survived at first (an `<a>` without `href` is not a link role); test tightened with `queryByText`, then `sin ningún número de WhatsApp no hay CTA de WhatsApp` |
+| M1b | minimum WhatsApp digits 8 → 0 | the six "no es un número usable" cases and both `enlaceWhatsappDelComercio` tests |
+| M2 | success path without the generation check | `una respuesta vieja que llega tarde no pisa a la de la recarga más nueva` |
+| M2b | failure path without the generation check | `un fallo viejo que llega tarde tampoco pisa a la recarga más nueva` |
+| M3 | accent fallback removed (`colorAcento ?? ''`) | 3 in `tema.test.ts` and `sin color de acento rige el naranja de Ways` |
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
 
 ## Next step
 
-T3 — public landing at `/` (`index.html` entry) and storefront shell at `/online` (`online.html` entry), from
-`GET /api/publico/vitrina` and `/api/publico/vitrina/logo`. Open for the owner after T2: the Vitrina page is wired as
-`Root` and `Admin`; the "Ver la página" link assumes the landing is served at `/` of the tenant domain.
+Feature complete; next: article publication (owner decision). Open for the owner: the Vitrina page is wired as `Root`
+and `Admin`; the "Ver la página" link assumes the landing is served at `/` of the tenant domain.

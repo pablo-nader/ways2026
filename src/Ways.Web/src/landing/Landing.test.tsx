@@ -133,6 +133,7 @@ describe('Landing', () => {
     it('sin ningún número de WhatsApp no hay CTA de WhatsApp', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto, { ...sucursalSinContacto, whatsapp: 'sin número' }] })
 
+      expect(screen.queryByText('Escribinos por WhatsApp')).not.toBeInTheDocument()
       expect(screen.queryByRole('link', { name: /whatsapp/i })).not.toBeInTheDocument()
       expect(screen.getAllByRole('link', { name: 'Comprar online' })).toHaveLength(2)
     })
