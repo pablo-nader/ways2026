@@ -79,6 +79,10 @@ export type Formulario = {
   idFamilia: number | ''
 }
 
+/** El campo del código con el que el proveedor habitual conoce al artículo: no es un dato del artículo sino de su
+ * relación con el proveedor, así que solo lo ofrece quien abre el alta desde una compra. */
+export type CodigoDeProveedorDelFormulario = { valor: string; onCambio: (codigo: string) => void }
+
 export function formularioVacio(): Formulario {
   return {
     id: null,
@@ -227,6 +231,7 @@ export function FormularioArticulo({
   familia,
   accionesDeFamilia,
   preguntaDeAlcanceAbierta,
+  codigoProveedor,
   onCambio,
   actualizarFormulario,
   onGuardar,
@@ -255,6 +260,7 @@ export function FormularioArticulo({
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
   /** La pregunta de alcance (un modal hermano de este, no hijo) está abierta: al cerrarse, si el foco se perdió, vuelve acá. */
   preguntaDeAlcanceAbierta: boolean
+  codigoProveedor?: CodigoDeProveedorDelFormulario
   onCambio: (f: Formulario) => void
   /** Actualización funcional, para el completado de las altas rápidas (react-async-state regla
    * 1): esos `onCreado` corren después de un `await` propio del mini-modal, así que un `valor`
@@ -666,6 +672,27 @@ export function FormularioArticulo({
               <div className="form-text">Se muestran solo los primeros 200 proveedores.</div>
             )}
           </div>
+
+          {codigoProveedor && (
+            <div className="col-md-4">
+              <label className="form-label" htmlFor="art-codigo-proveedor">
+                Código del proveedor
+              </label>
+              <input
+                id="art-codigo-proveedor"
+                className="form-control"
+                maxLength={50}
+                value={valor.idProveedorHabitual === '' ? '' : codigoProveedor.valor}
+                disabled={valor.idProveedorHabitual === ''}
+                onChange={(e) => codigoProveedor.onCambio(e.target.value)}
+              />
+              <div className="form-text">
+                {valor.idProveedorHabitual === ''
+                  ? 'Elegí un proveedor habitual para cargar su código.'
+                  : 'El código con el que el proveedor habitual identifica este artículo (opcional).'}
+              </div>
+            </div>
+          )}
 
           <div className="col-md-4">
             <Etiqueta htmlFor="art-alicuota-iva" deFamilia={bloqueoDeFamilia}>

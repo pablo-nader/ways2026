@@ -11,9 +11,9 @@ import type {
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario } from './familia'
-import { FormularioArticulo, type Formulario } from './FormularioArticulo'
+import { FormularioArticulo, type CodigoDeProveedorDelFormulario, type Formulario } from './FormularioArticulo'
 
-type Props = {
+export type PropsDeModalDeArticulo = {
   clave: number | 'nuevo'
   formulario: Formulario | null
   cargandoDetalle: boolean
@@ -45,6 +45,8 @@ type Props = {
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
   preguntaDeAlcanceAbierta: boolean
+  /** Solo en un alta abierta desde una compra: el código con el que el proveedor habitual conoce al artículo. */
+  codigoProveedor?: CodigoDeProveedorDelFormulario
   focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   actualizarFormulario: (actualizar: (previo: Formulario) => Formulario) => void
@@ -61,7 +63,8 @@ type Props = {
  * Modal de alta/edición de artículo (etapa articulos-en-modal): aloja el mismo
  * `FormularioArticulo` de siempre — identificación, clasificación, costos, disponibilidad,
  * códigos de barra y precios — pero ahora en un `Modal` en vez de apilado arriba de la grilla.
- * `Articulos.tsx` es dueño de TODO el estado (formulario, catálogos, avisos): este componente es
+ * Quien lo muestra (`Articulos.tsx`, o el alta desde una compra) es dueño de TODO el estado
+ * (`useFormularioDeArticulo`: formulario, catálogos, avisos): este componente es
  * una capa de presentación + wiring de foco, sin fetch ni escritura propios — así una URL que pasa
  * de `/articulos/create` a `/articulos/edit/{id}` tras un alta exitosa no fuerza un remonte que
  * tiraría el aviso de éxito y el foco (ver el comentario de `rutaModal.ts` y el efecto de apertura
@@ -91,6 +94,7 @@ export function ModalDeArticulo({
   familia,
   accionesDeFamilia,
   preguntaDeAlcanceAbierta,
+  codigoProveedor,
   focoDeReserva,
   onCambio,
   actualizarFormulario,
@@ -101,7 +105,7 @@ export function ModalDeArticulo({
   onMarcaCreada,
   onGrupoCreada,
   onProveedorCreado,
-}: Props) {
+}: PropsDeModalDeArticulo) {
   const titulo =
     formulario === null ? 'Artículo' : formulario.id === null ? 'Nuevo artículo' : `Editando artículo ${formulario.codigoInterno}`
 
@@ -150,6 +154,7 @@ export function ModalDeArticulo({
             familia={familia}
             accionesDeFamilia={accionesDeFamilia}
             preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
+            codigoProveedor={codigoProveedor}
             onCambio={onCambio}
             actualizarFormulario={actualizarFormulario}
             onGuardar={onGuardar}
