@@ -84,4 +84,11 @@ public class ItemComprobanteCompra : EntidadTenant
     /// <c>NULL</c> mientras la compra es borrador y para artículos que no son lot-effective.
     /// Snapshot desde ese momento — es lo que hace exacta la anulación.</summary>
     public int? IdLote { get; set; }
+
+    /// <summary>Código con que el proveedor imprimió la línea en su factura, ya normalizado
+    /// (<see cref="Ways.Domain.Articulos.ReglaDeCodigoProveedor"/>). Se conserva en toda línea que
+    /// lo trae, con o sin artículo; al confirmar se asocia en <c>codigos_proveedor</c> solo si la
+    /// línea tiene artículo y el código está libre (<see cref="AsociacionDeCodigosDeProveedor"/>).
+    /// <c>NULL</c> si la línea no trae código.</summary>
+    public string? CodigoProveedor { get; set; }
 }

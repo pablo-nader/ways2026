@@ -19,6 +19,7 @@ import {
   porcentajesDelLibro,
   type PestanaDeLibroIva,
 } from './calculosDeLibroIva'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -158,24 +159,22 @@ export function LibroIva() {
             <label className="form-label" htmlFor="libro-iva-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="libro-iva-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="libro-iva-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="libro-iva-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
           <div className="col-auto">

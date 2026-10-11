@@ -34,6 +34,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { guardarPuntoVentaSeleccionado, leerPuntoVentaGuardado, ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -735,26 +736,24 @@ function PantallaCuentaCorriente({
                 <label className="form-label" htmlFor="cc-filtro-desde">
                   Desde
                 </label>
-                <input
+                <CampoFecha
                   id="cc-filtro-desde"
-                  type="date"
                   className="form-control"
                   value={desde}
                   disabled={historico}
-                  onChange={(e) => setDesde(e.target.value)}
+                  onChange={(valor) => setDesde(valor)}
                 />
               </div>
               <div className="col-md-3">
                 <label className="form-label" htmlFor="cc-filtro-hasta">
                   Hasta
                 </label>
-                <input
+                <CampoFecha
                   id="cc-filtro-hasta"
-                  type="date"
                   className="form-control"
                   value={hasta}
                   disabled={historico}
-                  onChange={(e) => setHasta(e.target.value)}
+                  onChange={(valor) => setHasta(valor)}
                 />
               </div>
               <div className="col-md-3">

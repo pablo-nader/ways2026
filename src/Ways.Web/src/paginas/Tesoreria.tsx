@@ -8,6 +8,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -234,26 +235,24 @@ export function Tesoreria() {
                 <label className="form-label" htmlFor="tesoreria-desde">
                   Desde
                 </label>
-                <input
+                <CampoFecha
                   id="tesoreria-desde"
-                  type="date"
                   className="form-control"
                   disabled={filtros === null}
                   value={filtros?.desde ?? ''}
-                  onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+                  onChange={(valor) => cambiarFiltro({ desde: valor })}
                 />
               </div>
               <div className="col-md-2">
                 <label className="form-label" htmlFor="tesoreria-hasta">
                   Hasta
                 </label>
-                <input
+                <CampoFecha
                   id="tesoreria-hasta"
-                  type="date"
                   className="form-control"
                   disabled={filtros === null}
                   value={filtros?.hasta ?? ''}
-                  onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+                  onChange={(valor) => cambiarFiltro({ hasta: valor })}
                 />
               </div>
               {filtros && (

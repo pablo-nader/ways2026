@@ -214,6 +214,16 @@ public class ManejadorDeErroresComprasTests
         Assert.Equal("concepto_con_efectos", codigo);
     }
 
+    [Fact]
+    public async Task CkItemsComprobanteCompraCodigoProveedorNormalizadoSeTraduceA400CodigoProveedorInvalido()
+    {
+        var postgres = CrearExcepcion("23514", "ck_items_comprobante_compra_codigo_proveedor_normalizado");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("codigo_proveedor_invalido", codigo);
+    }
+
     // ---- FKs nuevas: el match genérico por prefijo "fk_" ya las cubre, sin cambio de código --
 
     [Theory]

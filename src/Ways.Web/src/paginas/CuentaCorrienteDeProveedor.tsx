@@ -27,6 +27,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -347,26 +348,24 @@ function PantallaCuentaCorrienteDeProveedor({
                 <label className="form-label" htmlFor="ccp-filtro-desde">
                   Desde
                 </label>
-                <input
+                <CampoFecha
                   id="ccp-filtro-desde"
-                  type="date"
                   className="form-control"
                   value={filtros.desde}
                   disabled={filtros.historico}
-                  onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+                  onChange={(valor) => cambiarFiltro({ desde: valor })}
                 />
               </div>
               <div className="col-md-3">
                 <label className="form-label" htmlFor="ccp-filtro-hasta">
                   Hasta
                 </label>
-                <input
+                <CampoFecha
                   id="ccp-filtro-hasta"
-                  type="date"
                   className="form-control"
                   value={filtros.hasta}
                   disabled={filtros.historico}
-                  onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+                  onChange={(valor) => cambiarFiltro({ hasta: valor })}
                 />
               </div>
               <div className="col-md-3">
