@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Combos;
 using Ways.Application.Fiscal;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
@@ -111,7 +112,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
     private async Task<int> ArticuloAsync(
         Contexto ctx, string nombre, decimal precio, UnidadVenta unidad = UnidadVenta.Unidad, int? idFamilia = null,
-        int? idAlicuotaIva = null)
+        int? idAlicuotaIva = null, bool controlaLote = false)
     {
         await using var db = Db(ctx.IdTenant);
         var ahora = DateTimeOffset.UtcNow;
@@ -120,7 +121,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         {
             IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
             IdArea = ctx.IdArea, IdAlicuotaIva = idAlicuotaIva ?? ctx.IdAlicuotaIva, UnidadVenta = unidad,
-            IdFamilia = idFamilia, EsProducto = true, CreatedAt = ahora, UpdatedAt = ahora
+            IdFamilia = idFamilia, EsProducto = true, ControlaLote = controlaLote, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();
@@ -211,6 +212,25 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
             [.. lineas.Select(l => new LineaDeVenta(l.IdArticulo, l.Cantidad, null))],
             [new PagoDeVenta(ctx.IdMedioEfectivo, total, null, 0m)],
             null, null);
+
+    private static SolicitudDeVenta VentaConLineas(Contexto ctx, decimal total, params LineaDeVenta[] lineas) =>
+        new(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [.. lineas],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, total, null, 0m)],
+            null, null);
+
+    private async Task HabilitarLotesAsync(Contexto ctx)
+    {
+        await using var db = Db(ctx.IdTenant);
+        var ahora = DateTimeOffset.UtcNow;
+        db.Parametros.Add(new Parametro
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdPuntoVenta = null,
+            Clave = "lotes_habilitado", Valor = "true", CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+    }
 
     private static async Task<ComprobanteEmitido> EmitirAsync(Contexto ctx, SolicitudDeVenta solicitud)
     {
@@ -544,6 +564,55 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     }
 
     // =================================================================================================
+    // Carga de candidatos: solo los combos que el carrito puede tocar
+    // =================================================================================================
+
+    [Fact]
+    public async Task ElCargadorNoTraeUnComboSinNingunComponenteEnElCarritoYTraeCompletoElQueTieneUno()
+    {
+        var ctx = await PrepararAsync(nameof(ElCargadorNoTraeUnComboSinNingunComponenteEnElCarritoYTraeCompletoElQueTieneUno));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var papas = await ArticuloAsync(ctx, "papas", 1000m);
+        var gaseosa = await ArticuloAsync(ctx, "gaseosa", 800m);
+        var delCarrito = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        var ajeno = await ComboAsync(ctx, 1500m, [Art(papas), Art(gaseosa)]);
+
+        await using var db = Db(ctx.IdTenant);
+        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(db, ctx.IdEmpresa, [pancho], []);
+
+        // El ajeno no figura; el del carrito figura con sus dos componentes aunque el carrito solo tenga el pancho.
+        var unico = Assert.Single(candidatos);
+        Assert.Equal(delCarrito, unico.Id);
+        Assert.DoesNotContain(candidatos, c => c.Id == ajeno);
+        Assert.Equal(
+            [(pancho, (int?)null, 1m), (coca, (int?)null, 1m)],
+            unico.Componentes.Select(c => (c.IdArticulo!.Value, c.IdFamilia, c.Cantidad)));
+
+        Assert.Empty(await ServicioDeCombos.CargarCandidatosParaVentaAsync(db, ctx.IdEmpresa, [], []));
+    }
+
+    [Fact]
+    public async Task ElCargadorTraeConTodosSusComponentesUnComboQueCoincideSoloPorUnaFamilia()
+    {
+        var ctx = await PrepararAsync(nameof(ElCargadorTraeConTodosSusComponentesUnComboQueCoincideSoloPorUnaFamilia));
+        var gaseosas = await FamiliaAsync(ctx, "Gaseosas");
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m, idFamilia: gaseosas);
+        var combo = await ComboAsync(ctx, 4000m, [Art(pancho), Fam(gaseosas, 2m)]);
+
+        await using var db = Db(ctx.IdTenant);
+        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(db, ctx.IdEmpresa, [coca], [gaseosas]);
+
+        // El carrito no tiene el pancho: el combo entra por la familia y trae igual el componente del pancho.
+        var unico = Assert.Single(candidatos);
+        Assert.Equal(combo, unico.Id);
+        Assert.Equal(2, unico.Componentes.Count);
+        Assert.Contains(unico.Componentes, c => c.IdArticulo == pancho && c.IdFamilia is null && c.Cantidad == 1m);
+        Assert.Contains(unico.Componentes, c => c.IdArticulo is null && c.IdFamilia == gaseosas && c.Cantidad == 2m);
+    }
+
+    // =================================================================================================
     // Anulación, devolución, ventas sin combos
     // =================================================================================================
 
@@ -613,6 +682,196 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var persistidos = await ItemsAsync(ctx, emitido.Id);
         Assert.All(persistidos, i => Assert.Null(i.IdCombo));
+    }
+
+    // =================================================================================================
+    // Ajuste manual, lotes y el mismo artículo en dos líneas
+    // =================================================================================================
+
+    [Fact]
+    public async Task ElAjusteManualSeAplicaSobreElNetoDeLaLineaQueYaIncluyeLaParteDelCombo()
+    {
+        var ctx = await PrepararAsync(nameof(ElAjusteManualSeAplicaSobreElNetoDeLaLineaQueYaIncluyeLaParteDelCombo));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        // Combo: pancho 3000 − 272.73 = 2727.27 y coca 2500 − 227.27 = 2272.73. El −10 % de la coca es
+        // 2272.73 × 0.10 = 227.273 → 227.27 (sobre el neto con el combo, no sobre los 2500 de lista):
+        // la línea queda en 2272.73 − 227.27 = 2045.46 y la venta en 2727.27 + 2045.46 = 4772.73.
+        var emitido = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 4772.73m,
+                new LineaDeVenta(pancho, 1m, null),
+                new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
+
+        Assert.Equal(4772.73m, emitido.Total);
+        Assert.Equal(5500m, emitido.Subtotal);
+        Assert.Equal(500m, emitido.DescuentoTotal);
+        Assert.Equal(227.27m, emitido.DescuentoManualTotal);
+        Assert.Equal([2727.27m, 2045.46m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([272.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([0m, -227.27m], emitido.Items.Select(i => i.AjusteManual));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+
+        var persistidos = await ItemsAsync(ctx, emitido.Id);
+        Assert.Equal([2727.27m, 2045.46m], persistidos.Select(i => i.Total));
+        Assert.Equal([0m, -227.27m], persistidos.Select(i => i.AjusteManual));
+    }
+
+    [Fact]
+    public async Task UnArticuloConLoteConsumidoPorElComboConservaDescuentoIdComboYLoteYDescuentaElStockUnaSolaVez()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloConLoteConsumidoPorElComboConservaDescuentoIdComboYLoteYDescuentaElStockUnaSolaVez));
+        await HabilitarLotesAsync(ctx);
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m, controlaLote: true);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        int idLote;
+        await using (var db = Db(ctx.IdTenant))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var lote = new Lote
+            {
+                IdArticulo = pancho, Codigo = "L-COMBO", FechaVencimiento = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(5)),
+                EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.Lotes.Add(lote);
+            await db.SaveChangesAsync();
+            idLote = lote.Id;
+
+            db.StockLotes.Add(new StockLote
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = idLote, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            db.Stock.Add(new Stock
+            {
+                IdArticulo = pancho, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = 10m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var emitido = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        var item = emitido.Items[0];
+        Assert.Equal(272.73m, item.Descuento);
+        Assert.Equal(2727.27m, item.Total);
+        Assert.Equal(combo, item.IdCombo);
+        Assert.Equal(idLote, item.IdLote);
+
+        var persistido = (await ItemsAsync(ctx, emitido.Id))[0];
+        Assert.Equal(idLote, persistido.IdLote);
+        Assert.Equal(combo, persistido.IdCombo);
+
+        await using var lectura = Db(ctx.IdTenant);
+        Assert.Equal(9m, await lectura.StockLotes
+            .Where(sl => sl.IdArticulo == pancho && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Select(sl => sl.Cantidad).SingleAsync());
+        Assert.Equal(9m, await StockAsync(ctx, pancho));
+        Assert.Equal(-1m, await StockAsync(ctx, coca));
+    }
+
+    [Fact]
+    public async Task ElMismoArticuloEnDosLineasConUnSoloComboConsumeUnaUnidadYDescuentaElStockDeAmbasLineas()
+    {
+        var ctx = await PrepararAsync(nameof(ElMismoArticuloEnDosLineasConUnSoloComboConsumeUnaUnidadYDescuentaElStockDeAmbasLineas));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        var emitido = await EmitirAsync(ctx, 8000m, (pancho, 1m), (coca, 1m), (pancho, 1m));
+
+        // Un set completo: el combo toma el primer pancho y la coca; el segundo pancho queda a lista.
+        Assert.Equal(8000m, emitido.Total);
+        Assert.Equal(500m, emitido.DescuentoTotal);
+        Assert.Equal([2727.27m, 2272.73m, 3000m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([combo, combo, (int?)null], emitido.Items.Select(i => i.IdCombo));
+        Assert.Equal(-2m, await StockAsync(ctx, pancho));
+        Assert.Equal(-1m, await StockAsync(ctx, coca));
+    }
+
+    [Fact]
+    public async Task ElMismoArticuloEnDosLineasConDosCombosAplicaElConjuntoDosVecesYElTotalEsElDeLosDosCombos()
+    {
+        var ctx = await PrepararAsync(nameof(ElMismoArticuloEnDosLineasConDosCombosAplicaElConjuntoDosVecesYElTotalEsElDeLosDosCombos));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        var emitido = await EmitirAsync(ctx, 10000m, (pancho, 1m), (coca, 2m), (pancho, 1m));
+
+        // Dos sets: cada pancho se lleva 272.73 y la coca 2 × 227.27 = 454.54; los dos sets suman 10000.
+        Assert.Equal(10000m, emitido.Total);
+        Assert.Equal(1000m, emitido.DescuentoTotal);
+        Assert.Equal([272.73m, 454.54m, 272.73m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([2727.27m, 4545.46m, 2727.27m], emitido.Items.Select(i => i.Total));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+        Assert.Equal(-2m, await StockAsync(ctx, pancho));
+        Assert.Equal(-2m, await StockAsync(ctx, coca));
+    }
+
+    // =================================================================================================
+    // Respaldo de esquema de items_comprobante_venta.id_combo (fk_items_comprobante_venta_combo)
+    // Viven acá y no en CombosEsquemaTests porque necesitan una venta emitida de verdad (comprobante, punto de
+    // venta, turno) y este archivo ya tiene ese armado.
+    // =================================================================================================
+
+    private static async Task AssertViolacionDeFkDeItemAsync(Func<Task> accion)
+    {
+        var excepcion = await Assert.ThrowsAsync<Npgsql.PostgresException>(accion);
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_items_comprobante_venta_combo", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnItemQueApuntaAUnComboDeOtroTenantViolaLaFkCompuestaDeComboDelItem()
+    {
+        var ctx = await PrepararAsync(nameof(UnItemQueApuntaAUnComboDeOtroTenantViolaLaFkCompuestaDeComboDelItem) + "A");
+        var otro = await PrepararAsync(nameof(UnItemQueApuntaAUnComboDeOtroTenantViolaLaFkCompuestaDeComboDelItem) + "B");
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var panchoDeOtro = await ArticuloAsync(otro, "pancho", 3000m);
+        var cocaDeOtro = await ArticuloAsync(otro, "coca", 2500m);
+        var comboDeOtro = await ComboAsync(otro, 5000m, [Art(panchoDeOtro), Art(cocaDeOtro)]);
+        var emitido = await EmitirAsync(ctx, 3000m, (pancho, 1m));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+
+        await AssertViolacionDeFkDeItemAsync(async () =>
+        {
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText = "UPDATE items_comprobante_venta SET id_combo = $1 WHERE id_comprobante_venta = $2";
+            comando.Parameters.Add(new Npgsql.NpgsqlParameter { Value = comboDeOtro });
+            comando.Parameters.Add(new Npgsql.NpgsqlParameter { Value = emitido.Id });
+            await comando.ExecuteNonQueryAsync();
+        });
+
+        var persistidos = await ItemsAsync(ctx, emitido.Id);
+        Assert.All(persistidos, i => Assert.Null(i.IdCombo));
+    }
+
+    [Fact]
+    public async Task BorrarFisicamenteUnComboReferenciadoPorUnItemDeVentaViolaLaFkYElComboSigueAhi()
+    {
+        var ctx = await PrepararAsync(nameof(BorrarFisicamenteUnComboReferenciadoPorUnItemDeVentaViolaLaFkYElComboSigueAhi));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+        await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+
+        await AssertViolacionDeFkDeItemAsync(async () =>
+        {
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText = "DELETE FROM combos WHERE id_combo = $1";
+            comando.Parameters.Add(new Npgsql.NpgsqlParameter { Value = combo });
+            await comando.ExecuteNonQueryAsync();
+        });
+
+        await using var db = Db(ctx.IdTenant);
+        Assert.Equal(2, await db.CombosComponentes.CountAsync(c => c.IdCombo == combo));
     }
 
     // =================================================================================================

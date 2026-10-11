@@ -409,15 +409,23 @@ public class ServicioDeCombos(
 
     /// <summary>Los combos que pueden aplicarse a una venta de la empresa <paramref name="idEmpresa"/>: vivos
     /// (el filtro global excluye los dados de baja), activos y de esa empresa o de todo el tenant, con sus
-    /// componentes. Una sola consulta (combos unidos con sus componentes) sin importar cuántos combos haya; un combo
-    /// sin componentes no figura. Estático y sin estado para que el checkout no sume una dependencia al
-    /// constructor de <c>ServicioDeVentas</c>.</summary>
+    /// componentes. Solo figuran los combos con al menos un componente que el carrito pueda satisfacer (un artículo
+    /// de <paramref name="idsDeArticulos"/> o una familia de <paramref name="idsDeFamilias"/>), pero de esos se
+    /// traen TODOS los componentes: el motor necesita el conjunto completo para decidir si el combo se completa.
+    /// Una sola consulta (combos unidos con sus componentes) sin importar cuántos combos haya; un combo sin
+    /// componentes no figura. Estático y sin estado para que el checkout no sume una dependencia al constructor de
+    /// <c>ServicioDeVentas</c>.</summary>
     public static async Task<IReadOnlyList<ComboCandidato>> CargarCandidatosParaVentaAsync(
-        IWaysDbContext db, int idEmpresa, CancellationToken ct = default)
+        IWaysDbContext db, int idEmpresa, IReadOnlyCollection<int> idsDeArticulos,
+        IReadOnlyCollection<int> idsDeFamilias, CancellationToken ct = default)
     {
         var filas = await (
                 from combo in db.Combos
                 where combo.Activo && (combo.IdEmpresa == null || combo.IdEmpresa == idEmpresa)
+                    && db.CombosComponentes.Any(m =>
+                        m.IdCombo == combo.Id
+                        && ((m.IdArticulo != null && idsDeArticulos.Contains(m.IdArticulo.Value))
+                            || (m.IdFamilia != null && idsDeFamilias.Contains(m.IdFamilia.Value))))
                 join componente in db.CombosComponentes on combo.Id equals componente.IdCombo
                 orderby combo.Id, componente.Id
                 select new

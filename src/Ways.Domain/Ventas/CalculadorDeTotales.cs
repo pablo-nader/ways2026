@@ -89,11 +89,6 @@ public static class CalculadorDeTotales
 
     private static decimal DescuentoDeLinea(LineaParaCalcular linea)
     {
-        if (linea.UnidadesConsumidasPorCombo == 0m && linea.AhorroDeCombo == 0m)
-        {
-            return Math.Round(linea.DescuentoUnitario * linea.Cantidad, 2, MidpointRounding.AwayFromZero);
-        }
-
         var unidadesConOferta = linea.Cantidad - linea.UnidadesConsumidasPorCombo;
 
         return Math.Round(linea.DescuentoUnitario * unidadesConOferta, 2, MidpointRounding.AwayFromZero)

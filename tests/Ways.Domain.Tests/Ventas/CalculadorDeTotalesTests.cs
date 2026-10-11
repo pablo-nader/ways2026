@@ -307,18 +307,37 @@ public class CalculadorDeTotalesTests
         var sinCampos = CalculadorDeTotales.Calcular(
         [
             new LineaParaCalcular(2m, 199.99m, 5.005m, -10m),
-            new LineaParaCalcular(-3m, 100m, 10m)
+            new LineaParaCalcular(-3m, 100m, 5.005m),
+            new LineaParaCalcular(1m, 10m, 5.005m)
         ]);
         var conCerosExplicitos = CalculadorDeTotales.Calcular(
         [
             new LineaParaCalcular(2m, 199.99m, 5.005m, -10m, UnidadesConsumidasPorCombo: 0m, AhorroDeCombo: 0m),
-            new LineaParaCalcular(-3m, 100m, 10m, null, 0m, 0m)
+            new LineaParaCalcular(-3m, 100m, 5.005m, null, 0m, 0m),
+            new LineaParaCalcular(1m, 10m, 5.005m, null, 0m, 0m)
         ]);
 
-        Assert.Equal(sinCampos.Items, conCerosExplicitos.Items);
-        Assert.Equal(
-            (sinCampos.Subtotal, sinCampos.DescuentoTotal, sinCampos.Total),
-            (conCerosExplicitos.Subtotal, conCerosExplicitos.DescuentoTotal, conCerosExplicitos.Total));
+        // Valores del comportamiento previo a los combos, calculados a mano con AwayFromZero:
+        //  línea 1: bruto 399.98; descuento 2 × 5.005 = 10.01; neto 389.97; ajuste −10 % = −38.997 → −39.00; total 350.97.
+        //  línea 2 (NC): bruto −300.00; descuento −3 × 5.005 = −15.015 → −15.02; neto −284.98; total −284.98.
+        //  línea 3: bruto 10.00; descuento 5.005 → 5.01 (el banker's daría 5.00); neto 4.99; total 4.99.
+        //  subtotal 399.98 − 300.00 + 10.00 = 109.98; descuento total 10.01 − 15.02 + 5.01 = 0.00;
+        //  descuento manual 39.00; total 109.98 − 0.00 − 39.00 = 70.98.
+        var esperados = new[]
+        {
+            new ItemCalculado(2m, 199.99m, 10.01m, 350.97m, -39.00m),
+            new ItemCalculado(-3m, 100m, -15.02m, -284.98m),
+            new ItemCalculado(1m, 10m, 5.01m, 4.99m)
+        };
+
+        foreach (var resultado in new[] { sinCampos, conCerosExplicitos })
+        {
+            Assert.Equal(esperados, resultado.Items);
+            Assert.Equal(109.98m, resultado.Subtotal);
+            Assert.Equal(0.00m, resultado.DescuentoTotal);
+            Assert.Equal(70.98m, resultado.Total);
+            Assert.Equal(39.00m, resultado.DescuentoManualTotal);
+        }
     }
 
     [Fact]

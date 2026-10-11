@@ -922,9 +922,16 @@ línea ya descontado) y anulación siguen funcionando por artículo.
   (`CalculadorDeTotales`, campos `UnidadesConsumidasPorCombo` y `AhorroDeCombo` de `LineaParaCalcular`). Una línea cuyas
   unidades se consumieron todas no lleva `id_oferta` (no recibió ninguna oferta); si le quedan unidades fuera del combo,
   conserva su oferta y su `id_oferta`.
+- El ajuste manual (`ajuste_manual_porcentaje`) se aplica sobre el neto de la línea que YA incluye la parte del combo:
+  el precio del combo rige antes de los ajustes manuales. Con una coca de 2.500 que recibe 227,27 de un combo, un −10 %
+  se calcula sobre 2.272,73 (−227,27), no sobre los 2.500 de lista; el neto, el ajuste y el total de la línea salen de la
+  misma fórmula de `CalculadorDeTotales` con o sin combo, y el total de la venta deja de coincidir con el precio del
+  combo en la medida del ajuste.
 - Los candidatos se cargan con UNA consulta (combos vivos y activos de la empresa del punto de venta o de todo el tenant,
-  unidos con sus componentes), y solo si la venta suma al menos 2 unidades. Todo se decide antes de la transacción y viaja
-  en el plan: un reintento de la escritura no vuelve a detectar combos.
+  unidos con sus componentes), y solo si la venta suma al menos 2 unidades. La consulta trae solo los combos que tienen
+  al menos un componente que el carrito puede satisfacer (un artículo del carrito de unidad de venta `Unidad`, o su
+  familia), pero de esos trae TODOS los componentes: el motor necesita el conjunto completo. Todo se decide antes de la
+  transacción y viaja en el plan: un reintento de la escritura no vuelve a detectar combos.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
 sus componentes (`Cascade`). La baja de negocio del combo es lógica (`deleted_at`) y borra físicamente sus componentes

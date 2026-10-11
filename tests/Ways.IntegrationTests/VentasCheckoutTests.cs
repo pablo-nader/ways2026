@@ -1168,7 +1168,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         //
         // SUBE a 17 con los combos (feature combos, T3): la query nueva es
         // ServicioDeCombos.CargarCandidatosParaVentaAsync, UNA sola (combos vivos y activos de la empresa del
-        // punto de venta unidos con sus componentes) que corre en toda venta online con signo positivo que
+        // punto de venta, con algún componente que el carrito pueda satisfacer, unidos con sus componentes) que corre en toda venta online con signo positivo que
         // sume al menos 2 unidades, haya o no combos en el tenant, porque la venta no puede saberlo sin
         // preguntar. No escala con las líneas ni con la cantidad de combos. Las ventas de 1 unidad no la
         // pagan (ver ElCheckoutDeUnaSolaUnidadNoPagaLaConsultaDeCombos), tampoco la conversión de un

@@ -515,8 +515,6 @@ public class ServicioDeVentas(
             return SinCombos;
         }
 
-        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(db, idEmpresa, ct);
-
         var lineasParaCombos = lineas
             .Select((linea, i) =>
             {
@@ -527,6 +525,14 @@ public class ServicioDeVentas(
                     resolucion[i].PrecioOriginal, resolucion[i].DescuentoUnitario);
             })
             .ToList();
+
+        var detectables = lineasParaCombos.Where(l => l.UnidadVenta == UnidadVenta.Unidad).ToList();
+        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(
+            db,
+            idEmpresa,
+            [.. detectables.Select(l => l.IdArticulo).Distinct()],
+            [.. detectables.Where(l => l.IdFamilia.HasValue).Select(l => l.IdFamilia!.Value).Distinct()],
+            ct);
 
         return CombosEnVenta.Resolver(lineasParaCombos, candidatos);
     }
