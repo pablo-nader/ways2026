@@ -40,6 +40,7 @@ export type SujetoDeBaja =
   | 'el proveedor'
   | 'el equipo'
   | 'la familia'
+  | 'el dominio'
 
 /**
  * Los códigos de conflicto de baja, cada uno con su propia guía. Nace con los SEIS de la etapa 20

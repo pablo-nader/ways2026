@@ -8,6 +8,8 @@
  */
 import { api } from './cliente'
 import type {
+  DominioAlta,
+  DominioListado,
   EmpresaEdicion,
   EmpresaListado,
   EstadoTenant,
@@ -28,6 +30,17 @@ export const clienteDeOrganizacion = {
   // Las tres bajas contestan 204 sin cuerpo: `api.delete<void>` y nada que espejar (el DTO de
   // respuesta no existe, así que no hay contrato que copiar mal).
   eliminarTenant: (id: number) => api.delete<void>(`/plataforma/tenants/${id}`),
+
+  // Dominios propios del tenant (solo plataforma). `verificarDominio` es idempotente; la baja
+  // contesta 204 y libera el host.
+  listarDominios: (idTenant: number) =>
+    api.get<DominioListado[]>(`/plataforma/tenants/${idTenant}/dominios`),
+  agregarDominio: (idTenant: number, datos: DominioAlta) =>
+    api.post<DominioListado>(`/plataforma/tenants/${idTenant}/dominios`, datos),
+  verificarDominio: (idTenant: number, idDominio: number) =>
+    api.post<DominioListado>(`/plataforma/tenants/${idTenant}/dominios/${idDominio}/verificar`),
+  eliminarDominio: (idTenant: number, idDominio: number) =>
+    api.delete<void>(`/plataforma/tenants/${idTenant}/dominios/${idDominio}`),
 
   listarEmpresas: () => api.get<EmpresaListado[]>('/empresas'),
   editarEmpresa: (id: number, datos: EmpresaEdicion) => api.put<EmpresaListado>(`/empresas/${id}`, datos),

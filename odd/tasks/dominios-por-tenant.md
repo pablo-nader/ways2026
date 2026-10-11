@@ -89,10 +89,17 @@ not stored.
     are exempt/platform; `GET /api/publico/sitio` only reads `IDominioActual`, it does no query of its
     own; the resolver reads `dominios` in Login mode from its own DI scope and the tenant name with the
     platform context.
-- [ ] **T2 — Web: login by username or mail, platform screen for domains.**
+- [x] **T2 — Web: login by username or mail, platform screen for domains.**
   Route: delegated (writer trigger: Login page, api client, platform page, tests). PR 2.
   - Login reads `GET /api/publico/sitio` and shows "Usuario o mail" under a tenant host.
   - Platform tenant screen gets a "Dominios" section: list, add, mark verified, delete.
+  - Done as two work-unit commits: `09b62edb` (login by usuario or mail) and `d355db04` (Dominios
+    screen). Implementation notes that differ from the plan above: there is no tenant detail page, so
+    "Dominios" is its own Root-only page at `/organizacion/dominios` (menu entry under Organización)
+    with a tenant selector built from `opcionesDeTenantAsignable`; the login field routes by `@`
+    (the server does not forbid `@` in a username, so such a user logs in with the mail); if
+    `GET /api/publico/sitio` fails the form falls back to mail-only with a notice; `AuthContext.iniciarSesion`
+    now takes `{ mail } | { usuario }`.
 - [ ] **T3 — Web: routes `/admin` (current app), `/online` (storefront shell) and `/` (landing shell).**
   Route: delegated (writer trigger: Vite entries, router basename, API fallback, redirects, tests).
   PR 3.
@@ -168,10 +175,46 @@ Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Informational
 - B: `login-dispositivo` ignores the host's tenant; the guard rejects the cookie on the next
   request, the bearer stays valid on the device's own domain. Follow-up: scope it like `/login`.
 
+T2 (commits `09b62edb`, `d355db04`), run from `src/Ways.Web`:
+
+- `npx tsc -b`: exit 0, no output.
+- `npx oxlint`: exit 0, 16 warnings, all `only-export-components` already on the branch (the
+  `AuthContext.tsx` one moved from line 14 to 15 with the new import), no errors.
+- `npx vitest run` (whole suite, once, no other run in parallel): 175 files, 4495 tests passed, 136 s.
+
+Mutation evidence (mutate the clause, run the colocated tests, watch them go red, revert byte-exact):
+
+| Mutant | Red tests |
+|---|---|
+| login: swap the `@` predicate | 4 unit tests plus both component tests that assert the request body |
+| login: drop `admiteUsuario &&` | unit test "bajo la plataforma todo es un correo" |
+| login: drop the generation gate of the site read | "una respuesta vieja del sitio no pisa a la lectura más nueva" |
+| login: drop the `enviandoRef` guard | "dos envíos del mismo tick salen como una sola request" |
+| dominios: drop the generation gate in `cargarDominios` | "una lista vieja que llega tarde no pisa la del tenant elegido después" |
+| dominios: `elegirTenant` without bumping the generation | same test |
+| dominios: drop the ref guard in `agregar` / `verificar` / `eliminar` | one same-tick double-fire test each |
+| dominios: drop `limpiarMensajes()` in `elegirTenant` / `agregar` / `verificar` / `eliminar` / `pedirEliminar` / `cancelarEliminar` | one test each (rule 16) |
+| dominios: send `esPrincipal: false` / skip `trim()` | "agrega el host sin espacios con su marca de principal…" |
+
+Not covered and left honest: the "Dominios" screen has no end-to-end test against the real API (the
+component tests mock `api/cliente`); the date in the verification column uses the browser's local
+time zone.
+
+### Judgment-day of T2 (target 7d2a0d51, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident warnings fixed in
+`67782536` (voseo copy in Dominios; the list is re-read after a 404 or an uncertain write failure
+while the message stays; comment matched to the code; dead `setCargandoDominios(false)`
+removed; "Marcar verificado" label-in-name). Verified with `npx tsc -b`, `npx oxlint` and the
+full `npx vitest run` (175 files, 4500 tests) plus mutation evidence on the three re-reads; no
+new judge round. Left as follow-ups: the server allows `@` in a username, so a username with
+`@` can only log in by mail (document or forbid server-side); a failed add leaves `aria-invalid`
+on the Host field for non-host errors; "Reintentar" after a failed list read clears a typed host.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
 
 ## Next step
 
-T2 (web: login by usuario or mail reading `GET /api/publico/sitio`, platform screen for domains).
+T3 (web: routes `/admin`, `/online` and `/`). T2 waits for its judgment-day round before PR 2.

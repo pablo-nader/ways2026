@@ -3,11 +3,12 @@ import type { ReactNode } from 'react'
 import { api, alPerderLaSesion, ErrorApi } from '../api/cliente'
 import type { UsuarioAutenticado } from '../api/tipos'
 import { olvidarPuntoVentaDeSesion } from '../puntoVenta/almacenDePuntoVenta'
+import type { CredencialDeLogin } from './credencialDeLogin'
 
 type EstadoAuth = {
   usuario: UsuarioAutenticado | null
   cargando: boolean
-  iniciarSesion: (mail: string, password: string) => Promise<void>
+  iniciarSesion: (credencial: CredencialDeLogin, password: string) => Promise<void>
   cerrarSesion: () => Promise<void>
 }
 
@@ -36,9 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Cualquier 401 en cualquier llamada tira la sesión abajo.
   useEffect(() => alPerderLaSesion(() => setUsuario(null)), [])
 
-  const iniciarSesion = useCallback(async (mail: string, password: string) => {
+  const iniciarSesion = useCallback(async (credencial: CredencialDeLogin, password: string) => {
     const autenticado = await api.post<UsuarioAutenticado>('/auth/login', {
-      mail,
+      ...credencial,
       password,
     })
     // Cada inicio de sesión vuelve a elegir el punto de venta: se olvida antes de publicar el
