@@ -32,6 +32,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('es-AR') : '—'
@@ -591,13 +592,12 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
             <label className="form-label" htmlFor="oc-fecha-esperada">
               Fecha esperada
             </label>
-            <input
+            <CampoFecha
               id="oc-fecha-esperada"
-              type="date"
               className="form-control"
               value={encabezado.fechaEsperada}
               disabled={!esBorrador || ocupado || !puedeEscribir}
-              onChange={(e) => setEncabezado((prev) => ({ ...prev, fechaEsperada: e.target.value }))}
+              onChange={(valor) => setEncabezado((prev) => ({ ...prev, fechaEsperada: valor }))}
             />
           </div>
           <div className="col-12">

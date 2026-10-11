@@ -20,6 +20,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 const clienteGrupos = { listar: () => api.get<GrupoListado[]>('/catalogos/grupos') }
 
@@ -549,24 +550,22 @@ function FormularioOfertaCampos({
             <label className="form-label" htmlFor="of-fecha-desde">
               Fecha desde
             </label>
-            <input
+            <CampoFecha
               id="of-fecha-desde"
-              type="date"
               className="form-control"
               value={valor.fechaDesde}
-              onChange={(e) => onCambio({ ...valor, fechaDesde: e.target.value })}
+              onChange={(fecha) => onCambio({ ...valor, fechaDesde: fecha })}
             />
           </div>
           <div className="col-md-3">
             <label className="form-label" htmlFor="of-fecha-hasta">
               Fecha hasta
             </label>
-            <input
+            <CampoFecha
               id="of-fecha-hasta"
-              type="date"
               className="form-control"
               value={valor.fechaHasta}
-              onChange={(e) => onCambio({ ...valor, fechaHasta: e.target.value })}
+              onChange={(fecha) => onCambio({ ...valor, fechaHasta: fecha })}
             />
           </div>
           <div className="col-md-3">
