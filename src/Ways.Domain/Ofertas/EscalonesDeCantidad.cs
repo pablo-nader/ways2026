@@ -14,6 +14,14 @@ public readonly record struct EscalonResuelto(decimal CantidadDesde, PrecioConOf
 /// por parámetro habría abierto la puerta a pasar la base de OTRA línea sin que nada lo note.</summary>
 public readonly record struct CurvaDeCantidad(PrecioConOfertas Base, IReadOnlyList<EscalonResuelto> Escalones);
 
+/// <summary>Una celda de la grilla de familia: con <see cref="CantidadDeFamiliaDesde"/> unidades
+/// de la familia en el carrito y <see cref="CantidadDesde"/> del propio artículo, la línea resuelve
+/// a <see cref="Resolucion"/>. La grilla existe porque la curva de
+/// <see cref="EscalonesDeCantidad.Construir"/> solo describe la diagonal "la familia crece junto
+/// con el artículo", y no el caso en que la cantidad de familia viene de OTROS artículos.</summary>
+public readonly record struct CeldaDeFamilia(
+    decimal CantidadDeFamiliaDesde, decimal CantidadDesde, PrecioConOfertas Resolucion);
+
 /// <summary>
 /// Tabla de escalones de cantidad de UNA línea (stage-pos-venta-offline: ofertas por volumen en la
 /// instantánea offline) — pura, sin base de datos, mismo criterio que
@@ -60,11 +68,72 @@ public static class EscalonesDeCantidad
         foreach (var umbral in umbrales)
         {
             candidatos.Add(new EscalonResuelto(
-                umbral, ResolvedorDeOfertas.Resolver(linea with { Cantidad = umbral }, candidatas)));
+                umbral, ResolvedorDeOfertas.Resolver(ConCantidad(linea, umbral), candidatas)));
         }
 
         return new CurvaDeCantidad(resolucionDeLaLinea, Colapsar(resolucionDeLaLinea, candidatos));
     }
+
+    /// <summary>
+    /// Grilla (cantidad de familia × cantidad propia) de <paramref name="linea"/>, vacía si ninguna
+    /// oferta de familia con <c>cantidad_minima</c> llega a la línea.
+    ///
+    /// <para>Los umbrales de familia son las <c>cantidad_minima</c> de las candidatas de alcance
+    /// familia por encima de <see cref="LineaAResolver.CantidadDeFamilia"/> que coinciden con la
+    /// línea en todos los demás ejes (se decide con <see cref="ResolvedorDeOfertas.Coincide"/> en el
+    /// umbral, igual que <see cref="DescubrirUmbrales"/>). El eje propio es la cantidad de la línea
+    /// más los umbrales de las demás candidatas con <c>cantidad_minima</c>. Cada celda es el
+    /// producto cartesiano, resuelto por el motor real con ambas cantidades fijadas: así el
+    /// dispositivo elige una celda en vez de evaluar ofertas.</para>
+    ///
+    /// <para>Las celdas no se colapsan: son pocas (los umbrales de un artículo) y una celda
+    /// repetida no puede dar un precio distinto del que el motor da.</para>
+    /// </summary>
+    public static IReadOnlyList<CeldaDeFamilia> ConstruirGrillaDeFamilia(
+        in LineaAResolver linea, IReadOnlyList<OfertaCandidata> candidatas)
+    {
+        var umbralesDeFamilia = new SortedSet<decimal>();
+        var umbralesPropios = new SortedSet<decimal> { linea.Cantidad };
+
+        foreach (var candidata in candidatas)
+        {
+            if (candidata.CantidadMinima is not { } umbral)
+            {
+                continue;
+            }
+
+            var esDeFamilia = candidata.Alcance.IdFamilia is not null;
+            if (umbral <= (esDeFamilia ? linea.CantidadDeFamilia : linea.Cantidad))
+            {
+                continue;
+            }
+
+            if (ResolvedorDeOfertas.Coincide(linea with { Cantidad = umbral, CantidadDeFamilia = umbral }, candidata))
+            {
+                (esDeFamilia ? umbralesDeFamilia : umbralesPropios).Add(umbral);
+            }
+        }
+
+        var celdas = new List<CeldaDeFamilia>(umbralesDeFamilia.Count * umbralesPropios.Count);
+        foreach (var deFamilia in umbralesDeFamilia)
+        {
+            foreach (var propio in umbralesPropios)
+            {
+                celdas.Add(new CeldaDeFamilia(
+                    deFamilia, propio,
+                    ResolvedorDeOfertas.Resolver(
+                        linea with { Cantidad = propio, CantidadDeFamilia = deFamilia }, candidatas)));
+            }
+        }
+
+        return celdas;
+    }
+
+    /// <summary>Mueve la cantidad de la línea y el agregado de su familia en el mismo delta: la
+    /// curva es de UN artículo, así que sondear un umbral es "este artículo llega a esa cantidad",
+    /// y el resto de la familia queda donde estaba.</summary>
+    private static LineaAResolver ConCantidad(in LineaAResolver linea, decimal cantidad) =>
+        linea with { Cantidad = cantidad, CantidadDeFamilia = linea.CantidadDeFamilia + (cantidad - linea.Cantidad) };
 
     /// <summary>
     /// Las cantidades en las que el resultado de <paramref name="linea"/> PUEDE cambiar, distintas
@@ -99,7 +168,7 @@ public static class EscalonesDeCantidad
                 continue;
             }
 
-            if (ResolvedorDeOfertas.Coincide(linea with { Cantidad = umbral }, candidata))
+            if (ResolvedorDeOfertas.Coincide(ConCantidad(linea, umbral), candidata))
             {
                 umbrales.Add(umbral);
             }

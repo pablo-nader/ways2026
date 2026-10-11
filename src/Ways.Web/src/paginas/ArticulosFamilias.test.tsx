@@ -371,7 +371,7 @@ const CAMPOS_COMPARTIDOS_DEL_FORMULARIO = [
   /^Costo de lista sin IVA/,
   /^Costo de lista con IVA/,
   /^Costo por/,
-  /^Descuento de proveedor/,
+  /^Descuento/,
   /^Controla lote/,
   /^Acumula en una sola línea/,
 ]
@@ -497,7 +497,7 @@ describe('Articulos — alta: elegir una familia', () => {
     expect(screen.getByLabelText(/^Controla lote/)).toBeChecked()
     expect(screen.getByLabelText(/^Acumula en una sola línea/)).not.toBeChecked()
     expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00')
-    expect(screen.getByLabelText(/^Descuento de proveedor/)).toHaveValue(5)
+    expect(screen.getByLabelText(/^Descuento/)).toHaveValue(5)
     expect(screen.getByLabelText(/^Costo por/)).toHaveValue('Unidad')
     expect(screen.getByLabelText(/^Costo de lista sin IVA/)).toHaveValue('123,97')
   })

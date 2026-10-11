@@ -8,6 +8,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { Modal } from '../componentes/Modal'
 
 type Formulario = {
   id: number | null
@@ -15,6 +16,8 @@ type Formulario = {
   activo: boolean
   valores: Record<string, ValorDeCampo>
 }
+
+const ID_FORMULARIO_CATALOGO = 'formulario-catalogo'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -30,6 +33,11 @@ const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la 
  * `ocupadoRef` de re-entrancia COMPARTIDOS entre el guardado y la baja —solo una escritura puede
  * estar en vuelo a la vez, sea alta/edición o baja— y `bloqueado` deja inerte toda la pantalla
  * mientras cualquiera de las dos está en vuelo.
+ *
+ * El alta y la edición viven en un `Modal` (mismo criterio que `Ofertas.tsx` y `Gastos.tsx`): un
+ * guardado exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra
+ * adentro (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores
+ * de la carga del listado y de la baja siguen en la pantalla.
  */
 export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   definicion,
@@ -41,6 +49,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
   /** Baja pendiente de confirmación: ver `Empresas.tsx`. La puerta es MODAL —`bloqueado` deja
@@ -106,6 +115,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     setFormulario({ id: null, nombre: '', activo: true, valores: { ...valoresPorDefecto } })
     setAviso('')
     setError('')
+    setErrorFormulario('')
   }
 
   function abrirEdicion(item: TListado) {
@@ -114,6 +124,14 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, valores: aValores(item) })
     setAviso('')
     setError('')
+    setErrorFormulario('')
+  }
+
+  /** El modal no ofrece cancelar con un guardado en vuelo (`ocupado`), así que cerrar no supersede
+   * ninguna escritura y no acuña generación. */
+  function cancelarFormulario() {
+    setFormulario(null)
+    setErrorFormulario('')
   }
 
   async function guardar() {
@@ -124,6 +142,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
     ocupadoRef.current = true
     setGuardando(true)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
       try {
@@ -134,7 +153,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           await api.put(`/catalogos/${recurso}/${datos.id}`, alta)
         }
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
@@ -254,20 +273,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           />
         )}
 
-        {formulario && (
-          <FormularioCatalogo
-            valor={formulario}
-            campos={campos}
-            tituloSingular={tituloSingular}
-            guardando={guardando}
-            bloqueado={bloqueado}
-            items={items}
-            onCambio={setFormulario}
-            onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
-          />
-        )}
-
         {cargando ? (
           <Cargando />
         ) : (
@@ -329,6 +334,21 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           </div>
         )}
       </Box>
+
+      {formulario && (
+        <ModalDeCatalogo
+          valor={formulario}
+          campos={campos}
+          tituloSingular={tituloSingular}
+          guardando={guardando}
+          bloqueado={bloqueado}
+          error={errorFormulario}
+          items={items}
+          onCambio={setFormulario}
+          onGuardar={guardar}
+          onCancelar={cancelarFormulario}
+        />
+      )}
     </div>
   )
 }
@@ -341,12 +361,13 @@ function formatearValorDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | u
   return valor === '' || valor === undefined || valor === null ? '—' : String(valor)
 }
 
-function FormularioCatalogo({
+function ModalDeCatalogo({
   valor,
   campos,
   tituloSingular,
   guardando,
   bloqueado,
+  error,
   items,
   onCambio,
   onGuardar,
@@ -357,6 +378,7 @@ function FormularioCatalogo({
   tituloSingular: string
   guardando: boolean
   bloqueado: boolean
+  error: string
   items: unknown[]
   onCambio: (f: Formulario) => void
   onGuardar: () => void
@@ -369,125 +391,128 @@ function FormularioCatalogo({
     onCambio({ ...valor, valores: { ...valor.valores, [clave]: nuevo } })
   }
 
+  const pie = (
+    <>
+      <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
+        Cancelar
+      </button>
+      <button type="submit" form={ID_FORMULARIO_CATALOGO} className="btn btn-success" disabled={bloqueado}>
+        {guardando ? 'Guardando…' : 'Guardar'}
+      </button>
+    </>
+  )
+
   return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
+    <Modal
+      titulo={esNuevo ? `Nueva ${tituloSingular}` : `Editar ${tituloSingular}`}
+      tamano="lg"
+      ocupado={bloqueado}
+      pie={pie}
+      onCerrar={onCancelar}
     >
-      <div className="col-12">
-        <strong>{esNuevo ? `Nueva ${tituloSingular}` : `Editando ${tituloSingular} ${valor.id}`}</strong>
-      </div>
+      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
+      <form
+        id={ID_FORMULARIO_CATALOGO}
+        className="row g-3"
+        autoComplete="off"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onGuardar()
+        }}
+      >
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="f-nombre">
+            Nombre
+          </label>
+          <input
+            id="f-nombre"
+            className="form-control"
+            maxLength={150}
+            value={valor.nombre}
+            onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
+            disabled={bloqueado}
+            required
+          />
+        </div>
 
-      <div className="col-md-4">
-        <label className="form-label" htmlFor="f-nombre">
-          Nombre
-        </label>
-        <input
-          id="f-nombre"
-          className="form-control"
-          maxLength={150}
-          value={valor.nombre}
-          onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
+        {camposVisibles.map((campo) => {
+          const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
+          const valorActual = String(valor.valores[campo.clave] ?? '')
+          // Solo tiene sentido buscar la opción faltante en `items` cuando las opciones vienen del
+          // listado: para selects de opciones estáticas (p. ej. comportamiento de medio de pago),
+          // buscar el valor por id en `items` podría matchear con un item no relacionado.
+          const opcionFaltante =
+            campo.opcionesDesdeListado && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
+              ? { valor: valorActual, etiqueta: etiquetaParaValorFaltante(valorActual, items) }
+              : null
 
-      {camposVisibles.map((campo) => {
-        const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
-        const valorActual = String(valor.valores[campo.clave] ?? '')
-        // Solo tiene sentido buscar la opción faltante en `items` cuando las opciones vienen del
-        // listado: para selects de opciones estáticas (p. ej. comportamiento de medio de pago),
-        // buscar el valor por id en `items` podría matchear con un item no relacionado.
-        const opcionFaltante =
-          campo.opcionesDesdeListado && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
-            ? { valor: valorActual, etiqueta: etiquetaParaValorFaltante(valorActual, items) }
-            : null
-
-        return (
-          <div className="col-md-3" key={campo.clave}>
-            <label className="form-label" htmlFor={`f-${campo.clave}`}>
-              {campo.etiqueta}
-            </label>
-            {campo.tipo === 'booleano' ? (
-              <div className="form-check pt-2">
+          return (
+            <div className="col-md-3" key={campo.clave}>
+              <label className="form-label" htmlFor={`f-${campo.clave}`}>
+                {campo.etiqueta}
+              </label>
+              {campo.tipo === 'booleano' ? (
+                <div className="form-check pt-2">
+                  <input
+                    id={`f-${campo.clave}`}
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={Boolean(valor.valores[campo.clave])}
+                    onChange={(e) => cambiarValorPropio(campo.clave, e.target.checked)}
+                    disabled={bloqueado}
+                  />
+                </div>
+              ) : campo.tipo === 'select' ? (
+                <select
+                  id={`f-${campo.clave}`}
+                  className="form-select"
+                  value={valorActual}
+                  onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
+                  disabled={bloqueado}
+                  required={campo.requerido}
+                >
+                  {valorActual === '' && <option value="">— Elegí una opción —</option>}
+                  {opcionFaltante && (
+                    <option value={opcionFaltante.valor}>{opcionFaltante.etiqueta}</option>
+                  )}
+                  {opciones.map((o) => (
+                    <option key={o.valor} value={o.valor}>
+                      {o.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              ) : (
                 <input
                   id={`f-${campo.clave}`}
-                  type="checkbox"
-                  className="form-check-input"
-                  checked={Boolean(valor.valores[campo.clave])}
-                  onChange={(e) => cambiarValorPropio(campo.clave, e.target.checked)}
+                  type="number"
+                  step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
+                  className="form-control"
+                  value={valorActual}
+                  onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
                   disabled={bloqueado}
+                  required={campo.requerido}
                 />
-              </div>
-            ) : campo.tipo === 'select' ? (
-              <select
-                id={`f-${campo.clave}`}
-                className="form-select"
-                value={valorActual}
-                onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
-                disabled={bloqueado}
-                required={campo.requerido}
-              >
-                {valorActual === '' && <option value="">— Elegí una opción —</option>}
-                {opcionFaltante && (
-                  <option value={opcionFaltante.valor}>{opcionFaltante.etiqueta}</option>
-                )}
-                {opciones.map((o) => (
-                  <option key={o.valor} value={o.valor}>
-                    {o.etiqueta}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                id={`f-${campo.clave}`}
-                type="number"
-                step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
-                className="form-control"
-                value={valorActual}
-                onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
-                disabled={bloqueado}
-                required={campo.requerido}
-              />
-            )}
-          </div>
-        )
-      })}
+              )}
+            </div>
+          )
+        })}
 
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="f-activo">
-          Estado
-        </label>
-        <select
-          id="f-activo"
-          className="form-select"
-          value={valor.activo ? 'activo' : 'inactivo'}
-          onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
-          disabled={bloqueado}
-        >
-          <option value="activo">Activo</option>
-          <option value="inactivo">Inactivo</option>
-        </select>
-      </div>
-
-      <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success" disabled={bloqueado}>
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={bloqueado}
-        >
-          Cancelar
-        </button>
-      </div>
-    </form>
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="f-activo">
+            Estado
+          </label>
+          <select
+            id="f-activo"
+            className="form-select"
+            value={valor.activo ? 'activo' : 'inactivo'}
+            onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
+            disabled={bloqueado}
+          >
+            <option value="activo">Activo</option>
+            <option value="inactivo">Inactivo</option>
+          </select>
+        </div>
+      </form>
+    </Modal>
   )
 }

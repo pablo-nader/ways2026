@@ -145,7 +145,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnName("descripcion");
 
                     b.Property<decimal?>("DescuentoProveedor")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("numeric(5,2)")
+                        .HasDefaultValue(0m)
                         .HasColumnName("descuento_proveedor");
 
                     b.Property<bool>("DisponibleParaTodas")

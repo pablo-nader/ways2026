@@ -24,7 +24,7 @@ import type { AlmacenClaveValor } from './almacenPos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { calcularTotalesDeLinea } from '../api/ajusteManual'
 import { previaDeLinea } from '../api/ventas'
-import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
+import type { ArticuloDeInstantanea, ClienteDeInstantanea, EscalonDeCantidad, EscalonDeFamilia, InstantaneaDePos, PrecioDeListaDeInstantanea, SolicitudDeVenta } from '../api/tipos'
 
 const emitirMock = vi.fn()
 const reservarNumeracionMock = vi.fn()
@@ -104,7 +104,7 @@ const LISTA_CF = 1
 type ArticuloConPrecio = Omit<ArticuloDeInstantanea, 'preciosPorLista'> & Omit<PrecioDeListaDeInstantanea, 'idListaPrecio'> & { idListaPrecio: number }
 
 function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
-  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, idListaPrecio = LISTA_CF, ...resto } = sobrescribir
+  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, escalonesDeFamilia, idListaPrecio = LISTA_CF, ...resto } = sobrescribir
   return {
     idArticulo: 1,
     codigoInterno: 'A0001',
@@ -113,7 +113,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): Articul
     idAlicuotaIva: 1,
     porcentajeIva: 21,
     ...resto,
-    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones }],
+    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones, escalonesDeFamilia }],
   }
 }
 
@@ -829,6 +829,41 @@ describe('useSincronizacionOffline — encolarVentaOffline', () => {
     expect(lineas).toHaveLength(2)
     expect(lineas.find((l) => l.idArticulo === 1)).toMatchObject({ cantidad: 1, precioUnitario: 100, descuentoUnitario: 0 })
     expect(lineas.find((l) => l.idArticulo === 2)).toMatchObject({ cantidad: 2, precioUnitario: 80, descuentoUnitario: 10 })
+  })
+
+  // Mismo carrito que la vista previa y el ticket (`preciosVigentesDeLasLineas`): dos alfajores de
+  // la familia con cantidad 1 llegan al mínimo de la oferta "2 x 3500" entre los dos, y el payload
+  // que el servidor cobra literal lleva el descuento de la oferta en AMBAS líneas.
+  it('con dos artículos de la misma familia y cantidad 1, encola el descuento de la oferta de familia en las dos líneas', async () => {
+    const celda: EscalonDeFamilia = { cantidadDeFamiliaDesde: 2, cantidadDesde: 1, precioFinal: 1750, descuentoUnitario: 250, aplicadas: [{ idOferta: 71, nombre: '2 x 3500', descuentoUnitario: 250 }] }
+    const alfajor = (idArticulo: number, idFamilia: number | null) =>
+      articuloFixture({ idArticulo, codigosBarra: [`${idArticulo}`], precioOriginal: 2000, precioFinal: 2000, idFamilia, escalonesDeFamilia: [celda] })
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaFixture({ articulos: [alfajor(1, 7), alfajor(2, 7), alfajor(3, null)] }))
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({
+          lineas: [
+            { idArticulo: 1, cantidad: 1, codigoBarra: '1', idLote: null },
+            { idArticulo: 2, cantidad: 1, codigoBarra: '2', idLote: null },
+            { idArticulo: 3, cantidad: 1, codigoBarra: '3', idLote: null },
+          ],
+        }),
+        esConsumidorFinal: true, idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+
+    const lineas = (await leerOutbox(almacen))[0].solicitud.lineas ?? []
+    expect(lineas.map((l) => ({ idArticulo: l.idArticulo, precioUnitario: l.precioUnitario, descuentoUnitario: l.descuentoUnitario }))).toEqual([
+      { idArticulo: 1, precioUnitario: 2000, descuentoUnitario: 250 },
+      { idArticulo: 2, precioUnitario: 2000, descuentoUnitario: 250 },
+      { idArticulo: 3, precioUnitario: 2000, descuentoUnitario: 0 },
+    ])
   })
 
   // El payload encolado es lo que el servidor cobra LITERAL (`precioUnitario`/`descuentoUnitario`

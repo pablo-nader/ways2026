@@ -20,10 +20,11 @@ public class ResolvedorDeOfertasTests
     private static LineaAResolver CrearLinea(
         int idArticulo = 1, int? idGrupo = null, IReadOnlyList<int>? idsCategorias = null,
         int idListaPrecio = 1, decimal cantidad = 1m, decimal precioOriginal = 1000m,
-        DateOnly? fecha = null, TimeOnly? hora = null, int? diaSemana = null, int? idFamilia = null) =>
+        DateOnly? fecha = null, TimeOnly? hora = null, int? diaSemana = null, int? idFamilia = null,
+        decimal? cantidadDeFamilia = null) =>
         new(
             idArticulo, idGrupo, idsCategorias ?? [], idListaPrecio, cantidad, precioOriginal,
-            fecha ?? Fecha, hora ?? Hora, diaSemana ?? DiaSemana, idFamilia);
+            fecha ?? Fecha, hora ?? Hora, diaSemana ?? DiaSemana, idFamilia, cantidadDeFamilia ?? cantidad);
 
     private static OfertaCandidata CrearCandidata(
         int id = 1, string nombre = "oferta", int prioridad = 0, bool acumulable = false,
@@ -503,5 +504,43 @@ public class ResolvedorDeOfertasTests
 
         Assert.Equal(0.13m, resultado.DescuentoUnitario);
         Assert.Equal(999.87m, resultado.PrecioFinal);
+    }
+
+    // --- Cantidad mínima por familia ---
+
+    [Fact]
+    public void UnaOfertaDeFamiliaCompletaLaCantidadMinimaConLaCantidadDeLaFamilia()
+    {
+        var linea = CrearLinea(cantidad: 1m, idFamilia: 5, cantidadDeFamilia: 2m);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5), cantidadMinima: 2m);
+
+        Assert.True(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaDeFamiliaNoMatcheaSiLaCantidadDeLaFamiliaNoLlegaAlMinimo()
+    {
+        var linea = CrearLinea(cantidad: 1m, idFamilia: 5, cantidadDeFamilia: 1m);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5), cantidadMinima: 2m);
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaDeFamiliaIgnoraLaCantidadPropiaCuandoLaDeLaFamiliaEsMenor()
+    {
+        var linea = CrearLinea(cantidad: 3m, idFamilia: 5, cantidadDeFamilia: 1m);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5), cantidadMinima: 2m);
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaDeArticuloSigueUsandoLaCantidadDeLaLineaAunqueLaFamiliaAlcance()
+    {
+        var linea = CrearLinea(idArticulo: 1, cantidad: 1m, idFamilia: 5, cantidadDeFamilia: 2m);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeArticulo(1), cantidadMinima: 2m);
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
     }
 }

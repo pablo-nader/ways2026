@@ -559,6 +559,66 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.True(Assert.Single(instantanea.Articulos, a => a.IdArticulo == idAcumula).AcumulaEnVenta);
     }
 
+    /// <summary>Punta a punta: la familia del artículo y la grilla de una oferta de familia
+    /// "2 x 3500" viajan en la versión 2, y un artículo sin familia ni oferta no trae ninguna de las
+    /// dos claves (el payload crece solo donde hace falta).</summary>
+    [Fact]
+    public async Task LaVersion2TraeLaFamiliaYLaGrillaDeUnaOfertaDeFamiliaConCantidadMinima()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LaVersion2TraeLaFamiliaYLaGrillaDeUnaOfertaDeFamiliaConCantidadMinima));
+        var idAlfajorA = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "alfajor-a", 2000m);
+        var idAlfajorB = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "alfajor-b", 2000m);
+        var idSuelto = await SembrarArticuloConPrecioYBarrasAsync(idTenant, "suelto", 2000m);
+
+        int idFamilia;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var familia = new Familia { IdTenant = idTenant, Nombre = "Alfajores", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Familias.Add(familia);
+            await db.SaveChangesAsync();
+            idFamilia = familia.Id;
+
+            foreach (var articulo in await db.Articulos.Where(a => a.Id == idAlfajorA || a.Id == idAlfajorB).ToListAsync())
+            {
+                articulo.IdFamilia = familia.Id;
+            }
+
+            db.Ofertas.Add(new Oferta
+            {
+                IdTenant = idTenant, Nombre = "2 x 3500", IdFamilia = familia.Id, PrecioUnitario = 1750m,
+                CantidadMinima = 2m, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "familia");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        var respuesta = await cajero.GetAsync(RutaV2);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        var instantanea = JsonSerializer.Deserialize<InstantaneaDePos>(cuerpo, OpcionesJson)!;
+
+        foreach (var id in new[] { idAlfajorA, idAlfajorB })
+        {
+            var alfajor = Assert.Single(instantanea.Articulos, a => a.IdArticulo == id);
+            Assert.Equal(idFamilia, alfajor.IdFamilia);
+            var precio = Assert.Single(alfajor.PreciosPorLista);
+            Assert.Equal(2000m, precio.PrecioFinal);
+            var celda = Assert.Single(precio.EscalonesDeFamilia!);
+            Assert.Equal((2m, 1m, 1750m, 250m), (celda.CantidadDeFamiliaDesde, celda.CantidadDesde, celda.PrecioFinal, celda.DescuentoUnitario));
+        }
+
+        var suelto = Assert.Single(instantanea.Articulos, a => a.IdArticulo == idSuelto);
+        Assert.Null(suelto.IdFamilia);
+        Assert.Null(Assert.Single(suelto.PreciosPorLista).EscalonesDeFamilia);
+        Assert.Equal(2, Regex.Matches(cuerpo, "escalonesDeFamilia").Count);
+        Assert.Equal(2, Regex.Matches(cuerpo, "idFamilia").Count);
+    }
+
     [Fact]
     public async Task LaVersion2TraeElPrecioEnCadaListaYLosClientesVisiblesConTodosSusCampos()
     {

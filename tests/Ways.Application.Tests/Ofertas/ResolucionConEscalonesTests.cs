@@ -18,7 +18,7 @@ namespace Ways.Application.Tests.Ofertas;
 /// criterio que <see cref="ServicioDeOfertasTests"/>: la resolución es query-only, nunca abre
 /// transacción, así que es alcanzable sin Postgres). Cubre el cableado del punto de entrada nuevo —
 /// la proyección de la curva a <see cref="EscalonDeCantidad"/> y que el resultado plano siga siendo
-/// EXACTAMENTE el de <see cref="ServicioDeOfertas.ResolverAsync"/>. La lógica de escalones en sí
+/// EXACTAMENTE el de <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/>. La lógica de escalones en sí
 /// (descubrimiento, orden, colapso) se prueba pura en <c>EscalonesDeCantidadTests</c>
 /// (Ways.Domain.Tests); el guard de "cero consultas extra" vive en <c>OfertasResolucionTests</c>
 /// (Postgres real, es el único lugar donde hay un <c>DbCommandInterceptor</c> que contar).
@@ -161,7 +161,7 @@ public class ResolucionConEscalonesTests
     }
 
     /// <summary>El refactor que extrajo el contexto compartido no movió el resultado plano:
-    /// <see cref="ServicioDeOfertas.ResolverAsync"/> y
+    /// <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/> y
     /// <see cref="ServicioDeOfertas.ResolverConEscalonesAsync"/> devuelven lo mismo, campo por
     /// campo, para el MISMO lote — incluida la línea sin precio vigente (lista existente, artículo
     /// sin fila en <c>precios</c>: los dos precios en <c>null</c> y sin aplicadas).</summary>
@@ -193,7 +193,7 @@ public class ResolucionConEscalonesTests
             new(idArticuloSinPrecio, null, idLista, 1m)
         ];
 
-        var plano = await CrearServicio(nombreDeBase).ResolverAsync(lineas, momento: null);
+        var plano = await CrearServicio(nombreDeBase).ResolverDocumentoAsync(lineas, momento: null);
         var conEscalones = await CrearServicio(nombreDeBase).ResolverConEscalonesAsync(lineas, momento: null);
 
         Assert.Equal(lineas.Count, plano.Count);
@@ -229,7 +229,7 @@ public class ResolucionConEscalonesTests
         var nombreDeBase = Guid.NewGuid().ToString();
         var servicio = CrearServicio(nombreDeBase);
 
-        Assert.Empty(await servicio.ResolverAsync([], momento: null));
+        Assert.Empty(await servicio.ResolverDocumentoAsync([], momento: null));
         Assert.Empty(await servicio.ResolverConEscalonesAsync([], momento: null));
     }
 
@@ -242,7 +242,7 @@ public class ResolucionConEscalonesTests
         var nombreDeBase = Guid.NewGuid().ToString();
         var servicio = CrearServicio(nombreDeBase);
 
-        var plano = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ResolverAsync(null, momento: null));
+        var plano = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ResolverDocumentoAsync(null, momento: null));
         var conEscalones = await Assert.ThrowsAsync<ErrorDominio>(
             () => servicio.ResolverConEscalonesAsync(null, momento: null));
 

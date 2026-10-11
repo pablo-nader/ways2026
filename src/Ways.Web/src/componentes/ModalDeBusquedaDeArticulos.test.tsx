@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDeBusquedaDeArticulos } from './ModalDeBusquedaDeArticulos'
 import type { ArticuloListado, PaginaDe, ResultadoDeResolucion } from '../api/tipos'
@@ -104,9 +104,12 @@ describe('ModalDeBusquedaDeArticulos — contexto de precio', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
 
     await screen.findByText('Fanta 1.5L')
-    expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', {
-      lineas: [{ idArticulo: 9, idEmpresa: 7, idListaPrecio: 3, cantidad: 1 }],
-    })
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', {
+        lineas: [{ idArticulo: 9, idEmpresa: 7, idListaPrecio: 3, cantidad: 1 }],
+        agregacion: 'PorLinea',
+      }),
+    )
   })
 })
 

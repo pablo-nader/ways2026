@@ -77,7 +77,7 @@ public class ServicioDeOfertasTests
             CrearServicioDePrecios(nombreDeBase, idTenant));
 
     /// <summary>Instancia real de <see cref="ServicioDePrecios"/> sobre el MISMO nombre de base
-    /// InMemory — <see cref="ServicioDeOfertas.ResolverAsync"/> (Slice 3) la usa para el lote de
+    /// InMemory — <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/> (Slice 3) la usa para el lote de
     /// precios; ningún test de este archivo la ejercita todavía (cubierto en
     /// <c>ResolvedorDeOfertasTests</c>/<c>OfertasResolucionTests</c>), pero el constructor la
     /// necesita.</summary>
@@ -561,5 +561,79 @@ public class ServicioDeOfertasTests
         Assert.Equal(idFamilia, listada.IdFamilia);
         Assert.Equal(idFamilia, detalle.IdFamilia);
         Assert.Null(detalle.IdGrupo);
+    }
+
+    // ---- nombre del artículo en el listado -----------------------------------------------------
+
+    private static async Task<int> SembrarArticuloAsync(
+        string nombreDeBase, int idTenant, string nombre, bool dadoDeBaja = false)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        var articulo = new Articulo
+        {
+            IdTenant = idTenant, CodigoInterno = $"art-{Guid.NewGuid():N}", Nombre = nombre,
+            IdArea = 1, IdAlicuotaIva = 1, UnidadVenta = UnidadVenta.Unidad, EsProducto = true,
+            Activo = true, CreatedAt = Ahora, UpdatedAt = Ahora,
+            DeletedAt = dadoDeBaja ? Ahora : null
+        };
+        siembra.Articulos.Add(articulo);
+        await siembra.SaveChangesAsync();
+
+        return articulo.Id;
+    }
+
+    private static async Task SembrarOfertaDeArticuloAsync(string nombreDeBase, int idTenant, int idArticulo, string nombre)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        siembra.Ofertas.Add(new Oferta
+        {
+            IdTenant = idTenant, Nombre = nombre, IdArticulo = idArticulo, Porcentaje = 10m,
+            CreatedAt = Ahora, UpdatedAt = Ahora
+        });
+        await siembra.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ListarDevuelveElNombreDelArticuloDeUnaOfertaDeArticulo()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idArticulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, "Alfajor maizena");
+        await SembrarOfertaDeArticuloAsync(nombreDeBase, idTenant: 1, idArticulo, "De artículo");
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var listada = Assert.Single(await servicio.ListarAsync());
+
+        Assert.Equal("Alfajor maizena", listada.NombreArticulo);
+    }
+
+    [Fact]
+    public async Task ListarDejaSinNombreDeArticuloLasOfertasDeOtroAlcance()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
+        await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var listada = Assert.Single(await servicio.ListarAsync());
+
+        Assert.Null(listada.NombreArticulo);
+    }
+
+    [Fact]
+    public async Task ListarDejaSinNombreUnArticuloDadoDeBajaConYSinIncluirEliminados()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idArticulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, "Dado de baja", dadoDeBaja: true);
+        await SembrarOfertaDeArticuloAsync(nombreDeBase, idTenant: 1, idArticulo, "Con artículo en baja");
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var listada = Assert.Single(await servicio.ListarAsync());
+        var conEliminadas = Assert.Single(await servicio.ListarAsync(incluirEliminados: true));
+
+        Assert.Equal(idArticulo, listada.IdArticulo);
+        Assert.Null(listada.NombreArticulo);
+        Assert.Null(conEliminadas.NombreArticulo);
     }
 }

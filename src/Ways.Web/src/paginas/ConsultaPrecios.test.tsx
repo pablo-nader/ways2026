@@ -152,6 +152,7 @@ describe('ConsultaPrecios — exactamente dos llamados por escaneo (mutation tar
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', {
       lineas: [{ idArticulo: 1, idEmpresa: 1, idListaPrecio: 3, cantidad: 1 }],
+      agregacion: 'PorLinea',
     })
   })
 

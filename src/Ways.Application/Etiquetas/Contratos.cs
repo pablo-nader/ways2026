@@ -5,7 +5,7 @@ namespace Ways.Application.Etiquetas;
 /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.12; design.md:182-183). Los cuatro
 /// mismos ejes que <c>ServicioDeArticulos.ListarAsync</c> gana en esta slice, más
 /// <see cref="SoloConOfertaVigente"/> — decidido ÍNTEGRAMENTE por
-/// <see cref="ServicioDeOfertas.ResolverAsync"/> (<c>Aplicadas.Count &gt; 0</c>), nunca por un
+/// <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/> (<c>Aplicadas.Count &gt; 0</c>), nunca por un
 /// segundo matching de ofertas acá (design decisión 6, proposal decisión 12).</summary>
 public sealed record FiltroDeEtiquetas(
     string? Busqueda, int? IdArea, int? IdCategoria, int? IdMarca, bool SoloConOfertaVigente = false);

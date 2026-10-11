@@ -1196,7 +1196,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         'Categoría',
         'Marca',
         'Grupo',
-        'Descuento de proveedor (%)',
+        'Descuento (%)',
         'Controla lote / vencimiento',
         'Acumula en una sola línea al vender',
         'Disponible para todas las empresas del tenant',

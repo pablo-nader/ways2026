@@ -18,8 +18,7 @@ import {
   esInstantaneaValida,
   guardarInstantaneaLocal,
   leerInstantaneaLocal,
-  precioEnLista,
-  preciosVigentesOffline,
+  preciosVigentesDeLasLineas,
   todasLasLineasTienenPrecioOffline,
   type InstantaneaLocal,
 } from './instantaneaOffline'
@@ -211,19 +210,17 @@ export type ResultadoDeSincronizacionOffline = {
 }
 
 /** Enriquece cada línea con el precio congelado de la instantánea en la lista de la venta, en el
- * tramo que corresponde a SU cantidad (`preciosVigentesOffline` — la misma función que resuelve la
- * vista previa en pantalla, para que lo mostrado y lo cobrado no puedan diferir: este payload es el
- * que el servidor cobra literal). `null` si CUALQUIER línea no tiene precio en esa lista. Defensa
+ * tramo que corresponde a SU cantidad y a la de su familia en el carrito
+ * (`preciosVigentesDeLasLineas` — la misma función que resuelve la vista previa en pantalla, para
+ * que lo mostrado y lo cobrado no puedan diferir: este payload es el que el servidor cobra literal). `null` si CUALQUIER línea no tiene precio en esa lista. Defensa
  * en profundidad únicamente: el gate real (todas o ninguna) es
  * `todasLasLineasTienenPrecioOffline`, ya evaluado por el llamador ANTES de invocar esto. */
 function enriquecerLineasConPrecioOffline(lineas: LineaDeVenta[], instantanea: InstantaneaDePos, idListaPrecio: number): LineaDeVenta[] | null {
-  const porId = new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
+  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
   const enriquecidas: LineaDeVenta[] = []
-  for (const linea of lineas) {
-    const articulo = porId.get(linea.idArticulo)
-    const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
-    if (!precio) return null
-    const precios = preciosVigentesOffline(precio, linea.cantidad)
+  for (const [indice, linea] of lineas.entries()) {
+    const precios = vigentes[indice]
+    if (!precios) return null
     // El backend trata `precioUnitario` como precio de LISTA (bruto) y resta `descuentoUnitario`
     // de nuevo (`ServicioDeVentas.MaterializarItems` → `CalculadorDeTotales.Calcular`) — el mismo
     // contrato que el camino online (`PrecioOriginal`/`DescuentoUnitario`). Mandar `precioFinal`

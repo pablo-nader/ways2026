@@ -9,7 +9,7 @@ namespace Ways.Application.Etiquetas;
 /// <summary>
 /// stage-18-etiquetas-y-consulta, Slice 2 (task 2.13; design.md:14-16, "Technical Approach").
 /// COMPONE la selección (ids explícitos o el filtro de <see cref="Articulos.ServicioDeArticulos"/>)
-/// con el precio ya resuelto por <see cref="ServicioDeOfertas.ResolverAsync"/> — nunca reimplementa
+/// con el precio ya resuelto por <see cref="ServicioDeOfertas.ResolverDocumentoAsync"/> — nunca reimplementa
 /// ninguna parte del matching de ofertas (design decisión 6/proposal decisión 12). Read-only:
 /// ningún <c>SaveChangesAsync</c> en esta clase, mismo contrato que
 /// <c>POST /api/ofertas/resolver</c> (spec: "Applied Ofertas Are Reported, Never Persisted").
@@ -150,7 +150,7 @@ public class ServicioDeEtiquetas(
             .Select(id => new LineaDeResolucion(id, idEmpresa, solicitud.IdListaPrecio, Cantidad: 1m))
             .ToList();
 
-        var resultados = await servicioDeOfertas.ResolverAsync(lineas, momento, ct);
+        var resultados = await servicioDeOfertas.ResolverPorLineaAsync(lineas, momento, ct);
 
         var filas = new List<FilaDeEtiqueta>();
 

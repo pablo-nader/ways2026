@@ -18,7 +18,7 @@ public class EscalonesDeCantidadTests
     private const int DiaSemana = 1; // lunes
 
     private static LineaAResolver CrearLinea(decimal cantidad = 1m, decimal precioOriginal = 1000m) =>
-        new(1, null, [], 1, cantidad, precioOriginal, Fecha, Hora, DiaSemana);
+        new(1, null, [], 1, cantidad, precioOriginal, Fecha, Hora, DiaSemana, null, cantidad);
 
     private static OfertaCandidata CrearCandidata(
         int id = 1, string nombre = "oferta", int prioridad = 0, bool acumulable = false,
@@ -259,5 +259,22 @@ public class EscalonesDeCantidadTests
         var escalones = EscalonesDeCantidad.Colapsar(plano, [candidato]);
 
         Assert.Equal([3m], escalones.Select(e => e.CantidadDesde));
+    }
+
+    /// <summary>Cláusula: <c>ConCantidad</c> mueve <c>CantidadDeFamilia</c> junto con la cantidad.
+    /// La curva es por artículo: una oferta de familia con mínimo 3 aparece como escalón en 3, el
+    /// mismo valor que antes de que la familia tuviera cantidad agregada.</summary>
+    [Fact]
+    public void UnaOfertaDeFamiliaGeneraSuEscalonCuandoElArticuloAlcanzaElUmbral()
+    {
+        var linea = new LineaAResolver(1, null, [], 1, 1m, 1000m, Fecha, Hora, DiaSemana, 5, 1m);
+        var deFamilia = new OfertaCandidata(
+            1, "familia", 0, false, AlcanceDeOferta.DeFamilia(5), BeneficioDeOferta.DePorcentaje(10m),
+            3m, null, null, null, null, new HashSet<int>(), new HashSet<int>());
+
+        var escalon = Assert.Single(EscalonesDeCantidad.Construir(linea, [deFamilia]).Escalones);
+
+        Assert.Equal(3m, escalon.CantidadDesde);
+        Assert.Equal(100m, escalon.Resolucion.DescuentoUnitario);
     }
 }

@@ -2770,6 +2770,26 @@ describe('Articulos — sección Costos', () => {
     expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ costoLista: 100, costoListaIncluyeIva: false })
   })
 
+  it('un artículo nuevo arranca con descuento 0 y lo manda así', async () => {
+    await abrirAltaConAlicuota()
+    expect(screen.getByLabelText('Descuento (%)')).toHaveValue(0)
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ descuentoProveedor: 0 })
+  })
+
+  it('vaciar el descuento manda 0 y no null', async () => {
+    await abrirAltaConAlicuota()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await userEvent.clear(screen.getByLabelText('Descuento (%)'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(cuerpoDelPedido(apiPostMock)).toMatchObject({ descuentoProveedor: 0 })
+  })
+
   it('cambiar la alícuota recalcula el campo derivado y deja intacto el que se tipeó', async () => {
     await abrirAltaConAlicuota()
     await userEvent.type(screen.getByLabelText('Costo de lista sin IVA'), '100')
@@ -2785,7 +2805,8 @@ describe('Articulos — sección Costos', () => {
     await abrirAltaConAlicuota()
     await userEvent.type(screen.getByLabelText('Costo de lista con IVA'), '100')
 
-    await userEvent.type(screen.getByLabelText('Descuento de proveedor (%)'), '10')
+    await userEvent.clear(screen.getByLabelText('Descuento (%)'))
+    await userEvent.type(screen.getByLabelText('Descuento (%)'), '10')
 
     expect(screen.getByLabelText('Costo nominal')).toHaveAttribute('readonly')
     expect(screen.getByLabelText('Costo nominal')).toHaveValue('90,00')
@@ -2849,7 +2870,8 @@ describe('Articulos — sección Costos', () => {
   it('al cambiar una entrada del cálculo el costo nominal pasa a ser la vista previa', async () => {
     await abrirEdicion(articuloFixture({ costoLista: 100, costoNominal: 73.5 }))
 
-    await userEvent.type(screen.getByLabelText('Descuento de proveedor (%)'), '10')
+    await userEvent.clear(screen.getByLabelText('Descuento (%)'))
+    await userEvent.type(screen.getByLabelText('Descuento (%)'), '10')
 
     expect(screen.getByLabelText('Costo nominal')).toHaveValue('90,00')
   })
@@ -2866,7 +2888,7 @@ describe('Articulos — sección Costos', () => {
     'Costo de lista sin IVA',
     'Costo de lista con IVA',
     'Costo por',
-    'Descuento de proveedor (%)',
+    'Descuento (%)',
     'Costo nominal',
   ]
   const sinCostos = () =>
