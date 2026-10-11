@@ -162,7 +162,7 @@ lo primero es decidir en cuál está:
 
 | Categoría | Scope | Tablas |
 |---|---|---|
-| **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas` |
+| **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas`, `combos`, `combos_componentes` |
 | **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios`, `familias` |
 | **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante`, `reservas_numeracion` |
 | **Global** | sin tenant | `roles`, `permisos`, planes/facturación del SaaS |

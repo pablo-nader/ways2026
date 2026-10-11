@@ -1748,6 +1748,139 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("numeraciones_clientes", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Combos.Combo", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_combo");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<int>("Codigo")
+                        .HasColumnType("integer")
+                        .HasColumnName("codigo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<decimal>("Precio")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("precio");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_combos_id_combo_id_tenant");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_combos_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_combos_empresa");
+
+                    b.HasIndex("IdTenant", "Codigo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_combos_codigo")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("combos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_combos_codigo_positivo", "codigo > 0");
+                            t.HasCheckConstraint("ck_combos_precio_positivo", "precio > 0");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Combos.ComboComponente", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_combo_componente");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Cantidad")
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("cantidad");
+
+                    b.Property<int?>("IdArticulo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_articulo");
+
+                    b.Property<int>("IdCombo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_combo");
+
+                    b.Property<int?>("IdFamilia")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_familia");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_combos_componentes_tenant");
+
+                    b.HasIndex("IdArticulo", "IdTenant")
+                        .HasDatabaseName("ix_combos_componentes_articulo");
+
+                    b.HasIndex("IdCombo", "IdArticulo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_combos_componentes_articulo")
+                        .HasFilter("id_articulo IS NOT NULL");
+
+                    b.HasIndex("IdCombo", "IdFamilia")
+                        .IsUnique()
+                        .HasDatabaseName("ux_combos_componentes_familia")
+                        .HasFilter("id_familia IS NOT NULL");
+
+                    b.HasIndex("IdCombo", "IdTenant")
+                        .HasDatabaseName("ix_combos_componentes_combo");
+
+                    b.HasIndex("IdFamilia", "IdTenant")
+                        .HasDatabaseName("ix_combos_componentes_familia");
+
+                    b.ToTable("combos_componentes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_combos_componentes_alcance_exclusivo", "num_nonnulls(id_articulo, id_familia) = 1");
+
+                            t.HasCheckConstraint("ck_combos_componentes_cantidad_positiva", "cantidad > 0");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Compras.AlicuotaComprobanteCompra", b =>
                 {
                     b.Property<int>("Id")
@@ -5367,6 +5500,55 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_numeraciones_clientes_tenant");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Combos.Combo", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_combos_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_combos_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Combos.ComboComponente", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_combos_componentes_tenant");
+
+                    b.HasOne("Ways.Domain.Articulos.Articulo", null)
+                        .WithMany()
+                        .HasForeignKey("IdArticulo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_combos_componentes_articulo");
+
+                    b.HasOne("Ways.Domain.Combos.Combo", null)
+                        .WithMany()
+                        .HasForeignKey("IdCombo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_combos_componentes_combo");
+
+                    b.HasOne("Ways.Domain.Articulos.Familia", null)
+                        .WithMany()
+                        .HasForeignKey("IdFamilia", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_combos_componentes_familia");
                 });
 
             modelBuilder.Entity("Ways.Domain.Compras.AlicuotaComprobanteCompra", b =>
