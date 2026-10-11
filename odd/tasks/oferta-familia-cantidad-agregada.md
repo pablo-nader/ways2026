@@ -33,8 +33,9 @@ Owner request (2026-10-11): mixed articles of one family must reach the threshol
 
 ## Delivery
 
-Strategy: chained PRs, stacked-to-main (cached owner preference). Forecast ~700 authored lines.
-- PR 1 = T1. PR 2 = T2.
+Strategy: single PR for the whole branch (about 1490 authored lines, tests included). The planned
+T1/T2 split was dropped: T1 alone, deployed on merge, leaves the article search preview aggregating
+by family and flags offline sales of mixed family lines as discrepant until T2 lands.
 
 ## Tasks
 
@@ -68,4 +69,10 @@ Strategy: chained PRs, stacked-to-main (cached owner preference). Forecast ~700 
 
 ## Next step
 
-Judgment-day on the T2 slice, then PR 2.
+Judgment-day (2026-10-11) on main...9b0d2c60: round one had no critical finding and two warnings
+(float family sum, search modal aggregation), both fixed; the scoped re-judgment of the fix delta
+was clean for both judges. Next: PR with auto-merge, then a POS release (Ways.Desktop bump and a
+`pos-v*` tag) so the registers receive the offline change.
+
+Open follow-ups: the family grid ships uncollapsed (snapshot size on large families); the offline
+family sum rounds to 3 decimals while the resolver endpoint does not validate quantity precision.
