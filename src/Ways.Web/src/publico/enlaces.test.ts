@@ -14,7 +14,10 @@ describe('enlaceWhatsapp', () => {
     ['  +54 9 11 5555 1234  ', 'https://wa.me/5491155551234'],
     ['+351 912 345 678', 'https://wa.me/351912345678'],
     ['00 44 20 7946 0958', 'https://wa.me/442079460958'],
-  ])('%s es internacional y se usa tal cual', (entrada, esperado) => {
+    ['5491155551234', 'https://wa.me/5491155551234'],
+    ['542235551234', 'https://wa.me/542235551234'],
+    ['54 9 223 555-1234', 'https://wa.me/5492235551234'],
+  ])('%s ya trae el código de país y se usa tal cual', (entrada, esperado) => {
     expect(enlaceWhatsapp(entrada)).toBe(esperado)
   })
 
@@ -37,7 +40,8 @@ describe('enlaceWhatsapp', () => {
     ['4444 5678'],
     ['223 15 555 1234'],
     ['11 5555-1234 / 11 6666-0000'],
-    ['5491155551234'],
+    ['54115555123'],
+    ['54911555512345'],
     ['+54 9 11'],
     ['+54 9 11 5555-1234 / 11 6666-0000'],
   ])('%s no es un número usable', (entrada) => {

@@ -7,6 +7,9 @@ const MAXIMO_INTERNACIONAL = 15
 const DIGITOS_ARGENTINOS = 10
 /** Prefijo de país y de celular con el que `wa.me` reconoce un móvil argentino. */
 const PREFIJO_MOVIL_ARGENTINO = '549'
+/** Código de país de Argentina y largos con los que un número escrito con él (`54…`) ya es internacional. */
+const CODIGO_DE_PAIS_ARGENTINO = '54'
+const LARGOS_ARGENTINOS_CON_PAIS = [12, 13]
 
 const PATRON_DE_USUARIO_DE_INSTAGRAM = /^[A-Za-z0-9._]{1,30}$/
 const PATRON_DE_PAGINA_DE_FACEBOOK = /^[A-Za-z0-9.-]{5,50}$/
@@ -40,10 +43,12 @@ function esDeDominio(url: string, ...dominios: string[]): boolean {
  * `https://wa.me/<número internacional>`. `wa.me` exige el número completo con código de país, y el
  * dato cargado suele venir en formato local, así que el producto asume Argentina:
  * - con `+` o `00` adelante es internacional: se usa tal cual si tiene de 10 a 15 dígitos;
+ * - sin `+` ni `00`, un número que empieza con `54` y tiene 12 o 13 dígitos (`5491155551234`,
+ *   `542235551234`) ya trae el código de país, que es como suelen cargarlo: se usa tal cual;
  * - si no, se descarta un único `0` inicial y, si quedan exactamente 10 dígitos (área más número),
  *   se les antepone `549` (celular argentino);
  * - cualquier otra forma no genera enlace antes que uno equivocado: 8 dígitos sin área, 11 dígitos
- *   ambiguos (`223 15 555 1234`), dos números en el mismo campo o un número con el 54 pero sin `+`.
+ *   ambiguos (`223 15 555 1234`) o dos números en el mismo campo.
  */
 export function enlaceWhatsapp(valor: string | null | undefined): string | null {
   const texto = (valor ?? '').trim()
@@ -54,6 +59,10 @@ export function enlaceWhatsapp(valor: string | null | undefined): string | null 
     const esValido = digitos.length >= MINIMO_INTERNACIONAL && digitos.length <= MAXIMO_INTERNACIONAL
 
     return esValido ? `https://wa.me/${digitos}` : null
+  }
+
+  if (digitos.startsWith(CODIGO_DE_PAIS_ARGENTINO) && LARGOS_ARGENTINOS_CON_PAIS.includes(digitos.length)) {
+    return `https://wa.me/${digitos}`
   }
 
   const local = digitos.startsWith('0') ? digitos.slice(1) : digitos
