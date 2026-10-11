@@ -367,11 +367,12 @@ public class ServicioDeOfertas(
         }
 
         var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
+        var cantidadPorFamilia = CantidadesPorFamilia(contexto, lineasPedidas);
         var resultado = new List<ResultadoDeResolucion>(lineasPedidas.Count);
 
         foreach (var linea in lineasPedidas)
         {
-            if (Preparar(contexto, linea) is not { } preparada)
+            if (Preparar(contexto, linea, cantidadPorFamilia) is not { } preparada)
             {
                 resultado.Add(SinPrecio(linea));
                 continue;
@@ -418,7 +419,7 @@ public class ServicioDeOfertas(
 
         foreach (var linea in lineasPedidas)
         {
-            if (Preparar(contexto, linea) is not { } preparada)
+            if (Preparar(contexto, linea, cantidadPorFamilia: null) is not { } preparada)
             {
                 resultado.Add(new ResultadoDeResolucionConEscalones(SinPrecio(linea), []));
                 continue;
@@ -590,7 +591,8 @@ public class ServicioDeOfertas(
     /// filtro de empresa y la <see cref="LineaAResolver"/> armada. <c>null</c> ⇒ el par
     /// (artículo, lista) no tiene precio vigente en este momento.</summary>
     private static (LineaAResolver Linea, IReadOnlyList<OfertaCandidata> Candidatas)? Preparar(
-        ContextoDeResolucion contexto, LineaDeResolucion linea)
+        ContextoDeResolucion contexto, LineaDeResolucion linea,
+        IReadOnlyDictionary<int, decimal>? cantidadPorFamilia)
     {
         if (!contexto.Precios.TryGetValue((linea.IdArticulo, linea.IdListaPrecio), out var monto) || monto is null)
         {
@@ -604,12 +606,36 @@ public class ServicioDeOfertas(
 
         var alcance = contexto.AlcancePorArticulo[linea.IdArticulo];
 
+        var cantidadDeFamilia = alcance.IdFamilia is { } idFamilia && cantidadPorFamilia is not null
+            ? cantidadPorFamilia[idFamilia]
+            : linea.Cantidad;
+
         var lineaAResolver = new LineaAResolver(
             linea.IdArticulo, alcance.IdGrupo, alcance.IdsCategorias,
             linea.IdListaPrecio, linea.Cantidad, monto.Value,
-            contexto.Fecha, contexto.Hora, contexto.DiaSemana, alcance.IdFamilia);
+            contexto.Fecha, contexto.Hora, contexto.DiaSemana, alcance.IdFamilia, cantidadDeFamilia);
 
         return (lineaAResolver, candidatas);
+    }
+
+    /// <summary>Suma de cantidades por familia sobre TODAS las líneas del lote (las líneas sin
+    /// familia no se suman entre sí). Es el dato que las ofertas de alcance familia comparan contra
+    /// <c>cantidad_minima</c>. <c>ResolverConEscalonesAsync</c> no lo usa: su lote es el catálogo
+    /// entero a cantidad 1, no un documento.</summary>
+    private static Dictionary<int, decimal> CantidadesPorFamilia(
+        ContextoDeResolucion contexto, IReadOnlyList<LineaDeResolucion> lineas)
+    {
+        var cantidadPorFamilia = new Dictionary<int, decimal>();
+
+        foreach (var linea in lineas)
+        {
+            if (contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
+            {
+                cantidadPorFamilia[idFamilia] = cantidadPorFamilia.GetValueOrDefault(idFamilia) + linea.Cantidad;
+            }
+        }
+
+        return cantidadPorFamilia;
     }
 
     /// <summary>Par (artículo, lista) sin precio vigente: caso fuera de alcance de la spec de

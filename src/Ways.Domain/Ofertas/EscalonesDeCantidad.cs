@@ -60,11 +60,17 @@ public static class EscalonesDeCantidad
         foreach (var umbral in umbrales)
         {
             candidatos.Add(new EscalonResuelto(
-                umbral, ResolvedorDeOfertas.Resolver(linea with { Cantidad = umbral }, candidatas)));
+                umbral, ResolvedorDeOfertas.Resolver(ConCantidad(linea, umbral), candidatas)));
         }
 
         return new CurvaDeCantidad(resolucionDeLaLinea, Colapsar(resolucionDeLaLinea, candidatos));
     }
+
+    /// <summary>Mueve la cantidad de la línea y el agregado de su familia en el mismo delta: la
+    /// curva es de UN artículo, así que sondear un umbral es "este artículo llega a esa cantidad",
+    /// y el resto de la familia queda donde estaba.</summary>
+    private static LineaAResolver ConCantidad(in LineaAResolver linea, decimal cantidad) =>
+        linea with { Cantidad = cantidad, CantidadDeFamilia = linea.CantidadDeFamilia + (cantidad - linea.Cantidad) };
 
     /// <summary>
     /// Las cantidades en las que el resultado de <paramref name="linea"/> PUEDE cambiar, distintas
@@ -99,7 +105,7 @@ public static class EscalonesDeCantidad
                 continue;
             }
 
-            if (ResolvedorDeOfertas.Coincide(linea with { Cantidad = umbral }, candidata))
+            if (ResolvedorDeOfertas.Coincide(ConCantidad(linea, umbral), candidata))
             {
                 umbrales.Add(umbral);
             }
