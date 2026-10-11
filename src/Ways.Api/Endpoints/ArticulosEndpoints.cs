@@ -133,9 +133,12 @@ public static class ArticulosEndpoints
         .WithSummary("Lista los códigos de barra activos del artículo.");
 
         grupo.MapGet("/{id:int}/sugerencia-precio", (
-            ServicioDeArticulos servicio, int id, CancellationToken ct) =>
-            servicio.SugerirPrecioAsync(id, ct))
-        .WithSummary("Sugiere un precio a partir del costo y margen del artículo (nunca se aplica solo).");
+            ServicioDeArticulos servicio, int id, int? idEmpresa, CancellationToken ct) =>
+            servicio.SugerirPrecioAsync(id, idEmpresa, ct))
+        .WithSummary(
+            "Sugiere un precio a partir del costo y margen del artículo (nunca se aplica solo), redondeado al "
+            + "múltiplo de redondeo_sugerencia_precio de la empresa indicada en idEmpresa (opcional; sin ella, el "
+            + "default del parámetro; una empresa inexistente es 404).");
 
         // Slice 3 (stage-3-articulos-y-precios, task 3.5): precios nidificados bajo
         // /api/articulos/{id}/precios, no un recurso top-level propio (proposal's Affected

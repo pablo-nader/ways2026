@@ -41,7 +41,7 @@ public static class ReglaDeFamilias
     /// La decisión de la EDICIÓN de un artículo que ES miembro (<see cref="ResolverAlcance"/> con
     /// <c>esMiembro: true</c>, afinada por lo que la edición toca). Quien edita un artículo no siempre
     /// cambia un campo compartido: <paramref name="cambiaCamposCompartidos"/> es el resultado de comparar
-    /// los trece valores del pedido con los ACTUALES del artículo (<see cref="ValoresCompartidosDeFamilia"/>),
+    /// los quince valores del pedido con los ACTUALES del artículo (<see cref="ValoresCompartidosDeFamilia"/>),
     /// y tiene que salir de la lectura hecha bajo el lock de membresía y las filas de los miembros. Cuando el
     /// pedido deja <c>acumula_en_venta</c> en <c>null</c> para conservar el valor guardado, ese campo entra a la
     /// comparación con el valor guardado del artículo —leído en esa misma lectura— como valor del pedido, así
@@ -76,7 +76,7 @@ public static class ReglaDeFamilias
     /// <summary>
     /// La decisión del ALTA de un artículo dentro de una familia (doc 10 §3), con la precedencia de los
     /// rechazos: familia inactiva, después familia sin miembros vivos y después campos compartidos distintos.
-    /// <paramref name="referencia"/> son los trece valores compartidos del miembro vivo de menor id (<c>null</c>
+    /// <paramref name="referencia"/> son los quince valores compartidos del miembro vivo de menor id (<c>null</c>
     /// ⇒ la familia no tiene ninguno), y <paramref name="pedidos"/> los del artículo que entra; los dos tienen
     /// que salir de lecturas hechas bajo el lock de membresía exclusivo. Un artículo no entra a una familia con
     /// valores propios: tienen que ser idénticos a los del resto, porque la familia no guarda ninguno y sus

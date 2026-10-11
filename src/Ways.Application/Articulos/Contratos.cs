@@ -15,7 +15,9 @@ namespace Ways.Application.Articulos;
 /// familia a la que pertenece el artículo (<c>null</c> = sin familia), tal como está guardada: no se anula
 /// aunque la fila de la familia esté dada de baja, porque los escritores definen la pertenencia por esa
 /// columna y por la baja del propio artículo (doc 10 §3, "Familias de artículos") — un lector que la
-/// anulara y un escritor que la respetara discreparían sobre quién es miembro.</summary>
+/// anulara y un escritor que la respetara discreparían sobre quién es miembro. Los costos —<see cref="CostoLista"/>,
+/// <see cref="CostoListaPor"/>, <see cref="CostoListaIncluyeIva"/>, <see cref="DescuentoProveedor"/> y
+/// <see cref="CostoNominal"/>— solo los reciben admin y supervisor; para el vendedor viajan <c>null</c>.</summary>
 public record ArticuloListado(
     int Id,
     string CodigoInterno,
@@ -31,6 +33,8 @@ public record ArticuloListado(
     decimal? UnidadesPorBulto,
     bool EsProducto,
     decimal? CostoLista,
+    CostoListaPor? CostoListaPor,
+    bool? CostoListaIncluyeIva,
     decimal? DescuentoProveedor,
     decimal? CostoNominal,
     bool DisponibleParaTodas,
@@ -50,10 +54,16 @@ public record ArticuloListado(
 /// es el código que <see cref="IdProveedorHabitual"/> imprime en su factura: si viene no vacío
 /// exige proveedor habitual y se persiste en la misma transacción que el artículo.
 ///
+/// <para><see cref="CostoLista"/> se guarda tal como viene: por unidad o por bulto según <see cref="CostoListaPor"/> y
+/// con o sin IVA según <see cref="CostoListaIncluyeIva"/>. El costo nominal no se envía: el alta lo calcula el
+/// servidor (<see cref="CalculadorDeCostoNominal"/>), salvo en una familia, donde el miembro nuevo hereda el de la
+/// referencia —nunca es motivo de <c>familia_valores_distintos</c> por sí solo—. <c>CostoListaPor.Bulto</c> exige
+/// <see cref="UnidadesPorBulto"/> mayor que cero (<c>400 unidades_por_bulto_requerido</c>).</para>
+///
 /// <para><see cref="IdFamilia"/> hace que el artículo nazca como miembro de esa familia (doc 10 §3). Entrar es un
 /// cambio de pertenencia: el alta toma el lock de membresía exclusivo y, bajo él, exige que la familia
 /// exista y esté viva (<c>404</c>), esté activa (<c>409 familia_inactiva</c>) y tenga al menos un artículo vivo
-/// (<c>409 familia_sin_articulos</c>), y que los trece campos compartidos del pedido sean idénticos a los del
+/// (<c>409 familia_sin_articulos</c>), y que los quince campos compartidos del pedido sean idénticos a los del
 /// miembro vivo de menor id (<c>409 familia_valores_distintos</c>, que nombra las columnas que difieren). Entre
 /// esos campos está <see cref="AcumulaEnVenta"/>: un pedido que no lo trae lleva su valor por defecto,
 /// <c>true</c>, y se compara como cualquier otro. El artículo nace con el mismo estado de precios que ese
@@ -74,14 +84,15 @@ public record AltaArticulo(
     bool EsProducto,
     decimal? CostoLista,
     decimal? DescuentoProveedor,
-    decimal? CostoNominal,
     bool DisponibleParaTodas = true,
     IReadOnlyList<int>? IdsEmpresas = null,
     bool Activo = true,
     bool ControlaLote = false,
     string? CodigoProveedor = null,
     bool AcumulaEnVenta = true,
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    CostoListaPor CostoListaPor = CostoListaPor.Unidad,
+    bool CostoListaIncluyeIva = true);
 
 /// <summary><c>CodigoInterno</c> no aparece a propósito: no es editable por este ABM (mismo
 /// criterio que <see cref="Ways.Application.Clientes.ClienteListado.Numero"/> — un valor
@@ -91,15 +102,18 @@ public record AltaArticulo(
 /// dispara <c>ServicioDeLotes.ReconciliarAsync</c>; <c>ServicioDeArticulos.ActualizarAsync</c>
 /// captura el valor previo ANTES de sobrescribir el campo para poder detectarlo.
 /// <see cref="AcumulaEnVenta"/> <c>null</c> deja el valor guardado como está: un cliente que no conoce
-/// el campo no debe pisar un <c>false</c> con el default.
+/// el campo no debe pisar un <c>false</c> con el default. Lo mismo vale para <see cref="CostoListaPor"/> y
+/// <see cref="CostoListaIncluyeIva"/>. El costo nominal no se envía: el servidor lo recalcula
+/// (<see cref="CalculadorDeCostoNominal"/>) solo si cambia alguna entrada del cálculo respecto de lo guardado; si no,
+/// conserva el guardado, que puede ser el costo efectivo de una compra.
 ///
 /// <para><see cref="Alcance"/> es la decisión del cliente cuando el artículo pertenece a una familia
-/// (doc 10 §3) y la edición cambia alguno de sus trece campos compartidos
+/// (doc 10 §3) y la edición cambia alguno de sus quince campos compartidos
 /// (<see cref="ValoresCompartidosDeFamilia"/>); cada valor tiene un destino. Sobre un artículo sin familia,
 /// <c>null</c> lo edita solo. Sobre un miembro, <c>null</c> con un cambio compartido se rechaza con
 /// <c>alcance_requerido</c> (409) sin escribir nada, y <c>null</c> sin cambio compartido escribe solo los
 /// campos propios del artículo (no hay nada que replicar).
-/// <see cref="AlcanceDeFamilia.Familia"/> aplica los trece campos compartidos del pedido a todos los miembros
+/// <see cref="AlcanceDeFamilia.Familia"/> aplica los quince campos compartidos del pedido a todos los miembros
 /// vivos y los campos propios solo al artículo editado (sin cambio compartido no hay nada que replicar y se
 /// escriben solo los propios). <see cref="AlcanceDeFamilia.SoloEste"/> saca al artículo de la familia, haya o
 /// no cambio compartido, y escribe todo solo en él. Un <see cref="Alcance"/> explícito sobre un artículo que
@@ -123,13 +137,14 @@ public record EdicionArticulo(
     bool EsProducto,
     decimal? CostoLista,
     decimal? DescuentoProveedor,
-    decimal? CostoNominal,
     bool DisponibleParaTodas,
     IReadOnlyList<int>? IdsEmpresas,
     bool Activo,
     bool ControlaLote,
     bool? AcumulaEnVenta = null,
-    AlcanceDeFamilia? Alcance = null);
+    AlcanceDeFamilia? Alcance = null,
+    CostoListaPor? CostoListaPor = null,
+    bool? CostoListaIncluyeIva = null);
 
 public record AltaCodigoBarra(string Codigo);
 

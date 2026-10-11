@@ -260,7 +260,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             CodigoInterno: null, Nombre: nombre, Descripcion: null, IdArea: s.IdArea, IdCategoria: null,
             IdMarca: null, IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva,
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
-            DescuentoProveedor: null, CostoNominal: null);
+            DescuentoProveedor: null);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio);
 
@@ -269,7 +269,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             var servicio = new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)));
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -281,7 +282,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             await new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)))
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))))
                 .CrearAsync(datos);
         }
 
@@ -309,7 +311,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var datos = new EdicionArticulo(
             Nombre: "Artículo editado", Descripcion: null, IdArea: s.IdArea, IdCategoria: null, IdMarca: null,
             IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva, UnidadVenta: UnidadVenta.Unidad,
-            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null, CostoNominal: null,
+            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null,
             DisponibleParaTodas: true, IdsEmpresas: null, Activo: true, ControlaLote: false);
 
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio, ClaseDeSentencia.Update);
@@ -319,7 +321,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             var servicio = new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)));
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.ActualizarAsync(idArticulo, datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -333,7 +336,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             await new ServicioDeArticulos(
                 db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
                 new GuardaDeReferencias(db, new InspectorDeUso(db)),
-                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)))
+                new ServicioDePrecios(db, Reloj(), ContextoAdmin(s)),
+                new Ways.Application.Parametros.ServicioDeParametros(db, Reloj(), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s))))
                 .ActualizarAsync(idArticulo, datos);
         }
 

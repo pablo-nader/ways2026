@@ -8,6 +8,7 @@ using Ways.Application.Auditoria;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Familias;
+using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
@@ -50,7 +51,8 @@ namespace Ways.Application.Compras;
 /// las líneas de una misma familia, solo la de mayor orden.
 /// </summary>
 public class ServicioDeCompras(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios,
+    ServicioDeParametros servicioDeParametros)
 {
     // ---- lectura --------------------------------------------------------------------------------
 
@@ -199,13 +201,13 @@ public class ServicioDeCompras(
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
-        var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
+        var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
         var (lineas, calculada) = Calcular(
             solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso),
-            solicitud.PreciosIncluyenIva, percepciones);
+            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia);
 
         // stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
         // "Ligadura Invariant"): sin transacción propia acá (CrearBorradorAsync no abre una), así
@@ -267,13 +269,13 @@ public class ServicioDeCompras(
         ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
         var codigosDeProveedor = NormalizarCodigosDeProveedor(solicitud.Items);
 
-        var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
+        var (tipo, _, _, _, porcentajePorAlicuota, margenes, redondeoDeSugerencia) = await ResolverContextoAsync(solicitud, ct);
         var discriminaIva = ReglaDeDiscriminacionDeIva.Resolver(tipo.RegistraLibroIva, tipo.DiscriminaIva, solicitud.DiscriminaIva);
         var percepciones = ConvertirPercepciones(solicitud.Percepciones);
         ReglaDePercepciones.Validar(tipo.RegistraLibroIva, discriminaIva, percepciones);
         var (lineas, calculada) = Calcular(
             solicitud.Items, discriminaIva, porcentajePorAlicuota, margenes, ConvertirIvaImpreso(solicitud.IvaImpreso),
-            solicitud.PreciosIncluyenIva, percepciones);
+            solicitud.PreciosIncluyenIva, percepciones, redondeoDeSugerencia);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
@@ -1320,7 +1322,8 @@ public class ServicioDeCompras(
     private async Task<(
         TipoComprobante Tipo, Proveedor Proveedor, PuntoVenta PuntoVenta,
         IReadOnlyDictionary<int, Articulo> ArticuloPorId, IReadOnlyDictionary<int, decimal> PorcentajePorAlicuota,
-        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> Margenes)>
+        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> Margenes,
+        decimal RedondeoDeSugerencia)>
         ResolverContextoAsync(SolicitudDeCompra solicitud, CancellationToken ct)
     {
         var tipo = await ResolverTipoDeCompraAsync(solicitud.IdTipoComprobante, ct);
@@ -1351,7 +1354,10 @@ public class ServicioDeCompras(
 
         var margenes = await ResolverMargenesAsync(articuloPorId, ct);
 
-        return (tipo, proveedor, puntoVenta, articuloPorId, porcentajePorAlicuota, margenes);
+        // Una compra no tiene empresa propia: es la de su punto de venta. Se resuelve una sola vez por compra.
+        var redondeoDeSugerencia = await servicioDeParametros.ResolverRedondeoDeSugerenciaAsync(puntoVenta.IdEmpresa, ct);
+
+        return (tipo, proveedor, puntoVenta, articuloPorId, porcentajePorAlicuota, margenes, redondeoDeSugerencia);
     }
 
     private async Task<IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)>> ResolverMargenesAsync(
@@ -1384,7 +1390,8 @@ public class ServicioDeCompras(
         IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes,
         IReadOnlyDictionary<int, decimal>? ivaImpreso,
         bool preciosIncluyenIva,
-        IReadOnlyList<PercepcionDeCompra> percepciones)
+        IReadOnlyList<PercepcionDeCompra> percepciones,
+        decimal redondeoDeSugerencia)
     {
         var orden = 1;
         var lineas = items
@@ -1395,7 +1402,7 @@ public class ServicioDeCompras(
             .ToList();
 
         var calculada = CalculadorDeCompra.Calcular(
-            lineas, discriminaIva, margenes, ivaImpreso, preciosIncluyenIva, percepciones);
+            lineas, discriminaIva, margenes, ivaImpreso, preciosIncluyenIva, percepciones, redondeoDeSugerencia);
         return (lineas, calculada);
     }
 

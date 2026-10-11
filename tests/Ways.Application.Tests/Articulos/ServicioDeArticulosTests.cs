@@ -87,7 +87,8 @@ public class ServicioDeArticulosTests
         // ReconciliacionTests (Ways.IntegrationTests), contra Postgres.
         return new ServicioDeArticulos(
             db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto),
-            new GuardaDeReferencias(db, new InspectorDeUso(db)), new ServicioDePrecios(db, reloj, contexto));
+            new GuardaDeReferencias(db, new InspectorDeUso(db)), new ServicioDePrecios(db, reloj, contexto),
+            new Ways.Application.Parametros.ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, contexto)));
     }
 
     private static async Task<(int IdArea, int IdAlicuotaIva)> SembrarCatalogosAsync(string nombreDeBase, int idTenant)
@@ -155,8 +156,7 @@ public class ServicioDeArticulosTests
             UnidadesPorBulto: null,
             EsProducto: true,
             CostoLista: null,
-            DescuentoProveedor: null,
-            CostoNominal: null);
+            DescuentoProveedor: null);
 
     private static EdicionArticulo EdicionValida(int idArea, int idAlicuotaIva, string nombre = "Editado") =>
         new(
@@ -173,7 +173,6 @@ public class ServicioDeArticulosTests
             EsProducto: true,
             CostoLista: null,
             DescuentoProveedor: null,
-            CostoNominal: null,
             DisponibleParaTodas: true,
             IdsEmpresas: null,
             Activo: true,
@@ -537,7 +536,7 @@ public class ServicioDeArticulosTests
             IdGrupo = grupo.Id,
             UnidadVenta = UnidadVenta.Unidad,
             EsProducto = true,
-            CostoNominal = 100m,
+            CostoNominal = 1000m,
             CreatedAt = Ahora,
             UpdatedAt = Ahora
         };
@@ -548,6 +547,169 @@ public class ServicioDeArticulosTests
 
         var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id);
 
-        Assert.Equal(130m, sugerencia.PrecioSugerido);
+        // 1000 + 30% = 1300, ya múltiplo del default (100): el redondeo no altera el resultado.
+        Assert.Equal(1300m, sugerencia.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioSinEmpresaRedondeaAlMultiploPorDefecto()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 44.8m, a => a.CostoNominal = 2000m);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id);
+
+        // 2000 + 44.8% = 2896 -> 2900.
+        Assert.Equal(2900m, sugerencia.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioConEmpresaUsaElMultiploConfiguradoDeEsaEmpresa()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 44.8m, a => a.CostoNominal = 2000m);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        var idOtraEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        await SembrarRedondeoAsync(nombreDeBase, idEmpresa, "500");
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var deLaEmpresa = await servicio.SugerirPrecioAsync(articulo.Id, idEmpresa);
+        var deOtraEmpresaSinFila = await servicio.SugerirPrecioAsync(articulo.Id, idOtraEmpresa);
+        var sinEmpresa = await servicio.SugerirPrecioAsync(articulo.Id);
+
+        Assert.Equal(3000m, deLaEmpresa.PrecioSugerido);
+        Assert.Equal(2900m, deOtraEmpresaSinFila.PrecioSugerido);
+        Assert.Equal(2900m, sinEmpresa.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioConMultiploCeroDeLaEmpresaNoRedondeaAMultiplos()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 44.8m, a => a.CostoNominal = 2000m);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        await SembrarRedondeoAsync(nombreDeBase, idEmpresa, "0");
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id, idEmpresa);
+
+        Assert.Equal(2896m, sugerencia.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioConUnaEmpresaInexistenteEs404()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 44.8m, a => a.CostoNominal = 2000m);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.SugerirPrecioAsync(articulo.Id, 999_999));
+
+        Assert.Equal("no_encontrado", error.Codigo);
+        Assert.Equal(404, error.EstadoHttp);
+    }
+
+    /// <summary>Sin <c>costo_nominal</c> guardado el costo base sale de normalizar el costo de lista: un costo por
+    /// bulto de 1200 con 12 unidades, sin IVA (21%) y con 10% de descuento es 100 × 1.21 × 0.9 = 108.90 por unidad.
+    /// Con margen 100% son 217.80, que el múltiplo 100 lleva a 200. Con el cálculo viejo (lista × (1 − descuento)
+    /// = 1080) la sugerencia sería 2200.</summary>
+    [Fact]
+    public async Task SugerirPrecioSinCostoNominalNormalizaElCostoDeListaPorBultoSinIva()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 100m, a =>
+        {
+            a.CostoLista = 1200m;
+            a.CostoListaPor = CostoListaPor.Bulto;
+            a.CostoListaIncluyeIva = false;
+            a.UnidadesPorBulto = 12m;
+            a.DescuentoProveedor = 10m;
+        });
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id);
+
+        Assert.Equal(200m, sugerencia.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioSinCostoNominalYConCostoPorBultoSinUnidadesNoSugiereNiTiraExcepcion()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 100m, a =>
+        {
+            a.CostoLista = 1200m;
+            a.CostoListaPor = CostoListaPor.Bulto;
+            a.UnidadesPorBulto = null;
+        });
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id);
+
+        Assert.Null(sugerencia.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task SugerirPrecioConCostoNominalGuardadoNoUsaElCostoDeLista()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var articulo = await SembrarArticuloConMargenAsync(nombreDeBase, margen: 0m, a =>
+        {
+            a.CostoNominal = 3000m;
+            a.CostoLista = 1m;
+            a.CostoListaPor = CostoListaPor.Bulto;
+            a.UnidadesPorBulto = 1000m;
+        });
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var sugerencia = await servicio.SugerirPrecioAsync(articulo.Id);
+
+        Assert.Equal(3000m, sugerencia.PrecioSugerido);
+    }
+
+    private static async Task<Articulo> SembrarArticuloConMargenAsync(
+        string nombreDeBase, decimal margen, Action<Articulo> configurar)
+    {
+        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+        var grupo = new Grupo { IdTenant = 1, Nombre = "Con margen", Margen = margen, CreatedAt = Ahora, UpdatedAt = Ahora };
+        siembra.Grupos.Add(grupo);
+        await siembra.SaveChangesAsync();
+
+        var articulo = new Articulo
+        {
+            IdTenant = 1,
+            CodigoInterno = "1",
+            Nombre = "Con margen",
+            IdArea = idArea,
+            IdAlicuotaIva = idAlicuotaIva,
+            IdGrupo = grupo.Id,
+            UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = true,
+            CreatedAt = Ahora,
+            UpdatedAt = Ahora
+        };
+        configurar(articulo);
+        siembra.Articulos.Add(articulo);
+        await siembra.SaveChangesAsync();
+
+        return articulo;
+    }
+
+    private static async Task SembrarRedondeoAsync(string nombreDeBase, int idEmpresa, string valor)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+        siembra.Parametros.Add(new Parametro
+        {
+            IdTenant = 1,
+            IdEmpresa = idEmpresa,
+            Clave = ParametroConocido.RedondeoSugerenciaPrecio.Clave,
+            Valor = valor,
+            CreatedAt = Ahora,
+            UpdatedAt = Ahora
+        });
+        await siembra.SaveChangesAsync();
     }
 }

@@ -312,7 +312,8 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var servicioDeArticulos = new ServicioDeArticulos(
             db, reloj, contexto, new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto),
-            new GuardaDeReferencias(db, new InspectorDeUso(db)), servicioDePrecios);
+            new GuardaDeReferencias(db, new InspectorDeUso(db)), servicioDePrecios,
+            new Ways.Application.Parametros.ServicioDeParametros(db, reloj, new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto)));
         var servicioDeEtiquetas = new ServicioDeEtiquetas(db, reloj, servicioDeArticulos, servicioDeOfertas);
 
         return (servicioDeEtiquetas, contador);

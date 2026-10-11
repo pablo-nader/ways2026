@@ -435,7 +435,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             CodigoInterno: null, Nombre: "Articulo trigger ABM", Descripcion: null, IdArea: ctx.IdArea,
             IdCategoria: null, IdMarca: null, IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: ctx.IdAlicuotaIva,
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
-            DescuentoProveedor: null, CostoNominal: null, ControlaLote: false);
+            DescuentoProveedor: null, ControlaLote: false);
         var creacion = await ctx.Admin.PostAsJsonAsync("/api/articulos", alta);
         Assert.Equal(HttpStatusCode.Created, creacion.StatusCode);
         var articulo = (await creacion.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;
@@ -447,7 +447,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             IdCategoria: articulo.IdCategoria, IdMarca: articulo.IdMarca, IdGrupo: articulo.IdGrupo,
             IdProveedorHabitual: articulo.IdProveedorHabitual, IdAlicuotaIva: articulo.IdAlicuotaIva,
             UnidadVenta: articulo.UnidadVenta, UnidadesPorBulto: articulo.UnidadesPorBulto, EsProducto: articulo.EsProducto,
-            CostoLista: articulo.CostoLista, DescuentoProveedor: articulo.DescuentoProveedor, CostoNominal: articulo.CostoNominal,
+            CostoLista: articulo.CostoLista, DescuentoProveedor: articulo.DescuentoProveedor,
             DisponibleParaTodas: articulo.DisponibleParaTodas, IdsEmpresas: null, Activo: articulo.Activo, ControlaLote: true);
         var edicionRespuesta = await ctx.Admin.PutAsJsonAsync($"/api/articulos/{articulo.Id}", edicion);
         var cuerpo = await edicionRespuesta.Content.ReadAsStringAsync();
@@ -476,7 +476,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             CodigoInterno: null, Nombre: "Articulo trigger parametros", Descripcion: null, IdArea: ctx.IdArea,
             IdCategoria: null, IdMarca: null, IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: ctx.IdAlicuotaIva,
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
-            DescuentoProveedor: null, CostoNominal: null, ControlaLote: true);
+            DescuentoProveedor: null, ControlaLote: true);
         var creacion = await ctx.Admin.PostAsJsonAsync("/api/articulos", alta);
         Assert.Equal(HttpStatusCode.Created, creacion.StatusCode);
         var articulo = (await creacion.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;

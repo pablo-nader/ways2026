@@ -441,6 +441,11 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_empresas_alicuotas_percepcion_rango" } =>
                 (StatusCodes.Status400BadRequest, "Las alícuotas de percepción tienen que estar entre 0 y 100.", "alicuota_percepcion_invalida"),
 
+            // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
+            // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_articulos_costo_lista_por" } =>
+                (StatusCodes.Status400BadRequest, "El campo costo_lista_por debe ser Unidad o Bulto.", "costo_lista_por_invalido"),
+
             // Backstop de esquema (judgment-day, slice 3 ronda 2, item 2; GATE-APROBADO
             // 2026-08-03) para "vigente_hasta > vigente_desde" en precios — ServicioDePrecios.
             // AbrirNuevoPrecioAsync ya lo garantiza en el camino de servicio (mismo código de

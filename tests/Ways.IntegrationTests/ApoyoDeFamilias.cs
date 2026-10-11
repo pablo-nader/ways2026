@@ -58,7 +58,7 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdActorAdmin, int IdListaGeneral, int IdListaMayorista,
         IReadOnlyList<int> Areas, IReadOnlyList<int> Categorias, IReadOnlyList<int> Grupos,
         IReadOnlyList<int> Proveedores, IReadOnlyList<int> Marcas, IReadOnlyList<int> Alicuotas,
-        HttpClient Admin, string MailAdmin, string PasswordAdmin) : IDisposable
+        HttpClient Admin, string MailAdmin, string PasswordAdmin, decimal PorcentajeDeLaAlicuota) : IDisposable
     {
         public void Dispose() => Admin.Dispose();
     }
@@ -139,8 +139,9 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         db.ListasPrecio.Add(mayorista);
         await db.SaveChangesAsync();
 
-        var alicuotas = await db.AlicuotasIva.OrderBy(a => a.Id).Select(a => a.Id).Take(2).ToListAsync();
-        Assert.Equal(2, alicuotas.Count);
+        var alicuotasSembradas = await db.AlicuotasIva.OrderBy(a => a.Id).Select(a => new { a.Id, a.Porcentaje }).Take(2).ToListAsync();
+        Assert.Equal(2, alicuotasSembradas.Count);
+        var alicuotas = alicuotasSembradas.Select(a => a.Id).ToList();
 
         var idListaGeneral = await db.ListasPrecio
             .Where(l => l.IdTenant == idTenant && l.EsDefault)
@@ -156,25 +157,28 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             idTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin, idListaGeneral, mayorista.Id,
             [.. areas.Select(a => a.Id)], [.. categorias.Select(c => c.Id)], [.. grupos.Select(g => g.Id)],
             [.. proveedores.Select(p => p.Id)], [.. marcas.Select(m => m.Id)], alicuotas, admin, mailAdmin,
-            resultado.PasswordTemporal);
+            resultado.PasswordTemporal, alicuotasSembradas[0].Porcentaje);
     }
 
-    /// <summary>Los trece campos compartidos de partida: todos con un valor (los nulleables también), para
+    /// <summary>Los quince campos compartidos de partida: todos con un valor (los nulleables también), para
     /// que cada cambio de <see cref="ValoresConUnCampoCambiado"/> sea de un valor a OTRO y no de nulo a
-    /// valor.</summary>
+    /// valor. El costo nominal es el que calcula el servidor con el resto (50 por unidad, con IVA, menos 10%): un
+    /// pedido con estos valores no cambia nada.</summary>
     public static ValoresCompartidosDeFamilia ValoresBase(Entorno e) => new(
         IdArea: e.Areas[0], IdCategoria: e.Categorias[0], IdGrupo: e.Grupos[0], IdProveedorHabitual: e.Proveedores[0],
         IdAlicuotaIva: e.Alicuotas[0], UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: 6m, EsProducto: true,
-        ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, DescuentoProveedor: 10m, CostoNominal: 40m);
+        ControlaLote: false, AcumulaEnVenta: true, CostoLista: 50m, CostoListaPor: CostoListaPor.Unidad,
+        CostoListaIncluyeIva: true, DescuentoProveedor: 10m, CostoNominal: 45m);
 
-    /// <summary>Los trece valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
+    /// <summary>Los quince valores como los lee un cliente (<see cref="ValoresCompartidosDeLaFamilia"/>), sin anular
     /// ningún id de catálogo: para las pruebas cuyos ids apuntan a filas vivas.</summary>
     public static ValoresCompartidosDeLaFamilia ComoLoLeeElCliente(ValoresCompartidosDeFamilia valores) =>
         ValoresCompartidosDeLaFamilia.De(valores);
 
     /// <summary>Los valores de <see cref="ValoresBase"/> con UN solo campo (el que nombra
     /// <paramref name="columna"/>, con el nombre de la columna de <c>articulos</c>) cambiado a otro valor
-    /// válido.</summary>
+    /// válido, y con el costo nominal que el servidor calcula para ese pedido. <c>costo_nominal</c> no se puede
+    /// cambiar solo: el pedido no lo trae, lo deriva el servidor.</summary>
     public static ValoresCompartidosDeFamilia ValoresConUnCampoCambiado(Entorno e, string columna)
     {
         var @base = ValoresBase(e);
@@ -191,20 +195,29 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             "es_producto" => @base with { EsProducto = false },
             "controla_lote" => @base with { ControlaLote = true },
             "acumula_en_venta" => @base with { AcumulaEnVenta = false },
-            "costo_lista" => @base with { CostoLista = 60m },
-            "descuento_proveedor" => @base with { DescuentoProveedor = 15m },
-            "costo_nominal" => @base with { CostoNominal = 45m },
+            "costo_lista" => @base with { CostoLista = 60m, CostoNominal = 54m },
+            "costo_lista_por" => @base with { CostoListaPor = CostoListaPor.Bulto, CostoNominal = 7.5m },
+            "costo_lista_incluye_iva" => @base with
+            {
+                CostoListaIncluyeIva = false,
+                CostoNominal = Math.Round(50m * (1 + e.PorcentajeDeLaAlicuota / 100m) * 0.9m, 2, MidpointRounding.AwayFromZero)
+            },
+            "descuento_proveedor" => @base with { DescuentoProveedor = 15m, CostoNominal = 42.5m },
             _ => throw new ArgumentOutOfRangeException(nameof(columna), columna, "Columna compartida desconocida.")
         };
     }
 
-    /// <summary>Las trece columnas compartidas de <c>articulos</c>, en el orden de declaración del record.</summary>
+    /// <summary>Las quince columnas compartidas de <c>articulos</c>, en el orden de declaración del record.</summary>
     public static readonly string[] ColumnasCompartidas =
     [
         "id_area", "id_categoria", "id_grupo", "id_proveedor_habitual", "id_alicuota_iva", "unidad_venta",
-        "unidades_por_bulto", "es_producto", "controla_lote", "acumula_en_venta", "costo_lista",
-        "descuento_proveedor", "costo_nominal"
+        "unidades_por_bulto", "es_producto", "controla_lote", "acumula_en_venta", "costo_lista", "costo_lista_por",
+        "costo_lista_incluye_iva", "descuento_proveedor", "costo_nominal"
     ];
+
+    /// <summary>Las columnas compartidas que un pedido puede cambiar por sí solas: todas menos
+    /// <c>costo_nominal</c>, que el servidor calcula y el pedido no trae.</summary>
+    public static readonly string[] ColumnasPedibles = [.. ColumnasCompartidas.Where(c => c != "costo_nominal")];
 
     public async Task<int> SembrarFamiliaAsync(Entorno e, string nombre, bool activa = true, bool dadaDeBaja = false)
     {
@@ -258,6 +271,8 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             ControlaLote = compartidos.ControlaLote,
             AcumulaEnVenta = compartidos.AcumulaEnVenta,
             CostoLista = compartidos.CostoLista,
+            CostoListaPor = compartidos.CostoListaPor,
+            CostoListaIncluyeIva = compartidos.CostoListaIncluyeIva,
             DescuentoProveedor = compartidos.DescuentoProveedor,
             CostoNominal = compartidos.CostoNominal,
             CreatedAt = ahora,
@@ -513,11 +528,13 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
         IdMarca: a.IdMarca, IdGrupo: a.IdGrupo, IdProveedorHabitual: a.IdProveedorHabitual,
         IdAlicuotaIva: a.IdAlicuotaIva, UnidadVenta: a.UnidadVenta, UnidadesPorBulto: a.UnidadesPorBulto,
         EsProducto: a.EsProducto, CostoLista: a.CostoLista, DescuentoProveedor: a.DescuentoProveedor,
-        CostoNominal: a.CostoNominal, DisponibleParaTodas: a.DisponibleParaTodas, IdsEmpresas: null, Activo: a.Activo,
-        ControlaLote: a.ControlaLote, AcumulaEnVenta: a.AcumulaEnVenta, Alcance: alcance);
+        DisponibleParaTodas: a.DisponibleParaTodas, IdsEmpresas: null, Activo: a.Activo,
+        ControlaLote: a.ControlaLote, AcumulaEnVenta: a.AcumulaEnVenta, Alcance: alcance,
+        CostoListaPor: a.CostoListaPor, CostoListaIncluyeIva: a.CostoListaIncluyeIva);
 
-    /// <summary>Los trece campos compartidos de <paramref name="valores"/> puestos en el pedido de
-    /// edición.</summary>
+    /// <summary>Los campos compartidos de <paramref name="valores"/> que el pedido de edición lleva puestos en
+    /// él. <c>costo_nominal</c> no viaja: el servidor lo calcula, y <see cref="ValoresConUnCampoCambiado"/> ya
+    /// trae el que va a resultar.</summary>
     public static EdicionArticulo ConCompartidos(EdicionArticulo edicion, ValoresCompartidosDeFamilia valores) =>
         edicion with
         {
@@ -526,7 +543,8 @@ internal sealed class ApoyoDeFamilias(WaysApiFixture fixture)
             UnidadVenta = valores.UnidadVenta, UnidadesPorBulto = valores.UnidadesPorBulto,
             EsProducto = valores.EsProducto, ControlaLote = valores.ControlaLote,
             AcumulaEnVenta = valores.AcumulaEnVenta, CostoLista = valores.CostoLista,
-            DescuentoProveedor = valores.DescuentoProveedor, CostoNominal = valores.CostoNominal
+            CostoListaPor = valores.CostoListaPor, CostoListaIncluyeIva = valores.CostoListaIncluyeIva,
+            DescuentoProveedor = valores.DescuentoProveedor
         };
 
     public static Task<HttpResponseMessage> PutArticuloAsync(HttpClient admin, int id, EdicionArticulo edicion) =>

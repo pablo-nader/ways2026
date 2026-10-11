@@ -131,8 +131,7 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             UnidadesPorBulto: null,
             EsProducto: true,
             CostoLista: null,
-            DescuentoProveedor: null,
-            CostoNominal: null);
+            DescuentoProveedor: null);
 
     // ---- task 2.8: codigo_interno ----------------------------------------------------------
 
@@ -1007,7 +1006,7 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             await AprovisionarTenantAsync(nameof(LaSugerenciaDePrecioNoPersisteNada));
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
-        var alta = AltaValida(idArea, idAlicuotaIva) with { CostoNominal = 100m };
+        var alta = AltaValida(idArea, idAlicuotaIva) with { CostoLista = 100m };
         var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
         var creado = await respuestaAlta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
 
@@ -1018,6 +1017,74 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         // Sin grupo/proveedor con margen: no hay sugerencia posible (spec no cubre el caso con
         // un escenario propio — ausencia de dato, no un error).
         Assert.Null(sugerencia!.PrecioSugerido);
+    }
+
+    /// <summary>Un artículo de 2000 con grupo de margen 44.8% suma 2896: la sugerencia es 2900 con el default
+    /// (100), 3000 con múltiplo 500 en la empresa indicada, y 2896 si el múltiplo de esa empresa es 0.</summary>
+    [Fact]
+    public async Task LaSugerenciaDePrecioSeRedondeaAlMultiploDeLaEmpresaIndicada()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaSugerenciaDePrecioSeRedondeaAlMultiploDeLaEmpresaIndicada));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        int idGrupo;
+        int idEmpresa;
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var grupo = new Grupo { IdTenant = idTenant, Nombre = "Con margen", Margen = 44.8m, CreatedAt = ahora, UpdatedAt = ahora };
+            db.Grupos.Add(grupo);
+            await db.SaveChangesAsync();
+            idGrupo = grupo.Id;
+            idEmpresa = await db.Empresas.Where(e => e.IdTenant == idTenant).Select(e => e.Id).FirstAsync();
+        }
+
+        var alta = AltaValida(idArea, idAlicuotaIva) with { CostoLista = 2000m, IdGrupo = idGrupo };
+        var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
+        Assert.Equal(HttpStatusCode.Created, respuestaAlta.StatusCode);
+        var creado = await respuestaAlta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+
+        var sinEmpresa = await admin.GetFromJsonAsync<SugerenciaDePrecio>($"/api/articulos/{creado!.Id}/sugerencia-precio");
+        Assert.Equal(2900m, sinEmpresa!.PrecioSugerido);
+
+        var conEmpresaSinFila = await admin.GetFromJsonAsync<SugerenciaDePrecio>(
+            $"/api/articulos/{creado.Id}/sugerencia-precio?idEmpresa={idEmpresa}");
+        Assert.Equal(2900m, conEmpresaSinFila!.PrecioSugerido);
+
+        await EstablecerRedondeoAsync(admin, idEmpresa, "500");
+        var conMultiplo500 = await admin.GetFromJsonAsync<SugerenciaDePrecio>(
+            $"/api/articulos/{creado.Id}/sugerencia-precio?idEmpresa={idEmpresa}");
+        Assert.Equal(3000m, conMultiplo500!.PrecioSugerido);
+
+        var sinEmpresaDespues = await admin.GetFromJsonAsync<SugerenciaDePrecio>($"/api/articulos/{creado.Id}/sugerencia-precio");
+        Assert.Equal(2900m, sinEmpresaDespues!.PrecioSugerido);
+
+        await EstablecerRedondeoAsync(admin, idEmpresa, "0");
+        var sinRedondeo = await admin.GetFromJsonAsync<SugerenciaDePrecio>(
+            $"/api/articulos/{creado.Id}/sugerencia-precio?idEmpresa={idEmpresa}");
+        Assert.Equal(2896m, sinRedondeo!.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task LaSugerenciaDePrecioConUnaEmpresaInexistenteDevuelve404()
+    {
+        var (_, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaSugerenciaDePrecioConUnaEmpresaInexistenteDevuelve404));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var respuesta = await admin.GetAsync($"/api/articulos/{creado.Id}/sugerencia-precio?idEmpresa=999999");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    private static async Task EstablecerRedondeoAsync(HttpClient cliente, int idEmpresa, string valor)
+    {
+        var respuesta = await cliente.PutAsJsonAsync(
+            $"/api/parametros?idEmpresa={idEmpresa}",
+            new Ways.Application.Parametros.ParametroAlta(ParametroConocido.RedondeoSugerenciaPrecio.Clave, valor, null));
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
     // ---- acumula_en_venta ---------------------------------------------------------------------
@@ -1140,7 +1207,6 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         EsProducto: articulo.EsProducto,
         CostoLista: articulo.CostoLista,
         DescuentoProveedor: articulo.DescuentoProveedor,
-        CostoNominal: articulo.CostoNominal,
         DisponibleParaTodas: articulo.DisponibleParaTodas,
         IdsEmpresas: null,
         Activo: articulo.Activo,

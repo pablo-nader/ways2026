@@ -29,7 +29,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.10")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "ambiente_fiscal", new[] { "homologacion", "produccion" });
@@ -114,6 +114,19 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.Property<decimal?>("CostoLista")
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("costo_lista");
+
+                    b.Property<bool>("CostoListaIncluyeIva")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("costo_lista_incluye_iva");
+
+                    b.Property<string>("CostoListaPor")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Unidad")
+                        .HasColumnName("costo_lista_por");
 
                     b.Property<decimal?>("CostoNominal")
                         .HasColumnType("numeric(14,2)")
@@ -234,7 +247,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
 
-                    b.ToTable("articulos", (string)null);
+                    b.ToTable("articulos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Articulos.ArticuloEmpresa", b =>

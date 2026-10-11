@@ -46,6 +46,14 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         return new ParametroResuelto(clave, valor);
     }
 
+    /// <summary>Múltiplo de redondeo de las sugerencias de precio de la empresa
+    /// (<c>redondeo_sugerencia_precio</c>, a nivel empresa): la fila de la empresa o el default declarado.</summary>
+    public async Task<decimal> ResolverRedondeoDeSugerenciaAsync(int idEmpresa, CancellationToken ct = default)
+    {
+        var resuelto = await ResolverAsync(ParametroConocido.RedondeoSugerenciaPrecio.Clave, idEmpresa, null, ct);
+        return JsonSerializer.Deserialize<decimal>(resuelto.Valor);
+    }
+
     public async Task<IReadOnlyList<ParametroListado>> ListarAsync(
         int idEmpresa, CancellationToken ct = default) =>
         await db.Parametros

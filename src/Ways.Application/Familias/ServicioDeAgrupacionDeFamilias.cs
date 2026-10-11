@@ -20,7 +20,7 @@ namespace Ways.Application.Familias;
 /// <c>Politicas.GestionDeCatalogo</c> aplicada en la capa de API, la misma puerta que el alta y la edición de
 /// artículos.
 ///
-/// <para>Agrupar ALINEA: los artículos que entran quedan idénticos al de referencia en los trece campos compartidos
+/// <para>Agrupar ALINEA: los artículos que entran quedan idénticos al de referencia en los quince campos compartidos
 /// (<see cref="ValoresCompartidosDeFamilia"/>) y en el estado de precios de cada lista fija
 /// (<see cref="EstadoDePrecios"/>, reglas en <see cref="ReglaDeAlineacionDePrecios"/>); los campos propios no se tocan.
 /// Es todo o nada: un artículo inexistente o en otra familia, un catálogo del artículo de referencia que no existe, un
@@ -232,7 +232,7 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <item>los chequeos de catálogo del artículo de referencia, ya con las filas de los artículos bloqueadas, en el
     /// orden de la edición de artículos (<c>ServicioDeArticulos.ActualizarAsync</c>): la alícuota de IVA, que es global y
     /// no se bloquea, y el área, la categoría, el grupo y el proveedor habitual, cada uno <c>FOR KEY SHARE</c> sobre la
-    /// fila viva (<see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>): los trece valores de la referencia son
+    /// fila viva (<see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>): los quince valores de la referencia son
     /// los que se copian a los demás, y un id de catálogo que no existe no se copia (<c>400 referencia_invalida</c>);</item>
     /// <item>los locks de par artículo-lista de cada destino y cada lista fija, por clave ascendente
     /// (<see cref="ServicioDePrecios.TomarLocksDeParesAsync"/>): el superconjunto de lo que se puede escribir, tomado
@@ -242,7 +242,7 @@ public class ServicioDeAgrupacionDeFamilias(
     /// <item>"ahora", UNA vez; FASE 1, solo lecturas: se planifica la alineación de los precios y se rechaza el pedido
     /// si algún par no se puede alinear;</item>
     /// <item>FASE 2, solo escrituras: la familia nueva (primer <c>SaveChangesAsync</c>, que da su id), la pertenencia y los
-    /// trece campos de cada artículo, las filas de precio y su auditoría (<see cref="ServicioDePrecios"/>, único escritor
+    /// quince campos de cada artículo, las filas de precio y su auditoría (<see cref="ServicioDePrecios"/>, único escritor
     /// de <c>precios</c>), el segundo <c>SaveChangesAsync</c> y el commit.</item>
     /// </list>
     ///

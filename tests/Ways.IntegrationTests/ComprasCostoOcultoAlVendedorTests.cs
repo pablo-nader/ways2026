@@ -180,7 +180,7 @@ public class ComprasCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(100m, item.CostoUnitario);
         Assert.Equal(0m, item.Descuento);
         Assert.Equal(1000m, item.Total);
-        Assert.Equal(181.5m, item.PrecioSugerido);
+        Assert.Equal(200m, item.PrecioSugerido);
         Assert.Equal(1210m, compra.Total);
 
         var alicuota = Assert.Single(compra.Alicuotas);
