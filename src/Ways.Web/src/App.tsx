@@ -56,10 +56,11 @@ import { Vencimientos } from './paginas/Vencimientos'
 import { PuertaDePuntoVenta } from './puntoVenta/PuertaDePuntoVenta'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
+import { PREFIJO_ADMIN } from './config/rutasPublicas'
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={PREFIJO_ADMIN}>
       <AuthProvider>
         <Routes>
           {/* Rutas públicas, sin sesión. */}
