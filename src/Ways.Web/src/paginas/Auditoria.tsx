@@ -13,6 +13,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { PanelDeCambio } from './PanelDeCambio'
+import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
@@ -129,24 +130,22 @@ export function Auditoria() {
             <label className="form-label" htmlFor="auditoria-desde">
               Desde
             </label>
-            <input
+            <CampoFecha
               id="auditoria-desde"
-              type="date"
               className="form-control"
               value={filtros.desde}
-              onChange={(e) => cambiarFiltro({ desde: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ desde: valor })}
             />
           </div>
           <div className="col-md-2">
             <label className="form-label" htmlFor="auditoria-hasta">
               Hasta
             </label>
-            <input
+            <CampoFecha
               id="auditoria-hasta"
-              type="date"
               className="form-control"
               value={filtros.hasta}
-              onChange={(e) => cambiarFiltro({ hasta: e.target.value })}
+              onChange={(valor) => cambiarFiltro({ hasta: valor })}
             />
           </div>
           <div className="col-md-2">

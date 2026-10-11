@@ -257,7 +257,7 @@ describe('Presupuesto — doble click en "Enviar" (react-async-state regla 9, ta
     renderPantalla()
     const inputVencimiento = await screen.findByLabelText('Vence el')
     await userEvent.clear(inputVencimiento)
-    await userEvent.type(inputVencimiento, '2026-10-15')
+    await userEvent.type(inputVencimiento, '15/10/2026')
 
     await userEvent.click(screen.getByRole('button', { name: 'Enviar' }))
 
