@@ -31,6 +31,7 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 
 const ID_FORMULARIO_OFERTA = 'formulario-oferta'
@@ -79,10 +80,15 @@ export function Ofertas() {
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [errorFormulario, setErrorFormulario] = useState('')
+  /** Cuenta los rechazos de validación: el mensaje puede repetirse sin cambiar el estado. */
+  const [rechazosDeValidacion, setRechazosDeValidacion] = useState(0)
   const [formulario, setFormulario] = useState<FormularioOferta | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [eliminando, setEliminando] = useState(false)
   const tokenEdicionRef = useRef(0)
+  /** Destino de foco cuando el modal se cierra con la pantalla inerte (guardado en vuelo): ningún
+   * botón es alcanzable en ese momento. */
+  const contenedorRef = useRef<HTMLDivElement>(null)
   const generacionCargaRef = useRef(0)
   const cargaInicialHechaRef = useRef(false)
   const ocupado = guardando || eliminando
@@ -178,7 +184,6 @@ export function Ofertas() {
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(null)
-    setErrorFormulario('')
   }
 
   async function abrirEdicion(o: OfertaListado) {
@@ -220,6 +225,7 @@ export function Ofertas() {
     const mensajeInvalido = validarFormulario(formulario)
     if (mensajeInvalido) {
       setErrorFormulario(mensajeInvalido)
+      setRechazosDeValidacion((n) => n + 1)
       return
     }
 
@@ -294,7 +300,7 @@ export function Ofertas() {
   )
 
   return (
-    <div className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} className="container-fluid py-4">
       <Box titulo="Ofertas" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
@@ -371,6 +377,8 @@ export function Ofertas() {
           guardando={guardando}
           ocupado={ocupado}
           error={errorFormulario}
+          disparoDelError={rechazosDeValidacion}
+          focoDeReserva={contenedorRef}
           onCambio={setFormulario}
           onGuardar={guardar}
           onCancelar={cancelarEdicion}
@@ -390,6 +398,8 @@ function ModalDeOferta({
   guardando,
   ocupado,
   error,
+  disparoDelError,
+  focoDeReserva,
   onCambio,
   onGuardar,
   onCancelar,
@@ -403,6 +413,8 @@ function ModalDeOferta({
   guardando: boolean
   ocupado: boolean
   error: string
+  disparoDelError: number
+  focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: FormularioOferta) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -436,8 +448,16 @@ function ModalDeOferta({
   )
 
   return (
-    <Modal titulo={esNuevo ? 'Nueva oferta' : 'Editar oferta'} tamano="xl" desplazable ocupado={ocupado} pie={pie} onCerrar={onCancelar}>
-      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
+    <Modal
+      titulo={esNuevo ? 'Nueva oferta' : 'Editar oferta'}
+      tamano="xl"
+      desplazable
+      ocupado={ocupado}
+      focoDeReserva={focoDeReserva}
+      pie={pie}
+      onCerrar={onCancelar}
+    >
+      <ErrorDeFormulario mensaje={error} disparo={disparoDelError} />
       <form
         id={ID_FORMULARIO_OFERTA}
         autoComplete="off"
@@ -460,6 +480,7 @@ function ModalDeOferta({
             </label>
             <input
               id="of-nombre"
+              autoFocus
               className="form-control"
               maxLength={150}
               value={valor.nombre}

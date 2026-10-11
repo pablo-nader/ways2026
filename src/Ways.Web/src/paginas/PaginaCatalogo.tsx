@@ -8,6 +8,7 @@ import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 
 type Formulario = {
@@ -61,6 +62,9 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
    * `ConfirmacionDeBaja.tsx`. */
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
+  /** Destino de foco cuando la modal se cierra con la pantalla inerte (guardado en vuelo): ningún
+   * botón es alcanzable en ese momento. */
+  const contenedorRef = useRef<HTMLDivElement>(null)
 
   /** Contrato de invalidación compartido por guardar y por la baja: ver `Empresas.tsx`. */
   const generacion = useRef(0)
@@ -131,7 +135,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
    * ninguna escritura y no acuña generación. */
   function cancelarFormulario() {
     setFormulario(null)
-    setErrorFormulario('')
   }
 
   async function guardar() {
@@ -258,7 +261,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   )
 
   return (
-    <div className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} className="container-fluid py-4">
       <Box titulo={titulo} variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
@@ -343,6 +346,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           guardando={guardando}
           bloqueado={bloqueado}
           error={errorFormulario}
+          focoDeReserva={contenedorRef}
           items={items}
           onCambio={setFormulario}
           onGuardar={guardar}
@@ -368,6 +372,7 @@ function ModalDeCatalogo({
   guardando,
   bloqueado,
   error,
+  focoDeReserva,
   items,
   onCambio,
   onGuardar,
@@ -379,6 +384,7 @@ function ModalDeCatalogo({
   guardando: boolean
   bloqueado: boolean
   error: string
+  focoDeReserva: React.RefObject<HTMLElement | null>
   items: unknown[]
   onCambio: (f: Formulario) => void
   onGuardar: () => void
@@ -407,10 +413,11 @@ function ModalDeCatalogo({
       titulo={esNuevo ? `Nueva ${tituloSingular}` : `Editar ${tituloSingular}`}
       tamano="lg"
       ocupado={bloqueado}
+      focoDeReserva={focoDeReserva}
       pie={pie}
       onCerrar={onCancelar}
     >
-      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
+      <ErrorDeFormulario mensaje={error} />
       <form
         id={ID_FORMULARIO_CATALOGO}
         className="row g-3"
@@ -426,6 +433,7 @@ function ModalDeCatalogo({
           </label>
           <input
             id="f-nombre"
+            autoFocus
             className="form-control"
             maxLength={150}
             value={valor.nombre}

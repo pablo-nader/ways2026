@@ -11,6 +11,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
 import { Modal } from '../componentes/Modal'
 import { aAlta, aFormulario, formularioVacio, type Formulario } from './proveedorFormulario'
 
@@ -155,6 +156,9 @@ export function Proveedores() {
   /** Id del proveedor cuya baja está en vuelo (distinto de `guardando`, que cubre alta/edición). */
   const [ocupadoBaja, setOcupadoBaja] = useState<number | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
+  /** Destino de foco cuando la modal se cierra con la pantalla inerte (guardado en vuelo): ningún
+   * botón es alcanzable en ese momento. */
+  const contenedorRef = useRef<HTMLDivElement>(null)
 
   /** Contrato de invalidación compartido por guardar y por la baja: ver `Empresas.tsx`. */
   const generacion = useRef(0)
@@ -331,7 +335,7 @@ export function Proveedores() {
   )
 
   return (
-    <div className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} className="container-fluid py-4">
       <Box titulo="Proveedores" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger">{error}</div>}
         {aviso && <div className="alert alert-success">{aviso}</div>}
@@ -353,6 +357,7 @@ export function Proveedores() {
             guardando={guardando}
             bloqueado={bloqueado}
             error={errorFormulario}
+            focoDeReserva={contenedorRef}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={cancelarFormulario}
@@ -445,6 +450,7 @@ function ModalDeProveedor({
   guardando,
   bloqueado,
   error,
+  focoDeReserva,
   onCambio,
   onGuardar,
   onCancelar,
@@ -454,6 +460,7 @@ function ModalDeProveedor({
   guardando: boolean
   bloqueado: boolean
   error: string
+  focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -477,10 +484,11 @@ function ModalDeProveedor({
       tamano="xl"
       desplazable
       ocupado={bloqueado}
+      focoDeReserva={focoDeReserva}
       pie={pie}
       onCerrar={onCancelar}
     >
-      {error && <div className="alert alert-danger py-2 px-3 small">{error}</div>}
+      <ErrorDeFormulario mensaje={error} />
       <form
         id={ID_FORMULARIO_PROVEEDOR}
         className="row g-3"
@@ -500,6 +508,7 @@ function ModalDeProveedor({
           </label>
           <input
             id="p-razon-social"
+            autoFocus
             className="form-control"
             maxLength={150}
             value={valor.razonSocial}
