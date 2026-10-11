@@ -1,4 +1,5 @@
 using Ways.Domain.Combos;
+using Ways.Domain.Ventas;
 
 namespace Ways.Domain.Tests.Combos;
 
@@ -42,9 +43,9 @@ public class ResolvedorDeCombosTests
         var coca = DeLinea(resolucion, 1);
 
         Assert.Equal(1, pancho.UnidadesConsumidas);
-        Assert.Equal(272.73m, pancho.AhorroDeCombo);
+        Assert.Equal(273m, pancho.AhorroDeCombo);
         Assert.Equal(1, coca.UnidadesConsumidas);
-        Assert.Equal(227.27m, coca.AhorroDeCombo);
+        Assert.Equal(227m, coca.AhorroDeCombo);
         Assert.Equal(5000m, (3000m - pancho.AhorroDeCombo) + (2500m - coca.AhorroDeCombo));
         Assert.Equal([7], pancho.IdsDeCombo);
 
@@ -79,8 +80,8 @@ public class ResolvedorDeCombosTests
             ],
             Combo(1, 4000m, Fam(FamiliaSnacks), Fam(FamiliaBebidas)));
 
-        Assert.Equal(277.78m, DeLinea(resolucion, 0).AhorroDeCombo);
-        Assert.Equal(222.22m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(278m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(222m, DeLinea(resolucion, 1).AhorroDeCombo);
     }
 
     [Fact]
@@ -90,8 +91,8 @@ public class ResolvedorDeCombosTests
             [Linea(0, Pancho, 1000m), Linea(1, Coca, 2000m), Linea(2, Sprite, 3000m)],
             Combo(1, 5000m, Art(Pancho), Art(Coca), Art(Sprite)));
 
-        Assert.Equal(166.67m, DeLinea(resolucion, 0).AhorroDeCombo);
-        Assert.Equal(333.33m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(167m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(333m, DeLinea(resolucion, 1).AhorroDeCombo);
         Assert.Equal(500m, DeLinea(resolucion, 2).AhorroDeCombo);
     }
 
@@ -102,9 +103,9 @@ public class ResolvedorDeCombosTests
             [Linea(0, Pancho, 100m), Linea(1, Coca, 100m), Linea(2, Sprite, 100m)],
             Combo(1, 200m, Art(Pancho), Art(Coca), Art(Sprite)));
 
-        Assert.Equal(33.33m, DeLinea(resolucion, 0).AhorroDeCombo);
-        Assert.Equal(33.33m, DeLinea(resolucion, 1).AhorroDeCombo);
-        Assert.Equal(33.34m, DeLinea(resolucion, 2).AhorroDeCombo);
+        Assert.Equal(33m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(33m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(34m, DeLinea(resolucion, 2).AhorroDeCombo);
         Assert.Equal(200m, 300m - resolucion.Lineas.Sum(l => l.AhorroDeCombo));
     }
 
@@ -131,9 +132,9 @@ public class ResolvedorDeCombosTests
         var pancho = DeLinea(resolucion, 0);
         var coca = DeLinea(resolucion, 1);
         Assert.Equal(2, pancho.UnidadesConsumidas);
-        Assert.Equal(545.46m, pancho.AhorroDeCombo);
+        Assert.Equal(546m, pancho.AhorroDeCombo);
         Assert.Equal(2, coca.UnidadesConsumidas);
-        Assert.Equal(454.54m, coca.AhorroDeCombo);
+        Assert.Equal(454m, coca.AhorroDeCombo);
 
         var aplicado = Assert.Single(resolucion.Combos);
         Assert.Equal(2, aplicado.Veces);
@@ -149,7 +150,7 @@ public class ResolvedorDeCombosTests
 
         var pancho = DeLinea(resolucion, 0);
         Assert.Equal(1, pancho.UnidadesConsumidas);
-        Assert.Equal(272.73m, pancho.AhorroDeCombo);
+        Assert.Equal(273m, pancho.AhorroDeCombo);
         Assert.Equal(1, Assert.Single(resolucion.Combos).Veces);
     }
 
@@ -211,7 +212,7 @@ public class ResolvedorDeCombosTests
     }
 
     [Fact]
-    public void ElComboQueNoEsMasBaratoQueLaOfertaNoSeAplicaYSiLoEsPorUnCentavoSi()
+    public void ElComboQueNoEsMasBaratoQueLaOfertaNoSeAplicaYSiLoEsPorUnPesoSi()
     {
         LineaParaCombos[] lineas =
             [Linea(0, Pancho, 3000m, descuentoDeOferta: 1000m), Linea(1, Coca, 2500m)];
@@ -220,9 +221,85 @@ public class ResolvedorDeCombosTests
         Assert.Empty(empate.Lineas);
         Assert.Empty(empate.Combos);
 
-        var masBarato = Resolver(lineas, Combo(1, 4499.99m, Art(Pancho), Art(Coca)));
+        var masBarato = Resolver(lineas, Combo(1, 4499m, Art(Pancho), Art(Coca)));
         Assert.Equal(2, masBarato.Lineas.Count);
-        Assert.Equal(1000.01m, masBarato.Lineas.Sum(l => l.AhorroDeCombo));
+        Assert.Equal(1001m, masBarato.Lineas.Sum(l => l.AhorroDeCombo));
+    }
+
+    [Fact]
+    public void UnComboCuyoPrecioConCentavosNoBajaDeUnPesoElCostoConOfertasNoSeAplicaPorqueCobraLoMismo()
+    {
+        LineaParaCombos[] lineas =
+            [Linea(0, Pancho, 3000m, descuentoDeOferta: 1000m), Linea(1, Coca, 2500m)];
+
+        var resolucion = Resolver(lineas, Combo(1, 4499.99m, Art(Pancho), Art(Coca)));
+
+        Assert.Empty(resolucion.Lineas);
+        Assert.Empty(resolucion.Combos);
+    }
+
+    [Fact]
+    public void ElAhorroConCentavosSeRedondeaAlPesoAntesDeRepartirseYLasPartesSonEnteras()
+    {
+        // Lista 5500 y combo 4499.60: ahorro 1000.40 → 1000. El conjunto cobra 4500 (no 4499.60):
+        // la venta es de pesos enteros.
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 3000m), Linea(1, Coca, 2500m)],
+            Combo(1, 4499.60m, Art(Pancho), Art(Coca)));
+
+        Assert.Equal(545m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(455m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(1000m, Assert.Single(resolucion.Combos).Ahorro);
+    }
+
+    [Fact]
+    public void UnaLineaDeListaConCentavosNoRecibeUnaParteFraccionariaAunSiLaProporcionLaSuperaAlPeso()
+    {
+        // Lista 100.60 y combo 0.20: ahorro 100.40 → 100. La proporción de la línea de 0.60 da 1,
+        // pero su tope entero es 0: la parte entera queda en 0 y el resto va a la otra línea.
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 0.60m), Linea(1, Coca, 100m)],
+            Combo(1, 0.20m, Art(Pancho), Art(Coca)));
+
+        Assert.Equal(0m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(100m, DeLinea(resolucion, 1).AhorroDeCombo);
+    }
+
+    [Fact]
+    public void TresLineasDeMilConUnComboDeDosMilCobranExactamenteElPrecioConLasNetasEnteras()
+    {
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 1000m), Linea(1, Coca, 1000m), Linea(2, Sprite, 1000m)],
+            Combo(1, 2000m, Art(Pancho), Art(Coca), Art(Sprite)));
+
+        Assert.Equal([333m, 333m, 334m], resolucion.Lineas.Select(l => l.AhorroDeCombo));
+
+        var totales = CalculadorDeTotales.Calcular(
+            resolucion.Lineas
+                .Select(l => new LineaParaCalcular(
+                    1m, 1000m, 0m, null, l.UnidadesConsumidas, l.AhorroDeCombo))
+                .ToList());
+
+        Assert.Equal(2000m, totales.Total);
+    }
+
+    [Fact]
+    public void ElComboQueConsumeUnaSolaUnidadDeUnaLineaConOfertaCobraElPrecioMasLasUnidadesFueraDelCombo()
+    {
+        var resolucion = Resolver(
+            [Linea(0, Pancho, 3000m, cantidad: 2m, descuentoDeOferta: 500m), Linea(1, Coca, 2500m)],
+            Combo(1, 4800m, Art(Pancho), Art(Coca)));
+
+        var pancho = DeLinea(resolucion, 0);
+        var coca = DeLinea(resolucion, 1);
+        var totales = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 3000m, 500m, null, pancho.UnidadesConsumidas, pancho.AhorroDeCombo),
+            new LineaParaCalcular(1m, 2500m, 0m, null, coca.UnidadesConsumidas, coca.AhorroDeCombo)
+        ]);
+
+        // Combo 4800 + la segunda unidad de pancho con su oferta (3000 − 500).
+        Assert.Equal(4800m + 2500m, totales.Total);
     }
 
     [Fact]
@@ -235,14 +312,14 @@ public class ResolvedorDeCombosTests
         var pancho = DeLinea(resolucion, 0);
         var coca = DeLinea(resolucion, 1);
         Assert.Equal(1, pancho.UnidadesConsumidas);
-        Assert.Equal(381.82m, pancho.AhorroDeCombo);
-        Assert.Equal(318.18m, coca.AhorroDeCombo);
+        Assert.Equal(382m, pancho.AhorroDeCombo);
+        Assert.Equal(318m, coca.AhorroDeCombo);
 
         // Fórmula documentada para quien llama: oferta × unidades no consumidas + parte del combo.
         var descuentoPancho = (500m * (2m - pancho.UnidadesConsumidas)) + pancho.AhorroDeCombo;
         var descuentoCoca = coca.AhorroDeCombo;
-        Assert.Equal(881.82m, descuentoPancho);
-        Assert.Equal(4800m + 2500m, (3000m * 2m - descuentoPancho) + (2500m - descuentoCoca));
+        Assert.Equal(882m, descuentoPancho);
+        Assert.Equal(4800m + 3000m - 500m, (3000m * 2m - descuentoPancho) + (2500m - descuentoCoca));
     }
 
     [Theory]
@@ -311,8 +388,8 @@ public class ResolvedorDeCombosTests
         var aplicado = Assert.Single(resolucion.Combos);
         Assert.Equal(conjuntos, aplicado.Veces);
         Assert.Equal(conjuntos * 500m, aplicado.Ahorro);
-        Assert.Equal(conjuntos * 272.73m, DeLinea(resolucion, 0).AhorroDeCombo);
-        Assert.Equal(conjuntos * 227.27m, DeLinea(resolucion, 1).AhorroDeCombo);
+        Assert.Equal(conjuntos * 273m, DeLinea(resolucion, 0).AhorroDeCombo);
+        Assert.Equal(conjuntos * 227m, DeLinea(resolucion, 1).AhorroDeCombo);
         Assert.Equal(aplicado.Ahorro, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
     }
 
@@ -321,14 +398,15 @@ public class ResolvedorDeCombosTests
     {
         var resolucion = Resolver(
             [Linea(0, Pancho, 10m), Linea(1, Coca, 10m), Linea(2, Sprite, 0m)],
-            Combo(1, 19.99m, Art(Pancho), Art(Coca), Art(Sprite)));
+            Combo(1, 19m, Art(Pancho), Art(Coca), Art(Sprite)));
 
         Assert.All(resolucion.Lineas, l => Assert.InRange(l.AhorroDeCombo, 0m, 10m));
-        Assert.Equal(0.01m, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
+        Assert.Equal(0m, DeLinea(resolucion, 2).AhorroDeCombo);
+        Assert.Equal(1m, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
     }
 
     [Fact]
-    public void LaParteDeCadaLineaNuncaSuperaSuImporteDeListaYElConjuntoSumaElPrecio()
+    public void LaParteDeCadaLineaNuncaSuperaSuImporteDeListaYElAhorroEsElPesoEnteroMasCercano()
     {
         var lineas = Enumerable.Range(0, 10)
             .Select(i => Linea(i, 100 + i, 1m))
@@ -344,7 +422,8 @@ public class ResolvedorDeCombosTests
             Assert.InRange(consumo.AhorroDeCombo, 0m, lineas[consumo.Indice].PrecioLista);
         }
 
-        Assert.Equal(0.06m, lineas.Sum(l => l.PrecioLista) - resolucion.Lineas.Sum(l => l.AhorroDeCombo));
+        // Lista 10.01 y combo 0.06: ahorro 9.95 → 10.
+        Assert.Equal(10m, resolucion.Lineas.Sum(l => l.AhorroDeCombo));
     }
 
     [Fact]

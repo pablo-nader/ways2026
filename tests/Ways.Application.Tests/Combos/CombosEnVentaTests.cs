@@ -27,8 +27,8 @@ public class CombosEnVentaTests
             [Linea(Pancho, 1m, 3000m), Linea(Coca, 1m, 2500m)], [PanchoYCoca()]);
 
         Assert.Equal(2, resultado.Count);
-        Assert.Equal(new ComboEnLinea(1, 272.73m, 1), resultado[0]);
-        Assert.Equal(new ComboEnLinea(1, 227.27m, 1), resultado[1]);
+        Assert.Equal(new ComboEnLinea(1, 273m, 1), resultado[0]);
+        Assert.Equal(new ComboEnLinea(1, 227m, 1), resultado[1]);
     }
 
     [Fact]
