@@ -79,10 +79,39 @@ Responde `503` si la base no contesta.
 
 ### 5. Después del primer deploy
 
-1. Entrá a la URL del servicio → te manda a `/login`.
+1. Entrá a la URL del servicio → te manda a `/admin` y de ahí a `/admin/login`.
 2. Ingresá con `root` / `root`.
 3. **Cambiá la contraseña de root desde Usuarios** antes de cargar nada real.
 4. Creá tu cuenta admin y usá esa para el día a día.
+
+---
+
+## Mapa de URLs
+
+La API sirve el front compilado (`wwwroot`) con tres entradas y el POS de escritorio aparte:
+
+| URL | Qué sirve |
+|---|---|
+| `/` | La landing del comercio (`index.html`). En un host de la plataforma (`Plataforma:Hosts`: `aipos.site`, `localhost`…) redirige (302) a `/admin` |
+| `/admin` y `/admin/...` | El back office y el POS web (`admin.html`); el router de React usa `basename="/admin"` |
+| `/online` y `/online/...` | La tienda online (`online.html`) |
+| `/pos.html` | El POS de escritorio: archivo estático, sin cambios (Tauri lo trae empaquetado y llama a `/api`) |
+| `/api/...` | La API; una `/api/...` inexistente da 404, nunca un HTML |
+| cualquier otra ruta sin extensión | La landing (`index.html`) |
+
+**Rutas viejas.** Para que los favoritos sigan andando, `GET` y `HEAD` a `/login`, `/pos`, `/descargar`
+y a cada pantalla del back office que antes colgaba de la raíz (`/caja`, `/articulos`, `/compras`…)
+redirigen (302, conservando el query) a la misma ruta bajo `/admin`: `/pos?idPresupuesto=5` →
+`/admin/pos?idPresupuesto=5`. La lista vive en `RutasDeLaSpa.RutasHeredadasDelBackOffice`
+([RutasDeLaSpa.cs](../src/Ways.Api/Spa/RutasDeLaSpa.cs)) y la fuente de verdad es
+[App.tsx](../src/Ways.Web/src/App.tsx): una prueba falla si las dos se desvían. `/api`, `/assets`,
+`/online`, `/admin` y los archivos nunca se redirigen, salvo los de entrada: un `GET` o `HEAD` directo a
+`/admin.html`, `/online.html` o `/index.html` redirige (302, conservando el query) a `/admin`, `/online` o `/`,
+porque abiertos por el nombre del archivo el router de React no reconoce la ruta y la página queda en blanco.
+`/pos.html` sigue sirviéndose tal cual.
+
+En desarrollo (`npm run dev`, `vite preview`) un plugin de `vite.config.ts` aplica el mismo reparto:
+`/admin/*` sale de `admin.html`, `/online/*` de `online.html` y el resto de `index.html`.
 
 ---
 
@@ -171,7 +200,7 @@ node src/Ways.Api/scripts/probar-conector-mcp.mjs https://aipos.site --solo-publ
   le corta el acceso a Ways).
 - La página de autorización no limita los intentos y comparte el bloqueo de cuenta del login: quien
   conozca un mail de `Mcp__MailsHabilitados` puede bloquear esa cuenta probando contraseñas
-  incorrectas, igual que desde `/login`.
+  incorrectas, igual que desde `/admin/login`.
 - A un mail fuera de la lista la página le responde con el mismo texto y el mismo estado que a una
   contraseña incorrecta, pero más rápido, porque lo rechaza sin consultar la base: midiendo tiempos
   se puede saber si un mail está en la lista.
@@ -225,7 +254,7 @@ No hace falta aplicarlas a mano: la API las corre al arrancar.
 
 ## App de escritorio (Ways POS)
 
-Clientes descargan el instalador de Windows desde `https://aipos.site/descargar` (página pública
+Clientes descargan el instalador de Windows desde `https://aipos.site/admin/descargar` (página pública
 `Descargar.tsx` en `src/Ways.Web`, sin login, servida por el mismo fallback de SPA que el resto de
 la app). El botón apunta al asset publicado en el último GitHub Release del repo público
 `pablo-nader/ways2026` (`VITE_URL_DESCARGA_POS` permite overridearlo).
@@ -245,14 +274,14 @@ la app). El botón apunta al asset publicado en el último GitHub Release del re
 El workflow `.github/workflows/pos-escritorio-release.yml` compila el instalador NSIS en
 `windows-latest`, verifica que la versión del tag coincida con `tauri.conf.json` (falla si no
 coincide) y publica el GitHub Release con dos assets: `WaysPOS-setup.exe` (nombre estable, es el
-que usa `/descargar`) y `WaysPOS-<version>-setup.exe`. También se puede disparar a mano
+que usa `/admin/descargar`) y `WaysPOS-<version>-setup.exe`. También se puede disparar a mano
 (`workflow_dispatch`) contra un tag ya existente.
 
 Notas:
 
 - El instalador **todavía no está firmado digitalmente**: Windows SmartScreen va a mostrar
   "Windows protegió su PC" en la primera ejecución. El paso a paso ("Más información" →
-  "Ejecutar de todas formas") está documentado en `/descargar`.
+  "Ejecutar de todas formas") está documentado en `/admin/descargar`.
 - Antes de que alguien use la app, hay que tener aplicada la migración de `DispositivosPos`
   (vinculación de equipos) contra la base de ese tenant.
 

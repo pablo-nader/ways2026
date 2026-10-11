@@ -3,11 +3,10 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
   formatearPorcentajeDeAjuste,
+  formatearPorcentajeDeAjusteConSigno,
   mensajeDeRechazoDeAjusteManual,
   rotuloDeAjusteManual,
-  tipoDeAjuste,
   validarPorcentajeDeAjuste,
-  type TipoDeAjusteManual,
 } from '../api/ajusteManual'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
@@ -81,7 +80,6 @@ import {
 } from '../api/ventas'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
-import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { Modal } from '../componentes/Modal'
@@ -132,10 +130,6 @@ function etiquetaDeCliente(c: ClienteListado): string {
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
-
-/** Editor inline del ajuste manual de una línea. `texto` es la magnitud tipeada, sin signo (el
- * signo lo da `tipo`); `error` es el mensaje de la última validación fallida, vacío si no hay. */
-type EdicionDeAjusteManual = { idLinea: string; tipo: TipoDeAjusteManual; texto: string; error: string }
 
 /** judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
  * atención" conjugaba el verbo siempre en plural, incluso con cantidad 1 ("1 venta necesitan
@@ -1021,12 +1015,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setPreviaLocal(instantanea !== null)
   }
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<string, string>>(() => borradorInicial?.cantidadesEnEdicion ?? {})
-  // Una sola línea a la vez tiene abierto el editor de ajuste manual. `disparadorDeAjusteRef` guarda
-  // el botón que lo abrió: se captura en el handler del click, nunca en un efecto posterior
-  // (react-async-state regla 12), para devolverle el foco al cerrar.
-  const [ajusteEnEdicion, setAjusteEnEdicion] = useState<EdicionDeAjusteManual | null>(null)
-  const disparadorDeAjusteRef = useRef<HTMLElement | null>(null)
-  const inputDeAjusteRef = useRef<HTMLInputElement>(null)
+  // Texto del ajuste manual que el cajero está tipeando, por línea: mientras no se confirma (blur o
+  // Enter) no toca el carrito, y un texto inválido queda acá, a la vista, en vez de revertirse solo.
+  const [ajustesEnEdicion, setAjustesEnEdicion] = useState<Record<string, string>>({})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -2340,9 +2331,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         return resto
       })
 
+    const limpiarAjusteDeFila = (idLinea: string) =>
+      setAjustesEnEdicion((prev) => {
+        if (!(idLinea in prev)) return prev
+        const { [idLinea]: _omitido, ...resto } = prev
+        return resto
+      })
+
     switch (accion.tipo) {
       case 'quitarLinea':
         limpiarFila(accion.idLinea)
+        limpiarAjusteDeFila(accion.idLinea)
         break
       case 'escanear': {
         const destino = idLineaDestinoDeEscaneo(lineasRef.current, accion.linea)
@@ -2351,6 +2350,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }
       case 'vaciar':
         setCantidadesEnEdicion({})
+        setAjustesEnEdicion({})
         break
       case 'editarCantidad':
       case 'fijarAjusteManual':
@@ -2416,87 +2416,70 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     })
   }
 
-  const idLineaEnEdicionDeAjuste = ajusteEnEdicion?.idLinea ?? null
-
-  // Un editor abierto sobre una línea que ya no está (quitada, carrito vaciado o venta cobrada) se
-  // cierra: si el mismo artículo volviera a escanearse, no debe reaparecer un editor viejo.
-  useEffect(() => {
-    if (idLineaEnEdicionDeAjuste !== null && !lineas.some((l) => l.idLinea === idLineaEnEdicionDeAjuste)) {
-      disparadorDeAjusteRef.current = null
-      setAjusteEnEdicion(null)
-    }
-  }, [lineas, idLineaEnEdicionDeAjuste])
-
-  // Al abrir el editor (o pasar de una línea a otra) el foco va al campo del porcentaje.
-  useEffect(() => {
-    if (idLineaEnEdicionDeAjuste !== null) inputDeAjusteRef.current?.focus()
-  }, [idLineaEnEdicionDeAjuste])
-
-  /** Cierra el editor. Cancelar (Escape, "Cancelar", tocar de nuevo el botón) devuelve el foco al
-   * botón que lo abrió. Tras aplicar o quitar el ajuste el foco va al input de código: lo que sigue
-   * es escanear, y un lector que termina con Enter sobre el botón lo reabriría. El `focus()`
-   * síncrono sirve porque ni el botón ni el input quedan deshabilitados por cerrar el editor (a
-   * diferencia de un control que se deshabilita mientras dura la operación, react-async-state
-   * regla 12); si el input está inerte (escaneo en vuelo) el foco cae al botón. */
-  function cerrarEditorDeAjuste(destinoDelFoco: 'disparador' | 'codigo' = 'disparador') {
-    const disparador = disparadorDeAjusteRef.current
-    disparadorDeAjusteRef.current = null
-    setAjusteEnEdicion(null)
-    const codigo = inputEscaneoRef.current
-    if (destinoDelFoco === 'codigo' && codigo !== null && !codigo.disabled) {
-      codigo.focus()
-      return
-    }
-    if (disparador !== null && disparador.isConnected && !disparador.matches(':disabled')) disparador.focus()
+  /** Texto del input "Ajuste %" de una línea: el borrador mientras se tipea y, si no, el porcentaje
+   * comprometido con signo (`-10`, `12,5`) o vacío si la línea no tiene ajuste. */
+  function textoDeAjuste(l: LineaCarrito): string {
+    const borrador = ajustesEnEdicion[l.idLinea]
+    if (borrador !== undefined) return borrador
+    return l.ajusteManualPorcentaje == null ? '' : formatearPorcentajeDeAjusteConSigno(l.ajusteManualPorcentaje)
   }
 
-  function alternarEditorDeAjuste(linea: LineaCarrito, disparador: HTMLElement) {
+  /** Motivo por el que el borrador de la línea no se puede comprometer; vacío si no hay borrador o es válido. */
+  function mensajeDeAjusteInvalido(idLinea: string): string {
+    const borrador = ajustesEnEdicion[idLinea]
+    if (borrador === undefined) return ''
+    const validacion = validarPorcentajeDeAjuste(borrador)
+    return validacion.ok ? '' : validacion.mensaje
+  }
+
+  function cambiarAjuste(idLinea: string, texto: string) {
     if (cobrandoRef.current) return
-    if (ajusteEnEdicion?.idLinea === linea.idLinea) {
-      cerrarEditorDeAjuste()
-      return
-    }
-    const porcentaje = linea.ajusteManualPorcentaje ?? null
-    disparadorDeAjusteRef.current = disparador
-    setAjusteEnEdicion({
-      idLinea: linea.idLinea,
-      tipo: porcentaje === null ? 'descuento' : tipoDeAjuste(porcentaje),
-      texto: porcentaje === null ? '' : formatearPorcentajeDeAjuste(porcentaje),
-      error: '',
+    setAjustesEnEdicion((prev) => ({ ...prev, [idLinea]: texto }))
+  }
+
+  function descartarBorradorDeAjuste(idLinea: string) {
+    setAjustesEnEdicion((prev) => {
+      if (!(idLinea in prev)) return prev
+      const { [idLinea]: _omitido, ...resto } = prev
+      return resto
     })
   }
 
-  function cambiarTextoDeAjuste(texto: string) {
-    setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, texto, error: '' }))
+  /** Compromete el borrador con el carrito. Un texto inválido no muta nada y se conserva para que se
+   * vea el error; vacío o cero quita el ajuste (solo si la línea tenía uno). */
+  function confirmarAjuste(linea: LineaCarrito) {
+    if (cobrandoRef.current) return
+    const borrador = ajustesEnEdicion[linea.idLinea]
+    if (borrador === undefined) return
+    const validacion = validarPorcentajeDeAjuste(borrador)
+    if (!validacion.ok) return
+    descartarBorradorDeAjuste(linea.idLinea)
+    const comprometido = linea.ajusteManualPorcentaje ?? null
+    if (validacion.porcentaje === comprometido) return
+    if (validacion.porcentaje === null) {
+      mutarCarrito({ tipo: 'quitarAjusteManual', idLinea: linea.idLinea })
+    } else {
+      mutarCarrito({ tipo: 'fijarAjusteManual', idLinea: linea.idLinea, porcentaje: validacion.porcentaje })
+    }
   }
 
-  function cambiarTipoDeAjuste(tipo: TipoDeAjusteManual) {
-    setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, tipo, error: '' }))
-  }
-
-  function aplicarAjuste(evento: React.FormEvent<HTMLFormElement>) {
-    evento.preventDefault()
-    if (cobrandoRef.current || ajusteEnEdicion === null) return
-    const validacion = validarPorcentajeDeAjuste(ajusteEnEdicion.texto, ajusteEnEdicion.tipo)
-    if (!validacion.ok) {
-      setAjusteEnEdicion((prev) => (prev === null ? prev : { ...prev, error: validacion.mensaje }))
+  /** Enter confirma y devuelve el foco al input de código (lo que sigue es escanear); Escape descarta
+   * el borrador. Sacar el foco del input dispara su blur, que es quien compromete el texto: con un
+   * texto inválido Enter no mueve el foco. Si el input de código está inerte (escaneo en vuelo) el
+   * foco simplemente se suelta. */
+  function teclaDelAjuste(evento: React.KeyboardEvent<HTMLInputElement>, linea: LineaCarrito) {
+    if (evento.key === 'Escape') {
+      evento.preventDefault()
+      evento.stopPropagation()
+      descartarBorradorDeAjuste(linea.idLinea)
       return
     }
-    mutarCarrito({ tipo: 'fijarAjusteManual', idLinea: ajusteEnEdicion.idLinea, porcentaje: validacion.porcentaje })
-    cerrarEditorDeAjuste('codigo')
-  }
-
-  function quitarAjusteDeLinea() {
-    if (cobrandoRef.current || ajusteEnEdicion === null) return
-    mutarCarrito({ tipo: 'quitarAjusteManual', idLinea: ajusteEnEdicion.idLinea })
-    cerrarEditorDeAjuste('codigo')
-  }
-
-  function teclaDelEditorDeAjuste(evento: React.KeyboardEvent<HTMLFormElement>) {
-    if (evento.key !== 'Escape') return
+    if (evento.key !== 'Enter') return
     evento.preventDefault()
-    evento.stopPropagation()
-    cerrarEditorDeAjuste()
+    if (cobrandoRef.current || mensajeDeAjusteInvalido(linea.idLinea) !== '') return
+    const codigo = inputEscaneoRef.current
+    if (codigo !== null && !codigo.disabled) codigo.focus()
+    else evento.currentTarget.blur()
   }
 
   /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
@@ -2793,6 +2776,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // efectivamente deshabilitado — no solo un aviso decorativo. Bajo `?idPresupuesto=` la
   // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
   // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
+  const hayAjusteSinConfirmar = Object.keys(ajustesEnEdicion).length > 0
   const precondicionesListas = modoPresupuesto
     ? presupuesto !== null &&
       presupuesto.convertible &&
@@ -2804,10 +2788,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       errorParametros === ''
     : !bloqueadoPorTurno &&
       !sincronizacionOffline.sincronizacionInicialPendiente &&
-      // Con el editor de ajuste manual abierto lo tipeado todavía no está en el carrito: cobrar ahí
-      // cobraría sin el ajuste. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón
-      // "Cobrar" y el atajo quedan inertes hasta que se aplica o se cancela.
-      ajusteEnEdicion === null &&
+      // Un ajuste manual tipeado y sin confirmar todavía no está en el carrito: cobrar ahí cobraría
+      // sin él. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón "Cobrar" y el atajo
+      // quedan inertes hasta que se confirma o se descarta.
+      !hayAjusteSinConfirmar &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
@@ -3223,6 +3207,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
+      setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
       setTerminoCliente('')
@@ -3627,6 +3612,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     <th>Artículo</th>
                     <th style={{ width: 110 }}>Cantidad</th>
                     <th className="text-end">Precio unit.</th>
+                    <th className="text-end" style={{ width: 110 }}>
+                      Ajuste %
+                    </th>
                     <th className="text-end">Total</th>
                     <th className="text-end">Acciones</th>
                   </tr>
@@ -3642,6 +3630,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                           <td>{item.descripcion}</td>
                           <td>{item.cantidad}</td>
                           <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
+                          <td className="text-end">—</td>
                           <td className="text-end">{formatearMoneda(item.total)}</td>
                           <td className="text-end">—</td>
                         </tr>
@@ -3651,8 +3640,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
                         const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
-                        const edicionDeAjuste = ajusteEnEdicion?.idLinea === l.idLinea ? ajusteEnEdicion : null
-                        const idEditorDeAjuste = `pos-ajuste-${l.idLinea}`
+                        const mensajeDeAjuste = mensajeDeAjusteInvalido(l.idLinea)
                         const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
                         const textoDelAjuste =
                           ajusteDeLinea === null
@@ -3672,82 +3660,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 <div>
                                   <span className={`badge ${ajusteDeLinea < 0 ? 'text-bg-warning' : 'text-bg-info'}`}>{textoDelAjuste}</span>
                                 </div>
-                              )}
-                              {edicionDeAjuste !== null && (
-                                <form
-                                  id={idEditorDeAjuste}
-                                  className="mt-2 p-2 border rounded"
-                                  aria-label={`Ajuste manual de ${l.nombre}`}
-                                  noValidate
-                                  onSubmit={aplicarAjuste}
-                                  onKeyDown={teclaDelEditorDeAjuste}
-                                >
-                                  <div className="d-flex flex-wrap align-items-start gap-2">
-                                    <div role="radiogroup" aria-label={`Tipo de ajuste de ${l.nombre}`} className="d-flex gap-3 align-items-center py-1">
-                                      <div className="form-check mb-0">
-                                        <input
-                                          className="form-check-input"
-                                          type="radio"
-                                          name={`${idEditorDeAjuste}-tipo`}
-                                          id={`${idEditorDeAjuste}-descuento`}
-                                          checked={edicionDeAjuste.tipo === 'descuento'}
-                                          disabled={lineaInerte}
-                                          onChange={() => cambiarTipoDeAjuste('descuento')}
-                                        />
-                                        <label className="form-check-label" htmlFor={`${idEditorDeAjuste}-descuento`}>
-                                          Descuento
-                                        </label>
-                                      </div>
-                                      <div className="form-check mb-0">
-                                        <input
-                                          className="form-check-input"
-                                          type="radio"
-                                          name={`${idEditorDeAjuste}-tipo`}
-                                          id={`${idEditorDeAjuste}-recargo`}
-                                          checked={edicionDeAjuste.tipo === 'recargo'}
-                                          disabled={lineaInerte}
-                                          onChange={() => cambiarTipoDeAjuste('recargo')}
-                                        />
-                                        <label className="form-check-label" htmlFor={`${idEditorDeAjuste}-recargo`}>
-                                          Recargo
-                                        </label>
-                                      </div>
-                                    </div>
-                                    <div className="input-group input-group-sm" style={{ width: 130 }}>
-                                      <input
-                                        ref={inputDeAjusteRef}
-                                        type="text"
-                                        inputMode="decimal"
-                                        autoComplete="off"
-                                        className={`form-control${edicionDeAjuste.error ? ' is-invalid' : ''}`}
-                                        aria-label={`Porcentaje del ajuste de ${l.nombre}`}
-                                        aria-invalid={edicionDeAjuste.error !== ''}
-                                        aria-describedby={edicionDeAjuste.error ? `${idEditorDeAjuste}-error` : undefined}
-                                        placeholder="Ej. 10"
-                                        value={edicionDeAjuste.texto}
-                                        disabled={lineaInerte}
-                                        onChange={(e) => cambiarTextoDeAjuste(e.target.value)}
-                                      />
-                                      <span className="input-group-text">%</span>
-                                    </div>
-                                    <button type="submit" className="btn btn-sm btn-primary" disabled={lineaInerte}>
-                                      Aplicar
-                                    </button>
-                                    {ajusteDeLinea !== null && (
-                                      <button type="button" className="btn btn-sm btn-outline-danger" disabled={lineaInerte} onClick={quitarAjusteDeLinea}>
-                                        Quitar ajuste
-                                      </button>
-                                    )}
-                                    <button type="button" className="btn btn-sm btn-outline-secondary" disabled={lineaInerte} onClick={() => cerrarEditorDeAjuste()}>
-                                      Cancelar
-                                    </button>
-                                  </div>
-                                  {edicionDeAjuste.error && (
-                                    <div id={`${idEditorDeAjuste}-error`} role="alert" className="text-danger small mt-1">
-                                      {edicionDeAjuste.error}
-                                    </div>
-                                  )}
-                                </form>
                               )}
                             </td>
                             <td>
@@ -3791,33 +3703,40 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 </>
                               )}
                             </td>
+                            <td>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                autoComplete="off"
+                                className={`form-control form-control-sm text-end${mensajeDeAjuste ? ' is-invalid' : ''}`}
+                                style={{ width: 90 }}
+                                aria-label={`Ajuste % de ${l.nombre}`}
+                                aria-invalid={mensajeDeAjuste !== '' || undefined}
+                                title={mensajeDeAjuste || undefined}
+                                value={textoDeAjuste(l)}
+                                disabled={lineaInerte}
+                                onChange={(e) => cambiarAjuste(l.idLinea, e.target.value)}
+                                onBlur={() => confirmarAjuste(l)}
+                                onKeyDown={(e) => teclaDelAjuste(e, l)}
+                              />
+                            </td>
                             <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
                             <td className="text-end text-nowrap">
-                              <div className="d-inline-flex gap-1">
-                                <BotonIcono
-                                  icono="ajuste"
-                                  etiqueta={`Ajuste manual de ${l.nombre}`}
-                                  aria-expanded={edicionDeAjuste !== null}
-                                  aria-controls={edicionDeAjuste !== null ? idEditorDeAjuste : undefined}
-                                  disabled={lineaInerte}
-                                  onClick={(e) => alternarEditorDeAjuste(l, e.currentTarget)}
-                                />
-                                <button
-                                  type="button"
-                                  className="btn btn-sm btn-outline-danger"
-                                  disabled={lineaInerte}
-                                  onClick={() => mutarCarrito({ tipo: 'quitarLinea', idLinea: l.idLinea })}
-                                >
-                                  Quitar
-                                </button>
-                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-danger"
+                                disabled={lineaInerte}
+                                onClick={() => mutarCarrito({ tipo: 'quitarLinea', idLinea: l.idLinea })}
+                              >
+                                Quitar
+                              </button>
                             </td>
                           </tr>
                         )
                       })}
                   {(modoPresupuesto ? (presupuesto?.items.length ?? 0) === 0 : lineas.length === 0) && (
                     <tr>
-                      <td colSpan={6} className="text-center text-muted py-4">
+                      <td colSpan={7} className="text-center text-muted py-4">
                         {modoPresupuesto ? 'Este presupuesto no tiene items.' : 'Escaneá o tipeá un código para empezar la venta.'}
                       </td>
                     </tr>
@@ -4037,9 +3956,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
-            {ajusteEnEdicion !== null && (
+            {hayAjusteSinConfirmar && (
               <div className="alert alert-warning py-1 px-2 small" role="status">
-                Aplicá o cancelá el ajuste antes de cobrar.
+                Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.
               </div>
             )}
 

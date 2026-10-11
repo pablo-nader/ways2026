@@ -5,7 +5,10 @@ namespace Ways.Application.Ofertas;
 /// <c>ofertas_listas</c> — vacío cuando la oferta aplica a todas las listas — para que un
 /// cliente HTTP pueda armar un PUT de no-op sin perder el targeting. <c>ListarAsync</c> lo deja
 /// vacío por fila (evita el N+1 de una query por oferta listada); el valor real solo se completa
-/// en <c>ObtenerAsync</c>/<c>CrearAsync</c>/<c>ActualizarAsync</c>.</summary>
+/// en <c>ObtenerAsync</c>/<c>CrearAsync</c>/<c>ActualizarAsync</c>. <c>NombreArticulo</c> es el
+/// caso inverso: solo lo completa <c>ListarAsync</c> (una query para todas las filas) y las
+/// demás operaciones lo dejan nulo; también es nulo cuando la oferta no es de artículo o el
+/// artículo no es visible (dado de baja).</summary>
 public sealed record OfertaListado(
     int Id,
     string Nombre,
@@ -26,7 +29,8 @@ public sealed record OfertaListado(
     bool Acumulable,
     bool Activo,
     IReadOnlyList<int> IdsListas,
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    string? NombreArticulo = null);
 
 /// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>/
 /// <see cref="IdFamilia"/>) y
