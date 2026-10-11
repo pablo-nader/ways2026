@@ -19,7 +19,7 @@ function Esqueleto() {
 function PantallaCalma({ mensaje, alReintentar }: { mensaje: string; alReintentar?: () => void }) {
   return (
     <main className="publico-calma">
-      <MarcaWays tema="oscuro" className="publico-calma-marca" />
+      <MarcaWays tema="oscuro" alto={56} className="publico-calma-marca" />
       <p className="publico-calma-mensaje">{mensaje}</p>
       {alReintentar && (
         <button type="button" className="publico-boton publico-boton-contorno" onClick={alReintentar}>

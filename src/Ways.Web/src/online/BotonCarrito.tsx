@@ -20,7 +20,7 @@ export const BotonCarrito = forwardRef<HTMLButtonElement, { abierto: boolean; al
         className="publico-boton publico-boton-contorno publico-boton-chico"
         aria-label={descripcionDelCarrito(cantidad)}
         aria-expanded={abierto}
-        aria-controls={ID_DEL_PANEL_DEL_CARRITO}
+        aria-controls={abierto ? ID_DEL_PANEL_DEL_CARRITO : undefined}
         onClick={alAlternar}
       >
         Carrito

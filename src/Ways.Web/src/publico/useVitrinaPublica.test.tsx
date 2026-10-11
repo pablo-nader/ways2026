@@ -67,6 +67,25 @@ describe('useVitrinaPublica', () => {
     expect(result.current.resultado.estado).toBe('error')
   })
 
+  it('un 404 con otro código no es sin publicar: es un error que se puede reintentar', async () => {
+    obtenerVitrinaMock.mockRejectedValueOnce(new ErrorApi(404, 'ruta_no_encontrada', 'No existe'))
+    const { result } = renderHook(() => useVitrinaPublica())
+    await waitFor(() => expect(result.current.resultado.estado).toBe('error'))
+
+    obtenerVitrinaMock.mockResolvedValueOnce(vitrina('Sur'))
+    await act(() => result.current.recargar())
+    expect(result.current.resultado.estado).toBe('publicada')
+  })
+
+  it('con un prefijo de sección el título del documento lo lleva', async () => {
+    obtenerVitrinaMock.mockResolvedValue(vitrina('Sur'))
+
+    const { result } = renderHook(() => useVitrinaPublica('Tienda online'))
+    await waitFor(() => expect(result.current.resultado.estado).toBe('publicada'))
+
+    expect(document.title).toBe('Tienda online · Sur')
+  })
+
   it('una respuesta vieja que llega tarde no pisa a la de la recarga más nueva', async () => {
     const primera = diferida()
     const segunda = diferida()

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorApi } from '../api/cliente'
 import type { SucursalPublica, VitrinaPublica } from '../api/tipos'
+import '../publico/publico.css'
 import { Landing } from './Landing'
 
 const obtenerVitrinaMock = vi.fn()
@@ -104,6 +105,16 @@ describe('Landing', () => {
         'src',
         '/api/publico/vitrina/logo?v=1700000000',
       )
+      expect(screen.getByRole('img', { name: 'Ferretería Sur' })).toHaveAttribute('height', '44')
+      expect(getComputedStyle(screen.getByRole('img', { name: 'Ferretería Sur' })).maxWidth).toBe('100%')
+    })
+
+    it('el wordmark de Ways reserva su tamaño para que el pie no se corra al cargar', async () => {
+      await verPublicada()
+
+      const wordmark = within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })
+      expect(wordmark).toHaveAttribute('height', '28')
+      expect(wordmark).toHaveAttribute('width', '51')
     })
 
     it('sin logo la cabecera escribe el nombre y no hay imagen del comercio', async () => {
@@ -144,6 +155,20 @@ describe('Landing', () => {
       const descripcion = screen.getByText(/Primera línea/)
       expect(descripcion.textContent).toBe('Primera línea\nSegunda <b>línea</b>')
       expect(descripcion.querySelector('b')).toBeNull()
+    })
+
+    it('un texto largo sin espacios se parte en vez de desbordar la página', async () => {
+      const largo = (marca: string) => marca + 'x'.repeat(120)
+      await verPublicada({
+        descripcion: largo('d'),
+        sucursales: [{ ...sucursalSinContacto, nombre: largo('n'), domicilio: largo('a'), horario: largo('h') }],
+      })
+
+      for (const marca of ['d', 'n', 'a', 'h']) {
+        const elemento = screen.getByText(largo(marca))
+        expect(getComputedStyle(elemento).overflowWrap, `texto ${marca}`).toBe('anywhere')
+      }
+      expect(getComputedStyle(screen.getByRole('listitem')).minWidth).toBe('0px')
     })
 
     it('sin descripción no hay sección de descripción', async () => {
@@ -228,7 +253,8 @@ describe('Landing', () => {
   })
 
   describe('sin publicar', () => {
-    it('un 404 muestra la pantalla tranquila, con el wordmark de Ways y el título por defecto', async () => {
+    it('un 404 muestra la pantalla tranquila, con el wordmark de Ways y sin tocar el título del HTML', async () => {
+      document.title = 'Ways'
       obtenerVitrinaMock.mockRejectedValue(new ErrorApi(404, 'vitrina_no_publicada', 'No publicada'))
 
       render(<Landing />)
@@ -237,6 +263,16 @@ describe('Landing', () => {
       expect(screen.getByRole('img', { name: 'Ways' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
       expect(document.title).toBe('Ways')
+      expect(document.head.querySelector('meta[name="description"]')).toBeNull()
+    })
+
+    it('un 404 con otro código no es "sin publicar": ofrece reintentar', async () => {
+      obtenerVitrinaMock.mockRejectedValue(new ErrorApi(404, 'ruta_no_encontrada', 'No existe'))
+
+      render(<Landing />)
+
+      expect(await screen.findByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
+      expect(screen.queryByText('Este comercio todavía no publicó su página.')).not.toBeInTheDocument()
     })
   })
 
@@ -254,6 +290,23 @@ describe('Landing', () => {
 
       expect(await screen.findByRole('heading', { level: 1, name: 'Todo para tu obra' })).toBeInTheDocument()
       await waitFor(() => expect(obtenerVitrinaMock).toHaveBeenCalledTimes(2))
+    })
+
+    it('al reintentar el aviso desaparece y se ve el esqueleto mientras la lectura sigue en vuelo', async () => {
+      obtenerVitrinaMock.mockRejectedValueOnce(new ErrorApi(500, 'error_interno', 'Falla'))
+      render(<Landing />)
+      const reintentar = await screen.findByRole('button', { name: 'Reintentar' })
+
+      let resolver: (valor: VitrinaPublica) => void = () => {}
+      obtenerVitrinaMock.mockReturnValueOnce(new Promise<VitrinaPublica>((r) => (resolver = r)))
+      await userEvent.click(reintentar)
+
+      expect(screen.getByRole('status', { name: 'Cargando' })).toBeInTheDocument()
+      expect(screen.queryByText('No pudimos cargar la página. Probá de nuevo en un momento.')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+
+      resolver(vitrina())
+      expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument()
     })
 
     it('un error que no es de la API (sin red) también es un error, no una vitrina sin publicar', async () => {

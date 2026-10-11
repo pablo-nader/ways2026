@@ -11,7 +11,7 @@ import { CarritoProvider } from './CarritoProvider'
 import { PanelCarrito } from './PanelCarrito'
 
 export function Tienda() {
-  const { resultado, recargar } = useVitrinaPublica()
+  const { resultado, recargar } = useVitrinaPublica('Tienda online')
   const [carritoAbierto, setCarritoAbierto] = useState(false)
   const botonDelCarrito = useRef<HTMLButtonElement>(null)
 

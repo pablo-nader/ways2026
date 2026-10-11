@@ -1,7 +1,7 @@
 /*
  * Páginas públicas del comercio (landing y tienda). Lenguaje de los carteles de Ways: Bricolage
  * Grotesque en mayúsculas para los titulares, barras de acento, casi negro y blanco. El acento
- * (`--vitrina-acento`) lo pone el comercio; el texto sobre el acento es siempre casi negro.
+ * (`--vitrina-acento`) lo pone el comercio; el texto sobre el acento (`--pub-tinta-sobre-acento`) lo calcula el tema según el contraste.
  */
 
 .publico {
@@ -67,15 +67,23 @@
 }
 
 .publico-cabecera-marca {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--pub-texto);
   text-decoration: none;
-  min-width: 0;
+}
+
+.publico-cabecera-marca:focus-visible {
+  outline-offset: -3px;
 }
 
 .publico-logo {
   display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
   max-height: 44px;
-  max-width: 55vw;
   object-fit: contain;
 }
 
@@ -114,7 +122,7 @@
 .publico-boton-acento {
   background: var(--pub-acento);
   border-color: var(--pub-acento);
-  color: var(--pub-tinta);
+  color: var(--pub-tinta-sobre-acento, var(--pub-tinta));
 }
 
 .publico-boton-acento:hover {
@@ -186,11 +194,12 @@
   margin: 0;
   font-size: 1.125rem;
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .publico-tarjetas {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: 16px;
   margin: 0;
   padding: 0;
@@ -198,6 +207,7 @@
 }
 
 .publico-tarjeta {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -211,12 +221,14 @@
   margin: 0;
   font-size: 1.25rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .publico-tarjeta-dato {
   margin: 0;
   color: var(--pub-secundario);
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .publico-tarjeta-enlaces {
@@ -286,6 +298,7 @@
   margin: 0;
   color: var(--pub-secundario);
   font-size: 1.125rem;
+  overflow-wrap: anywhere;
 }
 
 .publico-esqueleto {
@@ -340,7 +353,7 @@
   padding: 0 6px;
   background: var(--pub-acento);
   border-radius: 999px;
-  color: var(--pub-tinta);
+  color: var(--pub-tinta-sobre-acento, var(--pub-tinta));
   font-size: 0.8rem;
   font-weight: 700;
 }

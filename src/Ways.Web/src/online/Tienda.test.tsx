@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorApi } from '../api/cliente'
 import type { VitrinaPublica } from '../api/tipos'
+import '../publico/publico.css'
 import { useCarrito } from './CarritoContext'
 import { Tienda } from './Tienda'
 
@@ -39,6 +40,7 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-bs-theme')
   document.documentElement.style.removeProperty('--vitrina-acento')
   document.title = ''
+  document.body.style.overflow = ''
   document.head.querySelector('meta[name="description"]')?.remove()
 })
 
@@ -57,10 +59,10 @@ describe('Tienda', () => {
     )
   })
 
-  it('usa el tema y el acento de la vitrina y el nombre del comercio como título', async () => {
+  it('usa el tema y el acento de la vitrina y el título de la tienda con el nombre del comercio', async () => {
     await verTienda()
 
-    expect(document.title).toBe('Ferretería Sur')
+    expect(document.title).toBe('Tienda online · Ferretería Sur')
     expect(document.documentElement.dataset.bsTheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#2a9d8f')
   })
@@ -72,6 +74,7 @@ describe('Tienda', () => {
     expect(boton).toHaveTextContent('Carrito')
     expect(boton).toHaveTextContent('0')
     expect(boton).toHaveAttribute('aria-expanded', 'false')
+    expect(boton).not.toHaveAttribute('aria-controls')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -83,6 +86,8 @@ describe('Tienda', () => {
 
     const panel = screen.getByRole('dialog', { name: 'Carrito' })
     expect(boton).toHaveAttribute('aria-expanded', 'true')
+    expect(boton).toHaveAttribute('aria-controls', panel.id)
+    expect(panel).toHaveAttribute('aria-modal', 'true')
     expect(within(panel).getByText('Tu carrito está vacío')).toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: 'Cerrar' })).toHaveFocus()
 
@@ -93,14 +98,84 @@ describe('Tienda', () => {
     expect(boton).toHaveFocus()
   })
 
-  it('Escape cierra el panel', async () => {
-    await verTienda()
-    await userEvent.click(screen.getByRole('button', { name: 'Carrito, vacío' }))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  describe('panel modal del carrito', () => {
+    async function abrirPanel() {
+      await verTienda()
+      const boton = screen.getByRole('button', { name: 'Carrito, vacío' })
+      await userEvent.click(boton)
 
-    await userEvent.keyboard('{Escape}')
+      return { boton, panel: screen.getByRole('dialog', { name: 'Carrito' }) }
+    }
 
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    it('Escape cierra el panel aunque el foco no esté dentro de él', async () => {
+      const { boton } = await abrirPanel()
+      ;(document.activeElement as HTMLElement).blur()
+      expect(document.body).toHaveFocus()
+
+      await userEvent.keyboard('{Escape}')
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(boton).toHaveFocus()
+    })
+
+    it('el clic en el velo cierra el panel y devuelve el foco al botón', async () => {
+      const { boton } = await abrirPanel()
+
+      await userEvent.click(document.querySelector('.publico-carrito-velo') as HTMLElement)
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(boton).toHaveFocus()
+    })
+
+    it('el foco circula dentro del panel: Tab y Shift+Tab no salen hacia la página', async () => {
+      const { panel } = await abrirPanel()
+      const cerrar = within(panel).getByRole('button', { name: 'Cerrar' })
+
+      await userEvent.tab()
+      expect(cerrar).toHaveFocus()
+      await userEvent.tab({ shift: true })
+      expect(cerrar).toHaveFocus()
+
+      ;(document.activeElement as HTMLElement).blur()
+      await userEvent.tab()
+      expect(cerrar).toHaveFocus()
+    })
+
+    it('con varios elementos, Tab desde el último vuelve al primero y Shift+Tab desde el primero va al último', async () => {
+      const { panel } = await abrirPanel()
+      const cerrar = within(panel).getByRole('button', { name: 'Cerrar' })
+      const ultimo = document.createElement('button')
+      ultimo.textContent = 'Último'
+      panel.appendChild(ultimo)
+
+      await userEvent.tab()
+      expect(ultimo).toHaveFocus()
+      await userEvent.tab()
+      expect(cerrar).toHaveFocus()
+      await userEvent.tab({ shift: true })
+      expect(ultimo).toHaveFocus()
+    })
+
+    it('mientras está abierto el scroll de la página queda bloqueado y al cerrar se restaura lo que había', async () => {
+      document.body.style.overflow = 'scroll'
+      const { panel } = await abrirPanel()
+      expect(document.body.style.overflow).toBe('hidden')
+
+      await userEvent.click(within(panel).getByRole('button', { name: 'Cerrar' }))
+
+      expect(document.body.style.overflow).toBe('scroll')
+    })
+
+    it('al desmontar con el panel abierto no deja el scroll de la página bloqueado', async () => {
+      obtenerVitrinaMock.mockResolvedValue(vitrina)
+      const { unmount } = render(<Tienda />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Carrito, vacío' }))
+      expect(document.body.style.overflow).toBe('hidden')
+
+      unmount()
+
+      expect(document.body.style.overflow).toBe('')
+    })
   })
 
   it('un comercio sin publicar no tiene tienda: muestra la pantalla tranquila', async () => {

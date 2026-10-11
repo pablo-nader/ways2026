@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { ACENTO_POR_DEFECTO, acentoDeVitrina, aplicarCabeceraDelDocumento, aplicarTemaDeVitrina, temaDeVitrina } from './tema'
+import {
+  ACENTO_POR_DEFECTO,
+  acentoDeVitrina,
+  aplicarCabeceraDelDocumento,
+  aplicarTemaDeVitrina,
+  temaDeVitrina,
+  tintaSobreAcento,
+} from './tema'
 
 afterEach(() => {
   document.documentElement.removeAttribute('data-bs-theme')
   document.documentElement.style.removeProperty('--vitrina-acento')
+  document.documentElement.style.removeProperty('--pub-tinta-sobre-acento')
   document.title = ''
   document.head.querySelector('meta[name="description"]')?.remove()
 })
@@ -37,12 +45,37 @@ describe('temaDeVitrina', () => {
   })
 })
 
+describe('tintaSobreAcento', () => {
+  it.each([
+    ['#F7991C', '#121212'],
+    ['#ffffff', '#121212'],
+    ['#2a9d8f', '#121212'],
+    ['#1b3a8a', '#ffffff'],
+    ['#000080', '#ffffff'],
+    ['#000000', '#ffffff'],
+  ])('sobre %s va %s', (acento, esperado) => {
+    expect(tintaSobreAcento(acento)).toBe(esperado)
+  })
+
+  it('un acento inválido se mide como el naranja por defecto', () => {
+    expect(tintaSobreAcento('rojo')).toBe('#121212')
+  })
+})
+
 describe('aplicarTemaDeVitrina', () => {
   it('deja data-bs-theme y --vitrina-acento en <html>', () => {
     aplicarTemaDeVitrina({ tema: 'claro', colorAcento: '#2a9d8f' })
 
     expect(document.documentElement.dataset.bsTheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#2a9d8f')
+  })
+
+  it('deja la tinta del texto sobre el acento según el contraste', () => {
+    aplicarTemaDeVitrina({ tema: 'oscuro', colorAcento: '#1b3a8a' })
+    expect(document.documentElement.style.getPropertyValue('--pub-tinta-sobre-acento')).toBe('#ffffff')
+
+    aplicarTemaDeVitrina({ tema: 'oscuro', colorAcento: '#F7991C' })
+    expect(document.documentElement.style.getPropertyValue('--pub-tinta-sobre-acento')).toBe('#121212')
   })
 
   it('sin color de acento usa el naranja de Ways', () => {
@@ -54,19 +87,47 @@ describe('aplicarTemaDeVitrina', () => {
 })
 
 describe('aplicarCabeceraDelDocumento', () => {
+  const metaDescripcion = () => document.head.querySelector('meta[name="description"]')
+
   it('título y descripción salen del nombre y la frase del comercio', () => {
-    aplicarCabeceraDelDocumento({ nombre: ' Ferretería Sur ', tagline: 'Todo para tu obra' })
+    aplicarCabeceraDelDocumento({ nombre: ' Ferretería Sur ', tagline: 'Todo para tu obra', descripcion: 'Texto largo' })
 
     expect(document.title).toBe('Ferretería Sur')
-    expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute('content', 'Todo para tu obra')
+    expect(metaDescripcion()).toHaveAttribute('content', 'Todo para tu obra')
   })
 
-  it('sin vitrina el título es Ways y la descripción queda vacía; la meta no se duplica', () => {
-    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: 'Una frase' })
+  it('con un prefijo de sección el título es "<sección> · <nombre>"', () => {
+    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: null, descripcion: null }, 'Tienda online')
+
+    expect(document.title).toBe('Tienda online · Sur')
+  })
+
+  it('sin frase la descripción son los primeros 160 caracteres del texto, con los espacios colapsados', () => {
+    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: '  ', descripcion: `Hola
+
+  mundo ${'x'.repeat(300)}` })
+
+    const contenido = metaDescripcion()?.getAttribute('content') ?? ''
+    expect(contenido).toHaveLength(160)
+    expect(contenido.startsWith('Hola mundo xxx')).toBe(true)
+  })
+
+  it('sin vitrina no pisa el título del HTML ni crea una descripción vacía', () => {
+    document.title = 'Tienda online'
+
     aplicarCabeceraDelDocumento(null)
 
-    expect(document.title).toBe('Ways')
+    expect(document.title).toBe('Tienda online')
+    expect(metaDescripcion()).toBeNull()
+  })
+
+  it('sin frase ni texto no crea la meta de descripción, y la que hay no se duplica', () => {
+    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: null, descripcion: null })
+    expect(metaDescripcion()).toBeNull()
+
+    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: 'Una frase', descripcion: null })
+    aplicarCabeceraDelDocumento({ nombre: 'Sur', tagline: 'Otra frase', descripcion: null })
     expect(document.head.querySelectorAll('meta[name="description"]')).toHaveLength(1)
-    expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute('content', '')
+    expect(metaDescripcion()).toHaveAttribute('content', 'Otra frase')
   })
 })
