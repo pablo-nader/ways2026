@@ -29,7 +29,7 @@ Slice 3 — items grid (web):
 - [x] T6 Grid with columns Código, Detalle, UM, Cantidad, Importe, Descuento, IVA, Total; tab navigation; always one empty trailing row; remove "Agregar línea", "Agregar concepto", "Cargar por total". Lote/vencimiento cells only on rows whose article controls lote; "Act. costo" always on for article lines; UM Bulto = quantity × the article's unidades por bulto. Route: delegated (single writer). Commit fd000f47.
 - [x] T7 Código lookup on blur against the supplier's codes: prefill Detalle (read-only), UM = Unidad (option Bulto), Importe = article cost, Descuento = article default, IVA = article's or 21%. Unknown code stays on the line (T5). Commit fd000f47.
 - [x] T8 Detalle as keyboard-navigable search (arrow keys, Tab to accept); free text with no match = concepto. The "+" opens the existing quick-create modal (the integration point T9 swaps). Commit fd000f47.
-- [ ] T9 "+" button next to Detalle opening the full article creation form (extract the form state out of `paginas/Articulos.tsx` so it can be embedded).
+- [x] T9 "+" button next to Detalle opening the full article creation form (extract the form state out of `paginas/Articulos.tsx` so it can be embedded). Route: delegated (single writer). Commits c7659f0f (refactor: `useCatalogosDeArticulo` + `useFormularioDeArticulo`, page behavior unchanged), 4c0f7fc9 (the grid embeds it; `AltaRapidaArticuloDeCompra` removed).
 - [x] T10 Actions: "Guardar" (create + confirm chained from the web; on a failed confirm the user lands on the draft with the error), "Guardar borrador", "Cancelar" (with confirmation, back to the list). Commit fd000f47 (same commit as T6-T8: the four tasks rewrite the same hunks of `CompraEditor.tsx`).
 
 ## Constraints
@@ -54,6 +54,7 @@ Slice 3 — items grid (web):
 - 2026-10-10 (slice 3): a loaded line keeps its stored `actualizaCosto`.
 - 2026-10-10 (owner): on a supplier change, rows resolved by code are cleared (article, Importe, Descuento, IVA) and looked up again from scratch after an explicit confirmation, replacing the per-cell snapshot (`prefillDeCodigo`). Rows chosen by search or created with "+", loaded-draft rows and conceptos are untouched; with no code-resolved row there is no prompt.
 - 2026-10-11 (backend #359): the prefilled Importe is derived from the list cost normalized to per unit and IVA-inclusive using `costoListaPor` and `costoListaIncluyeIva` (list cost is stored as loaded), then netted when the receipt discriminates IVA with net prices; the quick-create modal declares its cost per unit, without IVA when the Importe is a net price.
+- 2026-10-11 (T9): the "+" opens the SAME form as the ABM (`ModalDeArticulo` + `FormularioArticulo`, state in `useFormularioDeArticulo`) in create mode, without touching the URL. Prefill: nombre = Detalle, proveedor habitual = the purchase's supplier, alícuota = the row's IVA, costo de lista = the row's Importe rounded to 2 decimals, per unit, with `costoListaIncluyeIva` from the receipt's price mode; the supplier code is a form field offered only from a purchase (not an article field: it travels as `codigoProveedor` in the create request). A row without an article is always UM Unidad, so no per-bulto case exists. The code is reported back to the row only when the created article's proveedor habitual is the purchase's supplier; otherwise the row keeps the code it had. While the form is open the purchase cannot be saved.
 - 2026-10-11: switching a row's UM converts the Importe so the per-unit cost is preserved (Unidad to Bulto multiplies by `unidadesPorBulto`, Bulto to Unidad divides, 4 decimals); Cantidad is not converted. A row takes the alícuota of the article created from it; the typed Importe and Descuento stay.
 
 ## Review
@@ -64,6 +65,7 @@ Slice 3 — items grid (web):
 - Slice 3, third re-judgment (880c06a7): left two warnings confirmed by both judges in the supplier-change path; the owner chose to replace the snapshot design with the simple clear-and-look-up-again rule, applied in 97608511.
 - Slice 3, re-judgment of 97608511: no critical defect; the simple rule holds. Three minor adjustments (price mode, quantity in bultos, conceptos with a pending code) applied in 0cbef200.
 - Cost normalization (be1aa4f6): judged by both judges with no critical finding; the UM conversion and the modal alícuota were applied in f95214e1.
+- T9 (c7659f0f, 4c0f7fc9): judged by both judges with no critical finding; the page refactor was confirmed behavior-preserving. Adjustments applied in fab4df0f: tab-exit guard counts the supplier code, retry copy inside the purchase, unmount gating of the catalog reads, supplier code sent only for the purchase's supplier, per-row mount key and consistent in-progress signal, late-default and family tests.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
@@ -81,16 +83,18 @@ Slice 3 — items grid (web):
 - `articulos/EditorDePrecios.tsx` still uses `datetime-local` (browser locale format).
 - Read-only printed date ranges (e.g. CuentaCorriente) still show ISO.
 - `CampoNumeroDeComprobante`: the "left the group" flag never resets, so a re-edited half-filled number is flagged while typing.
-- The quick-create modal stores `costoLista` with 2 decimals (column `numeric(14,2)`) while the row keeps 4.
+- The embedded article form refetches its catalogs on every open instead of reusing those the purchase already loaded.
+- The unmount gating of the catalog reads (`useCatalogosDeArticulo`) has no dedicated test; the unmounted-response path is covered only by the existing alta tests.
+- The article form stores `costoLista` with 2 decimals (column `numeric(14,2)`) while the row keeps 4.
 - When a list cost exists, the prefill prefers it over a more recent `costoNominal` left by a purchase.
-- `FormularioArticulo` does not yet expose `costoListaPor` / `costoListaIncluyeIva`.
 
 ## Progress
 
 - 2026-10-10: exploration done; slice 1 (T1-T4) implemented and reviewed; full web suite 3931 passed, tsc and oxlint clean.
 - 2026-10-10: T5 done: integration 3085, application 752, domain 1028, web 3936 passed; tsc and oxlint clean.
 - 2026-10-10: T6-T8 and T10 done (fd000f47): web 4061 passed (167 files), tsc and oxlint clean. Mutation evidence recorded for the lookup generation gate, the untouched-amount round trip, the incomplete-row block and the no-second-POST retry.
+- 2026-10-11: T9 done (c7659f0f, 4c0f7fc9): extraction proved by the unchanged Articulos suites; mutation evidence for the cost flag from the price mode, the closed-form response gate and the row code kept when no code is associated.
 
 ## Next step
 
-Deliver slice 3 as a PR, then T9 (embed the full article form in place of `AltaRapidaArticuloDeCompra`).
+Deliver slice 3 plus T9 (with fab4df0f) as PRs, after the judgment-day gate over the delta.

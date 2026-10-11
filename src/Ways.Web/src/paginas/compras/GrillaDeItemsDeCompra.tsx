@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { calcularTotalesDeCompra, costoDeLineaIncluyeIva, lineaFormularioACalculo } from '../../api/compras'
+import { calcularTotalesDeCompra, lineaFormularioACalculo } from '../../api/compras'
 import { cambiosAlElegirArticulo, lineaTieneDatos, type LineaDeCompraFormulario } from '../../api/lineaDeCompra'
 import type { AlicuotaIvaListado, ArticuloListado } from '../../api/tipos'
-import { AltaRapidaArticuloDeCompra } from './AltaRapidaArticuloDeCompra'
+import { AltaDeArticuloDesdeCompra } from './AltaDeArticuloDesdeCompra'
 import { FilaDeGrilla } from './FilaDeGrilla'
+import { precargaDeArticuloDesdeLinea } from './precargaDeArticuloDesdeLinea'
 import { useConsultaDeCodigos } from './useConsultaDeCodigos'
 
 type Props = {
@@ -16,13 +17,16 @@ type Props = {
   preciosFinales: boolean
   porcentajePorAlicuota: Record<number, number>
   idProveedor: number | null
-  nombreProveedor: string
+  /** El rol puede crear artículos (hoy, el mismo que escribe compras): sin él no se ofrece el "+". */
+  puedeCrearArticulos: boolean
   /** Pinta las celdas que le faltan a cada fila con datos (después de un intento de guardar). */
   marcarFaltantes: boolean
   /** Sube cada vez que el operador cambia el proveedor del encabezado. */
   cambiosDeProveedor: number
   /** Avisa si hay códigos de proveedor consultándose (guardar tiene que esperarlos). */
   onConsultando?: (hayEnVuelo: boolean) => void
+  /** Avisa si hay un alta de artículo abierta sobre la grilla (guardar la compra tiene que esperar a que se cierre). */
+  onCreandoArticulo?: (abierta: boolean) => void
   onCambio: (clave: number, cambios: Partial<LineaDeCompraFormulario>) => void
   onQuitar: (clave: number) => void
 }
@@ -43,8 +47,8 @@ function sonIguales(fila: LineaDeCompraFormulario, cambios: Partial<LineaDeCompr
  * y Total. Siempre cierra con una fila vacía (la mantiene el padre con `normalizarFilas`). Tab y
  * Shift+Tab recorren las celdas en orden de lectura y pasan de fila; Enter en una celda (sin lista
  * de artículos abierta) va al Código de la fila siguiente; el botón de quitar queda fuera del
- * orden de tabulación (Alt+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta rápida de
- * artículo desde la fila.
+ * orden de tabulación (Alt+Supr quita la fila donde está el foco). Resuelve el código del proveedor al salir de su celda y el alta
+ * de artículo desde la fila, con el formulario completo del ABM en un modal.
  */
 export function GrillaDeItemsDeCompra({
   lineas,
@@ -54,10 +58,11 @@ export function GrillaDeItemsDeCompra({
   preciosFinales,
   porcentajePorAlicuota,
   idProveedor,
-  nombreProveedor,
+  puedeCrearArticulos,
   marcarFaltantes,
   cambiosDeProveedor,
   onConsultando,
+  onCreandoArticulo,
   onCambio,
   onQuitar,
 }: Props) {
@@ -151,6 +156,11 @@ export function GrillaDeItemsDeCompra({
   }
 
   const filaEnAlta = creando === null ? null : lineas.find((l) => l.clave === creando)
+  const hayAlta = filaEnAlta !== null && filaEnAlta !== undefined && puedeCrearArticulos
+  useEffect(() => {
+    onCreandoArticulo?.(hayAlta)
+  }, [hayAlta, onCreandoArticulo])
+  useEffect(() => () => onCreandoArticulo?.(false), [onCreandoArticulo])
 
   return (
     <>
@@ -196,6 +206,7 @@ export function GrillaDeItemsDeCompra({
                 onCodigoSalida={alSalirDelCodigo}
                 onElegir={elegir}
                 onQuitar={quitar}
+                puedeCrearArticulos={puedeCrearArticulos}
                 onCrear={setCreando}
               />
             ))}
@@ -203,25 +214,30 @@ export function GrillaDeItemsDeCompra({
         </table>
       </div>
 
-      {filaEnAlta && (
-        <AltaRapidaArticuloDeCompra
-          nombreInicial={filaEnAlta.descripcion.trim()}
-          codigoInicial={filaEnAlta.codigoProveedor.trim()}
+      {hayAlta && (
+        <AltaDeArticuloDesdeCompra
+          key={filaEnAlta.clave}
+          precarga={precargaDeArticuloDesdeLinea({
+            descripcion: filaEnAlta.descripcion,
+            codigoProveedor: filaEnAlta.codigoProveedor,
+            idAlicuotaIva: filaEnAlta.idAlicuotaIva,
+            importe: filaEnAlta.importe,
+            idProveedor,
+            discriminaIva: modoDePrecios.discriminaIva,
+            preciosFinales: modoDePrecios.preciosIncluyenIva,
+          })}
           idProveedor={idProveedor}
-          nombreProveedor={nombreProveedor}
-          alicuotas={alicuotas}
-          idAlicuotaIvaDeLaLinea={filaEnAlta.idAlicuotaIva}
-          costoDeLaLinea={filaEnAlta.importe}
-          costoSinIva={!costoDeLineaIncluyeIva(modoDePrecios.discriminaIva, modoDePrecios.preciosIncluyenIva)}
           onCreado={(articulo, codigoProveedor) => {
-            const clave = filaEnAlta.clave
-            cambiar(clave, {
-              ...cambiosAlElegirArticulo(filaEnAlta, articulo, alicuotas, 'alta', modoDePrecios),
-              codigoProveedor: codigoProveedor ?? '',
+            const fila = lineasRef.current.find((l) => l.clave === filaEnAlta.clave)
+            if (!fila) return
+            cambiar(fila.clave, {
+              ...cambiosAlElegirArticulo(fila, articulo, alicuotas, 'alta', modoDePrecios),
+              // Sin código asociado a este proveedor la fila conserva el que tenía: el operador lo tipeó para esta compra.
+              codigoProveedor: codigoProveedor ?? fila.codigoProveedor,
               codigoConsultado: codigoProveedor ?? '',
             })
             setCreando(null)
-            setFoco({ clave })
+            setFoco({ clave: fila.clave })
           }}
           onCancelar={() => setCreando(null)}
         />

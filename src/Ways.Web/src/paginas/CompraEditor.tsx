@@ -324,6 +324,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const navigate = useNavigate()
   const { usuario } = useAuth()
   const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
+  // Crear artículos es del Admin (`/articulos` es admin-only): se pide aparte de escribir compras para que ampliar una no abra la otra.
+  const puedeCrearArticulos = usuario !== null && usuario.rolId === ROL.Admin
 
   const esNuevo = idCompra === null
 
@@ -645,6 +647,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     consultandoCodigosRef.current = hay
     if (!hay) setEsperandoCodigos(false)
   }, [])
+  // El alta de un artículo desde una fila deja inerte la pantalla de atrás: mientras está abierta no se guarda la compra.
+  const creandoArticuloRef = useRef(false)
+  const [creandoArticulo, setCreandoArticulo] = useState(false)
+  const alCambiarAltaDeArticulo = useCallback((abierta: boolean) => {
+    creandoArticuloRef.current = abierta
+    setCreandoArticulo(abierta)
+  }, [])
   const [error, setError] = useState(estadoInicial.error ?? '')
   const [advertencia, setAdvertencia] = useState(estadoInicial.advertencia ?? '')
   const [aviso, setAviso] = useState(estadoInicial.aviso ?? '')
@@ -845,7 +854,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   }
 
   const encabezadoCompleto = encabezado.idProveedor !== '' && encabezado.idTipoComprobante !== '' && encabezado.idPuntoVenta !== ''
-  const puedeGuardar = referenciaOk && puedeEscribir && encabezadoCompleto && !ocupado
+  const puedeGuardar = referenciaOk && puedeEscribir && encabezadoCompleto && !ocupado && !creandoArticulo
   const impedimentoParaGuardar =
     intentoFallido === null ? null : mensajeDeLoQueImpideGuardar(encabezado, lineas, intentoFallido === 'guardar')
   const hayCambios = hayCambiosSinGuardar({ esNuevo, encabezado, lineas, huellaGuardada })
@@ -870,7 +879,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
    */
   async function guardar(confirmar: boolean) {
     // regla 11: la guarda de reentrancia es el ref; el `disabled` de los botones cubre el estado.
-    if (guardandoRef.current) return
+    if (guardandoRef.current || creandoArticuloRef.current) return
     if (consultandoCodigosRef.current) {
       setEsperandoCodigos(true)
       return
@@ -1228,10 +1237,11 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               preciosFinales={preciosFinales}
               porcentajePorAlicuota={porcentajePorAlicuota}
               idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
-              nombreProveedor={(proveedores ?? []).find((p) => p.id === encabezado.idProveedor)?.razonSocial ?? ''}
+              puedeCrearArticulos={puedeCrearArticulos}
               marcarFaltantes={intentoFallido !== null}
               cambiosDeProveedor={cambiosDeProveedor}
               onConsultando={alCambiarConsultasEnVuelo}
+              onCreandoArticulo={alCambiarAltaDeArticulo}
               onCambio={cambiarLinea}
               onQuitar={quitarLinea}
             />

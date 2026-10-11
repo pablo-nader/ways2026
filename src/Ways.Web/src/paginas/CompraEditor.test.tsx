@@ -1757,6 +1757,32 @@ describe('CompraEditor — líneas por concepto', () => {
     await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
   })
 
+  it('mientras el alta de un artículo está abierta no se puede guardar la compra, y al cerrarla vuelve a poderse', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta.startsWith('/catalogos/areas')) return Promise.resolve([{ id: 4, nombre: 'Almacén', activo: true, orden: 1 }])
+      if (/^\/catalogos\/(categorias|marcas|grupos)/.test(ruta) || ruta === '/empresas' || ruta === '/familias') return Promise.resolve([])
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    await prepararCompraNueva(usuario)
+    await usuario.type(within(filaDeItems(0)).getByLabelText(/^Detalle, línea \d+$/), 'Yerba nueva')
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeEnabled()
+
+    await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    await within(dialogo).findByRole('option', { name: 'Almacén' })
+
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeDisabled()
+    const guardarLaCompra = screen.getAllByRole('button', { name: 'Guardar' }).filter((b) => !dialogo.contains(b))
+    expect(guardarLaCompra).toHaveLength(1)
+    expect(guardarLaCompra[0]).toBeDisabled()
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByRole('button', { name: 'Guardar borrador' })).toBeEnabled()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
   it('un borrador con una línea por concepto la reabre como concepto y el PUT la devuelve sin artículo', async () => {
     const concepto = itemFixture({
       orden: 2, idArticulo: null, descripcion: 'Flete', cantidad: 1, costoUnitario: 500, descuento: 0, total: 500,

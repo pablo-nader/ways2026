@@ -30,12 +30,14 @@ function Arnes({
   conArticulo = false,
   soloLectura = false,
   disabled = false,
+  puedeCrear = true,
 }: {
   eventos: Eventos
   idProveedor?: number | null
   conArticulo?: boolean
   soloLectura?: boolean
   disabled?: boolean
+  puedeCrear?: boolean
 }) {
   const [texto, setTexto] = useState('')
   return (
@@ -46,6 +48,7 @@ function Arnes({
         soloLectura={soloLectura}
         disabled={disabled}
         idProveedor={idProveedor}
+        puedeCrear={puedeCrear}
         onTexto={setTexto}
         onElegir={(a) => {
           eventos.elegidos.push(a)
@@ -373,6 +376,17 @@ describe('ComboboxDeArticulos — crear artículo', () => {
   it('con un artículo elegido no hay botón y Ctrl+Enter no hace nada', async () => {
     const usuario = userEvent.setup()
     const eventos = montar({ conArticulo: true })
+    expect(screen.queryByRole('button', { name: 'Crear artículo' })).not.toBeInTheDocument()
+    await usuario.click(screen.getByRole('combobox', { name: 'Detalle' }))
+
+    await usuario.keyboard('{Control>}{Enter}{/Control}')
+
+    expect(eventos.creaciones).toBe(0)
+  })
+
+  it('sin permiso para crear no hay botón y Ctrl+Enter no hace nada', async () => {
+    const usuario = userEvent.setup()
+    const eventos = montar({ puedeCrear: false })
     expect(screen.queryByRole('button', { name: 'Crear artículo' })).not.toBeInTheDocument()
     await usuario.click(screen.getByRole('combobox', { name: 'Detalle' }))
 

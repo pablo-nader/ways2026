@@ -11,9 +11,9 @@ import type {
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario, EstadoDeUnionAFamilia } from './familia'
-import { FormularioArticulo, type Formulario } from './FormularioArticulo'
+import { FormularioArticulo, type CodigoDeProveedorDelFormulario, type Formulario } from './FormularioArticulo'
 
-type Props = {
+export type PropsDeModalDeArticulo = {
   clave: number | 'nuevo'
   formulario: Formulario | null
   cargandoDetalle: boolean
@@ -33,6 +33,8 @@ type Props = {
    * el usuario solo ve un "Guardar" deshabilitado sin ninguna explicación. */
   erroresCatalogosRequeridos: string[]
   avisoListasPrecio: string
+  /** Cómo reintentar cuando un catálogo no cargó: depende de dónde vive el formulario. */
+  consejoDeReintento: string
   areas: AreaListado[]
   categorias: CategoriaListado[]
   marcas: MarcaListado[]
@@ -48,6 +50,8 @@ type Props = {
   errorDeFamiliaNueva: string
   sinGuardar: boolean
   preguntaDeAlcanceAbierta: boolean
+  /** Solo en un alta abierta desde una compra: el código con el que el proveedor habitual conoce al artículo. */
+  codigoProveedor?: CodigoDeProveedorDelFormulario
   focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   actualizarFormulario: (actualizar: (previo: Formulario) => Formulario) => void
@@ -64,7 +68,8 @@ type Props = {
  * Modal de alta/edición de artículo (etapa articulos-en-modal): aloja el mismo
  * `FormularioArticulo` de siempre — identificación, clasificación, costos, disponibilidad,
  * códigos de barra y precios — pero ahora en un `Modal` en vez de apilado arriba de la grilla.
- * `Articulos.tsx` es dueño de TODO el estado (formulario, catálogos, avisos): este componente es
+ * Quien lo muestra (`Articulos.tsx`, o el alta desde una compra) es dueño de TODO el estado
+ * (`useFormularioDeArticulo`: formulario, catálogos, avisos): este componente es
  * una capa de presentación + wiring de foco, sin fetch ni escritura propios — así una URL que pasa
  * de `/articulos/create` a `/articulos/edit/{id}` tras un alta exitosa no fuerza un remonte que
  * tiraría el aviso de éxito y el foco (ver el comentario de `rutaModal.ts` y el efecto de apertura
@@ -82,6 +87,7 @@ export function ModalDeArticulo({
   bloqueadoPorCatalogos,
   erroresCatalogosRequeridos,
   avisoListasPrecio,
+  consejoDeReintento,
   areas,
   categorias,
   marcas,
@@ -97,6 +103,7 @@ export function ModalDeArticulo({
   errorDeFamiliaNueva,
   sinGuardar,
   preguntaDeAlcanceAbierta,
+  codigoProveedor,
   focoDeReserva,
   onCambio,
   actualizarFormulario,
@@ -107,7 +114,7 @@ export function ModalDeArticulo({
   onMarcaCreada,
   onGrupoCreada,
   onProveedorCreado,
-}: Props) {
+}: PropsDeModalDeArticulo) {
   const titulo =
     formulario === null ? 'Artículo' : formulario.id === null ? 'Nuevo artículo' : `Editando artículo ${formulario.codigoInterno}`
 
@@ -127,7 +134,7 @@ export function ModalDeArticulo({
           {erroresCatalogosRequeridos.length > 0 && (
             <div className="alert alert-warning">
               {erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
-              hasta que se puedan cargar — recargá la página para reintentar.
+              hasta que se puedan cargar — {consejoDeReintento}.
             </div>
           )}
           {avisoListasPrecio && <div className="alert alert-warning">{avisoListasPrecio}</div>}
@@ -159,6 +166,7 @@ export function ModalDeArticulo({
             errorDeFamiliaNueva={errorDeFamiliaNueva}
             sinGuardar={sinGuardar}
             preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
+            codigoProveedor={codigoProveedor}
             onCambio={onCambio}
             actualizarFormulario={actualizarFormulario}
             onGuardar={onGuardar}

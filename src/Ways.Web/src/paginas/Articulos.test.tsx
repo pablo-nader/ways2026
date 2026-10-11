@@ -656,6 +656,29 @@ describe('Articulos — avisos de catálogos: visibles también dentro del modal
       await within(dialogo).findByText(/No se pudieron cargar las listas de precio/),
     ).toBeInTheDocument()
   })
+
+  it('en la pantalla de artículos el consejo para reintentar sigue siendo recargar la página', async () => {
+    mockearApiGet({ areasImpl: () => Promise.reject(new Error('sin red')) })
+
+    await abrirFormularioNuevo()
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(await within(dialogo).findByText(/hasta que se puedan cargar — recargá la página para reintentar\./)).toBeInTheDocument()
+    expect(within(dialogo).queryByText(/cerrá el alta/i)).not.toBeInTheDocument()
+  })
+
+  it('un fallo de las listas de precio en la pantalla de artículos también aconseja recargar la página', async () => {
+    mockearApiGet()
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/listas-precio' ? Promise.reject(new Error('sin red')) : base(ruta),
+    )
+
+    await abrirFormularioNuevo()
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(await within(dialogo).findByText(/el editor de precios no está disponible\. Recargá la página para reintentar\./)).toBeInTheDocument()
+  })
 })
 
 // ---- alta rápida de padrones desde el formulario de artículo ------------------------------------
