@@ -4,7 +4,7 @@ import { clienteDeFamilias } from '../../api/familias'
 import type { FamiliaDetalle, FamiliaListado } from '../../api/tipos'
 import { opcionesDeFamilia } from './familia'
 
-const ERROR_SIN_FAMILIAS = 'No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.'
+const ERROR_SIN_FAMILIAS = 'No se pudieron cargar las familias: no se puede elegir una existente y no se comprueba si el nombre de una nueva ya está en uso.'
 const ERROR_FAMILIAS_DESACTUALIZADAS = 'No se pudieron actualizar las familias: las que se ofrecen pueden estar desactualizadas.'
 
 /**

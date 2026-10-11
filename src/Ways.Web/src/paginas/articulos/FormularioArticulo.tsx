@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { COSTOS_LISTA_POR, UNIDADES_VENTA } from '../../api/tipos'
 import type {
   AlcanceDeFamilia,
@@ -19,6 +19,7 @@ import type {
 import { CampoImporte } from '../../componentes/CampoImporte'
 import { IconoDeAyuda } from '../../componentes/IconoDeAyuda'
 import { formatearImporte } from '../../formato/importes'
+import { mapaDeNombres, type NombresDeCatalogo } from '../familias/valoresCompartidos'
 import { AltaRapidaCategoria } from './AltaRapidaCategoria'
 import { AltaRapidaGrupo } from './AltaRapidaGrupo'
 import { AltaRapidaMarca } from './AltaRapidaMarca'
@@ -36,6 +37,7 @@ import {
   familiaDelArticulo,
   type AccionesDeFamiliaDelFormulario,
   type EstadoDeFamiliaDelFormulario,
+  type EstadoDeUnionAFamilia,
 } from './familia'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
@@ -77,6 +79,9 @@ export type Formulario = {
   /** En un alta, la familia elegida (`''` = sin familia); al editar, la familia a la que pertenece el
    * artículo. No se cambia editando: sale con `sacar` o con el alcance de un cambio. */
   idFamilia: number | ''
+  /** En un alta, el nombre de la familia que el servidor crea junto con el artículo (él queda como su referencia); `''` si no
+   * se pidió ninguna. Excluyente con `idFamilia`. */
+  nombreFamiliaNueva: string
 }
 
 /** El campo del código con el que el proveedor habitual conoce al artículo: no es un dato del artículo sino de su
@@ -116,6 +121,7 @@ export function formularioVacio(): Formulario {
     controlaLote: false,
     acumulaEnVenta: true,
     idFamilia: '',
+    nombreFamiliaNueva: '',
   }
 }
 
@@ -156,6 +162,7 @@ export function aFormulario(a: ArticuloListado): Formulario {
     controlaLote: a.controlaLote,
     acumulaEnVenta: a.acumulaEnVenta,
     idFamilia: a.idFamilia ?? '',
+    nombreFamiliaNueva: '',
   }
 }
 
@@ -193,13 +200,16 @@ function camposComunes(f: Formulario) {
 }
 
 export function aAlta(f: Formulario): AltaArticulo {
-  return {
+  const alta = {
     codigoInterno: aVacioNulo(f.codigoInterno),
     ...camposComunes(f),
     costoListaPor: f.costoListaPor,
     costoListaIncluyeIva: f.costoListaIncluyeIva,
     idFamilia: f.idFamilia === '' ? null : f.idFamilia,
   }
+  const nombreFamiliaNueva = f.nombreFamiliaNueva.trim()
+  // El servidor rechaza una familia existente y una nueva a la vez: la nueva solo viaja cuando no hay una elegida.
+  return f.idFamilia === '' && nombreFamiliaNueva !== '' ? { ...alta, nombreFamiliaNueva } : alta
 }
 
 /** Una edición manda la base y el IVA del costo de lista explícitos; solo si el artículo llegó sin costos manda
@@ -235,6 +245,9 @@ export function FormularioArticulo({
   bloqueadoPorCatalogos,
   familia,
   accionesDeFamilia,
+  union,
+  errorDeFamiliaNueva,
+  sinGuardar,
   preguntaDeAlcanceAbierta,
   codigoProveedor,
   onCambio,
@@ -263,6 +276,11 @@ export function FormularioArticulo({
   /** La familia del artículo (la elegida en un alta o la del miembro que se edita) y qué hacer con ella. */
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  union: EstadoDeUnionAFamilia
+  /** El rechazo del servidor a la familia nueva de un alta: se muestra junto a la sección de la familia. */
+  errorDeFamiliaNueva: string
+  /** El formulario tiene cambios sin guardar: el servidor lee los valores guardados, así que con ellos no se elige ni se crea una familia de un artículo existente. */
+  sinGuardar: boolean
   /** La pregunta de alcance (un modal hermano de este, no hijo) está abierta: al cerrarse, si el foco se perdió, vuelve acá. */
   preguntaDeAlcanceAbierta: boolean
   codigoProveedor?: CodigoDeProveedorDelFormulario
@@ -294,6 +312,17 @@ export function FormularioArticulo({
   const [salida, setSalida] = useState<{ disparador: HTMLElement } | null>(null)
   const focoDeSalidaRef = useRef<HTMLElement | null>(null)
   const refNombre = useRef<HTMLInputElement>(null)
+  const nombresDeCatalogo = useMemo<NombresDeCatalogo>(
+    () => ({
+      areas: mapaDeNombres(areas, (a) => a.nombre),
+      categorias: mapaDeNombres(categorias, (c) => c.nombre),
+      grupos: mapaDeNombres(grupos, (g) => g.nombre),
+      proveedores: mapaDeNombres(proveedores, etiquetaDeProveedor),
+      alicuotas: mapaDeNombres(alicuotasIva, (a) => a.nombre),
+    }),
+    [areas, categorias, grupos, proveedores, alicuotasIva],
+  )
+  const nombresDeListas = useMemo(() => mapaDeNombres(listasPrecio, (l) => l.nombre), [listasPrecio])
   const confirmandoSalida = salida !== null
   const bloqueado = ocupado || confirmandoSalida
 
@@ -363,7 +392,7 @@ export function FormularioArticulo({
     valor.costoListaIncluyeIva,
     porcentajeIva,
   )
-  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva)
+  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia)
   const bultoSinUnidadesPorBulto = bultoSinUnidades(
     valor.costoListaPor,
     valor.unidadesPorBulto.trim() === '' ? null : Number(valor.unidadesPorBulto),
@@ -391,11 +420,19 @@ export function FormularioArticulo({
       <SeccionDeFamilia
         esNuevo={esNuevo}
         idFamilia={valor.idFamilia}
+        nombreFamiliaNueva={valor.nombreFamiliaNueva}
+        idDelArticulo={valor.id}
+        codigoInterno={valor.codigoInterno}
         nombreDelArticulo={valor.nombre}
         ocupado={ocupado}
         listasPrecio={listasPrecio}
         familia={familia}
         acciones={accionesDeFamilia}
+        union={union}
+        errorDeFamiliaNueva={errorDeFamiliaNueva}
+        sinGuardar={sinGuardar}
+        nombresDeCatalogo={nombresDeCatalogo}
+        nombresDeListas={nombresDeListas}
         confirmandoSalida={confirmandoSalida}
         onPedirSalida={(disparador) => setSalida({ disparador })}
         onCancelarSalida={cancelarSalida}
@@ -406,7 +443,6 @@ export function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bultoSinUnidadesPorBulto) return
           onGuardar()
         }}
       >
@@ -724,95 +760,100 @@ export function FormularioArticulo({
             </select>
           </div>
 
-          <div className="col-12">
-            <strong className="text-muted small text-uppercase">Costos</strong>
-          </div>
-
-          <div className="col-md-3">
-            <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
-              Costo de lista sin IVA
-            </Etiqueta>
-            <CampoImporte
-              id="art-costo-lista-sin-iva"
-              className="form-control"
-              valor={costoDeLista.sinIva}
-              disabled={bloqueoDeFamilia}
-              onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
-            />
-          </div>
-
-          <div className="col-md-3">
-            <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
-              Costo de lista con IVA
-            </Etiqueta>
-            <CampoImporte
-              id="art-costo-lista-con-iva"
-              className="form-control"
-              valor={costoDeLista.conIva}
-              disabled={bloqueoDeFamilia}
-              onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
-            />
-          </div>
-
-          <div className="col-md-2">
-            <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
-              Costo por
-            </Etiqueta>
-            <select
-              id="art-costo-lista-por"
-              className="form-select"
-              value={valor.costoListaPor}
-              disabled={bloqueoDeFamilia}
-              onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
-            >
-              {COSTOS_LISTA_POR.map((c) => (
-                <option key={c.valor} value={c.valor}>
-                  {c.etiqueta}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-md-2">
-            <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
-              Descuento de proveedor (%)
-            </Etiqueta>
-            <input
-              id="art-descuento-proveedor"
-              type="number"
-              step="0.01"
-              min="0"
-              className="form-control"
-              value={valor.descuentoProveedor}
-              disabled={bloqueoDeFamilia}
-              onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
-            />
-          </div>
-
-          <div className="col-md-2">
-            <label className="form-label" htmlFor="art-costo-nominal">
-              Costo nominal
-            </label>
-            <input
-              id="art-costo-nominal"
-              className="form-control text-end"
-              readOnly
-              value={formatearImporte(costoNominal)}
-            />
-          </div>
-
-          <div className="col-12">
-            <div className="form-text mt-0">
-              El costo nominal es el costo por unidad con IVA y descuento aplicados. Se calcula al guardar; una compra
-              confirmada lo actualiza.
+          {/* Quien no ve los costos no recibe ninguno: no se le ofrece cargarlos. */}
+          {!valor.costosOcultos && (
+            <>
+            <div className="col-12">
+              <strong className="text-muted small text-uppercase">Costos</strong>
             </div>
-            {bultoSinUnidadesPorBulto && (
-              <div id="art-costo-bulto-error" className="text-danger small mt-1" role="alert">
-                Un costo por bulto necesita las unidades por bulto: completá "Unidades por bulto" con un valor mayor que
-                cero.
+
+            <div className="col-md-3">
+              <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
+                Costo de lista sin IVA
+              </Etiqueta>
+              <CampoImporte
+                id="art-costo-lista-sin-iva"
+                className="form-control"
+                valor={costoDeLista.sinIva}
+                disabled={bloqueoDeFamilia}
+                onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
+              />
+            </div>
+
+            <div className="col-md-3">
+              <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
+                Costo de lista con IVA
+              </Etiqueta>
+              <CampoImporte
+                id="art-costo-lista-con-iva"
+                className="form-control"
+                valor={costoDeLista.conIva}
+                disabled={bloqueoDeFamilia}
+                onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
+              />
+            </div>
+
+            <div className="col-md-2">
+              <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
+                Costo por
+              </Etiqueta>
+              <select
+                id="art-costo-lista-por"
+                className="form-select"
+                value={valor.costoListaPor}
+                disabled={bloqueoDeFamilia}
+                onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
+              >
+                {COSTOS_LISTA_POR.map((c) => (
+                  <option key={c.valor} value={c.valor}>
+                    {c.etiqueta}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-md-2">
+              <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
+                Descuento de proveedor (%)
+              </Etiqueta>
+              <input
+                id="art-descuento-proveedor"
+                type="number"
+                step="0.01"
+                min="0"
+                className="form-control"
+                value={valor.descuentoProveedor}
+                disabled={bloqueoDeFamilia}
+                onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
+              />
+            </div>
+
+            <div className="col-md-2">
+              <label className="form-label" htmlFor="art-costo-nominal">
+                Costo nominal
+              </label>
+              <input
+                id="art-costo-nominal"
+                className="form-control text-end"
+                readOnly
+                value={formatearImporte(costoNominal)}
+              />
+            </div>
+
+            <div className="col-12">
+              <div className="form-text mt-0">
+                El costo nominal es el costo por unidad con IVA y descuento aplicados. Se calcula al guardar; una compra
+                confirmada lo actualiza.
               </div>
-            )}
-          </div>
+              {bultoSinUnidadesPorBulto && (
+                <div id="art-costo-bulto-error" className="text-danger small mt-1" role="alert">
+                  Un costo por bulto necesita las unidades por bulto: completá "Unidades por bulto" con un valor mayor que
+                  cero.
+                </div>
+              )}
+            </div>
+            </>
+          )}
 
           <div className="col-12">
             <strong className="text-muted small text-uppercase">Disponibilidad</strong>
@@ -996,6 +1037,7 @@ export function FormularioArticulo({
             alDeEscribir={alDeEscribir}
             familia={familiaDelArticulo(valor.idFamilia, familia.detalle)}
             alSalirDeLaFamilia={accionesDeFamilia.alSalirDeLaFamilia}
+            alEscribirPrecio={accionesDeFamilia.alEscribirPrecio}
             alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
           />
         </>

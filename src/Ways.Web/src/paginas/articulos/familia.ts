@@ -11,6 +11,7 @@ import type {
   EstadoDePrecios,
   FamiliaDetalle,
   FamiliaListado,
+  PrevisualizacionDeAgrupacion,
   ValoresCompartidosDeLaFamilia,
 } from '../../api/tipos'
 import type { Formulario } from './FormularioArticulo'
@@ -132,6 +133,75 @@ export function cantidadDeArticulos(cantidad: number): string {
   return cantidad === 1 ? '1 artículo' : `${cantidad} artículos`
 }
 
+export const LARGO_MAXIMO_DEL_NOMBRE_DE_FAMILIA = 150
+
+const MENSAJE_NOMBRE_DE_FAMILIA_EN_USO =
+  'Ya existe una familia con ese nombre. Puede estar inactiva o no tener artículos, por eso no aparece en la lista de familias para elegir: revisala en la pantalla de Familias o elegí otro nombre.'
+
+const MENSAJE_NOMBRE_DE_FAMILIA_REQUERIDO = 'Escribí el nombre de la familia.'
+
+const MENSAJE_NOMBRE_DE_FAMILIA_LARGO = `El nombre de la familia no puede superar los ${LARGO_MAXIMO_DEL_NOMBRE_DE_FAMILIA} caracteres.`
+
+/**
+ * El motivo por el que `nombre` no sirve para una familia nueva, o `''` si sirve. Espeja al servidor: sin espacios en los
+ * extremos, obligatorio, hasta 150 caracteres y distinto —sin distinguir mayúsculas— del de cualquier familia viva. La
+ * lista de familias trae también las inactivas y las vacías, que no se ofrecen para elegir pero conservan su nombre. Es
+ * una ayuda al usuario: la autoridad es el servidor (409 `familia_nombre_duplicado`), y con la lista sin cargar no
+ * detecta ningún duplicado.
+ */
+export function validarNombreDeFamilia(nombre: string, familias: readonly FamiliaListado[]): string {
+  const limpio = nombre.trim()
+  if (limpio === '') return MENSAJE_NOMBRE_DE_FAMILIA_REQUERIDO
+  if (limpio.length > LARGO_MAXIMO_DEL_NOMBRE_DE_FAMILIA) return MENSAJE_NOMBRE_DE_FAMILIA_LARGO
+
+  const minuscula = limpio.toLowerCase()
+  return familias.some((familia) => familia.nombre.toLowerCase() === minuscula) ? MENSAJE_NOMBRE_DE_FAMILIA_EN_USO : ''
+}
+
+/**
+ * El rechazo de un alta con `nombreFamiliaNueva` que corresponde a la familia y no al artículo, listo para mostrar junto a la
+ * sección de la familia; `null` si es de otra cosa. `nombre_requerido` y `nombre_muy_largo` son los mismos códigos del
+ * nombre del propio artículo: solo se atribuyen a la familia cuando el del artículo es válido, que es lo único que la pantalla
+ * puede afirmar.
+ */
+export function rechazoDeLaFamiliaNuevaEnElAlta(estado: number, codigo: string, nombreDelArticulo: string): string | null {
+  const nombre = nombreDelArticulo.trim()
+
+  if (estado === 409 && codigo === 'familia_nombre_duplicado') {
+    return `${MENSAJE_NOMBRE_DE_FAMILIA_EN_USO} El artículo no se creó.`
+  }
+  if (estado === 400 && codigo === 'nombre_requerido' && nombre !== '') return `${MENSAJE_NOMBRE_DE_FAMILIA_REQUERIDO} El artículo no se creó.`
+  if (estado === 400 && codigo === 'nombre_muy_largo' && nombre.length <= LARGO_MAXIMO_DEL_NOMBRE_DE_FAMILIA) {
+    return `${MENSAJE_NOMBRE_DE_FAMILIA_LARGO} El artículo no se creó.`
+  }
+
+  return null
+}
+
+export const AVISO_DE_CAMBIOS_SIN_GUARDAR_EN_FAMILIA = 'Guardá los cambios del artículo antes de elegir o crear una familia: se usan los valores guardados.'
+
+export const AVISO_DE_UNION_DESACTUALIZADA =
+  'La familia cambió desde que se la eligió. Cancelá y elegila de nuevo para ver qué cambia.'
+
+/** Lo que cambia el artículo al unirse, dicho antes de confirmar. */
+export function advertenciaDeUnion(nombreDeLaFamilia: string): string {
+  return `Al confirmar, el artículo toma de la familia "${nombreDeLaFamilia}" sus quince campos compartidos y los precios de cada lista fija: sus valores y precios actuales se reemplazan. Son propios del artículo y no cambian: ${CAMPOS_PROPIOS}.`
+}
+
+/** La previsualización de la unión habla de la familia elegida: si el servidor ve la referencia en otra (o en ninguna), la foto es vieja. */
+export function previsualizacionDeUnionVigente(previsualizacion: PrevisualizacionDeAgrupacion | null, idFamilia: number | ''): boolean {
+  return previsualizacion !== null && previsualizacion.idFamilia === idFamilia
+}
+
+/** Por qué la familia elegida no admite al artículo según su detalle, o `''` si lo admite (activa y con referencia). */
+export function motivoDeFamiliaNoElegible(detalle: FamiliaDetalle): string {
+  if (!detalle.activo) return `La familia "${detalle.nombre}" está inactiva: no se le pueden agregar artículos.`
+  if (detalle.valores === null || detalle.articulos.length === 0) {
+    return `La familia "${detalle.nombre}" no tiene artículos vivos: no hay referencia con la que alinear al artículo.`
+  }
+  return ''
+}
+
 /** La familia de un artículo miembro. `nombre` y `cantidad` son `null` cuando no se pudo cargar su
  * detalle: el artículo sigue siendo miembro, solo que no se sabe cómo se llama ni cuántos artículos tiene. */
 export type FamiliaDelArticulo = { id: number; nombre: string | null; cantidad: number | null }
@@ -198,8 +268,14 @@ export function avisoDeValoresDistintos(campos: CampoCompartido[]): string {
   return `Los valores del artículo no coinciden con los de la familia${donde}. Se volvieron a cargar los de la familia: revisalos y guardá de nuevo.`
 }
 
-export function mensajeDeAlta(nombre: string, codigoInterno: string, familia: FamiliaDelArticulo | null): string {
+export function mensajeDeAlta(
+  nombre: string,
+  codigoInterno: string,
+  familia: FamiliaDelArticulo | null,
+  nombreDeFamiliaNueva = '',
+): string {
   const base = `Artículo "${nombre}" creado con código interno ${codigoInterno}.`
+  if (nombreDeFamiliaNueva !== '') return `${base} Creó la familia "${nombreDeFamiliaNueva}" y es su artículo de referencia.`
   if (familia === null) return base
 
   const de = familia.nombre === null ? 'una familia' : `la familia "${familia.nombre}"`
@@ -246,14 +322,48 @@ export type EstadoDeFamiliaDelFormulario = {
   error: string
 }
 
+/** Unir un artículo existente que no es miembro a una familia que ya existe: la elección todavía no escribe nada, se
+ * previsualiza lo que cambiaría y recién se escribe al confirmar. */
+export type EstadoDeUnionAFamilia = {
+  /** La familia elegida en el selector de un artículo existente; `''` si no se eligió ninguna. */
+  idElegida: number | ''
+  previsualizacion: PrevisualizacionDeAgrupacion | null
+  previsualizando: boolean
+  errorDePrevisualizacion: string
+  /** El motivo por el que la familia elegida no sirve o el rechazo de la unión o de la creación de una familia. */
+  error: string
+  /** Hay una escritura de familia en curso (unir o crear). */
+  escribiendo: boolean
+}
+
+export const UNION_SIN_ELEGIR: EstadoDeUnionAFamilia = {
+  idElegida: '',
+  previsualizacion: null,
+  previsualizando: false,
+  errorDePrevisualizacion: '',
+  error: '',
+  escribiendo: false,
+}
+
 export type AccionesDeFamiliaDelFormulario = {
+  /** En un alta, elige la familia de la que toma sus campos; en un artículo existente que no es miembro, la propone para unirlo
+   * (previsualiza, no escribe). `''` es "Sin familia": en un alta quita también la familia nueva anotada, y al editar cancela la unión propuesta. */
   elegir: (idFamilia: number | '') => void
+  /** Confirma la unión del artículo existente a la familia elegida. */
+  confirmarUnion: () => Promise<void>
+  /** "+": en un alta anota el nombre de la familia que se creará al guardar y resuelve `''`; en un artículo existente la crea
+   * con él como referencia. Resuelve el motivo del rechazo, o `''` si salió bien. */
+  crearFamilia: (nombre: string) => Promise<string>
+  /** Deshace la familia nueva anotada en un alta. */
+  quitarFamiliaNueva: () => void
   reintentar: () => void
   /** Saca al artículo editado de su familia. Resuelve `true` cuando la escritura terminó, haya salido bien o
    * no, y `false` si no llegó a empezar porque había otra en curso. */
   sacar: () => Promise<boolean>
   /** El editor de precios sacó al artículo de la familia (`SoloEste`). */
   alSalirDeLaFamilia: (nombre: string | null) => void
+  /** El editor de precios escribió un precio del artículo: la previsualización de una unión propuesta ya no vale. */
+  alEscribirPrecio: () => void
   /** El servidor dijo que la pertenencia cambió (`familia_cambio`): hay que recargar el artículo. */
   alCambiarLaFamilia: () => void
 }

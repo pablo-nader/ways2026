@@ -16,6 +16,7 @@ import type {
   GrupoListado,
   ListaPrecioListado,
   PaginaDeGrillaDeArticulos,
+  PrevisualizacionDeAgrupacion,
   ProveedorListado,
   ValoresCompartidosDeLaFamilia,
 } from '../api/tipos'
@@ -321,11 +322,21 @@ async function abrirAlta() {
   await screen.findByText('Nuevo artículo')
 }
 
+/** Elige una familia en el selector. El selector está desde el primer render con solo "Sin familia": esperar al elemento no
+ * prueba nada, la opción es lo único que prueba que las familias llegaron (web-test-data-gates, variante 1b). */
+async function elegirFamiliaEnElSelector(valor: string) {
+  const selector = await screen.findByLabelText('Familia (opcional)')
+  await waitFor(() =>
+    expect(within(selector).getAllByRole('option').some((o) => (o as HTMLOptionElement).value === valor)).toBe(true),
+  )
+  await userEvent.selectOptions(selector, valor)
+}
+
 /** Abre un alta y elige la familia: espera a que su detalle ya esté prellenado en el formulario (el dato, no el
  * elemento). */
 async function abrirAltaEnLaFamilia(idFamilia = '7') {
   await abrirAlta()
-  await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), idFamilia)
+  await elegirFamiliaEnElSelector(idFamilia)
   await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
 }
 
@@ -393,51 +404,76 @@ describe('Articulos — alta: el selector de familia', () => {
     await abrirAlta()
 
     const selector = await screen.findByLabelText('Familia (opcional)')
-    expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Sin familia',
-      'Sabores (3 artículos)',
-      'Talles (1 artículo)',
-    ])
+    await waitFor(() =>
+      expect(within(selector).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'Sin familia',
+        'Sabores (3 artículos)',
+        'Talles (1 artículo)',
+      ]),
+    )
     expect(selector).toHaveValue('')
   })
 
-  it('sin familias para elegir no ofrece el selector', async () => {
+  function opcionesDeSelector() {
+    return within(screen.getByLabelText('Familia (opcional)'))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+  }
+
+  it('sin familias para elegir el selector está igual, solo con "Sin familia", y trae el "+"', async () => {
     mockearApi({ familias: [familiaListado({ activo: false })] })
 
     await abrirAlta()
     await waitFor(() => expect(apiGetMock.mock.calls.some((c) => c[0] === '/familias')).toBe(true))
     await act(async () => {})
 
-    expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
-    expect(screen.queryByText('Familia')).not.toBeInTheDocument()
+    expect(opcionesDeSelector()).toEqual(['Sin familia'])
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled()
     expect(screen.queryByText('Cargando la familia…')).not.toBeInTheDocument()
   })
 
+  it('con cero familias en el tenant el selector tampoco desaparece', async () => {
+    await abrirAlta()
+    await waitFor(() => expect(apiGetMock.mock.calls.some((c) => c[0] === '/familias')).toBe(true))
+
+    expect(opcionesDeSelector()).toEqual(['Sin familia'])
+  })
+
   /** Cláusula bajo prueba: el aviso del fallo de carga de las familias, que dice lo que la pantalla de verdad
-   * impone: sin familias cargadas no hay selector (react-async-state regla 7). */
-  it('si no se pudieron cargar las familias lo avisa y no ofrece el selector, pero el alta sigue disponible', async () => {
+   * impone: sin familias cargadas no se puede elegir una existente y el nombre de una nueva no se contrasta
+   * (react-async-state regla 7). */
+  it('si no se pudieron cargar las familias lo avisa; el selector queda sin opciones, el "+" y el alta siguen disponibles', async () => {
     mockearApi({ familiasImpl: () => Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.')) })
 
     await abrirAlta()
 
     expect(
-      await screen.findByText('No se pudieron cargar las familias. No se puede elegir una familia al crear un artículo.'),
+      await screen.findByText('No se pudieron cargar las familias: no se puede elegir una existente y no se comprueba si el nombre de una nueva ya está en uso.'),
     ).toBeInTheDocument()
-    expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
+    expect(opcionesDeSelector()).toEqual(['Sin familia'])
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
 
-  it('al editar un artículo el selector no existe, ni siquiera cuando las familias no cargaron', async () => {
+  it('al editar un artículo que no es miembro el selector está, también cuando las familias no cargaron, y lo avisa', async () => {
     mockearApi({
       articulos: { 1: articuloFixture() },
       familiasImpl: () => Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.')),
     })
 
     await abrirEdicion(1, 'A0001')
-    await act(async () => {})
+
+    expect(opcionesDeSelector()).toEqual(['Sin familia'])
+    expect(await screen.findByText(/No se pudieron cargar las familias/)).toBeInTheDocument()
+  })
+
+  it('al editar un miembro no hay selector: se muestra su pertenencia', async () => {
+    escenarioDelMiembro()
+
+    await abrirEdicion()
 
     expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
-    expect(screen.queryByText(/No se pudieron cargar las familias/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Nueva familia' })).not.toBeInTheDocument()
   })
 })
 
@@ -475,6 +511,27 @@ describe('Articulos — alta: elegir una familia', () => {
       const label = document.querySelector(`label[for="${control.id}"]`)
       expect(label?.textContent, String(etiqueta)).toContain('(de la familia)')
     }
+  })
+
+  /** Cláusula bajo prueba: `bloqueoDeFamilia` como tercer argumento de `costoNominalDelFormulario`. La referencia trae
+   * 120 de nominal y su fórmula (150 con IVA y 5 % de descuento) da 142,50: solo el guardado de la familia explica 120. */
+  it('el costo nominal de solo lectura es el guardado de la familia mientras el alta está bloqueada, y la vista previa al dejarla', async () => {
+    const lectura = diferida<FamiliaDetalle>()
+    mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
+    await abrirAlta()
+    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await screen.findByText('Cargando la familia…')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('—')
+
+    await act(async () => {
+      lectura.resolver(detalleSabores())
+    })
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('120,00')
+
+    await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
+
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('142,50')
   })
 
   it('los botones "+" de los padrones compartidos quedan bloqueados; el de marca, que es propia, no', async () => {
@@ -532,7 +589,7 @@ describe('Articulos — alta: elegir una familia', () => {
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
     await abrirAlta()
 
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
 
     expect(await screen.findByText('Cargando la familia…')).toBeInTheDocument()
     expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
@@ -554,7 +611,7 @@ describe('Articulos — alta: elegir una familia', () => {
     const lectura = diferida<FamiliaDetalle>()
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
     await abrirAlta()
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
     await screen.findByText('Cargando la familia…')
 
     await userEvent.type(screen.getByLabelText('Nombre'), 'Frutilla{Enter}')
@@ -570,7 +627,7 @@ describe('Articulos — alta: elegir una familia', () => {
     })
     await abrirAlta()
 
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
 
     expect(await screen.findByText(/Se cayó la lectura\. El artículo no se puede guardar con esta familia hasta que cargue/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
@@ -589,7 +646,7 @@ describe('Articulos — alta: elegir una familia', () => {
       detalleDeFamiliaImpl: () => Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó la lectura.')),
     })
     await abrirAlta()
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
     await screen.findByText(/Se cayó la lectura/)
 
     await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
@@ -602,7 +659,7 @@ describe('Articulos — alta: elegir una familia', () => {
     mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores({ articulos: [], valores: null, precios: [] }) } })
     await abrirAlta()
 
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
 
     expect(
       await screen.findByText(/La familia "Sabores" no tiene artículos vivos: no hay valores ni precios que copiar\. El artículo no se puede guardar en ella\./),
@@ -635,6 +692,7 @@ describe('Articulos — alta: elegir una familia', () => {
     })
     await abrirAlta()
     const selector = await screen.findByLabelText('Familia (opcional)')
+    await screen.findByRole('option', { name: 'Talles (3 artículos)' })
 
     await userEvent.selectOptions(selector, '7')
     await userEvent.selectOptions(selector, '8')
@@ -658,7 +716,7 @@ describe('Articulos — alta: elegir una familia', () => {
     mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await abrirAlta()
-    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await elegirFamiliaEnElSelector('7')
     await screen.findByText('Cargando la familia…')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
@@ -938,8 +996,8 @@ describe('Articulos — alta: lo que el servidor rechaza de la familia', () => {
 
     expect(await screen.findByText(`${mensaje} Elegí otra familia o creá el artículo sin familia.`)).toBeInTheDocument()
     await waitFor(() => expect(lecturasDeFamilias).toBe(2))
-    // Ya no queda ninguna familia para elegir, y la que se había elegido dejó de bloquear los campos.
-    await waitFor(() => expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument())
+    // Ya no queda ninguna familia para elegir (solo "Sin familia"), y la que se había elegido dejó de bloquear los campos.
+    await waitFor(() => expect(within(screen.getByLabelText('Familia (opcional)')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia']))
     expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
   })
@@ -1961,7 +2019,7 @@ describe('Articulos — las familias que se ofrecen en un alta se mantienen al d
 
     await abrirUnAltaNueva()
 
-    await waitFor(() => expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument())
+    await waitFor(() => expect(within(screen.getByLabelText('Familia (opcional)')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia']))
   })
 
   /** Cláusula bajo prueba: `if (alcance === 'SoloEste') void familias.recargarOpciones()` de `guardar`. Evidencia de
@@ -2131,5 +2189,1131 @@ describe('Articulos — después de recargar el artículo por un rechazo de fami
     await userEvent.click(screen.getByRole('button', { name: 'Toda la familia' }))
 
     await esperarLaRecarga(miembro())
+  })
+})
+
+// ---- crear una familia desde el formulario de artículo ("+") ------------------------------------------------
+
+/** Responde cada POST por ruta; una ruta sin respuesta falla fuerte. */
+function mockearPosts(respuestas: Record<string, (cuerpo: Record<string, unknown>) => Promise<unknown>>) {
+  apiPostMock.mockImplementation((ruta: string, cuerpo: Record<string, unknown>) => {
+    const respuesta = respuestas[ruta]
+    return respuesta ? respuesta(cuerpo) : Promise.reject(new Error(`POST no mockeado en el test: ${ruta}`))
+  })
+}
+
+function pedidosA(ruta: string) {
+  return apiPostMock.mock.calls.filter((c) => c[0] === ruta) as [string, Record<string, unknown>][]
+}
+
+function lecturasDeFamilias() {
+  return apiGetMock.mock.calls.filter((c) => c[0] === '/familias').length
+}
+
+/** "+" del selector, el nombre y "Aceptar". */
+async function anotarFamiliaNueva(nombre: string) {
+  await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+  const dialogo = await screen.findByRole('dialog', { name: 'Nueva familia' })
+  await userEvent.type(within(dialogo).getByLabelText('Nombre'), nombre)
+  await userEvent.click(within(dialogo).getByRole('button', { name: 'Aceptar' }))
+}
+
+function dialogoDeFamiliaNueva() {
+  return screen.getByRole('dialog', { name: 'Nueva familia' })
+}
+
+describe('Articulos — alta: "+" para crear una familia nueva', () => {
+  const creado = articuloFixture({ id: 40, codigoInterno: 'A0040', nombre: 'Camisa', idFamilia: null })
+
+  beforeEach(() => {
+    mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores() }, articulos: { 40: creado } })
+    apiPostMock.mockResolvedValue(creado)
+  })
+
+  async function guardarConNombre(nombre = 'Camisa') {
+    await userEvent.type(screen.getByLabelText('Nombre'), nombre)
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+  }
+
+  it('no llama a la API: anota el nombre, lo muestra como familia nueva y deja editables los campos compartidos', async () => {
+    await abrirAlta()
+    await screen.findByRole('option', { name: 'Sabores (3 artículos)' })
+
+    await anotarFamiliaNueva('Talles')
+
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveDisplayValue('Nueva: Talles')
+    for (const etiqueta of CAMPOS_COMPARTIDOS_DEL_FORMULARIO) {
+      expect(screen.getByLabelText(etiqueta), String(etiqueta)).toBeEnabled()
+    }
+  })
+
+  it('guardar manda nombreFamiliaNueva con idFamilia: null, y el artículo pasa a ser miembro de la familia creada', async () => {
+    const enLaFamilia = articuloFixture({ id: 40, codigoInterno: 'A0040', nombre: 'Camisa', idFamilia: 50 })
+    mockearApi({
+      familiasImpl: () =>
+        Promise.resolve(lecturasDeFamilias() <= 1 ? [] : [familiaListado({ id: 50, nombre: 'Talles', cantidadArticulos: 1 })]),
+      detalles: { 50: detalleSabores({ id: 50, nombre: 'Talles', articulos: miembros(1) }) },
+      articulos: { 40: enLaFamilia },
+    })
+    apiPostMock.mockResolvedValue(enLaFamilia)
+    await abrirAlta()
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(1))
+    await anotarFamiliaNueva('Talles')
+
+    await guardarConNombre()
+
+    expect(pedidosA('/articulos')[0][1]).toMatchObject({ nombre: 'Camisa', idFamilia: null, nombreFamiliaNueva: 'Talles' })
+    expect(
+      await screen.findByText('Artículo "Camisa" creado con código interno A0040. Creó la familia "Talles" y es su artículo de referencia.'),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('Editando artículo A0040')).toBeInTheDocument()
+    expect(await screen.findByText('Familia "Talles" (1 artículo)')).toBeInTheDocument()
+    expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
+    await waitFor(() => expect(llamadasAGrilla()).toBe(2))
+  })
+
+  it('con una familia nueva los costos quedan editables y viajan con nombreFamiliaNueva, sin costoNominal ni idFamilia', async () => {
+    await abrirAlta()
+    await anotarFamiliaNueva('Talles')
+    await userEvent.type(screen.getByLabelText(/^Costo de lista sin IVA/), '100')
+    await userEvent.selectOptions(screen.getByLabelText('Costo por'), 'Bulto')
+    await userEvent.type(screen.getByLabelText(/^Unidades por bulto/), '6')
+
+    await guardarConNombre()
+
+    const cuerpo = pedidosA('/articulos')[0][1]
+    expect(cuerpo).toMatchObject({
+      idFamilia: null,
+      nombreFamiliaNueva: 'Talles',
+      costoLista: 100,
+      costoListaPor: 'Bulto',
+      costoListaIncluyeIva: false,
+      unidadesPorBulto: 6,
+    })
+    expect(cuerpo).not.toHaveProperty('costoNominal')
+  })
+
+  /** Cláusula bajo prueba: `nombreFamiliaNueva: ''` de `elegirFamilia` al elegir una familia existente.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('elegir una familia existente después del "+" descarta el nombre: manda idFamilia y no manda nombreFamiliaNueva', async () => {
+    await abrirAlta()
+    await anotarFamiliaNueva('Talles')
+
+    await elegirFamiliaEnElSelector('7')
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
+    expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+    await guardarConNombre()
+
+    const cuerpo = pedidosA('/articulos')[0][1]
+    expect(cuerpo.idFamilia).toBe(7)
+    expect('nombreFamiliaNueva' in cuerpo).toBe(false)
+  })
+
+  /** Cláusula bajo prueba: `idFamilia: ''` de `crearFamilia` en un alta: el "+" suelta la familia ya elegida.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('el "+" después de elegir una familia existente la suelta: desbloquea los campos y manda solo la nueva', async () => {
+    await abrirAltaEnLaFamilia()
+
+    await anotarFamiliaNueva('Talles')
+
+    for (const etiqueta of CAMPOS_COMPARTIDOS_DEL_FORMULARIO) {
+      expect(screen.getByLabelText(etiqueta), String(etiqueta)).toBeEnabled()
+    }
+    expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00')
+    await guardarConNombre()
+    expect(pedidosA('/articulos')[0][1]).toMatchObject({ idFamilia: null, nombreFamiliaNueva: 'Talles' })
+  })
+
+  it('"Quitar" deshace la familia nueva: vuelve a "Sin familia" y no manda el nombre', async () => {
+    await abrirAlta()
+    await anotarFamiliaNueva('Talles')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+
+    expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+    await guardarConNombre()
+    expect('nombreFamiliaNueva' in pedidosA('/articulos')[0][1]).toBe(false)
+  })
+
+  it('"Cambiar nombre" reabre el modal con el nombre anotado y lo reemplaza', async () => {
+    await abrirAlta()
+    await anotarFamiliaNueva('Talles')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cambiar nombre' }))
+    const campo = within(dialogoDeFamiliaNueva()).getByLabelText('Nombre')
+    expect(campo).toHaveValue('Talles')
+    await userEvent.clear(campo)
+    await userEvent.type(campo, 'Colores')
+    await userEvent.click(within(dialogoDeFamiliaNueva()).getByRole('button', { name: 'Aceptar' }))
+
+    expect(screen.getByText('Familia nueva: Colores')).toBeInTheDocument()
+    await guardarConNombre()
+    expect(pedidosA('/articulos')[0][1].nombreFamiliaNueva).toBe('Colores')
+  })
+
+  it('"Cancelar" en el modal no anota nada', async () => {
+    await abrirAlta()
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Nueva familia' })).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+  })
+
+  it('el submit del modal no llega al formulario del artículo: no se guarda el alta', async () => {
+    await abrirAlta()
+
+    await anotarFamiliaNueva('Talles')
+
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  describe('validación del nombre en el modal', () => {
+    async function abrirModalConFamiliasCargadas() {
+      mockearApi({
+        familias: [
+          familiaListado(),
+          familiaListado({ id: 8, nombre: 'Apagada', activo: false }),
+          familiaListado({ id: 9, nombre: 'Vacía', cantidadArticulos: 0 }),
+        ],
+      })
+      await abrirAlta()
+      await screen.findByRole('option', { name: 'Sabores (3 artículos)' })
+      await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+      return await screen.findByRole('dialog', { name: 'Nueva familia' })
+    }
+
+    async function probar(dialogo: HTMLElement, texto: string) {
+      const campo = within(dialogo).getByLabelText('Nombre')
+      await userEvent.clear(campo)
+      if (texto !== '') await userEvent.type(campo, texto)
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Aceptar' }))
+    }
+
+    it('el nombre en blanco y el de más de 150 caracteres se rechazan sin anotar nada', async () => {
+      const dialogo = await abrirModalConFamiliasCargadas()
+
+      await probar(dialogo, '   ')
+      expect(within(dialogo).getByRole('alert')).toHaveTextContent('Escribí el nombre de la familia.')
+
+      const campo = within(dialogo).getByLabelText('Nombre')
+      await userEvent.clear(campo)
+      await userEvent.click(campo)
+      await userEvent.paste('a'.repeat(151))
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Aceptar' }))
+      expect(within(dialogo).getByRole('alert')).toHaveTextContent('El nombre de la familia no puede superar los 150 caracteres.')
+      expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+    })
+
+    it('el nombre de una familia que se ofrece se rechaza sin distinguir mayúsculas ni espacios', async () => {
+      const dialogo = await abrirModalConFamiliasCargadas()
+
+      await probar(dialogo, '  sabores ')
+
+      expect(within(dialogo).getByRole('alert')).toHaveTextContent('Ya existe una familia con ese nombre')
+      expect(screen.queryByText(/^Familia nueva:/)).not.toBeInTheDocument()
+    })
+
+    /** Cláusula bajo prueba: la validación usa la lista completa de `GET /api/familias` y no solo las familias que se
+     * ofrecen. Una inactiva y una vacía no están en el selector, pero su nombre está en uso.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+    it.each(['Apagada', 'vacía'])('el nombre de una familia que NO se ofrece (%s: inactiva o vacía) también se rechaza, y lo explica', async (nombre) => {
+      const dialogo = await abrirModalConFamiliasCargadas()
+      expect(within(screen.getByLabelText('Familia (opcional)')).queryByRole('option', { name: /Apagada|Vacía/ })).not.toBeInTheDocument()
+
+      await probar(dialogo, nombre)
+
+      const alerta = within(dialogo).getByRole('alert')
+      expect(alerta).toHaveTextContent('Puede estar inactiva o no tener artículos')
+      expect(alerta).toHaveTextContent('pantalla de Familias')
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('corregido el nombre, se acepta y el modal se cierra', async () => {
+      const dialogo = await abrirModalConFamiliasCargadas()
+      await probar(dialogo, 'Sabores')
+
+      await probar(dialogo, 'Talles')
+
+      expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+      expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()
+    })
+  })
+
+  describe('lo que el servidor rechaza de la familia nueva', () => {
+    it('409 familia_nombre_duplicado: el artículo no se crea, el formulario conserva todo y se puede corregir el nombre y reintentar', async () => {
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe la familia "Talles".'))
+      await abrirAlta()
+      await anotarFamiliaNueva('Talles')
+      await userEvent.type(screen.getByLabelText(/^Costo de lista con IVA/), '77')
+
+      await guardarConNombre()
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Ya existe una familia con ese nombre')
+      expect(screen.getByRole('alert')).toHaveTextContent('El artículo no se creó.')
+      expect(screen.getByText('Nuevo artículo')).toBeInTheDocument()
+      expect(screen.getByLabelText('Nombre')).toHaveValue('Camisa')
+      expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('77,00')
+      expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()
+      await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cambiar nombre' }))
+      const campo = within(dialogoDeFamiliaNueva()).getByLabelText('Nombre')
+      await userEvent.clear(campo)
+      await userEvent.type(campo, 'Talles 2')
+      await userEvent.click(within(dialogoDeFamiliaNueva()).getByRole('button', { name: 'Aceptar' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      await waitFor(() => expect(pedidosA('/articulos')).toHaveLength(2))
+      expect(pedidosA('/articulos')[1][1]).toMatchObject({ nombre: 'Camisa', nombreFamiliaNueva: 'Talles 2' })
+    })
+
+    /** Cláusula bajo prueba: `setErrorDeFamiliaNueva('')` de `guardar` (react-async-state regla 16).
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+    it('reintentar el guardado saca de pantalla el rechazo anterior mientras se reenvía', async () => {
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe.'))
+      await abrirAlta()
+      await anotarFamiliaNueva('Talles')
+      await guardarConNombre()
+      await screen.findByText(/Ya existe una familia con ese nombre/)
+      apiPostMock.mockImplementation(() => new Promise(() => {}))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+      await waitFor(() => expect(pedidosA('/articulos')).toHaveLength(2))
+      expect(screen.queryByText(/Ya existe una familia con ese nombre/)).not.toBeInTheDocument()
+    })
+
+    it('400 nombre_requerido con el nombre del artículo completo se atribuye a la familia', async () => {
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'nombre_requerido', 'El nombre es obligatorio.'))
+      await abrirAlta()
+      await anotarFamiliaNueva('Talles')
+
+      await guardarConNombre()
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Escribí el nombre de la familia. El artículo no se creó.')
+    })
+
+    it('400 nombre_muy_largo con el nombre del artículo válido se atribuye a la familia', async () => {
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'nombre_muy_largo', 'El nombre es muy largo.'))
+      await abrirAlta()
+      await anotarFamiliaNueva('Talles')
+
+      await guardarConNombre()
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('El nombre de la familia no puede superar los 150 caracteres.')
+    })
+
+    it('otro rechazo del alta se muestra como siempre, en el banner del formulario', async () => {
+      apiPostMock.mockRejectedValueOnce(new ErrorApi(400, 'referencia_invalida', 'Una referencia ya no existe.'))
+      await abrirAlta()
+      await anotarFamiliaNueva('Talles')
+
+      await guardarConNombre()
+
+      expect(await screen.findByText('Una referencia ya no existe.')).toBeInTheDocument()
+      expect(screen.getByText('Familia nueva: Talles')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('Articulos — edición: "+" crea una familia con el artículo como referencia', () => {
+  const resultadoDeCrear = { idFamilia: 50, nombre: 'Talles', idArticuloReferencia: 1, articulos: [] }
+  const unicoMiembro = [{ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno', idMarca: null, activo: true }]
+
+  function escenarioSinFamilia(extra: Escenario = {}) {
+    mockearApi({
+      articulos: { 1: articuloFixture() },
+      familias: [],
+      detalles: { 50: detalleSabores({ id: 50, nombre: 'Talles', articulos: unicoMiembro }) },
+      ...extra,
+    })
+  }
+
+  it('un artículo sin familia ve el selector con "Sin familia" y el "+"', async () => {
+    escenarioSinFamilia()
+
+    await abrirEdicion(1, 'A0001')
+
+    expect(within(await screen.findByLabelText('Familia (opcional)')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia'])
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled()
+  })
+
+  it('crea la familia al instante con idsArticulos vacío y pasa a mostrar la pertenencia sin cerrar el modal', async () => {
+    escenarioSinFamilia()
+    mockearPosts({ '/familias': () => Promise.resolve(resultadoDeCrear) })
+    await abrirEdicion(1, 'A0001')
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(1))
+
+    await anotarFamiliaNueva('Talles')
+
+    expect(await screen.findByText('Familia "Talles" (1 artículo)')).toBeInTheDocument()
+    expect(pedidosA('/familias')).toEqual([['/familias', { nombre: 'Talles', idArticuloReferencia: 1, idsArticulos: [] }]])
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Nueva familia' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sacar de la familia' })).toBeEnabled()
+    expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Se creó la familia "Talles": este artículo es su referencia y conserva sus valores y sus precios.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
+    await waitFor(() => expect(llamadasAGrilla()).toBe(2))
+  })
+
+  it('no vuelve a leer el artículo ni lo escribe', async () => {
+    escenarioSinFamilia()
+    mockearPosts({ '/familias': () => Promise.resolve(resultadoDeCrear) })
+    await abrirEdicion(1, 'A0001')
+
+    await anotarFamiliaNueva('Talles')
+    await screen.findByText('Familia "Talles" (1 artículo)')
+
+    expect(lecturasDelArticulo(1)).toBe(1)
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('creada la familia el formulario no queda con cambios sin guardar: cerrarlo no pregunta', async () => {
+    escenarioSinFamilia()
+    mockearPosts({ '/familias': () => Promise.resolve(resultadoDeCrear) })
+    const confirmar = vi.spyOn(window, 'confirm')
+    await abrirEdicion(1, 'A0001')
+    await anotarFamiliaNueva('Talles')
+    await screen.findByText('Familia "Talles" (1 artículo)')
+
+    await userEvent.click(within(screen.getByRole('dialog', { name: /^Editando artículo/ })).getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmar).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: el ref de reentrancia de `AltaRapidaFamilia` (react-async-state regla 11).
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('dos clics sincrónicos en "Aceptar" emiten un solo POST y el modal sigue inerte, sin ningún aviso', async () => {
+    escenarioSinFamilia()
+    mockearPosts({ '/familias': () => new Promise(() => {}) })
+    await abrirEdicion(1, 'A0001')
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva familia' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nueva familia' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Talles')
+
+    const aceptar = within(dialogo).getByRole('button', { name: 'Aceptar' })
+    await act(async () => {
+      aceptar.click()
+      aceptar.click()
+      await Promise.resolve()
+    })
+
+    expect(pedidosA('/familias')).toHaveLength(1)
+    expect(within(dialogo).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Aceptando…' })).toBeDisabled()
+  })
+
+  it('con la escritura en vuelo el modal de la familia queda inerte', async () => {
+    escenarioSinFamilia()
+    mockearPosts({ '/familias': () => new Promise(() => {}) })
+    await abrirEdicion(1, 'A0001')
+    await anotarFamiliaNueva('Talles')
+
+    const dialogo = dialogoDeFamiliaNueva()
+    expect(within(dialogo).getByLabelText('Nombre')).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Aceptando…' })).toBeDisabled()
+  })
+
+  it('el rechazo del servidor se muestra en el modal con su ayuda, y el artículo sigue sin familia', async () => {
+    escenarioSinFamilia()
+    mockearPosts({
+      '/familias': () => Promise.reject(new ErrorApi(409, 'familia_nombre_duplicado', 'Ya existe la familia "Talles".')),
+    })
+    await abrirEdicion(1, 'A0001')
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(1))
+
+    await anotarFamiliaNueva('Talles')
+
+    const dialogo = dialogoDeFamiliaNueva()
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Ya existe la familia "Talles". Elegí otro nombre.')
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Talles')
+    expect(within(dialogo).getByLabelText('Nombre')).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Sacar de la familia' })).not.toBeInTheDocument()
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
+  })
+
+  it('409 articulo_en_otra_familia: recarga el artículo con el aviso de que la pertenencia cambió', async () => {
+    escenarioSinFamilia({
+      articuloImpl: (_id, llamada) => articuloFixture({ idFamilia: llamada === 1 ? null : 7 }),
+      detalles: { 7: detalleSabores() },
+    })
+    mockearPosts({ '/familias': () => Promise.reject(new ErrorApi(409, 'articulo_en_otra_familia', 'El artículo ya es de una familia.')) })
+    await abrirEdicion(1, 'A0001')
+
+    await anotarFamiliaNueva('Talles')
+
+    expect(
+      await screen.findByText(
+        'La pertenencia del artículo a su familia cambió desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.',
+      ),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
+  })
+
+  describe('con cambios sin guardar', () => {
+    it('el selector y el "+" quedan deshabilitados con el aviso de guardar primero, y vuelven al guardar', async () => {
+      escenarioSinFamilia({ familias: [familiaListado()] })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await screen.findByRole('option', { name: 'Sabores (3 artículos)' })
+      expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
+
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      expect(screen.getByLabelText('Familia (opcional)')).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
+      expect(
+        screen.getByText('Guardá los cambios del artículo antes de elegir o crear una familia: se usan los valores guardados.'),
+      ).toBeInTheDocument()
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+
+      expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled()
+      expect(
+        screen.queryByText('Guardá los cambios del artículo antes de elegir o crear una familia: se usan los valores guardados.'),
+      ).not.toBeInTheDocument()
+    })
+
+    it.each([
+      [
+        'el costo de lista',
+        async () => {
+          await userEvent.clear(screen.getByLabelText(/^Costo de lista con IVA/))
+          await userEvent.type(screen.getByLabelText(/^Costo de lista con IVA/), '55')
+        },
+      ],
+      ['la base del costo', () => userEvent.selectOptions(screen.getByLabelText('Costo por'), 'Bulto')],
+    ])('cambiar %s también deshabilita el selector y el "+": el servidor lee el costo guardado', async (_cambio, cambiar) => {
+      escenarioSinFamilia({ familias: [familiaListado()] })
+      await abrirEdicion(1, 'A0001')
+      await screen.findByRole('option', { name: 'Sabores (3 artículos)' })
+      expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
+
+      await cambiar()
+
+      expect(screen.getByLabelText('Familia (opcional)')).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
+    })
+
+    it('en un alta el selector y el "+" no se deshabilitan por los cambios: el servidor no lee nada guardado', async () => {
+      mockearApi({ familias: [familiaListado()] })
+      await abrirAlta()
+      await screen.findByRole('option', { name: 'Sabores (3 artículos)' })
+
+      await userEvent.type(screen.getByLabelText('Nombre'), 'Camisa')
+
+      expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeEnabled()
+    })
+  })
+})
+
+// ---- unir un artículo existente a una familia existente ------------------------------------------------------
+
+describe('Articulos — edición: unir un artículo a una familia que ya existe', () => {
+  /** Los quince valores del artículo sin familia de las fixtures (`articuloFixture`). */
+  const valoresDelArticulo: ValoresCompartidosDeLaFamilia = {
+    idArea: 1,
+    idCategoria: null,
+    idGrupo: null,
+    idProveedorHabitual: null,
+    idAlicuotaIva: 5,
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: null,
+    esProducto: true,
+    controlaLote: false,
+    acumulaEnVenta: true,
+    costoLista: 100,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
+    descuentoProveedor: null,
+    costoNominal: null,
+  }
+
+  function fotoDeUnion(sobrescribir: Partial<PrevisualizacionDeAgrupacion> = {}): PrevisualizacionDeAgrupacion {
+    return {
+      idArticuloReferencia: 31,
+      idFamilia: 7,
+      problemas: [],
+      articulos: [
+        {
+          idArticulo: 1,
+          campos: ['id_categoria', 'unidad_venta', 'costo_lista'],
+          actual: valoresDelArticulo,
+          nuevo: referencia,
+          precios: [{ idListaPrecio: 2, actual: { vigente: 900, pendiente: null }, nuevo: { vigente: 1200, pendiente: null } }],
+        },
+      ],
+      ...sobrescribir,
+    }
+  }
+
+  const resultadoDeUnir = { idFamilia: 7, nombre: 'Sabores', idArticuloReferencia: 31, articulos: [] }
+  const articuloUnido = articuloFixture({ idFamilia: 7, ...compartidosDelArticulo })
+
+  /** El artículo 1 sin familia y la familia "Sabores" (referencia: el artículo 31). El POST de unir sale a `unir`. */
+  function escenarioDeUnion(extra: Escenario = {}, unir: () => Promise<unknown> = () => Promise.resolve(resultadoDeUnir)) {
+    mockearApi({
+      articulos: { 1: articuloFixture() },
+      familias: [familiaListado()],
+      detalles: { 7: detalleSabores() },
+      ...extra,
+    })
+    mockearPosts({
+      '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion()),
+      '/familias/7/articulos': unir,
+    })
+  }
+
+  function propuesta() {
+    return screen.getByRole('group', { name: 'Unir el artículo a la familia' })
+  }
+
+  async function proponerLaFamilia(valor = '7') {
+    await abrirEdicion(1, 'A0001')
+    await elegirFamiliaEnElSelector(valor)
+    return await screen.findByRole('group', { name: 'Unir el artículo a la familia' })
+  }
+
+  async function confirmarLaUnion() {
+    await userEvent.click(within(propuesta()).getByRole('button', { name: 'Confirmar y unir a la familia' }))
+  }
+
+  it('elegir la familia no escribe: lee su detalle, previsualiza con la referencia de la familia y muestra qué cambia', async () => {
+    escenarioDeUnion()
+
+    const grupo = await proponerLaFamilia()
+
+    expect(unaFamiliaPidioSuDetalle()).toEqual([['/familias/7']])
+    expect(pedidosA('/familias/previsualizacion')).toEqual([
+      ['/familias/previsualizacion', { idArticuloReferencia: 31, idsArticulos: [1] }],
+    ])
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(within(grupo).getByRole('row', { name: /Categoría.*Sin asignar.*Bebidas/ })).toBeInTheDocument()
+    expect(within(grupo).getByRole('row', { name: /General/ })).toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('7')
+  })
+
+  it('dice con claridad que confirmar reemplaza los valores y los precios del artículo con los de la familia', async () => {
+    escenarioDeUnion()
+
+    const grupo = await proponerLaFamilia()
+
+    expect(grupo).toHaveTextContent('Al confirmar, el artículo toma de la familia "Sabores" sus quince campos compartidos')
+    expect(grupo).toHaveTextContent('sus valores y precios actuales se reemplazan')
+  })
+
+  it('confirmar suma al artículo con agregarArticulos, lo vuelve a leer y muestra su pertenencia con los valores alineados', async () => {
+    escenarioDeUnion({ articuloImpl: (_id, llamada) => (llamada === 1 ? articuloFixture() : articuloUnido) })
+    await proponerLaFamilia()
+
+    await confirmarLaUnion()
+
+    await waitFor(() => expect(pedidosA('/familias/7/articulos')).toEqual([['/familias/7/articulos', { idsArticulos: [1] }]]))
+    expect(await screen.findByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
+    expect(
+      await screen.findByText('El artículo "Articulo Uno" se unió a la familia "Sabores": tomó sus valores compartidos y sus precios.'),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
+    expect(lecturasDelArticulo(1)).toBe(2)
+    expect(screen.queryByLabelText('Familia (opcional)')).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    await waitFor(() => expect(llamadasAGrilla()).toBe(2))
+    await waitFor(() => expect(lecturasDeFamilias()).toBe(2))
+  })
+
+  it('si la previsualización trae problemas los muestra y no deja confirmar', async () => {
+    escenarioDeUnion()
+    mockearPosts({
+      '/familias/previsualizacion': () =>
+        Promise.resolve(
+          fotoDeUnion({
+            articulos: [],
+            problemas: [{ codigo: 'familia_precio_inalineable', mensaje: 'La lista General no se puede alinear.', idArticulo: 1, idListaPrecio: 2 }],
+          }),
+        ),
+    })
+
+    const grupo = await proponerLaFamilia()
+
+    expect(grupo).toHaveTextContent('No se puede agrupar así.')
+    expect(grupo).toHaveTextContent('La lista General no se puede alinear.')
+    expect(within(grupo).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeDisabled()
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+  })
+
+  it('"Cancelar" no escribe y devuelve el selector a "Sin familia"', async () => {
+    escenarioDeUnion()
+    const grupo = await proponerLaFamilia()
+
+    await userEvent.click(within(grupo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+  })
+
+  it('volver a "Sin familia" desde el selector también cancela', async () => {
+    escenarioDeUnion()
+    await proponerLaFamilia()
+
+    await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
+
+    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+  })
+
+  /** Cláusula bajo prueba: la generación de `usePrevisualizacion` (react-async-state regla 2): la foto de la familia que se
+   * dejó de elegir llega tarde y no pisa a la de la elegida después.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('la previsualización tardía de una familia que se dejó de elegir no pisa a la de la elegida después', async () => {
+    const deLaPrimera = diferida<PrevisualizacionDeAgrupacion>()
+    const deLaSegunda = diferida<PrevisualizacionDeAgrupacion>()
+    const miembroDeTalles = { id: 51, codigoInterno: 'A0051', nombre: 'Talle S', idMarca: null, activo: true }
+    escenarioDeUnion({
+      familias: [familiaListado(), familiaListado({ id: 8, nombre: 'Talles' })],
+      detalles: { 7: detalleSabores(), 8: detalleSabores({ id: 8, nombre: 'Talles', articulos: [miembroDeTalles] }) },
+    })
+    mockearPosts({
+      '/familias/previsualizacion': (cuerpo) => (cuerpo.idArticuloReferencia === 31 ? deLaPrimera.promesa : deLaSegunda.promesa),
+    })
+    await abrirEdicion(1, 'A0001')
+    await elegirFamiliaEnElSelector('7')
+    await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(1))
+    await elegirFamiliaEnElSelector('8')
+    await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(2))
+
+    await act(async () => {
+      deLaSegunda.resolver(fotoDeUnion({ idArticuloReferencia: 51, idFamilia: 8 }))
+    })
+    await screen.findByRole('group', { name: 'Unir el artículo a la familia' })
+    await act(async () => {
+      deLaPrimera.resolver(fotoDeUnion({ idArticuloReferencia: 31, idFamilia: 7 }))
+    })
+
+    expect(propuesta()).toHaveTextContent('de la familia "Talles"')
+    expect(propuesta()).not.toHaveTextContent('La familia cambió desde que se la eligió.')
+    expect(within(propuesta()).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeEnabled()
+    expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('8')
+  })
+
+  /** Cláusula bajo prueba: la generación del detalle en `useFamiliasDelFormulario`: el detalle tardío de la familia que se
+   * dejó de elegir no dispara una previsualización.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('el detalle tardío de una familia que se dejó de elegir no previsualiza', async () => {
+    const detalleTardio = diferida<FamiliaDetalle>()
+    escenarioDeUnion({ detalleDeFamiliaImpl: () => detalleTardio.promesa })
+    await abrirEdicion(1, 'A0001')
+    await elegirFamiliaEnElSelector('7')
+    await screen.findByText('Cargando la familia…')
+
+    await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
+    await act(async () => {
+      detalleTardio.resolver(detalleSabores())
+    })
+
+    expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+    expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el ref de reentrancia de `confirmarUnion` (react-async-state regla 11).
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+  it('dos clics sincrónicos en "Confirmar" emiten un solo POST', async () => {
+    escenarioDeUnion({}, () => new Promise(() => {}))
+    const grupo = await proponerLaFamilia()
+
+    const confirmar = within(grupo).getByRole('button', { name: 'Confirmar y unir a la familia' })
+    await act(async () => {
+      confirmar.click()
+      confirmar.click()
+      await Promise.resolve()
+    })
+
+    expect(pedidosA('/familias/7/articulos')).toHaveLength(1)
+  })
+
+  it('con la escritura en vuelo todo queda inerte: el selector, el "+", "Confirmar" y "Cancelar"', async () => {
+    escenarioDeUnion({}, () => new Promise(() => {}))
+    const grupo = await proponerLaFamilia()
+
+    await userEvent.click(within(grupo).getByRole('button', { name: 'Confirmar y unir a la familia' }))
+
+    expect(within(propuesta()).getByRole('button', { name: 'Uniendo…' })).toBeDisabled()
+    expect(within(propuesta()).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByLabelText('Familia (opcional)')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nueva familia' })).toBeDisabled()
+  })
+
+  describe('lo que descarta una propuesta abierta', () => {
+    function selectorDeFamilia() {
+      return screen.getByLabelText('Familia (opcional)')
+    }
+
+    /** Cláusula bajo prueba: `descartarPropuestaDeUnion()` del `guardar` de una edición: la foto de la unión se calculó con los
+     * valores guardados antes, así que al guardar el artículo ya no puede confirmarse.
+     * Evidencia de mutación (mutation-proof-tests): sacar esa llamada hace fallar este test (la propuesta sigue y "Confirmar" se
+     * habilita); revertido, vuelve a verde. */
+    it('guardar el artículo con una propuesta abierta la descarta: ya no hay con qué confirmar la unión', async () => {
+      escenarioDeUnion()
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await proponerLaFamilia()
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(selectorDeFamilia()).toBeEnabled()
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Cláusula bajo prueba: `alEscribirPrecio()` de `guardarPrecio` y su cableado `descartarPropuestaDeUnion` en `Articulos`: un
+     * precio escrito cambia lo que la unión reemplazaría, así que la propuesta abierta se descarta.
+     * Evidencia de mutación (mutation-proof-tests): dejar `alEscribirPrecio` como una función vacía hace fallar este test (la
+     * propuesta sigue abierta con su foto vieja); revertido, vuelve a verde. */
+    it('escribir un precio del artículo con una propuesta abierta la descarta: ya no hay con qué confirmar la unión', async () => {
+      escenarioDeUnion()
+      await proponerLaFamilia()
+      mockearPosts({
+        '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion()),
+        '/familias/7/articulos': () => Promise.resolve(resultadoDeUnir),
+        '/articulos/1/precios': () => Promise.resolve({ idArticulo: 1, idListaPrecio: 2, precio: 1500, fecha: '2026-10-05T00:00:00Z' }),
+      })
+
+      await userEvent.click((await screen.findAllByRole('button', { name: 'Gestionar' }))[0])
+      await userEvent.type(await screen.findByLabelText('Precio'), '1500')
+      await userEvent.click(screen.getByRole('button', { name: 'Establecer ahora' }))
+
+      await waitFor(() => expect(pedidosA('/articulos/1/precios')).toHaveLength(1))
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Cláusula bajo prueba: `soltarFamiliaDelFormulario()` de `crearFamiliaDelArticulo`: crear una familia con "+" descarta la
+     * propuesta abierta, así que tras "Sacar de la familia" el selector no conserva la elección vieja y elegir esa familia
+     * vuelve a proponerla.
+     * Evidencia de mutación (mutation-proof-tests): sacar esa llamada hace fallar este test (el selector queda en "7"); revertido,
+     * vuelve a verde. */
+    it('crear una familia con "+" descarta la propuesta: tras sacar al artículo el selector vuelve a "Sin familia" y elegir la misma familia la propone', async () => {
+      const miembroUnico = [{ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno', idMarca: null, activo: true }]
+      escenarioDeUnion({
+        detalles: { 7: detalleSabores(), 50: detalleSabores({ id: 50, nombre: 'Talles', articulos: miembroUnico }) },
+      })
+      mockearPosts({
+        '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion()),
+        '/familias': () => Promise.resolve({ idFamilia: 50, nombre: 'Talles', idArticuloReferencia: 1, articulos: [] }),
+      })
+      apiDeleteMock.mockResolvedValue(undefined)
+      await proponerLaFamilia()
+
+      await anotarFamiliaNueva('Talles')
+      await screen.findByText('Familia "Talles" (1 artículo)')
+      await userEvent.click(screen.getByRole('button', { name: 'Sacar de la familia' }))
+      await userEvent.click(
+        within(screen.getByRole('group', { name: 'Confirmar salida de la familia' })).getByRole('button', { name: 'Confirmar salida' }),
+      )
+
+      await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledExactlyOnceWith('/familias/50/articulos/1'))
+      await screen.findByLabelText('Familia (opcional)')
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+
+      await elegirFamiliaEnElSelector('7')
+
+      expect(await screen.findByRole('group', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('7')
+    })
+
+    /** Cláusula bajo prueba: el descarte del detalle en `soltarFamiliaDelFormulario` (generación de `useFamiliasDelFormulario`) al
+     * guardar: el detalle tardío de la propuesta descartada no previsualiza.
+     * Evidencia de mutación (mutation-proof-tests): sacar `descartarPropuestaDeUnion()` del `guardar` hace fallar este test
+     * (el detalle tardío dispara la previsualización); revertido, vuelve a verde. */
+    it('el detalle tardío de una propuesta descartada al guardar no previsualiza ni la reabre', async () => {
+      const detalleTardio = diferida<FamiliaDetalle>()
+      escenarioDeUnion({ detalleDeFamiliaImpl: () => detalleTardio.promesa })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await screen.findByText('Cargando la familia…')
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await act(async () => {
+        detalleTardio.resolver(detalleSabores())
+      })
+
+      expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+    })
+
+    /** Cláusula bajo prueba: lo mismo para la previsualización en vuelo al guardar: su respuesta tardía no reabre la propuesta.
+     * Evidencia de mutación (mutation-proof-tests): sacar `descartarPropuestaDeUnion()` del `guardar` hace fallar este test
+     * (el selector queda en "7"); revertido, vuelve a verde. No prueba la generación de `invalidar`: quitándola también
+     * pasa, porque el grupo de la propuesta no se dibuja mientras el selector está en "Sin familia" (la mata
+     * `usePrevisualizacion.test.ts`). */
+    it('la previsualización tardía de una propuesta descartada al guardar no la reabre', async () => {
+      const fotoTardia = diferida<PrevisualizacionDeAgrupacion>()
+      escenarioDeUnion()
+      mockearPosts({ '/familias/previsualizacion': () => fotoTardia.promesa })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(1))
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await act(async () => {
+        fotoTardia.resolver(fotoDeUnion())
+      })
+
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(selectorDeFamilia()).toHaveValue('')
+      expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+    })
+
+    /** Comportamiento de punta a punta, sin cláusula propia: la foto de una propuesta descartada al guardar llega tarde, cuando el
+     * usuario ya volvió a elegir la MISMA familia (su `idFamilia` coincide, así que contaría como vigente), y nunca se muestra
+     * ni se puede confirmar. La relectura del detalle va diferida para abrir la ventana en la que la foto vieja podría quedar en
+     * el estado del hook; un observador del DOM registra si alguna vez se pintó.
+     * Evidencia de mutación (mutation-proof-tests): quitar `generacionRef.current += 1` de `invalidar` NO hace fallar este test,
+     * porque la llamada siguiente a `previsualizar` limpia el estado antes de que llegue a pintarse (observado); esa cláusula la mata
+     * `usePrevisualizacion.test.ts` ("invalidar con una solicitud en vuelo…"). */
+    it('al volver a elegir la misma familia, la previsualización tardía de la propuesta descartada no se muestra ni se confirma', async () => {
+      const fotoVieja = diferida<PrevisualizacionDeAgrupacion>()
+      const fotoNueva = diferida<PrevisualizacionDeAgrupacion>()
+      const detalleDeLaReeleccion = diferida<FamiliaDetalle>()
+      const conPrecio = (vigente: number) => ({
+        precios: [{ idListaPrecio: 2, actual: { vigente: 900, pendiente: null }, nuevo: { vigente, pendiente: null } }],
+      })
+      const [deLaVieja, deLaNueva] = [conPrecio(4321), conPrecio(5678)]
+      const fotoConPrecio = (precio: { precios: PrevisualizacionDeAgrupacion['articulos'][number]['precios'] }) =>
+        fotoDeUnion({ articulos: [{ ...fotoDeUnion().articulos[0], ...precio }] })
+      escenarioDeUnion({
+        detalleDeFamiliaImpl: (_id, llamada) => (llamada === 1 ? Promise.resolve(detalleSabores()) : detalleDeLaReeleccion.promesa),
+      })
+      let pedidasLasFotos = 0
+      mockearPosts({
+        '/familias/previsualizacion': () => (pedidasLasFotos++ === 0 ? fotoVieja.promesa : fotoNueva.promesa),
+        '/familias/7/articulos': () => Promise.resolve(resultadoDeUnir),
+      })
+      apiPutMock.mockResolvedValue(articuloFixture({ nombre: 'Articulo UnoX' }))
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(1))
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+      await guardar()
+      await screen.findByText('Artículo "Articulo UnoX" actualizado.')
+      await elegirFamiliaEnElSelector('7')
+      await waitFor(() => expect(unaFamiliaPidioSuDetalle()).toHaveLength(2))
+
+      let seMostroLaFotoVieja = false
+      const observador = new MutationObserver(() => {
+        if (/4\.321/.test(document.body.textContent ?? '')) seMostroLaFotoVieja = true
+      })
+      observador.observe(document.body, { subtree: true, childList: true, characterData: true })
+      try {
+        await act(async () => {
+          fotoVieja.resolver(fotoConPrecio(deLaVieja))
+        })
+        await act(async () => {
+          detalleDeLaReeleccion.resolver(detalleSabores())
+        })
+        await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(2))
+        await screen.findByText('Calculando qué cambia…')
+
+        expect(seMostroLaFotoVieja).toBe(false)
+        expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Confirmar y unir a la familia' })).not.toBeInTheDocument()
+
+        await act(async () => {
+          fotoNueva.resolver(fotoConPrecio(deLaNueva))
+        })
+        expect(propuesta()).toHaveTextContent(/5\.678/)
+        expect(propuesta()).not.toHaveTextContent(/4\.321/)
+        expect(seMostroLaFotoVieja).toBe(false)
+        expect(within(propuesta()).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeEnabled()
+        expect(pedidosA('/familias/7/articulos')).toHaveLength(0)
+      } finally {
+        observador.disconnect()
+      }
+    })
+  })
+
+  describe('lo que el servidor rechaza al confirmar', () => {
+    it.each([
+      ['familia_inactiva', 409, 'La familia está inactiva.', 'Activala desde el listado de familias para poder sumarle artículos.'],
+      ['familia_sin_articulos', 409, 'La familia no tiene artículos vivos.', 'Una familia sin artículos vivos no tiene referencia'],
+      ['familia_precio_inalineable', 422, 'Un precio no se puede alinear.', 'Un precio nunca se quita'],
+      ['referencia_invalida', 400, 'Una referencia ya no existe.', 'Revisá que todos los artículos existan'],
+    ])('%s: muestra el motivo con su ayuda, vuelve a "Sin familia" y no toca el artículo', async (codigo, estado, mensaje, ayuda) => {
+      escenarioDeUnion({}, () => Promise.reject(new ErrorApi(estado, codigo, mensaje)))
+      await proponerLaFamilia()
+
+      await confirmarLaUnion()
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(mensaje)
+      expect(screen.getByRole('alert')).toHaveTextContent(ayuda)
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+      expect(screen.getByLabelText('Familia (opcional)')).toBeEnabled()
+      expect(lecturasDelArticulo(1)).toBe(1)
+    })
+
+    it('404: la familia que ya no existe deja de ofrecerse', async () => {
+      escenarioDeUnion(
+        { familiasImpl: () => Promise.resolve(lecturasDeFamilias() <= 1 ? [familiaListado()] : []) },
+        () => Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe la familia 7.')),
+      )
+      await proponerLaFamilia()
+
+      await confirmarLaUnion()
+
+      await screen.findByText(/No existe la familia 7\./)
+      await waitFor(() => expect(within(screen.getByLabelText('Familia (opcional)')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin familia']))
+    })
+
+    it('articulo_en_otra_familia: vuelve a leer el artículo y avisa que su pertenencia cambió', async () => {
+      escenarioDeUnion(
+        { articuloImpl: (_id, llamada) => (llamada === 1 ? articuloFixture() : articuloFixture({ idFamilia: 7, ...compartidosDelArticulo })) },
+        () => Promise.reject(new ErrorApi(409, 'articulo_en_otra_familia', 'El artículo ya es de otra familia.')),
+      )
+      await proponerLaFamilia()
+
+      await confirmarLaUnion()
+
+      expect(
+        await screen.findByText(
+          'La pertenencia del artículo a su familia cambió desde que se cargó la pantalla. Se recargó el artículo: revisá los datos y volvé a intentar.',
+        ),
+      ).toBeInTheDocument()
+      expect(await screen.findByText('Familia "Sabores" (3 artículos)')).toBeInTheDocument()
+    })
+
+    /** Cláusula bajo prueba: `setErrorDeUnion('')` de `soltarFamiliaDelFormulario` (react-async-state regla 16): el rechazo
+     * anterior no queda en pantalla mientras se pide la previsualización siguiente.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+    it('volver a elegir una familia saca de pantalla el rechazo anterior mientras se previsualiza', async () => {
+      escenarioDeUnion({}, () => Promise.reject(new ErrorApi(409, 'familia_inactiva', 'La familia está inactiva.')))
+      await proponerLaFamilia()
+      await confirmarLaUnion()
+      await screen.findByText(/La familia está inactiva\./)
+      mockearPosts({ '/familias/previsualizacion': () => new Promise(() => {}) })
+
+      await elegirFamiliaEnElSelector('7')
+
+      await waitFor(() => expect(pedidosA('/familias/previsualizacion')).toHaveLength(2))
+      expect(screen.queryByText(/La familia está inactiva\./)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('lo que pasa antes de poder confirmar', () => {
+    it('una familia que el detalle dice inactiva no se previsualiza: se explica y se vuelve a "Sin familia"', async () => {
+      escenarioDeUnion({ detalles: { 7: detalleSabores({ activo: false }) } })
+      await abrirEdicion(1, 'A0001')
+
+      await elegirFamiliaEnElSelector('7')
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('La familia "Sabores" está inactiva: no se le pueden agregar artículos.')
+      expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+      expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+    })
+
+    it('una familia sin referencia no se previsualiza', async () => {
+      escenarioDeUnion({ detalles: { 7: detalleSabores({ articulos: [], valores: null }) } })
+      await abrirEdicion(1, 'A0001')
+
+      await elegirFamiliaEnElSelector('7')
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('no tiene artículos vivos')
+      expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+    })
+
+    it('si el detalle de la familia no carga lo dice y "Reintentar" lo vuelve a pedir', async () => {
+      let lecturas = 0
+      escenarioDeUnion({
+        detalleDeFamiliaImpl: () =>
+          ++lecturas === 1 ? Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó la familia.')) : Promise.resolve(detalleSabores()),
+      })
+      await abrirEdicion(1, 'A0001')
+      await elegirFamiliaEnElSelector('7')
+      expect(await screen.findByText('Se cayó la familia.')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+      expect(await screen.findByRole('group', { name: 'Unir el artículo a la familia' })).toBeInTheDocument()
+      expect(screen.queryByText('Se cayó la familia.')).not.toBeInTheDocument()
+    })
+
+    it('si la previsualización falla lo dice y se puede cancelar', async () => {
+      escenarioDeUnion()
+      mockearPosts({ '/familias/previsualizacion': () => Promise.reject(new TypeError('Failed to fetch')) })
+      await abrirEdicion(1, 'A0001')
+
+      await elegirFamiliaEnElSelector('7')
+
+      const aviso = await screen.findByText('No se pudo previsualizar la agrupación.')
+      await userEvent.click(within(aviso.closest('.alert') as HTMLElement).getByRole('button', { name: 'Cancelar' }))
+      expect(screen.getByLabelText('Familia (opcional)')).toHaveValue('')
+    })
+
+    /** Cláusula bajo prueba: `previsualizacionDeUnionVigente` en la vista: la referencia que el servidor ve ya no está en
+     * la familia elegida.
+   * Evidencia de mutación (mutation-proof-tests): quitar la cláusula hace fallar este test; revertido, vuelve a verde. */
+    it('si el servidor ve la referencia en otra familia, avisa y no deja confirmar', async () => {
+      escenarioDeUnion()
+      mockearPosts({ '/familias/previsualizacion': () => Promise.resolve(fotoDeUnion({ idFamilia: 99 })) })
+
+      const grupo = await proponerLaFamilia()
+
+      expect(grupo).toHaveTextContent('La familia cambió desde que se la eligió.')
+      expect(within(grupo).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeDisabled()
+    })
+
+    it('con cambios sin guardar durante la propuesta no se puede confirmar, pero sí cancelar', async () => {
+      escenarioDeUnion()
+      const grupo = await proponerLaFamilia()
+
+      await userEvent.type(screen.getByLabelText('Nombre'), 'X')
+
+      expect(within(grupo).getByRole('button', { name: 'Confirmar y unir a la familia' })).toBeDisabled()
+      expect(screen.getByLabelText('Familia (opcional)')).toBeDisabled()
+      expect(within(grupo).getByRole('button', { name: 'Cancelar' })).toBeEnabled()
+    })
+  })
+
+  describe('un alta con una familia existente sigue como antes', () => {
+    it('elegirla en un alta no previsualiza ni escribe: prellena y bloquea los quince campos', async () => {
+      mockearApi({ familias: [familiaListado()], detalles: { 7: detalleSabores() } })
+      mockearPosts({})
+
+      await abrirAltaEnLaFamilia()
+
+      expect(pedidosA('/familias/previsualizacion')).toHaveLength(0)
+      expect(screen.queryByRole('group', { name: 'Unir el artículo a la familia' })).not.toBeInTheDocument()
+      expect(screen.getAllByText('(de la familia)').length).toBeGreaterThan(0)
+      expect(screen.getByLabelText(/^Costo de lista con IVA/)).toBeDisabled()
+    })
   })
 })

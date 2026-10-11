@@ -10,7 +10,7 @@ import type {
 } from '../../api/tipos'
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
-import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario } from './familia'
+import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario, EstadoDeUnionAFamilia } from './familia'
 import { FormularioArticulo, type CodigoDeProveedorDelFormulario, type Formulario } from './FormularioArticulo'
 
 export type PropsDeModalDeArticulo = {
@@ -46,6 +46,9 @@ export type PropsDeModalDeArticulo = {
   listasPrecio: ListaPrecioListado[]
   familia: EstadoDeFamiliaDelFormulario
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
+  union: EstadoDeUnionAFamilia
+  errorDeFamiliaNueva: string
+  sinGuardar: boolean
   preguntaDeAlcanceAbierta: boolean
   /** Solo en un alta abierta desde una compra: el código con el que el proveedor habitual conoce al artículo. */
   codigoProveedor?: CodigoDeProveedorDelFormulario
@@ -96,6 +99,9 @@ export function ModalDeArticulo({
   listasPrecio,
   familia,
   accionesDeFamilia,
+  union,
+  errorDeFamiliaNueva,
+  sinGuardar,
   preguntaDeAlcanceAbierta,
   codigoProveedor,
   focoDeReserva,
@@ -156,6 +162,9 @@ export function ModalDeArticulo({
             bloqueadoPorCatalogos={bloqueadoPorCatalogos}
             familia={familia}
             accionesDeFamilia={accionesDeFamilia}
+            union={union}
+            errorDeFamiliaNueva={errorDeFamiliaNueva}
+            sinGuardar={sinGuardar}
             preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
             codigoProveedor={codigoProveedor}
             onCambio={onCambio}

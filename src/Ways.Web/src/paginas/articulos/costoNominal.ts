@@ -113,12 +113,20 @@ export function entradasDeCosto(f: CostoGuardado, alicuotas: readonly AlicuotaIv
 }
 
 /**
- * El costo nominal que muestra el formulario. Quien no ve los costos no recibe ninguno y no se le calcula. Con un
- * artículo cargado cuyas entradas no cambiaron se muestra el guardado (puede ser el de una compra); en un alta o
- * apenas cambia una entrada, el que daría el servidor al guardar.
+ * El costo nominal que muestra el formulario. Quien no ve los costos no recibe ninguno y no se le calcula. Con el alta
+ * bloqueada a los valores de una familia (`bloqueadoPorFamilia`) se muestra el `costoNominal` del formulario: el de la
+ * referencia de la familia una vez aplicados sus valores (puede ser el efectivo de una compra, y es el que el servidor
+ * guarda), y mientras esos valores no llegaron, el que el formulario ya tuviera (vacío en un alta recién abierta).
+ * Con un artículo cargado cuyas entradas no cambiaron se muestra el guardado; en un alta sin familia o apenas cambia
+ * una entrada, el que daría el servidor al guardar.
  */
-export function costoNominalDelFormulario(f: Formulario, alicuotas: readonly AlicuotaIvaListado[]): number | null {
+export function costoNominalDelFormulario(
+  f: Formulario,
+  alicuotas: readonly AlicuotaIvaListado[],
+  bloqueadoPorFamilia: boolean,
+): number | null {
   if (f.costosOcultos) return null
+  if (bloqueadoPorFamilia) return numeroOVacio(f.costoNominal)
 
   const actual = entradasDeCosto(f, alicuotas)
   if (f.costoGuardado !== null && !cambiaAlgunaEntrada(entradasDeCosto(f.costoGuardado, alicuotas), actual)) {
