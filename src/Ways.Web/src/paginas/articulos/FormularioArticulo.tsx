@@ -352,7 +352,7 @@ export function FormularioArticulo({
     valor.costoListaIncluyeIva,
     porcentajeIva,
   )
-  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva)
+  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia)
   const bultoSinUnidadesPorBulto = bultoSinUnidades(
     valor.costoListaPor,
     valor.unidadesPorBulto.trim() === '' ? null : Number(valor.unidadesPorBulto),
@@ -395,7 +395,6 @@ export function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bultoSinUnidadesPorBulto) return
           onGuardar()
         }}
       >
@@ -690,95 +689,100 @@ export function FormularioArticulo({
             </select>
           </div>
 
-          <div className="col-12">
-            <strong className="text-muted small text-uppercase">Costos</strong>
-          </div>
-
-          <div className="col-md-3">
-            <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
-              Costo de lista sin IVA
-            </Etiqueta>
-            <CampoImporte
-              id="art-costo-lista-sin-iva"
-              className="form-control"
-              valor={costoDeLista.sinIva}
-              disabled={bloqueoDeFamilia}
-              onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
-            />
-          </div>
-
-          <div className="col-md-3">
-            <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
-              Costo de lista con IVA
-            </Etiqueta>
-            <CampoImporte
-              id="art-costo-lista-con-iva"
-              className="form-control"
-              valor={costoDeLista.conIva}
-              disabled={bloqueoDeFamilia}
-              onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
-            />
-          </div>
-
-          <div className="col-md-2">
-            <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
-              Costo por
-            </Etiqueta>
-            <select
-              id="art-costo-lista-por"
-              className="form-select"
-              value={valor.costoListaPor}
-              disabled={bloqueoDeFamilia}
-              onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
-            >
-              {COSTOS_LISTA_POR.map((c) => (
-                <option key={c.valor} value={c.valor}>
-                  {c.etiqueta}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-md-2">
-            <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
-              Descuento de proveedor (%)
-            </Etiqueta>
-            <input
-              id="art-descuento-proveedor"
-              type="number"
-              step="0.01"
-              min="0"
-              className="form-control"
-              value={valor.descuentoProveedor}
-              disabled={bloqueoDeFamilia}
-              onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
-            />
-          </div>
-
-          <div className="col-md-2">
-            <label className="form-label" htmlFor="art-costo-nominal">
-              Costo nominal
-            </label>
-            <input
-              id="art-costo-nominal"
-              className="form-control text-end"
-              readOnly
-              value={formatearImporte(costoNominal)}
-            />
-          </div>
-
-          <div className="col-12">
-            <div className="form-text mt-0">
-              El costo nominal es el costo por unidad con IVA y descuento aplicados. Se calcula al guardar; una compra
-              confirmada lo actualiza.
+          {/* Quien no ve los costos no recibe ninguno: no se le ofrece cargarlos. */}
+          {!valor.costosOcultos && (
+            <>
+            <div className="col-12">
+              <strong className="text-muted small text-uppercase">Costos</strong>
             </div>
-            {bultoSinUnidadesPorBulto && (
-              <div id="art-costo-bulto-error" className="text-danger small mt-1" role="alert">
-                Un costo por bulto necesita las unidades por bulto: completá "Unidades por bulto" con un valor mayor que
-                cero.
+
+            <div className="col-md-3">
+              <Etiqueta htmlFor="art-costo-lista-sin-iva" deFamilia={bloqueoDeFamilia}>
+                Costo de lista sin IVA
+              </Etiqueta>
+              <CampoImporte
+                id="art-costo-lista-sin-iva"
+                className="form-control"
+                valor={costoDeLista.sinIva}
+                disabled={bloqueoDeFamilia}
+                onChange={(n) => cargarCostoDeLista(n, false, costoDeLista.sinIva)}
+              />
+            </div>
+
+            <div className="col-md-3">
+              <Etiqueta htmlFor="art-costo-lista-con-iva" deFamilia={bloqueoDeFamilia}>
+                Costo de lista con IVA
+              </Etiqueta>
+              <CampoImporte
+                id="art-costo-lista-con-iva"
+                className="form-control"
+                valor={costoDeLista.conIva}
+                disabled={bloqueoDeFamilia}
+                onChange={(n) => cargarCostoDeLista(n, true, costoDeLista.conIva)}
+              />
+            </div>
+
+            <div className="col-md-2">
+              <Etiqueta htmlFor="art-costo-lista-por" deFamilia={bloqueoDeFamilia}>
+                Costo por
+              </Etiqueta>
+              <select
+                id="art-costo-lista-por"
+                className="form-select"
+                value={valor.costoListaPor}
+                disabled={bloqueoDeFamilia}
+                onChange={(e) => onCambio({ ...valor, costoListaPor: e.target.value as CostoListaPor })}
+              >
+                {COSTOS_LISTA_POR.map((c) => (
+                  <option key={c.valor} value={c.valor}>
+                    {c.etiqueta}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-md-2">
+              <Etiqueta htmlFor="art-descuento-proveedor" deFamilia={bloqueoDeFamilia}>
+                Descuento de proveedor (%)
+              </Etiqueta>
+              <input
+                id="art-descuento-proveedor"
+                type="number"
+                step="0.01"
+                min="0"
+                className="form-control"
+                value={valor.descuentoProveedor}
+                disabled={bloqueoDeFamilia}
+                onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
+              />
+            </div>
+
+            <div className="col-md-2">
+              <label className="form-label" htmlFor="art-costo-nominal">
+                Costo nominal
+              </label>
+              <input
+                id="art-costo-nominal"
+                className="form-control text-end"
+                readOnly
+                value={formatearImporte(costoNominal)}
+              />
+            </div>
+
+            <div className="col-12">
+              <div className="form-text mt-0">
+                El costo nominal es el costo por unidad con IVA y descuento aplicados. Se calcula al guardar; una compra
+                confirmada lo actualiza.
               </div>
-            )}
-          </div>
+              {bultoSinUnidadesPorBulto && (
+                <div id="art-costo-bulto-error" className="text-danger small mt-1" role="alert">
+                  Un costo por bulto necesita las unidades por bulto: completá "Unidades por bulto" con un valor mayor que
+                  cero.
+                </div>
+              )}
+            </div>
+            </>
+          )}
 
           <div className="col-12">
             <strong className="text-muted small text-uppercase">Disponibilidad</strong>
