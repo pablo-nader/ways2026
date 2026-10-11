@@ -169,7 +169,7 @@ function PantallaConsultaPrecios() {
       if (generacionRef.current !== generacion) return
 
       const idEmpresa = puntoVentaSeleccionado.idEmpresa
-      const [resolucion] = await clienteDeOfertas.resolver([{ idArticulo: articulo.idArticulo, idEmpresa, idListaPrecio, cantidad: 1 }])
+      const [resolucion] = await clienteDeOfertas.resolver([{ idArticulo: articulo.idArticulo, idEmpresa, idListaPrecio, cantidad: 1 }], 'PorLinea')
       if (generacionRef.current !== generacion) return
 
       setResultado(aResultadoDeConsulta(articulo, resolucion))

@@ -831,7 +831,7 @@ public class ServicioDeRemitos(
         var lineasDeResolucion = lineas
             .Select(l => new LineaDeResolucion(l.IdArticulo, idEmpresa, idListaPrecio, l.Cantidad))
             .ToList();
-        var resolucion = await servicioDeOfertas.ResolverAsync(lineasDeResolucion, momento, ct);
+        var resolucion = await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct);
 
         var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
         var articuloPorId = await db.Articulos

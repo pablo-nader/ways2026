@@ -992,6 +992,11 @@ export type ArticuloEscaneado = {
   unidadVenta?: UnidadVenta
 }
 
+/** Cómo el servidor interpreta el lote de `POST /api/ofertas/resolver` (espejo de
+ * `AgregacionDeResolucion`): `Documento` suma las cantidades de una familia entre líneas (el carrito);
+ * `PorLinea` resuelve cada línea por separado (vista previa de búsquedas y consulta de precio). */
+export type AgregacionDeResolucion = 'Documento' | 'PorLinea'
+
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
 export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
 
@@ -1032,6 +1037,21 @@ export type EscalonDeCantidad = {
   aplicadas: OfertaAplicada[]
 }
 
+/**
+ * Una celda de la grilla de familia — espejo de `EscalonDeFamilia`. Con `cantidadDeFamiliaDesde`
+ * unidades de la familia en el carrito y `cantidadDesde` del propio artículo, la línea resuelve a
+ * estos valores. Existe porque `escalones` solo describe la diagonal "la familia crece con el
+ * artículo": cuando la cantidad de la familia viene de OTROS artículos hace falta esta grilla. Al
+ * igual que el escalón, no trae `precioOriginal`.
+ */
+export type EscalonDeFamilia = {
+  cantidadDeFamiliaDesde: number
+  cantidadDesde: number
+  precioFinal: number
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+}
+
 /** Precio de un artículo en UNA lista — espejo de `PrecioDeListaDeInstantanea`. */
 export type PrecioDeListaDeInstantanea = {
   idListaPrecio: number
@@ -1043,6 +1063,9 @@ export type PrecioDeListaDeInstantanea = {
    * `cantidadDesde > 1` — nunca incluyen la entrada de cantidad 1, que es el precio plano de
    * arriba. Ausente/`null` significa que el precio plano rige a toda cantidad. */
   escalones?: EscalonDeCantidad[] | null
+  /** Grilla de ofertas de familia con cantidad mínima. Ausente/`null` — también en una instantánea
+   * guardada antes de que existiera — significa que ninguna llega al artículo y rige `escalones`. */
+  escalonesDeFamilia?: EscalonDeFamilia[] | null
 }
 
 /** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Un artículo sin
@@ -1061,6 +1084,9 @@ export type ArticuloDeInstantanea = {
   preciosPorLista: PrecioDeListaDeInstantanea[]
   /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
   acumulaEnVenta?: boolean
+  /** Familia del artículo; ausente/`null` si no tiene, o en una instantánea guardada antes de que
+   * existiera el campo (el carrito no suma nada para esa línea). */
+  idFamilia?: number | null
 }
 
 /** Un cliente visible para el punto de venta — espejo de `ClienteDeInstantanea`. `idListaPrecio`

@@ -15,6 +15,7 @@ using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Stock;
@@ -272,6 +273,61 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var (cantidadOtro, _) = await LeerStockYSaldoAsync(ctx, idOtro, idCliente);
         Assert.Equal(-2m, cantidadRepetido);
         Assert.Equal(-1m, cantidadOtro);
+    }
+
+    /// <summary>Cláusula: la <c>cantidad_minima</c> de una oferta de familia se suma entre las
+    /// líneas de la familia. Dos alfajores distintos de una misma familia (uno cada uno) completan
+    /// el mínimo 2 y ambos ítems persisten el descuento; un tercer artículo sin familia no suma.</summary>
+    [Fact]
+    public async Task DosArticulosDeUnaFamiliaCompletanLaCantidadMinimaDeLaOfertaDeFamiliaYPersistenElDescuento()
+    {
+        var ctx = await PrepararAsync(nameof(DosArticulosDeUnaFamiliaCompletanLaCantidadMinimaDeLaOfertaDeFamiliaYPersistenElDescuento));
+        var idAlfajorA = await SembrarArticuloConPrecioAsync(ctx, "alfajor-a", 2000m);
+        var idAlfajorB = await SembrarArticuloConPrecioAsync(ctx, "alfajor-b", 2000m);
+        var idSuelto = await SembrarArticuloConPrecioAsync(ctx, "suelto", 2000m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Familia", limiteCredito: 1000m);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var familia = new Familia { IdTenant = ctx.IdTenant, Nombre = "Alfajores", CreatedAt = ahora, UpdatedAt = ahora };
+            db.Familias.Add(familia);
+            await db.SaveChangesAsync();
+
+            foreach (var articulo in await db.Articulos.Where(a => a.Id == idAlfajorA || a.Id == idAlfajorB).ToListAsync())
+            {
+                articulo.IdFamilia = familia.Id;
+            }
+
+            db.Ofertas.Add(new Oferta
+            {
+                IdTenant = ctx.IdTenant, Nombre = "2 x 3500", IdFamilia = familia.Id, PrecioUnitario = 1750m,
+                CantidadMinima = 2m, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idAlfajorA, 1m, null), new LineaDeVenta(idAlfajorB, 1m, null), new LineaDeVenta(idSuelto, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 5500m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        Assert.Equal(5500m, emitido.Total);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var persistidos = await lectura.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == emitido.Id)
+            .OrderBy(i => i.Orden)
+            .Select(i => new { i.IdArticulo, i.Descuento })
+            .ToListAsync();
+        Assert.Equal(
+            [(idAlfajorA, 250m), (idAlfajorB, 250m), (idSuelto, 0m)],
+            persistidos.Select(i => (i.IdArticulo!.Value, i.Descuento)).ToList());
     }
 
     // ---- doc 10 §3: EsProducto = false (servicio) no toca stock -------------------------------

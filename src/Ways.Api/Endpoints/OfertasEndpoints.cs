@@ -49,7 +49,7 @@ public static class OfertasEndpoints
         // POS necesita resolver precios sin ser admin, cierra el carryover de verify de la
         // etapa 4.
         grupo.MapPost("/resolver", (ServicioDeOfertas servicio, SolicitudDeResolucion solicitud, CancellationToken ct) =>
-            servicio.ResolverAsync(solicitud.Lineas, solicitud.Momento, ct))
+            servicio.ResolverSolicitudAsync(solicitud, ct))
         .WithSummary("POST, no muta nada: resuelve precio final y ofertas aplicadas para un lote de líneas.");
 
         return app;

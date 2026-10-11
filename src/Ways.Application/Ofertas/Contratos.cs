@@ -100,7 +100,23 @@ public sealed record LineaDeResolucion(int IdArticulo, int? IdEmpresa, int IdLis
 /// <c>SetsRequiredMembers</c>: la clave "lineas" ausente o explícitamente <c>null</c> deserializa
 /// igual, así que <c>ServicioDeOfertas.ResolverAsync</c> es quien distingue ese caso (400
 /// <c>lineas_requeridas</c>) de un lote vacío legítimo (<c>[]</c> ⇒ resultado vacío).</summary>
-public sealed record SolicitudDeResolucion(IReadOnlyList<LineaDeResolucion>? Lineas, DateTimeOffset? Momento = null);
+public sealed record SolicitudDeResolucion(
+    IReadOnlyList<LineaDeResolucion>? Lineas,
+    DateTimeOffset? Momento = null,
+    AgregacionDeResolucion Agregacion = AgregacionDeResolucion.Documento);
+
+/// <summary>Cómo se interpreta el lote de <see cref="SolicitudDeResolucion"/>. El valor por omisión
+/// es <see cref="Documento"/> porque los POS ya instalados envían su carrito sin este campo.</summary>
+public enum AgregacionDeResolucion
+{
+    /// <summary>El lote es un documento: las ofertas de familia comparan su cantidad mínima contra
+    /// la suma de las cantidades de la familia en todo el lote (carrito, venta).</summary>
+    Documento = 0,
+
+    /// <summary>Cada línea es una consulta independiente a su propia cantidad: nada se suma entre
+    /// líneas (vista previa de un resultado de búsqueda, consulta de precio).</summary>
+    PorLinea = 1,
+}
 
 /// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>.</summary>
 public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal DescuentoUnitario);
@@ -130,10 +146,24 @@ public sealed record EscalonDeCantidad(
     decimal DescuentoUnitario,
     IReadOnlyList<OfertaAplicadaDto> Aplicadas);
 
+/// <summary>Una celda de la grilla de familia, forma HTTP de <c>Ways.Domain.Ofertas.CeldaDeFamilia</c>:
+/// con <see cref="CantidadDeFamiliaDesde"/> unidades de la familia en el carrito y
+/// <see cref="CantidadDesde"/> del propio artículo, la línea resuelve a estos valores. Igual que
+/// <see cref="EscalonDeCantidad"/>, no repite <c>PrecioOriginal</c>.</summary>
+public sealed record EscalonDeFamilia(
+    decimal CantidadDeFamiliaDesde,
+    decimal CantidadDesde,
+    decimal PrecioFinal,
+    decimal DescuentoUnitario,
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+
 /// <summary>El <see cref="Resultado"/> de siempre (la resolución a la cantidad pedida, byte por
 /// byte lo que devuelve <c>ServicioDeOfertas.ResolverAsync</c>) más la curva de precio por
 /// cantidad POR ENCIMA de esa cantidad. <see cref="Escalones"/> vacío ⇒ la línea no tiene ningún
-/// escalón: el resultado plano aplica a cualquier cantidad.</summary>
+/// escalón: el resultado plano aplica a cualquier cantidad. <see cref="EscalonesDeFamilia"/> es la
+/// grilla para cuando la cantidad de la familia viene de otros artículos; <c>null</c> ⇒ ninguna
+/// oferta de familia con cantidad mínima llega a la línea.</summary>
 public sealed record ResultadoDeResolucionConEscalones(
     ResultadoDeResolucion Resultado,
-    IReadOnlyList<EscalonDeCantidad> Escalones);
+    IReadOnlyList<EscalonDeCantidad> Escalones,
+    IReadOnlyList<EscalonDeFamilia>? EscalonesDeFamilia = null);
