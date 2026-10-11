@@ -3,6 +3,7 @@ import {
   calcularAjusteManual,
   calcularTotalesDeLinea,
   formatearPorcentajeDeAjuste,
+  formatearPorcentajeDeAjusteConSigno,
   mensajeDeRechazoDeAjusteManual,
   mensajeDeRechazoDeAjusteManualAlDrenar,
   rotuloDeAjusteManual,
@@ -211,43 +212,59 @@ describe('rótulos y formato del porcentaje', () => {
   })
 })
 
+describe('formatearPorcentajeDeAjusteConSigno', () => {
+  it('el descuento lleva el menos y el recargo no lleva más, con coma y sin ceros de relleno', () => {
+    expect(formatearPorcentajeDeAjusteConSigno(-10)).toBe('-10')
+    expect(formatearPorcentajeDeAjusteConSigno(15)).toBe('15')
+    expect(formatearPorcentajeDeAjusteConSigno(12.5)).toBe('12,5')
+    expect(formatearPorcentajeDeAjusteConSigno(-0.25)).toBe('-0,25')
+    expect(formatearPorcentajeDeAjusteConSigno(-100)).toBe('-100')
+  })
+
+  it('lo que formatea vuelve a validarse como el mismo porcentaje', () => {
+    for (const porcentaje of [-100, -33.33, -0.01, 0.01, 12.5, 100]) {
+      expect(validarPorcentajeDeAjuste(formatearPorcentajeDeAjusteConSigno(porcentaje))).toEqual({ ok: true, porcentaje })
+    }
+  })
+})
+
 describe('validarPorcentajeDeAjuste', () => {
-  it('un descuento devuelve la magnitud en negativo y un recargo en positivo', () => {
-    expect(validarPorcentajeDeAjuste('10', 'descuento')).toEqual({ ok: true, porcentaje: -10 })
-    expect(validarPorcentajeDeAjuste('10', 'recargo')).toEqual({ ok: true, porcentaje: 10 })
+  it('sin signo o con más es un recargo y con menos es un descuento', () => {
+    expect(validarPorcentajeDeAjuste('10')).toEqual({ ok: true, porcentaje: 10 })
+    expect(validarPorcentajeDeAjuste('+10')).toEqual({ ok: true, porcentaje: 10 })
+    expect(validarPorcentajeDeAjuste('-10')).toEqual({ ok: true, porcentaje: -10 })
   })
 
   it('acepta coma o punto decimal, hasta 2 decimales, y recorta los espacios', () => {
-    expect(validarPorcentajeDeAjuste('12,5', 'recargo')).toEqual({ ok: true, porcentaje: 12.5 })
-    expect(validarPorcentajeDeAjuste('12.5', 'descuento')).toEqual({ ok: true, porcentaje: -12.5 })
-    expect(validarPorcentajeDeAjuste('0,01', 'recargo')).toEqual({ ok: true, porcentaje: 0.01 })
-    expect(validarPorcentajeDeAjuste('  33,33 ', 'descuento')).toEqual({ ok: true, porcentaje: -33.33 })
+    expect(validarPorcentajeDeAjuste('12,5')).toEqual({ ok: true, porcentaje: 12.5 })
+    expect(validarPorcentajeDeAjuste('-12.5')).toEqual({ ok: true, porcentaje: -12.5 })
+    expect(validarPorcentajeDeAjuste('0,01')).toEqual({ ok: true, porcentaje: 0.01 })
+    expect(validarPorcentajeDeAjuste('  -33,33 ')).toEqual({ ok: true, porcentaje: -33.33 })
   })
 
-  it('el tope es 100 inclusive', () => {
-    expect(validarPorcentajeDeAjuste('100', 'descuento')).toEqual({ ok: true, porcentaje: -100 })
-    expect(validarPorcentajeDeAjuste('100,00', 'recargo')).toEqual({ ok: true, porcentaje: 100 })
+  it('el tope es 100 inclusive, con ambos signos', () => {
+    expect(validarPorcentajeDeAjuste('-100')).toEqual({ ok: true, porcentaje: -100 })
+    expect(validarPorcentajeDeAjuste('100,00')).toEqual({ ok: true, porcentaje: 100 })
+    expect(validarPorcentajeDeAjuste('+100')).toEqual({ ok: true, porcentaje: 100 })
   })
 
-  it('vacío pide el porcentaje', () => {
-    expect(validarPorcentajeDeAjuste('', 'descuento')).toEqual({ ok: false, mensaje: 'Ingresá el porcentaje del ajuste.' })
-    expect(validarPorcentajeDeAjuste('   ', 'recargo')).toEqual({ ok: false, mensaje: 'Ingresá el porcentaje del ajuste.' })
+  it.each(['', '   ', '0', '-0', '+0', '0,00', '0.0', '-0,00'])('%j quita el ajuste (vacío o cero)', (texto) => {
+    expect(validarPorcentajeDeAjuste(texto)).toEqual({ ok: true, porcentaje: null })
   })
 
-  it.each(['abc', '-10', '+10', '10,555', '10,', ',5', '1e1', '10 %', '1.000', '1,5,5'])(
-    'rechaza por formato %j (el signo lo da el selector; hasta 2 decimales)',
+  it.each(['abc', '-', '+', '--5', '+-5', '- 5', '10,555', '10,', ',5', '1e1', '10 %', '1.000', '1,5,5'])(
+    'rechaza por formato %j',
     (texto) => {
-      const resultado = validarPorcentajeDeAjuste(texto, 'descuento')
-      expect(resultado).toEqual({
+      expect(validarPorcentajeDeAjuste(texto)).toEqual({
         ok: false,
-        mensaje: 'Ingresá el porcentaje sin signo y con hasta 2 decimales (por ejemplo 10 o 12,5).',
+        mensaje:
+          'Ingresá el porcentaje con hasta 2 decimales: negativo para descuento, positivo para recargo (por ejemplo -10 o 12,5).',
       })
     },
   )
 
-  it.each(['0', '0,00', '0.0', '101', '100,01', '999'])('rechaza por rango %j (mayor que 0 y como máximo 100)', (texto) => {
-    const resultado = validarPorcentajeDeAjuste(texto, 'recargo')
-    expect(resultado).toEqual({ ok: false, mensaje: 'El porcentaje debe ser mayor que 0 y como máximo 100.' })
+  it.each(['101', '-101', '100,01', '-100,01', '999'])('rechaza por rango %j (como máximo 100 en valor absoluto)', (texto) => {
+    expect(validarPorcentajeDeAjuste(texto)).toEqual({ ok: false, mensaje: 'El porcentaje debe estar entre -100 y 100.' })
   })
 })
 
