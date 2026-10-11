@@ -56,7 +56,7 @@ resolved prices; no release needed), precedence by specificity, `activo = false`
 Created 2026-10-10. Branch `pnader/ofertas-por-familia`.
 
 - O1 implemented — commit `87ec0041` (28 files; +966/−52 outside the generated migration
-  files). Migration `20261010191731_OfertasPorFamilia`, exactly the approved model. Contract:
+  files). Migration `20261011024117_OfertasPorFamilia`, exactly the approved model. Contract:
   `idFamilia` on `OfertaListado`/`AltaOferta`/`EdicionOferta`; 400 `oferta_alcance_invalido`
   ("…exactamente un artículo, grupo, categoría o familia."); 400 `referencia_invalida` for a
   missing/soft-deleted/other-tenant familia; `DELETE /api/familias/{id}` → 409 `familia_en_uso`
@@ -110,6 +110,21 @@ Created 2026-10-10. Branch `pnader/ofertas-por-familia`.
   flashes while familias are still loading; `textoAlcance` fix has no test of its own; grupo
   and categoría selects have the same orphan-option gap (pre-existing).
 - Verdict: APPROVED for both slices, pending only the owner's delivery decision.
+- Delivery authorized by the owner 2026-10-10 ("si, dale y autocompletalos todos"): four PRs
+  stacked to main with auto-merge. main had moved (#357, #358, #359), so the work was rebuilt
+  by cherry-pick onto `a8be9491` as `pnader/familia-desde-articulo-backend`,
+  `pnader/familia-desde-articulo-web`, `pnader/ofertas-por-familia-backend`,
+  `pnader/ofertas-por-familia-web`. Changes relative to the judged code: `AltaArticulo` keeps
+  main's `CostoListaPor`/`CostoListaIncluyeIva` and then `NombreFamiliaNueva` last; the test
+  helper in `ArticulosAltaConFamiliaNuevaTests.cs` adapted to #359 (no `CostoNominal` on the
+  alta); migration regenerated on main's model as `20261011024117_OfertasPorFamilia` with
+  identical Up/Down (`has-pending-model-changes`: none). NOT re-judged after the rebase.
+  Observed on the final tip (writer): build 0 errors on all four tips; Domain 1077;
+  Application 779; FULL integration 3142/3142; `npx oxlint --quiet` clean; full
+  `npx vitest run` 163 files / 4039 tests.
+- Known after the rebase: #359 made the backend compare 15 shared familia fields while the
+  web still models 13 ("trece campos" copy, incl. the new join warning); main's own web
+  slice has to close that.
 - Product note raised to the owner: with OD4 strict, a familia that ever had an oferta
   (even a soft-deleted one) can never be dissolved.
 
