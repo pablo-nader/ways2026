@@ -357,6 +357,30 @@ export type SitioPublico = {
   admiteUsuario: boolean
 }
 
+/** Un punto de venta activo tal como lo muestra la landing (`GET /api/publico/vitrina`). */
+export type SucursalPublica = {
+  nombre: string
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
+/** La vitrina publicada de un comercio, sin sesión. `tema` llega como texto y la landing lo reduce
+ * a `claro`/`oscuro`; `logoVersion` solo rompe la caché del `<img>` cuando se sube otro logo. */
+export type VitrinaPublica = {
+  nombre: string
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: string
+  tieneLogo: boolean
+  logoVersion: number | null
+  sucursales: SucursalPublica[]
+}
+
 /** Dominio propio de un tenant (`GET /api/plataforma/tenants/{id}/dominios`). `verificadoEn` es
  * `null` hasta que la plataforma lo marca: un dominio sin verificar todavía no resuelve. */
 export type DominioListado = {

@@ -1,0 +1,396 @@
+/*
+ * Páginas públicas del comercio (landing y tienda). Lenguaje de los carteles de Ways: Bricolage
+ * Grotesque en mayúsculas para los titulares, barras de acento, casi negro y blanco. El acento
+ * (`--vitrina-acento`) lo pone el comercio; el texto sobre el acento es siempre casi negro.
+ */
+
+.publico {
+  --pub-tinta: #121212;
+  --pub-acento: var(--vitrina-acento, #f7991c);
+  --pub-fuente-titulo: 'Bricolage Grotesque', var(--ways-fuente);
+  --pub-ancho: 1100px;
+
+  min-height: 100vh;
+  background: var(--pub-fondo);
+  color: var(--pub-texto);
+  font-family: var(--ways-fuente);
+  line-height: 1.5;
+}
+
+[data-bs-theme='dark'] .publico {
+  --pub-fondo: #121212;
+  --pub-panel: #1d1d1f;
+  --pub-texto: #ffffff;
+  --pub-secundario: #c4c5c9;
+  --pub-borde: #3a3a3e;
+}
+
+[data-bs-theme='light'] .publico {
+  --pub-fondo: #ffffff;
+  --pub-panel: #f2f1ec;
+  --pub-texto: #121212;
+  --pub-secundario: #5a5a60;
+  --pub-borde: #cfcec8;
+}
+
+.publico a:focus-visible,
+.publico button:focus-visible {
+  outline: 3px solid var(--pub-texto);
+  outline-offset: 3px;
+}
+
+.publico-pagina {
+  max-width: var(--pub-ancho);
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.publico-titulo {
+  font-family: var(--pub-fuente-titulo);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.045em;
+  line-height: 0.86;
+  font-variation-settings: 'opsz' 96;
+  overflow-wrap: anywhere;
+}
+
+/* Cabecera */
+
+.publico-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--pub-borde);
+}
+
+.publico-cabecera-marca {
+  color: var(--pub-texto);
+  text-decoration: none;
+  min-width: 0;
+}
+
+.publico-logo {
+  display: block;
+  max-height: 44px;
+  max-width: 55vw;
+  object-fit: contain;
+}
+
+.publico-cabecera-nombre {
+  display: block;
+  font-size: 1.6rem;
+}
+
+.publico-cabecera-acciones {
+  flex-shrink: 0;
+}
+
+/* Botones */
+
+.publico-boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 24px;
+  border: 2px solid transparent;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.publico-boton-chico {
+  min-height: 40px;
+  padding: 0 16px;
+  font-size: 0.9rem;
+}
+
+.publico-boton-acento {
+  background: var(--pub-acento);
+  border-color: var(--pub-acento);
+  color: var(--pub-tinta);
+}
+
+.publico-boton-acento:hover {
+  filter: brightness(0.92);
+}
+
+.publico-boton-contorno {
+  background: transparent;
+  border-color: var(--pub-texto);
+  color: var(--pub-texto);
+}
+
+.publico-boton-contorno:hover {
+  background: var(--pub-panel);
+}
+
+/* Portada */
+
+.publico-portada {
+  padding: 48px 0 56px;
+}
+
+.publico-portada-chevrones {
+  display: block;
+  width: 72px;
+  height: auto;
+  margin-bottom: 24px;
+  color: var(--pub-acento);
+}
+
+.publico-portada-titular {
+  margin: 0;
+  max-width: 14ch;
+  font-size: clamp(2.75rem, 12vw, 7.5rem);
+}
+
+.publico-barra {
+  width: 120px;
+  height: 12px;
+  margin: 32px 0;
+  background: var(--pub-acento);
+}
+
+.publico-barra-fina {
+  height: 6px;
+  margin: 16px 0 24px;
+}
+
+.publico-portada-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Secciones */
+
+.publico-seccion {
+  padding: 32px 0;
+  border-top: 1px solid var(--pub-borde);
+}
+
+.publico-seccion-titulo {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 3.5rem);
+}
+
+.publico-descripcion {
+  max-width: 68ch;
+  margin: 0;
+  font-size: 1.125rem;
+  white-space: pre-line;
+}
+
+.publico-tarjetas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.publico-tarjeta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  background: var(--pub-panel);
+  border: 1px solid var(--pub-borde);
+  border-radius: 0.5rem;
+}
+
+.publico-tarjeta-nombre {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.publico-tarjeta-dato {
+  margin: 0;
+  color: var(--pub-secundario);
+  white-space: pre-line;
+}
+
+.publico-tarjeta-enlaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Pie */
+
+.publico-pie {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 32px 0 40px;
+  border-top: 6px solid var(--pub-acento);
+}
+
+.publico-pie-marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--pub-secundario);
+}
+
+.publico-pie-wordmark {
+  height: 28px;
+  width: auto;
+}
+
+.publico-pie-chevrones {
+  height: 18px;
+  width: auto;
+  color: var(--pub-acento);
+}
+
+.publico-pie-acceso {
+  color: var(--pub-secundario);
+  font-size: 0.9rem;
+  text-decoration: underline;
+}
+
+/* Estados */
+
+.publico-calma {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  min-height: 100vh;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.publico-calma-marca {
+  height: 56px;
+  width: auto;
+}
+
+.publico-calma-mensaje {
+  max-width: 36ch;
+  margin: 0;
+  color: var(--pub-secundario);
+  font-size: 1.125rem;
+}
+
+.publico-esqueleto {
+  padding-top: 24px;
+}
+
+.publico-bloque {
+  margin-bottom: 20px;
+  background: var(--pub-panel);
+  border-radius: 0.5rem;
+  animation: publico-pulso 1.4s ease-in-out infinite;
+}
+
+.publico-bloque-barra {
+  height: 44px;
+}
+
+.publico-bloque-titulo {
+  height: 72px;
+  max-width: 640px;
+}
+
+.publico-bloque-corto {
+  max-width: 360px;
+}
+
+.publico-bloque-texto {
+  height: 20px;
+  max-width: 560px;
+}
+
+@keyframes publico-pulso {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publico-bloque {
+    animation: none;
+  }
+}
+
+/* Carrito */
+
+.publico-carrito-cuenta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--pub-acento);
+  border-radius: 999px;
+  color: var(--pub-tinta);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.publico-carrito-capa {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+}
+
+.publico-carrito-velo {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.publico-carrito {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: min(100%, 420px);
+  padding: 20px 16px;
+  background: var(--pub-fondo);
+  border-left: 6px solid var(--pub-acento);
+  color: var(--pub-texto);
+}
+
+.publico-carrito-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.publico-carrito-titulo {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.publico-carrito-vacio {
+  margin: 0;
+  color: var(--pub-secundario);
+}
+
+@media (max-width: 480px) {
+  .publico-cabecera-nombre {
+    font-size: 1.3rem;
+  }
+}
