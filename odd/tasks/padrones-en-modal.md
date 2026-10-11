@@ -24,7 +24,7 @@ Solo Ways.Web. Sin cambios de API ni de esquema, salvo `nombreArticulo` en el li
 - [x] T3 — `PaginaCatalogo` (áreas, marcas, grupos, medios de pago, listas de precio). Ruta: delegada. Commit `6d4b32c1`. PR #378.
 - [x] T4 — Categorías (`Categorias.tsx`). Ruta: delegada. Commit `e5a62593`. PR #383.
 - [x] T5 — Proveedores (`Proveedores.tsx`). Ruta: delegada. Commit `b6cdc37b`. PR #383.
-- [x] T6 — Error visible y foco en las modales. Ruta: delegada.
+- [x] T6 — Error visible y foco en las modales. Ruta: delegada. Commit `2b0b0437`.
 
 ## Verificación
 - T1–T2: `ServicioDeOfertasTests` 25 en verde; suite web 4448 en verde; judgment-day sin severos.
