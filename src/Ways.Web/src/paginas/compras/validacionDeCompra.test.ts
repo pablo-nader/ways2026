@@ -90,6 +90,12 @@ describe('mensajeDeLoQueImpideGuardar', () => {
 })
 
 describe('huellaDeFormulario / hayCambiosSinGuardar', () => {
+  it('la precarga recordada de una consulta por código no cambia la huella', () => {
+    const sin = huellaDeFormulario(encabezado(), [completa(1)])
+    const con = huellaDeFormulario(encabezado(), [{ ...completa(1), prefillDeCodigo: { importe: 500, descuentoPorcentaje: null, idAlicuotaIva: 3 } }])
+    expect(con).toBe(sin)
+  })
+
   it('la huella ignora las claves de React, las filas vacías y los datos que la pantalla completa sola', () => {
     const base = huellaDeFormulario(encabezado(), [completa(1), lineaDeCompraVacia(2)])
     const otras = huellaDeFormulario(encabezado(), [{ ...completa(9), unidadVenta: 'Unidad', unidadesPorBulto: 12 }, lineaDeCompraVacia(10)])

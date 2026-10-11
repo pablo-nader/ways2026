@@ -45,6 +45,7 @@ function pistaDelCodigo(linea: LineaDeCompraFormulario, idProveedor: number | nu
   const codigo = linea.codigoProveedor.trim()
   if (codigo === '' || linea.resueltaPorCodigo) return ''
   if (idProveedor === null) return 'Elegí un proveedor para buscar el código.'
+  if (linea.idArticulo !== '') return codigo === linea.codigoConsultado ? '' : 'Se asociará al artículo al confirmar.'
   return codigo === linea.codigoConsultado ? 'Pendiente de asociar' : ''
 }
 

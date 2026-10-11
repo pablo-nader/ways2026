@@ -45,6 +45,15 @@ export type LineaGuardada = {
   vista: VistaDeLinea
 }
 
+/** Lo que la última precarga por código escribió en la fila (importe ya neteado, descuento e IVA):
+ * una celda que todavía vale lo mismo no fue tocada por el operador. Es solo estado de pantalla: no
+ * viaja a la API ni entra en la huella de cambios sin guardar. */
+export type PrefillDeCodigo = {
+  importe: number | null
+  descuentoPorcentaje: number | null
+  idAlicuotaIva: number | ''
+}
+
 export type LineaDeCompraFormulario = {
   /** Clave solo de React — el `PUT` es un replace-set completo (design decisión 2), ningún id de
    * línea persistido viaja en el request ni sobrevive entre saves. */
@@ -88,6 +97,9 @@ export type LineaDeCompraFormulario = {
    * concepto no lo usa: el servidor exige `false`. */
   actualizaCosto: boolean
   guardada: LineaGuardada | null
+  /** Ausente o `null` = ninguna celda viene de una precarga por código (se eligió el artículo buscando
+   * o creándolo, la línea se cargó de un borrador o la fila quedó vacía). */
+  prefillDeCodigo?: PrefillDeCodigo | null
 }
 
 export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
@@ -135,7 +147,8 @@ export function lineaTieneDatos(l: LineaDeCompraFormulario): boolean {
 export function normalizarFilas(lineas: LineaDeCompraFormulario[], claveNueva: number): LineaDeCompraFormulario[] {
   let fin = lineas.length
   while (fin > 0 && !lineaTieneDatos(lineas[fin - 1])) fin -= 1
-  return [...lineas.slice(0, fin), lineas[fin] ?? lineaDeCompraVacia(claveNueva)]
+  const sinPrefill = (l: LineaDeCompraFormulario) => (l.prefillDeCodigo && !lineaTieneDatos(l) ? { ...l, prefillDeCodigo: null } : l)
+  return [...lineas.slice(0, fin).map(sinPrefill), sinPrefill(lineas[fin] ?? lineaDeCompraVacia(claveNueva))]
 }
 
 function numero(valor: string): number {
@@ -508,6 +521,7 @@ export function cambiosAlElegirArticulo(
     idAlicuotaIva,
     actualizaCosto: l.idArticulo === articulo.id ? l.actualizaCosto : true,
     guardada: null,
+    prefillDeCodigo: null,
     ...(l.idArticulo !== articulo.id ? { codigoLote: '', fechaVencimiento: '' } : {}),
   }
 }
@@ -517,7 +531,9 @@ export function cambiosAlElegirArticulo(
  * (`actual`) y tal como estaba cuando se lanzó (`alLanzar`): lo que el operador tocó mientras la
  * consulta estaba en vuelo se respeta. Importe y Descuento son un par: si tocó uno, no se precarga
  * ninguno. Un IVA elegido en el vuelo se conserva y el importe precargado se neta con él. Con
- * `soloCeldasVacias` (re-consulta por cambio de proveedor) tampoco se pisa lo que la fila ya trae.
+ * `trasCambioDeProveedor` (re-consulta por cambio de proveedor) además se respeta toda celda con un
+ * valor que no sea el de la última precarga (`prefillDeCodigo`): lo que sigue valiendo la precarga
+ * pertenece al artículo anterior y se refresca con el nuevo. Devuelve también la nueva precarga.
  */
 export function cambiosAlResolverPorCodigo(
   alLanzar: LineaDeCompraFormulario,
@@ -525,14 +541,20 @@ export function cambiosAlResolverPorCodigo(
   articulo: ArticuloListado,
   alicuotas: AlicuotaIvaListado[],
   modo?: ModoDePreciosDeCompra,
-  soloCeldasVacias = false,
+  trasCambioDeProveedor = false,
 ): Partial<LineaDeCompraFormulario> {
+  const previo: PrefillDeCodigo = actual.prefillDeCodigo ?? { importe: null, descuentoPorcentaje: null, idAlicuotaIva: '' }
+  const importeDelOperador = trasCambioDeProveedor && actual.importe !== null && !Object.is(actual.importe, previo.importe)
+  const descuentoDelOperador =
+    trasCambioDeProveedor && actual.descuentoPorcentaje !== null && !Object.is(actual.descuentoPorcentaje, previo.descuentoPorcentaje)
   const parTocado =
     !Object.is(actual.importe, alLanzar.importe) ||
     !Object.is(actual.descuentoPorcentaje, alLanzar.descuentoPorcentaje) ||
-    (soloCeldasVacias && (actual.importe !== null || actual.descuentoPorcentaje !== null))
+    importeDelOperador ||
+    descuentoDelOperador
   const ivaTocado =
-    !Object.is(actual.idAlicuotaIva, alLanzar.idAlicuotaIva) || (soloCeldasVacias && actual.idAlicuotaIva !== '')
+    !Object.is(actual.idAlicuotaIva, alLanzar.idAlicuotaIva) ||
+    (trasCambioDeProveedor && actual.idAlicuotaIva !== '' && !Object.is(actual.idAlicuotaIva, previo.idAlicuotaIva))
 
   const cambios = cambiosAlElegirArticulo(actual, articulo, alicuotas, 'codigo', modo, ivaTocado)
   if (!Object.is(actual.unidadDeMedida, alLanzar.unidadDeMedida)) delete cambios.unidadDeMedida
@@ -541,7 +563,34 @@ export function cambiosAlResolverPorCodigo(
     delete cambios.descuentoPorcentaje
   }
   if (ivaTocado) delete cambios.idAlicuotaIva
+
+  const escribeCosto = !parTocado && costoDeArticuloParaCompra(articulo) !== null
+  cambios.prefillDeCodigo = {
+    importe: escribeCosto ? (cambios.importe ?? null) : previo.importe,
+    descuentoPorcentaje: escribeCosto ? (cambios.descuentoPorcentaje ?? null) : previo.descuentoPorcentaje,
+    idAlicuotaIva: ivaTocado ? previo.idAlicuotaIva : (cambios.idAlicuotaIva ?? previo.idAlicuotaIva),
+  }
   return cambios
+}
+
+/** La re-consulta contra el proveedor nuevo no encontró el código: la fila sigue sin artículo y las
+ * celdas que todavía valen la precarga del artículo anterior (y no se tocaron en el vuelo) se vacían;
+ * las que el operador cambió se conservan. */
+export function cambiosAlNoEncontrarTrasCambioDeProveedor(
+  alLanzar: LineaDeCompraFormulario,
+  actual: LineaDeCompraFormulario,
+): Partial<LineaDeCompraFormulario> {
+  const previo = actual.prefillDeCodigo
+  if (!previo) return {}
+  const intacta = (campo: keyof PrefillDeCodigo) =>
+    actual[campo] !== null && actual[campo] !== '' && Object.is(actual[campo], previo[campo]) && Object.is(actual[campo], alLanzar[campo])
+
+  return {
+    ...(intacta('importe') ? { importe: null } : {}),
+    ...(intacta('descuentoPorcentaje') ? { descuentoPorcentaje: null } : {}),
+    ...(intacta('idAlicuotaIva') ? { idAlicuotaIva: '' as const } : {}),
+    prefillDeCodigo: null,
+  }
 }
 
 /** Escribir en el Detalle de una fila con artículo la deja sin artículo: pasa a ser un concepto con
@@ -559,6 +608,7 @@ export function cambiosAlEscribirDetalle(l: LineaDeCompraFormulario, texto: stri
     unidadesPorBulto: null,
     unidadDeMedida: 'Unidad',
     guardada: null,
+    prefillDeCodigo: null,
   }
 }
 

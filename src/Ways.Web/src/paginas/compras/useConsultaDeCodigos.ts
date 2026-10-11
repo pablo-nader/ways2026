@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../../api/articulos'
 import {
   cambiosAlDesresolver,
+  cambiosAlNoEncontrarTrasCambioDeProveedor,
   cambiosAlResolverPorCodigo,
   type LineaDeCompraFormulario,
   type ModoDePreciosDeCompra,
@@ -154,7 +155,8 @@ export function useConsultaDeCodigos({
   )
 
   /** `fila` es la fila tal como está al lanzar la consulta; ya no depende del último código consultado.
-   * `soloCeldasVacias`: la re-consulta por cambio de proveedor no pisa lo que la fila ya carga. */
+   * `soloCeldasVacias`: la re-consulta por cambio de proveedor refresca solo las celdas vacías o que
+   * todavía valen la precarga del artículo anterior, y no pisa lo que el operador cambió. */
   const consultar = useCallback(
     async (fila: LineaDeCompraFormulario, idProveedorConsultado: number, soloCeldasVacias = false) => {
       const clave = fila.clave
@@ -190,6 +192,7 @@ export function useConsultaDeCodigos({
       terminar(null)
       if (
         !actual ||
+        actual.idArticulo !== '' ||
         disabledRef.current ||
         idProveedorRef.current !== idProveedorConsultado ||
         actual.codigoProveedor.trim() !== codigo
@@ -198,7 +201,8 @@ export function useConsultaDeCodigos({
       }
 
       if (articulo === null) {
-        aplicarRef.current(clave, { codigoConsultado: codigo })
+        const cambios = soloCeldasVacias ? cambiosAlNoEncontrarTrasCambioDeProveedor(fila, actual) : {}
+        aplicarRef.current(clave, { ...cambios, codigoConsultado: codigo })
         return
       }
       aplicarRef.current(clave, {

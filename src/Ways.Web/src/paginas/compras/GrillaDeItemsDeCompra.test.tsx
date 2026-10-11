@@ -1366,7 +1366,9 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
 
     await usuario.type(campo(0, 'Detalle'), 'Concepto')
     await usuario.type(campo(0, 'Cantidad'), '1')
-    expect(enviadas()[0]).toMatchObject({ idArticulo: null, codigoProveedor: 'AB-1' })
+    await usuario.type(campo(0, 'Importe'), '9')
+    await usuario.selectOptions(campo(0, 'IVA'), '3')
+    expect(enviadas()[0]).toMatchObject({ idArticulo: null, codigoProveedor: 'AB-1', costoUnitario: 9 })
   })
 
   it('si el código existe en el proveedor nuevo, la fila se resuelve a SU artículo', async () => {
@@ -1426,7 +1428,7 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
   })
 
   it('una fila resuelta por código cuyo importe, descuento e IVA el operador ajustó los conserva al re-consultarse contra el proveedor nuevo', async () => {
-    respuestas['AB-1@1'] = () => pagina([DEL_UNO])
+    respuestas['AB-1@1'] = () => pagina([{ ...DEL_UNO, idAlicuotaIva: 4 }])
     respuestas['AB-1@2'] = () => pagina([{ ...DEL_DOS, descuentoProveedor: 20, idAlicuotaIva: 4 }])
     const usuario = userEvent.setup()
     montar()
@@ -1444,6 +1446,193 @@ describe('GrillaDeItemsDeCompra — cambio de proveedor', () => {
     expect(campo(0, 'Descuento (%)')).toHaveValue('5,00')
     expect(campo(0, 'IVA')).toHaveValue('3')
   })
+
+  describe('la precarga del artículo anterior no viaja al artículo nuevo (T1)', () => {
+    const UNO = articuloFixture({ id: 20, nombre: 'Leche del uno', codigoProveedor: 'AB-1', costoLista: 200, descuentoProveedor: 10, idAlicuotaIva: 4 })
+    const DOS = articuloFixture({ id: 51, nombre: 'Leche del dos', codigoProveedor: 'AB-1', costoLista: 300, descuentoProveedor: 20, idAlicuotaIva: 3 })
+
+    async function resolverConElUno(usuario: ReturnType<typeof userEvent.setup>, props: Partial<Parameters<typeof Arnes>[0]> = {}) {
+      const vista = montar(props)
+      await escribirCodigoYSalir(usuario, 0, 'AB-1')
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del uno'))
+      return vista
+    }
+
+    it('un importe, un descuento y un IVA que siguen valiendo la precarga se reemplazan por los del artículo nuevo, y la precarga no viaja a la API', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([DOS])
+      const usuario = userEvent.setup()
+      const { enviadas } = await resolverConElUno(usuario)
+
+      await proveedor(usuario, '2')
+
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+      expect(campo(0, 'Importe')).toHaveValue('300,0000')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('20,00')
+      expect(campo(0, 'IVA')).toHaveValue('3')
+      await usuario.type(campo(0, 'Cantidad'), '1')
+      expect(enviadas()[0]).toMatchObject({ idArticulo: 51, costoUnitario: 300, descuento: 60, idAlicuotaIva: 3, actualizaCosto: true })
+      expect(JSON.stringify(enviadas())).not.toContain('prefill')
+    })
+
+    it('un importe que el operador cambió se conserva y su descuento tampoco se refresca; el IVA sin tocar sí', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([DOS])
+      const usuario = userEvent.setup()
+      await resolverConElUno(usuario)
+      await usuario.clear(campo(0, 'Importe'))
+      await usuario.type(campo(0, 'Importe'), '150')
+
+      await proveedor(usuario, '2')
+
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+      expect(campo(0, 'Importe')).toHaveValue('150,0000')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('10,00')
+      expect(campo(0, 'IVA')).toHaveValue('3')
+    })
+
+    it('un IVA que el operador cambió se conserva y el importe refrescado se neta con ESE IVA', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([{ ...DOS, costoLista: 221, descuentoProveedor: null, idAlicuotaIva: 4 }])
+      const usuario = userEvent.setup()
+      await resolverConElUno(usuario, { discriminaIva: true })
+      await usuario.selectOptions(campo(0, 'IVA'), '3')
+
+      await proveedor(usuario, '2')
+
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveValue('Leche del dos'))
+      expect(campo(0, 'IVA')).toHaveValue('3')
+      expect(campo(0, 'Importe')).toHaveValue('182,6446')
+    })
+
+    it('si el proveedor nuevo no tiene el código, se vacían las celdas que valían la precarga y se conservan las que el operador cambió', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([])
+      const usuario = userEvent.setup()
+      await resolverConElUno(usuario)
+      await usuario.clear(campo(0, 'Importe'))
+      await usuario.type(campo(0, 'Importe'), '150')
+
+      await proveedor(usuario, '2')
+
+      await within(filaDeItems(0)).findByText('Pendiente de asociar')
+      expect(campo(0, 'Importe')).toHaveValue('150,0000')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('')
+      expect(campo(0, 'IVA')).toHaveValue('')
+    })
+
+    it('si el proveedor nuevo no tiene el código y nada se tocó, la fila queda sin ningún valor del artículo anterior', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([])
+      const usuario = userEvent.setup()
+      await resolverConElUno(usuario)
+
+      await proveedor(usuario, '2')
+
+      await within(filaDeItems(0)).findByText('Pendiente de asociar')
+      expect(campo(0, 'Importe')).toHaveValue('')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('')
+      expect(campo(0, 'IVA')).toHaveValue('')
+    })
+
+    it('el mismo artículo en los dos proveedores queda con los mismos valores', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([UNO])
+      const usuario = userEvent.setup()
+      const { enviadas } = await resolverConElUno(usuario)
+
+      await proveedor(usuario, '2')
+
+      await waitFor(() => expect(busquedasConProveedor()).toContain('AB-1&idProveedor=2'))
+      await act(async () => {})
+      expect(campo(0, 'Detalle')).toHaveValue('Leche del uno')
+      expect(campo(0, 'Importe')).toHaveValue('200,0000')
+      expect(campo(0, 'Descuento (%)')).toHaveValue('10,00')
+      expect(campo(0, 'IVA')).toHaveValue('4')
+      await usuario.type(campo(0, 'Cantidad'), '1')
+      expect(enviadas()[0]).toMatchObject({ idArticulo: 20, costoUnitario: 200, descuento: 20, idAlicuotaIva: 4 })
+    })
+
+    it('un artículo elegido buscando después de resolver por código olvida la precarga y no se vuelve a consultar al cambiar de proveedor', async () => {
+      respuestas['AB-1@1'] = () => pagina([UNO])
+      respuestas['AB-1@2'] = () => pagina([DOS])
+      respuestas['yerba'] = () => pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40', costoLista: 80 })])
+      const usuario = userEvent.setup()
+      const { enviadas } = await resolverConElUno(usuario)
+      await usuario.clear(campo(0, 'Código'))
+      await usuario.type(campo(0, 'Código'), 'ZZ-9')
+      await usuario.type(campo(0, 'Detalle'), 'yerba')
+      await usuario.click(await screen.findByRole('option', { name: /Yerba 1kg/ }))
+      const antes = busquedasConProveedor().length
+
+      await proveedor(usuario, '2')
+      await act(async () => {})
+
+      expect(busquedasConProveedor()).toHaveLength(antes)
+      await usuario.type(campo(0, 'Cantidad'), '1')
+      expect(enviadas()[0]).toMatchObject({ idArticulo: 40, costoUnitario: 80 })
+    })
+  })
+
+  describe('pista de asociación del código (T2)', () => {
+    it('un artículo elegido buscando con un código tipeado avisa que se asociará al confirmar', async () => {
+      respuestas['yerba'] = () => pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40' })])
+      const usuario = userEvent.setup()
+      montar()
+      await usuario.type(campo(0, 'Detalle'), 'yerba')
+      await usuario.click(await screen.findByRole('option', { name: /Yerba 1kg/ }))
+      expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
+
+      await usuario.type(campo(0, 'Código'), 'ZZ-9')
+      await usuario.tab()
+      await act(async () => {})
+
+      expect(within(filaDeItems(0)).getByText('Se asociará al artículo al confirmar.')).toBeInTheDocument()
+      expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
+    })
+
+    it('un artículo creado con "+" avisa solo cuando el código se cambia después de crearlo', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      const usuario = userEvent.setup()
+      montar()
+      await usuario.type(campo(0, 'Código'), 'AB-1')
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+      await within(dialogo).findByRole('option', { name: 'Almacén' })
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
+
+      await usuario.type(campo(0, 'Código'), '7')
+
+      expect(within(filaDeItems(0)).getByText('Se asociará al artículo al confirmar.')).toBeInTheDocument()
+    })
+
+    it('una fila resuelta por su código no muestra ninguna pista: ya está asociado', async () => {
+      respuestas['AB-1'] = () => pagina([articuloFixture({ id: 20, codigoProveedor: 'AB-1', costoLista: 200 })])
+      const usuario = userEvent.setup()
+      montar()
+
+      await escribirCodigoYSalir(usuario, 0, 'AB-1')
+      await waitFor(() => expect(campo(0, 'Detalle')).toHaveAttribute('readonly'))
+
+      expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
+      expect(within(filaDeItems(0)).queryByText('Pendiente de asociar')).not.toBeInTheDocument()
+    })
+
+    it('un código sin artículo sigue diciendo "Pendiente de asociar"', async () => {
+      const usuario = userEvent.setup()
+      montar()
+
+      await escribirCodigoYSalir(usuario, 0, 'ZZ-9')
+
+      await within(filaDeItems(0)).findByText('Pendiente de asociar')
+      expect(within(filaDeItems(0)).queryByText('Se asociará al artículo al confirmar.')).not.toBeInTheDocument()
+    })
+  })
+
 
   it('los códigos tipeados antes de elegir un proveedor se consultan todos al elegirlo', async () => {
     respuestas['AB-1@1'] = () => pagina([DEL_UNO])
