@@ -279,7 +279,6 @@ export function Categorias() {
    * ninguna escritura y no acuña generación. */
   function cancelarFormulario() {
     setFormulario(null)
-    setErrorFormulario('')
   }
 
   const herramientas = (

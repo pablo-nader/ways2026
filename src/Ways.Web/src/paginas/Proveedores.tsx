@@ -246,7 +246,6 @@ export function Proveedores() {
    * ninguna escritura y no acuña generación. */
   function cancelarFormulario() {
     setFormulario(null)
-    setErrorFormulario('')
   }
 
   /** Ver `Empresas.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma
