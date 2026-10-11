@@ -37,7 +37,9 @@ combos out of parity as "una etapa nueva con su propio diseño". Requested by th
 - D4. The combo price does not depend on the price list.
 - D5. Components are `UnidadVenta.Unidad` only (integer quantities). Weighed articles cannot be
   components in v1.
-- D6. Several combos competing for the same units: greatest saving first, ties by lowest
+- D6. Several combos competing for the same units: greatest real gain first (what those
+  units cost with their ofertas minus the combo price; the winner is applied as many times as
+  its current line assignment allows, then everything is re-evaluated), ties by lowest
   `id_combo`. A unit is consumed by one combo only. Within a combo, article components are
   satisfied before family components.
 - D7. `C` + digits is tried as a combo first; if no active combo has that number the text falls
@@ -71,7 +73,7 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
 
 ## Tasks
 
-- [ ] T1 — Model and engine. Migration + entities/config for `combos` and
+- [x] T1 — Model and engine. Migration + entities/config for `combos` and
   `combos_componentes`, RLS, doc 10; pure `ResolvedorDeCombos` in `Ways.Domain` (detection per
   D2/D5/D6, allocation per D3, comparison input for D1) with unit tests; constraint backstops
   with SQLSTATE-asserted tests. Route: delegated (writer; multiple non-trivial files).
@@ -93,8 +95,32 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
 ## Progress
 
 Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded to
-`4728dcb6` (main with #373). Nothing implemented yet.
+`4728dcb6` (main with #373).
+
+- T1 implemented — commits `05476e89` (model + engine) and `4011305d` (judgment fixes).
+  Route: delegated writer (multiple non-trivial files); golden
+  `inventario-de-dependientes.txt` updated inline by the parent. Migration
+  `20261011195148_Combos`. Engine API: `ResolvedorDeCombos.Resolver(lineas, combos)` →
+  per line `UnidadesConsumidas`, `AhorroDeCombo` (line amount), `IdsDeCombo`; caller formula:
+  line discount = oferta unit discount × unconsumed units + combo share. Validator
+  `ReglaDeCombos.Validar` with codes `combo_precio_invalido`, `combo_componente_invalido`,
+  `combo_cantidad_invalida`, `combo_componente_duplicado`, `combo_unidades_insuficientes`.
+  Observed (fix actor): build 0 errors; Domain 1183/1183; integration `~Combos` 29/29;
+  Application 795/795; `has-pending-model-changes` clean. Parent spot checks: golden inventory
+  43/43, Domain `~Combos` 48/48. RED 42 failing → GREEN; mutation evidence: 7 engine + 9
+  migration mutants killed, plus K1, K3, K4 and the EF-filter test. Full integration suite not
+  run locally (CI runs it).
+- Judgment-day, T1: round 1 — 0 CRITICAL from either judge; confirmed by both and fixed in
+  `4011305d`: K1 ranking by real gain, K2 batch application, K3 bounded remainder, K4
+  `codigo > 0`, K5 caps, K6 doc claims, K7 test claims. Scoped re-judgment: both judges, all
+  resolved, 0 CRITICAL → APPROVED. Left as info: the engine assumes non-negative oferta
+  discounts (callers already guarantee it; with a negative one a set may not total the combo
+  price) — T3 must keep that precondition.
+- Carried to T2: `Combos`/`CombosComponentes` on `IWaysDbContext`; 23505 → 409 mappings for
+  `ux_combos_codigo`, `ux_combos_componentes_articulo|familia`; Unidad-only check in the
+  service; baja guards must ignore components of soft-deleted combos.
+- Review tier: RDD off (clone-local) → no native review; PR gate is judgment-day.
 
 ## Next step
 
-T1.
+PR for T1 (slice 1), then T2.
