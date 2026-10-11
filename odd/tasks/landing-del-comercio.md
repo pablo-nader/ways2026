@@ -61,7 +61,7 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
 
 ## Tasks
 
-- [x] **T1 — Backend: `vitrinas`, `Publico` mode, public and admin endpoints.** Delegated. PR 4. Commits `8f5c85a9`, `6250e913`, `a3f30aa7`.
+- [x] **T1 — Backend: `vitrinas`, `Publico` mode, public and admin endpoints.** Delegated. PR 4. Commits `8f5c85a9`, `6250e913`, `a3f30aa7`, `f87efc49` (judgment-day fixes).
   - Entity, configuration, migration with RLS policies and the `publico` mode in
     `ITenantActual`/`TenantActualDeSesion` and the interceptor.
   - `GET /api/publico/vitrina` (anonymous; tenant from the host; Publico mode): nombre
@@ -69,10 +69,15 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
     logoVersion, sucursales[] from the empresa's active puntos de venta (nombre, domicilio,
     horario, whatsapp, instagram, facebook, web). 404 `vitrina_no_publicada` when none.
   - `GET /api/publico/vitrina/logo` streams the bytes with `Cache-Control: public, max-age=3600`
-    and an ETag from `logo_actualizado_en`.
+    and an ETag from `logo_actualizado_en`; a matching `If-None-Match` answers 304 without reading
+    the bytes. Both public endpoints answer 404 for a suspended tenant.
   - Admin (role Admin of the tenant): `GET/PUT /api/empresas/{id}/vitrina`,
     `PUT /api/empresas/{id}/vitrina/logo` (multipart, size and content-type validated by magic
-    bytes), `DELETE .../logo`. 404-first; DTO fields all persisted.
+    bytes), `DELETE .../logo`. 404-first; DTO fields all persisted. Added by the judgment-day fixes:
+    `DELETE /api/empresas/{id}/vitrina` (soft delete, which also unpublishes; 204 and idempotent
+    when there is no vitrina) and `GET /api/empresas/{id}/vitrina/logo` (preview: bytes with
+    content type, `Cache-Control: private, no-store`, ETag + 304, 404 `logo_no_encontrado`, works
+    for an unpublished vitrina).
   - Tests: unit for validation (color, tema, logo type sniffing); integration for Publico mode
     reading only the published vitrina of the host's tenant and nothing from another tenant
     (mutation evidence on the policy predicate), admin round-trip, 404s.
@@ -129,8 +134,41 @@ Mutation evidence (clause mutated, tests that went red, then reverted and green)
 | M16 | vitrina created with `IdTenant = 0` | `LaPlataformaTambienAdministraLaVitrina...` (+2) |
 | M17 | DELETE of the logo keeps the content type | `QuitarElLogoLoBorraEntero...` (+2) |
 
+#### Judgment-day fixes (commit `f87efc49`, `fix(api): ajustes de judgment-day de la vitrina: ...`)
+
+1. Conditional logo without loading the bytes: the reader got `ObtenerVersionDelLogoAsync` (type and `logo_actualizado_en`
+   only) next to `ObtenerLogoAsync`; the shared `PublicoEndpoints.ServirLogoAsync` asks for the version first and answers 304
+   when `If-None-Match` (ETag, weak ETag or `*`) matches, and only otherwise reads the bytea. The cache headers are set
+   after the lookups, so a 404 is never publicly cacheable. ETag format unchanged (`EtagDelLogo.De`).
+2. Suspended tenant: `DominioResuelto`/`IDominioActual` carry `TenantPuedeOperar` (`Tenant.PuedeOperar`), computed in
+   `ResolvedorDeDominios` from the platform-context tenant read it already did for the name. Isolation choice: no new
+   platform-context read site and no `tenants` policy for the public mode; the cost is the existing 60 s resolver cache
+   (a suspension or reactivation takes up to 60 s to show on the domain). The domain still resolves
+   (`/api/publico/sitio` stays 200); only the vitrina and its logo answer 404.
+3. `DELETE /api/empresas/{id}/vitrina`: soft delete, 404-first, one read under the tenant lock, non-retrying strategy
+   (listed in the structural test), idempotent 204. Raw-SQL usage guard ignores `deleted_at` (OD4), so a deleted vitrina
+   still counts there and does not free the empresa for deletion; the guard was not touched and is not tested here.
+   A later PUT creates a new live row (the unique indexes are partial on live rows).
+4. `GET /api/empresas/{id}/vitrina/logo` (see contract above). GET routes need no authorization-allowlist entry (the
+   allowlist is for non-GET routes; the GET policy walkers already cover the group); the DELETE vitrina route is in it.
+5. Backstop comment in `ManejadorDeErrores` and docs/10 now say that the `ck_vitrinas_logo` backstop is unreachable
+   through the API and answers 400 `logo_no_admitido`, while `ValidarLogo` answers 413 `logo_demasiado_grande` / 415
+   `logo_no_admitido`.
+
+Verification: `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror` 0 warnings, 0 errors;
+`dotnet test tests/Ways.Application.Tests` 813 passed; the Vitrina|Dominios|SuperficieDeAutorizacion|Publico integration
+filter 168 passed; `dotnet format --verify-no-changes` on the changed files: only baseline ENDOFLINE/IDE0008/IMPORTS noise.
+
+| # | Mutation | Red |
+|---|---|---|
+| M18 | 304 path also calls `obtenerLogo()` | `UnaCondicionalQueCoincideDa304SinLeerLosBytesDelLogo` (bytes counter 4 instead of 1) |
+| M19 | `TenantQueSirve` ignores `TenantPuedeOperar` | `UnTenantSuspendidoNoSirveSuVitrinaNiSuLogoPeroSuDominioSigueResolviendo` |
+| M20 | resolver always reports `TenantPuedeOperar = true` | same test |
+| M21 | `EliminarAsync` without `DeletedAt` | `DarDeBajaLaVitrinaLaDespublica...`, `ElBorradoDeLaVitrinaYLaVistaPreviaDelLogoSoloLosHacen...` |
+| M22 | `ObtenerLogoAsync` (admin) without the empresa 404 | survived the HTTP theory (the version call always runs first); killed by `CadaLecturaDelLogoDelServicioDa404NoEncontrado...` added for it |
+
 Open for the owner: `vitrinas` is a `marcado` dependent in the usage guard (same as `dominios`), so a tenant or empresa
-that has a vitrina saved cannot be deleted, and there is no DELETE for the vitrina itself.
+that ever had a vitrina saved cannot be deleted, even after the vitrina itself is soft-deleted.
 
 ## Delivery slices
 
@@ -138,5 +176,6 @@ that has a vitrina saved cannot be deleted, and there is no DELETE for the vitri
 
 ## Next step
 
-T2 — web admin "Vitrina" page, on top of the endpoints of T1 (`GET/PUT /api/empresas/{id}/vitrina`,
-`PUT/DELETE .../vitrina/logo` with the raw image as the request body, `Content-Type: image/png|jpeg|webp`).
+T2 — web admin "Vitrina" page, on top of the endpoints of T1 (`GET/PUT/DELETE /api/empresas/{id}/vitrina`,
+`GET/PUT/DELETE .../vitrina/logo` with the raw image as the request body for PUT, `Content-Type: image/png|jpeg|webp`;
+`GET .../vitrina/logo` is the preview, `private, no-store` with ETag, 404 `logo_no_encontrado` when there is none).
