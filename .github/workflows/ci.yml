@@ -46,9 +46,11 @@ jobs:
   # Una sola suite de integración por daemon de Docker: dos en paralelo compiten
   # por el mismo contenedor y generan falsos rojos. Testcontainers levanta su
   # propio PostgreSQL (postgres:17-alpine) y el fixture crea el rol ways_app.
+  # El tope deja margen sobre la corrida más lenta observada: la suite tarda entre 27 y
+  # 43 minutos según el runner, y con 45 se cancelaba sin que fallara ningún test.
   backend-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
