@@ -147,7 +147,16 @@ function renderPantalla() {
   return render(<FacturarRemitos />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
+/** Los dos selects se renderizan deshabilitados y vacíos antes de que aterrice la referencia:
+ * `referenciaOk` (puntos de venta + clientes + medios) es lo que los habilita, así que esperar
+ * al elemento no prueba que sus opciones existan. */
+async function esperarReferencia() {
+  const puntoVenta = await screen.findByLabelText('Punto de venta')
+  await waitFor(() => expect(puntoVenta).toBeEnabled())
+}
+
 async function elegirClientePuntoVenta() {
+  await esperarReferencia()
   await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
   await userEvent.selectOptions(screen.getByLabelText('Cliente'), '#1 — Consumidor Final')
 }
@@ -176,8 +185,6 @@ describe('FacturarRemitos — picker cliente + punto de venta', () => {
   it('al elegir ambos, lista los remitos emitido sin ligar de ese par', async () => {
     mockearRutasBase()
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
-
     await elegirClientePuntoVenta()
 
     expect(await screen.findByText('0007-00000012')).toBeInTheDocument()
@@ -189,8 +196,6 @@ describe('FacturarRemitos — picker cliente + punto de venta', () => {
   it('sin remitos emitidos sin ligar, muestra el estado vacío', async () => {
     mockearRutasBase((ruta) => (ruta.startsWith('/remitos?') ? Promise.resolve(paginaFixture({ items: [], total: 0 })) : undefined))
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
-
     await elegirClientePuntoVenta()
 
     expect(await screen.findByText(/no tiene remitos emitidos sin facturar/)).toBeInTheDocument()
@@ -205,7 +210,6 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
         : undefined,
     )
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
 
@@ -223,7 +227,6 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
         : undefined,
     )
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
 
@@ -240,7 +243,6 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
   it('cambiar el cliente/punto de venta limpia la selección previa', async () => {
     mockearRutasBase()
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
 
@@ -282,9 +284,7 @@ describe('FacturarRemitos — guard de stale en cargarRemitos (mutation-proof-te
     })
 
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
-    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), '#1 — Consumidor Final')
+    await elegirClientePuntoVenta()
     // El fetch de remitos del Cliente A queda en vuelo — `resolverListaClienteA` todavía no se llamó.
 
     await userEvent.selectOptions(screen.getByLabelText('Cliente'), '#2 — Cliente B')
@@ -306,7 +306,6 @@ describe('FacturarRemitos — doble click en "Facturar" (react-async-state regla
   it('dispara exactamente un POST', async () => {
     mockearRutasBase()
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
     await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000012'))
@@ -345,7 +344,6 @@ describe('FacturarRemitos — doble click en "Facturar" (react-async-state regla
     mockearRutasBase()
     apiPostMock.mockImplementation((ruta: string) => (ruta === '/remitos/facturacion' ? Promise.resolve(comprobanteFixture()) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
     await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000012'))
@@ -379,7 +377,6 @@ describe('FacturarRemitos — doble click en "Facturar" (react-async-state regla
     )
     apiPostMock.mockImplementation((ruta: string) => (ruta === '/remitos/facturacion' ? Promise.resolve(comprobanteFixture()) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
     renderPantalla()
-    await screen.findByLabelText('Punto de venta')
     await elegirClientePuntoVenta()
     await screen.findByText('0007-00000012')
 
