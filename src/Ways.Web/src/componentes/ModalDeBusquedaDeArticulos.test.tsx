@@ -40,6 +40,8 @@ function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): Ar
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,

@@ -49,6 +49,8 @@ const valores: ValoresCompartidosDeLaFamilia = {
   controlaLote: false,
   acumulaEnVenta: true,
   costoLista: 150,
+  costoListaPor: 'Unidad',
+  costoListaIncluyeIva: true,
   descuentoProveedor: null,
   costoNominal: null,
 }
@@ -70,6 +72,8 @@ function articulo(id: number, sobrescribir: Partial<ArticuloListado> = {}): Arti
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: 'Unidad',
+    costoListaIncluyeIva: true,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,

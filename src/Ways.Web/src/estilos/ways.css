@@ -52,3 +52,50 @@
   background-color: darkorchid;
   border: 3px solid #000;
 }
+
+/* IconoDeAyuda: tooltip con CSS puro; colores invertidos respecto del tema para contrastar en claro y oscuro. */
+.icono-de-ayuda {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.35rem;
+}
+
+.icono-de-ayuda__boton {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--bs-secondary-color);
+  line-height: 1;
+}
+
+.icono-de-ayuda__boton:hover,
+.icono-de-ayuda__boton:focus-visible {
+  color: var(--bs-body-color);
+}
+
+.icono-de-ayuda__boton:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+.icono-de-ayuda__texto {
+  position: fixed;
+  z-index: 2000;
+  width: max-content;
+  transform: translate(-50%, -100%);
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--bs-border-radius);
+  background: var(--bs-body-color);
+  color: var(--bs-body-bg);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.icono-de-ayuda__texto[data-visible='true'] {
+  opacity: 1;
+}

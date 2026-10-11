@@ -219,3 +219,24 @@ describe('Parametros — clave dias_alerta_vencimiento (entero, nuevo en el regi
     expect(datos.valor).toBe('45')
   })
 })
+
+describe('Parametros — clave redondeo_sugerencia_precio (decimal, default 100)', () => {
+  it('se ofrece en el editor, con el default 100 en el placeholder, y envía el decimal', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'redondeo_sugerencia_precio')
+    expect(screen.getByPlaceholderText('Default: 100')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Valor'), '50')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, datos] = apiPutMock.mock.calls[0] as [string, { clave: string; valor: string }]
+    expect(datos.clave).toBe('redondeo_sugerencia_precio')
+    expect(datos.valor).toBe('50')
+  })
+})
