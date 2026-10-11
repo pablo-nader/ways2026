@@ -188,6 +188,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     codigoLote: null,
     fechaVencimiento: null,
     idLote: null,
+    codigoProveedor: null,
     ...sobrescribir,
   }
 }
@@ -1370,6 +1371,7 @@ describe('CompraEditor — líneas por concepto', () => {
         actualizaCosto: false,
         codigoLote: null,
         fechaVencimiento: null,
+        codigoProveedor: null,
       },
     ])
   })

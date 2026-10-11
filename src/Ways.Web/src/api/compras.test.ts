@@ -34,6 +34,7 @@ function lineaFixture(sobrescribir: Partial<LineaDeCompraFormulario> = {}): Line
     controlaLote: false,
     codigoLote: '',
     fechaVencimiento: '',
+    codigoProveedor: '',
     ...sobrescribir,
   }
 }
@@ -56,6 +57,7 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     codigoLote: null,
     fechaVencimiento: null,
     idLote: null,
+    codigoProveedor: null,
     ...sobrescribir,
   }
 }
@@ -86,6 +88,7 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
       controlaLote: false,
       codigoLote: '',
       fechaVencimiento: '',
+      codigoProveedor: '',
     })
   })
 
@@ -190,6 +193,7 @@ describe('líneas por concepto', () => {
       actualizaCosto: false,
       codigoLote: null,
       fechaVencimiento: null,
+      codigoProveedor: null,
     })
   })
 
@@ -254,6 +258,41 @@ describe('lineaCompletaParaEnvio', () => {
   })
 })
 
+describe('codigoProveedor de la línea', () => {
+  it('itemAFormulario conserva el código guardado y un item sin código abre vacío', () => {
+    expect(itemAFormulario(1, itemFixture({ codigoProveedor: 'AB-12' })).codigoProveedor).toBe('AB-12')
+    expect(itemAFormulario(1, itemFixture({ codigoProveedor: null })).codigoProveedor).toBe('')
+  })
+
+  it('itemAFormulario conserva el código también en una línea por concepto', () => {
+    const linea = itemAFormulario(1, itemFixture({ idArticulo: null, actualizaCosto: false, codigoProveedor: 'FLETE-9' }))
+    expect(linea.tipo).toBe('concepto')
+    expect(linea.codigoProveedor).toBe('FLETE-9')
+  })
+
+  it('aLineaSolicitada de un artículo envía el código recortado y null cuando está vacío', () => {
+    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '  AB-12  ' })).codigoProveedor).toBe('AB-12')
+    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '' })).codigoProveedor).toBeNull()
+    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '   ' })).codigoProveedor).toBeNull()
+  })
+
+  it('aLineaSolicitada de un concepto envía el código recortado y null cuando está vacío', () => {
+    const concepto = lineaDesdeTotal(1, 'Flete', 500, 3)
+    expect(aLineaSolicitada({ ...concepto, codigoProveedor: ' FLETE-9 ' }).codigoProveedor).toBe('FLETE-9')
+    expect(aLineaSolicitada({ ...concepto, codigoProveedor: '' }).codigoProveedor).toBeNull()
+  })
+
+  it('reabrir un borrador y volver a guardarlo no pierde el código de ninguna línea', () => {
+    const items = [
+      itemFixture({ orden: 1, codigoProveedor: 'AB-12' }),
+      itemFixture({ orden: 2, idArticulo: null, actualizaCosto: false, codigoProveedor: 'FLETE-9' }),
+      itemFixture({ orden: 3, codigoProveedor: null }),
+    ]
+    const reenviadas = items.map((item, i) => aLineaSolicitada(itemAFormulario(i + 1, item)))
+    expect(reenviadas.map((l) => l.codigoProveedor)).toEqual(['AB-12', 'FLETE-9', null])
+  })
+})
+
 describe('aLineaSolicitada', () => {
   it('mapea los campos numéricos y recorta bultos/unidadesPorBulto vacíos a null', () => {
     expect(aLineaSolicitada(lineaFixture())).toEqual({
@@ -268,6 +307,7 @@ describe('aLineaSolicitada', () => {
       actualizaCosto: true,
       codigoLote: null,
       fechaVencimiento: null,
+      codigoProveedor: null,
     })
   })
 

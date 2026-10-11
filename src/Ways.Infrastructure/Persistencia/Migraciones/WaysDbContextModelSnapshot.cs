@@ -1968,6 +1968,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("text")
                         .HasColumnName("codigo_lote");
 
+                    b.Property<string>("CodigoProveedor")
+                        .HasMaxLength(50)
+                        .HasColumnType("citext")
+                        .HasColumnName("codigo_proveedor");
+
                     b.Property<decimal>("CostoUnitario")
                         .HasColumnType("numeric(14,4)")
                         .HasColumnName("costo_unitario");
@@ -2064,6 +2069,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("items_comprobante_compra", null, t =>
                         {
                             t.HasCheckConstraint("ck_items_comprobante_compra_cantidad_positiva", "cantidad > 0");
+
+                            t.HasCheckConstraint("ck_items_comprobante_compra_codigo_proveedor_normalizado", "codigo_proveedor IS NULL OR (codigo_proveedor = btrim(codigo_proveedor) AND codigo_proveedor <> '')");
 
                             t.HasCheckConstraint("ck_items_comprobante_compra_concepto_sin_efectos", "id_articulo IS NOT NULL OR (actualiza_costo = false AND codigo_lote IS NULL AND fecha_vencimiento IS NULL AND id_lote IS NULL AND bultos IS NULL AND unidades_por_bulto IS NULL AND precio_sugerido IS NULL)");
 
