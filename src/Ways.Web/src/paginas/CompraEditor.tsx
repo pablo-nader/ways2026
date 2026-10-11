@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
@@ -8,21 +9,17 @@ import {
   etiquetaDeEstadoCompra,
   itemAFormulario,
   ivaImpresoDesdeDetalle,
-  costoDeLineaIncluyeIva,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
-  lineaDeConceptoVacia,
   lineaDesdeCoberturaDeOrden,
-  lineaDesdeTotal,
   lineaFormularioACalculo,
-  lineaConDescuentoInvalido,
+  normalizarFilas,
+  completarConArticulo,
   percepcionesAplicables,
   sePuedePagarLaCompra,
   type EncabezadoDeCompraFormulario,
   type LineaDeCompraFormulario,
 } from '../api/compras'
-import { clienteDeArticulos } from '../api/articulos'
-import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeGastos, clienteDeGastosDeAdministracion } from '../api/gastos'
@@ -32,7 +29,6 @@ import { clienteDePrecios } from '../api/precios'
 import { ROL } from '../api/tipos'
 import type {
   AlicuotaIvaListado,
-  ArticuloListado,
   CompraDetalle,
   EmpresaListado,
   GastoDeAdministracionListado,
@@ -49,11 +45,12 @@ import type {
 } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
-import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
 import { DesgloseDeIvaDeCompra } from './DesgloseDeIvaDeCompra'
+import { useMontado } from './familias/useMontado'
 import {
   alElegirProveedor,
   alicuotaDeEmpresaParaCompra,
@@ -69,8 +66,13 @@ import { PercepcionesDeCompra } from './PercepcionesDeCompra'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { etiquetaDeProveedor } from './etiquetaDeProveedor'
 import { CampoNumeroDeComprobante } from './compras/CampoNumeroDeComprobante'
-import { valorMedioLleno } from './compras/numeroDeComprobante'
-import { AltaRapidaArticuloDeCompra } from './compras/AltaRapidaArticuloDeCompra'
+import { GrillaDeItemsDeCompra } from './compras/GrillaDeItemsDeCompra'
+import {
+  hayCambiosSinGuardar,
+  huellaDeFormulario,
+  lineasIncompletas,
+  mensajeDeLoQueImpideGuardar,
+} from './compras/validacionDeCompra'
 import { CampoFecha } from '../componentes/CampoFecha'
 
 function formatearMoneda(valor: number | null): string {
@@ -124,449 +126,6 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
     percepciones: percepcionesDesdeDetalle(c.percepciones),
     percepcionesDescartadas: [],
   }
-}
-
-// ---- Selector de artículo por búsqueda (search-as-you-type, propio de cada fila) --------------
-
-type PropsSelectorDeArticulo = {
-  descripcion: string
-  /** Artículo hoy elegido en la línea: la acción de asociar solo aplica mientras siga siéndolo. */
-  idArticulo: number | ''
-  disabled: boolean
-  idProveedor: number | null
-  nombreProveedor: string
-  alicuotas: AlicuotaIvaListado[]
-  idAlicuotaIvaDeLaLinea: number | ''
-  costoDeLaLinea: number | null
-  /** El costo unitario de la línea ya trae el IVA (ver `costoDeLineaIncluyeIva`). */
-  costoIncluyeIva: boolean
-  onElegir: (articulo: ArticuloListado) => void
-}
-
-const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
-const MENSAJE_NUMERO_INCOMPLETO =
-  'El número del comprobante está incompleto: complete el punto de venta y el número, o deje ambos vacíos.'
-
-/** Código tipeado que el operador puede asociar al artículo elegido a mano. */
-type AsociacionPendiente = { idArticulo: number; idProveedor: number; nombreProveedor: string; codigo: string }
-
-function SelectorDeArticulo({
-  descripcion,
-  idArticulo,
-  disabled,
-  idProveedor,
-  nombreProveedor,
-  alicuotas,
-  idAlicuotaIvaDeLaLinea,
-  costoDeLaLinea,
-  costoIncluyeIva,
-  onElegir,
-}: PropsSelectorDeArticulo) {
-  const [termino, setTermino] = useState('')
-  const [resultados, setResultados] = useState<ArticuloListado[]>([])
-  // Término cuya búsqueda terminó bien: distingue "sin resultados" de "todavía sin buscar" y de
-  // "la búsqueda falló" (en ambos casos queda en null y no se ofrece crear).
-  const [terminoBuscado, setTerminoBuscado] = useState<string | null>(null)
-  const [buscando, setBuscando] = useState(false)
-  const [creando, setCreando] = useState<string | null>(null)
-  const [pendiente, setPendiente] = useState<AsociacionPendiente | null>(null)
-  const [asociando, setAsociando] = useState(false)
-  const [errorAsociacion, setErrorAsociacion] = useState('')
-  const [asociado, setAsociado] = useState('')
-  const generacionRef = useRef(0)
-  const asociandoRef = useRef(false)
-  // Generación de la asociación: elegir otro artículo o desmontar la fila invalida la respuesta en vuelo.
-  const generacionAsociacionRef = useRef(0)
-
-  useEffect(
-    () => () => {
-      generacionAsociacionRef.current += 1
-    },
-    [],
-  )
-
-  useEffect(() => {
-    const limpio = termino.trim()
-    if (limpio.length < 2) {
-      setResultados([])
-      setTerminoBuscado(null)
-      return
-    }
-
-    let vigente = true
-    const miGeneracion = (generacionRef.current += 1)
-    setBuscando(true)
-
-    const temporizador = setTimeout(() => {
-      clienteDeArticulos
-        .listar(termino, false, idProveedor ?? undefined)
-        .then((pagina) => {
-          if (!vigente || generacionRef.current !== miGeneracion) return
-          setResultados(pagina.items)
-          setTerminoBuscado(termino)
-        })
-        .catch(() => {
-          if (!vigente || generacionRef.current !== miGeneracion) return
-          setResultados([])
-          setTerminoBuscado(null)
-        })
-        .finally(() => {
-          if (!vigente || generacionRef.current !== miGeneracion) return
-          setBuscando(false)
-        })
-    }, 300)
-
-    return () => {
-      vigente = false
-      clearTimeout(temporizador)
-    }
-  }, [termino, idProveedor])
-
-  function reiniciarAsociacion() {
-    generacionAsociacionRef.current += 1
-    setAsociando(false)
-    setErrorAsociacion('')
-    setAsociado('')
-  }
-
-  function limpiarBusqueda() {
-    setTermino('')
-    setResultados([])
-    setTerminoBuscado(null)
-  }
-
-  function elegir(a: ArticuloListado) {
-    const codigo = termino.trim()
-    const sinCoincidencia = !resultados.some((r) => r.codigoProveedor)
-    reiniciarAsociacion()
-    setPendiente(
-      idProveedor !== null && codigo.length >= 2 && codigo.length <= LARGO_MAXIMO_CODIGO_PROVEEDOR && sinCoincidencia
-        ? { idArticulo: a.id, idProveedor, nombreProveedor, codigo }
-        : null,
-    )
-    onElegir(a)
-    limpiarBusqueda()
-  }
-
-  function elegirCreado(a: ArticuloListado) {
-    reiniciarAsociacion()
-    setPendiente(null)
-    onElegir(a)
-    setCreando(null)
-    limpiarBusqueda()
-  }
-
-  async function asociar() {
-    if (pendiente === null || asociandoRef.current) return
-    asociandoRef.current = true
-    const generacion = (generacionAsociacionRef.current += 1)
-    setAsociando(true)
-    setErrorAsociacion('')
-    try {
-      await clienteDeArticulos.asociarCodigoProveedor(pendiente.idArticulo, {
-        idProveedor: pendiente.idProveedor,
-        codigo: pendiente.codigo,
-      })
-      if (generacionAsociacionRef.current !== generacion) return
-      setAsociado(`Código «${pendiente.codigo}» asociado a ${pendiente.nombreProveedor}.`)
-      setPendiente(null)
-    } catch (e) {
-      if (generacionAsociacionRef.current !== generacion) return
-      setErrorAsociacion(e instanceof ErrorApi ? e.message : 'No se pudo asociar el código.')
-    } finally {
-      asociandoRef.current = false
-      if (generacionAsociacionRef.current === generacion) setAsociando(false)
-    }
-  }
-
-  const limpio = termino.trim()
-  const sinResultados = !buscando && terminoBuscado === termino && resultados.length === 0 && limpio.length >= 2
-  const accionDeAsociar =
-    pendiente !== null && pendiente.idArticulo === idArticulo && pendiente.idProveedor === idProveedor ? pendiente : null
-
-  return (
-    <div className="position-relative">
-      <input
-        type="text"
-        className="form-control form-control-sm"
-        placeholder="Buscar artículo…"
-        value={termino}
-        disabled={disabled}
-        onChange={(e) => setTermino(e.target.value)}
-      />
-      {descripcion && <div className="small text-muted">Elegido: {descripcion}</div>}
-      {accionDeAsociar && (
-        <button
-          type="button"
-          className="btn btn-link btn-sm p-0 small"
-          disabled={disabled || asociando}
-          onClick={asociar}
-        >
-          {asociando
-            ? 'Asociando…'
-            : `Asociar «${accionDeAsociar.codigo}» como código de ${accionDeAsociar.nombreProveedor}`}
-        </button>
-      )}
-      {errorAsociacion && accionDeAsociar && <div className="small text-danger">{errorAsociacion}</div>}
-      {asociado && <div className="small text-success">{asociado}</div>}
-      {buscando && <div className="small text-muted">Buscando…</div>}
-      {!buscando && (resultados.length > 0 || sinResultados) && (
-        <div className="list-group position-absolute w-100" style={{ zIndex: 10 }}>
-          {resultados.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className="list-group-item list-group-item-action py-1 px-2 small"
-              onClick={() => elegir(a)}
-            >
-              {a.codigoInterno} — {a.nombre}
-              {a.codigoProveedor ? ` (Cód. prov.: ${a.codigoProveedor})` : ''}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="list-group-item list-group-item-action py-1 px-2 small text-primary"
-            onClick={() => setCreando(limpio)}
-          >
-            {sinResultados ? `Crear artículo «${limpio}»` : 'Crear artículo nuevo…'}
-          </button>
-        </div>
-      )}
-      {creando !== null && (
-        <AltaRapidaArticuloDeCompra
-          termino={creando}
-          idProveedor={idProveedor}
-          nombreProveedor={nombreProveedor}
-          alicuotas={alicuotas}
-          idAlicuotaIvaDeLaLinea={idAlicuotaIvaDeLaLinea}
-          costoDeLaLinea={costoDeLaLinea}
-          costoIncluyeIva={costoIncluyeIva}
-          onCreado={elegirCreado}
-          onCancelar={() => setCreando(null)}
-        />
-      )}
-    </div>
-  )
-}
-
-// ---- Fila editable del grid de items -----------------------------------------------------------
-
-type PropsFilaDeItem = {
-  linea: LineaDeCompraFormulario
-  alicuotas: AlicuotaIvaListado[]
-  disabled: boolean
-  discriminaIva: boolean
-  /** El costo unitario de las líneas ya trae el IVA (ver `costoDeLineaIncluyeIva`). */
-  costoIncluyeIva: boolean
-  porcentajePorAlicuota: Record<number, number>
-  idProveedor: number | null
-  nombreProveedor: string
-  onCambio: (clave: number, cambios: Partial<LineaDeCompraFormulario>) => void
-  onQuitar: (clave: number) => void
-}
-
-function FilaDeItem({
-  linea,
-  alicuotas,
-  disabled,
-  discriminaIva,
-  costoIncluyeIva,
-  porcentajePorAlicuota,
-  idProveedor,
-  nombreProveedor,
-  onCambio,
-  onQuitar,
-}: PropsFilaDeItem) {
-  const calculo = lineaFormularioACalculo(linea, porcentajePorAlicuota)
-  const item = calcularTotalesDeCompra([calculo], discriminaIva).items[0]
-  const descuentoInvalido = lineaConDescuentoInvalido(calculo)
-  const incompleta = !lineaCompletaParaEnvio(linea)
-  const esConcepto = linea.tipo === 'concepto'
-  const restriccionDeUnidades = restriccionDeCantidad(linea.unidadVenta, { permiteCero: true })
-  const fraccionEnUnidad = !esConcepto && esFraccionDeArticuloPorUnidad(linea.unidadVenta, linea.unidades)
-
-  return (
-    <tr className={incompleta ? 'table-warning text-muted' : undefined}>
-      <td style={{ minWidth: 220 }}>
-        {esConcepto ? (
-          <>
-            <span className="badge text-bg-info mb-1">Concepto</span>
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              aria-label="Descripción del concepto"
-              placeholder="Descripción (ej. Flete)"
-              value={linea.descripcion}
-              disabled={disabled}
-              onChange={(e) => onCambio(linea.clave, { descripcion: e.target.value })}
-            />
-          </>
-        ) : (
-          <SelectorDeArticulo
-            descripcion={linea.descripcion}
-            idArticulo={linea.idArticulo}
-            disabled={disabled}
-            idProveedor={idProveedor}
-            nombreProveedor={nombreProveedor}
-            alicuotas={alicuotas}
-            idAlicuotaIvaDeLaLinea={linea.idAlicuotaIva}
-            costoDeLaLinea={linea.costoUnitario}
-            costoIncluyeIva={costoIncluyeIva}
-            onElegir={(a) => {
-              // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
-              // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
-              // viajan en el payload — la validación del servidor es incondicional y los persiste
-              // (judgment-day, slice 14, MAJOR juez A).
-              const cambioDeArticulo = linea.idArticulo !== a.id
-              onCambio(linea.clave, {
-                idArticulo: a.id,
-                descripcion: a.nombre,
-                controlaLote: a.controlaLote,
-                unidadVenta: a.unidadVenta,
-                ...(cambioDeArticulo ? { codigoLote: '', fechaVencimiento: '' } : {}),
-              })
-            }}
-          />
-        )}
-        {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
-      </td>
-      <td style={{ minWidth: 180 }}>
-        {esConcepto ? (
-          <span className="text-muted small">—</span>
-        ) : linea.controlaLote ? (
-          <>
-            <input
-              type="text"
-              className="form-control form-control-sm mb-1"
-              aria-label="Código de lote"
-              placeholder="Código de lote (opcional)"
-              value={linea.codigoLote}
-              disabled={disabled}
-              onChange={(e) => onCambio(linea.clave, { codigoLote: e.target.value })}
-            />
-            <CampoFecha
-              className={`form-control form-control-sm ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
-              aria-label="Fecha de vencimiento"
-              value={linea.fechaVencimiento}
-              disabled={disabled}
-              onChange={(valor) => onCambio(linea.clave, { fechaVencimiento: valor })}
-            />
-            {linea.fechaVencimiento.trim() === '' && (
-              <div className="invalid-feedback d-block">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
-            )}
-          </>
-        ) : (
-          <span className="text-muted small">No controla lote</span>
-        )}
-      </td>
-      <td style={{ width: 90 }}>
-        <input
-          type="number"
-          step={restriccionDeUnidades.step}
-          min={restriccionDeUnidades.min}
-          className={`form-control form-control-sm${fraccionEnUnidad ? ' is-invalid' : ''}`}
-          aria-label="Unidades"
-          value={linea.unidades}
-          disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { unidades: e.target.value })}
-        />
-        {fraccionEnUnidad && <div className="invalid-feedback">{MENSAJE_DE_CANTIDAD_ENTERA}</div>}
-      </td>
-      <td style={{ width: 80 }}>
-        {esConcepto ? (
-          <span className="text-muted small">—</span>
-        ) : (
-          <input
-            type="number"
-            step="1"
-            min="0"
-            className="form-control form-control-sm"
-            aria-label="Bultos"
-            value={linea.bultos}
-            disabled={disabled}
-            onChange={(e) => onCambio(linea.clave, { bultos: e.target.value })}
-          />
-        )}
-      </td>
-      <td style={{ width: 100 }}>
-        {esConcepto ? (
-          <span className="text-muted small">—</span>
-        ) : (
-          <input
-            type="number"
-            step="0.001"
-            min="0"
-            className="form-control form-control-sm"
-            aria-label="Unidades por bulto"
-            value={linea.unidadesPorBulto}
-            disabled={disabled}
-            onChange={(e) => onCambio(linea.clave, { unidadesPorBulto: e.target.value })}
-          />
-        )}
-      </td>
-      <td style={{ width: 110 }}>
-        <CampoImporte
-          className="form-control form-control-sm"
-          aria-label="Costo unitario"
-          decimales={4}
-          valor={linea.costoUnitario}
-          disabled={disabled}
-          onChange={(v) => onCambio(linea.clave, { costoUnitario: v })}
-        />
-      </td>
-      <td style={{ width: 100 }}>
-        <CampoImporte
-          className={`form-control form-control-sm ${descuentoInvalido ? 'is-invalid' : ''}`}
-          aria-label="Descuento"
-          valor={linea.descuento}
-          disabled={disabled}
-          onChange={(v) => onCambio(linea.clave, { descuento: v })}
-        />
-        {descuentoInvalido && <div className="invalid-feedback">Mayor al bruto de la línea.</div>}
-      </td>
-      <td style={{ width: 100 }}>
-        <select
-          className="form-select form-select-sm"
-          aria-label="Alícuota de IVA"
-          value={linea.idAlicuotaIva}
-          disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { idAlicuotaIva: e.target.value === '' ? '' : Number(e.target.value) })}
-        >
-          <option value="">Elegir…</option>
-          {alicuotas.map((al) => (
-            <option key={al.id} value={al.id}>
-              {al.nombre}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td className="text-center" style={{ width: 60 }}>
-        {esConcepto ? (
-          <span className="text-muted small">—</span>
-        ) : (
-          <input
-            type="checkbox"
-            className="form-check-input"
-            aria-label="Actualiza costo"
-            checked={linea.actualizaCosto}
-            disabled={disabled}
-            onChange={(e) => onCambio(linea.clave, { actualizaCosto: e.target.checked })}
-          />
-        )}
-      </td>
-      <td className="text-end">{formatearMoneda(item.total)}</td>
-      <td>
-        <button
-          type="button"
-          className="btn btn-outline-danger btn-sm"
-          disabled={disabled}
-          onClick={() => onQuitar(linea.clave)}
-        >
-          Quitar
-        </button>
-      </td>
-    </tr>
-  )
 }
 
 // ---- Tabla de items de solo lectura (compra confirmada/anulada) -------------------------------
@@ -747,6 +306,16 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
 // ---- Pantalla principal -------------------------------------------------------------------------
 
 type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null; idDesdeGasto: number | null }
+
+/** Lo que `guardar` deja en el estado de la navegación al aterrizar en el borrador recién creado:
+ * la pantalla de destino arranca con el resultado de la acción a la vista. */
+type EstadoDeNavegacion = {
+  aviso?: string
+  advertencia?: string
+  error?: string
+  gastoVinculado?: boolean
+  errorVincularGasto?: string
+}
 
 /** Remontada por `key={idCompra ?? 'nuevo-' + (idOrdenCompra ?? 's')}` (react-async-state regla 8)
  * — ningún estado de acá (borrador en edición, paneles de confirmar/anular) sobrevive a un cambio
@@ -931,8 +500,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   // ---- formulario editable (nuevo o borrador existente) ------------------------------------------
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
-  const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>([])
-  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador')
+  const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>(() => [lineaDeCompraVacia(0)])
+  useUnidadesDeVentaDeLineas(lineas, setLineas, esNuevo || compra?.estado === 'Borrador', completarConArticulo)
 
   useEffect(() => {
     if (ordenParaPrecargar === null) return
@@ -943,7 +512,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
       idOrdenCompra: ordenParaPrecargar.id,
     }))
     const pendientes = ordenParaPrecargar.cobertura.filter((c) => c.pendiente > 0)
-    setLineas(pendientes.map((c) => lineaDesdeCoberturaDeOrden(proximaClaveRef.current++, c, ordenParaPrecargar.items)))
+    const filas = pendientes.map((c) => lineaDesdeCoberturaDeOrden(proximaClaveRef.current++, c, ordenParaPrecargar.items))
+    setLineas(normalizarFilas(filas, proximaClaveRef.current++))
   }, [ordenParaPrecargar])
 
   // Prefill desde el gasto de origen: SOLO para un borrador nuevo (una compra ya creada/en edición
@@ -963,7 +533,8 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   useEffect(() => {
     if (compra === null) return
     setEncabezado(encabezadoDesdeDetalle(compra))
-    setLineas(compra.items.map((item) => itemAFormulario(proximaClaveRef.current++, item)))
+    const filas = compra.items.map((item) => itemAFormulario(proximaClaveRef.current++, item))
+    setLineas(normalizarFilas(filas, proximaClaveRef.current++))
   }, [compra])
 
   const tipoSeleccionado = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
@@ -1016,9 +587,13 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   // El mirror de totales se calcula SOLO sobre las líneas completas (`lineaCompletaParaEnvio`):
   // es la misma fuente de verdad que decide qué líneas viajan en `aSolicitudDeCompra` — una fila a
-  // medio llenar nunca debe sumar al Subtotal en pantalla, porque tampoco se va a guardar.
+  // medio llenar nunca debe sumar al Subtotal en pantalla, porque no se guarda: bloquea el guardado.
   const lineasCompletas = useMemo(() => lineas.filter(lineaCompletaParaEnvio), [lineas])
-  const lineasIncompletas = lineas.length - lineasCompletas.length
+  const cantidadDeIncompletas = useMemo(() => lineasIncompletas(lineas).length, [lineas])
+  const huellaGuardada = useMemo(
+    () => (compra === null ? null : huellaDeFormulario(encabezadoDesdeDetalle(compra), compra.items.map((i) => itemAFormulario(0, i)))),
+    [compra],
+  )
   const calculo = useMemo(
     () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
     [lineasCompletas, porcentajePorAlicuota],
@@ -1050,41 +625,72 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     [discriminaIva, percepcionesVisibles],
   )
 
-  const [panelTotalAbierto, setPanelTotalAbierto] = useState(false)
-  const [totalImporte, setTotalImporte] = useState<number | null>(null)
-  const [totalDescripcion, setTotalDescripcion] = useState('')
-  const [totalIdAlicuota, setTotalIdAlicuota] = useState<number | ''>('')
+  const montado = useMontado()
+  const ubicacion = useLocation()
+  // Lo que dejó la pantalla anterior al navegar a este borrador recién guardado (confirmación
+  // lograda, o guardado sin confirmar): se lee una sola vez y se limpia del historial.
+  const [estadoInicial] = useState<EstadoDeNavegacion>(() => (ubicacion.state as EstadoDeNavegacion | null) ?? {})
 
   const [guardando, setGuardando] = useState(false)
+  const [accion, setAccion] = useState<'guardar' | 'borrador' | null>(null)
   const guardandoRef = useRef(false)
-  const [error, setError] = useState('')
-  const [aviso, setAviso] = useState('')
+  // Códigos de proveedor que la grilla está consultando: guardar espera a que terminen, así una fila
+  // nunca se guarda como concepto y después la muta una respuesta tardía.
+  const consultandoCodigosRef = useRef(false)
+  const [esperandoCodigos, setEsperandoCodigos] = useState(false)
+  // Sube cuando el operador cambia el proveedor (no cuando lo fija una orden o un borrador al cargar).
+  const [cambiosDeProveedor, setCambiosDeProveedor] = useState(0)
 
-  const [confirmando, setConfirmando] = useState(false)
-  const confirmandoRef = useRef(false)
-  const [panelConfirmarAbierto, setPanelConfirmarAbierto] = useState(false)
-  const [confirmadoParaConfirmar, setConfirmadoParaConfirmar] = useState(false)
-  const [errorConfirmar, setErrorConfirmar] = useState('')
+  const alCambiarConsultasEnVuelo = useCallback((hay: boolean) => {
+    consultandoCodigosRef.current = hay
+    if (!hay) setEsperandoCodigos(false)
+  }, [])
+  const [error, setError] = useState(estadoInicial.error ?? '')
+  const [advertencia, setAdvertencia] = useState(estadoInicial.advertencia ?? '')
+  const [aviso, setAviso] = useState(estadoInicial.aviso ?? '')
+  // Acción con la que se intentó guardar y faltaba algo: el mensaje y las celdas marcadas se recalculan
+  // en vivo, así desaparecen solos cuando el operador completa o quita lo que faltaba.
+  const [intentoFallido, setIntentoFallido] = useState<'guardar' | 'borrador' | null>(null)
+  const [descartarAbierto, setDescartarAbierto] = useState(false)
+  const [disparadorDeDescartar, setDisparadorDeDescartar] = useState<HTMLElement | null>(null)
+  // Proveedor elegido que espera confirmación porque hay filas resueltas por código que se van a perder.
+  const [proveedorPendiente, setProveedorPendiente] = useState<string | null>(null)
+  const [disparadorDeProveedor, setDisparadorDeProveedor] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (ubicacion.state !== null) navigate(`${ubicacion.pathname}${ubicacion.search}`, { replace: true, state: null })
+    // Solo al montar: el estado ya quedó copiado arriba.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---- vínculo automático con el gasto de origen, DESPUÉS de confirmar (stage-gasto-a-compra,
   // PR4): un fallo acá NUNCA revierte la confirmación — la compra queda confirmada igual, con un
   // botón para reintentar el vínculo solo. --------------------------------------------------------
-  const [gastoVinculado, setGastoVinculado] = useState(false)
+  const [gastoVinculado, setGastoVinculado] = useState(estadoInicial.gastoVinculado ?? false)
   const [vinculandoGasto, setVinculandoGasto] = useState(false)
   const vinculandoGastoRef = useRef(false)
-  const [errorVincularGasto, setErrorVincularGasto] = useState('')
+  const [errorVincularGasto, setErrorVincularGasto] = useState(estadoInicial.errorVincularGasto ?? '')
 
-  async function vincularConGastoDeOrigen(idCompraConfirmada: number) {
-    if (idDesdeGasto === null || vinculandoGastoRef.current) return
+  async function vincularGasto(idCompraConfirmada: number): Promise<string | null> {
+    if (idDesdeGasto === null) return null
+    try {
+      await clienteDeGastos.vincularCompra(idDesdeGasto, idCompraConfirmada)
+      return null
+    } catch (e) {
+      return e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto de origen a esta compra.'
+    }
+  }
+
+  async function reintentarVinculoConGasto(idCompraConfirmada: number) {
+    if (vinculandoGastoRef.current) return
     vinculandoGastoRef.current = true
     setVinculandoGasto(true)
     setErrorVincularGasto('')
 
     try {
-      await clienteDeGastos.vincularCompra(idDesdeGasto, idCompraConfirmada)
-      setGastoVinculado(true)
-    } catch (e) {
-      setErrorVincularGasto(e instanceof ErrorApi ? e.message : 'No se pudo vincular el gasto de origen a esta compra.')
+      const errorDelVinculo = await vincularGasto(idCompraConfirmada)
+      if (errorDelVinculo === null) setGastoVinculado(true)
+      else setErrorVincularGasto(errorDelVinculo)
     } finally {
       vinculandoGastoRef.current = false
       setVinculandoGasto(false)
@@ -1116,7 +722,9 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   // todavía en curso — el gate queda asimétrico.
   const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
 
-  const ocupado = guardando || confirmando || anulando || aplicandoPrecios || vinculandoGasto
+  // Las puertas de "descartar cambios" y de "cambiar el proveedor" dejan inerte el resto de la
+  // pantalla mientras están abiertas.
+  const ocupado = guardando || anulando || aplicandoPrecios || vinculandoGasto || descartarAbierto || proveedorPendiente !== null
 
   function cambiarTipo(valor: string) {
     if (ocupado) return
@@ -1148,12 +756,22 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
     )
   }
 
-  function cambiarProveedor(valor: string) {
+  function cambiarProveedor(valor: string, disparador: HTMLElement) {
     if (ocupado) return
-    const hayCostoTipeado = lineas.some((l) => l.costoUnitario !== null)
+    if (lineas.some((l) => l.resueltaPorCodigo)) {
+      setDisparadorDeProveedor(disparador)
+      setProveedorPendiente(valor)
+      return
+    }
+    aplicarProveedor(valor)
+  }
+
+  function aplicarProveedor(valor: string) {
+    const hayCostoTipeado = lineas.some((l) => !l.resueltaPorCodigo && l.importe !== null)
     setEncabezado((prev) =>
       alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
     )
+    setCambiosDeProveedor((n) => n + 1)
   }
 
   function cambiarPuntoVenta(valor: string) {
@@ -1214,135 +832,146 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
   function cambiarLinea(clave: number, cambios: Partial<LineaDeCompraFormulario>) {
     if (ocupado) return
-    // regla 1: updater funcional, nunca lee `lineas` del cierre.
-    setLineas((prev) => prev.map((l) => (l.clave === clave ? { ...l, ...cambios } : l)))
-  }
-
-  function agregarLinea() {
-    if (ocupado) return
-    setLineas((prev) => [...prev, lineaDeCompraVacia(proximaClaveRef.current++)])
-  }
-
-  function agregarConcepto() {
-    if (ocupado) return
-    setLineas((prev) => [...prev, lineaDeConceptoVacia(proximaClaveRef.current++)])
-  }
-
-  function abrirCargaPorTotal() {
-    if (ocupado) return
-    const alicuotaHabitual = (alicuotas ?? []).find((a) => a.porcentaje === 21) ?? (alicuotas ?? [])[0]
-    setTotalIdAlicuota(alicuotaHabitual?.id ?? '')
-    setTotalImporte(null)
-    setTotalDescripcion('Total del comprobante')
-    setPanelTotalAbierto(true)
-  }
-
-  function cargarPorTotal() {
-    if (ocupado || totalImporte === null || totalImporte <= 0 || totalDescripcion.trim() === '') return
-    setLineas((prev) => [
-      ...prev,
-      lineaDesdeTotal(proximaClaveRef.current++, totalDescripcion.trim(), totalImporte, totalIdAlicuota),
-    ])
-    setPanelTotalAbierto(false)
+    // regla 1: updater funcional, nunca lee `lineas` del cierre. La clave de la fila vacía que
+    // `normalizarFilas` puede necesitar se toma acá: el updater tiene que ser puro.
+    const claveNueva = proximaClaveRef.current++
+    setLineas((prev) => normalizarFilas(prev.map((l) => (l.clave === clave ? { ...l, ...cambios } : l)), claveNueva))
   }
 
   function quitarLinea(clave: number) {
     if (ocupado) return
-    setLineas((prev) => prev.filter((l) => l.clave !== clave))
+    const claveNueva = proximaClaveRef.current++
+    setLineas((prev) => normalizarFilas(prev.filter((l) => l.clave !== clave), claveNueva))
   }
 
   const encabezadoCompleto = encabezado.idProveedor !== '' && encabezado.idTipoComprobante !== '' && encabezado.idPuntoVenta !== ''
   const puedeGuardar = referenciaOk && puedeEscribir && encabezadoCompleto && !ocupado
+  const impedimentoParaGuardar =
+    intentoFallido === null ? null : mensajeDeLoQueImpideGuardar(encabezado, lineas, intentoFallido === 'guardar')
+  const hayCambios = hayCambiosSinGuardar({ esNuevo, encabezado, lineas, huellaGuardada })
 
-  async function guardarBorrador() {
-    // regla 9: guard de reentrancia de primera línea.
+  const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
+  const hayPorCodigoEnBultos = lineas.some((l) => l.resueltaPorCodigo && l.unidadDeMedida === 'Bulto')
+
+  function pedirCancelar(evento: MouseEvent<HTMLButtonElement>) {
+    if (!hayCambios) {
+      navigate('/compras')
+      return
+    }
+    // Se captura acá, sincrónicamente: para cuando corra un efecto el botón ya está deshabilitado.
+    setDisparadorDeDescartar(evento.currentTarget)
+    setDescartarAbierto(true)
+  }
+
+  /**
+   * Guarda el borrador (POST si es nuevo, PUT si ya existe) y, con `confirmar`, lo confirma a
+   * continuación en la misma acción. El borrador queda guardado aunque la confirmación falle: se
+   * aterriza en él con el error a la vista, y reintentar actualiza ESE borrador — nunca crea otro.
+   */
+  async function guardar(confirmar: boolean) {
+    // regla 11: la guarda de reentrancia es el ref; el `disabled` de los botones cubre el estado.
     if (guardandoRef.current) return
-    if (!puedeGuardar) return
-    if (valorMedioLleno(encabezado.numeroExterno)) {
+    if (consultandoCodigosRef.current) {
+      setEsperandoCodigos(true)
+      return
+    }
+    setEsperandoCodigos(false)
+    if (mensajeDeLoQueImpideGuardar(encabezado, lineas, confirmar) !== null) {
       setAviso('')
-      setError(MENSAJE_NUMERO_INCOMPLETO)
+      setAdvertencia('')
+      setError('')
+      setIntentoFallido(confirmar ? 'guardar' : 'borrador')
       return
     }
 
     guardandoRef.current = true
     setGuardando(true)
+    setAccion(confirmar ? 'guardar' : 'borrador')
     setError('')
+    setAdvertencia('')
     setAviso('')
+    setIntentoFallido(null)
     // regla 3: bumpear la generación de carga ANTES de la escritura — invalida cualquier GET en
     // vuelo de la compra que este guardado está a punto de reemplazar.
     generacionRef.current += 1
-
-    try {
-      const solicitud = aSolicitudDeCompra(
-        { ...encabezado, percepciones: percepcionesResueltas },
-        lineas,
-        discriminaIva,
-        registraLibroIva,
-      )
-      if (esNuevo) {
-        const creada = await clienteDeCompras.crear(solicitud)
-        guardandoRef.current = false
-        setGuardando(false)
-        // Remontaje completo vía cambio de `key` (regla 8): navega a la ruta real de la compra
-        // recién creada, nunca reutiliza este estado de "nuevo" para simular la edición.
-        // `desdeGasto` viaja en la nueva URL — sin esto, el remontaje (nuevo → existente) perdería
-        // el vínculo pendiente y `confirmar()` no sabría a qué gasto ligar.
-        navigate(`/compras/${creada.id}${idDesdeGasto !== null ? `?desdeGasto=${idDesdeGasto}` : ''}`, { replace: true })
-      } else if (idCompra !== null) {
-        const actualizada = await clienteDeCompras.actualizar(idCompra, solicitud)
-        guardandoRef.current = false
-        setGuardando(false)
-        setCompra(actualizada)
-        setAviso('Borrador guardado.')
-      }
-    } catch (e) {
+    const liberar = () => {
       guardandoRef.current = false
       setGuardando(false)
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.')
+      setAccion(null)
     }
-  }
+    // `desdeGasto` viaja en la URL de la compra recién guardada: sin esto, el remontaje (nuevo →
+    // existente) perdería el vínculo pendiente.
+    const rutaDeLaCompra = (id: number) => `/compras/${id}${idDesdeGasto !== null ? `?desdeGasto=${idDesdeGasto}` : ''}`
 
-  async function confirmar() {
-    // regla 9: guard de reentrancia de primera línea.
-    if (confirmandoRef.current) return
-    if (!confirmadoParaConfirmar || idCompra === null) return
-    if (valorMedioLleno(encabezado.numeroExterno)) {
-      setErrorConfirmar(MENSAJE_NUMERO_INCOMPLETO)
+    let guardada: CompraDetalle
+    try {
+      const solicitud = aSolicitudDeCompra({ ...encabezado, percepciones: percepcionesResueltas }, lineas, discriminaIva, registraLibroIva)
+      guardada = esNuevo || idCompra === null ? await clienteDeCompras.crear(solicitud) : await clienteDeCompras.actualizar(idCompra, solicitud)
+    } catch (e) {
+      liberar()
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.')
       return
     }
 
-    confirmandoRef.current = true
-    setConfirmando(true)
-    setErrorConfirmar('')
-    generacionRef.current += 1
-
-    try {
-      const confirmada = await clienteDeCompras.confirmar(idCompra)
-      confirmandoRef.current = false
-      setConfirmando(false)
-      // regla 6: un 2xx de confirmar nunca se reporta como fallo — la respuesta ES el resultado.
-      setCompra(confirmada)
-      setPanelConfirmarAbierto(false)
-      setConfirmadoParaConfirmar(false)
-      setAviso(
-        confirmada.items.some((i) => i.idArticulo !== null)
-          ? 'Compra confirmada: el stock y el costo ya se actualizaron.'
-          : 'Compra confirmada.',
-      )
-
-      // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
-      // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
-      if (idDesdeGasto !== null) {
-        void vincularConGastoDeOrigen(confirmada.id)
+    if (!confirmar) {
+      if (esNuevo) {
+        // Remontaje completo vía cambio de `key` (regla 8): navega a la ruta real de la compra
+        // recién creada, nunca reutiliza este estado de "nuevo" para simular la edición. No se
+        // libera la pantalla: queda inerte hasta que la navegación la reemplace, así un clic en
+        // esa ventana no puede crear una segunda compra.
+        if (montado.current) navigate(rutaDeLaCompra(guardada.id), { replace: true })
+        else liberar()
+        return
       }
-    } catch (e) {
-      confirmandoRef.current = false
-      setConfirmando(false)
-      // El perdedor de la carrera de doble confirm (409 compra_no_es_borrador) se muestra tal
-      // cual, mismo criterio verbatim que el resto de esta pantalla (react-async-state regla 10 —
-      // Transferencias.tsx replica la misma copia de recuperación para su sibling error).
-      setErrorConfirmar(e instanceof ErrorApi ? e.message : 'No se pudo confirmar la compra.')
+      liberar()
+      setCompra(guardada)
+      setAviso('Borrador guardado.')
+      return
     }
+
+    let confirmada: CompraDetalle
+    try {
+      confirmada = await clienteDeCompras.confirmar(guardada.id)
+    } catch (e) {
+      // El 409 compra_no_es_borrador del perdedor de una carrera de doble confirmación se muestra
+      // tal cual, como el resto de esta pantalla.
+      const falla = e instanceof ErrorApi ? e.message : 'No se pudo confirmar la compra.'
+      const nota = 'El borrador quedó guardado, pero la compra NO se confirmó.'
+      if (esNuevo) {
+        // Sin liberar: la pantalla queda inerte hasta que la navegación la reemplace.
+        if (montado.current) navigate(rutaDeLaCompra(guardada.id), { replace: true, state: { advertencia: nota, error: falla } satisfies EstadoDeNavegacion })
+        else liberar()
+      } else {
+        liberar()
+        setCompra(guardada)
+        setAdvertencia(nota)
+        setError(falla)
+      }
+      return
+    }
+
+    // El vínculo con el gasto de origen corre DESPUÉS de que la confirmación ya comiteó — un
+    // fallo acá se muestra aparte (errorVincularGasto) y nunca deshace la confirmación.
+    const errorDelVinculo = await vincularGasto(confirmada.id)
+    const avisoDeConfirmacion = confirmada.items.some((i) => i.idArticulo !== null)
+      ? 'Compra confirmada: el stock y el costo ya se actualizaron.'
+      : 'Compra confirmada.'
+    const vinculo = {
+      gastoVinculado: idDesdeGasto !== null && errorDelVinculo === null,
+      errorVincularGasto: errorDelVinculo ?? undefined,
+    }
+    if (esNuevo) {
+      // Sin liberar: la pantalla queda inerte hasta que la navegación la reemplace.
+      if (montado.current) navigate(rutaDeLaCompra(confirmada.id), { replace: true, state: { aviso: avisoDeConfirmacion, ...vinculo } satisfies EstadoDeNavegacion })
+      else liberar()
+      return
+    }
+    liberar()
+    // regla 6: un 2xx de confirmar nunca se reporta como fallo — la respuesta ES el resultado.
+    setCompra(confirmada)
+    setAviso(avisoDeConfirmacion)
+    setGastoVinculado(vinculo.gastoVinculado)
+    setErrorVincularGasto(errorDelVinculo ?? '')
   }
 
   async function anular() {
@@ -1419,7 +1048,6 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
         }
       >
         {aviso && <div className="alert alert-success">{aviso}</div>}
-        {error && <div className="alert alert-danger">{error}</div>}
         {errorReferencia && (
           <div className="alert alert-warning py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de compra hasta que esto se resuelva.
@@ -1448,7 +1076,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               type="button"
               className="btn btn-sm btn-outline-danger"
               disabled={vinculandoGasto}
-              onClick={() => compra && void vincularConGastoDeOrigen(compra.id)}
+              onClick={() => compra && void reintentarVinculoConGasto(compra.id)}
             >
               {vinculandoGasto ? 'Reintentando…' : 'Reintentar vínculo'}
             </button>
@@ -1474,7 +1102,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               className="form-select"
               value={encabezado.idProveedor}
               disabled={!esBorrador || ocupado || !referenciaOk || !puedeEscribir}
-              onChange={(e) => cambiarProveedor(e.target.value)}
+              onChange={(e) => cambiarProveedor(e.target.value, e.currentTarget)}
             >
               <option value="">Elegir…</option>
               {(proveedores ?? []).map((p) => (
@@ -1592,163 +1220,21 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
 
         {mostrarFormulario ? (
           <>
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Artículo / concepto</th>
-                    <th>Lote</th>
-                    <th>Unidades</th>
-                    <th>Bultos</th>
-                    <th>Un./bulto</th>
-                    <th>Costo unitario</th>
-                    <th>Descuento</th>
-                    <th>IVA</th>
-                    <th>Act. costo</th>
-                    <th className="text-end">Total</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lineas.map((l) => (
-                    <FilaDeItem
-                      key={l.clave}
-                      linea={l}
-                      alicuotas={alicuotas ?? []}
-                      disabled={ocupado || !referenciaOk || !puedeEscribir}
-                      discriminaIva={discriminaIva}
-                      costoIncluyeIva={costoDeLineaIncluyeIva(discriminaIva, preciosFinales)}
-                      porcentajePorAlicuota={porcentajePorAlicuota}
-                      idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
-                      nombreProveedor={
-                        (proveedores ?? []).find((p) => p.id === encabezado.idProveedor)?.razonSocial ?? ''
-                      }
-                      onCambio={cambiarLinea}
-                      onQuitar={quitarLinea}
-                    />
-                  ))}
-                  {lineas.length === 0 && (
-                    <tr>
-                      <td colSpan={11} className="text-center text-muted py-3">
-                        Todavía no hay items cargados.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {puedeEscribir && (
-              <div className="d-flex flex-wrap gap-2 mb-3">
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  disabled={ocupado || !referenciaOk}
-                  onClick={agregarLinea}
-                >
-                  + Agregar línea
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  disabled={ocupado || !referenciaOk}
-                  onClick={agregarConcepto}
-                >
-                  + Agregar concepto
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary btn-sm"
-                  disabled={ocupado || !referenciaOk}
-                  onClick={abrirCargaPorTotal}
-                >
-                  Cargar por total
-                </button>
-              </div>
-            )}
-
-            {puedeEscribir && panelTotalAbierto && (
-              <div className="border p-3 mb-3">
-                <strong>Cargar por total</strong>
-                <div className="small text-muted mb-2">
-                  {discriminaIva
-                    ? preciosFinales
-                      ? 'Este comprobante discrimina IVA y sus precios lo incluyen: cargá el importe final, el IVA se discrimina.'
-                      : 'Este tipo de comprobante discrimina IVA: cargá el importe neto, el IVA se suma.'
-                    : 'Cargá el total del comprobante.'}{' '}
-                  Se agrega una sola línea por concepto: no mueve stock ni actualiza costos.
-                </div>
-                <div className="row g-2 align-items-end">
-                  <div className="col-md-4">
-                    <label className="form-label" htmlFor="compra-total-descripcion">
-                      Descripción
-                    </label>
-                    <input
-                      id="compra-total-descripcion"
-                      type="text"
-                      className="form-control form-control-sm"
-                      value={totalDescripcion}
-                      disabled={ocupado}
-                      onChange={(e) => setTotalDescripcion(e.target.value)}
-                    />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label" htmlFor="compra-total-importe">
-                      Importe total
-                    </label>
-                    <CampoImporte
-                      id="compra-total-importe"
-                      className="form-control form-control-sm"
-                      valor={totalImporte}
-                      disabled={ocupado}
-                      onChange={setTotalImporte}
-                    />
-                  </div>
-                  <div className="col-md-2">
-                    <label className="form-label" htmlFor="compra-total-alicuota">
-                      IVA del total
-                    </label>
-                    <select
-                      id="compra-total-alicuota"
-                      className="form-select form-select-sm"
-                      value={totalIdAlicuota}
-                      disabled={ocupado}
-                      onChange={(e) => setTotalIdAlicuota(e.target.value === '' ? '' : Number(e.target.value))}
-                    >
-                      <option value="">Elegir…</option>
-                      {(alicuotas ?? []).map((al) => (
-                        <option key={al.id} value={al.id}>
-                          {al.nombre}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-md-3 d-flex gap-2">
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      disabled={
-                        ocupado ||
-                        totalImporte === null ||
-                        totalImporte <= 0 ||
-                        totalDescripcion.trim() === '' ||
-                        totalIdAlicuota === ''
-                      }
-                      onClick={cargarPorTotal}
-                    >
-                      Agregar como concepto
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline-secondary btn-sm"
-                      onClick={() => setPanelTotalAbierto(false)}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            <GrillaDeItemsDeCompra
+              lineas={lineas}
+              alicuotas={alicuotas ?? []}
+              disabled={ocupado || !referenciaOk || !puedeEscribir}
+              discriminaIva={discriminaIva}
+              preciosFinales={preciosFinales}
+              porcentajePorAlicuota={porcentajePorAlicuota}
+              idProveedor={encabezado.idProveedor === '' ? null : encabezado.idProveedor}
+              nombreProveedor={(proveedores ?? []).find((p) => p.id === encabezado.idProveedor)?.razonSocial ?? ''}
+              marcarFaltantes={intentoFallido !== null}
+              cambiosDeProveedor={cambiosDeProveedor}
+              onConsultando={alCambiarConsultasEnVuelo}
+              onCambio={cambiarLinea}
+              onQuitar={quitarLinea}
+            />
 
             <div className="row g-3 mb-3">
               <div className="col-md-3">
@@ -1804,66 +1290,77 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               />
             )}
 
-            {lineasIncompletas > 0 && (
+            {cantidadDeIncompletas > 0 && (
               <div className="alert alert-warning py-1 px-2 small mb-3">
-                {lineasIncompletas} línea(s) incompleta(s) — no se van a guardar.
+                {cantidadDeIncompletas} línea(s) incompleta(s) — complételas o quítelas para poder guardar.
               </div>
             )}
 
-            <div className="d-flex gap-2 mb-3">
-              {puedeEscribir && (
-                <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={guardarBorrador}>
-                  {guardando ? 'Guardando…' : esNuevo ? 'Crear borrador' : 'Guardar borrador'}
-                </button>
-              )}
-              {!esNuevo && puedeEscribir && (
-                <button
-                  type="button"
-                  className="btn btn-success"
-                  disabled={ocupado || !referenciaOk}
-                  onClick={() => setPanelConfirmarAbierto(true)}
-                >
-                  Confirmar compra
-                </button>
-              )}
-            </div>
+            {advertencia && (
+              <div className="alert alert-warning py-1 px-2 small" role="alert">
+                {advertencia}
+              </div>
+            )}
+            {esperandoCodigos && (
+              <div className="alert alert-info py-1 px-2 small" role="alert">
+                Se están buscando códigos de proveedor: espere a que terminen y vuelva a guardar.
+              </div>
+            )}
+            {(impedimentoParaGuardar ?? error) && (
+              <div className="alert alert-danger py-1 px-2 small" role="alert">
+                {impedimentoParaGuardar ?? error}
+              </div>
+            )}
 
-            {panelConfirmarAbierto && (
-              <div className="border p-3 mb-3">
-                <strong>Confirmar compra</strong>
-                {errorConfirmar && <div className="alert alert-danger py-1 px-2 small mt-2">{errorConfirmar}</div>}
-                <div className="form-check my-2">
-                  <input
-                    id="compra-confirmacion-confirmar"
-                    type="checkbox"
-                    className="form-check-input"
-                    checked={confirmadoParaConfirmar}
-                    disabled={confirmando}
-                    onChange={(e) => setConfirmadoParaConfirmar(e.target.checked)}
-                  />
-                  <label className="form-check-label" htmlFor="compra-confirmacion-confirmar">
-                    {tieneArticulos
-                      ? 'Confirmo que quiero confirmar esta compra. Es irreversible: el stock entra, el costo del artículo se actualiza y no se puede volver a borrador.'
-                      : 'Confirmo que quiero confirmar esta compra. Es irreversible: no se puede volver a borrador.'}
-                  </label>
-                </div>
-                <div className="d-flex gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary"
-                    disabled={confirmando}
-                    onClick={() => {
-                      setPanelConfirmarAbierto(false)
-                      setConfirmadoParaConfirmar(false)
-                    }}
-                  >
+            {puedeEscribir && (
+              <>
+                <div className="d-flex flex-wrap gap-2 mb-2">
+                  <button type="button" className="btn btn-primary" disabled={!puedeGuardar} onClick={() => void guardar(true)}>
+                    {accion === 'guardar' ? 'Guardando…' : 'Guardar'}
+                  </button>
+                  <button type="button" className="btn btn-outline-primary" disabled={!puedeGuardar} onClick={() => void guardar(false)}>
+                    {accion === 'borrador' ? 'Guardando…' : 'Guardar borrador'}
+                  </button>
+                  <button type="button" className="btn btn-outline-secondary" disabled={ocupado} onClick={pedirCancelar}>
                     Cancelar
                   </button>
-                  <button type="button" className="btn btn-success" disabled={!confirmadoParaConfirmar || confirmando} onClick={confirmar}>
-                    {confirmando ? 'Confirmando…' : 'Confirmar'}
-                  </button>
                 </div>
-              </div>
+                <div className="small text-muted mb-3">
+                  {lineasCompletas.some((l) => l.idArticulo !== '')
+                    ? 'Guardar confirma la compra y es irreversible: el stock entra, el costo del artículo se actualiza y no se puede volver a borrador.'
+                    : 'Guardar confirma la compra y es irreversible: no se puede volver a borrador.'}{' '}
+                  Para dejarla pendiente, use Guardar borrador.
+                </div>
+              </>
+            )}
+
+            {proveedorPendiente !== null && (
+              <ConfirmacionDeBaja
+                titulo="el proveedor"
+                pregunta="Cambiar"
+                nota={`Cambiar el proveedor vuelve a buscar ${cantidadPorCodigo} ${cantidadPorCodigo === 1 ? 'línea' : 'líneas'} por su código y borra sus precios.${hayPorCodigoEnBultos ? ' Las líneas cargadas por bulto también pierden la cantidad.' : ''}`}
+                etiquetaConfirmar="Cambiar proveedor"
+                ocupado={false}
+                disparador={disparadorDeProveedor}
+                onConfirmar={() => {
+                  aplicarProveedor(proveedorPendiente)
+                  setProveedorPendiente(null)
+                }}
+                onCancelar={() => setProveedorPendiente(null)}
+              />
+            )}
+
+            {descartarAbierto && (
+              <ConfirmacionDeBaja
+                titulo="los cambios sin guardar de esta compra"
+                pregunta="Descartar"
+                nota="Lo que no se guardó se pierde."
+                etiquetaConfirmar="Descartar cambios"
+                ocupado={false}
+                disparador={disparadorDeDescartar}
+                onConfirmar={() => navigate('/compras')}
+                onCancelar={() => setDescartarAbierto(false)}
+              />
             )}
           </>
         ) : (

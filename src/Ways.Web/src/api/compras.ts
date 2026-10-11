@@ -7,15 +7,12 @@
  * `costoUnitario`/`descuento`/`idAlicuotaIva`).
  */
 import { api } from './cliente'
-import { respetaGranularidad } from './cantidadPorUnidad'
+import { brutoDeLinea, cantidadDeLinea, lineaCompletaParaEnvio, aLineaSolicitada, valoresParaApi, type LineaDeCompraFormulario } from './lineaDeCompra'
+import { redondearImporte } from '../formato/importes'
 import type {
-  CoberturaDeArticulo,
   CompraDetalle,
   EstadoCompra,
   EstadoPago,
-  ItemDeCompra,
-  ItemDeOrden,
-  LineaDeCompraSolicitada,
   PaginaDeCompras,
   PercepcionSolicitada,
   ResultadoAnulacion,
@@ -27,7 +24,6 @@ import type {
   SolicitudDePagoDeCompra,
   TipoComprobanteListado,
   TipoDePercepcion,
-  UnidadVenta,
 } from './tipos'
 
 function redondear(valor: number, decimales: number): number {
@@ -140,194 +136,7 @@ export function claseDeBadgeDeEstadoPago(estado: EstadoPago): string {
   }
 }
 
-// ---- Formulario del editor: una línea por fila de la grilla ---------------------------------
-
-export type TipoDeLineaDeCompra = 'articulo' | 'concepto'
-
-export type LineaDeCompraFormulario = {
-  /** Clave solo de React — el `PUT` es un replace-set completo (design decisión 2), ningún id de
-   * línea persistido viaja en el request ni sobrevive entre saves. */
-  clave: number
-  /** `concepto` = importe libre con descripción, sin artículo: no mueve stock, costo ni lote. */
-  tipo: TipoDeLineaDeCompra
-  idArticulo: number | ''
-  descripcion: string
-  unidades: string
-  bultos: string
-  unidadesPorBulto: string
-  /** `number | null` (`null` = "vacío") — mismo shape que emite `CampoImporte`. A diferencia de
-   * `unidades`/`bultos`/`unidadesPorBulto` (cantidades, no dinero), estos dos SÍ son importes. */
-  costoUnitario: number | null
-  descuento: number | null
-  idAlicuotaIva: number | ''
-  actualizaCosto: boolean
-  /** stage-12-lotes-vencimientos (Slice 14): capturado del `ArticuloListado.controlaLote`
-   * elegido en `SelectorDeArticulo` — decide si `fechaVencimiento` entra al conteo de líneas
-   * incompletas (`lineaCompletaParaEnvio`, espejo del `lote_requerido` server-side). Al reabrir
-   * un borrador existente se infiere de si la línea YA trae dato de lote (`itemAFormulario`):
-   * una línea lote-efectiva todavía no tocada no se detecta hasta que el operador la edite — el
-   * servidor sigue siendo la autoridad final al confirmar. */
-  controlaLote: boolean
-  codigoLote: string
-  fechaVencimiento: string
-  /** Código que el proveedor imprimió para la línea; `''` = sin código. Sin pantalla todavía: viaja
-   * para que reabrir y volver a guardar un borrador no pierda el que ya está guardado. */
-  codigoProveedor: string
-  /** Unidad de venta del artículo elegido (`cantidadPorUnidad.ts`): decide el paso de `unidades` y
-   * si una fracción se acepta. Se toma del artículo al elegirlo; en un borrador reabierto la
-   * completa `useUnidadesDeVentaDeLineas`. Ausente se trata como `Peso` (permisivo). Solo aplica a
-   * `unidades`: `unidadesPorBulto` es el tamaño del bulto, no una cantidad de la línea. */
-  unidadVenta?: UnidadVenta
-}
-
-export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
-  return {
-    clave,
-    tipo: 'articulo',
-    idArticulo: '',
-    descripcion: '',
-    unidades: '',
-    bultos: '',
-    unidadesPorBulto: '',
-    costoUnitario: null,
-    descuento: null,
-    idAlicuotaIva: '',
-    actualizaCosto: true,
-    controlaLote: false,
-    codigoLote: '',
-    fechaVencimiento: '',
-    codigoProveedor: '',
-  }
-}
-
-/** Línea por concepto: cantidad 1 por defecto y `actualizaCosto` siempre apagado — un concepto no
- * tiene artículo cuyo costo actualizar. */
-export function lineaDeConceptoVacia(clave: number): LineaDeCompraFormulario {
-  return { ...lineaDeCompraVacia(clave), tipo: 'concepto', unidades: '1', actualizaCosto: false }
-}
-
-/** "Cargar por total": una sola línea por concepto de cantidad 1 cuyo costo es el importe
- * tipeado del comprobante, para no cargar artículo por artículo una factura de ferretería. */
-export function lineaDesdeTotal(
-  clave: number,
-  descripcion: string,
-  importe: number,
-  idAlicuotaIva: number | '',
-): LineaDeCompraFormulario {
-  return { ...lineaDeConceptoVacia(clave), descripcion, costoUnitario: importe, idAlicuotaIva }
-}
-
-/** Un item ya persistido → fila de formulario, para reabrir un borrador existente. */
-export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompraFormulario {
-  return {
-    clave,
-    tipo: item.idArticulo === null ? 'concepto' : 'articulo',
-    idArticulo: item.idArticulo ?? '',
-    descripcion: item.descripcion,
-    unidades:
-      item.bultos !== null && item.unidadesPorBulto !== null
-        ? String(redondear(item.cantidad - item.bultos * item.unidadesPorBulto, 3))
-        : String(item.cantidad),
-    bultos: item.bultos === null ? '' : String(item.bultos),
-    unidadesPorBulto: item.unidadesPorBulto === null ? '' : String(item.unidadesPorBulto),
-    costoUnitario: item.costoUnitario,
-    descuento: item.descuento,
-    idAlicuotaIva: item.idAlicuotaIva,
-    actualizaCosto: item.actualizaCosto,
-    // Heurística documentada arriba (`LineaDeCompraFormulario.controlaLote`): un dato de lote ya
-    // persistido prueba que el artículo controla lote; su ausencia no prueba lo contrario.
-    controlaLote: item.idLote !== null || item.codigoLote !== null || item.fechaVencimiento !== null,
-    codigoLote: item.codigoLote ?? '',
-    fechaVencimiento: item.fechaVencimiento ?? '',
-    codigoProveedor: item.codigoProveedor ?? '',
-  }
-}
-
-/** stage-16-ordenes-de-compra, Slice 6: una fila de `CoberturaDeArticulo` (`Pendiente > 0`) de una
- * orden de compra → una línea del formulario de recepción de `CompraEditor.tsx` (design: "reads
- * `idOrdenCompra` from `useSearchParams`, pre-fills … one line per artículo with `Pendiente > 0`").
- * `unidades` arranca en el pendiente (lo que falta recibir); `costoUnitario` arranca en el
- * `costoEstimado` de la OC cuando existe (`''` — nunca `'0'` — cuando nunca se cotizó, para que
- * `lineaCompletaParaEnvio` siga exigiendo que el operador lo confirme). `descripcion` se resuelve
- * contra la línea original de la orden (mismo artículo) — nunca inventada. */
-export function lineaDesdeCoberturaDeOrden(clave: number, cobertura: CoberturaDeArticulo, itemsDeOrden: ItemDeOrden[]): LineaDeCompraFormulario {
-  const itemOriginal = itemsDeOrden.find((i) => i.idArticulo === cobertura.idArticulo)
-  return {
-    ...lineaDeCompraVacia(clave),
-    idArticulo: cobertura.idArticulo,
-    descripcion: itemOriginal?.descripcion ?? `Artículo #${cobertura.idArticulo}`,
-    unidades: String(cobertura.pendiente),
-    costoUnitario: cobertura.costoEstimado,
-  }
-}
-
-function numero(valor: string): number {
-  const n = Number(valor)
-  return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
-}
-
-function numeroONulo(valor: string): number | null {
-  return valor.trim() === '' ? null : Number(valor)
-}
-
-/** Mismo chequeo que `ServicioDeCompras` hace al confirmar (`lote_requerido`, 400) para un
- * artículo lote-efectivo: `fechaVencimiento` es obligatoria, `codigoLote` no (se deriva del
- * vencimiento si se omite — `ReglaDeLotes.DerivarCodigo`, design decisión 4). */
-export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
-  if (l.tipo === 'concepto') {
-    return l.descripcion.trim() !== '' && l.idAlicuotaIva !== '' && l.unidades.trim() !== '' && l.costoUnitario !== null
-  }
-
-  return (
-    l.idArticulo !== '' &&
-    l.idAlicuotaIva !== '' &&
-    l.unidades.trim() !== '' &&
-    respetaGranularidad(l.unidadVenta, Number(l.unidades)) &&
-    l.costoUnitario !== null &&
-    (!l.controlaLote || l.fechaVencimiento.trim() !== '')
-  )
-}
-
-function codigoProveedorONulo(l: LineaDeCompraFormulario): string | null {
-  const codigo = l.codigoProveedor.trim()
-  return codigo === '' ? null : codigo
-}
-
-/** Fila de formulario → `LineaDeCompraSolicitada` — solo se envían las filas completas
- * (`lineaCompletaParaEnvio`), una fila a medio llenar nunca viaja al servidor. */
-export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolicitada {
-  if (l.tipo === 'concepto') {
-    return {
-      idArticulo: null,
-      descripcion: l.descripcion.trim(),
-      unidades: numero(l.unidades),
-      bultos: null,
-      unidadesPorBulto: null,
-      costoUnitario: l.costoUnitario ?? 0,
-      descuento: l.descuento ?? 0,
-      idAlicuotaIva: Number(l.idAlicuotaIva),
-      actualizaCosto: false,
-      codigoLote: null,
-      fechaVencimiento: null,
-      codigoProveedor: codigoProveedorONulo(l),
-    }
-  }
-
-  return {
-    idArticulo: Number(l.idArticulo),
-    descripcion: l.descripcion.trim(),
-    unidades: numero(l.unidades),
-    bultos: numeroONulo(l.bultos),
-    unidadesPorBulto: numeroONulo(l.unidadesPorBulto),
-    costoUnitario: l.costoUnitario ?? 0,
-    descuento: l.descuento ?? 0,
-    idAlicuotaIva: Number(l.idAlicuotaIva),
-    actualizaCosto: l.actualizaCosto,
-    codigoLote: l.codigoLote.trim() === '' ? null : l.codigoLote.trim(),
-    fechaVencimiento: l.fechaVencimiento === '' ? null : l.fechaVencimiento,
-    codigoProveedor: codigoProveedorONulo(l),
-  }
-}
+export * from './lineaDeCompra'
 
 /** Una percepción del formulario. Mientras `automatica` es `true` su base (el neto gravado del
  * comprobante) y su importe (`base × alícuota / 100`) se derivan en cada render y el estado los deja
@@ -500,13 +309,14 @@ export function lineaFormularioACalculo(
   l: LineaDeCompraFormulario,
   porcentajePorAlicuota: Record<number, number>,
 ): LineaDeCalculo {
+  const v = valoresParaApi(l)
   return {
     idAlicuotaIva: l.idAlicuotaIva === '' ? 0 : l.idAlicuotaIva,
-    unidades: numero(l.unidades),
-    bultos: numero(l.bultos),
-    unidadesPorBulto: numero(l.unidadesPorBulto),
-    costoUnitario: l.costoUnitario ?? 0,
-    descuento: l.descuento ?? 0,
+    unidades: v.unidades,
+    bultos: v.bultos ?? 0,
+    unidadesPorBulto: v.unidadesPorBulto ?? 0,
+    costoUnitario: v.costoUnitario,
+    descuento: v.descuento,
     porcentajeIva: l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0),
   }
 }
@@ -518,9 +328,9 @@ export function costoDeLineaIncluyeIva(discriminaIva: boolean, preciosFinales: b
 }
 
 function calcularItem(l: LineaDeCalculo, discriminaIva: boolean, preciosIncluyenIva: boolean): ItemCalculado {
-  const cantidad = redondear(l.unidades + l.bultos * l.unidadesPorBulto, 3)
-  const bruto = redondear(cantidad * l.costoUnitario, 2)
-  const total = redondear(bruto - l.descuento, 2)
+  const cantidad = cantidadDeLinea(l.unidades, l.bultos, l.unidadesPorBulto)
+  const bruto = brutoDeLinea(l.unidades, l.bultos, l.unidadesPorBulto, l.costoUnitario)
+  const total = redondearImporte(bruto - l.descuento, 2)
   const costoEfectivo =
     cantidad <= 0
       ? null
@@ -623,14 +433,6 @@ function desglosarIva(
         (impreso < 0 || neto < 0 || redondear(Math.abs(impreso - ivaCalculado), 2) > TOLERANCIA_DE_IVA_IMPRESO)
       return { idAlicuotaIva, porcentaje, neto, ivaCalculado, iva, fueraDeTolerancia }
     })
-}
-
-/** Espejo de la regla `descuento(i) > bruto(i) ⇒ 400 descuento_de_item_invalido` — feedback
- * instantáneo, nunca autoritativo (el servidor la vuelve a validar). */
-export function lineaConDescuentoInvalido(l: LineaDeCalculo): boolean {
-  const cantidad = redondear(l.unidades + l.bultos * l.unidadesPorBulto, 3)
-  const bruto = redondear(cantidad * l.costoUnitario, 2)
-  return l.descuento > bruto
 }
 
 // ---- Pago de una compra confirmada -----------------------------------------------------------

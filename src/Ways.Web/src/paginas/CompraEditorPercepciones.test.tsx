@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CompraEditor } from './CompraEditor'
+import { cargarConcepto, filaDeItems } from './compras/ayudasDePruebaDeGrilla'
 import { ROL } from '../api/tipos'
 import type {
   AlicuotaIvaListado,
@@ -224,13 +225,7 @@ async function prepararCompraNueva(usuario: ReturnType<typeof userEvent.setup>, 
   await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
   await usuario.selectOptions(screen.getByLabelText('Tipo'), idTipo)
   await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '2')
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Cargar por total' })).toBeEnabled())
-}
-
-async function cargarPorTotal(usuario: ReturnType<typeof userEvent.setup>, importe: string) {
-  await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
-  await usuario.type(screen.getByLabelText('Importe total'), importe)
-  await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
+  await waitFor(() => expect(within(filaDeItems(0)).getByLabelText(/^Cantidad, línea \d+$/)).toBeEnabled())
 }
 
 function tablaDePercepciones() {
@@ -252,7 +247,7 @@ describe('CompraEditor — precios con IVA incluido', () => {
 
     expect(screen.getByLabelText('Precios con IVA incluido')).toBeChecked()
 
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
     // neto 1.000 + IVA 210 = lo tipeado; más las percepciones sugeridas (30 + 15) = 1.255
     const tabla = screen.getByRole('table', { name: 'Desglose de IVA' })
@@ -269,7 +264,7 @@ describe('CompraEditor — precios con IVA incluido', () => {
 
     expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
 
-    await cargarPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     expect(screen.getByText('$ 1.210,00')).toBeInTheDocument()
   })
@@ -278,7 +273,7 @@ describe('CompraEditor — precios con IVA incluido', () => {
     mockearReferencia([proveedorFixture({ percibeIibb: false, percibeIva: false })])
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
     const campo = screen.getByLabelText('IVA impreso 21%')
     await usuario.clear(campo)
@@ -298,11 +293,11 @@ describe('CompraEditor — precios con IVA incluido', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario, '7')
-    await cargarPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
 
     expect(screen.queryByLabelText('Precios con IVA incluido')).not.toBeInTheDocument()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -310,17 +305,14 @@ describe('CompraEditor — precios con IVA incluido', () => {
     expect(cuerpo.percepciones).toBeNull()
   })
 
-  it('al guardar manda el modo y el texto de "Cargar por total" habla del importe final', async () => {
+  it('al guardar manda el modo de precios con IVA incluido', async () => {
     mockearReferencia([proveedorFixture({ percibeIibb: false, percibeIva: false })])
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
 
-    await usuario.click(screen.getByRole('button', { name: 'Cargar por total' }))
-    expect(screen.getByText(/cargá el importe final, el IVA se discrimina/)).toBeInTheDocument()
-    await usuario.type(screen.getByLabelText('Importe total'), '1210')
-    await usuario.click(screen.getByRole('button', { name: 'Agregar como concepto' }))
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await cargarConcepto(usuario, '1210')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -333,7 +325,7 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
     const tabla = tablaDePercepciones()
     expect(within(tabla).getByLabelText('Base imponible Percepción IIBB')).toHaveValue('1.000,00')
@@ -347,9 +339,9 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
-    const costo = screen.getByLabelText('Costo unitario')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()
@@ -361,14 +353,14 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
     const importe = within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB')
     await usuario.clear(importe)
     await usuario.type(importe, '31,07')
     await usuario.tab()
 
-    const costo = screen.getByLabelText('Costo unitario')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()
@@ -383,7 +375,7 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
     const fila = within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB').closest('tr') as HTMLElement
     await usuario.click(within(fila).getByRole('button', { name: 'Quitar' }))
@@ -391,7 +383,7 @@ describe('CompraEditor — percepciones', () => {
     expect(within(tablaDePercepciones()).queryByLabelText('Importe Percepción IIBB')).not.toBeInTheDocument()
     expect(screen.getByText('$ 1.225,00')).toBeInTheDocument()
 
-    const costo = screen.getByLabelText('Costo unitario')
+    const costo = within(filaDeItems(0)).getByLabelText(/^Importe, línea \d+$/)
     await usuario.clear(costo)
     await usuario.type(costo, '2420')
     await usuario.tab()
@@ -405,7 +397,7 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
     const fila = within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB').closest('tr') as HTMLElement
     await usuario.click(within(fila).getByRole('button', { name: 'Quitar' }))
 
@@ -421,13 +413,13 @@ describe('CompraEditor — percepciones', () => {
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
     const importe = within(tablaDePercepciones()).getByLabelText('Importe Percepción IIBB')
     await usuario.clear(importe)
     await usuario.type(importe, '31,07')
     await usuario.tab()
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -460,7 +452,7 @@ describe('CompraEditor — percepciones', () => {
     mockearReferencia()
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
     expect(screen.getByText('$ 1.255,00')).toBeInTheDocument()
 
     await usuario.selectOptions(screen.getByLabelText('Tipo'), '7')
@@ -631,7 +623,7 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
     )
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
     await usuario.click(screen.getByRole('button', { name: '+ Percepción IIBB' }))
     const importe = screen.getByLabelText('Importe Percepción IIBB')
     await usuario.type(importe, '7')
@@ -668,9 +660,9 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
     apiPostMock.mockResolvedValue(compraFixture({ id: 99 }))
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1210')
+    await cargarConcepto(usuario, '1210')
 
-    await usuario.click(screen.getByRole('button', { name: 'Crear borrador' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
     const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
@@ -684,7 +676,7 @@ describe('CompraEditor — borradores que arrancan de un origen y referencia que
     ])
     const usuario = userEvent.setup()
     await prepararCompraNueva(usuario)
-    await cargarPorTotal(usuario, '1000')
+    await cargarConcepto(usuario, '1000')
     expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
 
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')

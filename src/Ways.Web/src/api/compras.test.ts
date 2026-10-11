@@ -1,64 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  aLineaSolicitada,
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
   costoDeLineaIncluyeIva,
   construirQueryDeCompras,
   etiquetaDeEstadoCompra,
   filtrosDeComprasVacios,
-  itemAFormulario,
-  lineaCompletaParaEnvio,
-  lineaConDescuentoInvalido,
   lineaDeCompraVacia,
-  lineaDeConceptoVacia,
-  lineaDesdeTotal,
   lineaFormularioACalculo,
   type LineaDeCalculo,
   type LineaDeCompraFormulario,
 } from './compras'
-import type { ItemDeCompra } from './tipos'
 
 function lineaFixture(sobrescribir: Partial<LineaDeCompraFormulario> = {}): LineaDeCompraFormulario {
   return {
-    clave: 1,
-    tipo: 'articulo',
+    ...lineaDeCompraVacia(1),
     idArticulo: 10,
     descripcion: 'Fideos 500g',
-    unidades: '10',
-    bultos: '',
-    unidadesPorBulto: '',
-    costoUnitario: 100,
-    descuento: 50,
+    cantidad: '10',
+    importe: 100,
+    descuentoPorcentaje: 5,
     idAlicuotaIva: 3,
-    actualizaCosto: true,
-    controlaLote: false,
-    codigoLote: '',
-    fechaVencimiento: '',
-    codigoProveedor: '',
-    ...sobrescribir,
-  }
-}
-
-function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
-  return {
-    orden: 1,
-    idArticulo: 10,
-    descripcion: 'Fideos 500g',
-    cantidad: 10,
-    bultos: null,
-    unidadesPorBulto: null,
-    costoUnitario: 100,
-    descuento: 50,
-    idAlicuotaIva: 3,
-    porcentajeIva: 21,
-    total: 950,
-    actualizaCosto: true,
-    precioSugerido: 114.95,
-    codigoLote: null,
-    fechaVencimiento: null,
-    idLote: null,
-    codigoProveedor: null,
     ...sobrescribir,
   }
 }
@@ -68,142 +30,6 @@ describe('etiquetaDeEstadoCompra', () => {
     expect(etiquetaDeEstadoCompra('Borrador')).toBe('Borrador')
     expect(etiquetaDeEstadoCompra('Confirmada')).toBe('Confirmada')
     expect(etiquetaDeEstadoCompra('Anulada')).toBe('Anulada')
-  })
-})
-
-describe('lineaDeCompraVacia / itemAFormulario', () => {
-  it('lineaDeCompraVacia arranca sin artículo ni alícuota elegidos, actualizaCosto en true', () => {
-    const linea = lineaDeCompraVacia(7)
-    expect(linea).toEqual({
-      clave: 7,
-      tipo: 'articulo',
-      idArticulo: '',
-      descripcion: '',
-      unidades: '',
-      bultos: '',
-      unidadesPorBulto: '',
-      costoUnitario: null,
-      descuento: null,
-      idAlicuotaIva: '',
-      actualizaCosto: true,
-      controlaLote: false,
-      codigoLote: '',
-      fechaVencimiento: '',
-      codigoProveedor: '',
-    })
-  })
-
-  it('itemAFormulario sin bultos deriva unidades = cantidad tal cual', () => {
-    const linea = itemAFormulario(1, itemFixture({ cantidad: 10, bultos: null, unidadesPorBulto: null }))
-    expect(linea.unidades).toBe('10')
-    expect(linea.bultos).toBe('')
-    expect(linea.unidadesPorBulto).toBe('')
-  })
-
-  it('itemAFormulario con bultos reconstruye unidades restando bultos × unidadesPorBulto de la cantidad persistida', () => {
-    // cantidad = unidades + bultos*unidadesPorBulto = unidades + 3*6 => unidades = cantidad - 18
-    const linea = itemAFormulario(1, itemFixture({ cantidad: 20, bultos: 3, unidadesPorBulto: 6 }))
-    expect(linea.unidades).toBe('2')
-    expect(linea.bultos).toBe('3')
-    expect(linea.unidadesPorBulto).toBe('6')
-  })
-
-  it('itemAFormulario infiere controlaLote de un dato de lote ya persistido (stage-12-lotes-vencimientos, Slice 14)', () => {
-    const conLote = itemAFormulario(1, itemFixture({ codigoLote: 'L-01', fechaVencimiento: '2026-12-01' }))
-    expect(conLote.controlaLote).toBe(true)
-    expect(conLote.codigoLote).toBe('L-01')
-    expect(conLote.fechaVencimiento).toBe('2026-12-01')
-
-    const sinLote = itemAFormulario(1, itemFixture({ codigoLote: null, fechaVencimiento: null, idLote: null }))
-    expect(sinLote.controlaLote).toBe(false)
-    expect(sinLote.codigoLote).toBe('')
-    expect(sinLote.fechaVencimiento).toBe('')
-  })
-})
-
-describe('líneas por concepto', () => {
-  it('lineaDeConceptoVacia arranca como concepto de cantidad 1, sin artículo y sin actualizar costo', () => {
-    const linea = lineaDeConceptoVacia(4)
-    expect(linea).toMatchObject({
-      clave: 4,
-      tipo: 'concepto',
-      idArticulo: '',
-      descripcion: '',
-      unidades: '1',
-      costoUnitario: null,
-      actualizaCosto: false,
-      controlaLote: false,
-    })
-  })
-
-  it('lineaDesdeTotal arma una línea por concepto de cantidad 1 cuyo costo es el importe tipeado', () => {
-    const linea = lineaDesdeTotal(9, 'Factura ferretería', 1234.56, 3)
-    expect(linea).toMatchObject({
-      clave: 9,
-      tipo: 'concepto',
-      descripcion: 'Factura ferretería',
-      unidades: '1',
-      costoUnitario: 1234.56,
-      idAlicuotaIva: 3,
-      actualizaCosto: false,
-    })
-  })
-
-  it('itemAFormulario de un item sin artículo reabre la línea como concepto', () => {
-    const linea = itemAFormulario(1, itemFixture({ idArticulo: null, descripcion: 'Flete', actualizaCosto: false }))
-    expect(linea.tipo).toBe('concepto')
-    expect(linea.idArticulo).toBe('')
-    expect(linea.descripcion).toBe('Flete')
-  })
-
-  it('itemAFormulario de un item con artículo es de tipo artículo', () => {
-    expect(itemAFormulario(1, itemFixture()).tipo).toBe('articulo')
-  })
-
-  it('un concepto está completo con descripción, alícuota, unidades y costo — sin artículo', () => {
-    expect(lineaCompletaParaEnvio(lineaDesdeTotal(1, 'Flete', 500, 3))).toBe(true)
-  })
-
-  it.each([
-    ['sin descripción', { descripcion: '   ' }],
-    ['sin alícuota', { idAlicuotaIva: '' as const }],
-    ['sin unidades', { unidades: '' }],
-    ['sin costo', { costoUnitario: null }],
-  ])('un concepto %s no está completo', (_nombre, cambios) => {
-    expect(lineaCompletaParaEnvio({ ...lineaDesdeTotal(1, 'Flete', 500, 3), ...cambios })).toBe(false)
-  })
-
-  it('aLineaSolicitada de un concepto viaja con idArticulo null y sin lote, bultos ni actualizaCosto', () => {
-    const solicitada = aLineaSolicitada({
-      ...lineaDesdeTotal(1, '  Flete  ', 500, 3),
-      bultos: '2',
-      unidadesPorBulto: '6',
-      codigoLote: 'L-1',
-      fechaVencimiento: '2026-12-01',
-      actualizaCosto: true,
-    })
-    expect(solicitada).toEqual({
-      idArticulo: null,
-      descripcion: 'Flete',
-      unidades: 1,
-      bultos: null,
-      unidadesPorBulto: null,
-      costoUnitario: 500,
-      descuento: 0,
-      idAlicuotaIva: 3,
-      actualizaCosto: false,
-      codigoLote: null,
-      fechaVencimiento: null,
-      codigoProveedor: null,
-    })
-  })
-
-  it('el mirror de totales suma un concepto como cualquier otra línea', () => {
-    const concepto = lineaFormularioACalculo(lineaDesdeTotal(1, 'Flete', 1000, 3), { 3: 21 })
-    const totales = calcularTotalesDeCompra([concepto], true)
-    expect(totales.subtotal).toBe(1000)
-    expect(totales.ivaTotal).toBe(210)
-    expect(totales.total).toBe(1210)
   })
 })
 
@@ -217,7 +43,7 @@ describe('costoDeLineaIncluyeIva', () => {
   })
 
   it('coincide con cómo calcula el costo efectivo de la línea: solo suma el IVA cuando el costo es neto', () => {
-    const linea = { ...lineaDeCompraVacia(1), unidades: '1', costoUnitario: 100, idAlicuotaIva: 3 as const }
+    const linea = lineaFixture({ cantidad: '1', importe: 100, descuentoPorcentaje: null, idAlicuotaIva: 3 })
     const costoEfectivo = (discriminaIva: boolean, preciosFinales: boolean) =>
       calcularTotalesDeCompra([lineaFormularioACalculo(linea, { 3: 21 })], discriminaIva, {}, preciosFinales).items[0].costoEfectivo
 
@@ -227,131 +53,6 @@ describe('costoDeLineaIncluyeIva', () => {
     expect(costoDeLineaIncluyeIva(true, true)).toBe(true)
     expect(costoEfectivo(false, false)).toBe(100)
     expect(costoDeLineaIncluyeIva(false, false)).toBe(true)
-  })
-})
-
-describe('lineaCompletaParaEnvio', () => {
-  it('una línea con artículo, alícuota, unidades y costo está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture())).toBe(true)
-  })
-
-  it('sin artículo elegido no está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ idArticulo: '' }))).toBe(false)
-  })
-
-  it('sin alícuota elegida no está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ idAlicuotaIva: '' }))).toBe(false)
-  })
-
-  it('sin unidades tipeadas no está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '' }))).toBe(false)
-  })
-
-  it('sin costo unitario tipeado no está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ costoUnitario: null }))).toBe(false)
-  })
-
-  it('un artículo que controla lote sin fecha de vencimiento no está completa (espejo del 400 lote_requerido del confirm)', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: true, fechaVencimiento: '' }))).toBe(false)
-  })
-
-  it('un artículo que controla lote con fecha de vencimiento (sin código, se deriva) está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: true, codigoLote: '', fechaVencimiento: '2026-12-01' }))).toBe(true)
-  })
-
-  it('unidades fraccionarias: incompleta para un artículo por unidad, completa para uno por peso o sin unidad conocida', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5', unidadVenta: 'Unidad' }))).toBe(false)
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5', unidadVenta: 'Peso' }))).toBe(true)
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '1.5' }))).toBe(true)
-  })
-
-  it('cero unidades sueltas sigue siendo válido para un artículo por unidad (el resto vienen en bultos)', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '0', bultos: '3', unidadesPorBulto: '12', unidadVenta: 'Unidad' }))).toBe(true)
-  })
-
-  it('unidadesPorBulto fraccionario no se juzga por la unidad de venta: es el tamaño del bulto, no una cantidad de la línea', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ unidades: '2', bultos: '1', unidadesPorBulto: '0.5', unidadVenta: 'Unidad' }))).toBe(true)
-  })
-
-  it('una línea por concepto no se juzga por unidad de venta', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ tipo: 'concepto', idArticulo: '', descripcion: 'Flete', unidades: '1.5' }))).toBe(true)
-  })
-
-  it('un artículo que no controla lote nunca exige fecha de vencimiento', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: false, fechaVencimiento: '' }))).toBe(true)
-  })
-})
-
-describe('codigoProveedor de la línea', () => {
-  it('itemAFormulario conserva el código guardado y un item sin código abre vacío', () => {
-    expect(itemAFormulario(1, itemFixture({ codigoProveedor: 'AB-12' })).codigoProveedor).toBe('AB-12')
-    expect(itemAFormulario(1, itemFixture({ codigoProveedor: null })).codigoProveedor).toBe('')
-  })
-
-  it('itemAFormulario conserva el código también en una línea por concepto', () => {
-    const linea = itemAFormulario(1, itemFixture({ idArticulo: null, actualizaCosto: false, codigoProveedor: 'FLETE-9' }))
-    expect(linea.tipo).toBe('concepto')
-    expect(linea.codigoProveedor).toBe('FLETE-9')
-  })
-
-  it('aLineaSolicitada de un artículo envía el código recortado y null cuando está vacío', () => {
-    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '  AB-12  ' })).codigoProveedor).toBe('AB-12')
-    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '' })).codigoProveedor).toBeNull()
-    expect(aLineaSolicitada(lineaFixture({ codigoProveedor: '   ' })).codigoProveedor).toBeNull()
-  })
-
-  it('aLineaSolicitada de un concepto envía el código recortado y null cuando está vacío', () => {
-    const concepto = lineaDesdeTotal(1, 'Flete', 500, 3)
-    expect(aLineaSolicitada({ ...concepto, codigoProveedor: ' FLETE-9 ' }).codigoProveedor).toBe('FLETE-9')
-    expect(aLineaSolicitada({ ...concepto, codigoProveedor: '' }).codigoProveedor).toBeNull()
-  })
-
-  it('reabrir un borrador y volver a guardarlo no pierde el código de ninguna línea', () => {
-    const items = [
-      itemFixture({ orden: 1, codigoProveedor: 'AB-12' }),
-      itemFixture({ orden: 2, idArticulo: null, actualizaCosto: false, codigoProveedor: 'FLETE-9' }),
-      itemFixture({ orden: 3, codigoProveedor: null }),
-    ]
-    const reenviadas = items.map((item, i) => aLineaSolicitada(itemAFormulario(i + 1, item)))
-    expect(reenviadas.map((l) => l.codigoProveedor)).toEqual(['AB-12', 'FLETE-9', null])
-  })
-})
-
-describe('aLineaSolicitada', () => {
-  it('mapea los campos numéricos y recorta bultos/unidadesPorBulto vacíos a null', () => {
-    expect(aLineaSolicitada(lineaFixture())).toEqual({
-      idArticulo: 10,
-      descripcion: 'Fideos 500g',
-      unidades: 10,
-      bultos: null,
-      unidadesPorBulto: null,
-      costoUnitario: 100,
-      descuento: 50,
-      idAlicuotaIva: 3,
-      actualizaCosto: true,
-      codigoLote: null,
-      fechaVencimiento: null,
-      codigoProveedor: null,
-    })
-  })
-
-  it('un descuento null se envía como 0, nunca NaN', () => {
-    expect(aLineaSolicitada(lineaFixture({ descuento: null })).descuento).toBe(0)
-  })
-
-  it('bultos/unidadesPorBulto tipeados viajan como número', () => {
-    const linea = aLineaSolicitada(lineaFixture({ bultos: '3', unidadesPorBulto: '6' }))
-    expect(linea.bultos).toBe(3)
-    expect(linea.unidadesPorBulto).toBe(6)
-  })
-
-  it('codigoLote/fechaVencimiento vacíos recortan a null; tipeados viajan tal cual', () => {
-    expect(aLineaSolicitada(lineaFixture({ codigoLote: '', fechaVencimiento: '' })).codigoLote).toBeNull()
-    expect(aLineaSolicitada(lineaFixture({ codigoLote: '', fechaVencimiento: '' })).fechaVencimiento).toBeNull()
-
-    const linea = aLineaSolicitada(lineaFixture({ codigoLote: '  L-01  ', fechaVencimiento: '2026-12-01' }))
-    expect(linea.codigoLote).toBe('L-01')
-    expect(linea.fechaVencimiento).toBe('2026-12-01')
   })
 })
 
@@ -416,7 +117,7 @@ describe('aSolicitudDeCompra', () => {
         percepciones: [],
         percepcionesDescartadas: [],
       },
-      [lineaFixture({ clave: 1 }), lineaFixture({ clave: 2, idArticulo: '' })],
+      [lineaFixture({ clave: 1 }), lineaFixture({ clave: 2, importe: null }), lineaDeCompraVacia(3)],
     )
     expect(solicitud.items).toHaveLength(1)
   })
@@ -449,6 +150,20 @@ describe('lineaFormularioACalculo', () => {
   it('una alícuota sin elegir resuelve porcentajeIva = 0', () => {
     const calculo = lineaFormularioACalculo(lineaFixture({ idAlicuotaIva: '' }), { 3: 21 })
     expect(calculo.porcentajeIva).toBe(0)
+  })
+
+  it('el descuento en porcentaje llega al cálculo como monto sobre el bruto de la línea', () => {
+    const calculo = lineaFormularioACalculo(lineaFixture({ cantidad: '10', importe: 100, descuentoPorcentaje: 5 }), { 3: 21 })
+    expect(calculo).toMatchObject({ unidades: 10, bultos: 0, unidadesPorBulto: 0, costoUnitario: 100, descuento: 50 })
+  })
+
+  it('una línea por bulto llega al cálculo con bultos, unidades por bulto y costo por unidad', () => {
+    const calculo = lineaFormularioACalculo(
+      lineaFixture({ cantidad: '2', unidadDeMedida: 'Bulto', unidadesPorBulto: 6, importe: 60, descuentoPorcentaje: null }),
+      { 3: 21 },
+    )
+    expect(calculo).toMatchObject({ unidades: 0, bultos: 2, unidadesPorBulto: 6, costoUnitario: 10, descuento: 0 })
+    expect(calcularTotalesDeCompra([calculo], false).items[0]).toMatchObject({ cantidad: 12, bruto: 120, total: 120 })
   })
 })
 
@@ -514,17 +229,6 @@ describe('calcularTotalesDeCompra', () => {
     expect(totales.subtotal).toBe(1200) // 1000 + 200
     expect(totales.descuentoTotal).toBe(50) // 50 + 0
     expect(totales.ivaTotal).toBe(220.5) // 199.5 + 21
-  })
-})
-
-describe('lineaConDescuentoInvalido', () => {
-  it('un descuento mayor al bruto es inválido', () => {
-    expect(lineaConDescuentoInvalido(lineaDeCalculoFixture({ descuento: 1500 }))).toBe(true)
-  })
-
-  it('un descuento igual o menor al bruto es válido', () => {
-    expect(lineaConDescuentoInvalido(lineaDeCalculoFixture({ descuento: 1000 }))).toBe(false)
-    expect(lineaConDescuentoInvalido(lineaDeCalculoFixture({ descuento: 50 }))).toBe(false)
   })
 })
 

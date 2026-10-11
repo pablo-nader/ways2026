@@ -7,23 +7,26 @@ import { CampoImporte } from '../../componentes/CampoImporte'
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import { elegirAlicuotaPorDefecto } from '../articulos/helpers'
-import { costoDeListaDeAltaRapida, prefillDeAltaRapidaDeArticulo } from './prefillAltaRapidaArticulo'
+import { costoDeListaDeAltaRapida } from './prefillAltaRapidaArticulo'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 
 const LARGO_MAXIMO_CODIGO_PROVEEDOR = 50
 
 type Props = {
-  /** Lo que se tipeó en el buscador: precarga el nombre o el código del proveedor. */
-  termino: string
+  /** Lo que ya se tipeó en la fila: el Detalle precarga el nombre y el Código, el código del proveedor. */
+  nombreInicial: string
+  codigoInicial: string
   idProveedor: number | null
   nombreProveedor: string
   alicuotas: AlicuotaIvaListado[]
   idAlicuotaIvaDeLaLinea: number | ''
   costoDeLaLinea: number | null
-  /** El costo unitario de la línea ya trae el IVA: es lo que el artículo guarda como `costoListaIncluyeIva`. */
-  costoIncluyeIva: boolean
-  onCreado: (articulo: ArticuloListado) => void
+  /** El Importe de la línea es un precio neto de IVA (comprobante que discrimina IVA con precios netos):
+   * el costo se guarda declarado sin IVA para que el servidor lo lleve a su costo nominal con IVA. */
+  costoSinIva: boolean
+  /** `codigoProveedor` es el que viajó al crear el artículo (el operador puede haberlo corregido acá). */
+  onCreado: (articulo: ArticuloListado, codigoProveedor: string | null) => void
   onCancelar: () => void
 }
 
@@ -31,28 +34,28 @@ type Props = {
  * Alta rápida de un artículo desde una línea de compra. Solo pide lo que `AltaArticulo` exige
  * (nombre, área, alícuota) más el código del proveedor y el costo; el resto viaja con los defaults
  * de un alta en blanco del ABM. El costo se guarda como `costoLista`, el campo de costo que el ABM
- * de artículos edita de forma directa. Viaja por unidad (el costo de una línea es unitario) y con el IVA incluido o no
- * según el modo de IVA de la compra (`costoIncluyeIva`); el servidor calcula el costo nominal.
+ * de artículos edita de forma directa (el servidor calcula el `costoNominal` a partir de él); se declara
+ * por unidad y con o sin IVA según `costoSinIva`.
  */
 export function AltaRapidaArticuloDeCompra({
-  termino,
+  nombreInicial,
+  codigoInicial,
   idProveedor,
   nombreProveedor,
   alicuotas,
   idAlicuotaIvaDeLaLinea,
   costoDeLaLinea,
-  costoIncluyeIva,
+  costoSinIva,
   onCreado,
   onCancelar,
 }: Props) {
-  const [prefill] = useState(() => prefillDeAltaRapidaDeArticulo(termino))
   const alicuotasActivas = alicuotas.filter((a) => a.activo)
 
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
   const [cargandoAreas, setCargandoAreas] = useState(true)
   const [errorAreas, setErrorAreas] = useState('')
-  const [nombre, setNombre] = useState(prefill.nombre)
-  const [codigoProveedor, setCodigoProveedor] = useState(prefill.codigoProveedor)
+  const [nombre, setNombre] = useState(nombreInicial)
+  const [codigoProveedor, setCodigoProveedor] = useState(codigoInicial)
   const [idArea, setIdArea] = useState<number | ''>('')
   const [idAlicuotaIva, setIdAlicuotaIva] = useState<number | ''>(() =>
     idAlicuotaIvaDeLaLinea !== '' && alicuotasActivas.some((a) => a.id === idAlicuotaIvaDeLaLinea)
@@ -121,7 +124,7 @@ export function AltaRapidaArticuloDeCompra({
         esProducto: true,
         costoLista: costo,
         costoListaPor: 'Unidad',
-        costoListaIncluyeIva: costoIncluyeIva,
+        costoListaIncluyeIva: !costoSinIva,
         descuentoProveedor: null,
         disponibleParaTodas: true,
         idsEmpresas: null,
@@ -129,7 +132,7 @@ export function AltaRapidaArticuloDeCompra({
         controlaLote: false,
         codigoProveedor: sinProveedor || codigoLimpio === '' ? null : codigoLimpio,
       })
-      onCreado(creado)
+      onCreado(creado, sinProveedor || codigoLimpio === '' ? null : codigoLimpio)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo crear el artículo.')
     } finally {
@@ -255,6 +258,7 @@ export function AltaRapidaArticuloDeCompra({
             disabled={guardando}
             onChange={setCosto}
           />
+          {costoSinIva && <div className="form-text">Se guarda sin IVA, tal como se cargó en la compra.</div>}
         </div>
 
         <div className="d-flex gap-2">
