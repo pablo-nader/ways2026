@@ -49,6 +49,12 @@ public class ItemComprobanteVenta : EntidadTenant
     /// </summary>
     public int? IdOferta { get; set; }
 
+    /// <summary>Combo que consumió unidades de esta línea. La línea sigue siendo la del artículo real:
+    /// el combo es un descuento repartido en <see cref="Descuento"/>, no una línea propia. Si varios
+    /// combos consumieron unidades de la misma línea, se guarda el de menor id. Snapshot inmutable:
+    /// <c>NULL</c> en toda venta anterior a los combos y en la que no los usó.</summary>
+    public int? IdCombo { get; set; }
+
     public int IdAlicuotaIva { get; set; }
     public decimal PorcentajeIva { get; set; }
 
