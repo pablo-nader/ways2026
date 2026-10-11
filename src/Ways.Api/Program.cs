@@ -6,10 +6,12 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Options;
 using Ways.Api.ConectorMcp;
+using Ways.Api.Dominios;
 using Ways.Api.Endpoints;
 using Ways.Api.Seguridad;
 using Ways.Application;
 using Ways.Application.Abstracciones;
+using Ways.Application.Dominios;
 using Ways.Infrastructure;
 using Ways.Infrastructure.Persistencia;
 
@@ -29,6 +31,14 @@ builder.Services.AgregarInfrastructure(builder.Configuration);
 // --- Contexto del usuario autenticado ---
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IContextoDeUsuario, ContextoDeUsuarioHttp>();
+
+// --- Dominio por el que llegó la request ---
+// El middleware ResolucionDeDominioMiddleware completa DominioActual antes de la autenticación; el
+// login, las páginas públicas y la guarda de sesión por host leen IDominioActual.
+builder.Services.Configure<OpcionesDePlataforma>(
+    builder.Configuration.GetSection(OpcionesDePlataforma.Seccion));
+builder.Services.AddScoped<DominioActual>();
+builder.Services.AddScoped<IDominioActual>(sp => sp.GetRequiredService<DominioActual>());
 
 // --- Detrás de un proxy inverso (EasyPanel, Traefik, nginx) ---
 // El proxy termina el TLS y habla HTTP con el contenedor. Sin esto la app cree que
@@ -220,6 +230,13 @@ var app = builder.Build();
 // Tiene que ir primero: todo lo que sigue depende de saber el esquema real.
 app.UseForwardedHeaders();
 
+// El host se resuelve acá y no más abajo: el conector MCP reescribe Request.Host en sus rutas (a la URL
+// pública), y el dominio es el que llegó, no el reescrito. Va antes del manejador de errores, así que
+// responde por su cuenta los casos que tiene (host desconocido, fallo de la base). Y antes de los
+// archivos estáticos y de la autenticación: un host que no es de la plataforma ni un dominio verificado
+// no llega a servir el front ni la API.
+app.UsarResolucionDeDominio();
+
 // Antes de UseExceptionHandler: la línea de diagnóstico del conector registra el estado que deja el
 // manejador de errores, no el 200 que tiene la respuesta mientras la excepción sube.
 app.UsarConectorMcp(conectorMcp);
@@ -263,8 +280,9 @@ app.MapearUsuarios();
 app.MapearCatalogos();
 app.MapearParametros();
 app.MapearAprovisionamiento();
-// Dominios propios de cada tenant (solo plataforma).
+// Dominios propios de cada tenant (solo plataforma) y la descripción pública del sitio.
 app.MapearDominios();
+app.MapearPublico();
 app.MapearOrganizacion();
 // stage-desktop-pos: vinculación de dispositivos de escritorio + su login por usuario.
 app.MapearDispositivos();

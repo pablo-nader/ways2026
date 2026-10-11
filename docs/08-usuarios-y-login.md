@@ -140,11 +140,22 @@ supervisor sin tener permiso para convertirlo en admin.
 
 ## Login
 
-- `POST /api/auth/login` con `{ mail, password }`. Es por `mail`, no por `usuario` (etapa 1
-  de multi-tenancy, doc 09): el `mail` es único global y resuelve la cuenta —y con ella el
-  tenant— sin que el request tenga que cargar ningún contexto de tenant de antemano. El
-  detalle del contrato de login vive en
+- `POST /api/auth/login` con `{ mail, password }`. En el host de la plataforma es por `mail`, no
+  por `usuario` (etapa 1 de multi-tenancy, doc 09): el `mail` es único global y resuelve la
+  cuenta —y con ella el tenant— sin que el request tenga que cargar ningún contexto de tenant de
+  antemano. El detalle del contrato de login vive en
   `openspec/changes/stage-1-organization-and-catalogs/specs/usuarios-y-login/spec.md`.
+- **Bajo el dominio propio de un comercio** (doc 09 "Dominios por tenant") el tenant ya se conoce
+  por el host, así que el body admite `{ usuario, password }` además de `{ mail, password }`:
+  exactamente uno de los dos (ambos o ninguno es `400 solicitud_invalida`). El `usuario` se busca
+  por `(id_tenant, usuario)`; en el host de la plataforma es `400 usuario_requiere_dominio`. Bajo
+  un dominio de comercio el `mail` también queda acotado a ese tenant: el de otra cuenta (o el de
+  plataforma) da el mismo error, y con el mismo costo, que una contraseña incorrecta — el dominio
+  no sirve para averiguar en qué tenant existe un mail, ni suma fallos a la cuenta ajena.
+  `GET /api/publico/sitio` (anónimo) dice a la pantalla de login si el host admite `usuario`.
+- Una sesión de un tenant solo vale en el dominio de ese tenant y en el host de la plataforma: la
+  misma cookie, o el mismo bearer, presentada en el dominio de otro comercio se rechaza (`401`, y
+  la cookie se borra). La sesión de `root` vale en cualquier host.
 - El mensaje de error es **el mismo** para mail inexistente y contraseña incorrecta.
   El legacy los distinguía (*"El usuario ingresado es incorrecto"* vs *"La contraseña
   ingresada es incorrecta"*), lo que permite enumerar cuentas. Además, ante un mail
