@@ -199,7 +199,7 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
             CodigoInterno: null, Nombre: "Artículo de prueba", Descripcion: null, IdArea: idArea,
             IdCategoria: null, IdMarca: null, IdGrupo: null, IdProveedorHabitual: null,
             IdAlicuotaIva: idAlicuotaIva, UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null,
-            EsProducto: true, CostoLista: null, DescuentoProveedor: null, CostoNominal: null);
+            EsProducto: true, CostoLista: null, DescuentoProveedor: null);
         var creacionArticulo = await admin.PostAsJsonAsync("/api/articulos", altaArticulo);
         Assert.Equal(HttpStatusCode.Created, creacionArticulo.StatusCode);
         var articulo = (await creacionArticulo.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson))!;

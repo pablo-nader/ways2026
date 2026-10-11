@@ -359,11 +359,34 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var ctx = await PrepararAsync(nameof(ElBorradorCalculaYGuardaElPrecioSugeridoSinAbrirNingunPrecio));
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, costoUnitario: 100m));
 
-        // C-FA (discrimina IVA): costoEfectivo = 121; margen proveedor 50% -> sugerido = 181.5.
-        Assert.Equal(181.5m, creada.Items[0].PrecioSugerido);
+        // C-FA (discrimina IVA): costoEfectivo = 121; margen proveedor 50% -> 181.5, que con el múltiplo por defecto (100) se sugiere como 200.
+        Assert.Equal(200m, creada.Items[0].PrecioSugerido);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.Precios.CountAsync());
+    }
+
+    /// <summary>La compra no tiene empresa propia: el múltiplo de redondeo es el de la empresa de su punto de
+    /// venta. 181.5 (121 + 50%) con múltiplo 25 es 175; con el default (100) es 200.</summary>
+    [Fact]
+    public async Task ElPrecioSugeridoDeLaCompraUsaElMultiploDeRedondeoDeLaEmpresaDelPuntoDeVenta()
+    {
+        var ctx = await PrepararAsync(nameof(ElPrecioSugeridoDeLaCompraUsaElMultiploDeRedondeoDeLaEmpresaDelPuntoDeVenta));
+
+        int idEmpresa;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            idEmpresa = await db.PuntosVenta.Where(pv => pv.Id == ctx.IdPuntoVenta).Select(pv => pv.IdEmpresa).SingleAsync();
+        }
+
+        var alta = await ctx.Admin.PutAsJsonAsync(
+            $"/api/parametros?idEmpresa={idEmpresa}",
+            new Ways.Application.Parametros.ParametroAlta(ParametroConocido.RedondeoSugerenciaPrecio.Clave, "25", null));
+        Assert.Equal(HttpStatusCode.OK, alta.StatusCode);
+
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, costoUnitario: 100m));
+
+        Assert.Equal(175m, creada.Items[0].PrecioSugerido);
     }
 
     [Fact]
@@ -373,7 +396,7 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, costoUnitario: 100m));
         var confirmada = await ConfirmarAsync(ctx, creada.Id);
 
-        Assert.Equal(181.5m, confirmada.Items[0].PrecioSugerido);
+        Assert.Equal(200m, confirmada.Items[0].PrecioSugerido);
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
@@ -401,13 +424,13 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Single(resultados);
         Assert.True(resultados[0].Aplicado);
-        Assert.Equal(181.5m, resultados[0].Precio);
+        Assert.Equal(200m, resultados[0].Precio);
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
             Assert.Equal(1, await db.Precios.CountAsync());
             var precio = await db.Precios.FirstAsync();
-            Assert.Equal(181.5m, precio.Monto);
+            Assert.Equal(200m, precio.Monto);
             Assert.Null(precio.VigenteHasta);
         }
     }
@@ -475,7 +498,7 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(2, resultados.Count);
         Assert.All(resultados, resultado => Assert.True(resultado.Aplicado, resultado.Error));
-        Assert.All(resultados, resultado => Assert.Equal(181.5m, resultado.Precio));
+        Assert.All(resultados, resultado => Assert.Equal(200m, resultado.Precio));
 
         await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var abiertas = await lectura.Precios
@@ -487,7 +510,7 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(
             new[] { ctx.IdArticulo, ctx.IdArticulo2, idHermano, idSuelto }.Order(),
             abiertas.Select(p => p.IdArticulo).Order());
-        Assert.All(abiertas, precio => Assert.Equal(181.5m, precio.Monto));
+        Assert.All(abiertas, precio => Assert.Equal(200m, precio.Monto));
         Assert.Equal(4, await lectura.Precios.CountAsync(p => p.IdListaPrecio == idListaPrecio));
     }
 
@@ -579,7 +602,7 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var delSuelto = resultados.Single(r => r.IdArticulo == idSuelto);
         Assert.True(delSuelto.Aplicado, delSuelto.Error);
-        Assert.Equal(181.5m, delSuelto.Precio);
+        Assert.Equal(200m, delSuelto.Precio);
 
         await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var preciosDeLaLista = await lectura.Precios.Where(p => p.IdListaPrecio == idListaPrecio).ToListAsync();
@@ -590,7 +613,7 @@ public class ComprasLifecycleTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal([120m, 130m], preciosDeLaLista.Where(p => p.IdArticulo == idHermano).OrderBy(p => p.VigenteDesde).Select(p => p.Monto));
 
         var delSueltoEnLaBase = Assert.Single(preciosDeLaLista, p => p.IdArticulo == idSuelto);
-        Assert.Equal(181.5m, delSueltoEnLaBase.Monto);
+        Assert.Equal(200m, delSueltoEnLaBase.Monto);
         Assert.Null(delSueltoEnLaBase.VigenteHasta);
         Assert.Equal(3, preciosDeLaLista.Count);
 

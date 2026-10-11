@@ -1,7 +1,7 @@
 namespace Ways.Domain.Articulos;
 
 /// <summary>
-/// Los trece campos de <see cref="Articulo"/> que son IGUALES para todos los miembros de una
+/// Los quince campos de <see cref="Articulo"/> que son IGUALES para todos los miembros de una
 /// <see cref="Familia"/> (doc 10 §3). Regla pura, sin base de datos: <see cref="De"/> toma la foto de
 /// un artículo, <see cref="AplicarA"/> la copia sobre otro y <see cref="CamposDistintos"/> nombra, con
 /// el nombre de columna de la tabla <c>articulos</c>, qué campos difieren.
@@ -27,6 +27,8 @@ public sealed record ValoresCompartidosDeFamilia(
     bool ControlaLote,
     bool AcumulaEnVenta,
     decimal? CostoLista,
+    CostoListaPor CostoListaPor,
+    bool CostoListaIncluyeIva,
     decimal? DescuentoProveedor,
     decimal? CostoNominal)
 {
@@ -42,10 +44,12 @@ public sealed record ValoresCompartidosDeFamilia(
         articulo.ControlaLote,
         articulo.AcumulaEnVenta,
         articulo.CostoLista,
+        articulo.CostoListaPor,
+        articulo.CostoListaIncluyeIva,
         articulo.DescuentoProveedor,
         articulo.CostoNominal);
 
-    /// <summary>Copia SOLO los trece campos compartidos sobre <paramref name="articulo"/>. No toca
+    /// <summary>Copia SOLO los quince campos compartidos sobre <paramref name="articulo"/>. No toca
     /// ningún campo propio, la familia, el tenant ni los sellos de auditoría: quien persiste decide
     /// <c>UpdatedAt</c>.</summary>
     public void AplicarA(Articulo articulo)
@@ -61,6 +65,8 @@ public sealed record ValoresCompartidosDeFamilia(
         articulo.ControlaLote = ControlaLote;
         articulo.AcumulaEnVenta = AcumulaEnVenta;
         articulo.CostoLista = CostoLista;
+        articulo.CostoListaPor = CostoListaPor;
+        articulo.CostoListaIncluyeIva = CostoListaIncluyeIva;
         articulo.DescuentoProveedor = DescuentoProveedor;
         articulo.CostoNominal = CostoNominal;
     }
@@ -125,6 +131,16 @@ public sealed record ValoresCompartidosDeFamilia(
         if (CostoLista != otros.CostoLista)
         {
             distintos.Add("costo_lista");
+        }
+
+        if (CostoListaPor != otros.CostoListaPor)
+        {
+            distintos.Add("costo_lista_por");
+        }
+
+        if (CostoListaIncluyeIva != otros.CostoListaIncluyeIva)
+        {
+            distintos.Add("costo_lista_incluye_iva");
         }
 
         if (DescuentoProveedor != otros.DescuentoProveedor)

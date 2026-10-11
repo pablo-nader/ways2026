@@ -152,8 +152,7 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             UnidadesPorBulto: null,
             EsProducto: true,
             CostoLista: null,
-            DescuentoProveedor: null,
-            CostoNominal: null);
+            DescuentoProveedor: null);
 
     private static async Task<ArticuloListado> CrearArticuloAsync(
         HttpClient cliente, int idArea, int idAlicuotaIva, string nombre = "Artículo de prueba")

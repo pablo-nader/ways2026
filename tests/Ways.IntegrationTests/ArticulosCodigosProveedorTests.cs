@@ -119,7 +119,6 @@ public class ArticulosCodigosProveedorTests(WaysApiFixture fixture) : IClassFixt
             EsProducto: true,
             CostoLista: null,
             DescuentoProveedor: null,
-            CostoNominal: null,
             CodigoProveedor: codigoProveedor);
 
     private static async Task<ArticuloListado> CrearArticuloAsync(Contexto c, string nombre)

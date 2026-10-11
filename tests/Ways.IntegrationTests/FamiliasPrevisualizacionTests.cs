@@ -38,14 +38,14 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         var familiaAjena = await apoyo.SembrarFamiliaAsync(e, "Familia ajena");
 
         await apoyo.SembrarArticuloAsync(e, "ref", @base, id: referencia);
-        await apoyo.SembrarArticuloAsync(e, "d1", @base with { IdGrupo = e.Grupos[1], CostoLista = 60m }, id: d1);
+        await apoyo.SembrarArticuloAsync(e, "d1", @base with { IdGrupo = e.Grupos[1], CostoLista = 60m, CostoNominal = 54m }, id: d1);
         await apoyo.SembrarArticuloAsync(e, "d2", @base, id: d2);
         await apoyo.SembrarArticuloAsync(
             e, "d3",
             @base with
             {
                 IdArea = e.Areas[1], IdCategoria = e.Categorias[1], UnidadVenta = UnidadVenta.Peso, ControlaLote = true,
-                CostoNominal = 45m
+                CostoNominal = 200m
             },
             id: d3);
         await apoyo.SembrarArticuloAsync(e, "d4", @base, familiaAjena, id: d4);
@@ -80,7 +80,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
 
     /// <summary>La previsualización completa del escenario, con cada campo leído con valores distintos: los artículos que
     /// se pueden alinear (el ya idéntico incluido, sin cambios), ascendentes por id y SIN los de otra familia, dado de baja
-    /// o inexistentes; por cada uno las columnas que difieren con los trece valores actuales y nuevos, y el cambio de
+    /// o inexistentes; por cada uno las columnas que difieren con los quince valores actuales y nuevos, y el cambio de
     /// precios de cada lista fija en la que cambia; y los cuatro problemas, en el orden en que el pedido real los
     /// rechaza: los artículos inexistentes (el dado de baja y el id que no existe, ascendentes), el que ya está en otra
     /// familia, y el precio que no se puede alinear.</summary>
@@ -101,7 +101,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal([s.D1, s.D2, s.D3], previa.Articulos.Select(a => a.IdArticulo));
 
         var d1 = previa.Articulos[0];
-        Assert.Equal(["id_grupo", "costo_lista"], d1.Campos);
+        Assert.Equal(["id_grupo", "costo_lista", "costo_nominal"], d1.Campos);
         Assert.Equal(ComoLoLeeElCliente(await ValoresDeAsync(s.D1)), d1.Actual);
         Assert.Equal(ComoLoLeeElCliente(@base), d1.Nuevo);
         Assert.Equal(
@@ -359,7 +359,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(familia, previa.IdFamilia);
         Assert.Equal([miembro, suelto], previa.Articulos.Select(a => a.IdArticulo));
         Assert.Empty(previa.Articulos[0].Campos);
-        Assert.Equal(["costo_lista"], previa.Articulos[1].Campos);
+        Assert.Equal(["costo_lista", "costo_nominal"], previa.Articulos[1].Campos);
 
         var problema = Assert.Single(previa.Problemas);
         Assert.Equal(("articulo_en_otra_familia", deOtra), (problema.Codigo, problema.IdArticulo));
@@ -386,7 +386,7 @@ public class FamiliasPrevisualizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(["familia_inactiva", "referencia_invalida"], deLaFamiliaInactiva.Problemas.Select(p => p.Codigo));
         Assert.Null(deLaFamiliaInactiva.Problemas[0].IdArticulo);
         Assert.Contains("\"Inactiva\"", deLaFamiliaInactiva.Problemas[0].Mensaje, StringComparison.Ordinal);
-        Assert.Equal(["costo_lista"], Assert.Single(deLaFamiliaInactiva.Articulos).Campos);
+        Assert.Equal(["costo_lista", "costo_nominal"], Assert.Single(deLaFamiliaInactiva.Articulos).Campos);
 
         var deLaFamiliaDadaDeBaja = await LeerPrevisualizacionAsync(await PostPrevisualizarAsync(e.Admin, deLaDadaDeBaja, suelto));
 

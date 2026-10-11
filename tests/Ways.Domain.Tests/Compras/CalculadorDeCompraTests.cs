@@ -175,11 +175,22 @@ public class CalculadorDeCompraTests
         var resultado = CalculadorDeCompra.Calcular(
             [Linea(idArticulo: 1, costoUnitario: 100m)], discriminaIva: false, margenes);
 
-        // costoEfectivo = 100 (sin IVA discriminado); margen grupo 50% -> Sugerir(100, null,
-        // null, 50, null) = 150.
-        var esperado = Ways.Domain.Precios.SugeridorDePrecio.Sugerir(100m, null, null, 50m, null);
+        // costoEfectivo = 100 (sin IVA discriminado); margen grupo 50% -> Sugerir(100, 50, null, 0) = 150.
+        var esperado = Ways.Domain.Precios.SugeridorDePrecio.Sugerir(100m, 50m, null, 0m);
         Assert.Equal(esperado, resultado.Items[0].PrecioSugerido);
         Assert.Equal(150m, resultado.Items[0].PrecioSugerido);
+    }
+
+    [Fact]
+    public void ElPrecioSugeridoSeRedondeaAlMultiploQueRecibeElCalculador()
+    {
+        var margenes = new Dictionary<int, (decimal?, decimal?)> { [1] = (50m, null) };
+
+        var resultado = CalculadorDeCompra.Calcular(
+            [Linea(idArticulo: 1, costoUnitario: 101m)], discriminaIva: false, margenes, multiploDeRedondeo: 100m);
+
+        // costoEfectivo 101 + 50% = 151.5 -> múltiplo 100 más cercano: 200.
+        Assert.Equal(200m, resultado.Items[0].PrecioSugerido);
     }
 
     [Fact]

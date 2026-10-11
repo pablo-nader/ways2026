@@ -175,7 +175,7 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
             CodigoInterno: null, Nombre: $"Artículo base {Guid.NewGuid():N}", Descripcion: null, IdArea: idArea,
             IdCategoria: null, IdMarca: null, IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: idAlicuotaIva,
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
-            DescuentoProveedor: null, CostoNominal: null);
+            DescuentoProveedor: null);
 
         var respuesta = await admin.PostAsJsonAsync("/api/articulos", alta);
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
@@ -253,8 +253,7 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
         UnidadesPorBulto: null,
         EsProducto: true,
         CostoLista: null,
-        DescuentoProveedor: null,
-        CostoNominal: null);
+        DescuentoProveedor: null);
 
     private static EdicionArticulo EdicionConReferencia(ArticuloListado actual, Referencia referencia, int idReferencia) => new(
         Nombre: actual.Nombre,
@@ -270,7 +269,6 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
         EsProducto: actual.EsProducto,
         CostoLista: actual.CostoLista,
         DescuentoProveedor: actual.DescuentoProveedor,
-        CostoNominal: actual.CostoNominal,
         DisponibleParaTodas: actual.DisponibleParaTodas,
         IdsEmpresas: null,
         Activo: actual.Activo,
@@ -293,7 +291,6 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
         EsProducto: actual.EsProducto,
         CostoLista: actual.CostoLista,
         DescuentoProveedor: actual.DescuentoProveedor,
-        CostoNominal: actual.CostoNominal,
         DisponibleParaTodas: actual.DisponibleParaTodas,
         IdsEmpresas: null,
         Activo: activo,
@@ -515,7 +512,7 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
             CodigoInterno: null, Nombre: $"Artículo {Guid.NewGuid():N}", Descripcion: null, IdArea: s.IdArea,
             IdCategoria: categoria.Id, IdMarca: marca.Id, IdGrupo: grupo.Id, IdProveedorHabitual: proveedor.Id,
             IdAlicuotaIva: idAlicuota, UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true,
-            CostoLista: null, DescuentoProveedor: null, CostoNominal: null);
+            CostoLista: null, DescuentoProveedor: null);
 
         var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
         Assert.Equal(HttpStatusCode.Created, respuestaAlta.StatusCode);
@@ -536,7 +533,7 @@ public class ArticulosReferenciasVivasTests(WaysApiFixture fixture) : IClassFixt
             IdProveedorHabitual: proveedorDos.Id, IdAlicuotaIva: creado.IdAlicuotaIva,
             UnidadVenta: creado.UnidadVenta, UnidadesPorBulto: creado.UnidadesPorBulto,
             EsProducto: creado.EsProducto, CostoLista: creado.CostoLista,
-            DescuentoProveedor: creado.DescuentoProveedor, CostoNominal: creado.CostoNominal,
+            DescuentoProveedor: creado.DescuentoProveedor,
             DisponibleParaTodas: creado.DisponibleParaTodas, IdsEmpresas: null, Activo: creado.Activo,
             ControlaLote: creado.ControlaLote);
 
