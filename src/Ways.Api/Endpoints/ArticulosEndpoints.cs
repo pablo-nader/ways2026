@@ -135,6 +135,7 @@ public static class ArticulosEndpoints
         grupo.MapGet("/{id:int}/sugerencia-precio", (
             ServicioDeArticulos servicio, int id, int? idEmpresa, CancellationToken ct) =>
             servicio.SugerirPrecioAsync(id, idEmpresa, ct))
+        .RequireAuthorization(Politicas.LecturaDeCostos)
         .WithSummary(
             "Sugiere un precio a partir del costo y margen del artículo (nunca se aplica solo), redondeado al "
             + "múltiplo de redondeo_sugerencia_precio de la empresa indicada en idEmpresa (opcional; sin ella, el "
