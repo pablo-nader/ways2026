@@ -882,8 +882,8 @@ export type ResultadoDeAgrupacion = {
 }
 
 // --- Ofertas (stage-4-ofertas) ---
-// Entidad dedicada (design decision 9): alcance (id_articulo/id_grupo/id_categoria) y
-// beneficio (precio_unitario/porcentaje/importe_fijo) viajan como las tres columnas nullable
+// Entidad dedicada (design decision 9): alcance (id_articulo/id_grupo/id_categoria/id_familia) y
+// beneficio (precio_unitario/porcentaje/importe_fijo) viajan como las columnas nullable
 // crudas de cada grupo (design decision 1) — la exclusividad la valida el servidor
 // (ReglaDeOfertas), acá solo se refleja/arma.
 
