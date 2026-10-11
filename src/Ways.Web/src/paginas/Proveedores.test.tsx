@@ -349,13 +349,13 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
 
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Editar' }))
-    expect(screen.getByText('Editando proveedor 1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editar proveedor' })).toBeInTheDocument()
 
     await usuario.click(bajaDe('Proveedor Uno SA'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
-    expect(screen.queryByText('Editando proveedor 1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar proveedor' })).not.toBeInTheDocument()
   })
 
   it('la baja del proveedor cuyo saldo está a la vista cierra también ese panel', async () => {
@@ -376,6 +376,200 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     expect(screen.queryByText('Saldo de Proveedor Uno SA')).not.toBeInTheDocument()
   })
 })
+
+const CONDICION_RI = { id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true }
+
+function mockearConCondicion(items: ProveedorListado[] = [proveedorFixture()]) {
+  mockearRutasBase((ruta) => {
+    if (ruta === '/proveedores') return Promise.resolve(paginaFixture(items))
+    if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+    return undefined
+  })
+}
+
+async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
+  await screen.findByText('Proveedor Uno SA')
+  await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+  await screen.findByRole('option', { name: 'Responsable Inscripto' })
+}
+
+describe('Proveedores — alta y edición en una modal', () => {
+  it('la primera pantalla es solo la grilla: ni formulario ni diálogo', async () => {
+    mockearConCondicion()
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('form')).toBeNull()
+  })
+
+  it('agregar abre la modal con el título de alta y el formulario vacío', async () => {
+    mockearConCondicion()
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo proveedor' })
+    expect(within(dialogo).getByLabelText('Razón social')).toHaveValue('')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeInTheDocument()
+  })
+
+  it('editar abre la modal con el título de edición y la fila cargada', async () => {
+    mockearConCondicion([proveedorFixture({ nombreFantasia: 'Uno', telefono: '4444' })])
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editar proveedor' })
+    expect(within(dialogo).getByLabelText('Razón social')).toHaveValue('Proveedor Uno SA')
+    expect(within(dialogo).getByLabelText('Nombre de fantasía')).toHaveValue('Uno')
+    expect(within(dialogo).getByLabelText('Teléfono')).toHaveValue('4444')
+  })
+
+  it('cancelar cierra la modal sin escribir nada', async () => {
+    mockearConCondicion()
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('un guardado exitoso cierra la modal, deja el aviso en la pantalla y recarga el listado', async () => {
+    let cargas = 0
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') {
+        cargas += 1
+        return Promise.resolve(
+          paginaFixture(cargas === 1 ? [proveedorFixture()] : [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Nuevo SA' })]),
+        )
+      }
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+      return undefined
+    })
+    apiPostMock.mockResolvedValue(proveedorFixture({ id: 2 }))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Proveedor "Nuevo SA" creado.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('cell', { name: 'Nuevo SA' })).toBeInTheDocument()
+  })
+
+  /** `user-event` solo busca el botón de envío dentro del `<form>`, así que no puede simular Enter
+   * sobre un botón del pie asociado por el atributo `form`: se prueba la asociación misma, que es
+   * lo que hace que el navegador envíe con Enter. */
+  it('el Guardar del pie pertenece al formulario del cuerpo', async () => {
+    mockearConCondicion()
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo proveedor' })
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toHaveProperty('form', dialogo.querySelector('form'))
+  })
+
+  it('un guardado rechazado muestra el error adentro de la modal, la deja abierta y conserva lo tipeado', async () => {
+    mockearConCondicion()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cuit_duplicado', 'Ya existe un proveedor con ese CUIT.'))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo proveedor' })
+    expect(await within(dialogo).findByText('Ya existe un proveedor con ese CUIT.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Razón social')).toHaveValue('Nuevo SA')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('el error de un guardado anterior no sobrevive a cancelar y reabrir', async () => {
+    mockearConCondicion()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cuit_duplicado', 'Ya existe un proveedor con ese CUIT.'))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Ya existe un proveedor con ese CUIT.')
+
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    expect(screen.queryByText('Ya existe un proveedor con ese CUIT.')).not.toBeInTheDocument()
+  })
+
+  it('un guardado ya hecho cuyo refresco falla cierra la modal y avisa en la pantalla', async () => {
+    let cargas = 0
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') {
+        cargas += 1
+        return cargas === 1
+          ? Promise.resolve(paginaFixture([proveedorFixture()]))
+          : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      }
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+      return undefined
+    })
+    apiPostMock.mockResolvedValue(proveedorFixture({ id: 2 }))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Proveedor "Nuevo SA" creado. Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('con el guardado en vuelo la modal no se cierra ni con la × ni con Escape, y un segundo envío se descarta', async () => {
+    mockearConCondicion()
+    apiPostMock.mockImplementation(() => new Promise<void>(() => {}))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nuevo proveedor' })).toBeInTheDocument()
+  })
+})
+
 
 describe('Proveedores — impuestos de la compra', () => {
   it('el alta manda los tres flags apagados por defecto', async () => {
