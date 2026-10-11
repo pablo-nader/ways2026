@@ -827,7 +827,7 @@ describe('cambiosAlResolverPorCodigo respeta lo tipeado mientras la consulta est
 })
 
 describe('cambiosAlCambiarDeProveedor', () => {
-  it('suelta el artículo y todo lo que su precarga escribió, y no toca Código ni Cantidad', () => {
+  it('suelta el artículo y todo lo que su precarga escribió, no toca el Código y, si estaba en bultos, borra la Cantidad', () => {
     const resuelta = lineaFixture({
       resueltaPorCodigo: true,
       codigoProveedor: 'AB-1',
@@ -842,7 +842,7 @@ describe('cambiosAlCambiarDeProveedor', () => {
       codigoLote: 'L1',
       fechaVencimiento: '2027-01-01',
     })
-    const cambios = cambiosAlCambiarDeProveedor()
+    const cambios = cambiosAlCambiarDeProveedor(resuelta)
     expect(cambios).toMatchObject({
       idArticulo: '',
       descripcion: '',
@@ -858,8 +858,14 @@ describe('cambiosAlCambiarDeProveedor', () => {
       idAlicuotaIva: '',
     })
     expect(cambios).not.toHaveProperty('codigoProveedor')
+    expect({ ...resuelta, ...cambios }).toMatchObject({ codigoProveedor: 'AB-1', cantidad: '' })
+  })
+
+  it('una fila en unidades conserva la Cantidad', () => {
+    const resuelta = lineaFixture({ resueltaPorCodigo: true, cantidad: '4', unidadDeMedida: 'Unidad' })
+    const cambios = cambiosAlCambiarDeProveedor(resuelta)
     expect(cambios).not.toHaveProperty('cantidad')
-    expect({ ...resuelta, ...cambios }).toMatchObject({ codigoProveedor: 'AB-1', cantidad: '4' })
+    expect({ ...resuelta, ...cambios }).toMatchObject({ cantidad: '4' })
   })
 })
 

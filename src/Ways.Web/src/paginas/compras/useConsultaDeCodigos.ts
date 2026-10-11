@@ -238,10 +238,12 @@ export function useConsultaDeCodigos({
 
     const idProv = idProveedorRef.current
     for (const fila of lineasRef.current) {
-      const cambios = fila.resueltaPorCodigo ? cambiosAlCambiarDeProveedor() : fila.codigoConsultado !== '' ? { codigoConsultado: '' } : null
+      const cambios = fila.resueltaPorCodigo ? cambiosAlCambiarDeProveedor(fila) : fila.codigoConsultado !== '' ? { codigoConsultado: '' } : null
       if (cambios) aplicarRef.current(fila.clave, cambios)
       const despues = cambios ? { ...fila, ...cambios } : fila
-      if (idProv !== null && despues.idArticulo === '' && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv)
+      // Un concepto con Detalle tipeado no se busca solo: el código se resuelve al salir de la celda.
+      const conDetalleTipeado = despues.idArticulo === '' && despues.descripcion.trim() !== ''
+      if (idProv !== null && despues.idArticulo === '' && !conDetalleTipeado && despues.codigoProveedor.trim() !== '') void consultar(despues, idProv)
     }
   }, [cambiosDeProveedor, avisar, consultar])
 

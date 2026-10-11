@@ -2314,7 +2314,10 @@ describe('CompraEditor — cambiar el proveedor con líneas resueltas por códig
   const busquedasDelProveedorDos = () =>
     apiGetMock.mock.calls.map((c: unknown[]) => String(c[0])).filter((r) => r.startsWith('/articulos?busqueda=') && r.includes('idProveedor=2'))
 
-  async function montarConDosProveedores(usuario: ReturnType<typeof userEvent.setup>) {
+  async function montarConDosProveedores(
+    usuario: ReturnType<typeof userEvent.setup>,
+    proveedores = [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })],
+  ) {
     mockearReferencia(
       (ruta) => {
         const m = /^\/articulos\?busqueda=([^&]+)&idProveedor=(\d+)/.exec(ruta)
@@ -2323,7 +2326,7 @@ describe('CompraEditor — cambiar el proveedor con líneas resueltas por códig
       },
       undefined,
       undefined,
-      [proveedorFixture(), proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })],
+      proveedores,
     )
     renderEditor('nueva')
     await completarEncabezadoDeCompraNueva(usuario)
@@ -2355,6 +2358,7 @@ describe('CompraEditor — cambiar el proveedor con líneas resueltas por códig
 
     const puerta = await screen.findByRole('alertdialog')
     expect(within(puerta).getByText('Cambiar el proveedor vuelve a buscar 1 línea por su código y borra sus precios.')).toBeInTheDocument()
+    expect(within(puerta).queryByText(/por bulto/)).not.toBeInTheDocument()
     expect(busquedasDelProveedorDos()).toEqual([])
 
     await usuario.click(within(puerta).getByRole('button', { name: 'Cambiar proveedor' }))
@@ -2366,6 +2370,109 @@ describe('CompraEditor — cambiar el proveedor con líneas resueltas por códig
     expect(celda(0, 'Cantidad')).toHaveDisplayValue('3')
     expect(celda(0, 'Importe')).toHaveValue('300,0000')
     expect(celda(0, 'Descuento (%)')).toHaveValue('20,00')
+  })
+
+  const CON_BULTO = articuloFixture({ id: 22, nombre: 'Con bulto', codigoProveedor: 'AB-1', costoLista: 242, idAlicuotaIva: 3, unidadesPorBulto: 12 })
+
+  it('una línea resuelta por código en bultos pierde también la cantidad y el aviso lo dice; una en unidades la conserva', async () => {
+    porBusqueda['AB-1@1'] = () => pagina([CON_BULTO])
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Con bulto')
+    await resolverPorCodigo(usuario, 1, 'CD-2', 'Otro del uno')
+    await usuario.type(celda(0, 'Cantidad'), '4')
+    await usuario.type(celda(1, 'Cantidad'), '7')
+    await usuario.selectOptions(celda(0, 'UM'), 'Bulto')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    const puerta = await screen.findByRole('alertdialog')
+    expect(
+      within(puerta).getByText(
+        'Cambiar el proveedor vuelve a buscar 2 líneas por su código y borra sus precios. Las líneas cargadas por bulto también pierden la cantidad.',
+      ),
+    ).toBeInTheDocument()
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue('Del dos'))
+    expect(celda(0, 'UM')).toHaveValue('Unidad')
+    expect(celda(0, 'Cantidad')).toHaveDisplayValue('')
+    expect(celda(1, 'Cantidad')).toHaveDisplayValue('7')
+  })
+
+  it('una línea en bultos que no se resolvió por código no hace que el aviso hable de bultos ni pierde su cantidad', async () => {
+    porBusqueda['yerba@1'] = () => pagina([articuloFixture({ id: 40, nombre: 'Yerba 1kg', codigoInterno: 'ART-40', costoLista: 80, unidadesPorBulto: 12 })])
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    await usuario.type(celda(1, 'Detalle'), 'yerba')
+    await usuario.click(await screen.findByRole('option', { name: /Yerba 1kg/ }))
+    await usuario.type(celda(1, 'Cantidad'), '5')
+    await usuario.selectOptions(celda(1, 'UM'), 'Bulto')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+
+    const puerta = await screen.findByRole('alertdialog')
+    expect(within(puerta).getByText('Cambiar el proveedor vuelve a buscar 1 línea por su código y borra sus precios.')).toBeInTheDocument()
+    await usuario.click(within(puerta).getByRole('button', { name: 'Cambiar proveedor' }))
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue('Del dos'))
+    expect(celda(1, 'UM')).toHaveValue('Bulto')
+    expect(celda(1, 'Cantidad')).toHaveDisplayValue('5')
+  })
+
+  it('el modo de precios del proveedor viejo no se conserva por el importe de líneas que se borran: toma el del nuevo y la precarga lo sigue', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario, [
+      proveedorFixture({ preciosIncluyenIva: true }),
+      proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA', preciosIncluyenIva: false }),
+    ])
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    expect(screen.getByLabelText('Precios con IVA incluido')).toBeChecked()
+    expect(celda(0, 'Importe')).toHaveValue('242,0000')
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue('Del dos'))
+    expect(screen.getByLabelText('Precios con IVA incluido')).not.toBeChecked()
+    expect(celda(0, 'Importe')).toHaveValue('300,0000')
+  })
+
+  it('con una línea sobreviviente de importe tipeado el modo de precios se conserva', async () => {
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario, [
+      proveedorFixture({ preciosIncluyenIva: true }),
+      proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA', preciosIncluyenIva: false }),
+    ])
+    await resolverPorCodigo(usuario, 0, 'AB-1', 'Del uno')
+    await cargarFila(usuario, 1, { detalle: 'Flete', cantidad: '1', importe: '500', iva: '3' })
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+    await usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cambiar proveedor' }))
+
+    await waitFor(() => expect(celda(0, 'Detalle')).toHaveValue('Del dos'))
+    expect(screen.getByLabelText('Precios con IVA incluido')).toBeChecked()
+    expect(celda(0, 'Importe')).toHaveValue('363,0000')
+    expect(celda(1, 'Importe')).toHaveValue('500,0000')
+  })
+
+  it('un concepto con Detalle tipeado y un código pendiente no se busca solo al cambiar de proveedor: conserva todo', async () => {
+    porBusqueda['ZZ-9@2'] = () => pagina([articuloFixture({ id: 52, nombre: 'Aparece en el dos', codigoProveedor: 'ZZ-9', costoLista: 999 })])
+    const usuario = userEvent.setup()
+    await montarConDosProveedores(usuario)
+    await cargarFila(usuario, 0, { codigo: 'ZZ-9', detalle: 'Flete', cantidad: '1', importe: '500', descuento: '5', iva: '3' })
+    await usuario.tab()
+    await act(async () => {})
+
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '2')
+    await act(async () => {})
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(busquedasDelProveedorDos()).toEqual([])
+    expect(celda(0, 'Detalle')).toHaveValue('Flete')
+    expect(celda(0, 'Importe')).toHaveValue('500,0000')
+    expect(celda(0, 'Descuento (%)')).toHaveValue('5,00')
+    expect(celda(0, 'IVA')).toHaveValue('3')
   })
 
   it('con varias líneas resueltas por código el aviso cuenta cuántas son, en plural', async () => {

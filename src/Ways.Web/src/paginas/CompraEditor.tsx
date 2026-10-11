@@ -767,7 +767,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   }
 
   function aplicarProveedor(valor: string) {
-    const hayCostoTipeado = lineas.some((l) => l.importe !== null)
+    const hayCostoTipeado = lineas.some((l) => !l.resueltaPorCodigo && l.importe !== null)
     setEncabezado((prev) =>
       alElegirProveedor(prev, valor === '' ? '' : Number(valor), referenciaDePercepciones, hayCostoTipeado),
     )
@@ -851,6 +851,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
   const hayCambios = hayCambiosSinGuardar({ esNuevo, encabezado, lineas, huellaGuardada })
 
   const cantidadPorCodigo = lineas.filter((l) => l.resueltaPorCodigo).length
+  const hayPorCodigoEnBultos = lineas.some((l) => l.resueltaPorCodigo && l.unidadDeMedida === 'Bulto')
 
   function pedirCancelar(evento: MouseEvent<HTMLButtonElement>) {
     if (!hayCambios) {
@@ -1337,7 +1338,7 @@ function PantallaCompraEditor({ idCompra, idOrdenCompra, idDesdeGasto }: PropsPa
               <ConfirmacionDeBaja
                 titulo="el proveedor"
                 pregunta="Cambiar"
-                nota={`Cambiar el proveedor vuelve a buscar ${cantidadPorCodigo} ${cantidadPorCodigo === 1 ? 'línea' : 'líneas'} por su código y borra sus precios.`}
+                nota={`Cambiar el proveedor vuelve a buscar ${cantidadPorCodigo} ${cantidadPorCodigo === 1 ? 'línea' : 'líneas'} por su código y borra sus precios.${hayPorCodigoEnBultos ? ' Las líneas cargadas por bulto también pierden la cantidad.' : ''}`}
                 etiquetaConfirmar="Cambiar proveedor"
                 ocupado={false}
                 disparador={disparadorDeProveedor}

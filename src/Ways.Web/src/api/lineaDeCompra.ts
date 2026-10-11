@@ -579,10 +579,12 @@ export function cambiosAlDesresolver(): Partial<LineaDeCompraFormulario> {
 }
 
 /** Cambio de proveedor sobre una fila resuelta por código: pierde el artículo y todo lo que su
- * precarga escribió (importe, descuento e IVA), y conserva Código y Cantidad. Queda lista para una
- * primera consulta contra el proveedor nuevo. */
-export function cambiosAlCambiarDeProveedor(): Partial<LineaDeCompraFormulario> {
-  return { ...cambiosAlDesresolver(), importe: null, descuentoPorcentaje: null, idAlicuotaIva: '' }
+ * precarga escribió (importe, descuento e IVA), y conserva Código y Cantidad. Si estaba en bultos
+ * también pierde la Cantidad: volver a Unidad sin tocarla convertiría bultos en unidades. Queda lista
+ * para una primera consulta contra el proveedor nuevo. */
+export function cambiosAlCambiarDeProveedor(l: LineaDeCompraFormulario): Partial<LineaDeCompraFormulario> {
+  const cambios: Partial<LineaDeCompraFormulario> = { ...cambiosAlDesresolver(), importe: null, descuentoPorcentaje: null, idAlicuotaIva: '' }
+  return l.unidadDeMedida === 'Bulto' ? { ...cambios, cantidad: '' } : cambios
 }
 
 /** Editar el código de una fila resuelta por código le saca el artículo (era de OTRO código): el
