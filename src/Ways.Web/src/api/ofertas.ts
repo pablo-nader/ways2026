@@ -7,7 +7,15 @@
  * descriptor literal).
  */
 import { api } from './cliente'
-import type { AltaOferta, EdicionOferta, LineaDeResolucion, ListaPrecioListado, OfertaListado, ResultadoDeResolucion } from './tipos'
+import type {
+  AltaOferta,
+  EdicionOferta,
+  FamiliaListado,
+  LineaDeResolucion,
+  ListaPrecioListado,
+  OfertaListado,
+  ResultadoDeResolucion,
+} from './tipos'
 import { formatearImporte } from '../formato/importes'
 
 export const clienteDeOfertas = {
@@ -25,13 +33,13 @@ export const clienteDeOfertas = {
   resolver: (lineas: LineaDeResolucion[]) => api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas }),
 }
 
-export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria'
+export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria' | 'Familia'
 export type BeneficioOferta = 'PrecioUnitario' | 'Porcentaje' | 'ImporteFijo'
 
 /** Estado controlado del formulario: todo campo numérico/temporal se maneja como texto (mismo
  * criterio que `Formulario` en `Articulos.tsx`); `alcance`/`beneficio` son la representación en
- * UI de la exclusividad de cada grupo — `aAltaOferta` los proyecta de vuelta a las tres
- * columnas nullable, forzando a `null` las dos no elegidas. */
+ * UI de la exclusividad de cada grupo — `aAltaOferta` los proyecta de vuelta a las columnas
+ * nullable (cuatro de alcance, tres de beneficio), forzando a `null` las no elegidas. */
 export type FormularioOferta = {
   id: number | null
   nombre: string
@@ -41,6 +49,7 @@ export type FormularioOferta = {
   nombreArticulo: string
   idGrupo: number | ''
   idCategoria: number | ''
+  idFamilia: number | ''
   fechaDesde: string
   fechaHasta: string
   horaDesde: string
@@ -67,6 +76,7 @@ export function formularioOfertaVacio(): FormularioOferta {
     nombreArticulo: '',
     idGrupo: '',
     idCategoria: '',
+    idFamilia: '',
     fechaDesde: '',
     fechaHasta: '',
     horaDesde: '',
@@ -113,6 +123,7 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
     idArticulo: f.alcance === 'Articulo' ? (f.idArticulo === '' ? null : f.idArticulo) : null,
     idGrupo: f.alcance === 'Grupo' ? (f.idGrupo === '' ? null : f.idGrupo) : null,
     idCategoria: f.alcance === 'Categoria' ? (f.idCategoria === '' ? null : f.idCategoria) : null,
+    idFamilia: f.alcance === 'Familia' ? (f.idFamilia === '' ? null : f.idFamilia) : null,
     fechaDesde: fechaOpcional(f.fechaDesde),
     fechaHasta: fechaOpcional(f.fechaHasta),
     horaDesde: horaOpcional(f.horaDesde),
@@ -130,14 +141,15 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
 }
 
 /**
- * `OfertaListado → Formulario`: deriva `alcance`/`beneficio` de cuál de las tres columnas
+ * `OfertaListado → Formulario`: deriva `alcance`/`beneficio` de cuál de las columnas
  * nullable de cada grupo viene completa (invariante ya garantizado por el servidor — nunca hay
  * cero ni más de una). `nombreArticulo` queda vacío acá a propósito: el detalle de oferta no
  * trae el nombre del artículo referenciado, así que el picker lo resuelve por separado cuando
  * el alcance es `Articulo` (ver `Ofertas.tsx`).
  */
 export function aValoresOferta(o: OfertaListado): FormularioOferta {
-  const alcance: AlcanceOferta = o.idArticulo !== null ? 'Articulo' : o.idGrupo !== null ? 'Grupo' : 'Categoria'
+  const alcance: AlcanceOferta =
+    o.idArticulo !== null ? 'Articulo' : o.idGrupo !== null ? 'Grupo' : o.idFamilia != null ? 'Familia' : 'Categoria'
   const beneficio: BeneficioOferta =
     o.precioUnitario !== null ? 'PrecioUnitario' : o.porcentaje !== null ? 'Porcentaje' : 'ImporteFijo'
 
@@ -150,6 +162,7 @@ export function aValoresOferta(o: OfertaListado): FormularioOferta {
     nombreArticulo: '',
     idGrupo: o.idGrupo ?? '',
     idCategoria: o.idCategoria ?? '',
+    idFamilia: o.idFamilia ?? '',
     fechaDesde: o.fechaDesde ?? '',
     fechaHasta: o.fechaHasta ?? '',
     horaDesde: o.horaDesde ? o.horaDesde.slice(0, 5) : '',
@@ -172,6 +185,16 @@ export function aValoresOferta(o: OfertaListado): FormularioOferta {
  * de la pantalla de artículos). */
 export function opcionesDeLista(listas: ListaPrecioListado[]): { valor: string; etiqueta: string }[] {
   return listas.filter((l) => l.activo).map((l) => ({ valor: String(l.id), etiqueta: l.nombre }))
+}
+
+/** Opciones del selector de familia objetivo: todas las familias vivas del listado, sin filtrar por estado (el servidor no
+ * mira `activo` ni si tiene miembros, igual que con los grupos). Una familia inactiva o sin artículos vivos se rotula para que
+ * se entienda que una oferta sobre ella no alcanza a ningún artículo por ahora. */
+export function opcionesDeFamiliaDeOferta(familias: FamiliaListado[]): { valor: number; etiqueta: string }[] {
+  return familias.map((f) => {
+    const avisos = [...(f.activo ? [] : ['inactiva']), ...(f.cantidadArticulos > 0 ? [] : ['sin artículos'])]
+    return { valor: f.id, etiqueta: avisos.length === 0 ? f.nombre : `${f.nombre} (${avisos.join(', ')})` }
+  })
 }
 
 /** Resumen de una sola línea del beneficio para la columna de listado — no persiste ni valida

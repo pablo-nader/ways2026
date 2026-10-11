@@ -249,7 +249,15 @@ public class ServicioDeArticulos(
     /// <c>IdFamilia</c> no corren los pasos propios de la familia —el lock de membresía, la lectura y el bloqueo de
     /// la familia, la referencia, la comparación de los campos compartidos y la copia de precios—; los 5 chequeos
     /// de catálogo, el 409 <c>codigo_proveedor_duplicado</c> cuando el pedido trae <c>codigo_proveedor</c>, los
-    /// respaldos de la base y el rollback con la suelta del contexto son los mismos en todo alta.</para></summary>
+    /// respaldos de la base y el rollback con la suelta del contexto son los mismos en todo alta.</para>
+    ///
+    /// <para>Con <see cref="AltaArticulo.NombreFamiliaNueva"/> la misma transacción crea la familia y le da al artículo
+    /// como único miembro: el lock de membresía exclusivo es la primera sentencia, igual que con
+    /// <c>IdFamilia</c>, y la familia se inserta —con su propio <c>SaveChangesAsync</c>, que da el id— justo antes del
+    /// artículo. No hay referencia, ni comparación de campos compartidos, ni copia de precios. El nombre se pre-chequea
+    /// como en <see cref="ServicioDeAgrupacionDeFamilias.CrearAsync"/>; el respaldo real es <c>ux_familias_nombre</c>, que
+    /// responde <c>409 familia_nombre_duplicado</c> y revierte el alta entera. Ni el alta de artículos ni la creación
+    /// de una familia escriben auditoría propia, así que no hay filas de auditoría que agregar.</para></summary>
     public async Task<ArticuloListado> CrearAsync(AltaArticulo datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
@@ -257,6 +265,7 @@ public class ServicioDeArticulos(
         var codigoInterno = NormalizarCodigoInternoOpcional(datos.CodigoInterno);
         var codigoProveedor = ReglaDeCodigoProveedor.NormalizarOpcional(datos.CodigoProveedor, "codigo_proveedor");
         ReglaDeCodigoProveedor.ExigirProveedor(codigoProveedor, datos.IdProveedorHabitual);
+        var nombreFamiliaNueva = NormalizarNombreDeFamiliaNueva(datos);
 
         ExigirIdRequerido(datos.IdArea, "id_area");
         ExigirIdRequerido(datos.IdAlicuotaIva, "id_alicuota_iva");
@@ -293,6 +302,11 @@ public class ServicioDeArticulos(
             await ExigirCodigoInternoDisponibleAsync(codigoInterno, ct);
         }
 
+        if (nombreFamiliaNueva is not null)
+        {
+            await NombreDeFamilia.ExigirDisponibleAsync(db, nombreFamiliaNueva, excluirId: null, ct);
+        }
+
         var idTenant = ExigirTenantDeLaSesion();
 
         // Sin reintento: el INSERT no es idempotente y no hay clave de idempotencia — el
@@ -312,8 +326,9 @@ public class ServicioDeArticulos(
             // que toman ese lock —la escritura de precios y la edición de artículos, compartido salvo con "solo
             // este", y la confirmación de compras, compartido—, así que ninguno está a mitad de camino mientras
             // se lee la referencia y se copian sus precios. Un alta sin familia no cambia ninguna pertenencia y
-            // no lo toma.
-            if (datos.IdFamilia is not null)
+            // no lo toma. Crear una familia nueva con el artículo como único miembro también cambia la pertenencia
+            // y lo toma igual.
+            if (datos.IdFamilia is not null || nombreFamiliaNueva is not null)
             {
                 await LockDeMembresiaDeFamilias.TomarExclusivoAsync(conexion, transaccionCruda, idTenant, ct);
             }
@@ -360,6 +375,20 @@ public class ServicioDeArticulos(
             try
             {
                 var ahora = reloj.Ahora;
+                var idFamiliaDelArticulo = datos.IdFamilia;
+
+                // La familia nueva se inserta antes que el artículo, que la referencia por su id, y en la misma
+                // transacción: un nombre tomado en una carrera la rechaza acá con el 23505 de ux_familias_nombre
+                // y no queda ni la familia ni el artículo. El artículo es su único miembro: no hay referencia
+                // contra la que comparar los campos compartidos ni precios que copiar.
+                if (nombreFamiliaNueva is not null)
+                {
+                    var familia = new Familia { Nombre = nombreFamiliaNueva, Activo = true, CreatedAt = ahora, UpdatedAt = ahora };
+                    db.Familias.Add(familia);
+                    await db.SaveChangesAsync(ct);
+                    idFamiliaDelArticulo = familia.Id;
+                }
+
                 var articulo = new Articulo
                 {
                     CodigoInterno = codigoFinal,
@@ -383,7 +412,7 @@ public class ServicioDeArticulos(
                     Activo = datos.Activo,
                     ControlaLote = datos.ControlaLote,
                     AcumulaEnVenta = datos.AcumulaEnVenta,
-                    IdFamilia = datos.IdFamilia,
+                    IdFamilia = idFamiliaDelArticulo,
                     CreatedAt = ahora,
                     UpdatedAt = ahora
                 };
@@ -1411,6 +1440,28 @@ public class ServicioDeArticulos(
         }
 
         return limpio;
+    }
+
+    /// <summary>El nombre de la familia a crear con el alta, o <c>null</c> si el pedido no trae
+    /// <see cref="AltaArticulo.NombreFamiliaNueva"/>. Con <see cref="AltaArticulo.IdFamilia"/> a la vez es
+    /// <c>400 familia_existente_y_nueva</c>; si no, se normaliza como cualquier nombre de familia
+    /// (<see cref="NombreDeFamilia.Normalizar"/>): un nombre presente pero vacío se rechaza, no se descarta.</summary>
+    private static string? NormalizarNombreDeFamiliaNueva(AltaArticulo datos)
+    {
+        if (datos.NombreFamiliaNueva is null)
+        {
+            return null;
+        }
+
+        if (datos.IdFamilia is not null)
+        {
+            throw new ErrorDominio(
+                "familia_existente_y_nueva",
+                "Los campos idFamilia y nombreFamiliaNueva son excluyentes: el artículo entra a una familia existente o crea una nueva.",
+                400);
+        }
+
+        return NombreDeFamilia.Normalizar(datos.NombreFamiliaNueva);
     }
 
     private static string NormalizarRequerido(string? valor, string campo, int largoMaximo)

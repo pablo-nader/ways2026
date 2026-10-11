@@ -68,7 +68,14 @@ public record ArticuloListado(
 /// esos campos está <see cref="AcumulaEnVenta"/>: un pedido que no lo trae lleva su valor por defecto,
 /// <c>true</c>, y se compara como cualquier otro. El artículo nace con el mismo estado de precios que ese
 /// miembro en cada lista fija. Sin <see cref="IdFamilia"/> el artículo no pertenece a ninguna familia y el alta
-/// no cambia.</para></summary>
+/// no cambia.</para>
+///
+/// <para><see cref="NombreFamiliaNueva"/> crea una familia con ese nombre en la misma transacción del alta, y el artículo
+/// es su único miembro y su referencia: no hay valores compartidos que comparar ni precios que copiar. Es excluyente
+/// con <see cref="IdFamilia"/> (<c>400 familia_existente_y_nueva</c>: no se elige una en silencio). Ausente (<c>null</c>)
+/// no cambia nada; presente se normaliza como el nombre de cualquier familia, así que una cadena vacía o de solo espacios
+/// es <c>400 nombre_requerido</c> y una de más de 150 caracteres, <c>400 nombre_muy_largo</c>. Un nombre en uso es
+/// <c>409 familia_nombre_duplicado</c> y no deja ni la familia ni el artículo.</para></summary>
 public record AltaArticulo(
     string? CodigoInterno,
     string Nombre,
@@ -92,7 +99,8 @@ public record AltaArticulo(
     bool AcumulaEnVenta = true,
     int? IdFamilia = null,
     CostoListaPor CostoListaPor = CostoListaPor.Unidad,
-    bool CostoListaIncluyeIva = true);
+    bool CostoListaIncluyeIva = true,
+    string? NombreFamiliaNueva = null);
 
 /// <summary><c>CodigoInterno</c> no aparece a propósito: no es editable por este ABM (mismo
 /// criterio que <see cref="Ways.Application.Clientes.ClienteListado.Numero"/> — un valor

@@ -9,7 +9,7 @@ namespace Ways.Domain.Ofertas;
 /// doc 09 §Catálogo).
 ///
 /// Design decision 1: mantiene las columnas nullable CRUDAS de doc 10 para los dos grupos
-/// exclusivos (alcance: articulo/grupo/categoria; beneficio: precio_unitario/porcentaje/
+/// exclusivos (alcance: articulo/grupo/categoria/familia; beneficio: precio_unitario/porcentaje/
 /// importe_fijo) — el invariante vive en <see cref="ReglaDeOfertas"/> (pura) Y en las dos
 /// CHECKs de esquema (<c>ck_ofertas_alcance_exclusivo</c>/<c>ck_ofertas_beneficio_exclusivo</c>).
 /// Los tipos discriminados/owned types se descartaron: pelearían contra las CHECKs de
@@ -28,12 +28,13 @@ public class Oferta : EntidadTenant
     /// ofertas "2x1 Verano" con ventanas distintas son legítimas.</summary>
     public required string Nombre { get; set; }
 
-    /// <summary>Alcance: exactamente uno de los tres tiene que estar seteado —
+    /// <summary>Alcance: exactamente uno de los cuatro tiene que estar seteado —
     /// <see cref="ReglaDeOfertas.LeerAlcance"/> valida el invariante antes de cualquier
     /// escritura; <c>ck_ofertas_alcance_exclusivo</c> es el backstop de esquema.</summary>
     public int? IdArticulo { get; set; }
     public int? IdGrupo { get; set; }
     public int? IdCategoria { get; set; }
+    public int? IdFamilia { get; set; }
 
     /// <summary>Vigencia por fecha — cada eje es independientemente opcional (NULL = sin
     /// restricción en ese eje), inclusivo en ambos extremos cuando está seteado.</summary>
@@ -53,8 +54,8 @@ public class Oferta : EntidadTenant
     public decimal? CantidadMinima { get; set; }
 
     /// <summary>Beneficio: exactamente uno de los tres tiene que estar seteado — mismo
-    /// invariante que <see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>,
-    /// validado por <see cref="ReglaDeOfertas.LeerBeneficio"/> y respaldado por
+    /// invariante que el alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/
+    /// <see cref="IdCategoria"/>/<see cref="IdFamilia"/>), validado por <see cref="ReglaDeOfertas.LeerBeneficio"/> y respaldado por
     /// <c>ck_ofertas_beneficio_exclusivo</c>.</summary>
     public decimal? PrecioUnitario { get; set; }
     public decimal? Porcentaje { get; set; }

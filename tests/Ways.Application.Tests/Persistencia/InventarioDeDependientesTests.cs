@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Application.Organizacion;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -30,7 +31,7 @@ public class InventarioDeDependientesTests
     [
         typeof(Tenant), typeof(Empresa), typeof(PuntoVenta), typeof(Usuario),
         typeof(Area), typeof(Categoria), typeof(Marca), typeof(Grupo), typeof(MedioPago),
-        typeof(ListaPrecio), typeof(Proveedor)
+        typeof(ListaPrecio), typeof(Proveedor), typeof(Familia)
     ];
 
     private static WaysDbContext CrearContexto()
@@ -53,9 +54,9 @@ public class InventarioDeDependientesTests
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las once anclas (las cuatro de
+    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las doce anclas (las cuatro de
     /// organización, más las siete de fix/bajas-catalogos-guarda-de-uso: los 6 catálogos de
-    /// tenant y proveedores). Las tres imposibilidades mecánicas (tipo sin tabla mapeada, tipo
+    /// tenant y proveedores, más la familia que usa su disolución). Las tres imposibilidades mecánicas (tipo sin tabla mapeada, tipo
     /// <c>Marcado</c> sin <c>created_at</c> resoluble, clave principal no legible desde el ancla)
     /// tiran <see cref="InvalidOperationException"/> NOMBRANDO el tipo y la FK, y esta prueba es
     /// quien las ejecuta en CI — para que sean fallas de build y nunca un 500 sobre un intento de
@@ -73,7 +74,8 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(MedioPago))]
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
-    public void N1_ConstruirNoTiraParaNingunaDeLasOnceAnclas(Type ancla)
+    [InlineData(typeof(Familia))]
+    public void N1_ConstruirNoTiraParaNingunaDeLasDoceAnclas(Type ancla)
     {
         using var db = CrearContexto();
 
@@ -105,6 +107,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(MedioPago))]
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
+    [InlineData(typeof(Familia))]
     public void N1_NingunaFkSeCaeEnSilencioYLosCarveOutsNoEjecutan(Type ancla)
     {
         using var db = CrearContexto();
@@ -168,6 +171,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(MedioPago))]
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
+    [InlineData(typeof(Familia))]
     public void N2_UsaAnclaEquivaleAEntidadBaseConColumnaCreatedAt(Type ancla)
     {
         using var db = CrearContexto();

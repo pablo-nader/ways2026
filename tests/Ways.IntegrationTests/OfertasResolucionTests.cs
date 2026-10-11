@@ -97,7 +97,8 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         return cliente;
     }
 
-    private async Task<int> SembrarArticuloAsync(int idTenant, string nombre, int? idCategoria = null, int? idGrupo = null)
+    private async Task<int> SembrarArticuloAsync(
+        int idTenant, string nombre, int? idCategoria = null, int? idGrupo = null, int? idFamilia = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
@@ -116,6 +117,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
             IdArea = area.Id,
             IdCategoria = idCategoria,
             IdGrupo = idGrupo,
+            IdFamilia = idFamilia,
             IdAlicuotaIva = idAlicuotaIva,
             UnidadVenta = UnidadVenta.Unidad,
             EsProducto = true,
@@ -300,6 +302,188 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal(30m, linea.DescuentoUnitario);
         Assert.Equal(170m, linea.PrecioFinal);
+    }
+
+    private async Task<int> SembrarGrupoAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var grupo = new Grupo { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Grupos.Add(grupo);
+        await db.SaveChangesAsync();
+
+        return grupo.Id;
+    }
+
+    private async Task<int> SembrarFamiliaAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var familia = new Familia { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    /// <summary>Cambia la pertenencia del artículo directo en la base, sin pasar por ningún servicio: lo que se
+    /// prueba es que la resolución lee la familia VIGENTE del artículo y no una copia.</summary>
+    private async Task CambiarFamiliaDelArticuloAsync(int idArticulo, int? idFamilia)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
+        await using var comando = new Npgsql.NpgsqlCommand(
+            "UPDATE articulos SET id_familia = $1 WHERE id_articulo = $2", cruda);
+        comando.Parameters.Add(new Npgsql.NpgsqlParameter { Value = (object?)idFamilia ?? DBNull.Value });
+        comando.Parameters.Add(new Npgsql.NpgsqlParameter { Value = idArticulo });
+
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    private static AltaOferta OfertaDeGrupo(int idGrupo, decimal porcentaje) => new(
+        Nombre: "oferta de grupo", IdEmpresa: null, IdArticulo: null, IdGrupo: idGrupo, IdCategoria: null,
+        FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
+        CantidadMinima: null, PrecioUnitario: null, Porcentaje: porcentaje, ImporteFijo: null,
+        Prioridad: 0, Acumulable: false);
+
+    private static AltaOferta OfertaDeFamilia(int idFamilia, decimal porcentaje, int prioridad = 0) => new(
+        Nombre: "oferta de familia", IdEmpresa: null, IdArticulo: null, IdGrupo: null, IdCategoria: null,
+        FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
+        CantidadMinima: null, PrecioUnitario: null, Porcentaje: porcentaje, ImporteFijo: null,
+        Prioridad: prioridad, Acumulable: false, IdFamilia: idFamilia);
+
+    /// <summary>El precio final de cada artículo (una unidad, sin empresa) en un solo pedido de resolución.</summary>
+    private static async Task<Dictionary<int, decimal?>> PreciosFinalesAsync(
+        HttpClient cliente, int idLista, params int[] idsArticulo)
+    {
+        var solicitud = new SolicitudDeResolucion(
+            [.. idsArticulo.Select(id => new LineaDeResolucion(id, null, idLista, 1m))]);
+        var respuesta = await cliente.PostAsJsonAsync("/api/ofertas/resolver", solicitud);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var resultado = await respuesta.Content.ReadFromJsonAsync<List<ResultadoDeResolucion>>();
+
+        return resultado!.ToDictionary(r => r.IdArticulo, r => r.PrecioFinal);
+    }
+
+    /// <summary>La oferta de grupo llega a los miembros del grupo y a nadie más. No existía una prueba contra la base
+    /// del alcance por grupo: el filtro grueso de candidatas (<c>ConstruirContextoAsync</c>) es SQL que ninguna
+    /// prueba del dominio ejercita.</summary>
+    [Fact]
+    public async Task ResolverAplicaLaOfertaDeGrupoSoloALosMiembrosDelGrupo()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverAplicaLaOfertaDeGrupoSoloALosMiembrosDelGrupo));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idGrupo = await SembrarGrupoAsync(idTenant, "Gaseosas");
+        var idOtroGrupo = await SembrarGrupoAsync(idTenant, "Lácteos");
+        var miembro = await SembrarArticuloAsync(idTenant, "cola", idGrupo: idGrupo);
+        var deOtroGrupo = await SembrarArticuloAsync(idTenant, "leche", idGrupo: idOtroGrupo);
+        var sinGrupo = await SembrarArticuloAsync(idTenant, "suelto");
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        foreach (var id in new[] { miembro, deOtroGrupo, sinGrupo })
+        {
+            await SembrarPrecioAsync(idTenant, id, idLista, 100m);
+        }
+
+        await CrearOfertaAsync(admin, OfertaDeGrupo(idGrupo, porcentaje: 20m));
+
+        var precios = await PreciosFinalesAsync(admin, idLista, miembro, deOtroGrupo, sinGrupo);
+
+        Assert.Equal(80m, precios[miembro]);
+        Assert.Equal(100m, precios[deOtroGrupo]);
+        Assert.Equal(100m, precios[sinGrupo]);
+    }
+
+    [Fact]
+    public async Task ResolverAplicaLaOfertaDeFamiliaSoloALosMiembrosDeLaFamilia()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverAplicaLaOfertaDeFamiliaSoloALosMiembrosDeLaFamilia));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        var idOtraFamilia = await SembrarFamiliaAsync(idTenant, "Pantalones");
+        var miembroUno = await SembrarArticuloAsync(idTenant, "remera-roja", idFamilia: idFamilia);
+        var miembroDos = await SembrarArticuloAsync(idTenant, "remera-azul", idFamilia: idFamilia);
+        var deOtraFamilia = await SembrarArticuloAsync(idTenant, "pantalon", idFamilia: idOtraFamilia);
+        var sinFamilia = await SembrarArticuloAsync(idTenant, "suelto");
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        foreach (var id in new[] { miembroUno, miembroDos, deOtraFamilia, sinFamilia })
+        {
+            await SembrarPrecioAsync(idTenant, id, idLista, 100m);
+        }
+
+        await CrearOfertaAsync(admin, OfertaDeFamilia(idFamilia, porcentaje: 20m));
+
+        var precios = await PreciosFinalesAsync(admin, idLista, miembroUno, miembroDos, deOtraFamilia, sinFamilia);
+
+        Assert.Equal(80m, precios[miembroUno]);
+        Assert.Equal(80m, precios[miembroDos]);
+        Assert.Equal(100m, precios[deOtraFamilia]);
+        Assert.Equal(100m, precios[sinFamilia]);
+    }
+
+    /// <summary>La pertenencia se lee al resolver: el artículo que entra a la familia recibe la oferta, el que sale
+    /// la pierde y el que pasa a otra familia deja de recibirla.</summary>
+    [Fact]
+    public async Task LaOfertaDeFamiliaSigueALosArticulosQueSeUnenYSalen()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaOfertaDeFamiliaSigueALosArticulosQueSeUnenYSalen));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        var idOtraFamilia = await SembrarFamiliaAsync(idTenant, "Pantalones");
+        var articulo = await SembrarArticuloAsync(idTenant, "viajero");
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        await SembrarPrecioAsync(idTenant, articulo, idLista, 100m);
+
+        await CrearOfertaAsync(admin, OfertaDeFamilia(idFamilia, porcentaje: 20m));
+
+        Assert.Equal(100m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
+
+        await CambiarFamiliaDelArticuloAsync(articulo, idFamilia);
+        Assert.Equal(80m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
+
+        await CambiarFamiliaDelArticuloAsync(articulo, idOtraFamilia);
+        Assert.Equal(100m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
+
+        await CambiarFamiliaDelArticuloAsync(articulo, idFamilia);
+        await CambiarFamiliaDelArticuloAsync(articulo, null);
+        Assert.Equal(100m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
+    }
+
+    /// <summary>Sin precedencia por tipo de alcance: la oferta de familia de mayor prioridad le gana a la de grupo
+    /// sobre el mismo artículo, y la de grupo de mayor prioridad le gana a la de familia.</summary>
+    [Fact]
+    public async Task UnaOfertaDeFamiliaYUnaDeGrupoSobreElMismoArticuloCompitenSoloPorPrioridad()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(
+            nameof(UnaOfertaDeFamiliaYUnaDeGrupoSobreElMismoArticuloCompitenSoloPorPrioridad));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        var idGrupo = await SembrarGrupoAsync(idTenant, "Verano");
+        var articulo = await SembrarArticuloAsync(idTenant, "remera", idGrupo: idGrupo, idFamilia: idFamilia);
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        await SembrarPrecioAsync(idTenant, articulo, idLista, 100m);
+
+        var deGrupo = await CrearOfertaAsync(admin, OfertaDeGrupo(idGrupo, porcentaje: 10m) with { Prioridad = 5 });
+        await CrearOfertaAsync(admin, OfertaDeFamilia(idFamilia, porcentaje: 30m, prioridad: 9));
+        Assert.Equal(70m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
+
+        var subida = new EdicionOferta(
+            Nombre: deGrupo.Nombre, IdEmpresa: null, IdArticulo: null, IdGrupo: deGrupo.IdGrupo, IdCategoria: null,
+            FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
+            CantidadMinima: null, PrecioUnitario: null, Porcentaje: 10m, ImporteFijo: null,
+            Prioridad: 20, Acumulable: false, IdsListas: null, Activo: true);
+        var respuesta = await admin.PutAsJsonAsync($"/api/ofertas/{deGrupo.Id}", subida);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        Assert.Equal(90m, (await PreciosFinalesAsync(admin, idLista, articulo))[articulo]);
     }
 
     /// <summary>Spec: "Empresa-scoped oferta excludes other empresas".</summary>

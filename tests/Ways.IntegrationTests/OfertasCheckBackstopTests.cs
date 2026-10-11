@@ -191,4 +191,88 @@ public class OfertasCheckBackstopTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal("ck_ofertas_dias_semana", excepcion.ConstraintName);
     }
+
+    private async Task<int> SembrarFamiliaAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var familia = new Familia { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    /// <summary>La CHECK de cuatro columnas admite exactamente una: una oferta de familia sola entra. Sin esta prueba
+    /// una CHECK que no aceptara la columna nueva pasaría las demás, que solo miran rechazos.</summary>
+    [Fact]
+    public async Task UnaOfertaConSoloFamiliaEsAceptadaPorLaCheckDeExclusividad()
+    {
+        var (idTenant, _) = await SembrarTenantConArticuloAsync(nameof(UnaOfertaConSoloFamiliaEsAceptadaPorLaCheckDeExclusividad));
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO ofertas (id_tenant, nombre, id_familia, porcentaje, created_at, updated_at) " +
+            "VALUES ($1, 'solo-familia', $2, 10, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idFamilia });
+
+        Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+    }
+
+    [Theory]
+    [InlineData("id_articulo")]
+    [InlineData("id_grupo")]
+    [InlineData("id_categoria")]
+    public async Task UnaOfertaConFamiliaYOtroAlcanceSeteadoViolaLaCheckDeExclusividad(string otraColumna)
+    {
+        var (idTenant, _) = await SembrarTenantConArticuloAsync(
+            nameof(UnaOfertaConFamiliaYOtroAlcanceSeteadoViolaLaCheckDeExclusividad) + otraColumna);
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            $"INSERT INTO ofertas (id_tenant, nombre, id_familia, {otraColumna}, porcentaje, created_at, updated_at) " +
+            "VALUES ($1, 'familia-y-otro', $2, 999999, 10, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idFamilia });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_ofertas_alcance_exclusivo", excepcion.ConstraintName);
+    }
+
+    /// <summary>La FK compuesta <c>(id_familia, id_tenant)</c>: un id que no existe y el id de una familia de OTRO
+    /// tenant dan el mismo <c>23503</c> sobre <c>fk_ofertas_familia</c>, que <c>ManejadorDeErrores</c> traduce a
+    /// 400 <c>referencia_invalida</c> con su mapeo genérico. El pre-chequeo del servicio los rechaza antes: esto
+    /// prueba la red de la base.</summary>
+    [Fact]
+    public async Task UnaOfertaConFamiliaInexistenteOAjenaViolaLaFkCompuesta()
+    {
+        var (idTenant, _) = await SembrarTenantConArticuloAsync(nameof(UnaOfertaConFamiliaInexistenteOAjenaViolaLaFkCompuesta));
+        var (idTenantAjeno, _) = await SembrarTenantConArticuloAsync(nameof(UnaOfertaConFamiliaInexistenteOAjenaViolaLaFkCompuesta) + "-ajeno");
+        var idFamiliaAjena = await SembrarFamiliaAsync(idTenantAjeno, "Ajena");
+
+        foreach (var idFamilia in new[] { 999_999_999, idFamiliaAjena })
+        {
+            await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText =
+                "INSERT INTO ofertas (id_tenant, nombre, id_familia, porcentaje, created_at, updated_at) " +
+                "VALUES ($1, 'familia-colgante', $2, 10, now(), now())";
+            comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idFamilia });
+
+            var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+            Assert.Equal("23503", excepcion.SqlState);
+            Assert.Equal("fk_ofertas_familia", excepcion.ConstraintName);
+        }
+    }
 }

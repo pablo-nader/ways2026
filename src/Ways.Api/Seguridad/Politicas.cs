@@ -111,6 +111,13 @@ public static class Politicas
     /// de dispositivo es una condición ADICIONAL, no un reemplazo del rol.</summary>
     public const string RequiereDispositivo = "requiere_dispositivo";
 
+    /// <summary>Supervisor o admin — la puerta de los endpoints cuya respuesta se deriva del costo
+    /// y no se puede enmascarar campo por campo (la sugerencia de precio es costo × margen). Los
+    /// listados que el vendedor sí lee siguen bajo <see cref="OperacionDePos"/> y devuelven el
+    /// costo en <c>null</c>. Mismo claim set que <see cref="LecturaDeReportes"/>, con nombre propio
+    /// para que un cambio en quién lee reportes no mueva quién ve costos.</summary>
+    public const string LecturaDeCostos = "lectura_costos";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -176,6 +183,12 @@ public static class Politicas
                         .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()))
             .AddPolicy(RequiereDispositivo, politica =>
                 politica.RequireAuthenticatedUser()
-                        .RequireClaim(ClaimsWays.IdDispositivo));
+                        .RequireClaim(ClaimsWays.IdDispositivo))
+            .AddPolicy(LecturaDeCostos, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()));
     }
 }

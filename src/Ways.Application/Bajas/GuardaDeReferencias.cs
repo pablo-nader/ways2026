@@ -196,13 +196,19 @@ public sealed class GuardaDeReferencias(IWaysDbContext db, InspectorDeUso inspec
     /// <see cref="InventarioDeDependientes.PropiedadesDeAncla"/> exige, y pregunta al inspector en
     /// modo referencia. Si alguna rama disparó, levanta <c>409</c> con <paramref name="codigo"/> y
     /// el mensaje que compone <see cref="ComponerMensaje"/>.
+    ///
+    /// <paramref name="tablasQueNoBloquean"/> deja afuera, por nombre de tabla hoja, las ramas que el
+    /// llamador resuelve por su cuenta antes de dar de baja (hoy, <c>articulos</c> al disolver una familia: sus
+    /// miembros se sueltan en la misma transacción y los dados de baja conservan su <c>id_familia</c>). El
+    /// filtro es por tabla exacta y solo afecta a ramas directas: una rama puenteada tiene otra etiqueta.
     /// </summary>
     public async Task ExigirSinReferenciasAsync<T>(
         T entidad,
         string codigo,
         string sujeto,
         IReadOnlyDictionary<string, string>? etiquetasPropias,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlySet<string>? tablasQueNoBloquean = null)
         where T : class
     {
         ArgumentNullException.ThrowIfNull(entidad);
@@ -214,7 +220,9 @@ public sealed class GuardaDeReferencias(IWaysDbContext db, InspectorDeUso inspec
             .Select(propiedad => LeerValorDeAncla(entidad, propiedad, tipoAncla))
             .ToList();
 
-        var etiquetas = await inspector.TablasQueReferencianAsync(tipoAncla, valoresDeClave, ct);
+        var etiquetas = (await inspector.TablasQueReferencianAsync(tipoAncla, valoresDeClave, ct))
+            .Where(etiqueta => tablasQueNoBloquean is null || !tablasQueNoBloquean.Contains(etiqueta))
+            .ToList();
 
         if (etiquetas.Count == 0)
         {

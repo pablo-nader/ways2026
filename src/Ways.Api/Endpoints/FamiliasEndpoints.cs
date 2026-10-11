@@ -71,7 +71,7 @@ public static class FamiliasEndpoints
         })
         .WithSummary(
             "Disuelve la familia: sus artículos vivos quedan sin familia, con todos sus valores, y la familia se "
-                + "da de baja.");
+                + "da de baja. 409 familia_en_uso si alguna oferta, viva o dada de baja, apunta a la familia.");
 
         return app;
     }

@@ -79,7 +79,9 @@ public static class ArticulosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
             "Crea un artículo. El código interno se autogenera si se omite. Con idFamilia, el artículo entra "
-                + "a esa familia: sus campos compartidos tienen que coincidir con los de la familia y copia sus precios.");
+                + "a esa familia: sus campos compartidos tienen que coincidir con los de la familia y copia sus precios. "
+                + "Con nombreFamiliaNueva (excluyente con idFamilia), crea esa familia en la misma transacción y el artículo "
+                + "es su único miembro; 409 familia_nombre_duplicado si el nombre está en uso.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeArticulos servicio, int id, EdicionArticulo datos, CancellationToken ct) =>
@@ -135,6 +137,7 @@ public static class ArticulosEndpoints
         grupo.MapGet("/{id:int}/sugerencia-precio", (
             ServicioDeArticulos servicio, int id, int? idEmpresa, CancellationToken ct) =>
             servicio.SugerirPrecioAsync(id, idEmpresa, ct))
+        .RequireAuthorization(Politicas.LecturaDeCostos)
         .WithSummary(
             "Sugiere un precio a partir del costo y margen del artículo (nunca se aplica solo), redondeado al "
             + "múltiplo de redondeo_sugerencia_precio de la empresa indicada en idEmpresa (opcional; sin ella, el "

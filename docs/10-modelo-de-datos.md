@@ -351,7 +351,7 @@ miembros en la misma transacción. El esquema no fuerza la igualdad; la sostiene
 > protocolo de locks y replican a la familia en su propia transacción: el de **precios** ("Precios con
 > alcance de familia", abajo; también lo usa aplicar el precio sugerido de una compra), la **edición de
 > artículos** ("Edición con alcance de familia"), el **alta de un artículo dentro de una familia** ("Alta
-> dentro de una familia") y la **confirmación de una compra**, que replica `costo_nominal` ("Compras y
+> dentro de una familia", y "Alta con una familia nueva", que crea la familia con el artículo como único miembro) y la **confirmación de una compra**, que replica `costo_nominal` ("Compras y
 > familias"). La **baja lógica** de un artículo también cambia quién es miembro (`deleted_at`) y no sigue ese
 > protocolo: no toma el lock de membresía sino el `FOR UPDATE` de la fila del artículo, y los escritores que
 > bloquean miembros reevalúan `deleted_at IS NULL` sobre cada fila bajo su propio lock de fila, así que un
@@ -470,6 +470,22 @@ difiera de la familia):
 del artículo nuevo en orden ascendente de su clave después de las filas y solo inserta. Los campos propios del
 artículo son los del pedido. Un fallo al guardar —también el de las filas de precio— revierte el artículo entero,
 y el alta no se reintenta. Sin `idFamilia` el alta no cambia: no toma el lock de membresía y no copia nada.
+
+**Alta con una familia nueva.** `POST /api/articulos` acepta también un `nombreFamiliaNueva` opcional: el artículo y la
+familia con ese nombre se crean en UNA transacción y el artículo es su único miembro y su referencia. No hay valores
+compartidos que comparar ni precios que copiar, y ni el alta de artículos ni la creación de una familia escriben auditoría
+propia, así que no se agrega ninguna fila de auditoría. Es **excluyente** con `idFamilia`: los dos a la vez son
+`400 familia_existente_y_nueva`, sin elegir ninguno en silencio. Con el campo ausente o en `null` el alta no cambia. Presente,
+el nombre se normaliza como el de cualquier familia (`NombreDeFamilia.Normalizar`): una cadena vacía o de solo espacios es
+`400 nombre_requerido` y una de más de 150 caracteres, `400 nombre_muy_largo`; un campo aceptado nunca se descarta. Un
+nombre en uso entre las familias vivas del tenant (sin distinguir mayúsculas) es `409 familia_nombre_duplicado`: el
+pre-chequeo corre antes de abrir la transacción y es solo de mejor esfuerzo; el respaldo es `ux_familias_nombre`, cuyo
+`23505` se produce al insertar la familia cuando la carrera se pierde y la API traduce al mismo `409`. Un fallo en cualquier
+punto revierte la transacción entera y no deja ni el artículo ni la familia. La respuesta es la del alta
+(`ArticuloListado`), con el `idFamilia` de la familia creada. Orden de locks: el de membresía **exclusivo** es la primera
+sentencia, igual que con `idFamilia`; después los chequeos de catálogo; la familia nueva se inserta (con su propio
+`SaveChangesAsync`, que da el id) justo antes que el artículo. Una fila nueva no la puede bloquear nadie, así que no hay
+fila de familia que bloquear ni filas de miembros ni locks de par.
 
 **Compras y familias.** La confirmación de una compra (`ServicioDeCompras.ConfirmarAsync`) toma el lock de
 membresía **compartido** como primera sentencia de su transacción, antes que el `UPDATE` del encabezado:
@@ -596,7 +612,10 @@ no toman locks.
   dados de baja conservan su `id_familia`. `204`; `404` si la familia no existe o ya está dada de baja (también la
   de otro tenant). Toma, en este orden, el lock de membresía exclusivo, la fila de la familia `FOR UPDATE` y las
   filas de los miembros vivos, ascendentes y `FOR NO KEY UPDATE`; el nombre de la familia disuelta se puede
-  reutilizar.
+  reutilizar. `409 familia_en_uso` si alguna oferta, viva o dada de baja, apunta a la familia (la misma política
+  que la baja de un grupo): la guarda corre bajo los dos locks, después de leer la familia, y no cuenta a los
+  artículos, que se sueltan en la misma transacción. El pre-chequeo de existencia de las
+  ofertas no toma lock: queda el residual descrito en la sección de ofertas (§3).
 
 **Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los quince campos compartidos (los
 propios no se tocan) y en el **estado de precios** de cada lista fija —el precio vigente y, si lo hay, el pendiente con su
@@ -673,7 +692,7 @@ conserva su `FOR UPDATE` de siempre sobre la fila propia, después de la membres
 precios (`ServicioDePrecios.AbrirNuevoPrecioAsync`) y la edición de artículos
 (`ServicioDeArticulos.ActualizarAsync`: exclusivo solo con `SoloEste`, compartido en cualquier otro caso; en
 "solo este" bloquea solo la fila propia y en los demás casos todos los miembros, los 5 chequeos de catálogo
-`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` (`ServicioDeArticulos.CrearAsync`:
+`FOR KEY SHARE` van después de las filas) y el alta con `idFamilia` o `nombreFamiliaNueva` (`ServicioDeArticulos.CrearAsync`:
 exclusivo, antes de los catálogos; la familia `FOR SHARE`; sin filas de miembros que bloquear, porque el
 artículo todavía no existe, y los locks de par del artículo nuevo al final) y la confirmación de una compra
 (`ServicioDeCompras.ConfirmarAsync`: compartido, antes del encabezado; las filas de los artículos con costo
@@ -728,6 +747,7 @@ ofertas (                     -- [catálogo]
     nombre          citext,                  -- lo que imprime el ticket (no único)
     -- alcance: exactamente uno
     id_articulo integer NULL, id_grupo integer NULL, id_categoria integer NULL,
+    id_familia  integer NULL,                -- FK (id_familia, id_tenant) -> familias; los miembros se leen al resolver
     -- vigencia
     fecha_desde date NULL, fecha_hasta date NULL,
     hora_desde  time NULL, hora_hasta  time NULL,
@@ -742,7 +762,7 @@ ofertas (                     -- [catálogo]
     acumulable      boolean NOT NULL DEFAULT false,  -- ¿se suma a otras o excluye?
     activo
 );
-CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria) = 1);
+CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
 CHECK (fecha_hasta >= fecha_desde AND hora_hasta >= hora_desde);  -- tolerante a NULL por eje
 CHECK (dias_semana IS NULL OR dias_semana <@ ARRAY[1,2,3,4,5,6,7]::smallint[]);
@@ -765,6 +785,24 @@ por cantidad) más lo que le faltaba: días de semana, ofertas por categoría, o
 limitadas a un subconjunto de listas, y reglas explícitas de solapamiento en lugar del
 `elseif` accidental de `funciones.php`. El descuento aplicado queda **en el item** que
 lo generó (ver abajo), no como línea fantasma con barra `OF...`.
+
+**Alcance por familia (ofertas-por-familia, aprobado 2026-10-10):** una oferta puede apuntar a una familia de
+artículos (`id_familia`, el cuarto alcance exclusivo). La pertenencia es dinámica: la oferta aplica a un artículo si
+y solo si `articulos.id_familia` es esa familia **al resolver** (un artículo dado de baja no es miembro), así que los
+comprobantes ya emitidos no cambian. La precedencia sigue siendo solo `prioridad`/`acumulable`: no hay orden
+automático por tipo de alcance. Una familia con `activo = false` no se valida ni al resolver ni al crear la oferta
+(igual que los grupos). Disolver una familia que alguna oferta referencia está bloqueado (`409 familia_en_uso`).
+
+Residual conocido: el pre-chequeo de existencia de la familia al crear o editar una oferta no toma lock, así que
+un alta o edición que corre en paralelo con la disolución de esa familia puede dejar una oferta viva apuntando a
+una familia disuelta. Es inerte (la familia ya no tiene miembros, así que el resolvedor nunca la empareja) y es el
+mismo residual abierto que `GuardaDeReferencias` documenta para los grupos; cerrarlo
+(`BloquearSiEstaVivaAsync` en el escritor) es un seguimiento pendiente para los escritores que todavía no lo
+cierran, ofertas incluidas; los escritores de artículos ya lo tienen cerrado.
+
+Migración `OfertasPorFamilia`: revertirla (`Down`) aborta con `23514` mientras alguna oferta tenga alcance por
+familia, porque el CHECK anterior de tres columnas no admite esa fila; esas ofertas hay que eliminarlas o
+reasignarles otro alcance antes de revertir.
 
 ---
 
@@ -1971,6 +2009,7 @@ erDiagram
     ofertas }o--o| articulos : ""
     ofertas }o--o| grupos : ""
     ofertas }o--o| categorias : ""
+    ofertas }o--o| familias : ""
     comprobantes_venta }o--|| tipos_comprobante : ""
     comprobantes_venta }o--|| clientes : ""
     comprobantes_venta ||--o{ items_comprobante_venta : ""

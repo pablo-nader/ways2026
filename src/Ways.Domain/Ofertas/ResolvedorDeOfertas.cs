@@ -73,7 +73,7 @@ public static class ResolvedorDeOfertas
     /// <summary>Spec: resolucion-de-ofertas / Candidate Matching — TODOS los ejes seteados
     /// tienen que matchear (AND), cada eje NULL/vacío no restringe (spec: ofertas / Vigencia
     /// Window Semantics, Multi-Lista Targeting via ofertas_listas). El alcance
-    /// (articulo/grupo/categoria) usa <see cref="LineaAResolver.IdsCategorias"/> — ya expandido
+    /// (articulo/grupo/categoria/familia) usa <see cref="LineaAResolver.IdsCategorias"/> — ya expandido
     /// a la cadena de ancestros por el llamador (<see cref="CadenaDeCategorias"/>), así que un
     /// <c>Contains</c> plano alcanza para el match jerárquico.</summary>
     public static bool Coincide(in LineaAResolver linea, OfertaCandidata candidata)
@@ -126,6 +126,11 @@ public static class ResolvedorDeOfertas
         if (alcance.IdGrupo is { } idGrupo)
         {
             return linea.IdGrupo == idGrupo;
+        }
+
+        if (alcance.IdFamilia is { } idFamilia)
+        {
+            return linea.IdFamilia == idFamilia;
         }
 
         var idCategoria = alcance.IdCategoria!.Value;

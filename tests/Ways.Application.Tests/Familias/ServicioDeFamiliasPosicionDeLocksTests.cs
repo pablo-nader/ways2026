@@ -91,7 +91,12 @@ public class ServicioDeFamiliasPosicionDeLocksTests
     /// <summary>Disolver toma los locks en el orden global de las familias y escribe después: la membresía, la fila de
     /// la familia —<c>FOR UPDATE</c>, antes de leerla—, la lectura de la familia, las filas de los miembros, recién
     /// entonces "ahora", la baja de los miembros, el guardado de la baja de la familia y el commit. La familia se lee
-    /// UNA sola vez (<c>single-read-under-lock</c>).</summary>
+    /// UNA sola vez (<c>single-read-under-lock</c>). Y la guarda de referencias corre DESPUÉS del <c>FOR UPDATE</c>
+    /// de la familia —con ese lock tomado, el chequeo de FK de una oferta que ya insertó sin comitear espera y la
+    /// guarda la ve ya comiteada— y ANTES de bloquear a los miembros. Mutación corrida: mover
+    /// <c>guarda.ExigirSinReferenciasAsync(...)</c> arriba de <c>guarda.BloquearFilaAsync&lt;Familia&gt;(...)</c> en
+    /// <c>DisolverAsync</c> → este test falla en "La guarda de referencias corre DESPUÉS del FOR UPDATE de la
+    /// familia" → revertido, verde.</summary>
     [Fact]
     public void DisolverTomaLosLocksEnElOrdenDelProtocoloYEscribeDespues()
     {
@@ -100,6 +105,7 @@ public class ServicioDeFamiliasPosicionDeLocksTests
         var membresia = Posicion(cuerpo, "LockDeMembresiaDeFamilias.TomarExclusivoAsync(");
         var filaDeLaFamilia = Posicion(cuerpo, "guarda.BloquearFilaAsync<Familia>(");
         var lecturaDeLaFamilia = Posicion(cuerpo, "db.Familias.FirstOrDefaultAsync(");
+        var guardaDeReferencias = Posicion(cuerpo, "guarda.ExigirSinReferenciasAsync(");
         var filasDeLosMiembros = Posicion(cuerpo, "MembresiaDeFamilias.BloquearMiembrosAsync(");
         var ahora = Posicion(cuerpo, "reloj.Ahora");
         var escrituraDeLosMiembros = Posicion(cuerpo, "DesvincularArticulosAsync(");
@@ -108,6 +114,10 @@ public class ServicioDeFamiliasPosicionDeLocksTests
 
         Assert.True(membresia < filaDeLaFamilia, "La membresía va antes que la fila de la familia.");
         Assert.True(filaDeLaFamilia < lecturaDeLaFamilia, "La fila de la familia se bloquea ANTES de leerla.");
+        Assert.True(
+            filaDeLaFamilia < guardaDeReferencias, "La guarda de referencias corre DESPUÉS del FOR UPDATE de la familia.");
+        Assert.True(
+            guardaDeReferencias < filasDeLosMiembros, "La guarda de referencias corre ANTES de bloquear a los miembros.");
         Assert.True(lecturaDeLaFamilia < filasDeLosMiembros, "Las filas de los miembros se bloquean después de la familia.");
         Assert.True(filasDeLosMiembros < ahora, "'ahora' se lee DESPUÉS de todos los locks.");
         Assert.True(ahora < escrituraDeLosMiembros, "Ninguna escritura corre antes de leer 'ahora'.");
@@ -115,6 +125,7 @@ public class ServicioDeFamiliasPosicionDeLocksTests
 
         Assert.Equal(1, Contar(cuerpo, "db.Familias."));
         Assert.Equal(1, Contar(cuerpo, "reloj.Ahora"));
+        Assert.Equal(1, Contar(cuerpo, "guarda.ExigirSinReferenciasAsync("));
     }
 
     /// <summary>Sacar comprueba la familia y el artículo bajo el lock de membresía, bloquea la fila del artículo —paso

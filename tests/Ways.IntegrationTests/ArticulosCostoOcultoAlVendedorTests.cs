@@ -19,6 +19,8 @@ namespace Ways.IntegrationTests;
 /// Los costos del artículo (<c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>) los ven
 /// admin y supervisor: el listado, el detalle y la grilla heredan <c>OperacionDePos</c> (el vendedor
 /// lee los mismos endpoints desde el POS), así que al vendedor le llega <c>null</c> en vez del costo.
+/// La sugerencia de precio se deriva del costo y no tiene campo que enmascarar: al vendedor se le
+/// rechaza el pedido entero.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -54,6 +56,8 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
             var ahora = DateTimeOffset.UtcNow;
             var area = new Area { IdTenant = resultado.IdTenant, Nombre = $"{nombre}-area", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
             db.Areas.Add(area);
+            var grupo = new Grupo { IdTenant = resultado.IdTenant, Nombre = $"{nombre}-grupo", Margen = 300m, CreatedAt = ahora, UpdatedAt = ahora };
+            db.Grupos.Add(grupo);
             await db.SaveChangesAsync();
 
             var articulo = new Articulo
@@ -62,6 +66,7 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
                 CodigoInterno = "COSTO-1",
                 Nombre = "Artículo con costo",
                 IdArea = area.Id,
+                IdGrupo = grupo.Id,
                 IdAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync(),
                 UnidadVenta = UnidadVenta.Unidad,
                 EsProducto = true,
@@ -133,5 +138,30 @@ public class ArticulosCostoOcultoAlVendedorTests(WaysApiFixture fixture) : IClas
 
         var grilla = await vendedor.GetFromJsonAsync<PaginaDeArticulosGrilla>("/api/articulos/grilla?nombre=con+costo", OpcionesJson);
         Assert.Null(Assert.Single(grilla!.Items).CostoNominal);
+    }
+
+    /// <summary>La sugerencia es costo × margen: con el margen del grupo a la vista, devolverla es
+    /// devolver el costo. Costo 61,5 con margen 300 % da 246, que al múltiplo por defecto (100) es 200.</summary>
+    [Theory]
+    [InlineData(RolConocido.Admin)]
+    [InlineData(RolConocido.Supervisor)]
+    public async Task UnRolDeBackOfficeRecibeLaSugerenciaDePrecio(RolConocido rol)
+    {
+        var (idArticulo, admin, supervisor) = await PrepararAsync($"SugerenciaVisible{rol}", RolConocido.Supervisor);
+        var cliente = rol == RolConocido.Admin ? admin : supervisor;
+
+        var sugerencia = await cliente.GetFromJsonAsync<SugerenciaDePrecio>($"/api/articulos/{idArticulo}/sugerencia-precio", OpcionesJson);
+
+        Assert.Equal(200m, sugerencia!.PrecioSugerido);
+    }
+
+    [Fact]
+    public async Task ElVendedorNoPuedePedirLaSugerenciaDePrecio()
+    {
+        var (idArticulo, _, vendedor) = await PrepararAsync(nameof(ElVendedorNoPuedePedirLaSugerenciaDePrecio), RolConocido.Vendedor);
+
+        var respuesta = await vendedor.GetAsync($"/api/articulos/{idArticulo}/sugerencia-precio");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 }

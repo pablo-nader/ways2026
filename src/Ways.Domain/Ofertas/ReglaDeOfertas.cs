@@ -25,18 +25,20 @@ public static class ReglaDeOfertas
         var cantidadDeColumnasSeteadas =
             (oferta.IdArticulo is not null ? 1 : 0) +
             (oferta.IdGrupo is not null ? 1 : 0) +
-            (oferta.IdCategoria is not null ? 1 : 0);
+            (oferta.IdCategoria is not null ? 1 : 0) +
+            (oferta.IdFamilia is not null ? 1 : 0);
 
         if (cantidadDeColumnasSeteadas != 1)
         {
             throw new ErrorDominio(
                 "oferta_alcance_invalido",
-                "La oferta tiene que apuntar a exactamente un artículo, grupo o categoría.",
+                "La oferta tiene que apuntar a exactamente un artículo, grupo, categoría o familia.",
                 400);
         }
 
         return oferta.IdArticulo is { } idArticulo ? AlcanceDeOferta.DeArticulo(idArticulo)
             : oferta.IdGrupo is { } idGrupo ? AlcanceDeOferta.DeGrupo(idGrupo)
+            : oferta.IdFamilia is { } idFamilia ? AlcanceDeOferta.DeFamilia(idFamilia)
             : AlcanceDeOferta.DeCategoria(oferta.IdCategoria!.Value);
     }
 

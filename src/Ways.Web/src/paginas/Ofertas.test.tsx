@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
-import type { ArticuloListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
+import type { ArticuloListado, FamiliaListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -21,6 +21,10 @@ vi.mock('../api/cliente', () => ({
 
 function grupoFixture(sobrescribir: Partial<GrupoListado> = {}): GrupoListado {
   return { id: 1, nombre: 'Bebidas', activo: true, idEmpresa: null, margen: null, ...sobrescribir }
+}
+
+function familiaFixture(sobrescribir: Partial<FamiliaListado> = {}): FamiliaListado {
+  return { id: 7, nombre: 'Sabores', activo: true, cantidadArticulos: 3, ...sobrescribir }
 }
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
@@ -75,6 +79,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     idArticulo: 1,
     idGrupo: null,
     idCategoria: null,
+    idFamilia: null,
     fechaDesde: null,
     fechaHasta: null,
     horaDesde: null,
@@ -96,9 +101,21 @@ const grupoBebidas = grupoFixture({ id: 1, nombre: 'Bebidas' })
 const listaMayorista = listaFixture({ id: 3, nombre: 'Lista mayorista' })
 const articuloCoca = articuloFixture({ id: 1, nombre: 'Coca Cola 1L' })
 
-function mockearApiGet() {
+const familiaSabores = familiaFixture({ id: 7, nombre: 'Sabores' })
+
+type EscenarioDeOfertas = {
+  ofertas?: OfertaListado[]
+  /** `null`: el listado de familias falla. */
+  familias?: FamiliaListado[] | null
+  /** Detalle por id (`GET /api/ofertas/{id}`). */
+  detalles?: Record<number, OfertaListado>
+}
+
+function mockearApiGet({ ofertas = [], familias = [familiaSabores], detalles = {} }: EscenarioDeOfertas = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/ofertas') return Promise.resolve<OfertaListado[]>([])
+    if (ruta === '/ofertas') return Promise.resolve<OfertaListado[]>(ofertas)
+    if (ruta.startsWith('/ofertas/')) return Promise.resolve(detalles[Number(ruta.split('/')[2])])
+    if (ruta === '/familias') return familias === null ? Promise.reject(new Error('sin red')) : Promise.resolve(familias)
     if (ruta === '/catalogos/grupos') return Promise.resolve([grupoBebidas])
     if (ruta === '/catalogos/categorias') return Promise.resolve([])
     if (ruta === '/empresas') return Promise.resolve([])
@@ -146,6 +163,160 @@ describe('Ofertas — radio de alcance (visibleSi análogo)', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Categoría' }))
 
     expect(screen.getByLabelText('Categoría objetivo')).toBeInTheDocument()
+  })
+})
+
+describe('Ofertas — alcance por familia', () => {
+  async function abrirNuevaOferta() {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta de familia')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+  }
+
+  /** El select existe desde que se elige el radio, pero sus opciones llegan con la carga: se espera a la opción, que es el dato. */
+  async function elegirFamilia(nombre: string) {
+    await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
+    await screen.findByRole('option', { name: nombre })
+    await userEvent.selectOptions(screen.getByLabelText('Familia objetivo'), nombre)
+  }
+
+  it('cambiar el radio a Familia hace aparecer el select de familia y oculta los otros alcances', async () => {
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
+
+    expect(screen.getByLabelText('Familia objetivo')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Grupo objetivo')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Categoría objetivo')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Buscar artículo')).not.toBeInTheDocument()
+  })
+
+  it('crea una oferta de familia: manda idFamilia y deja artículo, grupo y categoría en null', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idFamilia: 7 }))
+    await abrirNuevaOferta()
+    await elegirFamilia('Sabores')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta de familia" creada.')
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith(
+      '/ofertas',
+      expect.objectContaining({ idFamilia: 7, idArticulo: null, idGrupo: null, idCategoria: null, porcentaje: 10 }),
+    )
+  })
+
+  it('sin familia elegida no guarda y pide elegirla', async () => {
+    await abrirNuevaOferta()
+    await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Elegí una familia para el alcance.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('cambiar de alcance después de elegir una familia no la manda: solo viaja la columna del radio vigente', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idGrupo: 1 }))
+    await abrirNuevaOferta()
+    await elegirFamilia('Sabores')
+    await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await userEvent.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta de familia" creada.')
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith(
+      '/ofertas',
+      expect.objectContaining({ idFamilia: null, idGrupo: 1, idArticulo: null, idCategoria: null }),
+    )
+  })
+
+  it('rotula la familia inactiva y la vacía, y ofrece todas', async () => {
+    mockearApiGet({
+      familias: [
+        familiaSabores,
+        familiaFixture({ id: 8, nombre: 'Talles', activo: false }),
+        familiaFixture({ id: 9, nombre: 'Colores', cantidadArticulos: 0 }),
+      ],
+    })
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Familia' }))
+
+    await screen.findByRole('option', { name: 'Colores (sin artículos)' })
+
+    const opciones = within(screen.getByLabelText('Familia objetivo')).getAllByRole('option')
+    expect(opciones.map((o) => o.textContent)).toEqual(['Elegir…', 'Sabores', 'Talles (inactiva)', 'Colores (sin artículos)'])
+  })
+
+  it('si el listado de familias falla lo avisa y el resto de la pantalla sigue andando', async () => {
+    mockearApiGet({ ofertas: [ofertaFixture({ id: 2, nombre: 'Oferta existente' })], familias: null })
+    render(<Ofertas />)
+
+    expect(
+      await screen.findByText(/No se pudieron cargar las familias: no hay familias para elegir hasta recargar la página\. Una oferta que ya apunta a una familia se muestra por su número y se puede guardar sin cambiarla\./),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Oferta existente')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
+  })
+
+  it('el listado nombra la familia de la oferta, o su id si la familia no está cargada', async () => {
+    mockearApiGet({
+      ofertas: [
+        ofertaFixture({ id: 2, nombre: 'Con nombre', idArticulo: null, idFamilia: 7 }),
+        ofertaFixture({ id: 3, nombre: 'Sin cargar', idArticulo: null, idFamilia: 99 }),
+      ],
+    })
+    render(<Ofertas />)
+
+    const filaConNombre = (await screen.findByText('Con nombre')).closest('tr')!
+    await waitFor(() => expect(within(filaConNombre).getByText('Familia: Sabores')).toBeInTheDocument())
+    const filaSinCargar = screen.getByText('Sin cargar').closest('tr')!
+    expect(within(filaSinCargar).getByText('Familia: 99')).toBeInTheDocument()
+  })
+
+  it('editar una oferta de familia abre el radio Familia con su familia elegida y el PUT reenvía idFamilia', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await screen.findByText('Familia: Sabores')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+
+    expect(await screen.findByRole('radio', { name: 'Familia' })).toBeChecked()
+    expect(screen.getByLabelText('Familia objetivo')).toHaveValue('7')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith(
+      '/ofertas/2',
+      expect.objectContaining({ idFamilia: 7, idArticulo: null, idGrupo: null, idCategoria: null }),
+    )
+  })
+
+  /** Con el listado de familias caído la oferta no tiene su familia entre las opciones: el select muestra una opción de respaldo
+   * con el id, seleccionada, y el estado conserva `idFamilia`, así que guardar no le quita el alcance a la oferta. */
+  it('editar una oferta de familia con el listado de familias caído no le quita la familia al guardar', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta }, familias: null })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await screen.findByText(/No se pudieron cargar las familias/)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    expect(await screen.findByRole('radio', { name: 'Familia' })).toBeChecked()
+    const select = screen.getByLabelText('Familia objetivo')
+    expect(select).toHaveValue('7')
+    expect(within(select).getByRole('option', { name: 'Familia #7 (no disponible)' })).toHaveProperty('selected', true)
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ idFamilia: 7 }))
   })
 })
 
@@ -247,6 +418,7 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     const ofertaExistente = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas') return Promise.resolve<OfertaListado[]>([ofertaExistente])
+      if (ruta === '/familias') return Promise.resolve([familiaSabores])
       if (ruta === '/catalogos/grupos') return Promise.resolve([grupoBebidas])
       if (ruta === '/catalogos/categorias') return Promise.resolve([])
       if (ruta === '/empresas') return Promise.resolve([])

@@ -888,7 +888,7 @@ public class ManejadorDeErrores(
         {
             "ck_ofertas_alcance_exclusivo" =>
                 (StatusCodes.Status400BadRequest,
-                    "La oferta tiene que apuntar a exactamente un artículo, grupo o categoría.",
+                    "La oferta tiene que apuntar a exactamente un artículo, grupo, categoría o familia.",
                     "oferta_alcance_invalido"),
 
             "ck_ofertas_beneficio_exclusivo" =>
