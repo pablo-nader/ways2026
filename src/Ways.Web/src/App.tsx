@@ -18,6 +18,7 @@ import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
 import { Descargar } from './paginas/Descargar'
+import { Dominios } from './paginas/Dominios'
 import { Empresas } from './paginas/Empresas'
 import { EquiposPos } from './paginas/EquiposPos'
 import { Existencias } from './paginas/Existencias'
@@ -565,6 +566,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
                   <NuevoTenant />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/dominios"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root]}>
+                  <Dominios />
                 </RutaProtegida>
               }
             />
