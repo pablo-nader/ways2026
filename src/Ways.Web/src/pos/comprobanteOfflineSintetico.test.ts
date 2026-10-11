@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { construirComprobanteOfflineSintetico, type ParametrosDeComprobanteOfflineSintetico } from './comprobanteOfflineSintetico'
-import type { ArticuloDeInstantanea, EscalonDeCantidad, InstantaneaDePos, PrecioDeListaDeInstantanea } from '../api/tipos'
+import type { ArticuloDeInstantanea, EscalonDeCantidad, EscalonDeFamilia, InstantaneaDePos, PrecioDeListaDeInstantanea } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
 
 const LISTA = 5
@@ -10,7 +10,7 @@ const LISTA = 5
 type ArticuloConPrecio = Omit<ArticuloDeInstantanea, 'preciosPorLista'> & Omit<PrecioDeListaDeInstantanea, 'idListaPrecio'> & { idListaPrecio: number }
 
 function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): ArticuloDeInstantanea {
-  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, idListaPrecio = LISTA, ...resto } = sobrescribir
+  const { precioOriginal = 100, precioFinal = 100, descuentoUnitario = 0, aplicadas = [], escalones, escalonesDeFamilia, idListaPrecio = LISTA, ...resto } = sobrescribir
   return {
     idArticulo: 1,
     codigoInterno: 'A0001',
@@ -19,7 +19,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloConPrecio> = {}): Articul
     idAlicuotaIva: 1,
     porcentajeIva: 21,
     ...resto,
-    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones }],
+    preciosPorLista: [{ idListaPrecio, precioOriginal, precioFinal, descuentoUnitario, aplicadas, escalones, escalonesDeFamilia }],
   }
 }
 
@@ -53,7 +53,50 @@ function articuloConEscalonesFixture(sobrescribir: Partial<ArticuloConPrecio> = 
   return articuloFixture({ precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [], escalones: [ESCALON_3, ESCALON_6], ...sobrescribir })
 }
 
+const CELDA_FAMILIA_2: EscalonDeFamilia = { cantidadDeFamiliaDesde: 2, cantidadDesde: 1, precioFinal: 1750, descuentoUnitario: 250, aplicadas: [{ idOferta: 71, nombre: '2 x 3500', descuentoUnitario: 250 }] }
+
+function alfajorFixture(idArticulo: number, idFamilia: number | null): ArticuloDeInstantanea {
+  return articuloFixture({ idArticulo, codigosBarra: [`${idArticulo}`], precioOriginal: 2000, precioFinal: 2000, idFamilia, escalonesDeFamilia: [CELDA_FAMILIA_2] })
+}
+
 describe('construirComprobanteOfflineSintetico', () => {
+  // La cantidad de la familia sale de TODO el carrito, igual que en la vista previa y en el payload
+  // (`preciosVigentesDeLasLineas`): el ticket impreso no puede cobrar 2000 mientras la pantalla 1750.
+  it('dos artículos de la misma familia con cantidad 1 se cobran a 1750 cada uno, con la oferta de la celda', () => {
+    const comprobante = construir({
+      numero: 8,
+      numeroVisible: '0007-00000008',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ idArticulo: 1, cantidad: 1 }), lineaFixture({ idArticulo: 2, cantidad: 1 })],
+      instantanea: instantaneaFixture([alfajorFixture(1, 7), alfajorFixture(2, 7)]),
+      pagos: [{ idMedioPago: 1, importe: 3500, referencia: null, vuelto: 0 }],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items.map((i) => ({ descuento: i.descuento, total: i.total, idOferta: i.idOferta }))).toEqual([
+      { descuento: 250, total: 1750, idOferta: 71 },
+      { descuento: 250, total: 1750, idOferta: 71 },
+    ])
+    expect(comprobante).toMatchObject({ subtotal: 4000, descuentoTotal: 500, total: 3500 })
+  })
+
+  it('un artículo de la familia con cantidad 1 junto a uno sin familia se cobra a 2000', () => {
+    const comprobante = construir({
+      numero: 9,
+      numeroVisible: '0007-00000009',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ idArticulo: 1, cantidad: 1 }), lineaFixture({ idArticulo: 3, cantidad: 1 })],
+      instantanea: instantaneaFixture([alfajorFixture(1, 7), alfajorFixture(3, null)]),
+      pagos: [{ idMedioPago: 1, importe: 4000, referencia: null, vuelto: 0 }],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items.map((i) => i.descuento)).toEqual([0, 0])
+    expect(comprobante).toMatchObject({ subtotal: 4000, descuentoTotal: 0, total: 4000 })
+  })
+
   it('sin descuento: total de línea y del comprobante = cantidad × precio', () => {
     const comprobante = construir({
       numero: 5,

@@ -12,6 +12,7 @@ import type {
   ClienteDeInstantanea,
   ClienteListado,
   EscalonDeCantidad,
+  EscalonDeFamilia,
   InstantaneaDePos,
   MedioPagoDeInstantanea,
   MedioPagoListado,
@@ -70,7 +71,8 @@ function esPrecioDeLista(valor: unknown): boolean {
     typeof valor.precioFinal === 'number' &&
     typeof valor.descuentoUnitario === 'number' &&
     Array.isArray(valor.aplicadas) &&
-    (valor.escalones == null || Array.isArray(valor.escalones))
+    (valor.escalones == null || Array.isArray(valor.escalones)) &&
+    (valor.escalonesDeFamilia == null || Array.isArray(valor.escalonesDeFamilia))
   )
 }
 
@@ -84,7 +86,8 @@ function esArticulo(valor: unknown): boolean {
     Array.isArray(valor.preciosPorLista) &&
     valor.preciosPorLista.every(esPrecioDeLista) &&
     // Una instantánea guardada antes de `acumulaEnVenta` no lo trae y sigue siendo válida.
-    (valor.acumulaEnVenta == null || typeof valor.acumulaEnVenta === 'boolean')
+    (valor.acumulaEnVenta == null || typeof valor.acumulaEnVenta === 'boolean') &&
+    (valor.idFamilia == null || typeof valor.idFamilia === 'number')
   )
 }
 
@@ -186,13 +189,8 @@ export function precioEnLista(articulo: ArticuloDeInstantanea, idListaPrecio: nu
 /**
  * Tramo de cantidad vigente para `cantidad`: el que tiene el `cantidadDesde` MÁS ALTO entre los
  * que cumplen `cantidadDesde <= cantidad`. `null` cuando el precio no trae tramos o cuando ninguno
- * califica todavía; en ambos casos rige el precio plano.
- *
- * ÚNICO lugar donde vive esta regla — la consumen la vista previa del carrito
- * (`resolverPreciosOffline`), el payload que el servidor cobra literal
- * (`enriquecerLineasConPrecioOffline`) y el ticket sintético
- * (`construirComprobanteOfflineSintetico`): si divergieran, el cajero vería un importe y se
- * cobraría otro. Elige por umbral, no por posición en el array.
+ * califica todavía; en ambos casos rige el precio plano. Es la curva de UN artículo: describe cómo
+ * cambia el precio cuando la cantidad de la familia crece junto con la del artículo.
  */
 export function elegirEscalon(precio: PrecioDeListaDeInstantanea, cantidad: number): EscalonDeCantidad | null {
   let elegido: EscalonDeCantidad | null = null
@@ -204,30 +202,96 @@ export function elegirEscalon(precio: PrecioDeListaDeInstantanea, cantidad: numb
   return elegido
 }
 
-/** Los cuatro campos de precio que rigen para `cantidad` — el escalón vigente pisa
+/**
+ * Celda de la grilla de familia vigente: entre las celdas con `cantidadDeFamiliaDesde <=
+ * cantidadDeFamilia` toma las del umbral de familia MÁS ALTO y, dentro de ellas, la de
+ * `cantidadDesde` más alto que entra en `cantidad`. Si `cantidad` no alcanza ni la menor (una
+ * fracción por debajo de la base de la instantánea) toma la de menor `cantidadDesde`: es la
+ * resolución base de ese umbral de familia, igual que el precio plano lo es para `elegirEscalon`.
+ * `null` si el precio no trae grilla o la familia no llega a ningún umbral: ahí rige `elegirEscalon`,
+ * que es exacto porque sin umbral de familia alcanzado ningún tramo de la curva viene de una oferta
+ * de familia.
+ */
+export function elegirCeldaDeFamilia(
+  precio: PrecioDeListaDeInstantanea,
+  cantidad: number,
+  cantidadDeFamilia: number,
+): EscalonDeFamilia | null {
+  const alcanzadas = (precio.escalonesDeFamilia ?? []).filter((c) => c.cantidadDeFamiliaDesde <= cantidadDeFamilia)
+  if (alcanzadas.length === 0) return null
+
+  const umbralDeFamilia = Math.max(...alcanzadas.map((c) => c.cantidadDeFamiliaDesde))
+  const delUmbral = alcanzadas.filter((c) => c.cantidadDeFamiliaDesde === umbralDeFamilia)
+  const quePueden = delUmbral.filter((c) => c.cantidadDesde <= cantidad)
+
+  const propias = (quePueden.length > 0 ? quePueden : delUmbral).map((c) => c.cantidadDesde)
+  const cantidadDesde = quePueden.length > 0 ? Math.max(...propias) : Math.min(...propias)
+  return delUmbral.find((c) => c.cantidadDesde === cantidadDesde) ?? null
+}
+
+/** Los cuatro campos de precio que rigen para una línea — el escalón o la celda vigente pisa
  * `precioFinal`/`descuentoUnitario`/`aplicadas`, y `precioOriginal` queda SIEMPRE el de la lista
- * (el escalón no lo trae: es constante entre cantidades, ver `EscalonDeCantidad`). */
+ * (ni el escalón ni la celda lo traen: es constante entre cantidades). */
 export type PreciosVigentesOffline = Pick<PrecioDeListaDeInstantanea, 'precioOriginal' | 'precioFinal' | 'descuentoUnitario' | 'aplicadas'>
 
-/** Proyección de `elegirEscalon` a los campos de precio efectivos — segundo tramo de la MISMA
- * regla, exportado aparte para que los tres consumidores no repitan cada uno el "escalón, si no
- * el plano". */
-export function preciosVigentesOffline(precio: PrecioDeListaDeInstantanea, cantidad: number): PreciosVigentesOffline {
-  const escalon = elegirEscalon(precio, cantidad)
-  if (!escalon) {
+/**
+ * Precio vigente de UNA línea de cantidad `cantidad` cuya familia suma `cantidadDeFamilia` en el
+ * carrito (por omisión, la propia: sin otros artículos de la familia). Primero la grilla de
+ * familia, si la familia llegó a un umbral; si no, la curva de siempre.
+ */
+export function preciosVigentesOffline(
+  precio: PrecioDeListaDeInstantanea,
+  cantidad: number,
+  cantidadDeFamilia: number = cantidad,
+): PreciosVigentesOffline {
+  const vigente = elegirCeldaDeFamilia(precio, cantidad, cantidadDeFamilia) ?? elegirEscalon(precio, cantidad)
+  if (!vigente) {
     const { precioOriginal, precioFinal, descuentoUnitario, aplicadas } = precio
     return { precioOriginal, precioFinal, descuentoUnitario, aplicadas }
   }
   return {
     precioOriginal: precio.precioOriginal,
-    precioFinal: escalon.precioFinal,
-    descuentoUnitario: escalon.descuentoUnitario,
-    aplicadas: escalon.aplicadas,
+    precioFinal: vigente.precioFinal,
+    descuentoUnitario: vigente.descuentoUnitario,
+    aplicadas: vigente.aplicadas,
   }
 }
 
 function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloDeInstantanea> {
   return new Map(instantanea.articulos.map((a) => [a.idArticulo, a]))
+}
+
+/**
+ * Precio vigente de cada línea del carrito en la lista pedida, en el orden de las líneas; `null`
+ * donde el artículo no está en la instantánea o no tiene precio en esa lista.
+ *
+ * ÚNICO lugar donde se aplica la regla de precio offline — la consumen la vista previa del carrito
+ * (`resolverPreciosOffline`), el payload que el servidor cobra literal
+ * (`enriquecerLineasConPrecioOffline`) y el ticket sintético (`construirComprobanteOfflineSintetico`):
+ * si divergieran, el cajero vería un importe y se cobraría otro. La cantidad de familia de cada
+ * línea es la suma de las cantidades de TODAS las líneas cuyo artículo comparte su `idFamilia`
+ * (una línea sin familia, o de un artículo ausente de la instantánea, solo cuenta la suya).
+ */
+export function preciosVigentesDeLasLineas(
+  lineas: readonly { idArticulo: number; cantidad: number }[],
+  instantanea: InstantaneaDePos,
+  idListaPrecio: number,
+): (PreciosVigentesOffline | null)[] {
+  const porId = indicePorArticulo(instantanea)
+
+  const cantidadPorFamilia = new Map<number, number>()
+  for (const linea of lineas) {
+    const idFamilia = porId.get(linea.idArticulo)?.idFamilia
+    if (idFamilia != null) cantidadPorFamilia.set(idFamilia, (cantidadPorFamilia.get(idFamilia) ?? 0) + linea.cantidad)
+  }
+
+  return lineas.map((linea) => {
+    const articulo = porId.get(linea.idArticulo)
+    const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
+    if (!articulo || !precio) return null
+    const cantidadDeFamilia = articulo.idFamilia != null ? (cantidadPorFamilia.get(articulo.idFamilia) ?? linea.cantidad) : linea.cantidad
+    return preciosVigentesOffline(precio, linea.cantidad, cantidadDeFamilia)
+  })
 }
 
 /**
@@ -238,20 +302,20 @@ function indicePorArticulo(instantanea: InstantaneaDePos): Map<number, ArticuloD
  * instantánea o no tiene precio en esa lista queda ausente del índice — el mismo tratamiento que
  * un artículo sin precio en la resolución online.
  *
- * La `cantidad` de cada línea elige el tramo de precio vigente (`preciosVigentesOffline`).
+ * La cantidad de cada línea y la de su familia en el carrito eligen el precio vigente
+ * (`preciosVigentesDeLasLineas`).
  */
 export function resolverPreciosOffline(
   lineas: LineaCarrito[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
 ): PreciosPorLinea {
-  const porId = indicePorArticulo(instantanea)
+  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
   const indice: PreciosPorLinea = {}
-  for (const linea of lineas) {
-    const articulo = porId.get(linea.idArticulo)
-    const precio = articulo ? precioEnLista(articulo, idListaPrecio) : null
-    if (precio) indice[linea.idLinea] = { idArticulo: linea.idArticulo, idListaPrecio, ...preciosVigentesOffline(precio, linea.cantidad) }
-  }
+  lineas.forEach((linea, i) => {
+    const precios = vigentes[i]
+    if (precios) indice[linea.idLinea] = { idArticulo: linea.idArticulo, idListaPrecio, ...precios }
+  })
   return indice
 }
 
@@ -385,7 +449,7 @@ export function formatearVejezDeInstantanea(momento: string, ahora: Date): strin
 
 // Reexportado para que otros módulos (`outboxOffline.ts`) tipen sin importar desde `tipos.ts`
 // directamente donde no haga falta.
-export type { ArticuloDeInstantanea, EscalonDeCantidad, OfertaAplicada, PrecioDeListaDeInstantanea }
+export type { ArticuloDeInstantanea, EscalonDeCantidad, EscalonDeFamilia, OfertaAplicada, PrecioDeListaDeInstantanea }
 
 /** Época de la sesión local: cada purga la avanza. Una sincronización captura la época al empezar y
  * no persiste nada si cambió mientras tanto (la sesión terminó con la respuesta en vuelo). */

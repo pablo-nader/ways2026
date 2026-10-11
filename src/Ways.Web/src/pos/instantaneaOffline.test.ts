@@ -6,6 +6,7 @@ import {
   buscarClientesOffline,
   edadDeInstantaneaEnMinutos,
   elegirEscalon,
+  elegirCeldaDeFamilia,
   esInstantaneaValida,
   formatearVejezDeInstantanea,
   guardarInstantaneaLocal,
@@ -13,6 +14,7 @@ import {
   parsearEntradaDeEscaneoOffline,
   precioEnLista,
   purgarInstantaneaLocal,
+  preciosVigentesDeLasLineas,
   preciosVigentesOffline,
   resolverPreciosOffline,
   TOPE_DE_RESULTADOS_DE_CLIENTES,
@@ -23,6 +25,7 @@ import type {
   ArticuloDeInstantanea,
   ClienteDeInstantanea,
   EscalonDeCantidad,
+  EscalonDeFamilia,
   InstantaneaDePos,
   PrecioDeListaDeInstantanea,
 } from '../api/tipos'
@@ -594,5 +597,165 @@ describe('purgarInstantaneaLocal', () => {
       },
     })
     expect(borradas.sort()).toEqual(['instantanea', 'instantanea.v2'])
+  })
+})
+
+// --- Ofertas de familia: la cantidad de la familia sale de TODO el carrito -----------------------
+
+const FAMILIA_ALFAJORES = 7
+const OTRA_FAMILIA = 8
+
+/** Mismos importes que el caso del dueño: lista 2000, "2 x 3500" ⇒ 1750 desde 2 unidades de la
+ * familia. Todos los campos de cada celda difieren entre celdas para que elegir mal se vea. */
+const CELDA_FAMILIA_2: EscalonDeFamilia = { cantidadDeFamiliaDesde: 2, cantidadDesde: 1, precioFinal: 1750, descuentoUnitario: 250, aplicadas: [{ idOferta: 71, nombre: '2 x 3500', descuentoUnitario: 250 }] }
+const CELDA_FAMILIA_2_PROPIA_6: EscalonDeFamilia = { cantidadDeFamiliaDesde: 2, cantidadDesde: 6, precioFinal: 1400, descuentoUnitario: 600, aplicadas: [{ idOferta: 72, nombre: '6 o más', descuentoUnitario: 600 }] }
+const CELDA_FAMILIA_4: EscalonDeFamilia = { cantidadDeFamiliaDesde: 4, cantidadDesde: 1, precioFinal: 1500, descuentoUnitario: 500, aplicadas: [{ idOferta: 73, nombre: '4 x 6000', descuentoUnitario: 500 }] }
+
+function alfajorFixture(idArticulo: number, celdas: EscalonDeFamilia[] | undefined = [CELDA_FAMILIA_2], idFamilia: number | null = FAMILIA_ALFAJORES): ArticuloDeInstantanea {
+  return articuloFixture({
+    idArticulo,
+    codigoInterno: `ALF${idArticulo}`,
+    codigosBarra: [`77900000${idArticulo}`],
+    idFamilia,
+    preciosPorLista: [
+      precioFixture({
+        precioOriginal: 2000,
+        precioFinal: 2000,
+        escalones: [{ cantidadDesde: 2, precioFinal: 1750, descuentoUnitario: 250, aplicadas: CELDA_FAMILIA_2.aplicadas }],
+        escalonesDeFamilia: celdas,
+      }),
+    ],
+  })
+}
+
+const A = 1
+const B = 2
+const C_SIN_FAMILIA = 3
+const D_OTRA_FAMILIA = 4
+
+function instantaneaDeFamiliaFixture(celdas: EscalonDeFamilia[] | undefined = [CELDA_FAMILIA_2]) {
+  return instantaneaFixture({
+    articulos: [
+      alfajorFixture(A, celdas),
+      alfajorFixture(B, celdas),
+      alfajorFixture(C_SIN_FAMILIA, celdas, null),
+      alfajorFixture(D_OTRA_FAMILIA, celdas, OTRA_FAMILIA),
+    ],
+  })
+}
+
+function descuentos(lineas: LineaCarrito[], instantanea: InstantaneaDePos) {
+  const indice = resolverPreciosOffline(lineas, instantanea, LISTA)
+  return lineas.map((l) => indice[l.idLinea]?.descuentoUnitario)
+}
+
+describe('elegirCeldaDeFamilia', () => {
+  it('sin grilla, o con una cantidad de familia por debajo de todos los umbrales, no elige nada', () => {
+    expect(elegirCeldaDeFamilia(precioFixture(), 1, 9)).toBeNull()
+    expect(elegirCeldaDeFamilia(precioFixture({ escalonesDeFamilia: null }), 1, 9)).toBeNull()
+    expect(elegirCeldaDeFamilia(precioFixture({ escalonesDeFamilia: [CELDA_FAMILIA_2] }), 1, 1)).toBeNull()
+  })
+
+  // Cláusula: `cantidadDeFamiliaDesde <= cantidadDeFamilia` — en el umbral exacto entra.
+  it('el umbral de familia entra en la cantidad exacta y no en la anterior', () => {
+    const precio = precioFixture({ escalonesDeFamilia: [CELDA_FAMILIA_2] })
+    expect(elegirCeldaDeFamilia(precio, 1, 2)).toEqual(CELDA_FAMILIA_2)
+    expect(elegirCeldaDeFamilia(precio, 1, 1.99)).toBeNull()
+  })
+
+  it('toma el umbral de familia MÁS ALTO que entra, aunque la grilla venga desordenada', () => {
+    const precio = precioFixture({ escalonesDeFamilia: [CELDA_FAMILIA_4, CELDA_FAMILIA_2] })
+    expect(elegirCeldaDeFamilia(precio, 1, 3)).toEqual(CELDA_FAMILIA_2)
+    expect(elegirCeldaDeFamilia(precio, 1, 5)).toEqual(CELDA_FAMILIA_4)
+  })
+
+  it('dentro del umbral de familia elegido toma la cantidad propia más alta que entra', () => {
+    const precio = precioFixture({ escalonesDeFamilia: [CELDA_FAMILIA_2_PROPIA_6, CELDA_FAMILIA_2] })
+    expect(elegirCeldaDeFamilia(precio, 5, 8)).toEqual(CELDA_FAMILIA_2)
+    expect(elegirCeldaDeFamilia(precio, 6, 8)).toEqual(CELDA_FAMILIA_2_PROPIA_6)
+  })
+
+  it('con una cantidad propia por debajo de la base (fracción) cae en la celda de menor cantidad propia del grupo', () => {
+    const precio = precioFixture({ escalonesDeFamilia: [CELDA_FAMILIA_2_PROPIA_6, CELDA_FAMILIA_2] })
+    expect(elegirCeldaDeFamilia(precio, 0.5, 2.5)).toEqual(CELDA_FAMILIA_2)
+  })
+})
+
+describe('resolverPreciosOffline — cantidad agregada por familia', () => {
+  it('dos artículos de la misma familia con cantidad 1 completan el mínimo: ambos a 1750', () => {
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 1 })]
+    const indice = resolverPreciosOffline(lineas, instantaneaDeFamiliaFixture(), LISTA)
+    expect(indice['l-1']).toMatchObject({ precioOriginal: 2000, precioFinal: 1750, descuentoUnitario: 250 })
+    expect(indice['l-2']).toMatchObject({ precioOriginal: 2000, precioFinal: 1750, descuentoUnitario: 250 })
+    expect(indice['l-1'].aplicadas).toEqual(CELDA_FAMILIA_2.aplicadas)
+  })
+
+  it('un solo artículo con cantidad 1 no llega al mínimo: queda en 2000', () => {
+    expect(descuentos([lineaFixture({ idArticulo: A, cantidad: 1 })], instantaneaDeFamiliaFixture())).toEqual([0])
+  })
+
+  it('un solo artículo con cantidad 2 llega por sí solo (camino de siempre): 1750', () => {
+    expect(descuentos([lineaFixture({ idArticulo: A, cantidad: 2 })], instantaneaDeFamiliaFixture())).toEqual([250])
+  })
+
+  it('un artículo sin familia no suma con el de la familia: ambos a 2000', () => {
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: C_SIN_FAMILIA, cantidad: 1 })]
+    expect(descuentos(lineas, instantaneaDeFamiliaFixture())).toEqual([0, 0])
+  })
+
+  it('dos familias distintas no se suman entre sí', () => {
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: D_OTRA_FAMILIA, cantidad: 1 })]
+    expect(descuentos(lineas, instantaneaDeFamiliaFixture())).toEqual([0, 0])
+  })
+
+  it('dos líneas del MISMO artículo de la familia se suman entre sí', () => {
+    const lineas = [lineaFixture({ idLinea: 'x', idArticulo: A, cantidad: 1 }), lineaFixture({ idLinea: 'y', idArticulo: A, cantidad: 1 })]
+    expect(descuentos(lineas, instantaneaDeFamiliaFixture())).toEqual([250, 250])
+  })
+
+  it('cada línea toma la celda de SU cantidad propia dentro de la cantidad de familia del carrito', () => {
+    const instantanea = instantaneaDeFamiliaFixture([CELDA_FAMILIA_2, CELDA_FAMILIA_2_PROPIA_6])
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 6 })]
+    expect(descuentos(lineas, instantanea)).toEqual([250, 600])
+  })
+
+  it('con varios umbrales de familia, la cantidad total del carrito elige el más alto', () => {
+    const instantanea = instantaneaDeFamiliaFixture([CELDA_FAMILIA_2, CELDA_FAMILIA_4])
+    expect(descuentos([lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 2 })], instantanea)).toEqual([250, 250])
+    expect(descuentos([lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 3 })], instantanea)).toEqual([500, 500])
+  })
+
+  it('una instantánea sin los campos nuevos (guardada antes) cotiza como siempre: sin descuento por familia', () => {
+    const vieja = instantaneaFixture({
+      articulos: [A, B].map((id) => articuloFixture({ idArticulo: id, codigosBarra: [`${id}`], preciosPorLista: [precioFixture({ precioOriginal: 2000, precioFinal: 2000 })] })),
+    })
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 1 })]
+    expect(descuentos(lineas, vieja)).toEqual([0, 0])
+  })
+
+  it('una línea cuyo artículo no está en la instantánea queda sin precio y no suma a la familia de las otras', () => {
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: 999, cantidad: 1 })]
+    expect(descuentos(lineas, instantaneaDeFamiliaFixture())).toEqual([0, undefined])
+  })
+})
+
+describe('preciosVigentesDeLasLineas', () => {
+  it('devuelve un precio por línea, en el orden de las líneas, y null donde no hay precio en la lista', () => {
+    const lineas = [lineaFixture({ idArticulo: A, cantidad: 1 }), lineaFixture({ idArticulo: 999, cantidad: 1 }), lineaFixture({ idArticulo: B, cantidad: 1 })]
+    const precios = preciosVigentesDeLasLineas(lineas, instantaneaDeFamiliaFixture(), LISTA)
+    expect(precios.map((p) => p?.descuentoUnitario ?? null)).toEqual([250, null, 250])
+    expect(preciosVigentesDeLasLineas(lineas, instantaneaDeFamiliaFixture(), 99)).toEqual([null, null, null])
+  })
+})
+
+describe('esInstantaneaValida — campos de familia', () => {
+  it('acepta artículos con y sin idFamilia y precios con y sin grilla', () => {
+    expect(esInstantaneaValida(instantaneaDeFamiliaFixture())).toBe(true)
+    expect(esInstantaneaValida(instantaneaFixture())).toBe(true)
+  })
+
+  it('rechaza una grilla que no es una lista', () => {
+    const rota = instantaneaFixture({ articulos: [articuloFixture({ preciosPorLista: [precioFixture({ escalonesDeFamilia: 'x' as unknown as EscalonDeFamilia[] })] })] })
+    expect(esInstantaneaValida(rota)).toBe(false)
   })
 })
