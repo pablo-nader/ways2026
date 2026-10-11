@@ -109,6 +109,7 @@ public class ServicioDeOfertas(
             IdArticulo = datos.IdArticulo,
             IdGrupo = datos.IdGrupo,
             IdCategoria = datos.IdCategoria,
+            IdFamilia = datos.IdFamilia,
             FechaDesde = datos.FechaDesde,
             FechaHasta = datos.FechaHasta,
             HoraDesde = datos.HoraDesde,
@@ -199,6 +200,7 @@ public class ServicioDeOfertas(
             IdArticulo = datos.IdArticulo,
             IdGrupo = datos.IdGrupo,
             IdCategoria = datos.IdCategoria,
+            IdFamilia = datos.IdFamilia,
             FechaDesde = datos.FechaDesde,
             FechaHasta = datos.FechaHasta,
             HoraDesde = datos.HoraDesde,
@@ -262,6 +264,7 @@ public class ServicioDeOfertas(
             oferta.IdArticulo = candidato.IdArticulo;
             oferta.IdGrupo = candidato.IdGrupo;
             oferta.IdCategoria = candidato.IdCategoria;
+            oferta.IdFamilia = candidato.IdFamilia;
             oferta.FechaDesde = candidato.FechaDesde;
             oferta.FechaHasta = candidato.FechaHasta;
             oferta.HoraDesde = candidato.HoraDesde;
@@ -447,7 +450,7 @@ public class ServicioDeOfertas(
     /// <summary>Alcance de UN artículo del lote ya resuelto: grupo propio y cadena completa de
     /// ancestros de categoría (<see cref="CadenaDeCategorias"/>), lista para entrar en un
     /// <see cref="LineaAResolver"/> sin rearmarse por línea.</summary>
-    private sealed record AlcanceDeArticulo(int? IdGrupo, IReadOnlyList<int> IdsCategorias);
+    private sealed record AlcanceDeArticulo(int? IdGrupo, int? IdFamilia, IReadOnlyList<int> IdsCategorias);
 
     /// <summary>Una candidata materializada + el <c>id_empresa</c> de su fila — el único eje que
     /// NO evalúa el resolver puro (<see cref="LineaAResolver"/> no lleva ese dato, design:
@@ -483,10 +486,10 @@ public class ServicioDeOfertas(
         var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
         var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
 
-        // 1 consulta: alcance de los artículos pedidos (categoría/grupo propios).
+        // 1 consulta: alcance de los artículos pedidos (categoría/grupo/familia propios).
         var articulos = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
-            .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo })
+            .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia })
             .ToListAsync(ct);
 
         var idsArticuloFaltantes = idsArticulo.Except(articulos.Select(a => a.Id)).ToList();
@@ -505,6 +508,7 @@ public class ServicioDeOfertas(
         var alcancePorArticulo = new Dictionary<int, AlcanceDeArticulo>(articulos.Count);
         var todasLasCategoriasAlcanzables = new HashSet<int>();
         var idsGrupo = new HashSet<int>();
+        var idsFamilia = new HashSet<int>();
 
         foreach (var articulo in articulos)
         {
@@ -512,12 +516,17 @@ public class ServicioDeOfertas(
                 ? CadenaDeCategorias.ConstruirAncestros(idCategoria, padrePorCategoria)
                 : (IReadOnlySet<int>)new HashSet<int>();
 
-            alcancePorArticulo[articulo.Id] = new AlcanceDeArticulo(articulo.IdGrupo, ancestros.ToList());
+            alcancePorArticulo[articulo.Id] = new AlcanceDeArticulo(articulo.IdGrupo, articulo.IdFamilia, ancestros.ToList());
             todasLasCategoriasAlcanzables.UnionWith(ancestros);
 
             if (articulo.IdGrupo is { } idGrupo)
             {
                 idsGrupo.Add(idGrupo);
+            }
+
+            if (articulo.IdFamilia is { } idFamilia)
+            {
+                idsFamilia.Add(idFamilia);
             }
         }
 
@@ -534,6 +543,7 @@ public class ServicioDeOfertas(
             .Where(o => o.Activo &&
                 ((o.IdArticulo != null && idsArticulo.Contains(o.IdArticulo.Value)) ||
                  (o.IdGrupo != null && idsGrupo.Contains(o.IdGrupo.Value)) ||
+                 (o.IdFamilia != null && idsFamilia.Contains(o.IdFamilia.Value)) ||
                  (o.IdCategoria != null && todasLasCategoriasAlcanzables.Contains(o.IdCategoria.Value))) &&
                 (o.IdEmpresa == null || idsEmpresa.Contains(o.IdEmpresa.Value)))
             .ToListAsync(ct);
@@ -597,7 +607,7 @@ public class ServicioDeOfertas(
         var lineaAResolver = new LineaAResolver(
             linea.IdArticulo, alcance.IdGrupo, alcance.IdsCategorias,
             linea.IdListaPrecio, linea.Cantidad, monto.Value,
-            contexto.Fecha, contexto.Hora, contexto.DiaSemana);
+            contexto.Fecha, contexto.Hora, contexto.DiaSemana, alcance.IdFamilia);
 
         return (lineaAResolver, candidatas);
     }
@@ -632,7 +642,7 @@ public class ServicioDeOfertas(
     /// alcance y beneficio exclusivos, rango de <c>cantidad_minima</c>, ventana de vigencia
     /// válida, <c>dias_semana</c> subset sin duplicados. Devuelve el <see cref="AlcanceDeOferta"/>
     /// ya proyectado para que el llamador sepa qué referencia tenant-scoped validar a
-    /// continuación, sin tener que releer las tres columnas nullable crudas.</summary>
+    /// continuación, sin tener que releer las cuatro columnas nullable crudas de alcance.</summary>
     private static AlcanceDeOferta ValidarInvariantes(Oferta candidato)
     {
         var alcance = ReglaDeOfertas.LeerAlcance(candidato);
@@ -647,9 +657,10 @@ public class ServicioDeOfertas(
 
     /// <summary>db-error-backstops: pre-chequeo de existencia tenant-scoped antes del INSERT/
     /// UPDATE — el backstop real sigue siendo la FK compuesta correspondiente
-    /// (<c>fk_ofertas_articulo</c>/<c>fk_ofertas_grupo</c>/<c>fk_ofertas_categoria</c>, 23503 →
-    /// 400 <c>referencia_invalida</c>, genérico desde la Slice 1). <paramref name="alcance"/> ya
-    /// garantiza que exactamente uno de los tres está seteado (<see cref="ValidarInvariantes"/>
+    /// (<c>fk_ofertas_articulo</c>/<c>fk_ofertas_grupo</c>/<c>fk_ofertas_categoria</c>/
+    /// <c>fk_ofertas_familia</c>, 23503 → 400 <c>referencia_invalida</c>, genérico desde la
+    /// Slice 1). <paramref name="alcance"/> ya garantiza que exactamente uno de los cuatro está
+    /// seteado (<see cref="ValidarInvariantes"/>
     /// corrió antes), así que este método solo despacha a la tabla correcta.</summary>
     private async Task ExigirAlcanceValidoAsync(AlcanceDeOferta alcance, CancellationToken ct)
     {
@@ -668,6 +679,16 @@ public class ServicioDeOfertas(
             if (!await db.Grupos.AnyAsync(g => g.Id == idGrupo, ct))
             {
                 throw new ErrorDominio("referencia_invalida", $"No existe el grupo {idGrupo}.", 400);
+            }
+
+            return;
+        }
+
+        if (alcance.IdFamilia is { } idFamilia)
+        {
+            if (!await db.Familias.AnyAsync(f => f.Id == idFamilia, ct))
+            {
+                throw new ErrorDominio("referencia_invalida", $"No existe la familia {idFamilia}.", 400);
             }
 
             return;
@@ -842,5 +863,5 @@ public class ServicioDeOfertas(
         o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
         o.DiasSemana is null ? Array.Empty<int>() : o.DiasSemana.Select(d => (int)d).ToArray(),
         o.CantidadMinima, o.PrecioUnitario, o.Porcentaje, o.ImporteFijo,
-        o.Prioridad, o.Acumulable, o.Activo, idsListas);
+        o.Prioridad, o.Acumulable, o.Activo, idsListas, o.IdFamilia);
 }

@@ -2922,6 +2922,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
 
+                    b.Property<int?>("IdFamilia")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_familia");
+
                     b.Property<int?>("IdGrupo")
                         .HasColumnType("integer")
                         .HasColumnName("id_grupo");
@@ -2975,12 +2979,15 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_ofertas_empresa");
 
+                    b.HasIndex("IdFamilia", "IdTenant")
+                        .HasDatabaseName("ix_ofertas_familia");
+
                     b.HasIndex("IdGrupo", "IdTenant")
                         .HasDatabaseName("ix_ofertas_grupo");
 
                     b.ToTable("ofertas", null, t =>
                         {
-                            t.HasCheckConstraint("ck_ofertas_alcance_exclusivo", "num_nonnulls(id_articulo, id_grupo, id_categoria) = 1");
+                            t.HasCheckConstraint("ck_ofertas_alcance_exclusivo", "num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1");
 
                             t.HasCheckConstraint("ck_ofertas_beneficio_exclusivo", "num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1");
 
@@ -5749,6 +5756,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_ofertas_empresa");
+
+                    b.HasOne("Ways.Domain.Articulos.Familia", null)
+                        .WithMany()
+                        .HasForeignKey("IdFamilia", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_ofertas_familia");
 
                     b.HasOne("Ways.Domain.Catalogos.Grupo", null)
                         .WithMany()

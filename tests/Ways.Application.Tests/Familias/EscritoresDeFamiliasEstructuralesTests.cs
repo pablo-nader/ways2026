@@ -24,7 +24,10 @@ namespace Ways.Application.Tests.Familias;
 /// <item>un <c>SetProperty</c> sobre un campo compartido de <c>articulos</c>;</item>
 /// <item>la asignación de <c>CostoNominal</c>, <c>CostoLista</c>, <c>DescuentoProveedor</c>,
 /// <c>UnidadesPorBulto</c>, <c>IdProveedorHabitual</c>, <c>IdAlicuotaIva</c>, <c>UnidadVenta</c>,
-/// <c>EsProducto</c>, <c>ControlaLote</c>, <c>AcumulaEnVenta</c> o <c>IdFamilia</c> sobre cualquier receptor.</item>
+/// <c>EsProducto</c>, <c>ControlaLote</c>, <c>AcumulaEnVenta</c> o <c>IdFamilia</c> sobre cualquier receptor,
+/// salvo <c>oferta.IdFamilia</c>: la oferta tiene su propia columna <c>id_familia</c> (alcance de la oferta,
+/// no pertenencia de un artículo) y <c>ServicioDeOfertas</c> la asigna. Cualquier otro campo sobre un receptor
+/// llamado <c>oferta</c> sigue figurando como escritor.</item>
 /// </list>
 /// Los patrones son amplios a propósito (cualquier receptor, cualquier variable): un falso positivo obliga a
 /// mirar el archivo, que es justamente el punto.</para>
@@ -54,9 +57,12 @@ public class EscritoresDeFamiliasEstructuralesTests
     private const string CamposDeArticulosConOtrosUsos =
         "IdArea|IdCategoria|IdGrupo";
 
-    private const string CamposDeArticulosSinOtrosUsos =
+    private const string CamposDeArticulosSinOtrosUsosSalvoIdFamilia =
         "CostoNominal|CostoLista|DescuentoProveedor|UnidadesPorBulto|IdProveedorHabitual|IdAlicuotaIva|UnidadVenta|" +
-        "EsProducto|ControlaLote|AcumulaEnVenta|IdFamilia";
+        "EsProducto|ControlaLote|AcumulaEnVenta";
+
+    private const string CamposDeArticulosSinOtrosUsos =
+        CamposDeArticulosSinOtrosUsosSalvoIdFamilia + "|IdFamilia";
 
     /// <summary>Una sentencia SQL de escritura sobre <paramref name="tabla"/>: sin distinguir mayúsculas y con el
     /// nombre, si se quiere, entre comillas (en una cadena común las comillas llegan al texto como <c>\"</c>, y en
@@ -78,7 +84,7 @@ public class EscritoresDeFamiliasEstructuralesTests
         $@"\.SetProperty\(\s*\w+\s*=>\s*\w+\.(?:{CamposDeArticulosConOtrosUsos}|{CamposDeArticulosSinOtrosUsos})\b";
 
     private static readonly string AsignacionDeUnCampoCompartido =
-        $@"\.(?:{CamposDeArticulosSinOtrosUsos})\s*=[^=>]";
+        $@"\.(?:{CamposDeArticulosSinOtrosUsosSalvoIdFamilia}|(?<!\boferta\.)IdFamilia)\s*=[^=>]";
 
     internal static readonly Regex EscritoresDePrecios = new(
         string.Join(
@@ -219,6 +225,9 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("articulo.CostoNominal = costo;")]
     [InlineData("articulo.AcumulaEnVenta = false;")]
     [InlineData("articulo.IdFamilia = null;")]
+    [InlineData("oferta.CostoNominal = costo;")]
+    [InlineData("oferta.AcumulaEnVenta = false;")]
+    [InlineData("ofertaNueva.IdFamilia = null;")]
     public void ElPatronDeArticulosVeCadaFormaDeEscrituraQueDeclara(string fuente)
     {
         Assert.Matches(EscritoresDeArticulos, fuente);
@@ -231,6 +240,7 @@ public class EscritoresDeFamiliasEstructuralesTests
     [InlineData("var vigente = a.CostoNominal == costo;")]
     [InlineData("db.ArticulosEmpresas.Add(fila);")]
     [InlineData("var fila = new ArticuloEmpresa { IdArticulo = id };")]
+    [InlineData("oferta.IdFamilia = candidato.IdFamilia;")]
     public void ElPatronDeArticulosNoVeLecturasNiOtrasTablas(string fuente)
     {
         Assert.DoesNotMatch(EscritoresDeArticulos, fuente);

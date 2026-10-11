@@ -206,7 +206,8 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Prioridad: oferta.Prioridad,
         Acumulable: oferta.Acumulable,
         IdsListas: idsListas,
-        Activo: oferta.Activo);
+        Activo: oferta.Activo,
+        IdFamilia: oferta.IdFamilia);
 
     private static async Task<OfertaListado> CrearOfertaAsync(
         HttpClient cliente, int idGrupo, IReadOnlyList<int>? idsListas = null)
@@ -985,5 +986,160 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.NotNull(listado);
         var nombres = listado!.Select(o => o.Nombre).ToList();
         Assert.Equal(nombres.OrderBy(n => n, StringComparer.Ordinal), nombres);
+    }
+
+    // ---- alcance por familia --------------------------------------------------------------------
+
+    private async Task<int> SembrarFamiliaAsync(int idTenant, string nombre, bool dadaDeBaja = false)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var familia = new Familia
+        {
+            IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora,
+            DeletedAt = dadaDeBaja ? ahora : null
+        };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
+    }
+
+    private static AltaOferta AltaDeFamilia(int idFamilia) =>
+        AltaValida(idGrupo: 0) with { IdGrupo = null, IdFamilia = idFamilia };
+
+    private async Task<(int? IdGrupo, int? IdFamilia)> AlcancePersistidoAsync(int idTenant, int idOferta)
+    {
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await lectura.Ofertas.AsNoTracking().SingleAsync(o => o.Id == idOferta);
+
+        return (fila.IdGrupo, fila.IdFamilia);
+    }
+
+    [Fact]
+    public async Task CrearConFamiliaPersisteElAlcanceYLoDevuelveEnObtenerYListar()
+    {
+        var (idTenant, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearConFamiliaPersisteElAlcanceYLoDevuelveEnObtenerYListar));
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas", AltaDeFamilia(idFamilia));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var creada = (await respuesta.Content.ReadFromJsonAsync<OfertaListado>())!;
+
+        Assert.Equal(idFamilia, creada.IdFamilia);
+        Assert.Null(creada.IdGrupo);
+        Assert.Null(creada.IdArticulo);
+        Assert.Null(creada.IdCategoria);
+        Assert.Equal((null, idFamilia), await AlcancePersistidoAsync(idTenant, creada.Id));
+
+        var detalle = await admin.GetFromJsonAsync<OfertaListado>($"/api/ofertas/{creada.Id}");
+        Assert.Equal(idFamilia, detalle!.IdFamilia);
+
+        var listado = await admin.GetFromJsonAsync<List<OfertaListado>>("/api/ofertas");
+        Assert.Equal(idFamilia, listado!.Single(o => o.Id == creada.Id).IdFamilia);
+    }
+
+    [Fact]
+    public async Task EditarCambiaElAlcanceDeGrupoAFamiliaYDeVuelta()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarCambiaElAlcanceDeGrupoAFamiliaYDeVuelta));
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creada = await CrearOfertaAsync(admin, idGrupo);
+
+        var aFamilia = EdicionDesde(creada, idsListas: null) with { IdGrupo = null, IdFamilia = idFamilia };
+        var respuestaAFamilia = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", aFamilia);
+        Assert.Equal(HttpStatusCode.OK, respuestaAFamilia.StatusCode);
+        var enFamilia = (await respuestaAFamilia.Content.ReadFromJsonAsync<OfertaListado>())!;
+        Assert.Equal(idFamilia, enFamilia.IdFamilia);
+        Assert.Null(enFamilia.IdGrupo);
+        Assert.Equal((null, idFamilia), await AlcancePersistidoAsync(idTenant, creada.Id));
+
+        var devuelta = EdicionDesde(enFamilia, idsListas: null) with { IdFamilia = null, IdGrupo = idGrupo };
+        var respuestaDeVuelta = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", devuelta);
+        Assert.Equal(HttpStatusCode.OK, respuestaDeVuelta.StatusCode);
+        Assert.Equal((idGrupo, null), await AlcancePersistidoAsync(idTenant, creada.Id));
+    }
+
+    [Fact]
+    public async Task EditarUnaOfertaDeFamiliaSinTocarElAlcanceLaConserva()
+    {
+        var (idTenant, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarUnaOfertaDeFamiliaSinTocarElAlcanceLaConserva));
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas", AltaDeFamilia(idFamilia));
+        var creada = (await respuesta.Content.ReadFromJsonAsync<OfertaListado>())!;
+
+        var edicion = EdicionDesde(creada, idsListas: null) with { Nombre = "Remeras editada", Porcentaje = 25m };
+        var editada = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.OK, editada.StatusCode);
+        Assert.Equal((null, idFamilia), await AlcancePersistidoAsync(idTenant, creada.Id));
+    }
+
+    [Fact]
+    public async Task CrearConFamiliaInexistenteODeOtroTenantDevuelve400()
+    {
+        var (_, _, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(CrearConFamiliaInexistenteODeOtroTenantDevuelve400) + "-A");
+        var (idTenantB, _, _, _) =
+            await AprovisionarTenantAsync(nameof(CrearConFamiliaInexistenteODeOtroTenantDevuelve400) + "-B");
+        var idFamiliaDeB = await SembrarFamiliaAsync(idTenantB, "De B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+
+        foreach (var idFamilia in new[] { 999_999, idFamiliaDeB })
+        {
+            var respuesta = await adminA.PostAsJsonAsync("/api/ofertas", AltaDeFamilia(idFamilia));
+
+            Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+            var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task CrearYEditarConFamiliaDadaDeBajaDevuelve400()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearYEditarConFamiliaDadaDeBajaDevuelve400));
+        var idFamiliaDisuelta = await SembrarFamiliaAsync(idTenant, "Disuelta", dadaDeBaja: true);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var alta = await admin.PostAsJsonAsync("/api/ofertas", AltaDeFamilia(idFamiliaDisuelta));
+        Assert.Equal(HttpStatusCode.BadRequest, alta.StatusCode);
+        Assert.Equal(
+            "referencia_invalida",
+            (await alta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString());
+
+        var creada = await CrearOfertaAsync(admin, idGrupo);
+        var edicion = EdicionDesde(creada, idsListas: null) with { IdGrupo = null, IdFamilia = idFamiliaDisuelta };
+        var edicionRechazada = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.BadRequest, edicionRechazada.StatusCode);
+        Assert.Equal((idGrupo, null), await AlcancePersistidoAsync(idTenant, creada.Id));
+    }
+
+    [Fact]
+    public async Task CrearConFamiliaYOtroAlcanceDevuelve400OfertaAlcanceInvalido()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearConFamiliaYOtroAlcanceDevuelve400OfertaAlcanceInvalido));
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Remeras");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas", AltaValida(idGrupo) with { IdFamilia = idFamilia });
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("oferta_alcance_invalido", problema.GetProperty("codigo").GetString());
+        Assert.Contains("familia", problema.GetProperty("title").GetString());
     }
 }

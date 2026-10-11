@@ -27,7 +27,8 @@ ofertas for the whole batch without a per-articulo query loop.
 
 A candidate oferta for an input MUST satisfy ALL of: `activo = true`; scope
 matches (`id_articulo` equals the input's articulo, OR `id_grupo` equals the
-articulo's grupo, OR `id_categoria` equals the articulo's categoria **or any
+articulo's grupo, OR `id_familia` equals the articulo's current familia (membership
+is read at resolution time), OR `id_categoria` equals the articulo's categoria **or any
 ancestor of it** — an oferta on a parent categoria reaches articulos in its
 subcategorias, user decision 2026-08-03, tree depth ≤ 3); `id_empresa` is NULL
 or equals the input's empresa; lista targeting matches (per the `ofertas`
@@ -46,6 +47,14 @@ spec); vigencia matches at `momento` (per the `ofertas` spec);
 - GIVEN an oferta scoped to grupo "Bebidas" and an articulo belonging to that grupo
 - WHEN resolution runs for that articulo
 - THEN the oferta is a candidate
+
+#### Scenario: Familia-scoped oferta matches the articulo's current familia
+
+- GIVEN an oferta scoped to a familia and an articulo whose `id_familia` is that familia
+- WHEN resolution runs for that articulo
+- THEN the oferta is a candidate
+- AND an articulo of another familia, or without familia, does not get it
+- AND no automatic precedence by scope type applies: only `prioridad`/`acumulable` order the offers
 
 #### Scenario: Empresa-scoped oferta excludes other empresas
 

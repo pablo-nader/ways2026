@@ -3,7 +3,7 @@
 ## Purpose
 
 Defines the `ofertas` table (doc 10 §Ofertas, deviated per stage-4 decision 4):
-catálogo-scoped discount rules keyed by exclusive scope (articulo/grupo/categoria),
+catálogo-scoped discount rules keyed by exclusive scope (articulo/grupo/categoria/familia),
 exclusive benefit (precio_unitario/porcentaje/importe_fijo), vigencia windows,
 `cantidad_minima` trigger, multi-lista targeting via `ofertas_listas`, and
 precedence controls (`prioridad`, `acumulable`). Application/stacking math lives
@@ -15,12 +15,12 @@ in `resolucion-de-ofertas`; this spec covers schema, targeting, and ABM.
 
 `ofertas` MUST be catálogo-scoped (`id_tenant` NOT NULL, `id_empresa NULL` =
 tenant-wide, doc 09 §Catálogo) with: `id_oferta`, `nombre citext NOT NULL`
-(ticket label), `id_articulo`/`id_grupo`/`id_categoria` (exactly one NOT NULL),
+(ticket label), `id_articulo`/`id_grupo`/`id_categoria`/`id_familia` (exactly one NOT NULL),
 `fecha_desde`/`fecha_hasta date NULL`, `hora_desde`/`hora_hasta time NULL`,
 `dias_semana smallint[] NULL`, `cantidad_minima numeric(12,3) NULL`,
 `precio_unitario`/`porcentaje`/`importe_fijo` (exactly one NOT NULL),
 `prioridad int NOT NULL DEFAULT 0`, `acumulable boolean NOT NULL DEFAULT false`,
-`activo`. `CHECK num_nonnulls(id_articulo, id_grupo, id_categoria) = 1` and
+`activo`. `CHECK num_nonnulls(id_articulo, id_grupo, id_categoria, id_familia) = 1` and
 `CHECK num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1` MUST both
 be enforced.
 
@@ -52,9 +52,13 @@ be enforced.
 #### Scenario: Invalid scope reference maps to 400
 
 - GIVEN a create request references a non-existent `id_articulo`, `id_grupo`,
-  or `id_categoria`
+  `id_categoria` or `id_familia`
 - WHEN the insert reaches Postgres
 - THEN 23503 is raised and `ManejadorDeErrores` maps it to 400 `referencia_invalida`
+  (the FK backstop covers a non-existent id and an id of another tenant)
+- AND a soft-deleted referenced row still exists, so the composite FK is satisfied: only the
+  service pre-check (`ServicioDeOfertas.ExigirAlcanceValidoAsync`, which applies the soft-delete
+  filter) rejects it, also with 400 `referencia_invalida`
 
 ### Requirement: Vigencia Window Semantics
 

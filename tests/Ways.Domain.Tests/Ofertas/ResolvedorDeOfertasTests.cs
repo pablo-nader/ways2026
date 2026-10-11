@@ -20,10 +20,10 @@ public class ResolvedorDeOfertasTests
     private static LineaAResolver CrearLinea(
         int idArticulo = 1, int? idGrupo = null, IReadOnlyList<int>? idsCategorias = null,
         int idListaPrecio = 1, decimal cantidad = 1m, decimal precioOriginal = 1000m,
-        DateOnly? fecha = null, TimeOnly? hora = null, int? diaSemana = null) =>
+        DateOnly? fecha = null, TimeOnly? hora = null, int? diaSemana = null, int? idFamilia = null) =>
         new(
             idArticulo, idGrupo, idsCategorias ?? [], idListaPrecio, cantidad, precioOriginal,
-            fecha ?? Fecha, hora ?? Hora, diaSemana ?? DiaSemana);
+            fecha ?? Fecha, hora ?? Hora, diaSemana ?? DiaSemana, idFamilia);
 
     private static OfertaCandidata CrearCandidata(
         int id = 1, string nombre = "oferta", int prioridad = 0, bool acumulable = false,
@@ -284,6 +284,62 @@ public class ResolvedorDeOfertasTests
         var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeArticulo(2));
 
         Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaScopedAFamiliaMatcheaViaLaFamiliaDelArticulo()
+    {
+        var linea = CrearLinea(idFamilia: 5);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5));
+
+        Assert.True(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaScopedAFamiliaNoMatcheaOtraFamilia()
+    {
+        var linea = CrearLinea(idFamilia: 5);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(6));
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    [Fact]
+    public void UnaOfertaScopedAFamiliaNoMatcheaUnArticuloSinFamilia()
+    {
+        var linea = CrearLinea(idFamilia: null);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5));
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    /// <summary>La familia y el grupo no se confunden: el mismo número en una columna no matchea la otra.</summary>
+    [Fact]
+    public void UnaOfertaScopedAFamiliaNoMatcheaPorElGrupoConElMismoId()
+    {
+        var linea = CrearLinea(idGrupo: 5, idFamilia: null);
+        var candidata = CrearCandidata(alcance: AlcanceDeOferta.DeFamilia(5));
+
+        Assert.False(ResolvedorDeOfertas.Coincide(linea, candidata));
+    }
+
+    /// <summary>Sin precedencia automática por tipo de alcance: con la misma prioridad gana el mayor
+    /// descuento aunque sea la oferta de grupo, y con mayor prioridad gana la de familia.</summary>
+    [Fact]
+    public void LaPrecedenciaEntreUnaOfertaDeFamiliaYUnaDeGrupoSigueSiendoSoloPrioridad()
+    {
+        var linea = CrearLinea(precioOriginal: 1000m, idGrupo: 7, idFamilia: 5);
+        var deFamilia = CrearCandidata(
+            id: 1, prioridad: 10, alcance: AlcanceDeOferta.DeFamilia(5), beneficio: BeneficioDeOferta.DePorcentaje(10m));
+        var deGrupo = CrearCandidata(
+            id: 2, prioridad: 10, alcance: AlcanceDeOferta.DeGrupo(7), beneficio: BeneficioDeOferta.DePorcentaje(20m));
+
+        var empatadas = ResolvedorDeOfertas.Resolver(linea, [deFamilia, deGrupo]);
+        Assert.Equal(2, Assert.Single(empatadas.Aplicadas).IdOferta);
+
+        var familiaConMayorPrioridad = deFamilia with { Prioridad = 11 };
+        var conPrioridad = ResolvedorDeOfertas.Resolver(linea, [familiaConMayorPrioridad, deGrupo]);
+        Assert.Equal(1, Assert.Single(conPrioridad.Aplicadas).IdOferta);
     }
 
     // --- Candidate Matching: lista objetivo ---
