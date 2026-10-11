@@ -56,6 +56,191 @@ beforeEach(() => {
   apiDeleteMock.mockResolvedValue(undefined)
 })
 
+function editarDe(nombre: string) {
+  return within(screen.getByText(nombre).closest('li') as HTMLElement).getByRole('button', { name: 'Editar' })
+}
+
+describe('Categorias — alta y edición en una modal', () => {
+  it('la primera pantalla es solo la grilla: ni formulario ni diálogo', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('form')).toBeNull()
+  })
+
+  it('"Nueva categoría raíz" abre la modal con el título de alta y el formulario vacío', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('')
+    expect(within(dialogo).getByLabelText('Categoría padre')).toHaveValue('')
+  })
+
+  it('"+ Subcategoría" abre la modal con el padre elegido', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.click(screen.getByRole('button', { name: '+ Subcategoría' }))
+
+    expect(within(screen.getByRole('dialog', { name: 'Nueva categoría' })).getByLabelText('Categoría padre')).toHaveValue('1')
+  })
+
+  it('editar abre la modal con el título de edición y la fila cargada', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture({ activo: false, orden: 7 })])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.click(editarDe('Bebidas'))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Editar categoría' })
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Bebidas')
+    expect(within(dialogo).getByLabelText('Orden')).toHaveValue(7)
+    expect(within(dialogo).getByLabelText('Estado')).toHaveValue('inactivo')
+  })
+
+  it('cancelar cierra la modal sin escribir nada', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+    expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('un guardado exitoso cierra la modal, deja el aviso en la pantalla y recarga el listado', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return Promise.resolve(
+        cargas === 1 ? [categoriaFixture()] : [categoriaFixture(), categoriaFixture({ id: 2, nombre: 'Limpieza' })],
+      )
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Limpieza".')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock.mock.calls[0][0]).toBe('/catalogos/categorias')
+    expect(await screen.findByText('Limpieza')).toBeInTheDocument()
+  })
+
+  /** `user-event` solo busca el botón de envío dentro del `<form>`, así que no puede simular Enter
+   * sobre un botón del pie asociado por el atributo `form`: se prueba la asociación misma, que es
+   * lo que hace que el navegador envíe con Enter. */
+  it('el Guardar del pie pertenece al formulario del cuerpo', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toHaveProperty('form', dialogo.querySelector('form'))
+  })
+
+  it('un guardado rechazado muestra el error adentro de la modal, la deja abierta y conserva lo tipeado', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
+    expect(await within(dialogo).findByText('Ya existe una categoría con ese nombre.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Bebidas')
+    expect(within(dialogo).getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  it('el error de un guardado anterior no sobrevive a cancelar y reabrir', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByText('Ya existe una categoría con ese nombre.')
+
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+
+    expect(screen.queryByText('Ya existe una categoría con ese nombre.')).not.toBeInTheDocument()
+  })
+
+  it('un guardado ya hecho cuyo refresco falla cierra la modal y avisa en la pantalla', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return cargas === 1
+        ? Promise.resolve([categoriaFixture()])
+        : Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Limpieza". Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('con el guardado en vuelo la modal no se cierra ni con la × ni con Escape, y un segundo envío se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    apiPostMock.mockImplementation(() => new Promise<void>(() => {}))
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    const guardar = screen.getByRole('button', { name: 'Guardar' })
+    await act(async () => {
+      guardar.click()
+      guardar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    await usuario.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Nueva categoría' })).toBeInTheDocument()
+  })
+})
+
+
 describe('Categorias — el warning de subcategorías huérfanas se retiró', () => {
   it('la puerta de confirmación no menciona que las subcategorías quedan sin padre visible', async () => {
     const usuario = userEvent.setup()
@@ -243,12 +428,12 @@ describe('Categorias — baja lógica', () => {
 
     await screen.findByText('Bebidas')
     await usuario.click(within(screen.getByText('Bebidas').closest('li') as HTMLElement).getByRole('button', { name: 'Editar' }))
-    expect(screen.getByText('Editando categoría 1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editar categoría' })).toBeInTheDocument()
 
     await usuario.click(bajaDe('Bebidas'))
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await screen.findByText('Se dio de baja "Bebidas".')
-    expect(screen.queryByText('Editando categoría 1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Editar categoría' })).not.toBeInTheDocument()
   })
 })
