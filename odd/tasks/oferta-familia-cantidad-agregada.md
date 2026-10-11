@@ -50,7 +50,7 @@ Strategy: chained PRs, stacked-to-main (cached owner preference). Forecast ~700 
   - Checks: `dotnet test tests/Ways.Domain.Tests --filter "FullyQualifiedName~Ofertas"`,
     `dotnet test tests/Ways.Application.Tests --filter "FullyQualifiedName~Ofertas|FullyQualifiedName~Pos"`,
     focused integration tests for offers/checkout.
-- [ ] **T2 — Offline snapshot and POS cart aggregate by family** (route: delegated direct).
+- [x] **T2 — Offline snapshot and POS cart aggregate by family** (route: delegated direct).
   - Snapshot carries `idFamilia` per article and, per list price, the resolved results by family
     quantity in a new optional field; the web client sums cart quantities per family and picks the
     tier with both quantities. Old bundles ignore the new fields.
@@ -63,7 +63,8 @@ Strategy: chained PRs, stacked-to-main (cached owner preference). Forecast ~700 
 - 2026-10-11: explored; current per-line behavior confirmed from code.
 - 2026-10-11: T1 done (commit `ed19a3be`). `LineaAResolver.CantidadDeFamilia` is required; `ServicioDeOfertas.ResolverAsync` sums per family over the batch; `ResolverConEscalonesAsync` and the legacy curve keep the line's own quantity (delta-shifted aggregate). Checks green: build, Domain Ofertas (114), Application Ofertas|Pos (136), integration VentasCheckout|OfertasResolucion|InstantaneaDePos (67).
 - 2026-10-11: fix(etiquetas): `ServicioDeOfertas.ResolverAsync` is now private; callers choose `ResolverDocumentoAsync` (sums by family: ventas, remitos, presupuestos, `POST /api/ofertas/resolver`) or `ResolverPorLineaAsync` (own quantity: labels). Offline discrepancy recomputation reads the same batch call as the sale (`ServicioDeVentas.cs:169`), so it is already family-aggregated.
+- 2026-10-11: T2 done (commits `f23f3054` server contract + grid, `6e0d4a64` web client). Contract: `ArticuloDeInstantanea.idFamilia` (omitted when null) and `PrecioDeListaDeInstantanea.escalonesDeFamilia` (omitted when empty), cells `{cantidadDeFamiliaDesde, cantidadDesde, precioFinal, descuentoUnitario, aplicadas}`; grid = family thresholds x own thresholds, resolved by the real engine (`EscalonesDeCantidad.ConstruirGrillaDeFamilia`), no collapsing. Client: `preciosVigentesDeLasLineas` is the single rule used by preview, enqueued payload and synthetic ticket. No snapshot version bump needed: fields are optional, the content ETag changes once and devices re-download. Checks green: build, Domain Ofertas (120), Application Ofertas|Pos|Etiquetas (145), integration InstantaneaDePos|VentasCheckout (51), tsc, vitest src/pos (449). Mutation evidence recorded for the per-family sum and the `cantidadDeFamiliaDesde <= cantidadDeFamilia` clause.
 
 ## Next step
 
-T2.
+Judgment-day on the T2 slice, then PR 2.
