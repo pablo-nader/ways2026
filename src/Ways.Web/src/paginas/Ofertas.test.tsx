@@ -278,6 +278,21 @@ describe('Ofertas — alcance por familia', () => {
     expect(within(filaSinCargar).getByText('Familia: 99')).toBeInTheDocument()
   })
 
+  it('el listado nombra el artículo de la oferta, o su id si el servidor no trae el nombre', async () => {
+    mockearApiGet({
+      ofertas: [
+        ofertaFixture({ id: 2, nombre: 'Con nombre', idArticulo: 357, nombreArticulo: 'Alfajor maizena' }),
+        ofertaFixture({ id: 3, nombre: 'Sin nombre', idArticulo: 358, nombreArticulo: null }),
+      ],
+    })
+    render(<Ofertas />)
+
+    const filaConNombre = (await screen.findByText('Con nombre')).closest('tr')!
+    expect(within(filaConNombre).getByText('Artículo: Alfajor maizena')).toBeInTheDocument()
+    const filaSinNombre = screen.getByText('Sin nombre').closest('tr')!
+    expect(within(filaSinNombre).getByText('Artículo #358')).toBeInTheDocument()
+  })
+
   it('editar una oferta de familia abre el radio Familia con su familia elegida y el PUT reenvía idFamilia', async () => {
     const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idFamilia: 7 })
     mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })

@@ -47,7 +47,7 @@ function validarFormulario(f: FormularioOferta): string | null {
 }
 
 function textoAlcance(o: OfertaListado, grupos: GrupoListado[], categorias: CategoriaListado[], familias: FamiliaListado[]): string {
-  if (o.idArticulo !== null) return `Artículo #${o.idArticulo}`
+  if (o.idArticulo !== null) return o.nombreArticulo ? `Artículo: ${o.nombreArticulo}` : `Artículo #${o.idArticulo}`
   if (o.idGrupo !== null) return `Grupo: ${grupos.find((g) => g.id === o.idGrupo)?.nombre ?? o.idGrupo}`
   if (o.idFamilia != null) return `Familia: ${familias.find((f) => f.id === o.idFamilia)?.nombre ?? o.idFamilia}`
   return `Categoría: ${categorias.find((c) => c.id === o.idCategoria)?.nombre ?? o.idCategoria}`
