@@ -477,6 +477,27 @@ describe('Articulos — alta: elegir una familia', () => {
     }
   })
 
+  /** Cláusula bajo prueba: `bloqueoDeFamilia` como tercer argumento de `costoNominalDelFormulario`. La referencia trae
+   * 120 de nominal y su fórmula (150 con IVA y 5 % de descuento) da 142,50: solo el guardado de la familia explica 120. */
+  it('el costo nominal de solo lectura es el guardado de la familia mientras el alta está bloqueada, y la vista previa al dejarla', async () => {
+    const lectura = diferida<FamiliaDetalle>()
+    mockearApi({ familias: [familiaListado()], detalleDeFamiliaImpl: () => lectura.promesa })
+    await abrirAlta()
+    await userEvent.selectOptions(await screen.findByLabelText('Familia (opcional)'), '7')
+    await screen.findByText('Cargando la familia…')
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('—')
+
+    await act(async () => {
+      lectura.resolver(detalleSabores())
+    })
+    await waitFor(() => expect(screen.getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('120,00')
+
+    await userEvent.selectOptions(screen.getByLabelText('Familia (opcional)'), '')
+
+    expect(screen.getByLabelText('Costo nominal')).toHaveValue('142,50')
+  })
+
   it('los botones "+" de los padrones compartidos quedan bloqueados; el de marca, que es propia, no', async () => {
     await abrirAltaEnLaFamilia()
 

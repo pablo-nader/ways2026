@@ -352,7 +352,7 @@ export function FormularioArticulo({
     valor.costoListaIncluyeIva,
     porcentajeIva,
   )
-  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva)
+  const costoNominal = costoNominalDelFormulario(valor, alicuotasIva, bloqueoDeFamilia)
   const bultoSinUnidadesPorBulto = bultoSinUnidades(
     valor.costoListaPor,
     valor.unidadesPorBulto.trim() === '' ? null : Number(valor.unidadesPorBulto),

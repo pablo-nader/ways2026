@@ -173,48 +173,77 @@ describe('costoNominalDelFormulario', () => {
   }
 
   it('un artículo cargado sin cambios en las entradas muestra el costo nominal guardado, aunque no salga de la fórmula', () => {
-    expect(costoNominalDelFormulario(cargado(), alicuotas)).toBe(73.5)
+    expect(costoNominalDelFormulario(cargado(), alicuotas, false)).toBe(73.5)
   })
 
   it('un cambio que no cuenta (unidades por bulto con base unidad, otra alícuota con IVA incluido) conserva el guardado', () => {
-    expect(costoNominalDelFormulario(cargado({ unidadesPorBulto: '12' }), alicuotas)).toBe(73.5)
-    expect(costoNominalDelFormulario(cargado({ idAlicuotaIva: 2 }), alicuotas)).toBe(73.5)
+    expect(costoNominalDelFormulario(cargado({ unidadesPorBulto: '12' }), alicuotas, false)).toBe(73.5)
+    expect(costoNominalDelFormulario(cargado({ idAlicuotaIva: 2 }), alicuotas, false)).toBe(73.5)
   })
 
   it('apenas cambia una entrada que cuenta se muestra la vista previa calculada', () => {
-    expect(costoNominalDelFormulario(cargado({ costoLista: '200' }), alicuotas)).toBe(200)
-    expect(costoNominalDelFormulario(cargado({ descuentoProveedor: '10' }), alicuotas)).toBe(90)
-    expect(costoNominalDelFormulario(cargado({ costoListaIncluyeIva: false }), alicuotas)).toBe(121)
+    expect(costoNominalDelFormulario(cargado({ costoLista: '200' }), alicuotas, false)).toBe(200)
+    expect(costoNominalDelFormulario(cargado({ descuentoProveedor: '10' }), alicuotas, false)).toBe(90)
+    expect(costoNominalDelFormulario(cargado({ costoListaIncluyeIva: false }), alicuotas, false)).toBe(121)
   })
 
   it('volver a las entradas originales vuelve a mostrar el guardado', () => {
-    expect(costoNominalDelFormulario(cargado({ costoLista: '200' }), alicuotas)).toBe(200)
-    expect(costoNominalDelFormulario(cargado({ costoLista: '100' }), alicuotas)).toBe(73.5)
+    expect(costoNominalDelFormulario(cargado({ costoLista: '200' }), alicuotas, false)).toBe(200)
+    expect(costoNominalDelFormulario(cargado({ costoLista: '100' }), alicuotas, false)).toBe(73.5)
   })
 
   it('un artículo guardado sin IVA recalcula al cambiar la alícuota y conserva el guardado si no cambia', () => {
     const base = cargado()
     const sinIva = { costoListaIncluyeIva: false, costoGuardado: { ...base.costoGuardado!, costoListaIncluyeIva: false } }
 
-    expect(costoNominalDelFormulario(cargado(sinIva), alicuotas)).toBe(73.5)
-    expect(costoNominalDelFormulario(cargado({ ...sinIva, idAlicuotaIva: 2 }), alicuotas)).toBe(110.5)
+    expect(costoNominalDelFormulario(cargado(sinIva), alicuotas, false)).toBe(73.5)
+    expect(costoNominalDelFormulario(cargado({ ...sinIva, idAlicuotaIva: 2 }), alicuotas, false)).toBe(110.5)
   })
 
   it('un alta siempre muestra la vista previa: sin costo de lista no hay nada que mostrar', () => {
-    expect(costoNominalDelFormulario({ ...formularioVacio(), idAlicuotaIva: 1 }, alicuotas)).toBeNull()
+    expect(costoNominalDelFormulario({ ...formularioVacio(), idAlicuotaIva: 1 }, alicuotas, false)).toBeNull()
     expect(
-      costoNominalDelFormulario({ ...formularioVacio(), idAlicuotaIva: 1, costoLista: '121', costoListaIncluyeIva: false }, alicuotas),
+      costoNominalDelFormulario({ ...formularioVacio(), idAlicuotaIva: 1, costoLista: '121', costoListaIncluyeIva: false }, alicuotas, false),
     ).toBe(146.41)
   })
 
   it('por bulto sin unidades por bulto no hay vista previa', () => {
-    expect(costoNominalDelFormulario({ ...formularioVacio(), costoLista: '300', costoListaPor: 'Bulto' }, alicuotas)).toBeNull()
+    expect(costoNominalDelFormulario({ ...formularioVacio(), costoLista: '300', costoListaPor: 'Bulto' }, alicuotas, false)).toBeNull()
     expect(
-      costoNominalDelFormulario({ ...formularioVacio(), costoLista: '300', costoListaPor: 'Bulto', unidadesPorBulto: '12' }, alicuotas),
+      costoNominalDelFormulario({ ...formularioVacio(), costoLista: '300', costoListaPor: 'Bulto', unidadesPorBulto: '12' }, alicuotas, false),
     ).toBe(25)
   })
 
   it('quien no ve los costos no recibe ninguno, ni siquiera calculado', () => {
-    expect(costoNominalDelFormulario(cargado({ costosOcultos: true, costoLista: '999' }), alicuotas)).toBeNull()
+    expect(costoNominalDelFormulario(cargado({ costosOcultos: true, costoLista: '999' }), alicuotas, false)).toBeNull()
+  })
+
+  describe('un alta bloqueada a los valores de una familia', () => {
+    // El nominal de la referencia (120) lo dejó una compra: la fórmula con estas entradas da 142,5 (150 con IVA y 5 % de descuento).
+    const deLaFamilia = (sobrescribir: Partial<Formulario> = {}): Formulario => ({
+      ...formularioVacio(),
+      idFamilia: 7,
+      idAlicuotaIva: 1,
+      costoLista: '150',
+      descuentoProveedor: '5',
+      costoNominal: '120',
+      ...sobrescribir,
+    })
+
+    it('muestra el nominal guardado de la familia y no el que daría la fórmula', () => {
+      expect(costoNominalDelFormulario(deLaFamilia(), alicuotas, true)).toBe(120)
+    })
+
+    it('al dejar la familia (campos desbloqueados) vuelve a la vista previa calculada', () => {
+      expect(costoNominalDelFormulario(deLaFamilia(), alicuotas, false)).toBe(142.5)
+    })
+
+    it('antes de que lleguen los valores de la familia no hay nominal que mostrar, aunque haya entradas con las que calcular', () => {
+      expect(costoNominalDelFormulario(deLaFamilia({ costoNominal: '' }), alicuotas, true)).toBeNull()
+    })
+
+    it('quien no ve los costos sigue sin recibir ninguno', () => {
+      expect(costoNominalDelFormulario(deLaFamilia({ costosOcultos: true }), alicuotas, true)).toBeNull()
+    })
   })
 })
