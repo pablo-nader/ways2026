@@ -41,7 +41,7 @@ columns stay `numeric(14,2)`.
   private rounding copies in `api/pagos.ts` and `api/cuentaCorriente.ts` with the central helper.
   `api/compras.ts` and `sugerenciasDePercepcion.ts` are untouched. Tests first.
   Route: delegated writer.
-- [ ] T3 — Judgment-day on the slice, then PR.
+- [x] T3 — Judgment-day on the slice, then PR.
 
 ## Acceptance criteria
 
@@ -77,7 +77,19 @@ Strategy: `ask-on-risk`. Forecast: ~300–450 authored lines, mostly test expect
 Accepted behavior changes: a manual % on a small line rounds to the peso (12.5% of 100 = 13); an offline
 price difference below one peso of line net is no longer flagged as a discrepancy.
 
-Next step: T3.
+- T3 judgment-day — round 1: both judges confirmed one CRITICAL (presupuesto conversion and remito
+  invoicing recomputed stored items through the rounding formula: stored cents and half-peso ties
+  failed with 409/500). Owner decision: respect what is stored. Fix commit `74513cf1`
+  (`TotalesGuardados.Sumar`; header must equal the sum of stored items; amounts carried unchanged).
+  Integration 3161 passed, Domain 1100, Application 780, vitest 4467. Scoped re-judgment: both judges
+  F1 RESOLVED, clean round. JUDGMENT: APPROVED.
+- Delivery: single PR. Server and web mirror must land together (parity constraint); most of the
+  size is rewritten test expectations.
+
+Accepted tradeoff from the fix: a raw UPDATE of an item's cantidad or precio_unitario that leaves the
+stored amounts untouched is no longer caught by the conversion/invoicing integrity check.
+
+Next step: merge the PR, then the POS desktop release.
 
 ## Follow-ups
 
