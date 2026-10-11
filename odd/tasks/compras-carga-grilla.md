@@ -65,6 +65,7 @@ Slice 3 — items grid (web):
 - Slice 3, third re-judgment (880c06a7): left two warnings confirmed by both judges in the supplier-change path; the owner chose to replace the snapshot design with the simple clear-and-look-up-again rule, applied in 97608511.
 - Slice 3, re-judgment of 97608511: no critical defect; the simple rule holds. Three minor adjustments (price mode, quantity in bultos, conceptos with a pending code) applied in 0cbef200.
 - Cost normalization (be1aa4f6): judged by both judges with no critical finding; the UM conversion and the modal alícuota were applied in f95214e1.
+- T9 (c7659f0f, 4c0f7fc9): judged by both judges with no critical finding; the page refactor was confirmed behavior-preserving. Adjustments applied in fab4df0f: tab-exit guard counts the supplier code, retry copy inside the purchase, unmount gating of the catalog reads, supplier code sent only for the purchase's supplier, per-row mount key and consistent in-progress signal, late-default and family tests.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
@@ -82,6 +83,8 @@ Slice 3 — items grid (web):
 - `articulos/EditorDePrecios.tsx` still uses `datetime-local` (browser locale format).
 - Read-only printed date ranges (e.g. CuentaCorriente) still show ISO.
 - `CampoNumeroDeComprobante`: the "left the group" flag never resets, so a re-edited half-filled number is flagged while typing.
+- The embedded article form refetches its catalogs on every open instead of reusing those the purchase already loaded.
+- The unmount gating of the catalog reads (`useCatalogosDeArticulo`) has no dedicated test; the unmounted-response path is covered only by the existing alta tests.
 - The article form stores `costoLista` with 2 decimals (column `numeric(14,2)`) while the row keeps 4.
 - When a list cost exists, the prefill prefers it over a more recent `costoNominal` left by a purchase.
 
@@ -94,4 +97,4 @@ Slice 3 — items grid (web):
 
 ## Next step
 
-Run judgment-day on T9 (c7659f0f..4c0f7fc9) and deliver slice 3 plus T9 as PRs.
+Deliver slice 3 plus T9 (with fab4df0f) as PRs, after the judgment-day gate over the delta.
