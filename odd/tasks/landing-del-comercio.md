@@ -81,10 +81,12 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
   - Tests: unit for validation (color, tema, logo type sniffing); integration for Publico mode
     reading only the published vitrina of the host's tenant and nothing from another tenant
     (mutation evidence on the policy predicate), admin round-trip, 404s.
-- [ ] **T2 — Web admin: "Vitrina" page.** Delegated. PR 5.
+- [x] **T2 — Web admin: "Vitrina" page.** Delegated. PR 5. Commits `3505e91e` (client and helpers), `5d185496` (page, route, menu).
   - Under the empresa configuration: form (tagline, descripción, color de acento, tema), logo
     upload with preview, "Publicar"/"Despublicar", link to open the landing.
   - react-async-state gating, descriptor tests, data gates.
+  - Done as `/organizacion/vitrina` (Root and Admin), menu entry "Vitrina" under Organización. Publicar/Despublicar is
+    the "Publicada" switch inside the single Guardar write. The empresa selection lives in component state (not the URL).
 - [ ] **T3 — Web public: landing at `/` and storefront shell at `/online`.** Delegated. PR 6.
   - `index.html` entry renders the landing from `/api/publico/vitrina`: hero (logo, name,
     tagline, chevrons, CTA "Comprar online" → `/online`, CTA WhatsApp), description block,
@@ -183,12 +185,55 @@ mutants M18–M22; no new judge round. Follow-ups: no server-side cache on the p
 (negative caching), the empresa/tenant baja guard ignores `deleted_at` so a deleted vitrina
 still counts, no per-branch opt-out of the public listing, PUT loads the logo bytea.
 
+### T2 (commits `3505e91e` client and helpers, `5d185496` page, route and menu)
+
+Route/topology: delegated bounded writer (trigger: 2+ non-trivial files). Branch `pnader/vitrina-web`, based on
+`pnader/vitrina-backend` (`233f9456`), because the checkout the writer started in did not yet contain `f87efc49`.
+
+- `api/cliente.ts`: `api.putBinario(ruta, archivo)` sends the raw `File`/`Blob` with its own `Content-Type`
+  (`application/octet-stream` when it has none); `pedir` already let caller headers win over the JSON default.
+- `api/vitrinas.ts`: `obtenerVitrina`, `guardarVitrina`, `eliminarVitrina`, `subirLogo`, `quitarLogo`, `urlDelLogoAdmin`
+  (`?v=logoVersion`) and the pure helpers `esColorHex`, `colorParaElSelector`, `tiposDeLogoAdmitidos`, `validarLogo`
+  (type first, then size, same order as the server), `aBorrador`/`aEdicion`, `opcionesDeEmpresaParaVitrina`,
+  `copiaDeFalloDeVitrina` (the seven codes, plus 413/415 without a code), `debeReleerTrasFallo`. Types `VitrinaAdmin`,
+  `VitrinaEdicion`, `TemaDeVitrina` in `api/tipos.ts`.
+- `paginas/Vitrina.tsx`: three generation-gated reads (empresas, sitio, vitrina); every write behind a synchronous ref
+  and a full-window inert state; the saved vitrina and the editable draft are separate states, so a logo upload or removal
+  never overwrites unsaved form text. `PUT vitrina` and `PUT vitrina/logo` apply the `VitrinaAdmin` the server returns
+  (the surface is inert for the whole write); the two `DELETE`s re-read, with the "se guardó, pero no se pudo actualizar la
+  vista" notice when only the re-read fails; a 404 or an uncertain failure re-reads and keeps the message. "Ver la
+  página" (`/`, new tab) only when `GET /api/publico/sitio` says tenant domain and the saved vitrina is published.
+- Client-side rejections that send nothing: logo type, logo over 1 MB, color not `#rrggbb` (Guardar is disabled and the
+  copy says so).
+
+Verification (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` exit 0, 16 warnings, all pre-existing
+(`only-export-components`), none in the new files; `npx vitest run` 183 files, 4724 tests passed; `npx vite build` ok.
+New tests: 55 in `paginas/Vitrina.test.tsx`, 51 in `api/vitrinas.test.ts`, 4 for `api.putBinario` in `api/cliente.test.ts`,
+two lines in `componentes/menu.test.ts`.
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `validarLogo` without the size check | `validarLogo > un byte más de 1 MB...`, `un archivo de más de 1 MB se rechaza sin salir a la red`, `elegir un archivo inválido borra el rechazo...` |
+| M1b | size check `>=` instead of `>` | `un PNG de 1 MB justo se acepta`, `un archivo de exactamente 1 MB se sube` |
+| M2 | `putBinario` without the `Content-Type` header | `manda el archivo tal cual con su propio Content-Type...`, `un archivo sin tipo conocido sale como application/octet-stream...` |
+| M3 | vitrina read without the generation check | `una vitrina vieja que llega tarde no pisa la de la empresa elegida después` |
+| M4 | ref guard removed from `guardar` | `dos envíos del mismo tick salen como una sola request` |
+| M5 | ref guard removed from `elegirLogo` | `dos cambios del mismo tick salen como una sola subida` |
+| M6 | `editar` keeps the rejection | `editar el formulario borra el rechazo...` |
+| M7 | logo upload also resets the draft | `un archivo válido se sube crudo y la vista previa pasa a la versión nueva sin tocar el borrador` |
+| M8 | link shown on the platform host | `bajo la plataforma no hay enlace...` |
+| M9 | `guardar` does not clear previous messages | `guardar borra el aviso de éxito de una subida anterior` |
+| M10 | link driven by the draft instead of the saved vitrina | the two `enlace a la página` tests about publishing |
+| M11 | no re-read after a 404 / uncertain `guardar` failure | `un fallo incierto relee...`, `un 404 relee...` |
+| M12 | Guardar enabled with an invalid color | `un color mal escrito se explica junto al campo y deshabilita Guardar` |
+| M13 | upload without the client-side validation | the three client-rejection tests |
+
 ## Delivery slices
 
 - PR 4: T1 (stacked on `dominios-por-tenant` PR 3). PR 5: T2. PR 6: T3.
 
 ## Next step
 
-T2 — web admin "Vitrina" page, on top of the endpoints of T1 (`GET/PUT/DELETE /api/empresas/{id}/vitrina`,
-`GET/PUT/DELETE .../vitrina/logo` with the raw image as the request body for PUT, `Content-Type: image/png|jpeg|webp`;
-`GET .../vitrina/logo` is the preview, `private, no-store` with ETag, 404 `logo_no_encontrado` when there is none).
+T3 — public landing at `/` (`index.html` entry) and storefront shell at `/online` (`online.html` entry), from
+`GET /api/publico/vitrina` and `/api/publico/vitrina/logo`. Open for the owner after T2: the Vitrina page is wired as
+`Root` and `Admin`; the "Ver la página" link assumes the landing is served at `/` of the tenant domain.
