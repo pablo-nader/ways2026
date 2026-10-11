@@ -53,7 +53,8 @@
   border: 3px solid #000;
 }
 
-/* IconoDeAyuda: tooltip con CSS puro; colores invertidos respecto del tema para contrastar en claro y oscuro. */
+/* IconoDeAyuda: el componente decide cuándo se ve (`data-visible`), de qué lado va (`data-lado`) y dónde (`top` y `left`
+   en línea); acá solo se dibuja. Colores invertidos respecto del tema para contrastar en claro y oscuro. */
 .icono-de-ayuda {
   display: inline-flex;
   align-items: center;
@@ -92,10 +93,33 @@
   font-size: 0.8125rem;
   line-height: 1.35;
   text-align: left;
-  pointer-events: none;
   opacity: 0;
+  /* Oculto no intercepta clics; visible se puede apuntar (WCAG 1.4.13). */
+  pointer-events: none;
+}
+
+.icono-de-ayuda__texto[data-lado='abajo'] {
+  transform: translate(-50%, 0);
 }
 
 .icono-de-ayuda__texto[data-visible='true'] {
   opacity: 1;
+  pointer-events: auto;
+}
+
+/* Puente transparente sobre la separación con el ícono: al cruzarla el puntero sigue sobre el texto y no se cierra. */
+.icono-de-ayuda__texto::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--icono-de-ayuda-separacion);
+}
+
+.icono-de-ayuda__texto[data-lado='arriba']::before {
+  top: 100%;
+}
+
+.icono-de-ayuda__texto[data-lado='abajo']::before {
+  bottom: 100%;
 }
