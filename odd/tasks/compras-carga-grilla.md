@@ -57,7 +57,7 @@ Slice 3 — items grid (web):
 
 - Slice 1: judgment-day round 1 (main..15ed8859) no severe findings, 4 warnings confirmed by both judges, fixed in d70a0d40; scoped re-judgment of the delta clean. Native picker on the `inert` hidden input verified in Chromium. JUDGMENT: APPROVED.
 - Slice 2 (T5): judgment-day (a29232a3..fb4cb1eb) no severe findings. Both judges suspected a race between confirm and the article soft delete; it was disproved (the stock movement FK already takes FOR KEY SHARE on the article before the association) and pinned with a deterministic test plus mutation evidence in 04878b3c. JUDGMENT: APPROVED.
-- Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057.
+- Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057; the second scoped re-judgment (d8de8057) left two issues confirmed by both judges (wrong price carried across a supplier change, missing association hint), the judgment was escalated, and the owner authorized a third fix round applied in 880c06a7.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
