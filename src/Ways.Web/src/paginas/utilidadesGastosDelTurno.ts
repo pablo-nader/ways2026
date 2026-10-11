@@ -5,6 +5,7 @@
  */
 import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
 import type {
+  AreaListado,
   CategoriaGasto,
   GastoDeTurno,
   MedioPagoListado,
@@ -60,6 +61,7 @@ export type FormularioDeGasto = {
   idMedioPago: number
   categoria: CategoriaGasto
   idProveedor: number | null
+  idArea: number | null
   observaciones: string
   origenFondos: OrigenFondosGasto
 }
@@ -68,7 +70,7 @@ export type FormularioDeGasto = {
  * Cuerpo de `POST /api/gastos` (decisión del pedido 2): `concepto` es la observación recortada
  * cuando no está vacía, o el texto fijo "Gasto del turno" en caso contrario — nunca viaja en
  * blanco (el servidor lo rechaza con 400 `gasto_concepto_requerido`,
- * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`idArea`/`numeroFactura`/
+ * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`numeroFactura`/
  * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` aterriza en
  * stage-gastos-origen-fondos-pos (PR2) — se manda tal cual lo eligió el cajero, nunca inferido.
  */
@@ -78,7 +80,7 @@ export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
     idPuntoVenta: form.idPuntoVenta,
     categoria: form.categoria,
     idProveedor: form.idProveedor,
-    idArea: null,
+    idArea: form.idArea,
     concepto: observaciones !== '' ? observaciones : 'Gasto del turno',
     detalle: null,
     idMedioPago: form.idMedioPago,
@@ -111,4 +113,10 @@ export function salidaDeEfectivoDeCaja(medio: MedioPagoListado | undefined, orig
 export function faltanteDeEfectivo(importe: number | null, disponible: number): number {
   if (importe === null) return 0
   return Math.max(0, redondearImporte(importe - disponible))
+}
+
+/** Área con la que arranca un gasto nuevo: la primera ACTIVA (el servidor ordena por nombre, no por
+ * estado), igual que el artículo nuevo. `''` si no hay ninguna. */
+export function areaPorDefecto(areas: AreaListado[]): number | '' {
+  return areas.find((a) => a.activo)?.id ?? ''
 }

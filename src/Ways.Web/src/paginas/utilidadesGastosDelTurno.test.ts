@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { GastoDeTurno, MedioPagoListado, ResumenDeTurno } from '../api/tipos'
+import type { AreaListado, GastoDeTurno, MedioPagoListado, ResumenDeTurno } from '../api/tipos'
 import {
   aSolicitudDeGasto,
+  areaPorDefecto,
   categoriaAlElegirProveedor,
   etiquetaDeCategoriaGasto,
   efectivoDisponibleEnCaja,
@@ -58,6 +59,7 @@ function formularioFixture(sobrescribir: Partial<FormularioDeGasto> = {}): Formu
     idMedioPago: 1,
     categoria: 'Otros',
     idProveedor: null,
+    idArea: null,
     observaciones: '',
     origenFondos: 'CajaTurno',
     ...sobrescribir,
@@ -141,10 +143,9 @@ describe('aSolicitudDeGasto', () => {
     expect(aSolicitudDeGasto(formularioFixture({ observaciones: '   ' })).concepto).toBe('Gasto del turno')
   })
 
-  it('detalle/idArea/numeroFactura/idComprobanteCompra siempre viajan null — el formulario no los pide', () => {
+  it('detalle/numeroFactura/idComprobanteCompra siempre viajan null — el formulario no los pide', () => {
     const solicitud = aSolicitudDeGasto(formularioFixture())
     expect(solicitud.detalle).toBeNull()
-    expect(solicitud.idArea).toBeNull()
     expect(solicitud.numeroFactura).toBeNull()
     expect(solicitud.idComprobanteCompra).toBeNull()
   })
@@ -158,6 +159,11 @@ describe('aSolicitudDeGasto', () => {
     expect(solicitud.idMedioPago).toBe(3)
     expect(solicitud.categoria).toBe('Proveedor')
     expect(solicitud.idProveedor).toBe(42)
+  })
+
+  it('manda idArea tal cual lo trae el formulario, o null si no hay área', () => {
+    expect(aSolicitudDeGasto(formularioFixture({ idArea: 4 })).idArea).toBe(4)
+    expect(aSolicitudDeGasto(formularioFixture({ idArea: null })).idArea).toBeNull()
   })
 
   // dto-contract-honesty: origenFondos se manda tal cual lo eligió el cajero, nunca inferido ni
@@ -250,5 +256,25 @@ describe('faltanteDeEfectivo', () => {
 
   it('resuelve los centavos sin arrastrar error de coma flotante', () => {
     expect(faltanteDeEfectivo(0.3, 0.1)).toBe(0.2)
+  })
+})
+
+function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
+  return { id: 1, nombre: 'General', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
+}
+
+// Cláusula bajo prueba: el default es la primera área ACTIVA, no la primera del array.
+describe('areaPorDefecto', () => {
+  it('devuelve la primera área activa', () => {
+    expect(areaPorDefecto([areaFixture({ id: 3 }), areaFixture({ id: 5 })])).toBe(3)
+  })
+
+  it('saltea las inactivas aunque estén primero', () => {
+    expect(areaPorDefecto([areaFixture({ id: 2, activo: false }), areaFixture({ id: 5 })])).toBe(5)
+  })
+
+  it('sin áreas activas devuelve vacío', () => {
+    expect(areaPorDefecto([areaFixture({ id: 2, activo: false })])).toBe('')
+    expect(areaPorDefecto([])).toBe('')
   })
 })

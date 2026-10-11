@@ -618,6 +618,103 @@ describe('GastosDelTurno — efectivo en caja', () => {
   })
 })
 
+describe('GastosDelTurno — área del alta', () => {
+  const general = { id: 10, nombre: 'General', activo: true, idEmpresa: null, orden: 1 }
+  const cocina = { id: 11, nombre: 'Cocina', activo: true, idEmpresa: null, orden: 2 }
+  const archivada = { id: 9, nombre: 'Archivada', activo: false, idEmpresa: null, orden: 0 }
+
+  async function esperarAreas() {
+    await screen.findByLabelText('Importe')
+    await screen.findByRole('option', { name: 'General' })
+  }
+
+  async function completar() {
+    await userEvent.type(screen.getByLabelText('Importe'), '500')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+  }
+
+  it('el select arranca en la primera área activa, sin opción vacía, y el alta la manda', async () => {
+    mockearRutas({ areas: [archivada, general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    const select = screen.getByLabelText('Área')
+    expect(select).toHaveValue('10')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Archivada', 'General', 'Cocina'])
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 10 })))
+  })
+
+  it('el área elegida a mano es la que viaja', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: 11 })))
+  })
+
+  it('tras un alta exitoso el formulario vuelve a la primera área activa', async () => {
+    mockearRutas({ areas: [general, cocina] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await esperarAreas()
+
+    await userEvent.selectOptions(screen.getByLabelText('Área'), 'Cocina')
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('Gasto registrado.')
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('si las áreas llegan después de abrir el formulario, el default se completa cuando aterrizan', async () => {
+    mockearRutas({})
+    const baseline = apiGetMock.getMockImplementation()!
+    let entregarAreas: (lista: AreaListado[]) => void = () => undefined
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/catalogos/areas'
+        ? new Promise<AreaListado[]>((resolve) => {
+            entregarAreas = resolve
+          })
+        : baseline(ruta),
+    )
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    expect(screen.getByLabelText('Área')).toHaveValue('')
+
+    await act(async () => entregarAreas([general, cocina]))
+
+    expect(screen.getByLabelText('Área')).toHaveValue('10')
+  })
+
+  it('sin áreas el select muestra una única opción vacía deshabilitada y el alta manda idArea null', async () => {
+    mockearRutas({ areas: [] })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+    await screen.findByLabelText('Importe')
+    await screen.findByText('Este turno todavía no tiene gastos.')
+
+    const select = screen.getByLabelText('Área')
+    const opciones = within(select).getAllByRole('option')
+    expect(opciones).toHaveLength(1)
+    expect(opciones[0]).toBeDisabled()
+    expect(select).toHaveValue('')
+
+    await completar()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/gastos', expect.objectContaining({ idArea: null })))
+  })
+})
+
 describe('GastosDelTurno — listado', () => {
   it('lista los gastos del turno con hora, categoría, medio y el total', async () => {
     mockearRutas({

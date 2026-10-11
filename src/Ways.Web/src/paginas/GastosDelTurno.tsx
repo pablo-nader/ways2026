@@ -29,6 +29,7 @@ import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
 import type { CajaDeEscritorio } from './Pos'
 import {
   aSolicitudDeGasto,
+  areaPorDefecto,
   categoriaAlElegirProveedor,
   efectivoDisponibleEnCaja,
   etiquetaDeCategoriaGasto,
@@ -105,6 +106,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const [idMedioPago, setIdMedioPago] = useState<number | ''>('')
   const [categoria, setCategoria] = useState<CategoriaGasto>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
+  const [idAreaElegida, setIdAreaElegida] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
   const [origenFondos, setOrigenFondos] = useState<OrigenFondosGasto>('CajaTurno')
 
@@ -224,6 +226,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
     setIdMedioPago('')
     setCategoria('Otros')
     setIdProveedor('')
+    setIdAreaElegida('')
     setObservaciones('')
     setOrigenFondos('CajaTurno')
   }
@@ -269,6 +272,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
           idMedioPago,
           categoria,
           idProveedor: idProveedor === '' ? null : idProveedor,
+          idArea: idArea === '' ? null : idArea,
           observaciones,
           origenFondos,
         }),
@@ -344,6 +348,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const gastos = detalle?.gastos ?? []
   const total = totalDeGastos(gastos)
+  const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
   const saleDeLaCaja = salidaDeEfectivoDeCaja(
     medios?.find((m) => m.id === idMedioPago),
     origenFondos,
@@ -441,6 +446,29 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                   {proveedoresOrdenados.map((p) => (
                     <option key={p.id} value={p.id}>
                       {etiquetaDeProveedor(p)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="col-md-2">
+                <label className="form-label" htmlFor="gasto-area">
+                  Área
+                </label>
+                <select
+                  id="gasto-area"
+                  className="form-select"
+                  value={idArea}
+                  onChange={(e) => setIdAreaElegida(Number(e.target.value))}
+                >
+                  {(areas ?? []).length === 0 && (
+                    <option value="" disabled>
+                      Sin áreas
+                    </option>
+                  )}
+                  {(areas ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.nombre}
                     </option>
                   ))}
                 </select>
