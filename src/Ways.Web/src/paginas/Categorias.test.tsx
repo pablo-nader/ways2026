@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Categorias } from './Categorias'
@@ -435,5 +435,76 @@ describe('Categorias — baja lógica', () => {
 
     await screen.findByText('Se dio de baja "Bebidas".')
     expect(screen.queryByRole('dialog', { name: 'Editar categoría' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Categorias — error y foco de la modal', () => {
+  it('un guardado rechazado expone el error como alerta adentro del diálogo', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'nombre_duplicado', 'Ya existe una categoría con ese nombre.'))
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await within(screen.getByRole('dialog')).findByRole('alert')
+    expect(alerta).toHaveTextContent('Ya existe una categoría con ese nombre.')
+  })
+
+  it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByLabelText('Nombre')).toHaveFocus())
+  })
+
+  it('con el refresco en vuelo tras guardar, el foco queda en el contenedor de la pantalla y no en <body>', async () => {
+    const usuario = userEvent.setup()
+    let liberarRefresco: (filas: CategoriaListado[]) => void = () => {}
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      return cargas === 1
+        ? Promise.resolve([categoriaFixture()])
+        : new Promise<CategoriaListado[]>((resolver) => {
+            liberarRefresco = resolver
+          })
+    })
+    apiPostMock.mockResolvedValue(undefined)
+    const { container } = render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    await usuario.click(screen.getByRole('button', { name: 'Nueva categoría raíz' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Limpieza')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Se creó "Limpieza".')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Nueva categoría raíz' })).toBeDisabled()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(container.firstElementChild)
+
+    await act(async () => liberarRefresco([categoriaFixture()]))
+    expect(screen.getByRole('button', { name: 'Nueva categoría raíz' })).toBeEnabled()
+    expect(document.activeElement).toBe(container.firstElementChild)
+  })
+
+  it('cancelar devuelve el foco al botón que abrió la modal', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([categoriaFixture()])
+    render(<Categorias />)
+
+    await screen.findByText('Bebidas')
+    const abrir = screen.getByRole('button', { name: 'Nueva categoría raíz' })
+    await usuario.click(abrir)
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(abrir).toHaveFocus()
   })
 })
