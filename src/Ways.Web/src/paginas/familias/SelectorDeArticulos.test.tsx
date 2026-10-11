@@ -36,6 +36,8 @@ function articulo(id: number, sobrescribir: Partial<ArticuloListado> = {}): Arti
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: null,
+    costoListaIncluyeIva: null,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,

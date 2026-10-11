@@ -53,6 +53,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: null,
+    costoListaIncluyeIva: null,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -1139,6 +1141,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         idProveedorHabitual: 1,
         codigoProveedor: 'AB-1234',
         costoLista: 12.35,
+        costoListaPor: 'Unidad',
+        costoListaIncluyeIva: true,
         codigoInterno: null,
       })
 
@@ -1170,6 +1174,39 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
 
       await waitFor(() => expect(campo(0, 'Código')).toHaveValue('AB-2'))
       expect(captura.lineas[0].codigoConsultado).toBe('AB-2')
+    })
+
+    it('con precios netos de un comprobante que discrimina IVA, el costo se guarda declarado sin IVA', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      const usuario = userEvent.setup()
+      montar({ discriminaIva: true, preciosFinales: false })
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.type(campo(0, 'Importe'), '100')
+      const dialogo = await abrirAlta(usuario)
+      expect(within(dialogo).getByText('Se guarda sin IVA, tal como se cargó en la compra.')).toBeInTheDocument()
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+      const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+      expect(cuerpo).toMatchObject({ costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: false })
+    })
+
+    it('con precios con IVA incluido de un comprobante que discrimina, el costo se guarda con IVA', async () => {
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
+      const usuario = userEvent.setup()
+      montar({ discriminaIva: true, preciosFinales: true })
+
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      await usuario.type(campo(0, 'Importe'), '121')
+      const dialogo = await abrirAlta(usuario)
+      await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
+      await usuario.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+      await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+      const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+      expect(cuerpo).toMatchObject({ costoLista: 121, costoListaPor: 'Unidad', costoListaIncluyeIva: true })
     })
 
     it('Ctrl+Enter en el Detalle abre el mismo alta, sin tocar el ratón', async () => {
@@ -1791,6 +1828,39 @@ describe('GrillaDeItemsDeCompra — precarga según el modo de precios', () => {
     await usuario.click(await screen.findByRole('option', { name: /Leche/ }))
 
     expect(campo(0, 'Importe')).toHaveValue('100,0000')
+  })
+})
+
+describe('GrillaDeItemsDeCompra — costo de lista cargado por bulto y sin IVA', () => {
+  const POR_BULTO_SIN_IVA = articuloFixture({
+    id: 20,
+    nombre: 'Leche',
+    codigoProveedor: 'AB-1',
+    costoLista: 1200,
+    costoListaPor: 'Bulto',
+    costoListaIncluyeIva: false,
+    unidadesPorBulto: 12,
+    idAlicuotaIva: 3,
+  })
+
+  it('en un comprobante de precios netos precarga el costo por unidad sin IVA', async () => {
+    respuestas['AB-1'] = () => pagina([POR_BULTO_SIN_IVA])
+    const usuario = userEvent.setup()
+    montar({ discriminaIva: true, preciosFinales: false })
+
+    await escribirCodigoYSalir(usuario, 0, 'AB-1')
+
+    await waitFor(() => expect(campo(0, 'Importe')).toHaveValue('100,0000'))
+  })
+
+  it('con precios con IVA incluido precarga el costo por unidad con IVA', async () => {
+    respuestas['AB-1'] = () => pagina([POR_BULTO_SIN_IVA])
+    const usuario = userEvent.setup()
+    montar({ discriminaIva: true, preciosFinales: true })
+
+    await escribirCodigoYSalir(usuario, 0, 'AB-1')
+
+    await waitFor(() => expect(campo(0, 'Importe')).toHaveValue('121,0000'))
   })
 })
 

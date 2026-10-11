@@ -212,6 +212,7 @@ export function GrillaDeItemsDeCompra({
           alicuotas={alicuotas}
           idAlicuotaIvaDeLaLinea={filaEnAlta.idAlicuotaIva}
           costoDeLaLinea={filaEnAlta.importe}
+          costoSinIva={modoDePrecios.discriminaIva && !modoDePrecios.preciosIncluyenIva}
           onCreado={(articulo, codigoProveedor) => {
             const clave = filaEnAlta.clave
             cambiar(clave, {

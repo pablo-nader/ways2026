@@ -577,6 +577,9 @@ export type OpcionDeProveedor = {
 
 export type UnidadVenta = 'Unidad' | 'Peso'
 
+/** Base sobre la que se cargó `costoLista` (espejo de `Ways.Domain.Articulos.CostoListaPor`, que viaja por nombre). */
+export type CostoListaPor = 'Unidad' | 'Bulto'
+
 export const UNIDADES_VENTA: { valor: UnidadVenta; etiqueta: string }[] = [
   { valor: 'Unidad', etiqueta: 'Por unidad' },
   { valor: 'Peso', etiqueta: 'Por peso' },
@@ -600,6 +603,10 @@ export type ArticuloListado = {
   unidadesPorBulto: number | null
   esProducto: boolean
   costoLista: number | null
+  /** Base de `costoLista` (por unidad o por bulto) y si trae IVA: el costo se guarda tal como se cargó. Igual
+   * que los demás costos, viajan `null` para el rol sin visibilidad de costos. */
+  costoListaPor: CostoListaPor | null
+  costoListaIncluyeIva: boolean | null
   descuentoProveedor: number | null
   costoNominal: number | null
   disponibleParaTodas: boolean
@@ -652,6 +659,9 @@ export type AltaArticulo = {
   /** El artículo nace como miembro de esa familia: los trece campos compartidos tienen que ser idénticos
    * a los de la familia (409 `familia_valores_distintos`) y el servidor le copia sus precios. */
   idFamilia?: number | null
+  /** Qué es `costoLista`: ausentes, el servidor asume por unidad y con IVA. */
+  costoListaPor?: CostoListaPor
+  costoListaIncluyeIva?: boolean
 }
 
 /** Lo que el cliente elige cuando el artículo escrito pertenece a una familia (espejo de

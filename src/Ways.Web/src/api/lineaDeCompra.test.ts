@@ -83,6 +83,8 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     unidadesPorBulto: null,
     esProducto: true,
     costoLista: null,
+    costoListaPor: null,
+    costoListaIncluyeIva: null,
     descuentoProveedor: null,
     costoNominal: null,
     disponibleParaTodas: true,
@@ -725,6 +727,95 @@ describe('precarga según el modo de precios', () => {
   it('un artículo recién creado conserva el importe tipeado aunque el modo sea neto', () => {
     const cambios = cambiosAlElegirArticulo(lineaFixture({ idArticulo: '', importe: 77 }), articuloFixture({ costoLista: 121 }), ALICUOTAS, 'alta', NETO)
     expect(cambios.importe).toBe(77)
+  })
+})
+
+describe('costo de lista normalizado a por unidad y con IVA (costoListaPor, costoListaIncluyeIva)', () => {
+  const NETO: Parameters<typeof importeSegunModoDePrecios>[2] = { discriminaIva: true, preciosIncluyenIva: false }
+  const alic = (delArticulo: number | null, deLaFila: number | null = delArticulo) => ({ delArticulo, deLaFila })
+  const base = { descuentoProveedor: 5, costoNominal: 80 }
+
+  it('por unidad y con IVA: el costo de lista tal cual, y neteado solo si el comprobante lo pide', () => {
+    const articulo = { ...base, costoLista: 121, costoListaPor: 'Unidad', costoListaIncluyeIva: true } as const
+    expect(costoDeArticuloParaCompra(articulo, alic(21))).toEqual({ importe: 121, descuentoPorcentaje: 5 })
+    expect(costoDeArticuloParaCompra(articulo, alic(21), NETO)).toEqual({ importe: 100, descuentoPorcentaje: 5 })
+  })
+
+  it('por unidad y sin IVA: se le suma el IVA de la alícuota del artículo', () => {
+    const articulo = { ...base, costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: false } as const
+    expect(costoDeArticuloParaCompra(articulo, alic(21))).toEqual({ importe: 121, descuentoPorcentaje: 5 })
+    expect(costoDeArticuloParaCompra(articulo, alic(10.5))).toEqual({ importe: 110.5, descuentoPorcentaje: 5 })
+  })
+
+  it('por bulto y con IVA: se divide entre las unidades por bulto', () => {
+    const articulo = { ...base, costoLista: 1210, costoListaPor: 'Bulto', costoListaIncluyeIva: true, unidadesPorBulto: 12 } as const
+    expect(costoDeArticuloParaCompra(articulo, alic(21))).toEqual({ importe: 100.8333, descuentoPorcentaje: 5 })
+    expect(costoDeArticuloParaCompra(articulo, alic(21), NETO)).toEqual({ importe: 83.3333, descuentoPorcentaje: 5 })
+  })
+
+  it('por bulto y sin IVA: se divide y se suma el IVA; en modo neto con otra alícuota en la fila, se vuelve a netear con la de la fila', () => {
+    const articulo = { ...base, costoLista: 1200, costoListaPor: 'Bulto', costoListaIncluyeIva: false, unidadesPorBulto: 12 } as const
+    expect(costoDeArticuloParaCompra(articulo, alic(21))).toEqual({ importe: 121, descuentoPorcentaje: 5 })
+    expect(costoDeArticuloParaCompra(articulo, alic(21, 10.5), NETO)).toEqual({ importe: 109.5023, descuentoPorcentaje: 5 })
+  })
+
+  it('un costo sin IVA en un comprobante neto con la misma alícuota se precarga exacto, sin la ida y vuelta del IVA', () => {
+    const sinIva = (costoLista: number) => ({ ...base, costoLista, costoListaPor: 'Unidad', costoListaIncluyeIva: false }) as const
+    expect(costoDeArticuloParaCompra(sinIva(33.33), alic(21), NETO)?.importe).toBe(33.33)
+    expect(costoDeArticuloParaCompra(sinIva(0.1235), alic(10.5), NETO)?.importe).toBe(0.1235)
+    const porBulto = { ...sinIva(100), costoListaPor: 'Bulto', unidadesPorBulto: 3 } as const
+    expect(costoDeArticuloParaCompra(porBulto, alic(21), NETO)?.importe).toBe(33.3333)
+  })
+
+  it('por bulto sin unidades por bulto utilizables, la lista no sirve y se usa el nominal sin descuento', () => {
+    const porBulto = { ...base, costoLista: 1200, costoListaPor: 'Bulto', costoListaIncluyeIva: true } as const
+    for (const unidadesPorBulto of [null, 0, undefined]) {
+      expect(costoDeArticuloParaCompra({ ...porBulto, unidadesPorBulto }, alic(21))).toEqual({ importe: 80, descuentoPorcentaje: null })
+    }
+    expect(costoDeArticuloParaCompra({ ...porBulto, costoNominal: 121, unidadesPorBulto: null }, alic(21), NETO)).toEqual({
+      importe: 100,
+      descuentoPorcentaje: null,
+    })
+    expect(costoDeArticuloParaCompra({ ...porBulto, costoNominal: null, unidadesPorBulto: null }, alic(21))).toBeNull()
+  })
+
+  it('sin indicadores (payload viejo o nulos) se asume por unidad y con IVA incluido', () => {
+    expect(costoDeArticuloParaCompra({ ...base, costoLista: 121 }, alic(21))).toEqual({ importe: 121, descuentoPorcentaje: 5 })
+    expect(
+      costoDeArticuloParaCompra({ ...base, costoLista: 121, costoListaPor: null, costoListaIncluyeIva: null, unidadesPorBulto: 12 }, alic(21), NETO),
+    ).toEqual({ importe: 100, descuentoPorcentaje: 5 })
+  })
+
+  it('un rol sin visibilidad de costos (todo nulo) no precarga nada', () => {
+    const sinCostos = { costoLista: null, costoListaPor: null, costoListaIncluyeIva: null, descuentoProveedor: null, costoNominal: null }
+    expect(costoDeArticuloParaCompra(sinCostos, alic(21), NETO)).toBeNull()
+  })
+
+  it('alícuota 0: sin IVA no suma nada; en modo neto con otra alícuota en la fila, se netea con la de la fila', () => {
+    const articulo = { ...base, costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: false } as const
+    expect(costoDeArticuloParaCompra(articulo, alic(0))).toEqual({ importe: 100, descuentoPorcentaje: 5 })
+    expect(costoDeArticuloParaCompra(articulo, alic(0), NETO)?.importe).toBe(100)
+    expect(costoDeArticuloParaCompra(articulo, alic(0, 21), NETO)?.importe).toBe(82.6446)
+  })
+
+  it('sin alícuota del artículo: con IVA incluido sigue siendo utilizable; sin IVA la lista no sirve y se usa el nominal', () => {
+    const conIva = { ...base, costoLista: 121, costoListaPor: 'Unidad', costoListaIncluyeIva: true } as const
+    expect(costoDeArticuloParaCompra(conIva, alic(null))).toEqual({ importe: 121, descuentoPorcentaje: 5 })
+    const sinIva = { ...base, costoLista: 100, costoListaPor: 'Unidad', costoListaIncluyeIva: false } as const
+    expect(costoDeArticuloParaCompra(sinIva, alic(null))).toEqual({ importe: 80, descuentoPorcentaje: null })
+  })
+
+  it('elegir un artículo cargado por bulto y sin IVA usa la alícuota del artículo y la de la fila', () => {
+    const articulo = articuloFixture({
+      costoLista: 1200,
+      costoListaPor: 'Bulto',
+      costoListaIncluyeIva: false,
+      unidadesPorBulto: 12,
+      idAlicuotaIva: 3,
+      descuentoProveedor: 5,
+    })
+    expect(cambiosAlElegirArticulo(lineaDeCompraVacia(1), articulo, ALICUOTAS, 'busqueda', NETO)).toMatchObject({ importe: 100, descuentoPorcentaje: 5 })
+    expect(cambiosAlElegirArticulo(lineaDeCompraVacia(1), articulo, ALICUOTAS, 'busqueda')).toMatchObject({ importe: 121, descuentoPorcentaje: 5 })
   })
 })
 

@@ -426,20 +426,6 @@ export function lineaDesdeCoberturaDeOrden(
 
 export type OrigenDeArticulo = 'codigo' | 'busqueda' | 'alta'
 
-/** Costo con el que se precarga la fila: el de lista con el descuento habitual del proveedor (un
- * PORCENTAJE, `descuento_proveedor numeric(5,2)`), que es lo que el comprobante del proveedor
- * muestra; si el artículo no tiene lista, el costo nominal (el de reposición, que ya es neto de
- * descuento). `null` en ambos = el rol no ve costos o el artículo no tiene ninguno. */
-export function costoDeArticuloParaCompra(
-  articulo: Pick<ArticuloListado, 'costoLista' | 'descuentoProveedor' | 'costoNominal'>,
-): { importe: number; descuentoPorcentaje: number | null } | null {
-  if (articulo.costoLista !== null) {
-    return { importe: articulo.costoLista, descuentoPorcentaje: articulo.descuentoProveedor }
-  }
-  if (articulo.costoNominal !== null) return { importe: articulo.costoNominal, descuentoPorcentaje: null }
-  return null
-}
-
 /** La alícuota del artículo si el catálogo la conoce; si no, la del 21 %. */
 export function alicuotaParaArticulo(articulo: Pick<ArticuloListado, 'idAlicuotaIva'>, alicuotas: AlicuotaIvaListado[]): number | '' {
   if (alicuotas.some((a) => a.id === articulo.idAlicuotaIva)) return articulo.idAlicuotaIva
@@ -450,10 +436,10 @@ export function alicuotaParaArticulo(articulo: Pick<ArticuloListado, 'idAlicuota
 export type ModoDePreciosDeCompra = { discriminaIva: boolean; preciosIncluyenIva: boolean }
 
 /**
- * El costo de lista del artículo es el precio final de la lista del proveedor (el legado lo muestra
- * como `lista / 1,21` para obtener el neto) y el nominal es el costo efectivo con IVA incluido
- * (docs/10, compras). Un comprobante que discrimina IVA con precios netos pide el Importe sin IVA:
- * se lo extrae con la alícuota de la fila, a los 4 decimales de la columna. En los demás modos
+ * Recibe un costo por unidad y con IVA incluido (`costoDeArticuloParaCompra` lleva a esa base el costo
+ * de lista, que se guarda tal como se cargó, y el nominal ya viene así; docs/10, compras). Un
+ * comprobante que discrimina IVA con precios netos pide el Importe sin IVA: se lo extrae con la
+ * alícuota de la fila, a los 4 decimales de la columna. En los demás modos
  * (precios con IVA incluido, o un comprobante que no discrimina) el importe es el costo tal cual.
  * Solo se aplica al precargar: cambiar el modo después no reescribe lo que ya está en las filas.
  */
@@ -464,6 +450,59 @@ export function importeSegunModoDePrecios(
 ): number {
   if (!modo || !modo.discriminaIva || modo.preciosIncluyenIva || porcentajeIva === null) return costoConIva
   return redondearImporte(productoRedondeado([costoConIva, 100], 6) / (100 + porcentajeIva), 4)
+}
+
+type ArticuloConCosto = Pick<ArticuloListado, 'costoLista' | 'descuentoProveedor' | 'costoNominal'> &
+  Partial<Pick<ArticuloListado, 'costoListaPor' | 'costoListaIncluyeIva' | 'unidadesPorBulto'>>
+
+/** Alícuotas con las que se normaliza el costo: la del artículo (la que usa el servidor para llevar un
+ * costo sin IVA a su nominal) y la que le queda a la fila (la que decide el neteo del comprobante). */
+export type AlicuotasDePrecarga = { delArticulo: number | null; deLaFila: number | null }
+
+/**
+ * Costo con el que se precarga la fila: el de lista llevado a POR UNIDAD y CON IVA —espejo de
+ * `CalculadorDeCostoNominal.Calcular` hasta antes del descuento, que la grilla muestra en su propia
+ * columna— con el descuento habitual del proveedor (un PORCENTAJE, `descuento_proveedor numeric(5,2)`);
+ * luego se aplica el modo de precios del comprobante. El costo de lista se guarda tal como se cargó:
+ * por bulto se divide entre `unidadesPorBulto`; sin IVA se le suma el de la alícuota del artículo. Sin
+ * indicadores (payload viejo) se asume por unidad y con IVA, los defaults del servidor.
+ *
+ * Si el comprobante pide el importe neto y el costo se guardó sin IVA con la misma alícuota, se
+ * precarga el costo guardado tal cual, sin sumar y volver a quitar el IVA (evita el redondeo de ida y
+ * vuelta). Si la lista no se puede usar (bulto sin unidades por bulto, o sin IVA y sin alícuota
+ * conocida) o el artículo no tiene lista, se usa el costo nominal (el de reposición, que ya es neto de
+ * descuento y viene por unidad con IVA). `null` en ambos = el rol no ve costos o no hay ninguno.
+ */
+export function costoDeArticuloParaCompra(
+  articulo: ArticuloConCosto,
+  alicuotas: AlicuotasDePrecarga = { delArticulo: null, deLaFila: null },
+  modo?: ModoDePreciosDeCompra,
+): { importe: number; descuentoPorcentaje: number | null } | null {
+  const lista = articulo.costoLista
+  const porBulto = articulo.costoListaPor === 'Bulto'
+  const incluyeIva = articulo.costoListaIncluyeIva ?? true
+  const { delArticulo, deLaFila } = alicuotas
+  const unidades = articulo.unidadesPorBulto ?? null
+  const utilizable = lista !== null && (!porBulto || (unidades !== null && unidades > 0)) && (incluyeIva || delArticulo !== null)
+
+  if (utilizable) {
+    const porUnidad = porBulto ? redondearImporte(lista / (unidades as number), 6) : lista
+    const descuentoPorcentaje = articulo.descuentoProveedor
+    const netea = modo !== undefined && modo.discriminaIva && !modo.preciosIncluyenIva && deLaFila !== null
+
+    if (incluyeIva) return { importe: redondearImporte(importeSegunModoDePrecios(porUnidad, deLaFila, modo), 4), descuentoPorcentaje }
+    if (!netea || deLaFila === delArticulo) {
+      const importe = netea ? porUnidad : productoRedondeado([porUnidad, 100 + (delArticulo as number), 0.01], 6)
+      return { importe: redondearImporte(importe, 4), descuentoPorcentaje }
+    }
+    const importe = redondearImporte(productoRedondeado([porUnidad, 100 + (delArticulo as number)], 6) / (100 + deLaFila), 4)
+    return { importe, descuentoPorcentaje }
+  }
+
+  if (articulo.costoNominal !== null) {
+    return { importe: redondearImporte(importeSegunModoDePrecios(articulo.costoNominal, deLaFila, modo), 4), descuentoPorcentaje: null }
+  }
+  return null
 }
 
 /**
@@ -487,11 +526,8 @@ export function cambiosAlElegirArticulo(
   const idAlicuotaIva =
     conservarIva || (conservarLoTipeado && l.idAlicuotaIva !== '') ? l.idAlicuotaIva : alicuotaParaArticulo(articulo, alicuotas)
   const porcentajeIva = alicuotas.find((a) => a.id === idAlicuotaIva)?.porcentaje ?? null
-  const costoDeLista = costoDeArticuloParaCompra(articulo)
-  const costo =
-    costoDeLista === null
-      ? null
-      : { ...costoDeLista, importe: importeSegunModoDePrecios(costoDeLista.importe, porcentajeIva, modo) }
+  const porcentajeDelArticulo = alicuotas.find((a) => a.id === articulo.idAlicuotaIva)?.porcentaje ?? null
+  const costo = costoDeArticuloParaCompra(articulo, { delArticulo: porcentajeDelArticulo, deLaFila: porcentajeIva }, modo)
   const importe = conservarLoTipeado ? (l.importe ?? costo?.importe ?? null) : (costo?.importe ?? l.importe)
   const descuentoPorcentaje = conservarLoTipeado || costo === null ? l.descuentoPorcentaje : costo.descuentoPorcentaje
 
