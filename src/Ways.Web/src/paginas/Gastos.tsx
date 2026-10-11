@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import {
   advertenciasDeGastoDeAdministracion,
   aSolicitudDeGastoDeAdministracion,
@@ -808,9 +808,9 @@ export function Gastos() {
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                       <td>
                         {g.idComprobanteCompra !== null ? (
-                          <a href={`/compras/${g.idComprobanteCompra}`} onClick={(e) => { e.preventDefault(); navigate(`/compras/${g.idComprobanteCompra}`) }}>
+                          <Link to={`/compras/${g.idComprobanteCompra}`}>
                             Compra #{g.idComprobanteCompra}
-                          </a>
+                          </Link>
                         ) : (
                           <div className="d-flex gap-1">
                             <button

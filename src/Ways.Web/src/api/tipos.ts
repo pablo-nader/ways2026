@@ -348,6 +348,28 @@ export type TenantListado = {
 
 export type TenantEdicion = { nombre: string }
 
+/** `GET /api/publico/sitio`: lo que se sabe del sitio sin sesión. `nombreComercio` solo viene bajo
+ * el dominio verificado de un comercio; `admiteUsuario` dice si el login acepta el nombre de usuario
+ * (solo bajo ese dominio: bajo la plataforma el servidor lo rechaza con `usuario_requiere_dominio`). */
+export type SitioPublico = {
+  esPlataforma: boolean
+  nombreComercio: string | null
+  admiteUsuario: boolean
+}
+
+/** Dominio propio de un tenant (`GET /api/plataforma/tenants/{id}/dominios`). `verificadoEn` es
+ * `null` hasta que la plataforma lo marca: un dominio sin verificar todavía no resuelve. */
+export type DominioListado = {
+  id: number
+  idTenant: number
+  host: string
+  esPrincipal: boolean
+  verificadoEn: string | null
+  createdAt: string
+}
+
+export type DominioAlta = { host: string; esPrincipal: boolean }
+
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
  * empresa se sigue listando con el nombre en `null` y se muestra como anomalía en vez de
  * desaparecer. `idTenant` deja de renderizarse y pasa a ser la clave del filtro por tenant. */

@@ -9,6 +9,7 @@ using Ways.Api.ConectorMcp;
 using Ways.Api.Dominios;
 using Ways.Api.Endpoints;
 using Ways.Api.Seguridad;
+using Ways.Api.Spa;
 using Ways.Application;
 using Ways.Application.Abstracciones;
 using Ways.Application.Dominios;
@@ -257,6 +258,9 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi().AllowAnonymous();
 }
 
+// Antes de los archivos estáticos: la raíz de la plataforma no sirve la landing, va a /admin.
+app.UsarRedireccionesDeLaSpa();
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -319,31 +323,9 @@ app.MapearFiscal();
 
 await app.MapearConectorMcpAsync(conectorMcp);
 
-// Cualquier ruta que no sea /api la resuelve el router de React.
-// Una /api/... inexistente tiene que dar 404, no devolver el index.html.
-app.MapFallback(async contexto =>
-{
-    if (contexto.Request.Path.StartsWithSegments("/api"))
-    {
-        contexto.Response.StatusCode = StatusCodes.Status404NotFound;
-        return;
-    }
-
-    var entorno = contexto.RequestServices.GetRequiredService<IWebHostEnvironment>();
-    var raiz = string.IsNullOrEmpty(entorno.WebRootPath)
-        ? Path.Combine(AppContext.BaseDirectory, "wwwroot")
-        : entorno.WebRootPath;
-    var indice = Path.Combine(raiz, "index.html");
-
-    if (!File.Exists(indice))
-    {
-        contexto.Response.StatusCode = StatusCodes.Status404NotFound;
-        return;
-    }
-
-    contexto.Response.ContentType = "text/html; charset=utf-8";
-    await contexto.Response.SendFileAsync(indice);
-}).AllowAnonymous();
+// Cualquier ruta que no sea /api la resuelve el router de React, con la entrada de su prefijo
+// (/admin, /online o la landing). Una /api/... inexistente tiene que dar 404, no devolver un HTML.
+app.MapearFallbackDeLaSpa();
 
 app.Run();
 

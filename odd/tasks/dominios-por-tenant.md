@@ -89,11 +89,18 @@ not stored.
     are exempt/platform; `GET /api/publico/sitio` only reads `IDominioActual`, it does no query of its
     own; the resolver reads `dominios` in Login mode from its own DI scope and the tenant name with the
     platform context.
-- [ ] **T2 — Web: login by username or mail, platform screen for domains.**
+- [x] **T2 — Web: login by username or mail, platform screen for domains.**
   Route: delegated (writer trigger: Login page, api client, platform page, tests). PR 2.
   - Login reads `GET /api/publico/sitio` and shows "Usuario o mail" under a tenant host.
   - Platform tenant screen gets a "Dominios" section: list, add, mark verified, delete.
-- [ ] **T3 — Web: routes `/admin` (current app), `/online` (storefront shell) and `/` (landing shell).**
+  - Done as two work-unit commits: `09b62edb` (login by usuario or mail) and `d355db04` (Dominios
+    screen). Implementation notes that differ from the plan above: there is no tenant detail page, so
+    "Dominios" is its own Root-only page at `/organizacion/dominios` (menu entry under Organización)
+    with a tenant selector built from `opcionesDeTenantAsignable`; the login field routes by `@`
+    (the server does not forbid `@` in a username, so such a user logs in with the mail); if
+    `GET /api/publico/sitio` fails the form falls back to mail-only with a notice; `AuthContext.iniciarSesion`
+    now takes `{ mail } | { usuario }`.
+- [x] **T3 — Web: routes `/admin` (current app), `/online` (storefront shell) and `/` (landing shell).**
   Route: delegated (writer trigger: Vite entries, router basename, API fallback, redirects, tests).
   PR 3.
   - Vite entries: `index.html` → landing shell, `admin.html` → current app with
@@ -101,6 +108,25 @@ not stored.
   - API: `MapFallback` serves the entry by path prefix; old paths (`/login`, `/pos`, `/descargar`,
     and every back-office route) redirect to `/admin/...` for a transition period.
   - Platform host (`aipos.site`): `/` redirects to `/admin`.
+  - Done as two work-unit commits (route: delegated writer; triggers: 2+ non-trivial files and
+    preparation reading): `5f414fbf` (web: entries, basename, dev rewrite, shells) and `d484920f` (API:
+    fallback by prefix, redirects, docs 07 and 08). Implementation notes that differ from the plan above:
+    the list of old top-level routes is `RutasDeLaSpa.RutasHeredadasDelBackOffice` (26 segments) and
+    `App.tsx` is its source of truth, enforced by `RutasDeLaSpaTests` (it parses the `path="/..."` of
+    `App.tsx`); the redirect is a middleware before `UseStaticFiles` (the static default file would
+    otherwise serve the landing on the platform root), not part of `MapFallback`; the only raw anchor to
+    the back office, in `Gastos.tsx`, became a router `Link`; the dev server and `vite preview` rewrite
+    `/admin/*` and `/online/*` with a plugin whose rule lives in `src/config/entradasDeVite.ts`.
+  - Desktop app (`src/Ways.Desktop/scripts/sync-frontend-local.mjs`): it copied everything in `dist/`
+    except `index.html`, so `admin.html` and `online.html` would have landed in `ui/`. Resolved by commit
+    `de41a31e`: the script now skips `index.html`, `admin.html` and `online.html`.
+  - Judgment-day informational findings, fixed in one commit (hash in the verification evidence below):
+    dropped the unreachable `valor[0] != '/'` clause of `EsRutaHeredada` (a non-empty `PathString` always
+    starts with `/`); kept `!Path.HasValue` in the redirect middleware because an empty `Path` is reachable
+    when the request is exactly the `PathBase` (covered by a direct middleware test); `GET`/`HEAD` to
+    `/admin.html`, `/online.html` and `/index.html` now redirect (302, query kept) to `/admin`, `/online` and
+    `/` instead of serving a blank page (`/pos.html` is still served); the Vite dev/preview rewrite compares
+    the first segment case-insensitively, like the server.
 
 ## Verification evidence
 
@@ -168,10 +194,102 @@ Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Informational
 - B: `login-dispositivo` ignores the host's tenant; the guard rejects the cookie on the next
   request, the bearer stays valid on the device's own domain. Follow-up: scope it like `/login`.
 
+T2 (commits `09b62edb`, `d355db04`), run from `src/Ways.Web`:
+
+- `npx tsc -b`: exit 0, no output.
+- `npx oxlint`: exit 0, 16 warnings, all `only-export-components` already on the branch (the
+  `AuthContext.tsx` one moved from line 14 to 15 with the new import), no errors.
+- `npx vitest run` (whole suite, once, no other run in parallel): 175 files, 4495 tests passed, 136 s.
+
+Mutation evidence (mutate the clause, run the colocated tests, watch them go red, revert byte-exact):
+
+| Mutant | Red tests |
+|---|---|
+| login: swap the `@` predicate | 4 unit tests plus both component tests that assert the request body |
+| login: drop `admiteUsuario &&` | unit test "bajo la plataforma todo es un correo" |
+| login: drop the generation gate of the site read | "una respuesta vieja del sitio no pisa a la lectura más nueva" |
+| login: drop the `enviandoRef` guard | "dos envíos del mismo tick salen como una sola request" |
+| dominios: drop the generation gate in `cargarDominios` | "una lista vieja que llega tarde no pisa la del tenant elegido después" |
+| dominios: `elegirTenant` without bumping the generation | same test |
+| dominios: drop the ref guard in `agregar` / `verificar` / `eliminar` | one same-tick double-fire test each |
+| dominios: drop `limpiarMensajes()` in `elegirTenant` / `agregar` / `verificar` / `eliminar` / `pedirEliminar` / `cancelarEliminar` | one test each (rule 16) |
+| dominios: send `esPrincipal: false` / skip `trim()` | "agrega el host sin espacios con su marca de principal…" |
+
+Not covered and left honest: the "Dominios" screen has no end-to-end test against the real API (the
+component tests mock `api/cliente`); the date in the verification column uses the browser's local
+time zone.
+
+### Judgment-day of T2 (target 7d2a0d51, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident warnings fixed in
+`67782536` (voseo copy in Dominios; the list is re-read after a 404 or an uncertain write failure
+while the message stays; comment matched to the code; dead `setCargandoDominios(false)`
+removed; "Marcar verificado" label-in-name). Verified with `npx tsc -b`, `npx oxlint` and the
+full `npx vitest run` (175 files, 4500 tests) plus mutation evidence on the three re-reads; no
+new judge round. Left as follow-ups: the server allows `@` in a username, so a username with
+`@` can only log in by mail (document or forbid server-side); a failed add leaves `aria-invalid`
+on the Host field for non-host errors; "Reintentar" after a failed list read clears a typed host.
+
+T3 (commits `5f414fbf`, `d484920f`):
+
+- `npx tsc -b`: exit 0, no output. `npx oxlint`: exit 0, only the `only-export-components` warnings
+  already on the branch. `npx vite build`: `dist/` holds `index.html`, `admin.html`, `online.html`,
+  `pos.html`; `pos.html` is byte-identical in source and still loads `/src/pos/main.tsx`.
+- `npx vitest run` (whole suite, once, no other run in parallel): 180 files, 4527 tests passed, 125 s.
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~Fallback|...~Rutas|...~Dominios|...~Salud"`:
+  196 passed. Full `dotnet test tests/Ways.IntegrationTests` (once, alone): 3300 passed, 0 failed, 28 m 18 s
+  (3214 of T1 plus the 86 new).
+- Smoke: `vite` dev and `vite preview` answer `/` with the landing entry, `/admin`, `/admin/articulos/edit/3`
+  with `admin.html`, `/online/x` with `online.html`, `/pos.html` with the POS entry.
+- `dotnet format --verify-no-changes` over the new `.cs` files: only the known baseline noise (IDE0008,
+  ENDOFLINE, IMPORTS); the one real hit (IDE0047) was fixed.
+
+Mutation evidence (mutate the clause, run the 86 `RutasDeLaSpa*` tests, watch them go red, revert):
+
+| Mutant | Red tests |
+|---|---|
+| root redirect without `EsPlataforma` | tenant root serves the landing (1) |
+| root redirect with `!EsPlataforma` | platform root x3 methods/queries, every platform host, tenant root (7) |
+| `EsRutaHeredada` matches any segment, not the first | `/api/pos`, `/api/login`, `/admin/pos`, `/online/pos`, `/assets/pos`, `/admin/login`, prefix-served entries (13+) |
+| redirect without the GET/HEAD gate | POST `/login` and POST `/` redirect tests (2) |
+| fallback without the `/api` guard | `/api/no-existe`, `/api/pos`, `/api/login` and the three old `RutaDeRespaldoTests` (6) |
+| `basename` removed from `BrowserRouter` | both `App.test.tsx` cases |
+
+Fix commit `fix(api): redirigir las entradas .html y quitar guardas inalcanzables en las rutas de la SPA`
+(judgment-day informational findings; it sits right after `de41a31e` on the branch):
+
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~RutasDeLaSpa|FullyQualifiedName~RutaDeRespaldo"`:
+  108 passed. First run of the new tests found a real bug in the first draft of `DestinoDeEntradaCruda`
+  (`cond ? "/" : null` converts the null string to a non-null `PathString`), fixed before the commit.
+- In `src/Ways.Web`: `npx tsc -b` clean; `npx vitest run src/config/entradasDeVite.test.ts`: 24 passed.
+- Mutants, reverted byte-exact (md5 checked): deleting the `/admin.html` arm of `DestinoDeEntradaCruda` turns
+  red the 2 unit cases and the 3 server cases for `/admin.html` (plain, `/Admin.html`, with query);
+  `esLaRaiz` without `!Path.HasValue` turns red `LaRaizDeLaPlataformaConPathBaseTieneElPathVacioYVaAAdmin`.
+
+Not covered and left honest: no end-to-end check against a real `vite build` output served by the API
+(the tests write their own `wwwroot`); the dev plugin is proven by its pure function plus a manual smoke,
+not by a Vitest run of the server; a missing static file with an extension (`/assets/x.js`) still gets
+the framework's 401 and not the landing, as before.
+
+### Judgment-day of T3 (target de41a31e, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident suggestions fixed
+in `71782c48`: `/admin.html`, `/online.html` and `/index.html` now redirect to their prefix
+(they rendered a blank page because the router basename did not match), the unreachable
+`valor[0] != '/'` guard is gone, the dev/preview rewrite is case-insensitive like the server,
+and the stale desktop-sync note was corrected. `!Path.HasValue` stays: it is reachable with a
+`PathBase` and has its own test. Verified with the bounded `RutasDeLaSpa|RutaDeRespaldo`
+integration filter (108 tests), `tsc` and the `entradasDeVite` tests, plus mutation evidence on
+the `/admin.html` arm. Then `origin/main` was merged (`0762633c`) and the suites re-run before
+the PR.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
 
 ## Next step
 
-T2 (web: login by usuario or mail reading `GET /api/publico/sitio`, platform screen for domains).
+Feature `landing-del-comercio` (the real landing and the storefront content). T3 waits for its
+judgment-day round before PR 3.

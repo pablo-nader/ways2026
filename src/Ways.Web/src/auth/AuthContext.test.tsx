@@ -51,7 +51,7 @@ function Sonda() {
   return (
     <div>
       <p>{`Usuario: ${usuario?.usuario ?? 'nadie'}`}</p>
-      <button type="button" onClick={() => void iniciarSesion(ana.mail, 'secreto').catch(() => undefined)}>
+      <button type="button" onClick={() => void iniciarSesion({ mail: ana.mail }, 'secreto').catch(() => undefined)}>
         Ingresar
       </button>
       <button type="button" onClick={() => void cerrarSesion().catch(() => undefined)}>

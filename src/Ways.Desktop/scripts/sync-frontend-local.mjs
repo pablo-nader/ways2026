@@ -5,9 +5,9 @@
 //
 // `ui/index.html`, `ui/setup.js` y `ui/styles.css` son la pagina de configuracion, escrita a mano
 // -- este script nunca los toca ni los borra (nunca aparecen en `dist/`, Ways.Web no los conoce).
-// `dist/index.html` (la app completa para navegador) tampoco se copia a proposito: la app de
-// escritorio solo necesita `pos.html`; copiar el `index.html` de la app completa pisaria la
-// pagina de configuracion con la app entera.
+// `dist/index.html` (la landing publica), `dist/admin.html` (la app completa para navegador) y
+// `dist/online.html` (la tienda) tampoco se copian a proposito: la app de escritorio solo
+// necesita `pos.html`; copiar `index.html` pisaria la pagina de configuracion con la landing.
 //
 // Todas las rutas se resuelven relativas a este archivo (nunca a `process.cwd()`), para no
 // depender de desde donde el CLI de Tauri decide invocar este script.
@@ -27,8 +27,10 @@ console.log('[sync-frontend-local] compilando Ways.Web...')
 // práctico acá (no hay entrada externa) pero evitable sin costo con `execSync`.
 execSync('npm run build', { cwd: directorioWaysWeb, stdio: 'inherit' })
 
+const ENTRADAS_SOLO_WEB = new Set(['index.html', 'admin.html', 'online.html'])
+
 for (const entrada of readdirSync(directorioDist)) {
-  if (entrada === 'index.html') continue
+  if (ENTRADAS_SOLO_WEB.has(entrada)) continue
 
   const origen = path.join(directorioDist, entrada)
   const destino = path.join(directorioUi, entrada)

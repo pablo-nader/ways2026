@@ -18,6 +18,7 @@ import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
 import { Descargar } from './paginas/Descargar'
+import { Dominios } from './paginas/Dominios'
 import { Empresas } from './paginas/Empresas'
 import { EquiposPos } from './paginas/EquiposPos'
 import { Existencias } from './paginas/Existencias'
@@ -55,10 +56,11 @@ import { Vencimientos } from './paginas/Vencimientos'
 import { PuertaDePuntoVenta } from './puntoVenta/PuertaDePuntoVenta'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
+import { PREFIJO_ADMIN } from './config/rutasPublicas'
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={PREFIJO_ADMIN}>
       <AuthProvider>
         <Routes>
           {/* Rutas públicas, sin sesión. */}
@@ -565,6 +567,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
                   <NuevoTenant />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/dominios"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root]}>
+                  <Dominios />
                 </RutaProtegida>
               }
             />
