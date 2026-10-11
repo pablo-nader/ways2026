@@ -121,6 +121,13 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Dominios/ServicioDeDominios.cs", "AgregarAsync" },
         { "Ways.Application/Dominios/ServicioDeDominios.cs", "VerificarAsync" },
         { "Ways.Application/Dominios/ServicioDeDominios.cs", "EliminarAsync" },
+
+        // Vitrinas: guardar, subir el logo y quitarlo. Leen la vitrina bajo el lock del tenant y la agregan si
+        // falta: un reintento sobre un commit ambiguo repetiría una escritura que sí tuvo éxito, sin ninguna
+        // clave de idempotencia que lo evite.
+        { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "GuardarAsync" },
+        { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "GuardarLogoAsync" },
+        { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "QuitarLogoAsync" },
     };
 
     /// <summary>
