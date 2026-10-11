@@ -20,6 +20,14 @@ import type {
 } from '../../api/tipos'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './helpers'
 
+const CONSEJO_DE_LA_PAGINA = 'recargá la página para reintentar'
+const CONSEJO_DENTRO_DE_UNA_COMPRA =
+  'cerrá el alta y volvé a abrirla para reintentar; no recargues la página: perderías la compra sin guardar'
+
+function conPrimeraMayuscula(texto: string): string {
+  return texto.charAt(0).toUpperCase() + texto.slice(1)
+}
+
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteCategorias = clienteDeCatalogo<CategoriaListado, CategoriaAlta>('categorias')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
@@ -30,7 +38,9 @@ const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
  * alícuotas de IVA, empresas y listas de precio), leídos una vez al montar. Los que el formulario exige para
  * guardar dejan su motivo en `erroresCatalogosRequeridos`; el de las listas de precio, en `avisoListasPrecio`.
  */
-export function useCatalogosDeArticulo() {
+export function useCatalogosDeArticulo({ dentroDeUnaCompra = false }: { dentroDeUnaCompra?: boolean } = {}) {
+  // Dentro de una compra recargar descartaría lo cargado sin guardar: el reintento que sirve es cerrar y reabrir el alta.
+  const consejoDeReintento = dentroDeUnaCompra ? CONSEJO_DENTRO_DE_UNA_COMPRA : CONSEJO_DE_LA_PAGINA
   const [areas, setAreas] = useState<AreaListado[]>([])
   const [categorias, setCategorias] = useState<CategoriaListado[]>([])
   const [marcas, setMarcas] = useState<MarcaListado[]>([])
@@ -48,6 +58,11 @@ export function useCatalogosDeArticulo() {
   }
 
   useEffect(() => {
+    // El hook se monta y desmonta con cada apertura del alta desde una compra: lo que llegue después no es de nadie.
+    let vigente = true
+    const aplicar = <T,>(setter: (valor: T) => void) => (valor: T) => {
+      if (vigente) setter(valor)
+    }
     // incluirInactivos: true en los cuatro — un artículo existente puede referenciar un área/
     // categoría/marca/grupo ya desactivada (la baja lógica es hoy la salida recomendada cuando la
     // guarda de referencias rechaza el borrado, fix/articulos-form-catalogos-inactivos) y el
@@ -55,14 +70,15 @@ export function useCatalogosDeArticulo() {
     // solo ofrece las activas: `opcionesConValorActual` filtra en el render, no acá.
     clienteAreas
       .listar(true)
-      .then(setAreas)
+      .then(aplicar(setAreas))
       .catch(() => {
+        if (!vigente) return
         setAreas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las áreas.')
       })
-    clienteCategorias.listar(true).then(setCategorias).catch(() => setCategorias([]))
-    clienteMarcas.listar(true).then(setMarcas).catch(() => setMarcas([]))
-    clienteGrupos.listar(true).then(setGrupos).catch(() => setGrupos([]))
+    clienteCategorias.listar(true).then(aplicar(setCategorias)).catch(() => aplicar(setCategorias)([]))
+    clienteMarcas.listar(true).then(aplicar(setMarcas)).catch(() => aplicar(setMarcas)([]))
+    clienteGrupos.listar(true).then(aplicar(setGrupos)).catch(() => aplicar(setGrupos)([]))
     // tamanio grande a propósito: es un selector de referencia, no un listado paginado. Si el
     // tenant tiene más proveedores que el clamp del servidor, avisamos que la lista quedó
     // truncada en vez de esconder el resto en silencio. Sin `incluirInactivos` acá: a diferencia
@@ -71,35 +87,43 @@ export function useCatalogosDeArticulo() {
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
       .then((p) => {
+        if (!vigente) return
         // Pre-ordenado por la MISMA etiqueta que el select muestra (nombre de fantasía o razón
         // social, nunca la razón social cruda) — el alta rápida inserta manteniendo este orden.
         setProveedores(ordenarProveedoresPorEtiqueta(p.items))
         setProveedoresTruncados(p.total > p.items.length)
       })
-      .catch(() => setProveedores([]))
+      .catch(() => aplicar(setProveedores)([]))
     clienteDeCatalogosFiscales
       .alicuotasIva()
-      .then(setAlicuotasIva)
+      .then(aplicar(setAlicuotasIva))
       .catch(() => {
+        if (!vigente) return
         setAlicuotasIva([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las alícuotas de IVA.')
       })
     clienteDeOrganizacion
       .listarEmpresas()
-      .then(setEmpresas)
+      .then(aplicar(setEmpresas))
       .catch(() => {
+        if (!vigente) return
         setEmpresas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las empresas.')
       })
     clienteDePrecios
       .listasDePrecio()
-      .then(setListasPrecio)
+      .then(aplicar(setListasPrecio))
       .catch(() => {
+        if (!vigente) return
         setListasPrecio([])
         setAvisoListasPrecio(
-          'No se pudieron cargar las listas de precio: el editor de precios no está disponible. Recargá la página para reintentar.',
+          `No se pudieron cargar las listas de precio: el editor de precios no está disponible. ${conPrimeraMayuscula(consejoDeReintento)}.`,
         )
       })
+    return () => {
+      vigente = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // `areas` trae activas e inactivas (incluirInactivos: true) — el default de un artículo NUEVO tiene que ser la
@@ -141,6 +165,7 @@ export function useCatalogosDeArticulo() {
     listasPrecio,
     erroresCatalogosRequeridos,
     avisoListasPrecio,
+    consejoDeReintento,
     areaPorDefecto,
     alicuotaPorDefecto,
     alCrearCategoria,

@@ -37,6 +37,7 @@ const ALICUOTAS: AlicuotaIvaListado[] = [
 const PORCENTAJES = { 3: 21, 4: 10.5 }
 const AREA = { id: 4, nombre: 'Almacén', activo: true, orden: 1 }
 const PROVEEDOR = { id: 1, razonSocial: 'Proveedor Uno SA', nombreFantasia: null, activo: true }
+const OTRO_PROVEEDOR = { id: 2, razonSocial: 'Proveedor Dos SA', nombreFantasia: null, activo: true }
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
@@ -212,8 +213,8 @@ async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
   return dialogo
 }
 
+/** No elige el Área: el alta la completa sola con la primera activa cuando llega el catálogo. */
 async function guardarAlta(usuario: ReturnType<typeof userEvent.setup>, dialogo: HTMLElement) {
-  await usuario.selectOptions(within(dialogo).getByLabelText('Área'), '4')
   await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
 }
 
@@ -229,7 +230,7 @@ beforeEach(() => {
     }
     if (ruta.startsWith('/catalogos/areas')) return Promise.resolve([AREA])
     if (/^\/catalogos\/(categorias|marcas|grupos)/.test(ruta)) return Promise.resolve([])
-    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [PROVEEDOR], total: 1, pagina: 1, tamanio: 200 })
+    if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [PROVEEDOR, OTRO_PROVEEDOR], total: 2, pagina: 1, tamanio: 200 })
     if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve(ALICUOTAS)
     if (ruta === '/empresas' || ruta === '/catalogos/listas-precio' || ruta === '/familias') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -1222,6 +1223,7 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       await usuario.type(campo(0, 'Importe'), '12,3456')
       await usuario.selectOptions(campo(0, 'IVA'), '4')
       const dialogo = await abrirAlta(usuario)
+      expect(within(dialogo).getByLabelText('Área')).toHaveValue('4')
       await guardarAlta(usuario, dialogo)
 
       await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
@@ -1329,6 +1331,94 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       expect(captura.lineas[0].codigoConsultado).toBe('')
     })
 
+    describe('el código de la fila es del proveedor de la compra', () => {
+      it('con otro proveedor habitual el código no viaja, el campo queda de solo lectura y la fila lo conserva para asociarlo al confirmar', async () => {
+        apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 2 }))
+        const usuario = userEvent.setup()
+        const { captura } = montar()
+
+        await usuario.type(campo(0, 'Código'), 'AB-1')
+        await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+        const dialogo = await abrirAlta(usuario)
+        expect(within(dialogo).getByLabelText('Código del proveedor')).toBeEnabled()
+        await usuario.selectOptions(within(dialogo).getByLabelText('Proveedor habitual'), '2')
+
+        expect(within(dialogo).getByLabelText('Código del proveedor')).toBeDisabled()
+        expect(within(dialogo).getByLabelText('Código del proveedor')).toHaveValue('AB-1')
+        expect(within(dialogo).getByText(/Este código es del proveedor de la compra/)).toBeInTheDocument()
+        await guardarAlta(usuario, dialogo)
+
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+        expect(cuerpo).toMatchObject({ idProveedorHabitual: 2, codigoProveedor: null })
+        expect(campo(0, 'Código')).toHaveValue('AB-1')
+        expect(captura.lineas[0].codigoConsultado).toBe('')
+        expect(within(filaDeItems(0)).getByText('Se asociará al artículo al confirmar.')).toBeInTheDocument()
+      })
+
+      it('si el operador vuelve al proveedor de la compra, el campo se habilita y el código viaja', async () => {
+        apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1 }))
+        const usuario = userEvent.setup()
+        const { captura } = montar()
+
+        await usuario.type(campo(0, 'Código'), 'AB-1')
+        await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+        const dialogo = await abrirAlta(usuario)
+        await usuario.selectOptions(within(dialogo).getByLabelText('Proveedor habitual'), '2')
+        await usuario.selectOptions(within(dialogo).getByLabelText('Proveedor habitual'), '1')
+
+        expect(within(dialogo).getByLabelText('Código del proveedor')).toBeEnabled()
+        expect(within(dialogo).queryByText(/Este código es del proveedor de la compra/)).not.toBeInTheDocument()
+        await guardarAlta(usuario, dialogo)
+
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+        expect(cuerpo).toMatchObject({ idProveedorHabitual: 1, codigoProveedor: 'AB-1' })
+        expect(captura.lineas[0].codigoConsultado).toBe('AB-1')
+      })
+    })
+
+    it('un artículo que entra a una familia desde la compra manda su idFamilia y la fila queda resuelta', async () => {
+      const valores = {
+        idArea: 4,
+        idCategoria: null,
+        idGrupo: null,
+        idProveedorHabitual: 1,
+        idAlicuotaIva: 3,
+        unidadVenta: 'Unidad',
+        unidadesPorBulto: null,
+        esProducto: true,
+        controlaLote: false,
+        acumulaEnVenta: true,
+        costoLista: 150,
+        costoListaPor: 'Unidad',
+        costoListaIncluyeIva: true,
+        descuentoProveedor: null,
+        costoNominal: 150,
+      }
+      const base = apiGetMock.getMockImplementation()!
+      apiGetMock.mockImplementation((ruta: string) => {
+        if (ruta === '/familias') return Promise.resolve([{ id: 7, nombre: 'Sabores', activo: true, cantidadArticulos: 3 }])
+        if (ruta === '/familias/7') return Promise.resolve({ id: 7, nombre: 'Sabores', activo: true, articulos: [], valores, precios: [] })
+        return base(ruta)
+      })
+      apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva', idProveedorHabitual: 1, idFamilia: 7 }))
+      const usuario = userEvent.setup()
+      const { captura } = montar()
+
+      await usuario.type(campo(0, 'Código'), 'AB-1')
+      await usuario.type(campo(0, 'Detalle'), 'Yerba nueva')
+      const dialogo = await abrirAlta(usuario)
+      await usuario.selectOptions(await within(dialogo).findByLabelText('Familia (opcional)'), '7')
+      await waitFor(() => expect(within(dialogo).getByLabelText(/^Costo de lista con IVA/)).toHaveValue('150,00'))
+      await guardarAlta(usuario, dialogo)
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      const [, cuerpo] = apiPostMock.mock.calls[0] as [string, Record<string, unknown>]
+      expect(cuerpo).toMatchObject({ idFamilia: 7, idArea: 4, costoLista: 150, codigoProveedor: 'AB-1' })
+      expect(captura.lineas[0].idArticulo).toBe(77)
+    })
+
     it('con precios netos de un comprobante que discrimina IVA, el costo se guarda declarado sin IVA', async () => {
       apiPostMock.mockResolvedValue(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
       const usuario = userEvent.setup()
@@ -1420,6 +1510,24 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
         confirmar.mockRestore()
       })
 
+      it('editar solo el código del proveedor registra el aviso de salida de la pestaña, y un formulario intacto no', async () => {
+        const usuario = userEvent.setup()
+        montar()
+        await usuario.type(campo(0, 'Código'), 'AB-1')
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        const dialogo = await abrirAlta(usuario)
+        const intentarSalir = () => {
+          const evento = new Event('beforeunload', { cancelable: true })
+          window.dispatchEvent(evento)
+          return evento.defaultPrevented
+        }
+        expect(intentarSalir()).toBe(false)
+
+        await usuario.type(within(dialogo).getByLabelText('Código del proveedor'), '9')
+
+        expect(intentarSalir()).toBe(true)
+      })
+
       it('si se acepta, cierra sin crear nada y la fila conserva todo lo tipeado en la compra', async () => {
         const confirmar = vi.spyOn(window, 'confirm').mockReturnValue(true)
         const usuario = userEvent.setup()
@@ -1454,6 +1562,39 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       expect(within(dialogo).getByLabelText('Proveedor habitual')).toHaveValue('')
       expect(within(dialogo).getByLabelText('Código del proveedor')).toBeDisabled()
       expect(within(dialogo).getByText('Elegí un proveedor habitual para cargar su código.')).toBeInTheDocument()
+    })
+
+    describe('un catálogo que no carga dentro de la compra', () => {
+      function fallar(ruta: string) {
+        const base = apiGetMock.getMockImplementation()!
+        apiGetMock.mockImplementation((r: string) => (r.startsWith(ruta) ? Promise.reject(new Error('sin red')) : base(r)))
+      }
+
+      async function abrirConFallo() {
+        const usuario = userEvent.setup()
+        montar()
+        await usuario.type(campo(0, 'Detalle'), 'Cosa nueva')
+        await usuario.click(within(filaDeItems(0)).getByRole('button', { name: /^Crear artículo, línea \d+$/ }))
+        return screen.findByRole('dialog', { name: 'Nuevo artículo' })
+      }
+
+      it('un catálogo requerido dice que se cierre y reabra el alta, y no que se recargue la página', async () => {
+        fallar('/catalogos/areas')
+        const dialogo = await abrirConFallo()
+
+        expect(await within(dialogo).findByText(/cerrá el alta y volvé a abrirla para reintentar; no recargues la página: perderías la compra sin guardar\./)).toBeInTheDocument()
+        expect(within(dialogo).queryByText(/recargá la página/i)).not.toBeInTheDocument()
+      })
+
+      it('las listas de precio que no cargan dan el mismo consejo', async () => {
+        fallar('/catalogos/listas-precio')
+        const dialogo = await abrirConFallo()
+
+        expect(
+          await within(dialogo).findByText(/No se pudieron cargar las listas de precio.*Cerrá el alta y volvé a abrirla para reintentar; no recargues la página/),
+        ).toBeInTheDocument()
+        expect(within(dialogo).queryByText(/recargá la página/i)).not.toBeInTheDocument()
+      })
     })
 
     it('un 409 codigo_proveedor_duplicado se muestra en el formulario y la fila no cambia', async () => {
@@ -1537,6 +1678,8 @@ describe('GrillaDeItemsDeCompra — Detalle (T8)', () => {
       // la pantalla pierde el permiso con la request en vuelo: el alta se desmonta y la fila sigue ahí
       rerender(<Arnes captura={captura} puedeCrearArticulos={false} />)
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      // sin alta abierta la compra se puede guardar de nuevo
+      expect(captura.creando.at(-1)).toBe(false)
       await act(async () => {
         resolver(articuloFixture({ id: 77, nombre: 'Yerba nueva' }))
       })

@@ -33,6 +33,8 @@ export type PropsDeModalDeArticulo = {
    * el usuario solo ve un "Guardar" deshabilitado sin ninguna explicación. */
   erroresCatalogosRequeridos: string[]
   avisoListasPrecio: string
+  /** Cómo reintentar cuando un catálogo no cargó: depende de dónde vive el formulario. */
+  consejoDeReintento: string
   areas: AreaListado[]
   categorias: CategoriaListado[]
   marcas: MarcaListado[]
@@ -82,6 +84,7 @@ export function ModalDeArticulo({
   bloqueadoPorCatalogos,
   erroresCatalogosRequeridos,
   avisoListasPrecio,
+  consejoDeReintento,
   areas,
   categorias,
   marcas,
@@ -125,7 +128,7 @@ export function ModalDeArticulo({
           {erroresCatalogosRequeridos.length > 0 && (
             <div className="alert alert-warning">
               {erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
-              hasta que se puedan cargar — recargá la página para reintentar.
+              hasta que se puedan cargar — {consejoDeReintento}.
             </div>
           )}
           {avisoListasPrecio && <div className="alert alert-warning">{avisoListasPrecio}</div>}

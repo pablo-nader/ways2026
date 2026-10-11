@@ -81,7 +81,12 @@ export type Formulario = {
 
 /** El campo del código con el que el proveedor habitual conoce al artículo: no es un dato del artículo sino de su
  * relación con el proveedor, así que solo lo ofrece quien abre el alta desde una compra. */
-export type CodigoDeProveedorDelFormulario = { valor: string; onCambio: (codigo: string) => void }
+export type CodigoDeProveedorDelFormulario = {
+  valor: string
+  onCambio: (codigo: string) => void
+  /** El proveedor habitual elegido no es el dueño del código (el de la compra): el campo queda solo lectura. */
+  deOtroProveedor?: boolean
+}
 
 export function formularioVacio(): Formulario {
   return {
@@ -683,13 +688,15 @@ export function FormularioArticulo({
                 className="form-control"
                 maxLength={50}
                 value={valor.idProveedorHabitual === '' ? '' : codigoProveedor.valor}
-                disabled={valor.idProveedorHabitual === ''}
+                disabled={valor.idProveedorHabitual === '' || codigoProveedor.deOtroProveedor === true}
                 onChange={(e) => codigoProveedor.onCambio(e.target.value)}
               />
               <div className="form-text">
                 {valor.idProveedorHabitual === ''
                   ? 'Elegí un proveedor habitual para cargar su código.'
-                  : 'El código con el que el proveedor habitual identifica este artículo (opcional).'}
+                  : codigoProveedor.deOtroProveedor
+                    ? 'Este código es del proveedor de la compra: se le asociará al artículo al confirmar la compra.'
+                    : 'El código con el que el proveedor habitual identifica este artículo (opcional).'}
               </div>
             </div>
           )}

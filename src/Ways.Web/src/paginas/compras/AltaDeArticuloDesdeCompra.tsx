@@ -38,6 +38,7 @@ export function AltaDeArticuloDesdeCompra({ precarga, idProveedor, onCreado, onC
 
   const alta = useFormularioDeArticulo({
     precargaInicial,
+    compra: { idProveedor },
     alCrear: (creado, codigoEnviado) => {
       if (!vigenteRef.current) return
       // El servidor asocia el código al proveedor habitual del artículo, que el operador pudo cambiar en el formulario.

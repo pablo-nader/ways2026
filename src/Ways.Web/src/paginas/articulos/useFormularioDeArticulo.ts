@@ -47,11 +47,21 @@ type Opciones = {
   /** Abre ya con un alta precargada, sin pasar por un primer render sin formulario (quien lo aloja en un modal no
    * quiere mostrar "Cargando artículo…" para algo que ya tiene). Solo se lee al montar. */
   precargaInicial?: PrecargaDeAlta
+  /** Presente solo cuando el formulario vive dentro de una compra: ahí no se puede recargar la página para reintentar
+   * y el código del proveedor es el de `idProveedor`, el proveedor de la compra. */
+  compra?: { idProveedor: number | null }
 }
 
-/** El código que viaja con un alta: solo si el formulario lo ofrece, hay proveedor habitual y se tipeó algo. */
-export function codigoDeProveedorDeAlta(formulario: Formulario, codigoProveedor: string | null): string | null {
+/** El código que viaja con un alta: solo si el formulario lo ofrece, hay proveedor habitual y se tipeó algo. Con
+ * `idProveedorDeLaCompra` (el alta desde una compra), solo si el proveedor habitual es el de la compra: el código es de
+ * ese proveedor y no se le puede asociar a otro. */
+export function codigoDeProveedorDeAlta(
+  formulario: Formulario,
+  codigoProveedor: string | null,
+  idProveedorDeLaCompra?: number | null,
+): string | null {
   if (codigoProveedor === null || formulario.idProveedorHabitual === '') return null
+  if (idProveedorDeLaCompra !== undefined && formulario.idProveedorHabitual !== idProveedorDeLaCompra) return null
   const limpio = codigoProveedor.trim()
   return limpio === '' ? null : limpio
 }
@@ -64,8 +74,8 @@ export function codigoDeProveedorDeAlta(formulario: Formulario, codigoProveedor:
  * Todas las escrituras comparten una única guarda de reentrancia (`escrituraEnCursoRef`) y un token
  * (`tokenEdicionRef`) que abrir, cerrar y guardar invalidan: la respuesta de una escritura superada no se aplica.
  */
-export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }: Opciones) {
-  const catalogos = useCatalogosDeArticulo()
+export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, compra }: Opciones) {
+  const catalogos = useCatalogosDeArticulo({ dentroDeUnaCompra: compra !== undefined })
   const { areaPorDefecto, alicuotaPorDefecto } = catalogos
 
   // El área y la alícuota por defecto de una alta precargada las completa el efecto de más abajo cuando llegan los catálogos.
@@ -280,7 +290,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
 
     try {
       if (formulario.id === null) {
-        const codigoEnviado = codigoDeProveedorDeAlta(formulario, codigoProveedor)
+        const codigoEnviado = codigoDeProveedorDeAlta(formulario, codigoProveedor, compra?.idProveedor)
         const alta = aAlta(formulario)
         const creado = await clienteDeArticulos.crear(codigoProveedor === null ? alta : { ...alta, codigoProveedor: codigoEnviado })
         // La familia tiene un miembro más: las que se ofrecen en un alta se vuelven a leer, también si el modal ya cambió de artículo.
@@ -515,9 +525,9 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
   }
 
   // Recarga/cierre de PESTAÑA (no navegación SPA): el listener se registra/desregistra según haya o no cambios sin
-  // guardar, nunca queda pegado. `formulario` alcanza como dependencia: `formularioOriginalRef.current` siempre se
-  // asigna en el mismo tick que `setFormulario` (nunca solo), así que `haySinGuardar()` ya lee el par correcto en
-  // cada corrida de este efecto.
+  // guardar, nunca queda pegado. Depende de `formulario` y de `codigoProveedor`, los dos estados que `haySinGuardar()`
+  // compara contra su original: `formularioOriginalRef.current` siempre se asigna en el mismo tick que `setFormulario`
+  // (nunca solo), así que el par que lee en cada corrida es el correcto.
   useEffect(() => {
     if (!haySinGuardar()) return
     function alIntentarSalir(evento: BeforeUnloadEvent) {
@@ -527,7 +537,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
     window.addEventListener('beforeunload', alIntentarSalir)
     return () => window.removeEventListener('beforeunload', alIntentarSalir)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formulario])
+  }, [formulario, codigoProveedor])
 
   // Las acciones del formulario sobre su familia atan al artículo que se está mostrando: una que llegue tarde,
   // desde el editor de precios de uno que ya se cerró, no puede tocar al que se abrió después.
@@ -541,6 +551,14 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
       if (idDelFormulario !== null) recargarArticuloDesactualizado(idDelFormulario)
     },
   }
+
+  // El código de la fila es del proveedor de la compra: con otro proveedor habitual no se envía (la fila lo conserva y
+  // el servidor lo asocia al proveedor de la compra al confirmar).
+  const codigoEsDeOtroProveedor =
+    compra !== undefined &&
+    formulario !== null &&
+    formulario.idProveedorHabitual !== '' &&
+    formulario.idProveedorHabitual !== compra.idProveedor
 
   /** Las props del modal de artículo; quien lo muestra aporta lo que depende de dónde vive. */
   function propsDelModal(propias: {
@@ -560,6 +578,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
       bloqueadoPorCatalogos: catalogos.erroresCatalogosRequeridos.length > 0,
       erroresCatalogosRequeridos: catalogos.erroresCatalogosRequeridos,
       avisoListasPrecio: catalogos.avisoListasPrecio,
+      consejoDeReintento: catalogos.consejoDeReintento,
       areas: catalogos.areas,
       categorias: catalogos.categorias,
       marcas: catalogos.marcas,
@@ -572,7 +591,10 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial }:
       familia: familias,
       accionesDeFamilia,
       preguntaDeAlcanceAbierta: decisionDeAlcance !== null,
-      codigoProveedor: codigoProveedor === null ? undefined : { valor: codigoProveedor, onCambio: setCodigoProveedor },
+      codigoProveedor:
+        codigoProveedor === null
+          ? undefined
+          : { valor: codigoProveedor, onCambio: setCodigoProveedor, deOtroProveedor: codigoEsDeOtroProveedor },
       onCambio: setFormulario,
       actualizarFormulario,
       onGuardar: pedirGuardado,

@@ -156,7 +156,7 @@ export function GrillaDeItemsDeCompra({
   }
 
   const filaEnAlta = creando === null ? null : lineas.find((l) => l.clave === creando)
-  const hayAlta = filaEnAlta !== null && filaEnAlta !== undefined
+  const hayAlta = filaEnAlta !== null && filaEnAlta !== undefined && puedeCrearArticulos
   useEffect(() => {
     onCreandoArticulo?.(hayAlta)
   }, [hayAlta, onCreandoArticulo])
@@ -214,8 +214,9 @@ export function GrillaDeItemsDeCompra({
         </table>
       </div>
 
-      {filaEnAlta && puedeCrearArticulos && (
+      {hayAlta && (
         <AltaDeArticuloDesdeCompra
+          key={filaEnAlta.clave}
           precarga={precargaDeArticuloDesdeLinea({
             descripcion: filaEnAlta.descripcion,
             codigoProveedor: filaEnAlta.codigoProveedor,
