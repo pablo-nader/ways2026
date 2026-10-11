@@ -1139,11 +1139,11 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             (20m, 2m, 0m, 18m),
             (conDescuento.Subtotal, conDescuento.DescuentoManualTotal, conDescuento.RecargoManualTotal, conDescuento.Total));
 
-        // 20 líneas de 10 con +25 %: cada una +2.5 ⇒ 12.5; subtotal 200, recargo manual 50, total 250.
+        // 20 líneas de 10 con +25 %: cada una +2.5 redondea a +3 ⇒ 13; subtotal 200, recargo manual 60, total 260.
         Assert.Equal(20, conRecargo.Items.Count);
-        Assert.All(conRecargo.Items, i => Assert.Equal((25m, 2.5m, 12.5m), (i.AjusteManualPorcentaje, i.AjusteManual, i.Total)));
+        Assert.All(conRecargo.Items, i => Assert.Equal((25m, 3m, 13m), (i.AjusteManualPorcentaje, i.AjusteManual, i.Total)));
         Assert.Equal(
-            (200m, 0m, 50m, 250m),
+            (200m, 0m, 60m, 260m),
             (conRecargo.Subtotal, conRecargo.DescuentoManualTotal, conRecargo.RecargoManualTotal, conRecargo.Total));
     }
 
@@ -1330,7 +1330,9 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         {
             var idArticulo = await SembrarArticuloConPrecioAsync(ctx, $"presupuesto-{Guid.NewGuid():N}", 10m);
             lineas.Add(new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: ajusteManualPorcentaje));
-            totalEsperado += 10m + (ajusteManualPorcentaje is { } porcentaje ? 10m * porcentaje / 100m : 0m);
+            totalEsperado += 10m + (ajusteManualPorcentaje is { } porcentaje
+                ? Math.Round(10m * porcentaje / 100m, 0, MidpointRounding.AwayFromZero)
+                : 0m);
         }
 
         var contador = new ContadorDeComandos();

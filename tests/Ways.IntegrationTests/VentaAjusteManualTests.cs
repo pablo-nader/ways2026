@@ -424,14 +424,14 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(100m, doble.RecargoManualTotal);
 
         var minimoPositivo = await EmitirOkAsync(
-            ctx.Cliente, VentaOnline(ctx, 100.01m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: 0.01m)));
-        Assert.Equal(0.01m, minimoPositivo.Items[0].AjusteManual);
-        Assert.Equal(100.01m, minimoPositivo.Total);
+            ctx.Cliente, VentaOnline(ctx, 100m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: 0.01m)));
+        Assert.Equal(0m, minimoPositivo.Items[0].AjusteManual);
+        Assert.Equal(100m, minimoPositivo.Total);
 
         var casiTodo = await EmitirOkAsync(
-            ctx.Cliente, VentaOnline(ctx, 0.01m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -99.99m)));
-        Assert.Equal(-99.99m, casiTodo.Items[0].AjusteManual);
-        Assert.Equal(0.01m, casiTodo.Total);
+            ctx.Cliente, VentaOnline(ctx, 0m, new LineaDeVenta(idArticulo, 1m, null, AjusteManualPorcentaje: -99.99m)));
+        Assert.Equal(-100m, casiTodo.Items[0].AjusteManual);
+        Assert.Equal(0m, casiTodo.Total);
     }
 
     /// <summary>Con <c>IdPresupuestoOrigen</c> las líneas no se admiten: la conversión rechaza
@@ -680,31 +680,31 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(-80m, auditado.GetProperty("ajuste_manual").GetDecimal());
     }
 
-    /// <summary>Misma cláusula con −50 %: el dispositivo cobró 10.01 y el servidor resuelve 10.00. El
-    /// ajuste de 10.01 es −5.005 que redondea a −5.01 (total 5.00) y el de 10.00 es −5.00 (total
-    /// 5.00): comparando totales ajustados los dos dan 5.00 y el centavo desaparece. Sobre el neto
-    /// anterior al ajuste (10.01 contra 10.00) se ve.</summary>
+    /// <summary>Misma cláusula con −50 %: el dispositivo cobró 11 y el servidor resuelve 10. El
+    /// ajuste de 11 es −5.5 que redondea a −6 (total 5) y el de 10 es −5 (total
+    /// 5): comparando totales ajustados los dos dan 5 y la diferencia desaparece. Sobre el neto
+    /// anterior al ajuste (11 contra 10) se ve. Los importes de venta son pesos enteros.</summary>
     [Fact]
-    public async Task UnCentavoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste()
+    public async Task UnPesoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste()
     {
         var ctx = await PrepararOfflineAsync(
-            nameof(UnCentavoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste));
+            nameof(UnPesoDeDiferenciaDePrecioOfflineSigueMarcandoDiscrepanciaConMenosCincuentaPorCientoDeAjuste));
         var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 10m);
 
         var emitido = await EmitirOkAsync(
             ctx.Cliente,
             VentaOffline(
                 ctx, 5m, numero: 1,
-                new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 10.01m, AjusteManualPorcentaje: -50m)));
+                new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 11m, AjusteManualPorcentaje: -50m)));
 
         var item = Assert.Single(emitido.Items);
         Assert.True(item.PrecioDiscrepante);
-        Assert.Equal(-5.01m, item.AjusteManual);
+        Assert.Equal(-6m, item.AjusteManual);
         Assert.Equal(5m, item.Total);
         Assert.Equal(1, await ContarDiscrepanciasAsync(ctx.IdTenant));
 
         var auditado = await LeerItemAuditadoDeLaDiscrepanciaAsync(ctx.IdTenant);
-        Assert.Equal(10.01m, auditado.GetProperty("precio_cobrado").GetDecimal());
+        Assert.Equal(11m, auditado.GetProperty("precio_cobrado").GetDecimal());
         Assert.Equal(10m, auditado.GetProperty("precio_esperado").GetDecimal());
         Assert.Equal(-50m, auditado.GetProperty("ajuste_manual_porcentaje").GetDecimal());
     }
@@ -804,7 +804,7 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
             nameof(ReenviarUnaVentaOfflineConAjusteManualDevuelveElMismoComprobanteConLosMismosAjustes));
         var idArticulo = await SembrarServicioAsync(ctx.IdTenant, 100m);
         SolicitudDeVenta Solicitud() => VentaOffline(
-            ctx, 112.5m, numero: 1,
+            ctx, 113m, numero: 1,
             new LineaDeVenta(idArticulo, 1m, null, PrecioUnitario: 100m, AjusteManualPorcentaje: 12.5m));
 
         var primera = await EmitirOkAsync(ctx.Cliente, Solicitud());
@@ -812,11 +812,11 @@ public class VentaAjusteManualTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal(primera.Id, segunda.Id);
         Assert.Equal(12.5m, segunda.Items[0].AjusteManualPorcentaje);
-        Assert.Equal(12.5m, segunda.Items[0].AjusteManual);
-        Assert.Equal(112.5m, segunda.Items[0].Total);
+        Assert.Equal(13m, segunda.Items[0].AjusteManual);
+        Assert.Equal(113m, segunda.Items[0].Total);
         Assert.Equal(0m, segunda.DescuentoManualTotal);
-        Assert.Equal(12.5m, segunda.RecargoManualTotal);
-        Assert.Equal(112.5m, segunda.Total);
+        Assert.Equal(13m, segunda.RecargoManualTotal);
+        Assert.Equal(113m, segunda.Total);
         Assert.Equal(1, await ContarComprobantesAsync(ctx.IdTenant));
     }
 
