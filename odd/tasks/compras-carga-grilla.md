@@ -54,6 +54,7 @@ Slice 3 — items grid (web):
 - 2026-10-10 (slice 3): a loaded line keeps its stored `actualizaCosto`.
 - 2026-10-10 (owner): on a supplier change, rows resolved by code are cleared (article, Importe, Descuento, IVA) and looked up again from scratch after an explicit confirmation, replacing the per-cell snapshot (`prefillDeCodigo`). Rows chosen by search or created with "+", loaded-draft rows and conceptos are untouched; with no code-resolved row there is no prompt.
 - 2026-10-11 (backend #359): the prefilled Importe is derived from the list cost normalized to per unit and IVA-inclusive using `costoListaPor` and `costoListaIncluyeIva` (list cost is stored as loaded), then netted when the receipt discriminates IVA with net prices; the quick-create modal declares its cost per unit, without IVA when the Importe is a net price.
+- 2026-10-11: switching a row's UM converts the Importe so the per-unit cost is preserved (Unidad to Bulto multiplies by `unidadesPorBulto`, Bulto to Unidad divides, 4 decimals); Cantidad is not converted. A row takes the alícuota of the article created from it; the typed Importe and Descuento stay.
 
 ## Review
 
@@ -62,6 +63,7 @@ Slice 3 — items grid (web):
 - Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057; the second scoped re-judgment (d8de8057) left two issues confirmed by both judges (wrong price carried across a supplier change, missing association hint), the judgment was escalated, and the owner authorized a third fix round applied in 880c06a7.
 - Slice 3, third re-judgment (880c06a7): left two warnings confirmed by both judges in the supplier-change path; the owner chose to replace the snapshot design with the simple clear-and-look-up-again rule, applied in 97608511.
 - Slice 3, re-judgment of 97608511: no critical defect; the simple rule holds. Three minor adjustments (price mode, quantity in bultos, conceptos with a pending code) applied in 0cbef200.
+- Cost normalization (be1aa4f6): judged by both judges with no critical finding; the UM conversion and the modal alícuota were applied in f95214e1.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
@@ -79,6 +81,9 @@ Slice 3 — items grid (web):
 - `articulos/EditorDePrecios.tsx` still uses `datetime-local` (browser locale format).
 - Read-only printed date ranges (e.g. CuentaCorriente) still show ISO.
 - `CampoNumeroDeComprobante`: the "left the group" flag never resets, so a re-edited half-filled number is flagged while typing.
+- The quick-create modal stores `costoLista` with 2 decimals (column `numeric(14,2)`) while the row keeps 4.
+- When a list cost exists, the prefill prefers it over a more recent `costoNominal` left by a purchase.
+- `FormularioArticulo` does not yet expose `costoListaPor` / `costoListaIncluyeIva`.
 
 ## Progress
 
