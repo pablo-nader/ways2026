@@ -160,7 +160,7 @@ describe('previaDeLinea', () => {
     const linea = lineaFixture({ cantidad: 3, ajusteManualPorcentaje: 15 })
     const resultado = resultadoFixture({ precioOriginal: 100, precioFinal: 90, descuentoUnitario: 10 })
 
-    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 310.5, ajusteManual: 40.5 })
+    expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 311, ajusteManual: 41 })
   })
 
   it('el ajuste se calcula sobre el neto posterior a las ofertas, no sobre el precio de lista', () => {
@@ -170,16 +170,16 @@ describe('previaDeLinea', () => {
     expect(previaDeLinea(linea, resultado)).toMatchObject({ total: 72, ajusteManual: -8 })
   })
 
-  it('redondea el ajuste half-away-from-zero, también con monto negativo (1,005 → 1,01, nunca 1,00)', () => {
-    const resultado = resultadoFixture({ precioOriginal: 10.05, precioFinal: 10.05, descuentoUnitario: 0 })
+  it('redondea el ajuste half-away-from-zero al peso, también con monto negativo (10,5 → 11, nunca 10)', () => {
+    const resultado = resultadoFixture({ precioOriginal: 105, precioFinal: 105, descuentoUnitario: 0 })
 
     expect(previaDeLinea(lineaFixture({ cantidad: 1, ajusteManualPorcentaje: -10 }), resultado)).toMatchObject({
-      ajusteManual: -1.01,
-      total: 9.04,
+      ajusteManual: -11,
+      total: 94,
     })
     expect(previaDeLinea(lineaFixture({ cantidad: 1, ajusteManualPorcentaje: 10 }), resultado)).toMatchObject({
-      ajusteManual: 1.01,
-      total: 11.06,
+      ajusteManual: 11,
+      total: 116,
     })
   })
 
@@ -187,13 +187,19 @@ describe('previaDeLinea', () => {
     const linea = lineaFixture({ cantidad: 0.333 })
     const resultado = resultadoFixture({ precioOriginal: 10.5, precioFinal: 10.5, descuentoUnitario: 0 })
 
-    expect(previaDeLinea(linea, resultado).total).toBe(3.5)
+    expect(previaDeLinea(linea, resultado).total).toBe(3)
   })
 
-  it('un bruto que es empate exacto de medio centavo sube como en el servidor: 0,7 × 1,15 = 0,81, no 0,80', () => {
-    const resultado = resultadoFixture({ precioOriginal: 1.15, precioFinal: 1.15, descuentoUnitario: 0 })
+  it('un bruto que es empate exacto de medio peso sube como en el servidor: 0,7 × 45 = 32, no 31', () => {
+    const resultado = resultadoFixture({ precioOriginal: 45, precioFinal: 45, descuentoUnitario: 0 })
 
-    expect(previaDeLinea(lineaFixture({ cantidad: 0.7 }), resultado).total).toBe(0.81)
+    expect(previaDeLinea(lineaFixture({ cantidad: 0.7 }), resultado).total).toBe(32)
+  })
+
+  it('la oferta x3 por 3500 (1166,66 por unidad) previsualiza 3500, no 3499,98', () => {
+    const resultado = resultadoFixture({ precioOriginal: 1500, precioFinal: 1166.66, descuentoUnitario: 333.34 })
+
+    expect(previaDeLinea(lineaFixture({ cantidad: 3 }), resultado)).toMatchObject({ total: 3500, ajusteManual: 0 })
   })
 
   it('sin precioOriginal reconstruye el precio de lista como precioFinal + descuentoUnitario', () => {
@@ -235,14 +241,14 @@ describe('calcularSubtotalPrevia', () => {
     expect(calcularSubtotalPrevia(lineas, precios)).toBe(335)
   })
 
-  it('suma sin arrastrar error de punto flotante (0,1 + 0,2 es 0,3)', () => {
+  it('suma los totales ya redondeados al peso de cada línea, no la suma sin redondear (0,6 + 0,6 son 2, no 1)', () => {
     const lineas = [lineaFixture({ idArticulo: 1, cantidad: 1 }), lineaFixture({ idArticulo: 2, cantidad: 1 })]
     const precios = {
-      1: resultadoFixture({ idArticulo: 1, precioOriginal: 0.1, precioFinal: 0.1, descuentoUnitario: 0 }),
-      2: resultadoFixture({ idArticulo: 2, precioOriginal: 0.2, precioFinal: 0.2, descuentoUnitario: 0 }),
+      1: resultadoFixture({ idArticulo: 1, precioOriginal: 0.6, precioFinal: 0.6, descuentoUnitario: 0 }),
+      2: resultadoFixture({ idArticulo: 2, precioOriginal: 0.6, precioFinal: 0.6, descuentoUnitario: 0 }),
     }
 
-    expect(calcularSubtotalPrevia(lineas, precios)).toBe(0.3)
+    expect(calcularSubtotalPrevia(lineas, precios)).toBe(2)
   })
 
   it('lee el precio de cada línea por idLinea: dos líneas del mismo artículo suman cada una el suyo', () => {

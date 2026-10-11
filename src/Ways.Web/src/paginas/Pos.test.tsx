@@ -5493,8 +5493,8 @@ describe('Pos — ajuste manual por línea', () => {
     await userEvent.clear(campoDePorcentajeDeAjuste())
     await userEvent.type(campoDePorcentajeDeAjuste(), '12,5')
     await userEvent.click(aplicar)
-    await waitFor(() => expect(screen.getByText('$ 87,50', { selector: 'strong' })).toBeInTheDocument())
-    expect(screen.getByText('Desc. manual 12,5% -$ 12,50')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('$ 87,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Desc. manual 12,5% -$ 13,00')).toBeInTheDocument()
     expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
   })
 

@@ -8,9 +8,10 @@
  * y al ticket EXACTAMENTE lo que se decidió offline es lo honesto.
  *
  * Espeja pixel a pixel la fórmula de `Ways.Domain.Ventas.CalculadorDeTotales.Calcular`: bruto de
- * línea = cantidad × precio ORIGINAL (lista, antes de descuento), descuento = descuentoUnitario ×
- * cantidad, neto = bruto − descuento, y el ajuste manual de la línea (porcentaje con signo) se
- * aplica sobre ese neto: total de línea = neto + ajuste (`calcularTotalesDeLinea`).
+ * línea = cantidad × precio ORIGINAL (lista, antes de descuento) al peso entero, neto = cantidad ×
+ * (precio − descuentoUnitario) redondeado una sola vez al peso, descuento = bruto − neto, y el
+ * ajuste manual de la línea (porcentaje con signo) se aplica sobre ese neto: total de línea =
+ * neto + ajuste (`calcularTotalesDeLinea`). Todos los importes del comprobante son pesos enteros.
  * `subtotal`/`descuentoTotal` del comprobante son la suma de esas mismas columnas;
  * `descuentoManualTotal`/`recargoManualTotal` separan los ajustes por el signo del porcentaje y
  * `total = subtotal − descuentoTotal − descuentoManualTotal + recargoManualTotal` — nunca un
@@ -31,7 +32,7 @@ import { precioEnLista, preciosVigentesOffline } from './instantaneaOffline'
 import { calcularTotalesDeLinea, totalesDeAjusteManual } from '../api/ajusteManual'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
-import { redondearImporte } from '../formato/importes'
+import { redondearAPeso } from '../formato/importes'
 
 export type ParametrosDeComprobanteOfflineSintetico = {
   numero: number
@@ -100,8 +101,8 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     })
   }
 
-  subtotal = redondearImporte(subtotal)
-  descuentoTotal = redondearImporte(descuentoTotal)
+  subtotal = redondearAPeso(subtotal)
+  descuentoTotal = redondearAPeso(descuentoTotal)
   const { descuentoManualTotal, recargoManualTotal } = totalesDeAjusteManual(ajustes)
 
   return {
@@ -117,7 +118,7 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     descuentoTotal,
     descuentoManualTotal,
     recargoManualTotal,
-    total: redondearImporte(subtotal - descuentoTotal - descuentoManualTotal + recargoManualTotal),
+    total: redondearAPeso(subtotal - descuentoTotal - descuentoManualTotal + recargoManualTotal),
     direccionEntrega: null,
     observaciones: null,
     items,

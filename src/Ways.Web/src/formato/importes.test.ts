@@ -4,7 +4,11 @@ import {
   formatearImporte,
   formatearImporteConSigno,
   parsearImporte,
+  productoAPeso,
+  productoDeDiferenciaAPeso,
+  productoDeDiferenciaRedondeado,
   productoRedondeado,
+  redondearAPeso,
   redondearImporte,
 } from './importes'
 
@@ -298,5 +302,67 @@ describe('parsearImporte', () => {
   it('formatearImporte(parsearImporte(texto)) es estable para entradas válidas', () => {
     expect(formatearImporte(parsearImporte('1.234,56'))).toBe('1.234,56')
     expect(formatearImporte(parsearImporte('10000'))).toBe('10.000,00')
+  })
+})
+
+describe('redondearAPeso', () => {
+  it.each([
+    [3499.98, 3500],
+    [3500.49, 3500],
+    [3500.5, 3501],
+    [0.5, 1],
+    [2.5, 3],
+    [-0.5, -1],
+    [-2.5, -3],
+    [-3499.98, -3500],
+  ])('%s se redondea a %s (el medio se aleja de cero)', (valor, esperado) => {
+    expect(redondearAPeso(valor)).toBe(esperado)
+  })
+
+  it('lo que redondea a cero devuelve 0 y nunca -0', () => {
+    expect(Object.is(redondearAPeso(-0.4), -0)).toBe(false)
+  })
+})
+
+describe('productoAPeso', () => {
+  it('es el producto decimal exacto redondeado al peso: un empate que el flotante pierde sube', () => {
+    // 0,7 × 45 = 31,5 exacto; el producto flotante da 31.499999999999996.
+    expect(0.7 * 45).toBeLessThan(31.5)
+    expect(productoAPeso([0.7, 45])).toBe(32)
+    expect(productoAPeso([-0.7, 45])).toBe(-32)
+  })
+
+  it('una cantidad pesada de 3 decimales se redondea una sola vez', () => {
+    expect(productoAPeso([0.375, 1999.99])).toBe(750)
+  })
+})
+
+describe('productoDeDiferenciaRedondeado', () => {
+  it('es factor × (minuendo − sustraendo) exacto: 3 × (1500 − 333,34) = 3499,98', () => {
+    expect(productoDeDiferenciaRedondeado(3, 1500, 333.34)).toBe(3499.98)
+  })
+
+  it('la resta no arrastra ruido de flotante: un empate exacto sube', () => {
+    // 1 × (2,3 − 0,8) = 1,5 exacto; la resta flotante da 1.4999999999999998.
+    expect(2.3 - 0.8).toBeLessThan(1.5)
+    expect(productoDeDiferenciaRedondeado(1, 2.3, 0.8, 0)).toBe(2)
+    expect(productoDeDiferenciaRedondeado(-1, 2.3, 0.8, 0)).toBe(-2)
+    expect(productoDeDiferenciaRedondeado(1, 0.3, 0.1, 2)).toBe(0.2)
+  })
+
+  it('devuelve NaN con un operando no finito y nunca -0', () => {
+    expect(productoDeDiferenciaRedondeado(Number.NaN, 1, 1)).toBeNaN()
+    expect(Object.is(productoDeDiferenciaRedondeado(-1, 1, 1, 0), -0)).toBe(false)
+  })
+})
+
+describe('productoDeDiferenciaAPeso', () => {
+  it('la oferta x3 por 3500: 3 × (1500 − 333,34) da 3500', () => {
+    expect(productoDeDiferenciaAPeso(3, 1500, 333.34)).toBe(3500)
+  })
+
+  it('el medio se aleja de cero con cantidad positiva y negativa', () => {
+    expect(productoDeDiferenciaAPeso(1, 10, 1.5)).toBe(9)
+    expect(productoDeDiferenciaAPeso(-1, 10, 1.5)).toBe(-9)
   })
 })

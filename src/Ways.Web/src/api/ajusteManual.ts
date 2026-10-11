@@ -8,7 +8,7 @@
  * cuenta: imprimen los montos que ya trae el comprobante. El servidor recalcula cada monto con la
  * misma fórmula, en decimal, y es quien manda; acá solo se anticipa lo que va a cobrar.
  */
-import { productoRedondeado, redondearImporte } from '../formato/importes'
+import { productoAPeso, productoDeDiferenciaAPeso, redondearImporte } from '../formato/importes'
 
 /** Magnitud máxima admitida del porcentaje (el rango válido es de -100 a 100, sin incluir el 0). */
 export const PORCENTAJE_MAXIMO_DE_AJUSTE = 100
@@ -16,9 +16,9 @@ export const PORCENTAJE_MAXIMO_DE_AJUSTE = 100
 export type TipoDeAjusteManual = 'descuento' | 'recargo'
 
 export type TotalesDeLinea = {
-  /** `cantidad × precioOriginal`, antes de ofertas. */
+  /** `cantidad × precioOriginal` al peso, antes de ofertas. */
   bruto: number
-  /** Descuento por oferta de la línea (`descuentoUnitario × cantidad`), en positivo. */
+  /** Descuento por oferta de la línea (`bruto − neto`), en positivo en una venta normal. */
   descuento: number
   /** `bruto − descuento`: la base sobre la que se aplica el ajuste manual. */
   neto: number
@@ -29,36 +29,37 @@ export type TotalesDeLinea = {
 }
 
 /**
- * Monto del ajuste sobre `neto` (`neto × porcentaje / 100`), redondeado half-away-from-zero a 2
- * decimales con aritmética decimal exacta (`productoRedondeado`): dividir por 100 en punto
- * flotante pierde empates exactos (4,10 × 15 % es 0,615 y el flotante da 0,6149999999999999), y
- * el servidor, que calcula en decimal, redondea el empate hacia arriba. El 100 entra como el
- * factor `0.01`, que es exacto en decimal.
+ * Monto del ajuste sobre `neto` (`neto × porcentaje / 100`), redondeado half-away-from-zero al
+ * peso entero con aritmética decimal exacta (`productoAPeso`): dividir por 100 en punto flotante
+ * pierde empates exactos (375 × 9,2 % es 34,5 y el flotante da 34.49999999999999), y el servidor,
+ * que calcula en decimal, redondea el empate hacia arriba. El 100 entra como el factor `0.01`, que
+ * es exacto en decimal.
  */
 export function calcularAjusteManual(neto: number, porcentaje: number | null | undefined): number {
   if (porcentaje === null || porcentaje === undefined) return 0
-  return productoRedondeado([neto, porcentaje, 0.01])
+  return productoAPeso([neto, porcentaje, 0.01])
 }
 
-/** Fórmula de línea del servidor (`CalculadorDeTotales`): cada paso se redondea a 2 decimales
- * antes de pasar al siguiente, y el ajuste se aplica sobre el neto POSTERIOR a las ofertas. El
- * bruto y el descuento son productos decimales exactos (`productoRedondeado`), con cualquier
- * cantidad de decimales por unidad. */
+/** Fórmula de línea del servidor (`CalculadorDeTotales`), toda en pesos enteros: el bruto es
+ * `cantidad × precio` redondeado al peso, el neto es el neto VERDADERO `cantidad × (precio −
+ * descuento unitario)` redondeado una sola vez, el descuento de la línea es `bruto − neto` (nunca
+ * una cifra redondeada por su cuenta) y el ajuste se aplica sobre ese neto POSTERIOR a las
+ * ofertas. Los productos son decimales exactos, con cualquier cantidad de decimales por unidad. */
 export function calcularTotalesDeLinea(params: {
   cantidad: number
   precioOriginal: number
   descuentoUnitario: number
   porcentaje: number | null | undefined
 }): TotalesDeLinea {
-  const bruto = productoRedondeado([params.cantidad, params.precioOriginal])
-  const descuento = productoRedondeado([params.descuentoUnitario, params.cantidad])
-  const neto = redondearImporte(bruto - descuento)
+  const bruto = productoAPeso([params.cantidad, params.precioOriginal])
+  const neto = productoDeDiferenciaAPeso(params.cantidad, params.precioOriginal, params.descuentoUnitario)
+  const descuento = bruto - neto
   const ajuste = calcularAjusteManual(neto, params.porcentaje)
-  return { bruto, descuento, neto, ajuste, total: redondearImporte(neto + ajuste) }
+  return { bruto, descuento, neto, ajuste, total: neto + ajuste }
 }
 
 /**
- * Separa los ajustes por el SIGNO DEL PORCENTAJE (no del monto): el descuento manual suma
+ * Separa los ajustes (ya enteros, salen de `calcularAjusteManual`) por el SIGNO DEL PORCENTAJE (no del monto): el descuento manual suma
  * `−ajuste` de las líneas con porcentaje negativo y el recargo suma `ajuste` de las de porcentaje
  * positivo, ambos en positivo en una venta normal. Un recargo nunca se netea contra un descuento,
  * así que un comprobante con los dos muestra los dos.

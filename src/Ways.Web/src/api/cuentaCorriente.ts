@@ -9,6 +9,7 @@
  */
 import { api } from './cliente'
 import { esVueltoJustificado } from './pagos'
+import { redondearImporte } from '../formato/importes'
 import type {
   ComportamientoMedioPago,
   ComprobanteEmitido,
@@ -24,9 +25,8 @@ import type {
   SolicitudDeReliquidacion,
 } from './tipos'
 
-function redondear(valor: number): number {
-  return Math.round((valor + Number.EPSILON) * 100) / 100
-}
+// Sumas de importes tipeados y saldos: conservan hasta 2 decimales (no son importes de venta calculados).
+const redondear = (valor: number): number => redondearImporte(valor)
 
 /** Offset UTC del navegador (`±HH:MM`) para la fecha local dada — el servidor corre en UTC
  * (Docker) mientras el local opera en ART (UTC-3); sin este offset explícito, un `desde`/`hasta`

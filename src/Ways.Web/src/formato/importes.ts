@@ -127,6 +127,11 @@ export function productoRedondeado(factores: readonly number[], decimales = 2): 
     escala += decimal.escala
   }
 
+  return redondearMantisa(mantisa, escala, decimales)
+}
+
+/** Redondea half-away-from-zero el decimal exacto `mantisa × 10^-escala` a `decimales` dígitos. */
+function redondearMantisa(mantisa: bigint, escala: number, decimales: number): number {
   const exceso = escala - decimales
   if (exceso <= 0) return Number(mantisa * 10n ** BigInt(-exceso)) / 10 ** decimales
 
@@ -135,6 +140,44 @@ export function productoRedondeado(factores: readonly number[], decimales = 2): 
   let cociente = magnitud / divisor
   if ((magnitud % divisor) * 2n >= divisor) cociente += 1n
   return Number(mantisa < 0n ? -cociente : cociente) / 10 ** decimales
+}
+
+/**
+ * `factor × (minuendo − sustraendo)` con aritmética decimal exacta, redondeado half-away-from-zero
+ * a `decimales` dígitos. Es el neto de una línea (`cantidad × (precio − descuento unitario)`): la
+ * resta en punto flotante (`1166.66` menos algo) mete ruido de último dígito que, sobre un empate
+ * exacto, decide el redondeo para el lado equivocado. `NaN` si algún operando no es finito.
+ */
+export function productoDeDiferenciaRedondeado(
+  factor: number,
+  minuendo: number,
+  sustraendo: number,
+  decimales = 2,
+): number {
+  if (![factor, minuendo, sustraendo].every(Number.isFinite)) return Number.NaN
+  const a = aDecimalExacto(minuendo)
+  const b = aDecimalExacto(sustraendo)
+  const escalaComun = Math.max(a.escala, b.escala)
+  const diferencia = a.mantisa * 10n ** BigInt(escalaComun - a.escala) - b.mantisa * 10n ** BigInt(escalaComun - b.escala)
+  const multiplicador = aDecimalExacto(factor)
+  return redondearMantisa(diferencia * multiplicador.mantisa, escalaComun + multiplicador.escala, decimales)
+}
+
+/**
+ * Los importes de venta calculados (líneas, ajustes, totales) son pesos enteros, igual que en el
+ * servidor (`RedondeoDePeso`): half-away-from-zero al peso. Las tres funciones son la forma de
+ * pedir ese redondeo; compras, costos y el desglose fiscal siguen usando centavos.
+ */
+export function redondearAPeso(valor: number): number {
+  return redondearImporte(valor, 0)
+}
+
+export function productoAPeso(factores: readonly number[]): number {
+  return productoRedondeado(factores, 0)
+}
+
+export function productoDeDiferenciaAPeso(factor: number, minuendo: number, sustraendo: number): number {
+  return productoDeDiferenciaRedondeado(factor, minuendo, sustraendo, 0)
 }
 
 export interface OpcionesFormatearImporte {
