@@ -900,9 +900,31 @@ documento y reparte el ahorro entre las líneas consumidas:
   el importe de lista de las unidades que aporta: el resto de redondeo se coloca en la última línea que puede
   absorberlo y, si no cabe, retrocede a las anteriores. Las unidades consumidas de cada conjunto suman exactamente el
   precio del combo. Es un importe de línea, no unitario.
-- Las líneas con cantidad no entera o no positiva (notas de crédito) se ignoran en la detección. El motor solo ve la
-  `Cantidad`: un artículo pesable vendido en cantidad entera (2,000 kg) se consumiría como unidades. Por eso la ruta de
-  venta (T3) tiene que excluir de la detección a los artículos pesables según su unidad de venta, no según la cantidad.
+- Las líneas con cantidad no entera o no positiva se ignoran en la detección. El motor solo ve la `Cantidad`: un
+  artículo pesable vendido en cantidad entera (2,000 kg) se consumiría como unidades. Por eso la venta
+  (`CombosEnVenta`) deja afuera de la detección a los artículos cuya `UnidadVenta` no es `Unidad`, según la unidad de
+  venta y no según la cantidad.
+
+#### Combos en la venta online
+
+`ServicioDeVentas.EmitirAsync` aplica combos en la fase de decisión, después de resolver las ofertas y antes de los
+totales, el FEFO y la validación de pagos. Solo en la venta online de signo positivo: quedan afuera la conversión de un
+presupuesto (precios congelados), la venta con `NumeroPreasignado` (precios del dispositivo) y las notas de crédito.
+El combo nunca es una línea de la venta: la venta conserva las líneas de los artículos reales y el combo es un descuento
+repartido entre ellas, así que stock (un movimiento por artículo), IVA (la alícuota de cada artículo sobre el total de
+línea ya descontado) y anulación siguen funcionando por artículo.
+
+- `items_comprobante_venta.id_combo` (FK compuesta `(id_combo, id_tenant)` → `combos`, `Restrict`, índice
+  `ix_items_comprobante_venta_combo`, sin backfill) guarda el combo de la línea; si varios combos consumieron unidades
+  de la misma línea se guarda el de menor `id_combo`. Es un snapshot: la venta emitida se lee igual aunque el combo se
+  dé de baja después (la baja es lógica y la FK nunca queda colgada).
+- El descuento de la línea es `round(descuento_de_oferta_unitario × unidades no consumidas) + parte del combo`
+  (`CalculadorDeTotales`, campos `UnidadesConsumidasPorCombo` y `AhorroDeCombo` de `LineaParaCalcular`). Una línea cuyas
+  unidades se consumieron todas no lleva `id_oferta` (no recibió ninguna oferta); si le quedan unidades fuera del combo,
+  conserva su oferta y su `id_oferta`.
+- Los candidatos se cargan con UNA consulta (combos vivos y activos de la empresa del punto de venta o de todo el tenant,
+  unidos con sus componentes), y solo si la venta suma al menos 2 unidades. Todo se decide antes de la transacción y viaja
+  en el plan: un reintento de la escritura no vuelve a detectar combos.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
 sus componentes (`Cascade`). La baja de negocio del combo es lógica (`deleted_at`) y borra físicamente sus componentes
@@ -987,7 +1009,8 @@ items_comprobante_venta (
     precio_unitario numeric(14,2),           -- de la lista aplicada, ya resuelto
     id_lista_precio integer,                 -- con qué lista se vendió
     id_oferta       integer NULL,            -- si una oferta tocó esta línea
-    descuento       numeric(14,2) NOT NULL DEFAULT 0,   -- importe descontado en la línea
+    id_combo        integer NULL,            -- combo que consumió unidades de la línea (FK compuesta, Restrict)
+    descuento       numeric(14,2) NOT NULL DEFAULT 0,   -- importe descontado en la línea (oferta + parte del combo)
     ajuste_manual_porcentaje numeric(5,2) NULL,         -- con signo: negativo = descuento, positivo = recargo
     ajuste_manual   numeric(14,2) NOT NULL DEFAULT 0,   -- monto con signo del ajuste, sobre el neto de la línea
     id_alicuota_iva integer, porcentaje_iva numeric(5,2),  -- snapshot

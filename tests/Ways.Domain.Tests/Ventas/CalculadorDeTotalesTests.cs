@@ -300,4 +300,80 @@ public class CalculadorDeTotalesTests
         Assert.Equal(0m, conPorcentajeNulo.RecargoManualTotal);
         Assert.Equal(sinCuartoArgumento.Subtotal - sinCuartoArgumento.DescuentoTotal, sinCuartoArgumento.Total);
     }
+
+    [Fact]
+    public void LosCamposDeComboPorDefectoDejanElResultadoIdenticoAlDeLaLineaSinCombo()
+    {
+        var sinCampos = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, -10m),
+            new LineaParaCalcular(-3m, 100m, 10m)
+        ]);
+        var conCerosExplicitos = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, -10m, UnidadesConsumidasPorCombo: 0m, AhorroDeCombo: 0m),
+            new LineaParaCalcular(-3m, 100m, 10m, null, 0m, 0m)
+        ]);
+
+        Assert.Equal(sinCampos.Items, conCerosExplicitos.Items);
+        Assert.Equal(
+            (sinCampos.Subtotal, sinCampos.DescuentoTotal, sinCampos.Total),
+            (conCerosExplicitos.Subtotal, conCerosExplicitos.DescuentoTotal, conCerosExplicitos.Total));
+    }
+
+    [Fact]
+    public void LaLineaConConsumoParcialDeComboDescuentaLaOfertaSoloDeLasUnidadesNoConsumidasMasLaParteDelCombo()
+    {
+        // 3 unidades a 1000 con oferta de 100 por unidad; el combo consumió 2 y le tocó 1500:
+        // descuento = 100 × 1 + 1500 = 1600; neto = 3000 − 1600 = 1400.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(3m, 1000m, 100m, UnidadesConsumidasPorCombo: 2m, AhorroDeCombo: 1500m)]);
+
+        Assert.Equal(3000m, resultado.Subtotal);
+        Assert.Equal(1600m, resultado.Items[0].Descuento);
+        Assert.Equal(1600m, resultado.DescuentoTotal);
+        Assert.Equal(1400m, resultado.Items[0].Total);
+        Assert.Equal(1400m, resultado.Total);
+    }
+
+    [Fact]
+    public void LaLineaConTodasSusUnidadesConsumidasIgnoraLaOfertaUnitaria()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(2m, 3000m, 500m, UnidadesConsumidasPorCombo: 2m, AhorroDeCombo: 727.27m)]);
+
+        Assert.Equal(727.27m, resultado.Items[0].Descuento);
+        Assert.Equal(5272.73m, resultado.Items[0].Total);
+    }
+
+    [Fact]
+    public void ElDescuentoDeLaOfertaSeRedondeaSobreLasUnidadesNoConsumidasYElDelComboSeSumaSinRedondear()
+    {
+        // 0.005 × 1 unidad no consumida redondea a 0.01 (lejos de cero); la parte del combo es un
+        // importe de línea ya en centavos y se suma tal cual.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(4m, 10m, 0.005m, UnidadesConsumidasPorCombo: 3m, AhorroDeCombo: 4.5m)]);
+
+        Assert.Equal(4.51m, resultado.Items[0].Descuento);
+        Assert.Equal(35.49m, resultado.Items[0].Total);
+    }
+
+    [Fact]
+    public void ElDescuentoDeComboAlimentaElTotalYMantieneLaInvarianteConAjusteManual()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(1m, 3000m, 0m, null, 1m, 272.73m),
+            new LineaParaCalcular(1m, 2500m, 0m, -10m, 1m, 227.27m),
+            new LineaParaCalcular(1m, 100m, 0m)
+        ]);
+
+        // Línea 1: 3000 − 272.73 = 2727.27. Línea 2: neto 2500 − 227.27 = 2272.73, ajuste −10 % = −227.27
+        // (redondeo lejos de cero) ⇒ 2045.46. Línea 3: 100.
+        Assert.Equal(5600m, resultado.Subtotal);
+        Assert.Equal(500m, resultado.DescuentoTotal);
+        Assert.Equal(227.27m, resultado.DescuentoManualTotal);
+        Assert.Equal(4872.73m, resultado.Total);
+        Assert.Equal(resultado.Items.Sum(i => i.Total), resultado.Total);
+    }
 }

@@ -407,6 +407,40 @@ public class ServicioDeCombos(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>Los combos que pueden aplicarse a una venta de la empresa <paramref name="idEmpresa"/>: vivos
+    /// (el filtro global excluye los dados de baja), activos y de esa empresa o de todo el tenant, con sus
+    /// componentes. Una sola consulta (combos unidos con sus componentes) sin importar cuántos combos haya; un combo
+    /// sin componentes no figura. Estático y sin estado para que el checkout no sume una dependencia al
+    /// constructor de <c>ServicioDeVentas</c>.</summary>
+    public static async Task<IReadOnlyList<ComboCandidato>> CargarCandidatosParaVentaAsync(
+        IWaysDbContext db, int idEmpresa, CancellationToken ct = default)
+    {
+        var filas = await (
+                from combo in db.Combos
+                where combo.Activo && (combo.IdEmpresa == null || combo.IdEmpresa == idEmpresa)
+                join componente in db.CombosComponentes on combo.Id equals componente.IdCombo
+                orderby combo.Id, componente.Id
+                select new
+                {
+                    combo.Id,
+                    combo.Nombre,
+                    combo.Precio,
+                    componente.IdArticulo,
+                    componente.IdFamilia,
+                    componente.Cantidad
+                })
+            .ToListAsync(ct);
+
+        return filas
+            .GroupBy(f => f.Id)
+            .Select(g => new ComboCandidato(
+                g.Key,
+                g.First().Nombre,
+                g.First().Precio,
+                g.Select(f => new ComponenteDeCombo(f.IdArticulo, f.IdFamilia, f.Cantidad)).ToList()))
+            .ToList();
+    }
+
     private async Task<Combo> BuscarAsync(int id, CancellationToken ct) =>
         await db.Combos.FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el combo {id}.");

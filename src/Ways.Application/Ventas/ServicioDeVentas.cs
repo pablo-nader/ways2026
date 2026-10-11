@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.Caja;
+using Ways.Application.Combos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Ofertas;
@@ -15,6 +16,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Combos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
@@ -197,8 +199,17 @@ public class ServicioDeVentas(
         // es un materializador PRIVADO SEPARADO, MaterializarItems (:1007 y siguientes) queda
         // literalmente intacto — los dos corren CalculadorDeTotales.Calcular como única
         // autoridad aritmética (tensión T2).
+        // Combos (D1-D8 del feature combos): solo en la venta online, que es la que el servidor precia.
+        // Quedan fuera la conversión de un presupuesto (precios congelados), la venta offline con
+        // NumeroPreasignado (precios del dispositivo) y la devolución (signo negativo). Todo lo que se
+        // decide acá viaja en el plan: la lambda reintentable no vuelve a detectar combos.
+        var combosPorLinea = presupuestoOrigen is null && solicitud.NumeroPreasignado is null && tipo.Signo > 0
+            ? await DetectarCombosAsync(puntoVenta.IdEmpresa, lineas, resolucion!, articuloPorId, ct)
+            : SinCombos;
+
         var (items, totales) = presupuestoOrigen is null
-            ? MaterializarItems(tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio)
+            ? MaterializarItems(
+                tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio, combosPorLinea)
             : MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId);
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
@@ -484,6 +495,40 @@ public class ServicioDeVentas(
 
             return existente;
         });
+    }
+
+    private static readonly IReadOnlyDictionary<int, ComboEnLinea> SinCombos = new Dictionary<int, ComboEnLinea>();
+
+    /// <summary>Detecta los combos de una venta online ya resuelta por ofertas. Cuesta UNA consulta
+    /// (<see cref="ServicioDeCombos.CargarCandidatosParaVentaAsync"/>), y ninguna si la venta suma menos
+    /// unidades que el mínimo de un combo: con menos no puede completarse ninguno. Es solo una
+    /// optimización; qué líneas entran a la detección lo decide <see cref="CombosEnVenta.Resolver"/>.</summary>
+    private async Task<IReadOnlyDictionary<int, ComboEnLinea>> DetectarCombosAsync(
+        int idEmpresa,
+        IReadOnlyList<LineaDeVenta> lineas,
+        IReadOnlyList<ResultadoDeResolucion> resolucion,
+        IReadOnlyDictionary<int, Articulo> articuloPorId,
+        CancellationToken ct)
+    {
+        if (lineas.Sum(l => l.Cantidad) < ReglaDeCombos.UnidadesMinimas)
+        {
+            return SinCombos;
+        }
+
+        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(db, idEmpresa, ct);
+
+        var lineasParaCombos = lineas
+            .Select((linea, i) =>
+            {
+                var articulo = articuloPorId[linea.IdArticulo];
+
+                return new LineaDeVentaParaCombos(
+                    linea.IdArticulo, articulo.IdFamilia, articulo.UnidadVenta, linea.Cantidad,
+                    resolucion[i].PrecioOriginal, resolucion[i].DescuentoUnitario);
+            })
+            .ToList();
+
+        return CombosEnVenta.Resolver(lineasParaCombos, candidatos);
     }
 
     /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
@@ -1334,6 +1379,7 @@ public class ServicioDeVentas(
                 IdArea = i.IdArea,
                 IdListaPrecio = i.IdListaPrecio,
                 IdOferta = i.IdOferta,
+                IdCombo = i.IdCombo,
                 IdAlicuotaIva = i.IdAlicuotaIva,
                 PorcentajeIva = i.PorcentajeIva,
                 Cantidad = i.Cantidad,
@@ -1830,7 +1876,8 @@ public class ServicioDeVentas(
         IReadOnlyList<ResultadoDeResolucion> resolucion,
         IReadOnlyDictionary<int, Articulo> articuloPorId,
         IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
-        int idListaPrecio)
+        int idListaPrecio,
+        IReadOnlyDictionary<int, ComboEnLinea> combosPorLinea)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
 
@@ -1863,9 +1910,13 @@ public class ServicioDeVentas(
                     400);
             }
 
+            // El combo es un descuento de línea sobre las unidades que consumió; las demás conservan su
+            // oferta unitaria (CalculadorDeTotales). Sin combo en la línea, el cálculo es el de siempre.
+            combosPorLinea.TryGetValue(i, out var comboDeLaLinea);
+
             lineasParaCalcular.Add(new LineaParaCalcular(
                 cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
-                linea.AjusteManualPorcentaje));
+                linea.AjusteManualPorcentaje, comboDeLaLinea.UnidadesConsumidas, comboDeLaLinea.Ahorro));
         }
 
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
@@ -1889,6 +1940,16 @@ public class ServicioDeVentas(
             // arma ResolvedorDeOfertas) — el descuento total sigue siendo la suma de todas, ese
             // no se pierde.
             var idOferta = resultado.Aplicadas.Count > 0 ? resultado.Aplicadas[0].IdOferta : (int?)null;
+
+            // Combos: una línea cuyas unidades se consumieron TODAS por combos no recibió ninguna oferta
+            // (se vendió a lista menos su parte del combo), así que no lleva id_oferta; si le quedan
+            // unidades fuera del combo, esas unidades sí tuvieron su oferta y la conserva. id_combo es el
+            // combo de menor id entre los que consumieron unidades de la línea.
+            var tieneCombo = combosPorLinea.TryGetValue(i, out var combo);
+            if (tieneCombo && combo.UnidadesConsumidas == linea.Cantidad)
+            {
+                idOferta = null;
+            }
 
             // stage-pos-venta-offline-backend: "lo que el servidor HUBIERA cobrado" HOY, solo
             // para DETECTAR (nunca bloquear ni recalcular) una discrepancia — nunca se persiste
@@ -1918,7 +1979,8 @@ public class ServicioDeVentas(
                 PrecioEsperado: discrepante ? resultado.PrecioOriginal : null,
                 DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null,
                 AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
-                AjusteManual: calculado.AjusteManual));
+                AjusteManual: calculado.AjusteManual,
+                IdCombo: tieneCombo ? combo.IdCombo : null));
         }
 
         return (items, totales);
@@ -2224,7 +2286,7 @@ public class ServicioDeVentas(
                     i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento,
                     i.AjusteManualPorcentaje, i.AjusteManual, i.Total,
                     planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false,
-                    planItem?.PrecioDiscrepante ?? false);
+                    planItem?.PrecioDiscrepante ?? false, i.IdCombo);
             })
             .ToList();
 
@@ -2270,7 +2332,7 @@ public class ServicioDeVentas(
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
-        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m);
+        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
