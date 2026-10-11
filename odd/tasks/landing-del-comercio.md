@@ -61,7 +61,7 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
 
 ## Tasks
 
-- [ ] **T1 — Backend: `vitrinas`, `Publico` mode, public and admin endpoints.** Delegated. PR 4.
+- [x] **T1 — Backend: `vitrinas`, `Publico` mode, public and admin endpoints.** Delegated. PR 4. Commits `8f5c85a9`, `6250e913`, `a3f30aa7`.
   - Entity, configuration, migration with RLS policies and the `publico` mode in
     `ITenantActual`/`TenantActualDeSesion` and the interceptor.
   - `GET /api/publico/vitrina` (anonymous; tenant from the host; Publico mode): nombre
@@ -92,7 +92,45 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
 
 ## Verification evidence
 
-(recorded per task as commits land)
+### T1 (commits `8f5c85a9` modo publico, `6250e913` tabla y RLS, `a3f30aa7` API)
+
+- `dotnet build src/Ways.Api/Ways.Api.csproj -warnaserror`: 0 warnings, 0 errors.
+- `dotnet test tests/Ways.Domain.Tests`: 1192 passed. `dotnet test tests/Ways.Application.Tests`: 811 passed.
+- `dotnet test tests/Ways.IntegrationTests` (alone, once, at the end): 3422 passed, 0 failed, 29 m 25 s.
+- `dotnet format --verify-no-changes` on the changed files: only baseline noise (ENDOFLINE, IDE0008, IMPORTS, and the
+  WHITESPACE findings on untouched lines of `Program.cs` and the comment lines of `TenantActualDeSesion.cs`).
+- Deviation from the brief, found while writing the "Publico cannot read `articulos`" test: the standard policies
+  `{tabla}_tenant` do not check the mode, so a public mode carrying its tenant in `app.tenant_id` would read and write
+  every tenant table. The tenant of the public mode travels in its own GUC `app.tenant_publico`
+  (`app_tenant_publico()`), the policies use it, and `app.tenant_id` stays empty. Second small addition: the vitrinas
+  policy also requires `deleted_at IS NULL`.
+- Bug caught by the tests before shipping: `NULL IN (...)` is NULL and a CHECK that evaluates to NULL passes, so
+  `ck_vitrinas_logo` accepted a logo with no content type until the type got an explicit `IS NOT NULL`.
+
+Mutation evidence (clause mutated, tests that went red, then reverted and green):
+
+| # | Mutation | Red |
+|---|---|---|
+| M1 | `vitrinas_publico_lectura` without `id_tenant = app_tenant_publico()` | `EnModoPublicoLaPolicyDeVitrinasDejaVerSoloLaPublicadaYVivaDelTenantDelGuc`, `ElContextoPublicoDeEf...`, `EnModoPublicoSinTenantNoSeVeNada` |
+| M2 | same, `empresas` | `EnModoPublicoLasPoliciesDeEmpresasYPuntosVenta...`, `ElContextoPublicoDeEf...`, `EnModoPublicoSinTenantNoSeVeNada` |
+| M3 | same, `puntos_venta` | `EnModoPublicoLasPoliciesDeEmpresasYPuntosVenta...`, `ElContextoPublicoDeEf...`, `EnModoPublicoSinTenantNoSeVeNada` |
+| M4 | vitrinas policy without `publicada` | `...DeVitrinasDejaVer...`, `ElLogoDeUnaVitrinaSinPublicarNoSeSirve`, `UnComercioSinVitrinaPublicadaViva404...` (+1) |
+| M5 | vitrinas policy without `deleted_at IS NULL` | `...DeVitrinasDejaVer...`, `ElContextoPublicoDeEf...` |
+| M6 | policies without `app_modo() = 'publico'` | `ElGucPublicoSinElModoPublicoNoAbreNada` x3 |
+| M7 | `ComoGucs` also puts the tenant in `app.tenant_id` | `ElContextoPublicoDeEf...`, `ElReaplicadoSobreUnaConexionAbierta...`, `ElModoPublicoLlevaSuTenantEnElGucPublico...` (unit) +2 |
+| M8 | extra public policy on `areas` | `EnModoPublicoNoSeLeeNingunaOtraTablaDelTenant`, `SoloVitrinasEmpresasYPuntosVenta...` |
+| M9 | `GuardarAsync` validates before the 404 | `UnaEmpresaQueElAdminNoVeDa404NoEncontradoAntesQueCualquierValidacion` x3 |
+| M10 | `GuardarAsync` with a retrying strategy | 2 structural tests (Application) + `UnaFallaTransitoriaAlCrearLaVitrinaNoSeReintentaNiGuardaNada` |
+| M11 | no tenant lock | `DosPublicacionesSimultaneasDelMismoTenantDanUnOkYUn409VitrinaYaPublicada` |
+| M12 | no translation of `ux_vitrinas_publicada_por_tenant` | `PublicarUnaSegundaEmpresaDelTenantDa409...`, `DosPublicacionesSimultaneas...` |
+| M13 | logo sniffing accepts anything | 11 domain tests + `UnLogoConTipoDeclaradoOContenidoNoAdmitidoDa415...` |
+| M14 | logo limit `>=` instead of `>` | `UnLogoDeExactamenteUnMegabyteSeAcepta` (unit) and the integration one |
+| M15 | constant ETag | `ElEtagYLaVersionSalenDeLaUltimaCarga...`, `ElLogoSeSirveConSuTipoCacheDeUnaHora...` |
+| M16 | vitrina created with `IdTenant = 0` | `LaPlataformaTambienAdministraLaVitrina...` (+2) |
+| M17 | DELETE of the logo keeps the content type | `QuitarElLogoLoBorraEntero...` (+2) |
+
+Open for the owner: `vitrinas` is a `marcado` dependent in the usage guard (same as `dominios`), so a tenant or empresa
+that has a vitrina saved cannot be deleted, and there is no DELETE for the vitrina itself.
 
 ## Delivery slices
 
@@ -100,4 +138,5 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
 
 ## Next step
 
-Starts after `dominios-por-tenant` T3.
+T2 — web admin "Vitrina" page, on top of the endpoints of T1 (`GET/PUT /api/empresas/{id}/vitrina`,
+`PUT/DELETE .../vitrina/logo` with the raw image as the request body, `Content-Type: image/png|jpeg|webp`).
