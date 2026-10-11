@@ -840,6 +840,58 @@ Migración `OfertasPorFamilia`: revertirla (`Down`) aborta con `23514` mientras 
 familia, porque el CHECK anterior de tres columnas no admite esa fila; esas ofertas hay que eliminarlas o
 reasignarles otro alcance antes de revertir.
 
+### Combos
+
+Un combo es un conjunto de dos o más unidades que se vende a un precio fijo (ej. 1 pancho $3.000 + 1 coca $2.500 =
+$5.000). Cada componente es un artículo o una familia, con su cantidad. La venta nunca lleva una línea "combo": sigue
+guardando las líneas de los artículos reales y el combo es un descuento repartido entre ellas, así que stock, IVA,
+anulación y reportes siguen funcionando por artículo.
+
+```sql
+combos (                      -- [catálogo]
+    id_combo,
+    id_empresa integer NULL,                 -- NULL = toda empresa del tenant
+    codigo     integer NOT NULL,             -- lo que se tipea tras la "C" en el POS
+    nombre     citext,                       -- lo que imprime el ticket (no único)
+    precio     numeric(14,2) NOT NULL,       -- precio fijo del conjunto, no depende de la lista de precios
+    activo
+);
+CHECK (precio > 0);                          -- ck_combos_precio_positivo
+UNIQUE (id_tenant, codigo) WHERE deleted_at IS NULL;   -- ux_combos_codigo
+
+combos_componentes (          -- [catálogo] hijo de combos, sin auditoría (PK propia)
+    id_combo_componente, id_tenant, id_combo,
+    id_articulo integer NULL,                -- FK (id_articulo, id_tenant) -> articulos (Restrict)
+    id_familia  integer NULL,                -- FK (id_familia, id_tenant)  -> familias  (Restrict)
+    cantidad    numeric(12,3) NOT NULL
+);
+CHECK (num_nonnulls(id_articulo, id_familia) = 1);   -- ck_combos_componentes_alcance_exclusivo
+CHECK (cantidad > 0);                                -- ck_combos_componentes_cantidad_positiva
+UNIQUE (id_combo, id_articulo) WHERE id_articulo IS NOT NULL;  -- ux_combos_componentes_articulo
+UNIQUE (id_combo, id_familia)  WHERE id_familia  IS NOT NULL;  -- ux_combos_componentes_familia
+-- FK (id_combo, id_tenant) -> combos (Cascade)
+```
+
+Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conjunto suma al menos dos unidades en
+total y las cantidades son enteros (los artículos pesables no pueden ser componentes). `ResolvedorDeCombos` (dominio
+puro) detecta los conjuntos completos en el documento y reparte el ahorro entre las líneas consumidas:
+
+- Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. Entre combos que
+  compiten gana el de mayor ahorro por aplicación, y a igual ahorro el de menor `id_combo`. El algoritmo es voraz:
+  no busca el óptimo global cuando varios combos se pisan.
+- Dentro de un combo se cubren primero los componentes artículo y después los familia; entre líneas que pueden
+  cubrir un mismo componente se elige por orden de documento.
+- Las unidades consumidas se cobran a precio de lista menos su parte del combo; la oferta no se apila sobre ellas, y
+  el combo solo aplica si queda estrictamente más barato que esas mismas unidades con su oferta. Las unidades de la
+  misma línea que no entran al combo conservan su oferta.
+- El ahorro de una aplicación (lista de las unidades consumidas − precio del combo) se reparte entre las líneas en
+  proporción a su importe de lista, redondeado a centavos (`AwayFromZero`), y el resto de redondeo cae en la última
+  línea: las unidades consumidas suman exactamente el precio del combo. Es un importe de línea, no unitario.
+- Las líneas con cantidad no entera o no positiva (pesables, notas de crédito) se ignoran en la detección.
+
+Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
+sus componentes (`Cascade`), aunque la baja de negocio es lógica (`deleted_at`).
+
 ---
 
 ## 4. Comprobantes de venta
@@ -2046,6 +2098,9 @@ erDiagram
     ofertas }o--o| grupos : ""
     ofertas }o--o| categorias : ""
     ofertas }o--o| familias : ""
+    combos ||--o{ combos_componentes : ""
+    combos_componentes }o--o| articulos : ""
+    combos_componentes }o--o| familias : ""
     comprobantes_venta }o--|| tipos_comprobante : ""
     comprobantes_venta }o--|| clientes : ""
     comprobantes_venta ||--o{ items_comprobante_venta : ""
