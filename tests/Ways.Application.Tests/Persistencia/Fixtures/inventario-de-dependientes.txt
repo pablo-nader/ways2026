@@ -9,6 +9,7 @@ Empresa | articulos_empresas | id_empresa,id_tenant | sinmarca
 Empresa | categorias | id_empresa,id_tenant | marcado
 Empresa | certificados_fiscales | id_empresa,id_tenant | marcado
 Empresa | clientes | id_empresa,id_tenant | marcado
+Empresa | combos | id_empresa,id_tenant | marcado
 Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
@@ -40,6 +41,7 @@ Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | vitrinas | id_empresa,id_tenant | marcado
 Familia | articulos | id_familia,id_tenant | marcado
+Familia | combos_componentes | id_familia,id_tenant | sinmarca
 Familia | ofertas | id_familia,id_tenant | marcado
 Grupo | articulos | id_grupo,id_tenant | marcado
 Grupo | ofertas | id_grupo,id_tenant | marcado
@@ -92,6 +94,8 @@ Tenant | certificados_fiscales | id_tenant | marcado
 Tenant | clientes | id_tenant | marcado
 Tenant | codigos_barra | id_tenant | marcado
 Tenant | codigos_proveedor | id_tenant | marcado
+Tenant | combos | id_tenant | marcado
+Tenant | combos_componentes | id_tenant | sinmarca
 Tenant | comprobantes_compra | id_tenant | marcado
 Tenant | comprobantes_venta | id_tenant | marcado
 Tenant | dispositivos | id_tenant | marcado
