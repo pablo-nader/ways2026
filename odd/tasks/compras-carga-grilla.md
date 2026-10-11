@@ -60,6 +60,7 @@ Slice 3 — items grid (web):
 - Slice 2 (T5): judgment-day (a29232a3..fb4cb1eb) no severe findings. Both judges suspected a race between confirm and the article soft delete; it was disproved (the stock movement FK already takes FOR KEY SHARE on the article before the association) and pinned with a deterministic test plus mutation evidence in 04878b3c. JUDGMENT: APPROVED.
 - Slice 3: judgment-day round 1 on fd000f47 found five defects confirmed by both judges, fixed in 05d2162d; scoped re-judgment found no critical defect and four confirmed warnings, fixed in d8de8057; the second scoped re-judgment (d8de8057) left two issues confirmed by both judges (wrong price carried across a supplier change, missing association hint), the judgment was escalated, and the owner authorized a third fix round applied in 880c06a7.
 - Slice 3, third re-judgment (880c06a7): left two warnings confirmed by both judges in the supplier-change path; the owner chose to replace the snapshot design with the simple clear-and-look-up-again rule, applied in 97608511.
+- Slice 3, re-judgment of 97608511: no critical defect; the simple rule holds. Three minor adjustments (price mode, quantity in bultos, conceptos with a pending code) applied in 0cbef200.
 - Receipt-driven development: off (clone-local); no native review.
 
 ## Follow-ups
@@ -70,6 +71,9 @@ Slice 3 — items grid (web):
 
 - Owner question open: annulling a confirmed purchase keeps the supplier code association made at confirm.
 - A code left unassociated because it belongs to another article gives no signal beyond the code on the line.
+
+- Untested path: lookup in flight when the supplier prompt opens, then Cancel (the row stays unresolved until the next blur).
+- After a supplier change, rows with an article and a code show "Se asociará al artículo al confirmar." (intended: the association goes to the new supplier).
 
 - `articulos/EditorDePrecios.tsx` still uses `datetime-local` (browser locale format).
 - Read-only printed date ranges (e.g. CuentaCorriente) still show ISO.
@@ -83,4 +87,4 @@ Slice 3 — items grid (web):
 
 ## Next step
 
-Judgment-day over the slice 3 diff (T6-T8, T10), then deliver; T9 (embed the full article form in place of `AltaRapidaArticuloDeCompra`) is the remaining task.
+Deliver slice 3 as a PR, then T9 (embed the full article form in place of `AltaRapidaArticuloDeCompra`).
