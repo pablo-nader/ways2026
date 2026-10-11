@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Dinero;
 using Ways.Domain.Ventas;
 
 namespace Ways.Domain.Tests.CuentaCorriente;
@@ -244,26 +245,26 @@ public class ReliquidadorDeConsumosTests
     [Fact]
     public void ElRedondeoDeLineaEsAwayFromZero()
     {
-        // 3 × 33.335 = 100.005 → redondea a 100.01 (AwayFromZero), no a 100.00 (banker's rounding).
+        // 3 × 33.5 = 100.5 → redondea a 101 (AwayFromZero), no a 100 (banker's rounding).
         var linea = new LineaAReliquidar(1, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m);
         var consumo = UnConsumo(1, linea);
 
-        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 33.335m });
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 33.5m });
 
         var detalleLinea = Assert.Single(Assert.Single(resultado.Detalle).Lineas);
-        Assert.Equal(100.01m, detalleLinea.TotalDelDia);
+        Assert.Equal(101m, detalleLinea.TotalDelDia);
     }
 
     [Fact]
     public void ElRedondeoDelFactorDeConsumoEsAwayFromZero()
     {
         var linea = new LineaAReliquidar(1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 100m);
-        // deltaBruto = 10; factor = 1/3 ⇒ 10 × 0.333... = 3.333... → redondea a 3.33.
-        var consumo = new ConsumoAReliquidar(1, 10, ImporteFinanciado: 1m, TotalComprobante: 3m, [linea]);
+        // deltaBruto = 5; factor = 1/2 ⇒ 5 × 0.5 = 2.5 → redondea a 3 (AwayFromZero), no a 2.
+        var consumo = new ConsumoAReliquidar(1, 10, ImporteFinanciado: 1m, TotalComprobante: 2m, [linea]);
 
-        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 110m });
+        var resultado = ReliquidadorDeConsumos.Calcular([consumo], new Dictionary<int, decimal?> { [1] = 105m });
 
-        Assert.Equal(3.33m, resultado.Delta);
+        Assert.Equal(3m, resultado.Delta);
     }
 
     // ---- el cap de 500 consumos por corrida ----------------------------------------------------
@@ -411,14 +412,14 @@ public class ReliquidadorDeConsumosTests
         var conNulo = new LineaAReliquidar(
             1, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m, AjusteManualPorcentaje: null);
         var omitido = new LineaAReliquidar(1, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m);
-        var precios = new Dictionary<int, decimal?> { [1] = 33.335m };
+        var precios = new Dictionary<int, decimal?> { [1] = 33.5m };
 
         var resultadoNulo = ReliquidadorDeConsumos.Calcular([UnConsumo(1, conNulo)], precios);
         var resultadoOmitido = ReliquidadorDeConsumos.Calcular([UnConsumo(1, omitido)], precios);
 
-        Assert.Equal(100.01m, Assert.Single(Assert.Single(resultadoNulo.Detalle).Lineas).TotalDelDia);
+        Assert.Equal(101m, Assert.Single(Assert.Single(resultadoNulo.Detalle).Lineas).TotalDelDia);
         Assert.Equal(resultadoOmitido.Delta, resultadoNulo.Delta);
-        Assert.Equal(1.01m, resultadoNulo.Delta);
+        Assert.Equal(2m, resultadoNulo.Delta);
     }
 
     // ---- detalle auditable: el porcentaje viaja para poder reconstruir el total del día -------
@@ -433,7 +434,7 @@ public class ReliquidadorDeConsumosTests
             2, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 120m, AjusteManualPorcentaje: 20m);
         var lineaC = new LineaAReliquidar(
             3, Cantidad: 3m, PrecioUnitario: 33m, Descuento: 0m, TotalHistorico: 99m);
-        var precios = new Dictionary<int, decimal?> { [1] = 120m, [2] = 150m, [3] = 33.335m };
+        var precios = new Dictionary<int, decimal?> { [1] = 120m, [2] = 150m, [3] = 33.5m };
 
         var resultado = ReliquidadorDeConsumos.Calcular([UnConsumo(1, lineaA, lineaB, lineaC)], precios);
 
@@ -446,14 +447,14 @@ public class ReliquidadorDeConsumosTests
         var detalle = DetalleDeTresLineas();
 
         Assert.Equal(
-            new (int?, decimal?, decimal?)[] { (1, -10m, 216m), (2, 20m, 180m), (3, null, 100.01m) },
+            new (int?, decimal?, decimal?)[] { (1, -10m, 216m), (2, 20m, 180m), (3, null, 101m) },
             detalle.Select(d => (d.IdArticulo, d.AjusteManualPorcentaje, d.TotalDelDia)).ToArray());
 
         // El detalle se basta a sí mismo: neto = round(cantidad x precio actual) y total del día =
         // neto + ajuste manual del porcentaje del propio detalle.
         foreach (var linea in detalle)
         {
-            var neto = Math.Round(linea.Cantidad * linea.PrecioActual!.Value, 2, MidpointRounding.AwayFromZero);
+            var neto = RedondeoDePeso.APesoEntero(linea.Cantidad * linea.PrecioActual!.Value);
             Assert.Equal(
                 neto + CalculadorDeTotales.AjusteManualSobre(neto, linea.AjusteManualPorcentaje), linea.TotalDelDia);
         }
@@ -499,26 +500,26 @@ public class ReliquidadorDeConsumosTests
 
         // Sin ajuste, el JSON es byte a byte el de antes de que existiera el campo.
         Assert.Equal(
-            "{\"IdArticulo\":3,\"Cantidad\":3,\"PrecioHistorico\":33,\"PrecioActual\":33.335,\"TotalHistorico\":99," +
-            "\"TotalDelDia\":100.01,\"Delta\":1.01,\"Motivo\":null}",
+            "{\"IdArticulo\":3,\"Cantidad\":3,\"PrecioHistorico\":33,\"PrecioActual\":33.5,\"TotalHistorico\":99," +
+            "\"TotalDelDia\":101,\"Delta\":2,\"Motivo\":null}",
             JsonSerializer.Serialize(detalle[2]));
         Assert.Contains("\"AjusteManualPorcentaje\":-10", JsonSerializer.Serialize(detalle[0]));
         Assert.Contains("\"AjusteManualPorcentaje\":20", JsonSerializer.Serialize(detalle[1]));
     }
 
     [Theory]
-    [InlineData(10, 11006)]
-    [InlineData(-10, 9004)]
-    public void ElRedondeoDelAjusteManualEsElDelCheckoutAwayFromZero(int porcentaje, int totalEsperadoEnCentavos)
+    [InlineData(10, 116)]
+    [InlineData(-10, 94)]
+    public void ElRedondeoDelAjusteManualEsElDelCheckoutAwayFromZero(int porcentaje, int totalEsperado)
     {
-        // Neto 100.05; el ajuste es ±10.005, justo en el punto medio: AwayFromZero lo lleva a ±10.01
-        // (el redondeo bancario daría ±10.00) — el mismo resultado que CalculadorDeTotales.
+        // Neto 105; el ajuste es ±10.5, justo en el punto medio: AwayFromZero lo lleva a ±11 (el
+        // redondeo bancario daría ±10) — el mismo resultado que CalculadorDeTotales.
         var linea = new LineaAReliquidar(
-            1, Cantidad: 1m, PrecioUnitario: 100.05m, Descuento: 0m, TotalHistorico: 100.05m,
+            1, Cantidad: 1m, PrecioUnitario: 105m, Descuento: 0m, TotalHistorico: 105m,
             AjusteManualPorcentaje: porcentaje);
 
-        var resultado = ReliquidadorDeConsumos.Calcular([UnConsumo(1, linea)], new Dictionary<int, decimal?> { [1] = 100.05m });
+        var resultado = ReliquidadorDeConsumos.Calcular([UnConsumo(1, linea)], new Dictionary<int, decimal?> { [1] = 105m });
 
-        Assert.Equal(totalEsperadoEnCentavos / 100m, Assert.Single(Assert.Single(resultado.Detalle).Lineas).TotalDelDia);
+        Assert.Equal((decimal)totalEsperado, Assert.Single(Assert.Single(resultado.Detalle).Lineas).TotalDelDia);
     }
 }

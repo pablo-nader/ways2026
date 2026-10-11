@@ -53,21 +53,30 @@ public class CalculadorDeTotalesTests
     [Fact]
     public void ElBrutoDeLineaRedondeaAwayFromZeroEnElMedio()
     {
-        // 3 * 33.335 = 100.005 exacto -> un punto medio real de redondeo a centavos.
-        // AwayFromZero redondea a 100.01 — el banker's rounding default de .NET hubiera dado
-        // 100.00 (par más cercano), que es exactamente lo que este criterio POS evita.
-        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 33.335m, 0m)]);
+        // 3 * 33.5 = 100.5 exacto -> un punto medio real de redondeo al peso. AwayFromZero
+        // redondea a 101 — el banker's rounding default de .NET hubiera dado 100 (par más
+        // cercano), que es exactamente lo que este criterio POS evita.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 33.5m, 0m)]);
 
-        Assert.Equal(100.01m, resultado.Subtotal);
+        Assert.Equal(101m, resultado.Subtotal);
     }
 
     [Fact]
-    public void ElDescuentoDeLineaRedondeaAwayFromZeroEnElMedio()
+    public void ElDescuentoDeLineaEsElBrutoMenosElNetoRedondeadoAwayFromZeroEnElMedio()
     {
-        // Descuento unitario 0.005 * 1 unidad = 0.005 exacto -> otro punto medio real.
-        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 10m, 0.005m)]);
+        // Precio 11 con descuento unitario 1.5: el neto verdadero es 9.5, un punto medio real que
+        // AwayFromZero lleva a 10. El descuento es bruto 11 - neto 10 = 1, no el 1.5 verdadero
+        // redondeado por separado.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 11m, 1.5m)]);
 
-        Assert.Equal(0.01m, resultado.Items[0].Descuento);
+        Assert.Equal(10m, resultado.Items[0].Total);
+        Assert.Equal(1m, resultado.Items[0].Descuento);
+
+        // Neto verdadero 8.5: AwayFromZero da 9 (banker's daría 8, el par más cercano).
+        var otro = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 10m, 1.5m)]);
+
+        Assert.Equal(9m, otro.Items[0].Total);
+        Assert.Equal(1m, otro.Items[0].Descuento);
     }
 
     // ---- descuento clamp / total == Σ item.total --------------------------------------------
@@ -184,16 +193,16 @@ public class CalculadorDeTotalesTests
     [Fact]
     public void ElAjusteManualRedondeaAwayFromZeroEnElMedioParaRecargoYDescuento()
     {
-        // Neto 0.05 x 10 % = 0.005 exacto: punto medio real. AwayFromZero da 0.01 / -0.01; el
-        // banker's rounding default de .NET hubiera dado 0.00 en ambos.
-        var recargo = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 0.05m, 0m, 10m)]);
-        var descuento = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 0.05m, 0m, -10m)]);
+        // Neto 5 x 10 % = 0.5 exacto: punto medio real. AwayFromZero da 1 / -1; el banker's
+        // rounding default de .NET hubiera dado 0 en ambos.
+        var recargo = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 5m, 0m, 10m)]);
+        var descuento = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 5m, 0m, -10m)]);
 
-        Assert.Equal(0.01m, recargo.Items[0].AjusteManual);
-        Assert.Equal(0.06m, recargo.Items[0].Total);
-        Assert.Equal(-0.01m, descuento.Items[0].AjusteManual);
-        Assert.Equal(0.04m, descuento.Items[0].Total);
-        Assert.Equal(0.01m, descuento.DescuentoManualTotal);
+        Assert.Equal(1m, recargo.Items[0].AjusteManual);
+        Assert.Equal(6m, recargo.Items[0].Total);
+        Assert.Equal(-1m, descuento.Items[0].AjusteManual);
+        Assert.Equal(4m, descuento.Items[0].Total);
+        Assert.Equal(1m, descuento.DescuentoManualTotal);
     }
 
     [Fact]
@@ -231,10 +240,11 @@ public class CalculadorDeTotalesTests
     {
         var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 33.33m, 1m, -100m)]);
 
-        // Bruto 99.99, descuento 3.00, neto 96.99: el ajuste anula exactamente el neto.
-        Assert.Equal(-96.99m, resultado.Items[0].AjusteManual);
+        // Bruto 99.99 -> 100, neto verdadero 3 x 32.33 = 96.99 -> 97, descuento 3: el ajuste anula
+        // exactamente el neto.
+        Assert.Equal(-97m, resultado.Items[0].AjusteManual);
         Assert.Equal(0m, resultado.Items[0].Total);
-        Assert.Equal(96.99m, resultado.DescuentoManualTotal);
+        Assert.Equal(97m, resultado.DescuentoManualTotal);
         Assert.Equal(0m, resultado.Total);
     }
 
@@ -299,5 +309,109 @@ public class CalculadorDeTotalesTests
         Assert.Equal(0m, conPorcentajeNulo.DescuentoManualTotal);
         Assert.Equal(0m, conPorcentajeNulo.RecargoManualTotal);
         Assert.Equal(sinCuartoArgumento.Subtotal - sinCuartoArgumento.DescuentoTotal, sinCuartoArgumento.Total);
+    }
+
+    // ---- importes de venta a peso entero ---------------------------------------------------------
+
+    [Fact]
+    public void UnaOfertaDeTresPorTresMilQuinientosCobraTresMilQuinientosExactos()
+    {
+        // Oferta "x3 por 3500" cargada como 1166.66 por unidad (lista 1500, descuento unitario
+        // 333.34): 3 x 1166.66 = 3499.98 y la línea cobra el peso entero más cercano.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 1500m, 333.34m)]);
+
+        Assert.Equal(3500m, resultado.Items[0].Total);
+        Assert.Equal(4500m, resultado.Subtotal);
+        Assert.Equal(1000m, resultado.Items[0].Descuento);
+        Assert.Equal(1000m, resultado.DescuentoTotal);
+        Assert.Equal(3500m, resultado.Total);
+    }
+
+    [Fact]
+    public void ElNetoEsElNetoVerdaderoRedondeadoYElDescuentoEsLaDiferenciaConElBruto()
+    {
+        // 7 x 1166.66 = 8166.62 -> neto 8167. El descuento no se redondea por su cuenta (7 x
+        // 333.34 = 2333.38): es bruto 7 x 1500 = 10500 menos neto 8167 = 2333.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(7m, 1500m, 333.34m)]);
+
+        Assert.Equal(8167m, resultado.Items[0].Total);
+        Assert.Equal(10500m, resultado.Subtotal);
+        Assert.Equal(2333m, resultado.Items[0].Descuento);
+        Assert.Equal(resultado.Subtotal - resultado.DescuentoTotal, resultado.Total);
+    }
+
+    [Fact]
+    public void UnaCantidadPesadaCalculaElNetoVerdaderoYLoRedondeaAlPeso()
+    {
+        // 0.375 kg x 1999.99 = 749.99625 -> 750.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(0.375m, 1999.99m, 0m)]);
+
+        Assert.Equal(750m, resultado.Items[0].Total);
+        Assert.Equal(750m, resultado.Subtotal);
+    }
+
+    [Fact]
+    public void ElPuntoMedioDelNetoRedondeaAlejandoseDeCeroEnPositivoYEnNegativo()
+    {
+        // 1 x 100.50 -> 101; la cantidad negativa de NCX -1 x 100.50 -> -101 (banker's daría 100).
+        var venta = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 100.50m, 0m)]);
+        var ncx = CalculadorDeTotales.Calcular([new LineaParaCalcular(-1m, 100.50m, 0m)]);
+
+        Assert.Equal(101m, venta.Items[0].Total);
+        Assert.Equal(-101m, ncx.Items[0].Total);
+    }
+
+    [Fact]
+    public void ElAjusteManualSeCalculaSobreElNetoEnteroYTambienEsEntero()
+    {
+        // Neto 3500 (de 1166.66 x 3), -15 % = -525 exacto; +3 % = 105. Con 999.50 x 1 -> neto
+        // 1000 (999.5 redondea hacia arriba) y +0.15 % = 1.5 -> 2 (punto medio).
+        var descuento = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 1500m, 333.34m, -15m)]);
+        var recargo = CalculadorDeTotales.Calcular([new LineaParaCalcular(1m, 999.50m, 0m, 0.15m)]);
+
+        Assert.Equal(-525m, descuento.Items[0].AjusteManual);
+        Assert.Equal(2975m, descuento.Items[0].Total);
+        Assert.Equal(525m, descuento.DescuentoManualTotal);
+        Assert.Equal(1000m, recargo.Items[0].Total - recargo.Items[0].AjusteManual);
+        Assert.Equal(2m, recargo.Items[0].AjusteManual);
+        Assert.Equal(1002m, recargo.Total);
+    }
+
+    [Fact]
+    public void ElAjusteManualRedondeadoNoPuedeAlejarseDeCeroEnLaLineaNegativaDeNcx()
+    {
+        // Neto -1000, +0.15 % = -1.5 -> -2 (away from zero), total -1002.
+        var resultado = CalculadorDeTotales.Calcular([new LineaParaCalcular(-1m, 1000m, 0m, 0.15m)]);
+
+        Assert.Equal(-2m, resultado.Items[0].AjusteManual);
+        Assert.Equal(-1002m, resultado.Total);
+    }
+
+    [Fact]
+    public void TodosLosImportesDeUnaVentaMixtaSonEnterosYElTotalCoincideConLosItems()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(3m, 1500m, 333.34m, -15m),
+            new LineaParaCalcular(0.375m, 1999.99m, 0m, 7.5m),
+            new LineaParaCalcular(7m, 33.333m, 1.111m, null),
+            new LineaParaCalcular(-4m, 59.9m, 3.3m, -33.33m),
+            new LineaParaCalcular(2m, 199.99m, 5.005m)
+        ]);
+
+        static bool EsEntero(decimal valor) => decimal.Truncate(valor) == valor;
+
+        Assert.All(resultado.Items, i =>
+        {
+            Assert.True(EsEntero(i.Total), $"Total {i.Total}");
+            Assert.True(EsEntero(i.Descuento), $"Descuento {i.Descuento}");
+            Assert.True(EsEntero(i.AjusteManual), $"Ajuste {i.AjusteManual}");
+        });
+        Assert.True(EsEntero(resultado.Subtotal));
+        Assert.True(EsEntero(resultado.DescuentoTotal));
+        Assert.True(EsEntero(resultado.DescuentoManualTotal));
+        Assert.True(EsEntero(resultado.RecargoManualTotal));
+        Assert.True(EsEntero(resultado.Total));
+        Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
     }
 }

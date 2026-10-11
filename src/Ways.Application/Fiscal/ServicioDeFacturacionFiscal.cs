@@ -656,7 +656,7 @@ public class ServicioDeFacturacionFiscal(
                 [new LineaParaCalcular(linea.Cantidad, linea.PrecioUnitario, linea.DescuentoUnitario)]);
             var itemCalculado = calculado.Items[0];
 
-            subtotal += Math.Round(linea.Cantidad * linea.PrecioUnitario, 2, MidpointRounding.AwayFromZero);
+            subtotal += CalculadorDeTotales.BrutoDeLinea(linea.Cantidad, linea.PrecioUnitario);
             descuentoTotal += itemCalculado.Descuento;
 
             itemsCalculados.Add(new LineaCalculada(linea, alicuota.Porcentaje, itemCalculado));

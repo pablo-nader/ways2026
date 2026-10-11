@@ -1373,7 +1373,7 @@ public class ServicioDeVentas(
         // 4.5. stage-pos-venta-offline-backend: rastro auditable (nunca un bloqueo, nunca una
         // recomputación silenciosa del comprobante) de cada línea offline cuyo precio congelado
         // no coincide con lo que ResolverAsync hubiera cobrado HOY — ver
-        // MaterializarItems/NetoDeLinea. Decisión explícita (docs/10 §9.2, ítem cerrado por esta
+        // MaterializarItems/CalculadorDeTotales.NetoDeLinea. Decisión explícita (docs/10 §9.2, ítem cerrado por esta
         // etapa): auditoria en vez de una columna nueva en items_comprobante_venta — cero DB
         // CHANGE GATE, reusa el writer/lector ya existentes (GET /api/auditoria), y "warning,
         // nunca bloqueo" es exactamente el criterio que ya tiene ItemComprobanteVenta.LoteVencido.
@@ -1896,8 +1896,8 @@ public class ServicioDeVentas(
             // auditoria, ver EjecutarTransaccionAsync/ServicioDeAuditoria). Sin precio vigente HOY
             // (el artículo pudo perder su precio entre el cobro offline y este sync) no hay
             // expectativa que comparar: PrecioDiscrepante queda false, nunca un falso positivo
-            // contra un "esperado" inventado. NetoDeLinea reusa el MISMO redondeo/orden de
-            // CalculadorDeTotales — nunca una segunda autoridad de dinero, esta cuenta no
+            // contra un "esperado" inventado. Se usa CalculadorDeTotales.NetoDeLinea, la MISMA fórmula
+            // del cálculo — nunca una segunda autoridad de dinero, esta cuenta no
             // alimenta totales/ValidadorDePagos/persistencia. Se compara el neto ANTERIOR al ajuste
             // manual de las dos partes (bruto − descuento): el porcentaje es el mismo dato del
             // request de los dos lados, así que no es una diferencia de precio y no participa de
@@ -1906,7 +1906,7 @@ public class ServicioDeVentas(
             var esLineaOffline = linea.PrecioUnitario is not null;
             var discrepante = esLineaOffline
                 && resultado.PrecioOriginal is not null
-                && NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario)
+                && CalculadorDeTotales.NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario)
                     != calculado.Total - calculado.AjusteManual;
 
             items.Add(new LineaDelPlan(
@@ -1922,18 +1922,6 @@ public class ServicioDeVentas(
         }
 
         return (items, totales);
-    }
-
-    /// <summary>Mismo redondeo/orden que <see cref="CalculadorDeTotales.Calcular"/> (design:
-    /// Checkout Contract) — a propósito NUNCA una segunda autoridad de dinero: esta función solo
-    /// alimenta el diagnóstico de discrepancia de precio offline de <see cref="MaterializarItems"/>,
-    /// nunca <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste. Devuelve el neto de
-    /// línea ESPERADO (bruto − descuento de oferta), anterior a cualquier ajuste manual.</summary>
-    private static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario)
-    {
-        var bruto = Math.Round(cantidadConSigno * precioUnitario, 2, MidpointRounding.AwayFromZero);
-        var descuento = Math.Round(descuentoUnitario * cantidadConSigno, 2, MidpointRounding.AwayFromZero);
-        return bruto - descuento;
     }
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que

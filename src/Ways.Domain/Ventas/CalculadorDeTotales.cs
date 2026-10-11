@@ -1,4 +1,5 @@
 using Ways.Domain.Common;
+using Ways.Domain.Dinero;
 
 namespace Ways.Domain.Ventas;
 
@@ -28,9 +29,9 @@ public readonly record struct TotalesCalculados(
 
 /// <summary>
 /// Calcula los totales de un checkout (design: Checkout Contract — orden de redondeo pineado,
-/// pura, DB-free). Mismo criterio POS que <see cref="Ofertas.ResolvedorDeOfertas"/>:
-/// <see cref="MidpointRounding.AwayFromZero"/> en cada redondeo, nunca el banker's rounding
-/// default de .NET.
+/// pura, DB-free). Todo importe calculado es un peso entero
+/// (<see cref="RedondeoDePeso"/>: punto medio away-from-zero, nunca el banker's rounding default
+/// de .NET); con componentes enteros el total del documento coincide con la suma de los items.
 /// </summary>
 public static class CalculadorDeTotales
 {
@@ -44,9 +45,9 @@ public static class CalculadorDeTotales
 
         foreach (var linea in lineas)
         {
-            var brutoDeLinea = Math.Round(linea.Cantidad * linea.PrecioUnitario, 2, MidpointRounding.AwayFromZero);
-            var descuento = Math.Round(linea.DescuentoUnitario * linea.Cantidad, 2, MidpointRounding.AwayFromZero);
-            var netoDeLinea = brutoDeLinea - descuento;
+            var brutoDeLinea = BrutoDeLinea(linea.Cantidad, linea.PrecioUnitario);
+            var netoDeLinea = NetoDeLinea(linea.Cantidad, linea.PrecioUnitario, linea.DescuentoUnitario);
+            var descuento = brutoDeLinea - netoDeLinea;
             var ajusteManual = AjusteManualSobre(netoDeLinea, linea.AjusteManualPorcentaje);
             var totalDeLinea = netoDeLinea + ajusteManual;
 
@@ -80,10 +81,23 @@ public static class CalculadorDeTotales
         return new TotalesCalculados(items, subtotal, descuentoTotal, total, descuentoManualTotal, recargoManualTotal);
     }
 
+    /// <summary>Bruto de la línea: cantidad por precio de lista, al peso entero (los importes de
+    /// venta calculados nunca llevan centavos, ver <see cref="RedondeoDePeso"/>).</summary>
+    public static decimal BrutoDeLinea(decimal cantidadConSigno, decimal precioUnitario) =>
+        RedondeoDePeso.APesoEntero(cantidadConSigno * precioUnitario);
+
+    /// <summary>Neto de la línea antes del ajuste manual: el neto VERDADERO (cantidad por precio
+    /// final unitario) redondeado una sola vez. El descuento de línea es <c>bruto − neto</c>, nunca
+    /// una cifra redondeada por separado: dos redondeos independientes dejarían centavos o
+    /// cobrarían distinto de cantidad × precio final (1166.66 × 3 = 3499.98 cobra 3500). La reusan
+    /// el diagnóstico de discrepancia offline y la reliquidación para no tener una segunda fórmula.</summary>
+    public static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario) =>
+        RedondeoDePeso.APesoEntero(cantidadConSigno * (precioUnitario - descuentoUnitario));
+
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con
     /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula del ajuste: la
     /// reusa también la reliquidación de cuenta corriente para reaplicar el porcentaje de cada
     /// item sobre el neto nuevo.</summary>
     public static decimal AjusteManualSobre(decimal netoDeLinea, decimal? porcentaje) =>
-        porcentaje is { } p ? Math.Round(netoDeLinea * p / 100m, 2, MidpointRounding.AwayFromZero) : 0m;
+        porcentaje is { } p ? RedondeoDePeso.APesoEntero(netoDeLinea * p / 100m) : 0m;
 }

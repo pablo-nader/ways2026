@@ -1,5 +1,6 @@
 using Ways.Application.Fiscal;
 using Ways.Domain.Common;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Tests.Fiscal;
 
@@ -86,5 +87,29 @@ public class ComposicionDeTotalesFiscalesTests
 
         Assert.Equal("alicuota_sin_mapeo_afip", error.Codigo);
         Assert.Equal(409, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnTotalDeVentaEnteroConservaCentavosEnElDesgloseYNetoMasIvaIgualAlTotal()
+    {
+        // Oferta x3 por 3500 (1166.66 por unidad) y otra línea con total entero, ambas al 21 %: el
+        // total del grupo es entero (el POS cobra pesos enteros) pero el desglose neto/IVA sigue
+        // en centavos, y neto + IVA reconstruye el total exacto.
+        var oferta = CalculadorDeTotales.Calcular([new LineaParaCalcular(3m, 1500m, 333.34m)]).Items[0];
+        var otra = CalculadorDeTotales.Calcular([new LineaParaCalcular(7m, 1500m, 333.34m)]).Items[0];
+
+        var totales = ComposicionDeTotalesFiscales.Componer(
+        [
+            new LineaFiscal(1, "21%", 5, 21m, oferta.Total),
+            new LineaFiscal(1, "21%", 5, 21m, otra.Total)
+        ]);
+
+        var entrada = Assert.Single(totales.Iva);
+        Assert.Equal(3500m, oferta.Total);
+        Assert.Equal(8167m, otra.Total);
+        Assert.Equal(11667m, totales.ImpTotal);
+        Assert.Equal(11667m, entrada.BaseImp + entrada.Importe);
+        Assert.Equal(9642.15m, entrada.BaseImp);
+        Assert.Equal(2024.85m, entrada.Importe);
     }
 }
