@@ -5,7 +5,7 @@ namespace Ways.Domain.Combos;
 /// <summary>
 /// Reglas de negocio puras de un combo (sin base de datos, mismo criterio que
 /// <see cref="Ofertas.ReglaDeOfertas"/>). Todo camino de escritura de combos debe pasar por
-/// <see cref="Validar"/> antes de tocar filas (todavía no existe ninguno; lo crea T2); las CHECKs <c>ck_combos_precio_positivo</c>,
+/// <see cref="Validar"/> antes de tocar filas (lo hace <c>ServicioDeCombos</c>); las CHECKs <c>ck_combos_precio_positivo</c>,
 /// <c>ck_combos_componentes_cantidad_positiva</c> y <c>ck_combos_componentes_alcance_exclusivo</c>
 /// y los índices únicos de componente respaldan una parte de estas reglas en el esquema. La
 /// regla de al menos dos unidades en total no tiene respaldo de esquema.
@@ -20,13 +20,40 @@ public static class ReglaDeCombos
     /// <summary>Tope de precio: el máximo de <c>numeric(14,2)</c>.</summary>
     public const decimal PrecioMaximo = 999_999_999_999.99m;
 
+    /// <summary>Tope de componentes de un combo: cada uno cuesta un <c>FOR KEY SHARE</c> bajo el lock por tenant.</summary>
+    public const int ComponentesMaximos = 50;
+
+    /// <summary>Tope del código que se tipea tras la <c>C</c> en el POS: seis dígitos.</summary>
+    public const int CodigoMaximo = 999_999;
+
+    /// <summary>El código de un combo es un entero entre 1 y <see cref="CodigoMaximo"/>. La unicidad entre los
+    /// combos vivos del tenant no se decide acá: la comprueba el servicio y la respalda <c>ux_combos_codigo</c>.</summary>
+    public static void ValidarCodigo(int codigo)
+    {
+        if (codigo is < 1 or > CodigoMaximo)
+        {
+            throw new ErrorDominio(
+                "combo_codigo_invalido",
+                "El código del combo tiene que ser un entero entre 1 y 999999.",
+                400);
+        }
+    }
+
     public static void Validar(decimal precio, IReadOnlyCollection<ComponenteDeCombo> componentes)
     {
-        if (precio <= 0 || precio > PrecioMaximo)
+        if (precio <= 0 || precio > PrecioMaximo || precio != decimal.Round(precio, 2))
         {
             throw new ErrorDominio(
                 "combo_precio_invalido",
-                "El precio del combo tiene que ser mayor a cero y no superar 999999999999,99.",
+                "El precio del combo tiene que ser mayor a cero, tener hasta dos decimales y no superar 999999999999,99.",
+                400);
+        }
+
+        if (componentes.Count > ComponentesMaximos)
+        {
+            throw new ErrorDominio(
+                "combo_componentes_excedidos",
+                $"Un combo admite hasta {ComponentesMaximos} componentes.",
                 400);
         }
 

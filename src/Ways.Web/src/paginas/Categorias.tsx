@@ -6,8 +6,11 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { BotonIcono } from '../componentes/BotonIcono'
+import { ErrorDeFormulario } from '../componentes/ErrorDeFormulario'
+import { Modal } from '../componentes/Modal'
 
 const PROFUNDIDAD_MAXIMA = 3
+const ID_FORMULARIO_CATEGORIA = 'formulario-categoria'
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -89,12 +92,18 @@ function aplanar(arbol: Nodo[]): Nodo[] {
  * El backend ahora bloquea la baja de una categoría con subcategorías (`categoria_en_uso`), así
  * que la puerta ya no puede prometer que "las subcategorías quedan sin este padre visible" — esa
  * advertencia del `confirm()` nativo se retira.
+ *
+ * El alta y la edición viven en un `Modal` (mismo criterio que `PaginaCatalogo.tsx`): un guardado
+ * exitoso lo cierra y el aviso queda en la pantalla; el rechazo de un guardado se muestra adentro
+ * (`errorFormulario`), porque un alert de la pantalla quedaría detrás del fondo. Los errores de la
+ * carga del listado y de la baja siguen en la pantalla.
  */
 export function Categorias() {
   const [items, setItems] = useState<CategoriaListado[]>([])
   const [incluirInactivos, setIncluirInactivos] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [errorFormulario, setErrorFormulario] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
@@ -103,6 +112,9 @@ export function Categorias() {
   /** Id de la categoría cuya baja está en vuelo (distinto de `guardando`, que cubre alta/edición). */
   const [ocupadoBaja, setOcupadoBaja] = useState<number | null>(null)
   const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
+  /** Destino de foco cuando la modal se cierra con la pantalla inerte (guardado en vuelo): ningún
+   * botón es alcanzable en ese momento. */
+  const contenedorRef = useRef<HTMLDivElement>(null)
 
   /** Contrato de invalidación compartido por guardar y por la baja: ver `Empresas.tsx`. */
   const generacion = useRef(0)
@@ -151,6 +163,7 @@ export function Categorias() {
     ocupadoRef.current = true
     setGuardando(true)
     setError('')
+    setErrorFormulario('')
     setAviso('')
     try {
       try {
@@ -168,7 +181,7 @@ export function Categorias() {
           await api.put(`/catalogos/categorias/${datos.id}`, datosAlta)
         }
       } catch (e) {
-        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        if (generacion.current === token) setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
         return
       }
@@ -248,6 +261,7 @@ export function Categorias() {
     setFormulario({ ...FORMULARIO_VACIO, idCategoriaPadre })
     setAviso('')
     setError('')
+    setErrorFormulario('')
   }
 
   function abrirEdicion(item: CategoriaListado) {
@@ -262,6 +276,13 @@ export function Categorias() {
     })
     setAviso('')
     setError('')
+    setErrorFormulario('')
+  }
+
+  /** La modal no ofrece cancelar con una escritura en vuelo (`ocupado`), así que cerrar no supersede
+   * ninguna escritura y no acuña generación. */
+  function cancelarFormulario() {
+    setFormulario(null)
   }
 
   const herramientas = (
@@ -291,7 +312,7 @@ export function Categorias() {
   )
 
   return (
-    <div className="container-fluid py-4">
+    <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Categorías" variante="inverse" herramientas={herramientas}>
         <p className="text-muted">
           Taxonomía jerárquica, máximo {PROFUNDIDAD_MAXIMA} niveles (Bebidas → Gaseosas → Cola). El servidor
@@ -312,14 +333,16 @@ export function Categorias() {
         )}
 
         {formulario && (
-          <FormularioCategoria
+          <ModalDeCategoria
             valor={formulario}
             arbol={arbol}
             guardando={guardando}
             bloqueado={bloqueado}
+            error={errorFormulario}
+            focoDeReserva={contenedorRef}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
+            onCancelar={cancelarFormulario}
           />
         )}
 
@@ -412,11 +435,13 @@ function NodoCategoria({
   )
 }
 
-function FormularioCategoria({
+function ModalDeCategoria({
   valor,
   arbol,
   guardando,
   bloqueado,
+  error,
+  focoDeReserva,
   onCambio,
   onGuardar,
   onCancelar,
@@ -425,6 +450,8 @@ function FormularioCategoria({
   arbol: Nodo[]
   guardando: boolean
   bloqueado: boolean
+  error: string
+  focoDeReserva: React.RefObject<HTMLElement | null>
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -435,100 +462,105 @@ function FormularioCategoria({
     (nodo) => nodo.id !== valor.id && !excluidos.has(nodo.id) && nodo.nivel < PROFUNDIDAD_MAXIMA,
   )
 
+  const pie = (
+    <>
+      <button type="button" className="btn btn-outline-secondary" onClick={onCancelar} disabled={bloqueado}>
+        Cancelar
+      </button>
+      <button type="submit" form={ID_FORMULARIO_CATEGORIA} className="btn btn-success" disabled={bloqueado}>
+        {guardando ? 'Guardando…' : 'Guardar'}
+      </button>
+    </>
+  )
+
   return (
-    <form
-      className="row g-3 border p-3 mb-4 bg-body"
-      autoComplete="off"
-      onSubmit={(e) => {
-        e.preventDefault()
-        onGuardar()
-      }}
+    <Modal
+      titulo={esNueva ? 'Nueva categoría' : 'Editar categoría'}
+      tamano="lg"
+      ocupado={bloqueado}
+      focoDeReserva={focoDeReserva}
+      pie={pie}
+      onCerrar={onCancelar}
     >
-      <div className="col-12">
-        <strong>{esNueva ? 'Nueva categoría' : `Editando categoría ${valor.id}`}</strong>
-      </div>
+      <ErrorDeFormulario mensaje={error} />
+      <form
+        id={ID_FORMULARIO_CATEGORIA}
+        className="row g-3"
+        autoComplete="off"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onGuardar()
+        }}
+      >
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="fc-nombre">
+            Nombre
+          </label>
+          <input
+            id="fc-nombre"
+            autoFocus
+            className="form-control"
+            maxLength={150}
+            value={valor.nombre}
+            onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
+            disabled={bloqueado}
+            required
+          />
+        </div>
 
-      <div className="col-md-4">
-        <label className="form-label" htmlFor="fc-nombre">
-          Nombre
-        </label>
-        <input
-          id="fc-nombre"
-          className="form-control"
-          maxLength={150}
-          value={valor.nombre}
-          onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="fc-padre">
+            Categoría padre
+          </label>
+          <select
+            id="fc-padre"
+            className="form-select"
+            value={valor.idCategoriaPadre ?? ''}
+            onChange={(e) =>
+              onCambio({ ...valor, idCategoriaPadre: e.target.value === '' ? null : Number(e.target.value) })
+            }
+            disabled={bloqueado}
+          >
+            <option value="">— Ninguna (raíz) —</option>
+            {opcionesPadre.map((nodo) => (
+              <option key={nodo.id} value={nodo.id}>
+                {'—'.repeat(nodo.nivel - 1)} {nodo.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <div className="col-md-3">
-        <label className="form-label" htmlFor="fc-padre">
-          Categoría padre
-        </label>
-        <select
-          id="fc-padre"
-          className="form-select"
-          value={valor.idCategoriaPadre ?? ''}
-          onChange={(e) =>
-            onCambio({ ...valor, idCategoriaPadre: e.target.value === '' ? null : Number(e.target.value) })
-          }
-          disabled={bloqueado}
-        >
-          <option value="">— Ninguna (raíz) —</option>
-          {opcionesPadre.map((nodo) => (
-            <option key={nodo.id} value={nodo.id}>
-              {'—'.repeat(nodo.nivel - 1)} {nodo.nombre}
-            </option>
-          ))}
-        </select>
-      </div>
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="fc-orden">
+            Orden
+          </label>
+          <input
+            id="fc-orden"
+            type="number"
+            className="form-control"
+            value={valor.orden}
+            onChange={(e) => onCambio({ ...valor, orden: e.target.value })}
+            disabled={bloqueado}
+            required
+          />
+        </div>
 
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="fc-orden">
-          Orden
-        </label>
-        <input
-          id="fc-orden"
-          type="number"
-          className="form-control"
-          value={valor.orden}
-          onChange={(e) => onCambio({ ...valor, orden: e.target.value })}
-          disabled={bloqueado}
-          required
-        />
-      </div>
-
-      <div className="col-md-2">
-        <label className="form-label" htmlFor="fc-activo">
-          Estado
-        </label>
-        <select
-          id="fc-activo"
-          className="form-select"
-          value={valor.activo ? 'activo' : 'inactivo'}
-          onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
-          disabled={bloqueado}
-        >
-          <option value="activo">Activo</option>
-          <option value="inactivo">Inactivo</option>
-        </select>
-      </div>
-
-      <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success" disabled={bloqueado}>
-          {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-secondary"
-          onClick={onCancelar}
-          disabled={bloqueado}
-        >
-          Cancelar
-        </button>
-      </div>
-    </form>
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="fc-activo">
+            Estado
+          </label>
+          <select
+            id="fc-activo"
+            className="form-select"
+            value={valor.activo ? 'activo' : 'inactivo'}
+            onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
+            disabled={bloqueado}
+          >
+            <option value="activo">Activo</option>
+            <option value="inactivo">Inactivo</option>
+          </select>
+        </div>
+      </form>
+    </Modal>
   )
 }

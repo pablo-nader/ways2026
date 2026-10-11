@@ -7,9 +7,17 @@ namespace Ways.Domain.Ventas;
 /// llega con signo (negativa en NCX, design decisión 4) — la aritmética es uniforme para ambos
 /// signos, sin rama especial. <see cref="AjusteManualPorcentaje"/> es el porcentaje que el operador
 /// aplicó a mano sobre el neto de la línea (negativo = descuento, positivo = recargo); <c>null</c>
-/// es "sin ajuste" y deja el cálculo idéntico al previo a esa columna.</summary>
+/// es "sin ajuste" y deja el cálculo idéntico al previo a esa columna.
+/// <see cref="UnidadesConsumidasPorCombo"/> son las unidades de la línea que un combo ya consumió
+/// (mismo signo que <see cref="Cantidad"/>) y <see cref="AhorroDeCombo"/> es el importe de LÍNEA que
+/// el combo les repartió (positivo, sin signo de cantidad). El descuento de la línea es
+/// <c>bruto − neto</c>, con el neto <c>round(Cantidad × Precio − DescuentoUnitario × (Cantidad −
+/// UnidadesConsumidasPorCombo) − AhorroDeCombo)</c> al peso entero, redondeado una sola vez: la
+/// oferta unitaria solo alcanza a las unidades que el combo no consumió. Con ambos en cero el
+/// cálculo es el de siempre.</summary>
 public readonly record struct LineaParaCalcular(
-    decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null);
+    decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null,
+    decimal UnidadesConsumidasPorCombo = 0m, decimal AhorroDeCombo = 0m);
 
 /// <summary>Una línea ya calculada — lista para materializar en
 /// <see cref="ItemComprobanteVenta"/> (más los campos de snapshot que Slice 4 completa).
@@ -46,7 +54,9 @@ public static class CalculadorDeTotales
         foreach (var linea in lineas)
         {
             var brutoDeLinea = BrutoDeLinea(linea.Cantidad, linea.PrecioUnitario);
-            var netoDeLinea = NetoDeLinea(linea.Cantidad, linea.PrecioUnitario, linea.DescuentoUnitario);
+            var netoDeLinea = NetoDeLinea(
+                linea.Cantidad, linea.PrecioUnitario, linea.DescuentoUnitario,
+                linea.UnidadesConsumidasPorCombo, linea.AhorroDeCombo);
             var descuento = brutoDeLinea - netoDeLinea;
             var ajusteManual = AjusteManualSobre(netoDeLinea, linea.AjusteManualPorcentaje);
             var totalDeLinea = netoDeLinea + ajusteManual;
@@ -87,12 +97,19 @@ public static class CalculadorDeTotales
         RedondeoDePeso.APesoEntero(cantidadConSigno * precioUnitario);
 
     /// <summary>Neto de la línea antes del ajuste manual: el neto VERDADERO (cantidad por precio
-    /// final unitario) redondeado una sola vez. El descuento de línea es <c>bruto − neto</c>, nunca
-    /// una cifra redondeada por separado: dos redondeos independientes dejarían centavos o
+    /// final unitario, menos el ahorro de combo) redondeado una sola vez. La oferta unitaria solo
+    /// alcanza a las unidades que el combo no consumió. El descuento de línea es <c>bruto − neto</c>,
+    /// nunca una cifra redondeada por separado: dos redondeos independientes dejarían centavos o
     /// cobrarían distinto de cantidad × precio final (1166.66 × 3 = 3499.98 cobra 3500). La reusan
-    /// el diagnóstico de discrepancia offline y la reliquidación para no tener una segunda fórmula.</summary>
-    public static decimal NetoDeLinea(decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario) =>
-        RedondeoDePeso.APesoEntero(cantidadConSigno * (precioUnitario - descuentoUnitario));
+    /// el diagnóstico de discrepancia offline y la reliquidación para no tener una segunda fórmula;
+    /// sin combo el resultado es el de siempre.</summary>
+    public static decimal NetoDeLinea(
+        decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario,
+        decimal unidadesConsumidasPorCombo = 0m, decimal ahorroDeCombo = 0m) =>
+        RedondeoDePeso.APesoEntero(
+            (cantidadConSigno * precioUnitario)
+            - (descuentoUnitario * (cantidadConSigno - unidadesConsumidasPorCombo))
+            - ahorroDeCombo);
 
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con
     /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula del ajuste: la

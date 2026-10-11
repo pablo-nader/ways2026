@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
@@ -611,5 +611,102 @@ describe('Ofertas — alta y edición en modal', () => {
 
     expect(await screen.findByText('No se pudo abrir la oferta.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('Ofertas — error y foco del modal', () => {
+  async function completarOfertaDeGrupo() {
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await userEvent.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+  }
+
+  it('un guardado rechazado expone el error como alerta adentro del diálogo', async () => {
+    apiPostMock.mockRejectedValue(new Error('boom'))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await within(screen.getByRole('dialog')).findByRole('alert')
+    expect(alerta).toHaveTextContent('No se pudo guardar la oferta.')
+  })
+
+  it('dos validaciones idénticas seguidas traen la alerta a la vista cada una', async () => {
+    const scrollIntoViewMock = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: scrollIntoViewMock,
+    })
+    try {
+      render(<Ofertas />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+      await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+      await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+      const guardar = within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' })
+
+      await userEvent.click(guardar)
+      const alerta = await within(screen.getByRole('dialog')).findByRole('alert')
+      expect(alerta).toHaveTextContent('Elegí un artículo para el alcance.')
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1)
+
+      await userEvent.click(guardar)
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(2)
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+  })
+
+  it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
+    render(<Ofertas />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByLabelText('Nombre')).toHaveFocus())
+  })
+
+  it('con el refresco en vuelo tras guardar, el foco queda en el contenedor de la pantalla y no en <body>', async () => {
+    const respuestaBase = apiGetMock.getMockImplementation() as (ruta: string) => Promise<unknown>
+    let liberarRefresco: (ofertas: OfertaListado[]) => void = () => {}
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/ofertas') return respuestaBase(ruta)
+      cargas += 1
+      return cargas === 1
+        ? respuestaBase(ruta)
+        : new Promise<OfertaListado[]>((resolver) => {
+            liberarRefresco = resolver
+          })
+    })
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, nombre: 'Oferta nueva', idArticulo: null, idGrupo: 1 }))
+    const { container } = render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(container.firstElementChild)
+
+    await act(async () => liberarRefresco([]))
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
+    expect(document.activeElement).toBe(container.firstElementChild)
+  })
+
+  it('cancelar devuelve el foco al botón que abrió el modal', async () => {
+    render(<Ofertas />)
+
+    const abrir = await screen.findByRole('button', { name: 'Agregar' })
+    await userEvent.click(abrir)
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(abrir).toHaveFocus()
   })
 })

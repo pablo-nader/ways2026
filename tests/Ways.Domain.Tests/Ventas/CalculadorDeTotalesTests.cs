@@ -414,4 +414,128 @@ public class CalculadorDeTotalesTests
         Assert.True(EsEntero(resultado.Total));
         Assert.Equal(resultado.Total, resultado.Items.Sum(i => i.Total));
     }
+
+    // ---- combos a peso entero --------------------------------------------------------------------
+
+    [Fact]
+    public void LosCamposDeComboPorDefectoDejanElResultadoIdenticoAlDeLaLineaSinCombo()
+    {
+        var sinCampos = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, -10m),
+            new LineaParaCalcular(-3m, 100m, 5.005m),
+            new LineaParaCalcular(1m, 10m, 5.005m)
+        ]);
+        var conCerosExplicitos = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(2m, 199.99m, 5.005m, -10m, UnidadesConsumidasPorCombo: 0m, AhorroDeCombo: 0m),
+            new LineaParaCalcular(-3m, 100m, 5.005m, null, 0m, 0m),
+            new LineaParaCalcular(1m, 10m, 5.005m, null, 0m, 0m)
+        ]);
+
+        // Valores de la línea sin combo, calculados a mano con la regla de peso entero:
+        //  línea 1: bruto 399.98 → 400; neto 2 × 194.985 = 389.97 → 390; descuento 10; ajuste −10 % = −39; total 351.
+        //  línea 2 (NC): bruto −300; neto −3 × 94.995 = −284.985 → −285 (lejos de cero); descuento −15; total −285.
+        //  línea 3: bruto 10; neto 4.995 → 5; descuento 5; total 5.
+        //  subtotal 400 − 300 + 10 = 110; descuento total 10 − 15 + 5 = 0; descuento manual 39; total 110 − 0 − 39 = 71.
+        var esperados = new[]
+        {
+            new ItemCalculado(2m, 199.99m, 10m, 351m, -39m),
+            new ItemCalculado(-3m, 100m, -15m, -285m),
+            new ItemCalculado(1m, 10m, 5m, 5m)
+        };
+
+        foreach (var resultado in new[] { sinCampos, conCerosExplicitos })
+        {
+            Assert.Equal(esperados, resultado.Items);
+            Assert.Equal(110m, resultado.Subtotal);
+            Assert.Equal(0m, resultado.DescuentoTotal);
+            Assert.Equal(71m, resultado.Total);
+            Assert.Equal(39m, resultado.DescuentoManualTotal);
+        }
+    }
+
+    [Fact]
+    public void NetoDeLineaSinComboDaElMismoResultadoQueConLosArgumentosDeComboEnCero()
+    {
+        Assert.Equal(3500m, CalculadorDeTotales.NetoDeLinea(3m, 1500m, 333.34m));
+        Assert.Equal(
+            CalculadorDeTotales.NetoDeLinea(3m, 1500m, 333.34m),
+            CalculadorDeTotales.NetoDeLinea(3m, 1500m, 333.34m, 0m, 0m));
+        Assert.Equal(-285m, CalculadorDeTotales.NetoDeLinea(-3m, 100m, 5.005m));
+    }
+
+    [Fact]
+    public void LaLineaConConsumoParcialDeComboDescuentaLaOfertaSoloDeLasUnidadesNoConsumidasMasLaParteDelCombo()
+    {
+        // 3 unidades a 1000 con oferta de 100 por unidad; el combo consumió 2 y le tocó 1500:
+        // descuento = 100 × 1 + 1500 = 1600; neto = 3000 − 1600 = 1400.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(3m, 1000m, 100m, UnidadesConsumidasPorCombo: 2m, AhorroDeCombo: 1500m)]);
+
+        Assert.Equal(3000m, resultado.Subtotal);
+        Assert.Equal(1600m, resultado.Items[0].Descuento);
+        Assert.Equal(1600m, resultado.DescuentoTotal);
+        Assert.Equal(1400m, resultado.Items[0].Total);
+        Assert.Equal(1400m, resultado.Total);
+    }
+
+    [Fact]
+    public void LaLineaConTodasSusUnidadesConsumidasIgnoraLaOfertaUnitaria()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(2m, 3000m, 500m, UnidadesConsumidasPorCombo: 2m, AhorroDeCombo: 727m)]);
+
+        Assert.Equal(727m, resultado.Items[0].Descuento);
+        Assert.Equal(5273m, resultado.Items[0].Total);
+    }
+
+    [Fact]
+    public void ElNetoDeUnaLineaConComboSeRedondeaUnaSolaVezYElDescuentoEsLaDiferenciaConElBruto()
+    {
+        // 4 × 10 = 40; la unidad no consumida pierde 0.5 de oferta y el combo repartió 4:
+        // neto = 40 − 0.5 − 4 = 35.5 → 36 (lejos de cero). Redondear la oferta por su cuenta
+        // (0.5 → 1) daría descuento 5 y neto 35.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(4m, 10m, 0.5m, UnidadesConsumidasPorCombo: 3m, AhorroDeCombo: 4m)]);
+
+        Assert.Equal(40m, resultado.Subtotal);
+        Assert.Equal(4m, resultado.Items[0].Descuento);
+        Assert.Equal(36m, resultado.Items[0].Total);
+    }
+
+    [Fact]
+    public void TresLineasDeMilConPartesEnterasDelAhorroCobranExactamenteElPrecioDelCombo()
+    {
+        // Combo de 2000 sobre 3 × 1000: ahorro 1000 repartido 333 + 333 + 334.
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(1m, 1000m, 0m, null, 1m, 333m),
+            new LineaParaCalcular(1m, 1000m, 0m, null, 1m, 333m),
+            new LineaParaCalcular(1m, 1000m, 0m, null, 1m, 334m)
+        ]);
+
+        Assert.Equal([667m, 667m, 666m], resultado.Items.Select(i => i.Total));
+        Assert.Equal(2000m, resultado.Total);
+        Assert.Equal(1000m, resultado.DescuentoTotal);
+    }
+
+    [Fact]
+    public void ElDescuentoDeComboAlimentaElTotalYMantieneLaInvarianteConAjusteManual()
+    {
+        var resultado = CalculadorDeTotales.Calcular(
+        [
+            new LineaParaCalcular(1m, 3000m, 0m, null, 1m, 273m),
+            new LineaParaCalcular(1m, 2500m, 0m, -10m, 1m, 227m),
+            new LineaParaCalcular(1m, 100m, 0m)
+        ]);
+
+        // Línea 1: 3000 − 273 = 2727. Línea 2: neto 2500 − 227 = 2273, ajuste −10 % = −227.3 → −227
+        // ⇒ 2046. Línea 3: 100.
+        Assert.Equal(5600m, resultado.Subtotal);
+        Assert.Equal(500m, resultado.DescuentoTotal);
+        Assert.Equal(227m, resultado.DescuentoManualTotal);
+        Assert.Equal(4873m, resultado.Total);
+        Assert.Equal(resultado.Items.Sum(i => i.Total), resultado.Total);
+    }
 }
