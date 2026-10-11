@@ -20,6 +20,9 @@ public static class ReglaDeCombos
     /// <summary>Tope de precio: el máximo de <c>numeric(14,2)</c>.</summary>
     public const decimal PrecioMaximo = 999_999_999_999.99m;
 
+    /// <summary>Tope de componentes de un combo: cada uno cuesta un <c>FOR KEY SHARE</c> bajo el lock por tenant.</summary>
+    public const int ComponentesMaximos = 50;
+
     /// <summary>Tope del código que se tipea tras la <c>C</c> en el POS: seis dígitos.</summary>
     public const int CodigoMaximo = 999_999;
 
@@ -38,11 +41,19 @@ public static class ReglaDeCombos
 
     public static void Validar(decimal precio, IReadOnlyCollection<ComponenteDeCombo> componentes)
     {
-        if (precio <= 0 || precio > PrecioMaximo)
+        if (precio <= 0 || precio > PrecioMaximo || precio != decimal.Round(precio, 2))
         {
             throw new ErrorDominio(
                 "combo_precio_invalido",
-                "El precio del combo tiene que ser mayor a cero y no superar 999999999999,99.",
+                "El precio del combo tiene que ser mayor a cero, tener hasta dos decimales y no superar 999999999999,99.",
+                400);
+        }
+
+        if (componentes.Count > ComponentesMaximos)
+        {
+            throw new ErrorDominio(
+                "combo_componentes_excedidos",
+                $"Un combo admite hasta {ComponentesMaximos} componentes.",
                 400);
         }
 

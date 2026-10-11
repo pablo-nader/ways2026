@@ -254,6 +254,9 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static AltaCombo AltaInvalida(string caso, Entorno e, int a, int b) => caso switch
     {
         "precio_cero" => Alta(null, [Art(a), Art(b)], precio: 0m),
+        "precio_con_tres_decimales" => Alta(null, [Art(a), Art(b)], precio: 10.005m),
+        "componentes_excedidos" => Alta(
+            null, [.. Enumerable.Range(1, ReglaDeCombos.ComponentesMaximos + 1).Select(i => Art(i))]),
         "precio_sobre_el_tope" => Alta(null, [Art(a), Art(b)], precio: ReglaDeCombos.PrecioMaximo + 0.01m),
         "componente_vacio" => Alta(null, [Art(a), new ComponenteDeSolicitudDeCombo(null, null, 1m)]),
         "componente_con_ambos" => Alta(null, [Art(a), new ComponenteDeSolicitudDeCombo(b, e.IdEmpresa, 1m)]),
@@ -275,6 +278,8 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
     [Theory]
     [InlineData("precio_cero", "combo_precio_invalido")]
+    [InlineData("precio_con_tres_decimales", "combo_precio_invalido")]
+    [InlineData("componentes_excedidos", "combo_componentes_excedidos")]
     [InlineData("precio_sobre_el_tope", "combo_precio_invalido")]
     [InlineData("componente_vacio", "combo_componente_invalido")]
     [InlineData("componente_con_ambos", "combo_componente_invalido")]
@@ -505,6 +510,54 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var filas = await ComponentesEnBaseAsync(original.Id);
         Assert.Equal(3, filas.Count);
         Assert.DoesNotContain(filas, f => f.IdArticulo == b);
+    }
+
+    /// <summary>Cláusula: <c>activo</c> es obligatorio en el PUT. Omitirlo no puede reactivar en silencio un combo
+    /// inactivo; el 400 se emite antes de tocar nada.</summary>
+    [Fact]
+    public async Task UnPutSinActivoDa400ActivoRequeridoYNoReactivaUnComboInactivo()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnPutSinActivoDa400ActivoRequeridoYNoReactivaUnComboInactivo));
+        var a = await ArticuloAsync(e, "a");
+        var b = await ArticuloAsync(e, "b");
+        var combo = await CrearAsync(e.Admin, Alta(1, [Art(a, 2m), Art(b)], nombre: "Inactivo", activo: false));
+        var antes = await ComboEnBaseAsync(combo.Id);
+
+        var respuesta = await e.Admin.PutAsJsonAsync(
+            $"/api/combos/{combo.Id}",
+            new
+            {
+                nombre = "Editado",
+                precio = 4000m,
+                componentes = new[] { new { idArticulo = a, cantidad = 1m }, new { idArticulo = b, cantidad = 1m } }
+            },
+            OpcionesJson);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("activo_requerido", (await ProblemaAsync(respuesta)).Codigo);
+        var despues = await ComboEnBaseAsync(combo.Id);
+        Assert.False(despues.Activo);
+        Assert.Equal((antes.Codigo, antes.Nombre, antes.Precio, antes.UpdatedAt), (despues.Codigo, despues.Nombre, despues.Precio, despues.UpdatedAt));
+        Assert.Equal([(a, 2m), (b, 1m)], (await ComponentesEnBaseAsync(combo.Id)).Select(f => (f.IdArticulo!.Value, f.Cantidad)));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    [InlineData(ReglaDeCombos.CodigoMaximo + 1)]
+    public async Task UnPutConUnCodigoFueraDeRangoDa400ComboCodigoInvalidoYNoTocaNada(int codigoPedido)
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnPutConUnCodigoFueraDeRangoDa400ComboCodigoInvalidoYNoTocaNada) + codigoPedido);
+        var a = await ArticuloAsync(e, "a");
+        var b = await ArticuloAsync(e, "b");
+        var combo = await CrearAsync(e.Admin, Alta(5, [Art(a), Art(b)], nombre: "Intacto"));
+
+        var respuesta = await PutAsync(e.Admin, combo.Id, Edicion(codigoPedido, [Art(a), Art(b)]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("combo_codigo_invalido", (await ProblemaAsync(respuesta)).Codigo);
+        var guardado = await ComboEnBaseAsync(combo.Id);
+        Assert.Equal((5, "Intacto"), (guardado.Codigo, guardado.Nombre));
     }
 
     [Fact]

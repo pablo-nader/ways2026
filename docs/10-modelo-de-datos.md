@@ -874,8 +874,10 @@ UNIQUE (id_combo, id_familia)  WHERE id_familia  IS NOT NULL;  -- ux_combos_comp
 ```
 
 Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conjunto suma al menos dos unidades en
-total, las cantidades son enteros entre 1 y 999.999 (`combo_cantidad_invalida`) y el precio no supera
-999.999.999.999,99 (`combo_precio_invalido`), para que ningún valor llegue a la base como 22003. Que los artículos
+total, las cantidades son enteros entre 1 y 999.999 (`combo_cantidad_invalida`), el precio es mayor a cero, tiene hasta dos
+decimales y no supera 999.999.999.999,99 (`combo_precio_invalido`), para que ningún valor llegue a la base como 22003 ni
+la respuesta muestre un precio sin redondear, y el combo tiene hasta 50 componentes (`combo_componentes_excedidos`,
+`ReglaDeCombos.ComponentesMaximos`; cada uno cuesta un `FOR KEY SHARE` bajo el lock por tenant). Que los artículos
 pesables no sean componentes (solo `UnidadVenta.Unidad`) NO lo valida `ReglaDeCombos`, que no recibe la unidad de
 venta: lo exige `ServicioDeCombos` (ver "API" más abajo). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
 documento y reparte el ahorro entre las líneas consumidas:
@@ -898,7 +900,9 @@ documento y reparte el ahorro entre las líneas consumidas:
   el importe de lista de las unidades que aporta: el resto de redondeo se coloca en la última línea que puede
   absorberlo y, si no cabe, retrocede a las anteriores. Las unidades consumidas de cada conjunto suman exactamente el
   precio del combo. Es un importe de línea, no unitario.
-- Las líneas con cantidad no entera o no positiva (pesables, notas de crédito) se ignoran en la detección.
+- Las líneas con cantidad no entera o no positiva (notas de crédito) se ignoran en la detección. El motor solo ve la
+  `Cantidad`: un artículo pesable vendido en cantidad entera (2,000 kg) se consumiría como unidades. Por eso la ruta de
+  venta (T3) tiene que excluir de la detección a los artículos pesables según su unidad de venta, no según la cantidad.
 
 Un artículo o una familia que un combo referencia no se puede borrar (`Restrict`); borrar físicamente el combo borra
 sus componentes (`Cascade`). La baja de negocio del combo es lógica (`deleted_at`) y borra físicamente sus componentes
@@ -916,12 +920,14 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   quitarlo); un PUT que lo repita se rechaza con `referencia_invalida`.
 - `POST` y `PUT /api/combos/{id}` reciben `{ codigo?, nombre, precio, idEmpresa?, activo, componentes[] }` con
   componentes `{ idArticulo?, idFamilia?, cantidad }`. El PUT reemplaza todo, incluido el conjunto de componentes, en una
-  transacción. `activo` omitido vale `true`. `codigo` omitido: en el alta el servidor asigna el máximo `codigo` vivo del
+  transacción. `activo` omitido en el alta vale `true`; en el PUT es obligatorio (`400 activo_requerido`), para que
+  omitirlo no reactive un combo inactivo en silencio. `codigo` omitido: en el alta el servidor asigna el máximo `codigo` vivo del
   tenant + 1 (los combos dados de baja no cuentan, así que su código se reutiliza); en el PUT se conserva el actual.
   `codigo` informado tiene que estar entre 1 y 999.999 (`ReglaDeCombos.CodigoMaximo`). `DELETE` da la baja lógica.
 - Un PUT o DELETE sobre un id inexistente, dado de baja o de otro tenant responde `404` antes de validar el cuerpo.
 - Errores `400`: los de `ReglaDeCombos` (`combo_precio_invalido`, `combo_componente_invalido`, `combo_cantidad_invalida`,
-  `combo_componente_duplicado`, `combo_unidades_insuficientes`), `combo_codigo_invalido`, `nombre_requerido`,
+  `combo_componente_duplicado`, `combo_unidades_insuficientes`, `combo_componentes_excedidos`), `activo_requerido`
+  (solo PUT), `combo_codigo_invalido`, `nombre_requerido`,
   `nombre_muy_largo` (150), `referencia_invalida` (artículo, familia o empresa que no existe, está dada de baja o es de
   otro tenant) y `combo_componente_no_unitario` (un componente artículo con `UnidadVenta.Peso`, o una familia con algún
   miembro vivo `Peso`; los servicios, `es_producto = false`, sí se aceptan). `409`: `combo_codigo_duplicado` (código en
@@ -930,7 +936,9 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   código, el pre-chequeo de código y el reemplazo del conjunto. Cada artículo o familia referenciado se toma `FOR KEY
   SHARE` sobre su fila viva en esa transacción, de modo que una baja que ya tiene la fila hace fallar el alta o la
   edición con `referencia_invalida` en vez de dejar un componente colgante. Que el artículo no sea pesable se comprueba
-  en ese momento; cambiarlo después a pesable no se bloquea (el resolvedor ignora las líneas de cantidad no entera).
+  en ese momento y solo en ese momento: cambiar después un componente a pesable, o sumar un artículo pesable a una familia
+  que ya usa un combo, no se bloquea. La ruta de venta (T3) debe excluir los artículos pesables de la detección por su
+  unidad de venta, no por la cantidad.
 - Respaldos de esquema (`ManejadorDeErrores`): `ux_combos_codigo` → `409 combo_codigo_duplicado`;
   `ux_combos_componentes_articulo` y `ux_combos_componentes_familia` → `409 combo_componente_duplicado`. Solo una
   escritura fuera de banda las alcanza, porque el lock por tenant serializa las del servicio.

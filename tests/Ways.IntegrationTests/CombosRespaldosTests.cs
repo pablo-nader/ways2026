@@ -105,7 +105,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var put = e.Admin.PutAsJsonAsync(
             $"/api/combos/{combo.Id}",
-            new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), nuevo]),
+            new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), nuevo], true),
             OpcionesJson);
 
         await EsperarAsync(
@@ -126,6 +126,104 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             .Where(c => c.IdCombo == combo.Id && c.IdArticulo != null).Select(c => c.IdArticulo!.Value).OrderBy(x => x).ToListAsync();
         Assert.Contains(a, articulos);
         Assert.Contains(b, articulos);
+    }
+
+    /// <summary>Cláusula: el combo del PUT se lee DESPUÉS de tomar el lock. Una baja concurrente (simulada por una
+    /// conexión cruda que sostiene el lock, da de baja el combo y borra sus componentes) gana la carrera mientras el PUT
+    /// espera el lock; el PUT, que ya pasó su 404 previo porque la baja no estaba comiteada, tiene que responder 404 y
+    /// no resucitar ni reescribir nada.</summary>
+    [Fact]
+    public async Task UnPutQueEsperaElLockDeUnaBajaEnCursoDelMismoComboDa404YNoLoReescribe()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnPutQueEsperaElLockDeUnaBajaEnCursoDelMismoComboDa404YNoLoReescribe));
+        var (a, b) = await DosArticulosAsync(e);
+        var combo = await CrearAsync(e.Admin, Alta(1, a, b));
+
+        var (poll, sostenedor, transaccion) = await apoyo.AbrirSostenedorAsync(e.IdTenant);
+        await using var _poll = poll;
+        await using var _sostenedor = sostenedor;
+        await using var _transaccion = transaccion;
+
+        await EjecutarAsync(sostenedor, transaccion, "SELECT pg_advisory_xact_lock($1)", ServicioDeCombos.ClaveDeLockDeCombos(e.IdTenant));
+        await EjecutarAsync(sostenedor, transaccion, "DELETE FROM combos_componentes WHERE id_combo = $1", combo.Id);
+        await EjecutarAsync(sostenedor, transaccion, "UPDATE combos SET deleted_at = now() WHERE id_combo = $1", combo.Id);
+
+        var put = e.Admin.PutAsJsonAsync(
+            $"/api/combos/{combo.Id}",
+            new EdicionCombo(null, "Resucitado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 1m)], true),
+            OpcionesJson);
+
+        await EsperarAsync(
+            () => EsperandoElLockDeCombosAsync(poll, e.IdTenant),
+            "El PUT nunca se observó esperando el lock de combos: la prueba no prueba la carrera.");
+        Assert.False(put.IsCompleted);
+
+        await transaccion.CommitAsync();
+
+        var respuesta = await put.WaitAsync(EsperaMaxima);
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var guardado = await db.Combos.IgnoreQueryFilters().SingleAsync(c => c.Id == combo.Id);
+        Assert.NotNull(guardado.DeletedAt);
+        Assert.Equal("Combo", guardado.Nombre);
+        Assert.Empty(await db.CombosComponentes.IgnoreQueryFilters().Where(c => c.IdCombo == combo.Id).ToListAsync());
+    }
+
+    private static async Task<long> FilasEnEsperaAsync(NpgsqlConnection poll)
+    {
+        await using var comando = new NpgsqlCommand(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted", poll);
+
+        return (long)(await comando.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>Cláusula: el componente se toma <c>FOR KEY SHARE</c> dentro de la transacción del combo. Un PUT queda
+    /// detenido en el UPDATE del combo (una conexión cruda sostiene su fila) cuando ya tomó la fila del artículo nuevo;
+    /// la baja de ese artículo llega, espera esa fila, y al comitear el PUT ve el componente y responde
+    /// <c>409 articulo_en_uso</c>. Sin el lock la baja no espera y gana, y el combo queda con un componente de baja.</summary>
+    [Fact]
+    public async Task LaBajaDeUnArticuloEsperaUnaEscrituraDeComboEnCursoQueLoAgregaYDa409ArticuloEnUso()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(LaBajaDeUnArticuloEsperaUnaEscrituraDeComboEnCursoQueLoAgregaYDa409ArticuloEnUso));
+        var (a, b) = await DosArticulosAsync(e);
+        var nuevo = await apoyo.SembrarArticuloAsync(e, "nuevo", ValoresBase(e));
+        var combo = await CrearAsync(e.Admin, Alta(1, a, b));
+
+        var (poll, sostenedor, transaccion) = await apoyo.AbrirSostenedorAsync(e.IdTenant);
+        await using var _poll = poll;
+        await using var _sostenedor = sostenedor;
+        await using var _transaccion = transaccion;
+
+        await EjecutarAsync(sostenedor, transaccion, "UPDATE combos SET updated_at = updated_at WHERE id_combo = $1", combo.Id);
+
+        var put = e.Admin.PutAsJsonAsync(
+            $"/api/combos/{combo.Id}",
+            new EdicionCombo(null, "Con el nuevo", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(nuevo, null, 1m)], true),
+            OpcionesJson);
+
+        await EsperarAsync(
+            () => EsperandoUnaFilaAsync(poll),
+            "El PUT nunca se observó esperando la fila del combo: la prueba no prueba la carrera.");
+
+        var baja = e.Admin.DeleteAsync($"/api/articulos/{nuevo}");
+
+        await EsperarAsync(
+            async () => await FilasEnEsperaAsync(poll) >= 2 ? new object() : null,
+            "La baja del artículo nunca se observó esperando la fila que el PUT tiene tomada.");
+        Assert.False(put.IsCompleted);
+        Assert.False(baja.IsCompleted);
+
+        await transaccion.CommitAsync();
+
+        Assert.Equal(HttpStatusCode.OK, (await put.WaitAsync(EsperaMaxima)).StatusCode);
+        var respuestaDeBaja = await baja.WaitAsync(EsperaMaxima);
+        Assert.Equal(HttpStatusCode.Conflict, respuestaDeBaja.StatusCode);
+        Assert.Equal("articulo_en_uso", (await ProblemaAsync(respuestaDeBaja)).Codigo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        Assert.Null((await db.Articulos.IgnoreQueryFilters().SingleAsync(x => x.Id == nuevo)).DeletedAt);
+        Assert.Contains(nuevo, await db.CombosComponentes.Where(c => c.IdCombo == combo.Id).Select(c => c.IdArticulo!.Value).ToListAsync());
     }
 
     private static async Task<Candado?> EsperandoElLockDeCombosAsync(NpgsqlConnection poll, int idTenant)
@@ -163,7 +261,7 @@ public class CombosRespaldosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             "alta" => e.Admin.PostAsJsonAsync("/api/combos", Alta(null, a, b), OpcionesJson),
             "edicion" => e.Admin.PutAsJsonAsync(
                 $"/api/combos/{existente.Id}",
-                new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 2m)]),
+                new EdicionCombo(null, "Editado", 4000m, null, [new ComponenteDeSolicitudDeCombo(a, null, 1m), new ComponenteDeSolicitudDeCombo(b, null, 2m)], true),
                 OpcionesJson),
             _ => e.Admin.DeleteAsync($"/api/combos/{existente.Id}")
         };

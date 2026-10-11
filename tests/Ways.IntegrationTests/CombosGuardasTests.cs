@@ -86,7 +86,7 @@ public class CombosGuardasTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
         var edicion = new EdicionCombo(
             null, "Sin familia", 4000m, null,
-            [new ComponenteDeSolicitudDeCombo(pancho, null, 1m), new ComponenteDeSolicitudDeCombo(coca, null, 1m)]);
+            [new ComponenteDeSolicitudDeCombo(pancho, null, 1m), new ComponenteDeSolicitudDeCombo(coca, null, 1m)], true);
         Assert.Equal(HttpStatusCode.OK, (await e.Admin.PutAsJsonAsync($"/api/combos/{combo.Id}", edicion, OpcionesJson)).StatusCode);
 
         Assert.Equal(HttpStatusCode.NoContent, (await DisolverAsync(e.Admin, familia)).StatusCode);

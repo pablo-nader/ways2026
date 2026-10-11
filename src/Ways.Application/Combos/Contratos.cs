@@ -39,6 +39,8 @@ public sealed record AltaCombo(
 /// <summary>
 /// Edición completa de un combo: reemplaza nombre, precio, empresa, estado y el conjunto de componentes.
 /// <see cref="Codigo"/> omitido ⇒ conserva el actual; informado, aplica las mismas reglas que en el alta.
+/// <see cref="Activo"/> es obligatorio (<c>400 activo_requerido</c>): es nullable para que su ausencia en el JSON se
+/// rechace en vez de leerse como un valor por defecto y reactivar (o desactivar) el combo en silencio.
 /// </summary>
 public sealed record EdicionCombo(
     int? Codigo,
@@ -46,4 +48,4 @@ public sealed record EdicionCombo(
     decimal Precio,
     int? IdEmpresa,
     IReadOnlyList<ComponenteDeSolicitudDeCombo>? Componentes,
-    bool Activo = true);
+    bool? Activo);

@@ -128,6 +128,8 @@ public class ServicioDeCombos(
         }
 
         var nombre = NormalizarNombre(datos.Nombre);
+        var activo = datos.Activo
+            ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
         var codigo = ValidarCodigoPedido(datos.Codigo);
         var componentes = ValidarConjunto(datos.Precio, datos.Componentes);
 
@@ -157,7 +159,7 @@ public class ServicioDeCombos(
             existente.Nombre = nombre;
             existente.Precio = datos.Precio;
             existente.IdEmpresa = datos.IdEmpresa;
-            existente.Activo = datos.Activo;
+            existente.Activo = activo;
             existente.UpdatedAt = reloj.Ahora;
 
             // Dos SaveChanges en la misma transacción: el DELETE del conjunto viejo se emite antes que el INSERT del
@@ -284,7 +286,9 @@ public class ServicioDeCombos(
 
     /// <summary>Bajo el lock de combos: toma cada fila referenciada <c>FOR KEY SHARE</c>, en orden ascendente de id y
     /// artículos antes que familias, y comprueba que sea viva y del tenant (RLS esconde la ajena); después exige que
-    /// ningún componente sea pesable. La unidad de venta se mira en ese momento: cambiarla después no se bloquea.</summary>
+    /// ningún componente sea pesable. Es un chequeo puntual: ni cambiar la unidad de venta de un componente a Peso ni sumar un
+    /// artículo pesable a una familia ya usada por un combo se bloquea después, así que la detección de combos en la
+    /// venta tiene que excluir los artículos pesables por su unidad de venta y no por la cantidad.</summary>
     private async Task ExigirReferenciasUtilizablesAsync(
         IReadOnlyCollection<ComponenteDeCombo> componentes, CancellationToken ct)
     {

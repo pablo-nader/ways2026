@@ -9,6 +9,8 @@ public class ReglaDeCombosTests
 
     private static ComponenteDeCombo Fam(int id, decimal cantidad = 1m) => new(null, id, cantidad);
 
+    private static decimal Precio(string valor) => decimal.Parse(valor, System.Globalization.CultureInfo.InvariantCulture);
+
     private static void AssertCodigo(string codigo, decimal precio, params ComponenteDeCombo[] componentes)
     {
         var error = Assert.Throws<ErrorDominio>(() => ReglaDeCombos.Validar(precio, componentes));
@@ -36,6 +38,41 @@ public class ReglaDeCombosTests
         AssertCodigo("combo_cantidad_invalida", 5000m, Art(1, ReglaDeCombos.CantidadMaxima + 1m), Art(2));
         AssertCodigo("combo_precio_invalido", ReglaDeCombos.PrecioMaximo + 0.01m, Art(1), Art(2));
     }
+
+    [Theory]
+    [InlineData("10.00")]
+    [InlineData("10.5")]
+    [InlineData("10.000")]
+    [InlineData("0.01")]
+    public void UnPrecioConHastaDosDecimalesSeAcepta(string precio)
+    {
+        ReglaDeCombos.Validar(Precio(precio), [Art(1), Art(2)]);
+    }
+
+    [Theory]
+    [InlineData("10.005")]
+    [InlineData("10.001")]
+    [InlineData("0.0001")]
+    public void UnPrecioConMasDeDosDecimalesSeRechazaEnVezDeRedondearseEnSilencio(string precio) =>
+        AssertCodigo("combo_precio_invalido", Precio(precio), Art(1), Art(2));
+
+    [Fact]
+    public void ElTopeDeComponentesSeAceptaYUnoMasSeRechaza()
+    {
+        ReglaDeCombos.Validar(5000m, [.. Enumerable.Range(1, ReglaDeCombos.ComponentesMaximos).Select(i => Art(i))]);
+
+        AssertCodigo(
+            "combo_componentes_excedidos",
+            5000m,
+            [.. Enumerable.Range(1, ReglaDeCombos.ComponentesMaximos + 1).Select(i => Art(i))]);
+    }
+
+    [Fact]
+    public void ElTopeDeComponentesSeCuentaAntesDeMirarCadaComponente() =>
+        AssertCodigo(
+            "combo_componentes_excedidos",
+            5000m,
+            [.. Enumerable.Range(1, ReglaDeCombos.ComponentesMaximos + 1).Select(_ => new ComponenteDeCombo(null, null, 1m))]);
 
     [Fact]
     public void UnaSolaUnidadEnTotalSeRechaza() =>
