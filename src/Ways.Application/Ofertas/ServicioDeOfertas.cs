@@ -642,7 +642,7 @@ public class ServicioDeOfertas(
     /// alcance y beneficio exclusivos, rango de <c>cantidad_minima</c>, ventana de vigencia
     /// válida, <c>dias_semana</c> subset sin duplicados. Devuelve el <see cref="AlcanceDeOferta"/>
     /// ya proyectado para que el llamador sepa qué referencia tenant-scoped validar a
-    /// continuación, sin tener que releer las tres columnas nullable crudas.</summary>
+    /// continuación, sin tener que releer las cuatro columnas nullable crudas de alcance.</summary>
     private static AlcanceDeOferta ValidarInvariantes(Oferta candidato)
     {
         var alcance = ReglaDeOfertas.LeerAlcance(candidato);

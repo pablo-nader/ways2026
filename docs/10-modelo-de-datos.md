@@ -598,7 +598,8 @@ no toman locks.
   filas de los miembros vivos, ascendentes y `FOR NO KEY UPDATE`; el nombre de la familia disuelta se puede
   reutilizar. `409 familia_en_uso` si alguna oferta, viva o dada de baja, apunta a la familia (la misma política
   que la baja de un grupo): la guarda corre bajo los dos locks, después de leer la familia, y no cuenta a los
-  artículos, que se sueltan en la misma transacción.
+  artículos, que se sueltan en la misma transacción. El pre-chequeo de existencia de las
+  ofertas no toma lock: queda el residual descrito en la sección de ofertas (§3).
 
 **Alinear.** Alinear un artículo con el de referencia es dejarlo idéntico a él en los quince campos compartidos (los
 propios no se tocan) y en el **estado de precios** de cada lista fija —el precio vigente y, si lo hay, el pendiente con su
@@ -775,6 +776,16 @@ y solo si `articulos.id_familia` es esa familia **al resolver** (un artículo da
 comprobantes ya emitidos no cambian. La precedencia sigue siendo solo `prioridad`/`acumulable`: no hay orden
 automático por tipo de alcance. Una familia con `activo = false` no se valida ni al resolver ni al crear la oferta
 (igual que los grupos). Disolver una familia que alguna oferta referencia está bloqueado (`409 familia_en_uso`).
+
+Residual conocido: el pre-chequeo de existencia de la familia al crear o editar una oferta no toma lock, así que
+un alta o edición que corre en paralelo con la disolución de esa familia puede dejar una oferta viva apuntando a
+una familia disuelta. Es inerte (la familia ya no tiene miembros, así que el resolvedor nunca la empareja) y es el
+mismo residual abierto que `GuardaDeReferencias` documenta para los grupos; cerrarlo
+(`BloquearSiEstaVivaAsync` en el escritor) es un seguimiento pendiente para todos los catálogos.
+
+Migración `OfertasPorFamilia`: revertirla (`Down`) aborta con `23514` mientras alguna oferta tenga alcance por
+familia, porque el CHECK anterior de tres columnas no admite esa fila; esas ofertas hay que eliminarlas o
+reasignarles otro alcance antes de revertir.
 
 ---
 

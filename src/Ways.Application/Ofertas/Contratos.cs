@@ -31,7 +31,7 @@ public sealed record OfertaListado(
 /// <summary>Alcance (<see cref="IdArticulo"/>/<see cref="IdGrupo"/>/<see cref="IdCategoria"/>/
 /// <see cref="IdFamilia"/>) y
 /// beneficio (<see cref="PrecioUnitario"/>/<see cref="Porcentaje"/>/<see cref="ImporteFijo"/>)
-/// viajan como las tres columnas nullable crudas de doc 10 (design decision 1) — la
+/// viajan como las columnas nullable crudas de doc 10 (cuatro de alcance, tres de beneficio) (design decision 1) — la
 /// exclusividad de cada grupo la valida <c>ReglaDeOfertas</c> del lado de
 /// <c>ServicioDeOfertas</c>, no un tipo discriminado acá. <see cref="IdsListas"/>: vacío/omitido
 /// ⇒ la oferta aplica a todas las listas del tenant (spec: Multi-Lista Targeting via

@@ -52,9 +52,13 @@ be enforced.
 #### Scenario: Invalid scope reference maps to 400
 
 - GIVEN a create request references a non-existent `id_articulo`, `id_grupo`,
-  `id_categoria` or `id_familia` (a soft-deleted or other-tenant familia counts as non-existent)
+  `id_categoria` or `id_familia`
 - WHEN the insert reaches Postgres
 - THEN 23503 is raised and `ManejadorDeErrores` maps it to 400 `referencia_invalida`
+  (the FK backstop covers a non-existent id and an id of another tenant)
+- AND a soft-deleted referenced row still exists, so the composite FK is satisfied: only the
+  service pre-check (`ServicioDeOfertas.ExigirAlcanceValidoAsync`, which applies the soft-delete
+  filter) rejects it, also with 400 `referencia_invalida`
 
 ### Requirement: Vigencia Window Semantics
 
