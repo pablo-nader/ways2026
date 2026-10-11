@@ -106,7 +106,7 @@ export function Login() {
 
         <form onSubmit={enviar} autoComplete="off" noValidate>
           <p className="text-muted text-center">
-            {admiteUsuario ? 'Ingresa tu usuario o correo y tu contraseña' : 'Ingresá tu correo y contraseña'}
+            {admiteUsuario ? 'Ingresá tu usuario o correo y tu contraseña' : 'Ingresá tu correo y contraseña'}
           </p>
           {estadoDelSitio.fase === 'fallido' && (
             <p className="text-muted small text-center">

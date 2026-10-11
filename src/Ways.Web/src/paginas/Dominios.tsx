@@ -148,7 +148,7 @@ export function Dominios() {
       setEsPrincipal(false)
       await refrescarTrasEscribir(
         id,
-        `Se agregó el dominio "${creado.host}". Cuando su DNS apunte al servidor, márcalo como verificado.`,
+        `Se agregó el dominio "${creado.host}". Cuando su DNS apunte al servidor, marcalo como verificado.`,
       )
     } finally {
       ocupadoRef.current = false
