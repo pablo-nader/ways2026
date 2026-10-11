@@ -148,6 +148,26 @@ Not covered and left honest: no audit rows for domain changes; the 60 s cache li
 tested (only its invalidation), and with several instances another one can serve a stale answer for up
 to 60 s.
 
+### Judgment-day of T1 (target 1db684e8, round 0, 2026-10-11)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Informational ledger
+(not fixed, recorded as follow-ups):
+
+- Both: `ServicioDeDominios.AgregarAsync` accepts a host that is also a platform host
+  (`aipos.site`, `localhost`, `tauri.localhost`, any `Plataforma:Hosts`); it verifies fine but
+  never resolves because the middleware checks platform hosts first. Follow-up: reject it with
+  400 `host_de_plataforma`.
+- Both: an unknown host costs a DI scope plus a query per request; the cache holds only hits.
+  Follow-up: cache the negative result for the same 60 s and consider a per-host single-flight.
+- Both: `DominioActual` defaults to platform, so `SesionCorrespondeAlHost` fails open when the
+  middleware did not run (not reachable today). Follow-up: tri-state "unresolved".
+- A: a tenant that ever had a domain row can never be dado de baja (`marcado` dependent, raw SQL
+  ignores `deleted_at`). Follow-up with the owner.
+- B: login by `usuario` makes account lockout reachable by guessing a username (5 failures).
+  Accepted trade-off of the owner's request; mitigation (per-IP throttle) is a follow-up.
+- B: `login-dispositivo` ignores the host's tenant; the guard rejects the cookie on the next
+  request, the bearer stays valid on the device's own domain. Follow-up: scope it like `/login`.
+
 ## Delivery slices
 
 - PR 1: T1. PR 2: T2 (stacked on PR 1). PR 3: T3 (stacked on PR 2).
