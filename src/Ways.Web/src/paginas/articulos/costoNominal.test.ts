@@ -156,6 +156,18 @@ describe('porcentajeDeAlicuota y entradasDeCosto', () => {
       ),
     ).toEqual({ costoLista: null, por: 'Unidad', incluyeIva: true, unidadesPorBulto: null, porcentajeIva: 21, descuentoProveedor: 0 })
   })
+
+  it.each(['', '  '])('un descuento vacío (%j) equivale a cero, como lo guarda el servidor', (descuentoProveedor) => {
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', idAlicuotaIva: 1 }
+
+    expect(entradasDeCosto({ ...costos, descuentoProveedor }, alicuotas).descuentoProveedor).toBe(0)
+  })
+
+  it('un descuento tipeado se conserva', () => {
+    const costos = { costoLista: '100', costoListaPor: 'Unidad' as const, costoListaIncluyeIva: true, unidadesPorBulto: '', idAlicuotaIva: 1 }
+
+    expect(entradasDeCosto({ ...costos, descuentoProveedor: '12.5' }, alicuotas).descuentoProveedor).toBe(12.5)
+  })
 })
 
 describe('costoNominalDelFormulario', () => {
@@ -174,6 +186,20 @@ describe('costoNominalDelFormulario', () => {
 
   it('un artículo cargado sin cambios en las entradas muestra el costo nominal guardado, aunque no salga de la fórmula', () => {
     expect(costoNominalDelFormulario(cargado(), alicuotas, false)).toBe(73.5)
+  })
+
+  /** Cláusula bajo prueba: el descuento vacío se lee como 0 en `entradasDeCosto`; sin ella, '' (null) != '0' (0)
+   * contaría como cambio y reemplazaría el nominal guardado por la fórmula. */
+  it('vaciar un descuento guardado en 0 no cuenta como cambio: se conserva el nominal guardado', () => {
+    const guardado = { ...cargado().costoGuardado!, descuentoProveedor: '0' }
+
+    expect(costoNominalDelFormulario(cargado({ descuentoProveedor: '', costoGuardado: guardado }), alicuotas, false)).toBe(73.5)
+  })
+
+  it('el descuento guardado en 0 y tipeado como 10 sí recalcula', () => {
+    const guardado = { ...cargado().costoGuardado!, descuentoProveedor: '0' }
+
+    expect(costoNominalDelFormulario(cargado({ descuentoProveedor: '10', costoGuardado: guardado }), alicuotas, false)).toBe(90)
   })
 
   it('un cambio que no cuenta (unidades por bulto con base unidad, otra alícuota con IVA incluido) conserva el guardado', () => {

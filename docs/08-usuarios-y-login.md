@@ -140,11 +140,22 @@ supervisor sin tener permiso para convertirlo en admin.
 
 ## Login
 
-- `POST /api/auth/login` con `{ mail, password }`. Es por `mail`, no por `usuario` (etapa 1
-  de multi-tenancy, doc 09): el `mail` es único global y resuelve la cuenta —y con ella el
-  tenant— sin que el request tenga que cargar ningún contexto de tenant de antemano. El
-  detalle del contrato de login vive en
+- `POST /api/auth/login` con `{ mail, password }`. En el host de la plataforma es por `mail`, no
+  por `usuario` (etapa 1 de multi-tenancy, doc 09): el `mail` es único global y resuelve la
+  cuenta —y con ella el tenant— sin que el request tenga que cargar ningún contexto de tenant de
+  antemano. El detalle del contrato de login vive en
   `openspec/changes/stage-1-organization-and-catalogs/specs/usuarios-y-login/spec.md`.
+- **Bajo el dominio propio de un comercio** (doc 09 "Dominios por tenant") el tenant ya se conoce
+  por el host, así que el body admite `{ usuario, password }` además de `{ mail, password }`:
+  exactamente uno de los dos (ambos o ninguno es `400 solicitud_invalida`). El `usuario` se busca
+  por `(id_tenant, usuario)`; en el host de la plataforma es `400 usuario_requiere_dominio`. Bajo
+  un dominio de comercio el `mail` también queda acotado a ese tenant: el de otra cuenta (o el de
+  plataforma) da el mismo error, y con el mismo costo, que una contraseña incorrecta — el dominio
+  no sirve para averiguar en qué tenant existe un mail, ni suma fallos a la cuenta ajena.
+  `GET /api/publico/sitio` (anónimo) dice a la pantalla de login si el host admite `usuario`.
+- Una sesión de un tenant solo vale en el dominio de ese tenant y en el host de la plataforma: la
+  misma cookie, o el mismo bearer, presentada en el dominio de otro comercio se rechaza (`401`, y
+  la cookie se borra). La sesión de `root` vale en cualquier host.
 - El mensaje de error es **el mismo** para mail inexistente y contraseña incorrecta.
   El legacy los distinguía (*"El usuario ingresado es incorrecto"* vs *"La contraseña
   ingresada es incorrecta"*), lo que permite enumerar cuentas. Además, ante un mail
@@ -175,8 +186,11 @@ supervisor sin tener permiso para convertirlo en admin.
 
 ### En el front
 
-- **No hay zonas públicas.** `/login` es la única ruta sin sesión.
-- Sin sesión, cualquier ruta redirige a `/login` guardando la ruta original;
+- **El back office y el POS web viven bajo `/admin`** (el router de React usa `basename="/admin"`):
+  `/admin/login` es la única pantalla del back office sin sesión, junto con `/admin/descargar`. La raíz
+  `/` de un comercio es su landing pública y `/online` su tienda (ver [07](07-despliegue.md#mapa-de-urls)).
+  Los favoritos viejos (`/login`, `/pos`, `/descargar`…) redirigen a `/admin/...`.
+- Sin sesión, cualquier ruta de `/admin` redirige a `/admin/login` guardando la ruta original;
   al autenticarse se vuelve ahí, no al home.
 - Cualquier `401` de cualquier llamada tira la sesión abajo y rebota al login.
 
@@ -193,8 +207,9 @@ y las variables de entorno dejan de tener efecto.
 
 ## Login de dispositivo (stage-desktop-pos)
 
-El POS de escritorio (Tauri) sirve `pos.html` desde una página local (`http://tauri.localhost`),
-de otro origen que la API: la política CORS `pos-local` no habilita credenciales y el cliente web
+El POS de escritorio (Tauri) sirve `pos.html` desde una página local (`http://tauri.localhost`) y no
+usa las rutas `/admin`, `/online` ni la landing: llama a la API en `/api` y su router es propio.
+Es de otro origen que la API: la política CORS `pos-local` no habilita credenciales y el cliente web
 manda `credentials: 'omit'`, así que ninguna cookie de la API viaja ahí. Por eso cada credencial
 tiene también una forma de header (detalle abajo). Tampoco usa el login por mail de arriba: un dispositivo se vincula UNA VEZ (un Admin, con su propia sesión normal) y
 después cualquier cajero autorizado entra con **usuario + contraseña** contra ESE dispositivo —
@@ -228,7 +243,7 @@ doc 10 §9 (`dispositivos`).
   credenciales). Busca la cuenta por `(id_tenant del dispositivo, usuario)` — reusa el mismo
   núcleo de `ServicioDeAutenticacion` que el login por mail (timing-safe, lockout a los 5
   intentos, rehash transparente, estado de cuenta/tenant), con un chequeo extra: el rol tiene que
-  ser Vendedor, Supervisor o Admin (los mismos que puede operar `/pos` en la web) — otro rol
+  ser Vendedor, Supervisor o Admin (los mismos que puede operar `/admin/pos` en la web) — otro rol
   responde `403 rol_no_permitido_en_dispositivo`, recién después de validar la contraseña (mismo
   criterio que `usuario_bloqueado`/`usuario_inactivo`: no es una vía de enumeración nueva).
   Actualiza `ultimo_uso_at` del dispositivo al confirmar.

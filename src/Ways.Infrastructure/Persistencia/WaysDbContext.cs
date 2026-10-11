@@ -18,6 +18,7 @@ using Ways.Domain.Compras;
 using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
+using Ways.Domain.Combos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.CuentaCorriente;
@@ -37,6 +38,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<PuntoVenta> PuntosVenta => Set<PuntoVenta>();
+
+    // Dominios propios de cada tenant (rebanada 0 de la tienda online): ServicioDeDominios los
+    // administra y ResolvedorDeDominios los lee para resolver el tenant desde el host.
+    public DbSet<Dominio> Dominios => Set<Dominio>();
 
     // stage-desktop-pos: dispositivo de escritorio vinculado a un punto de venta.
     // ServicioDeDispositivos es el primer (y único) consumidor de Application.
@@ -86,6 +91,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // la migración, sin consumidor todavía).
     public DbSet<Oferta> Ofertas => Set<Oferta>();
     public DbSet<OfertaLista> OfertasListas => Set<OfertaLista>();
+    public DbSet<Combo> Combos => Set<Combo>();
+    public DbSet<ComboComponente> CombosComponentes => Set<ComboComponente>();
 
     // stage-5-pos-ventas, Slice 2: NumeracionesComprobante NO se expone en IWaysDbContext —
     // mismo criterio que NumeracionesArticulos (no NumeracionesClientes): su único escritor
@@ -288,6 +295,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnNumeracionArticulo(modelBuilder);
         AplicarFiltroDeTenantEnArticuloEmpresa(modelBuilder);
         AplicarFiltroDeTenantEnOfertaLista(modelBuilder);
+        AplicarFiltroDeTenantEnComboComponente(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionComprobante(modelBuilder);
         AplicarFiltroDeTenantEnStock(modelBuilder);
         AplicarFiltroDeTenantEnStockLote(modelBuilder);
@@ -678,6 +686,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(OfertaLista), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(OfertaLista.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="ComboComponente"/> no hereda de <see cref="EntidadTenant"/> (sin auditoría ni
+    /// baja lógica), así que necesita la misma variante escrita a mano que
+    /// <see cref="AplicarFiltroDeTenantEnOfertaLista"/>. Su <c>IdTenant</c> no se auto-estampa:
+    /// quien arme la fila lo asigna y el <c>WITH CHECK</c> de RLS rechaza el INSERT si falta.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnComboComponente(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(ComboComponente))!;
+
+        var parametro = Expression.Parameter(typeof(ComboComponente), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(ComboComponente.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

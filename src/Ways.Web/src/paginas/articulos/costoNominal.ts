@@ -108,7 +108,7 @@ export function entradasDeCosto(f: CostoGuardado, alicuotas: readonly AlicuotaIv
     incluyeIva: f.costoListaIncluyeIva,
     unidadesPorBulto: numeroOVacio(f.unidadesPorBulto),
     porcentajeIva: porcentajeDeAlicuota(alicuotas, f.idAlicuotaIva),
-    descuentoProveedor: numeroOVacio(f.descuentoProveedor),
+    descuentoProveedor: numeroOVacio(f.descuentoProveedor) ?? 0,
   }
 }
 

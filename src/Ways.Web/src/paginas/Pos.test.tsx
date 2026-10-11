@@ -744,11 +744,9 @@ describe('Pos — escaneo', () => {
     expect(within(filas()[0]).getAllByText('$ 100,00')).toHaveLength(2)
     expect(screen.getByText('$ 340,00', { selector: 'strong' })).toBeInTheDocument()
 
-    await userEvent.click(within(filas()[1]).getByRole('button', { name: 'Ajuste manual de Coca Cola 1L' }))
-    expect(screen.getAllByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' })).toHaveLength(1)
-    await userEvent.click(screen.getByRole('radio', { name: 'Descuento' }))
-    await userEvent.type(screen.getByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' }), '10')
-    await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    expect(screen.getAllByRole('textbox', { name: 'Ajuste % de Coca Cola 1L' })).toHaveLength(2)
+    await userEvent.type(within(filas()[1]).getByRole('textbox', { name: 'Ajuste % de Coca Cola 1L' }), '-10')
+    await userEvent.tab()
 
     await waitFor(() => expect(within(filas()[1]).getByText('Desc. manual 10% -$ 24,00')).toBeInTheDocument())
     expect(within(filas()[0]).queryByText(/Desc\. manual/)).not.toBeInTheDocument()
@@ -1686,7 +1684,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
     await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
-    await aplicarAjusteManual('Recargo', '15')
+    await aplicarAjusteManual('15')
     await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
 
     await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
@@ -3441,8 +3439,8 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     await screen.findByText(/Esta venta viene del presupuesto N° 1/)
     expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
 
-    expect(screen.queryByRole('button', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('form', { name: /^Ajuste manual de/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /^Ajuste % de/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Ajuste %' })).toBeInTheDocument()
   })
 
   it('cobrar postea la SolicitudDeVenta con idPresupuestoOrigen, sin idCliente ni lineas (dto-contract-honesty)', async () => {
@@ -5368,10 +5366,8 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
   })
 })
 
-/** Ajuste manual por línea: las dos primeras funciones arman el carrito de una Coca Cola ($ 100) y
- * abren/rellenan el editor inline; se comparten con los tests de offline y de borrador. */
-const NOMBRE_DEL_BOTON_DE_AJUSTE = 'Ajuste manual de Coca Cola 1L'
-
+/** Ajuste manual por línea: la columna "Ajuste %" tiene un input con signo por fila (negativo =
+ * descuento, positivo = recargo) que compromete al perder el foco o con Enter. */
 async function armarCarritoConCocaCola() {
   renderPos()
   await screen.findByRole('option', { name: /Consumidor Final/ })
@@ -5390,16 +5386,16 @@ async function esperarMediosDePago() {
   await waitFor(() => expect(selector).toBeEnabled())
 }
 
-function campoDePorcentajeDeAjuste() {
-  return screen.getByRole('textbox', { name: 'Porcentaje del ajuste de Coca Cola 1L' })
+function campoDeAjuste() {
+  return screen.getByRole('textbox', { name: 'Ajuste % de Coca Cola 1L' })
 }
 
-async function aplicarAjusteManual(tipo: 'Descuento' | 'Recargo', porcentaje: string) {
-  await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-  await userEvent.click(screen.getByRole('radio', { name: tipo }))
-  await userEvent.clear(campoDePorcentajeDeAjuste())
-  await userEvent.type(campoDePorcentajeDeAjuste(), porcentaje)
-  await userEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+/** Tipea el porcentaje con signo y sale del campo (el blur lo compromete). */
+async function aplicarAjusteManual(porcentaje: string) {
+  const campo = campoDeAjuste()
+  await userEvent.clear(campo)
+  if (porcentaje !== '') await userEvent.type(campo, porcentaje)
+  await userEvent.tab()
 }
 
 function panelDatosDeLaVenta(): HTMLElement {
@@ -5411,16 +5407,17 @@ function llamadasAResolver() {
 }
 
 describe('Pos — ajuste manual por línea', () => {
-  it('un descuento manual baja el total de la línea y el total previo, se ve en un badge y en el panel de totales, y no vuelve a resolver precios', async () => {
+  it('un descuento manual (porcentaje negativo) baja el total de la línea y el total previo, se ve en un badge y en el panel de totales, y no vuelve a resolver precios', async () => {
     await armarCarritoConCocaCola()
     const resolucionesAntes = llamadasAResolver().length
 
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
 
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
     expect(within(fila).getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
     expect(within(fila).getByText('$ 90,00')).toBeInTheDocument()
+    expect(campoDeAjuste()).toHaveValue('-10')
     const panel = within(panelDatosDeLaVenta())
     expect(panel.getByText('Desc. manual')).toBeInTheDocument()
     expect(panel.getByText('-$ 10,00')).toBeInTheDocument()
@@ -5434,133 +5431,156 @@ describe('Pos — ajuste manual por línea', () => {
     expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
   })
 
-  it('un recargo manual sube el total y se muestra aparte, con su propio rótulo', async () => {
+  it('un recargo manual (porcentaje positivo) sube el total y se muestra aparte, con su propio rótulo', async () => {
     await armarCarritoConCocaCola()
 
-    await aplicarAjusteManual('Recargo', '15')
+    await aplicarAjusteManual('15')
 
     await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
     expect(within(fila).getByText('Recargo 15% +$ 15,00')).toBeInTheDocument()
+    expect(campoDeAjuste()).toHaveValue('15')
     const panel = within(panelDatosDeLaVenta())
     expect(panel.getByText('Recargo')).toBeInTheDocument()
     expect(panel.getByText('+$ 15,00')).toBeInTheDocument()
     expect(panel.queryByText('Desc. manual')).not.toBeInTheDocument()
   })
 
-  it('al abrir el editor el foco va al campo del porcentaje, con "Descuento" elegido y sin el botón "Quitar ajuste"', async () => {
+  it('el input arranca vacío, acepta "+" y coma o punto decimal, y muestra el porcentaje comprometido con signo (el recargo sin "+")', async () => {
     await armarCarritoConCocaCola()
+    expect(campoDeAjuste()).toHaveValue('')
 
-    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
+    await aplicarAjusteManual('+12,5')
 
-    expect(campoDePorcentajeDeAjuste()).toHaveFocus()
-    expect(screen.getByRole('radio', { name: 'Descuento' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Recargo' })).not.toBeChecked()
-    expect(screen.queryByRole('button', { name: 'Quitar ajuste' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(screen.getByText('$ 112,50', { selector: 'strong' })).toBeInTheDocument())
+    expect(campoDeAjuste()).toHaveValue('12,5')
+    expect(screen.getByText('Recargo 12,5% +$ 12,50')).toBeInTheDocument()
+
+    await aplicarAjusteManual('-0.5')
+    await waitFor(() => expect(screen.getByText('$ 99,50', { selector: 'strong' })).toBeInTheDocument())
+    expect(campoDeAjuste()).toHaveValue('-0,5')
   })
 
-  it('un porcentaje inválido muestra el motivo en el lugar, deja el editor abierto y no toca el carrito; tipear de nuevo limpia el aviso', async () => {
+  it('un texto inválido marca el campo con el motivo, no toca el carrito y se conserva (con aviso para cobrar) hasta corregirlo o descartarlo', async () => {
     await armarCarritoConCocaCola()
-    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-    const aplicar = screen.getByRole('button', { name: 'Aplicar' })
+    const campo = campoDeAjuste()
+    const MENSAJE_DE_FORMATO =
+      'Ingresá el porcentaje con hasta 2 decimales: negativo para descuento, positivo para recargo (por ejemplo -10 o 12,5).'
 
-    await userEvent.click(aplicar)
-    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá el porcentaje del ajuste.')
+    await userEvent.type(campo, '10,555')
+    expect(campo).toHaveClass('is-invalid')
+    expect(campo).toHaveAttribute('aria-invalid', 'true')
+    expect(campo).toHaveAttribute('title', MENSAJE_DE_FORMATO)
 
-    await userEvent.type(campoDePorcentajeDeAjuste(), '0')
-    await userEvent.click(aplicar)
-    expect(screen.getByRole('alert')).toHaveTextContent('El porcentaje debe ser mayor que 0 y como máximo 100.')
-    expect(campoDePorcentajeDeAjuste()).toHaveAttribute('aria-invalid', 'true')
+    await userEvent.tab()
+    expect(campo).toHaveValue('10,555')
+    expect(campo).toHaveClass('is-invalid')
+    expect(screen.getByText('Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.')).toBeInTheDocument()
 
-    await userEvent.clear(campoDePorcentajeDeAjuste())
-    await userEvent.type(campoDePorcentajeDeAjuste(), '101')
-    await userEvent.click(aplicar)
-    expect(screen.getByRole('alert')).toHaveTextContent('El porcentaje debe ser mayor que 0 y como máximo 100.')
-
-    await userEvent.clear(campoDePorcentajeDeAjuste())
-    await userEvent.type(campoDePorcentajeDeAjuste(), '10,555')
-    await userEvent.click(aplicar)
-    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá el porcentaje sin signo y con hasta 2 decimales (por ejemplo 10 o 12,5).')
+    await userEvent.clear(campo)
+    await userEvent.type(campo, '101')
+    expect(campo).toHaveAttribute('title', 'El porcentaje debe estar entre -100 y 100.')
+    await userEvent.clear(campo)
+    await userEvent.type(campo, '--5')
+    expect(campo).toHaveAttribute('title', MENSAJE_DE_FORMATO)
+    await userEvent.clear(campo)
+    await userEvent.type(campo, 'abc')
+    expect(campo).toHaveClass('is-invalid')
 
     // Nada de lo anterior llegó al carrito.
-    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Desc\. manual|Recargo \d/)).not.toBeInTheDocument()
     expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
 
-    await userEvent.type(campoDePorcentajeDeAjuste(), '1')
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-
-    await userEvent.clear(campoDePorcentajeDeAjuste())
-    await userEvent.type(campoDePorcentajeDeAjuste(), '12,5')
-    await userEvent.click(aplicar)
-    await waitFor(() => expect(screen.getByText('$ 87,00', { selector: 'strong' })).toBeInTheDocument())
-    expect(screen.getByText('Desc. manual 12,5% -$ 13,00')).toBeInTheDocument()
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+    await userEvent.clear(campo)
+    await userEvent.type(campo, '-12,5')
+    expect(campo).not.toHaveClass('is-invalid')
+    expect(campo).not.toHaveAttribute('aria-invalid')
+    await userEvent.tab()
+    await waitFor(() => expect(screen.getByText('$ 87,50', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Desc. manual 12,5% -$ 12,50')).toBeInTheDocument()
+    expect(screen.queryByText('Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.')).not.toBeInTheDocument()
   })
 
-  it('Escape cancela sin aplicar nada y devuelve el foco al botón que abrió el editor', async () => {
+  it('un texto inválido sobre una línea con ajuste deja el ajuste comprometido como estaba', async () => {
     await armarCarritoConCocaCola()
-    const disparador = screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })
-    await userEvent.click(disparador)
-    await userEvent.type(campoDePorcentajeDeAjuste(), '10')
+    await aplicarAjusteManual('-10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await aplicarAjusteManual('150')
+
+    expect(campoDeAjuste()).toHaveClass('is-invalid')
+    expect(screen.getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument()
+  })
+
+  it('Escape descarta lo tipeado y vuelve a mostrar el valor comprometido, sin tocar el carrito', async () => {
+    await armarCarritoConCocaCola()
+    await userEvent.type(campoDeAjuste(), '10')
 
     await userEvent.keyboard('{Escape}')
 
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
-    expect(disparador).toHaveFocus()
-    expect(disparador).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
+    expect(campoDeAjuste()).toHaveValue('')
+    await userEvent.tab()
+    expect(screen.queryByText(/Desc\. manual|Recargo \d/)).not.toBeInTheDocument()
+    expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
+
+    await aplicarAjusteManual('-10')
+    await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.clear(campoDeAjuste())
+    await userEvent.type(campoDeAjuste(), '25')
+    await userEvent.keyboard('{Escape}')
+    expect(campoDeAjuste()).toHaveValue('-10')
+    expect(screen.getByText('Desc. manual 10% -$ 10,00')).toBeInTheDocument()
+  })
+
+  it('Enter compromete el ajuste y deja el foco en el input de código para seguir escaneando', async () => {
+    await armarCarritoConCocaCola()
+
+    await userEvent.type(campoDeAjuste(), '20{Enter}')
+
+    await waitFor(() => expect(screen.getByText('$ 120,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(screen.getByText('Recargo 20% +$ 20,00')).toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  it('Enter con un texto inválido no mueve el foco ni toca el carrito', async () => {
+    await armarCarritoConCocaCola()
+
+    await userEvent.type(campoDeAjuste(), 'abc{Enter}')
+
+    expect(campoDeAjuste()).toHaveFocus()
+    expect(campoDeAjuste()).toHaveClass('is-invalid')
     expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
   })
 
-  it('"Cancelar" y volver a tocar el botón también cierran el editor', async () => {
+  it.each(['', '0', '-0', '0,00'])('dejar el campo en %j quita el ajuste y deja el total original', async (texto) => {
     await armarCarritoConCocaCola()
-    const disparador = screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })
-
-    await userEvent.click(disparador)
-    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
-    expect(disparador).toHaveFocus()
-
-    await userEvent.click(disparador)
-    expect(screen.getByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).toBeInTheDocument()
-    await userEvent.click(disparador)
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
-  })
-
-  it('Enter en el campo aplica el ajuste (el editor es un formulario) y deja el foco en el input de código para seguir escaneando', async () => {
-    await armarCarritoConCocaCola()
-    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-
-    await userEvent.type(campoDePorcentajeDeAjuste(), '20{Enter}')
-
-    await waitFor(() => expect(screen.getByText('$ 80,00', { selector: 'strong' })).toBeInTheDocument())
-    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
-  })
-
-  it('reabrir una línea con ajuste lo trae cargado; "Quitar ajuste" lo elimina, deja el total original y devuelve el foco al input de código', async () => {
-    await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
 
-    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-    expect(screen.getByRole('radio', { name: 'Descuento' })).toBeChecked()
-    expect(campoDePorcentajeDeAjuste()).toHaveValue('10')
-
-    await userEvent.click(screen.getByRole('button', { name: 'Quitar ajuste' }))
+    await aplicarAjusteManual(texto)
 
     await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
     expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+    expect(campoDeAjuste()).toHaveValue('')
+  })
+
+  it('dejar en cero una línea que no tenía ajuste no cambia nada', async () => {
+    await armarCarritoConCocaCola()
+
+    await aplicarAjusteManual('0')
+
+    expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument()
+    expect(campoDeAjuste()).toHaveValue('')
+    expect(screen.queryByText('Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.')).not.toBeInTheDocument()
   })
 
   it('cambiar de descuento a recargo sobre una línea que ya tiene ajuste lo reemplaza', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
 
-    await aplicarAjusteManual('Recargo', '5')
+    await aplicarAjusteManual('5')
 
     await waitFor(() => expect(screen.getByText('$ 105,00', { selector: 'strong' })).toBeInTheDocument())
     expect(screen.getByText('Recargo 5% +$ 5,00')).toBeInTheDocument()
@@ -5571,7 +5591,7 @@ describe('Pos — ajuste manual por línea', () => {
     // tolerancia_pago = 10 (mock base). Descuento 10 % → total 90: pagar 85 queda dentro de la
     // tolerancia; sin el ajuste el faltante sería 15 y "Cobrar" seguiría deshabilitado.
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
     await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -5582,7 +5602,7 @@ describe('Pos — ajuste manual por línea', () => {
 
   it('con recargo del 15 %, pagar $ 100 no cubre el total ($ 115): "Cobrar" queda deshabilitado hasta cubrirlo', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Recargo', '15')
+    await aplicarAjusteManual('15')
     await waitFor(() => expect(screen.getByText('$ 115,00', { selector: 'strong' })).toBeInTheDocument())
     await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -5598,7 +5618,7 @@ describe('Pos — ajuste manual por línea', () => {
 
   it('Cobrar manda SOLO el porcentaje en la línea ajustada, con su signo, y nada de dinero por línea', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
     await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -5620,7 +5640,7 @@ describe('Pos — ajuste manual por línea', () => {
 
   it('re-escanear el mismo artículo suma la cantidad y conserva el ajuste, que se recalcula sobre el nuevo neto', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -5633,7 +5653,7 @@ describe('Pos — ajuste manual por línea', () => {
 
   it('cambiar la cantidad conserva el ajuste', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Recargo', '10')
+    await aplicarAjusteManual('10')
     await waitFor(() => expect(screen.getByText('$ 110,00', { selector: 'strong' })).toBeInTheDocument())
 
     const cantidad = screen.getByLabelText('Cantidad de Coca Cola 1L')
@@ -5644,12 +5664,12 @@ describe('Pos — ajuste manual por línea', () => {
     expect(screen.getByText('Recargo 10% +$ 30,00')).toBeInTheDocument()
   })
 
-  it('quitar la línea se lleva el ajuste: volver a escanear el artículo arranca sin ajuste ni editor', async () => {
+  it('quitar la línea se lleva el ajuste y el borrador: volver a escanear el artículo arranca sin ajuste, sin error y sin aviso de cobro', async () => {
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
-    await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-    expect(screen.getByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).toBeInTheDocument()
+    await aplicarAjusteManual('abc')
+    expect(campoDeAjuste()).toHaveClass('is-invalid')
 
     await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
@@ -5658,66 +5678,68 @@ describe('Pos — ajuste manual por línea', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
     expect(screen.queryByText(/Desc\. manual/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('form', { name: 'Ajuste manual de Coca Cola 1L' })).not.toBeInTheDocument()
+    expect(campoDeAjuste()).toHaveValue('')
+    expect(campoDeAjuste()).not.toHaveClass('is-invalid')
+    expect(screen.queryByText('Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.')).not.toBeInTheDocument()
   })
 
-  it('con el diálogo "¿Finalizar venta?" abierto, el botón de ajuste queda inerte', async () => {
+  it('con el diálogo "¿Finalizar venta?" abierto, el input de ajuste queda inerte', async () => {
     await armarVentaLista()
-    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toBeEnabled()
+    expect(campoDeAjuste()).toBeEnabled()
 
     fireEvent.keyDown(document, { key: 'F9' })
     await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
 
-    expect(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE })).toBeDisabled()
+    expect(campoDeAjuste()).toBeDisabled()
   })
 
-  // Lo tipeado en el editor todavía no está en el carrito: cobrar con el editor abierto cobraría sin
-  // el ajuste. La cláusula que lo impide es `ajusteEnEdicion === null` en `precondicionesListas`,
-  // de la que cuelgan `puedeCobrar` (el botón) y el F9.
-  describe('con el editor de ajuste abierto y un porcentaje sin aplicar no se puede cobrar', () => {
-    const AVISO_DE_AJUSTE_SIN_APLICAR = 'Aplicá o cancelá el ajuste antes de cobrar.'
+  // Lo tipeado en el campo todavía no está en el carrito: cobrar con el texto sin confirmar
+  // cobraría sin el ajuste. La cláusula que lo impide es `!hayAjusteSinConfirmar` en
+  // `precondicionesListas`, de la que cuelgan `puedeCobrar` (el botón) y el F9.
+  describe('con un porcentaje tipeado y sin confirmar no se puede cobrar', () => {
+    const AVISO_DE_AJUSTE_SIN_CONFIRMAR = 'Confirmá (Enter) o descartá (Esc) el ajuste antes de cobrar.'
 
-    async function abrirEditorYTipearSinAplicar() {
-      await userEvent.click(screen.getByRole('button', { name: NOMBRE_DEL_BOTON_DE_AJUSTE }))
-      await userEvent.type(campoDePorcentajeDeAjuste(), '10')
+    async function tipearSinConfirmar() {
+      await userEvent.type(campoDeAjuste(), '10')
     }
 
     function seEnvioLaVenta() {
       return apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')
     }
 
-    it('el botón "Cobrar" se deshabilita, el aviso se ve, hacerle clic no cobra, y al cancelar vuelve a habilitarse', async () => {
+    it('el botón "Cobrar" se deshabilita, el aviso se ve, hacerle clic no cobra, y al descartar vuelve a habilitarse', async () => {
       await armarVentaLista()
       const cobrar = screen.getByRole('button', { name: /Cobrar/ })
       expect(cobrar).toBeEnabled()
-      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_CONFIRMAR)).not.toBeInTheDocument()
 
-      await abrirEditorYTipearSinAplicar()
+      await tipearSinConfirmar()
 
       expect(cobrar).toBeDisabled()
-      expect(screen.getByText(AVISO_DE_AJUSTE_SIN_APLICAR)).toBeInTheDocument()
-      await userEvent.click(cobrar)
+      expect(screen.getByText(AVISO_DE_AJUSTE_SIN_CONFIRMAR)).toBeInTheDocument()
+      // `fireEvent` y no `userEvent`: un clic real sacaría el foco del campo y confirmaría el texto.
+      fireEvent.click(cobrar)
       expect(seEnvioLaVenta()).toBe(false)
 
-      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+      await userEvent.keyboard('{Escape}')
 
       expect(cobrar).toBeEnabled()
-      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_APLICAR)).not.toBeInTheDocument()
+      expect(screen.queryByText(AVISO_DE_AJUSTE_SIN_CONFIRMAR)).not.toBeInTheDocument()
       expect(seEnvioLaVenta()).toBe(false)
     })
 
-    it('F9 con el foco en el campo del porcentaje no abre "¿Finalizar venta?" ni cobra; sin el editor, el mismo F9 sí abre el diálogo', async () => {
+    it('F9 con el foco en el campo del porcentaje no abre "¿Finalizar venta?" ni cobra; descartado el texto, el mismo F9 sí abre el diálogo', async () => {
       await armarVentaLista()
-      await abrirEditorYTipearSinAplicar()
+      await tipearSinConfirmar()
 
-      fireEvent.keyDown(campoDePorcentajeDeAjuste(), { key: 'F9' })
+      fireEvent.keyDown(campoDeAjuste(), { key: 'F9' })
       await act(async () => {})
 
       expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
       expect(seEnvioLaVenta()).toBe(false)
 
-      // Control positivo: lo que lo detuvo fue el editor y no otra precondición.
-      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+      // Control positivo: lo que lo detuvo fue el texto sin confirmar y no otra precondición.
+      await userEvent.keyboard('{Escape}')
       fireEvent.keyDown(document, { key: 'F9' })
       expect(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })).toBeInTheDocument()
     })
@@ -5735,7 +5757,7 @@ describe('Pos — ajuste manual por línea', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
     await armarCarritoConCocaCola()
-    await aplicarAjusteManual('Descuento', '10')
+    await aplicarAjusteManual('-10')
     await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
     await esperarMediosDePago()
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -6115,7 +6137,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
-      await aplicarAjusteManual('Descuento', '10')
+      await aplicarAjusteManual('-10')
       await waitFor(() => expect(screen.getByText('$ 90,00', { selector: 'strong' })).toBeInTheDocument())
       await esperarMediosDePago()
       await cobrarConEfectivo('90')

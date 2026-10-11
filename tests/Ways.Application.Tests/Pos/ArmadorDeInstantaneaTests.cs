@@ -158,6 +158,30 @@ public class ArmadorDeInstantaneaTests
     }
 
     [Fact]
+    public void ArmarArticulosLlevaLaFamiliaDelArticuloYLaGrillaDeCadaLista()
+    {
+        var articulos = new[]
+        {
+            new ArticuloAResolver(11, "A11", "Alfajor A", 21, true, UnidadVenta.Unidad, IdFamilia: 7),
+            new ArticuloAResolver(12, "A12", "Sin familia", 21, true, UnidadVenta.Unidad),
+        };
+        var celda = new EscalonDeFamilia(2m, 1m, 1750m, 250m, [new OfertaAplicadaDto(71, "2 x 3500", 250m)]);
+        var resolucion = new[]
+        {
+            Resuelto(11, 3, 2000m, 2000m, 0m) with { EscalonesDeFamilia = [celda] },
+            Resuelto(12, 3, 2000m, 2000m, 0m) with { EscalonesDeFamilia = [] },
+        };
+
+        var resultado = ArmarArticulos(
+            articulos, [3], resolucion, new Dictionary<int, IReadOnlyList<string>>(), new Dictionary<int, decimal> { [21] = 21m });
+
+        Assert.Equal(7, resultado[0].IdFamilia);
+        Assert.Equal([celda], Assert.Single(resultado[0].PreciosPorLista).EscalonesDeFamilia);
+        Assert.Null(resultado[1].IdFamilia);
+        Assert.Null(Assert.Single(resultado[1].PreciosPorLista).EscalonesDeFamilia);
+    }
+
+    [Fact]
     public void ArmarArticulosRechazaUnaResolucionDeOtroTamanio()
     {
         var articulos = new[] { new ArticuloAResolver(11, "A11", "Arroz", 21, true, UnidadVenta.Unidad) };

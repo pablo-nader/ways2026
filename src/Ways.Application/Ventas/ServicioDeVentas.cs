@@ -166,7 +166,7 @@ public class ServicioDeVentas(
             .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad))
             .ToList();
         var resolucion = presupuestoOrigen is null
-            ? await servicioDeOfertas.ResolverAsync(lineasDeResolucion, momento, ct)
+            ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
             : null;
 
         // 2 consultas: snapshot de articulos + alicuotas (design: The Sale Transaction). Sin

@@ -17,8 +17,9 @@
  * `total = subtotal − descuentoTotal − descuentoManualTotal + recargoManualTotal` — nunca un
  * cálculo alternativo.
  *
- * El descuento por unidad y la oferta salen de `preciosVigentesOffline` sobre el precio de la lista
- * de la venta (no del precio plano): este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
+ * El descuento por unidad y la oferta salen de `preciosVigentesDeLasLineas` sobre el precio de la
+ * lista de la venta (no del precio plano), con la cantidad de la línea y la de su familia en el
+ * carrito: este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
  * resolvió la vista previa, así que sin ese lookup el ticket impreso quedaría con el descuento de
  * cantidad 1 mientras la pantalla y el payload encolado cobran el del tramo.
  *
@@ -28,7 +29,7 @@
  * y NINGÚN consumidor de este comprobante sintético (`VentaFinalizada`, `ticketDeVenta`) lee esos
  * dos campos — verificado contra ambos archivos antes de fijar este contrato.
  */
-import { precioEnLista, preciosVigentesOffline } from './instantaneaOffline'
+import { preciosVigentesDeLasLineas } from './instantaneaOffline'
 import { calcularTotalesDeLinea, totalesDeAjusteManual } from '../api/ajusteManual'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
@@ -56,6 +57,8 @@ export type ParametrosDeComprobanteOfflineSintetico = {
 export function construirComprobanteOfflineSintetico(params: ParametrosDeComprobanteOfflineSintetico): ComprobanteEmitido | null {
   const porId = new Map(params.instantanea.articulos.map((a) => [a.idArticulo, a]))
 
+  const vigentes = preciosVigentesDeLasLineas(params.lineas, params.instantanea, params.idListaPrecio)
+
   let subtotal = 0
   let descuentoTotal = 0
   const items: ItemEmitido[] = []
@@ -64,10 +67,9 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
   for (let indice = 0; indice < params.lineas.length; indice++) {
     const linea = params.lineas[indice]
     const articulo = porId.get(linea.idArticulo)
-    const precio = articulo ? precioEnLista(articulo, params.idListaPrecio) : null
-    if (!articulo || !precio) return null
+    const precios = vigentes[indice]
+    if (!articulo || !precios) return null
 
-    const precios = preciosVigentesOffline(precio, linea.cantidad)
     const { bruto, descuento, ajuste, total } = calcularTotalesDeLinea({
       cantidad: linea.cantidad,
       precioOriginal: precios.precioOriginal,

@@ -1,0 +1,126 @@
+# combos
+
+## Objective
+
+A combo is a set of two or more units (each component is a specific article or an article
+family, with a quantity) sold at one fixed price. Example: 1 pancho ($3.000) + 1 coca ($2.500)
+= $5.000. Selling it decrements the stock of the real articles.
+
+## Problem
+
+Ofertas discount one line at a time; nothing can express "N different articles at a fixed
+price". The legacy combo feature was dead and `docs/11-programa-post-paridad.md:47-50` left
+combos out of parity as "una etapa nueva con su propio diseño". Requested by the owner on
+2026-10-11.
+
+## Owner decisions (2026-10-11)
+
+- A combo never becomes a sale line. The sale always holds the real article lines; the combo is
+  a discount spread over them. Stock, IVA, annulment and reports keep working per article.
+- Two entry paths, one engine: (1) the cashier loads the articles separately and the combo is
+  detected; (2) the cashier picks a combo and the POS adds the same article lines.
+- POS: a "Buscar combo" button next to the article search, and typing `C` + digits in the code
+  box loads the combo with that number.
+- A component may be an article or a family; 2 or more components, any mix.
+
+## Design decisions taken by the agent (owner may overrule; each is cheap to change before T3)
+
+- D1. Combo units are priced at list price minus the combo share; ofertas do not stack on the
+  units a combo consumes. A combo applies only when it is cheaper than what ofertas give those
+  same units. Units of the same line outside the combo keep their oferta.
+- D2. The combo applies as many times as the document holds complete sets (2 panchos + 2 cocas
+  = 2 combos; 2 panchos + 1 coca = 1 combo + 1 pancho at its normal price).
+- D3. The combo saving is split across the consumed lines in proportion to their list amount,
+  in cents, with the rounding remainder on the last line, so the set totals exactly the combo
+  price. It is a LINE amount (the existing `descuento` column is already a line amount); a unit
+  discount cannot represent it exactly.
+- D4. The combo price does not depend on the price list.
+- D5. Components are `UnidadVenta.Unidad` only (integer quantities). Weighed articles cannot be
+  components in v1.
+- D6. Several combos competing for the same units: greatest real gain first (what those
+  units cost with their ofertas minus the combo price; the winner is applied as many times as
+  its current line assignment allows, then everything is re-evaluated), ties by lowest
+  `id_combo`. A unit is consumed by one combo only. Within a combo, article components are
+  satisfied before family components.
+- D7. `C` + digits is tried as a combo first; if no active combo has that number the text falls
+  back to the article lookup (`codigo_interno` is free `citext`, an article may be called C12).
+- D8. Out of scope for v1: presupuestos and remitos (stay per line), detection on credit notes
+  (NCX returns lines at list price minus recorded discount as today), validity windows.
+
+## Model (doc 10 category: catálogo, like `ofertas`)
+
+- `combos`: `id_combo`, `id_tenant`, `id_empresa NULL`, `codigo integer NOT NULL` (the number
+  typed after `C`; unique per tenant among live rows), `nombre`, `precio numeric(14,2) > 0`,
+  `activo`, `created_at/updated_at/deleted_at`. RLS via `HabilitarRlsDeTenant`.
+- `combos_componentes`: `id_combo_componente`, `id_tenant`, `id_combo`, `id_articulo NULL`,
+  `id_familia NULL`, `cantidad numeric(12,3) > 0`;
+  `CHECK num_nonnulls(id_articulo, id_familia) = 1`; composite FKs with `id_tenant`, Restrict
+  to articulos/familias, Cascade from combos; an article or family appears once per combo.
+- `items_comprobante_venta.id_combo integer NULL` (traceability; added in T3) with FK Restrict.
+- Domain invariant: total component quantity ≥ 2.
+
+## Scope
+
+Backend (model, pure engine, ABM API, sale integration, price preview), back-office screen,
+POS online and offline (snapshot, local engine, combo search, `C` code), POS release.
+
+## Configuration
+
+- TDD: test-first where a runnable deterministic test exists (the pure engine above all).
+- Review: PR gate is judgment-day until a clean round (`CLAUDE.md`).
+- Delivery: forecast well above 400 authored lines → chained PRs, `stacked-to-main` (cached
+  owner preference); each slice ships PR + auto-merge + Auto-fix without asking.
+
+## Tasks
+
+- [x] T1 — Model and engine. Migration + entities/config for `combos` and
+  `combos_componentes`, RLS, doc 10; pure `ResolvedorDeCombos` in `Ways.Domain` (detection per
+  D2/D5/D6, allocation per D3, comparison input for D1) with unit tests; constraint backstops
+  with SQLSTATE-asserted tests. Route: delegated (writer; multiple non-trivial files).
+- [ ] T2 — ABM API. `GET/POST/PUT/DELETE /api/combos`, validation (≥ 2 units, Unidad-only,
+  live references, unique code with 23505 backstop, 404-first), dissolve/baja guards for a
+  family or article used by a combo, integration tests. Route: delegated (writer).
+- [ ] T3 — Sale integration. `id_combo` on the item; combos applied in the decide phase of
+  `ServicioDeVentas.EmitirAsync` after ofertas (D1); line-amount discount through
+  `CalculadorDeTotales`; `POST /api/ofertas/resolver` (document aggregation) returns the combo
+  share for the POS preview; offline request line carries the combo fields and the discrepancy
+  audit understands them; query-budget guard updated on purpose. Route: delegated (writer).
+- [ ] T4 — Back office. "Combos" screen (list, create, edit, baja) with component editor
+  (article or family + quantity), menu entry, Vitest tests. Route: delegated (writer).
+- [ ] T5 — POS. Snapshot carries combos; TypeScript port of the engine for offline with parity
+  tests against the C# cases; "Buscar combo" button; `C` + digits; member picker when a
+  component is a family; ticket shows the combo name; Desktop bump + `pos-v*` tag.
+  Route: delegated (writer).
+
+## Progress
+
+Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded to
+`4728dcb6` (main with #373).
+
+- T1 implemented — commits `05476e89` (model + engine) and `4011305d` (judgment fixes).
+  Route: delegated writer (multiple non-trivial files); golden
+  `inventario-de-dependientes.txt` updated inline by the parent. Migration
+  `20261011195148_Combos`. Engine API: `ResolvedorDeCombos.Resolver(lineas, combos)` →
+  per line `UnidadesConsumidas`, `AhorroDeCombo` (line amount), `IdsDeCombo`; caller formula:
+  line discount = oferta unit discount × unconsumed units + combo share. Validator
+  `ReglaDeCombos.Validar` with codes `combo_precio_invalido`, `combo_componente_invalido`,
+  `combo_cantidad_invalida`, `combo_componente_duplicado`, `combo_unidades_insuficientes`.
+  Observed (fix actor): build 0 errors; Domain 1183/1183; integration `~Combos` 29/29;
+  Application 795/795; `has-pending-model-changes` clean. Parent spot checks: golden inventory
+  43/43, Domain `~Combos` 48/48. RED 42 failing → GREEN; mutation evidence: 7 engine + 9
+  migration mutants killed, plus K1, K3, K4 and the EF-filter test. Full integration suite not
+  run locally (CI runs it).
+- Judgment-day, T1: round 1 — 0 CRITICAL from either judge; confirmed by both and fixed in
+  `4011305d`: K1 ranking by real gain, K2 batch application, K3 bounded remainder, K4
+  `codigo > 0`, K5 caps, K6 doc claims, K7 test claims. Scoped re-judgment: both judges, all
+  resolved, 0 CRITICAL → APPROVED. Left as info: the engine assumes non-negative oferta
+  discounts (callers already guarantee it; with a negative one a set may not total the combo
+  price) — T3 must keep that precondition.
+- Carried to T2: `Combos`/`CombosComponentes` on `IWaysDbContext`; 23505 → 409 mappings for
+  `ux_combos_codigo`, `ux_combos_componentes_articulo|familia`; Unidad-only check in the
+  service; baja guards must ignore components of soft-deleted combos.
+- Review tier: RDD off (clone-local) → no native review; PR gate is judgment-day.
+
+## Next step
+
+PR for T1 (slice 1), then T2.

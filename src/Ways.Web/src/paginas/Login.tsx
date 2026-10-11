@@ -1,23 +1,41 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
-import { ErrorApi } from '../api/cliente'
+import { credencialDeLogin, mensajeDeFalloDeLogin } from '../auth/credencialDeLogin'
+import { clienteDePublico } from '../api/publico'
 import { puedeOperarPos } from '../api/tipos'
+import type { SitioPublico } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
 import { BotonDeTema } from '../tema/BotonDeTema'
 
 type EstadoDeRuta = { desde?: { pathname: string; search: string } }
+
+/** Lo que se sabe del sitio por el que se entró. Mientras `cargando` el formulario se rinde
+ * inerte; si la lectura falla (`fallido`) se ofrece el ingreso por correo, que vale bajo cualquier
+ * dominio. */
+type EstadoDelSitio = { fase: 'cargando' } | { fase: 'listo'; sitio: SitioPublico } | { fase: 'fallido' }
 
 export function Login() {
   const { usuario, cargando, iniciarSesion } = useAuth()
   const navegar = useNavigate()
   const ubicacion = useLocation()
 
-  const [mail, setMail] = useState('')
+  const [identificador, setIdentificador] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [estadoDelSitio, setEstadoDelSitio] = useState<EstadoDelSitio>({ fase: 'cargando' })
+  const identificadorRef = useRef<HTMLInputElement>(null)
+  /** Generación de la lectura del sitio: la única superseder es una lectura nueva (el montaje se
+   * repite bajo StrictMode), y gana la última INICIADA, no la última resuelta. */
+  const generacionDelSitio = useRef(0)
+  /** Espejo SÍNCRONO de `enviando`: dos envíos del mismo tick leen el mismo render. */
+  const enviandoRef = useRef(false)
+
+  const sitio = estadoDelSitio.fase === 'listo' ? estadoDelSitio.sitio : null
+  const admiteUsuario = sitio?.admiteUsuario ?? false
+  const formularioListo = estadoDelSitio.fase !== 'cargando'
 
   const estado = ubicacion.state as EstadoDeRuta | null
   // Paridad con el legacy (A1): quien opera el POS entra directo a vender.
@@ -35,17 +53,39 @@ export function Login() {
     }
   }, [cargando, usuario, destino, navegar])
 
+  useEffect(() => {
+    const token = ++generacionDelSitio.current
+
+    clienteDePublico
+      .obtenerSitio()
+      .then((leido) => {
+        if (generacionDelSitio.current === token) setEstadoDelSitio({ fase: 'listo', sitio: leido })
+      })
+      .catch(() => {
+        if (generacionDelSitio.current === token) setEstadoDelSitio({ fase: 'fallido' })
+      })
+  }, [])
+
+  // El `autoFocus` no alcanza: el campo nace inerte y recién se habilita cuando llega el sitio.
+  useEffect(() => {
+    if (!cargando && formularioListo) identificadorRef.current?.focus()
+  }, [cargando, formularioListo])
+
   async function enviar(evento: FormEvent) {
     evento.preventDefault()
+    if (enviandoRef.current) return
+
+    enviandoRef.current = true
     setError('')
     setEnviando(true)
 
     try {
-      await iniciarSesion(mail, password)
+      await iniciarSesion(credencialDeLogin(identificador, admiteUsuario), password)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo iniciar sesión.')
+      setError(mensajeDeFalloDeLogin(e))
       setPassword('')
     } finally {
+      enviandoRef.current = false
       setEnviando(false)
     }
   }
@@ -61,18 +101,28 @@ export function Login() {
       </div>
       <div className="form-signin">
         <h1 className="text-center ways-brand">Ways</h1>
+        {sitio?.nombreComercio && <h2 className="h5 text-center">{sitio.nombreComercio}</h2>}
         <hr />
 
         <form onSubmit={enviar} autoComplete="off" noValidate>
-          <p className="text-muted text-center">Ingresá tu correo y contraseña</p>
+          <p className="text-muted text-center">
+            {admiteUsuario ? 'Ingresá tu usuario o correo y tu contraseña' : 'Ingresá tu correo y contraseña'}
+          </p>
+          {estadoDelSitio.fase === 'fallido' && (
+            <p className="text-muted small text-center">
+              No se pudo identificar el sitio: por ahora se ingresa solo con el correo.
+            </p>
+          )}
 
           <input
-            type="email"
-            name="mail"
+            ref={identificadorRef}
+            type={admiteUsuario ? 'text' : 'email'}
+            name={admiteUsuario ? 'usuario' : 'mail'}
             className="form-control mb-3"
-            placeholder="Correo electrónico"
-            value={mail}
-            onChange={(e) => setMail(e.target.value)}
+            placeholder={admiteUsuario ? 'Usuario o mail' : 'Correo electrónico'}
+            value={identificador}
+            onChange={(e) => setIdentificador(e.target.value)}
+            disabled={!formularioListo}
             autoFocus
             required
           />
@@ -84,6 +134,7 @@ export function Login() {
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            disabled={!formularioListo}
             required
           />
 
@@ -92,7 +143,7 @@ export function Login() {
           <button
             type="submit"
             className="btn btn-lg btn-success form-control"
-            disabled={enviando}
+            disabled={!formularioListo || enviando}
           >
             {enviando ? 'Ingresando…' : 'Continuar'}
           </button>

@@ -174,6 +174,7 @@ const ADMINISTRACION_DE_ROOT: Resumen = {
         ['Puntos de venta', '/organizacion/puntos-venta'],
         ['Tenants', '/organizacion/tenants'],
         ['Nuevo tenant', '/organizacion/nuevo-tenant'],
+        ['Dominios', '/organizacion/dominios'],
       ],
     },
   ],
@@ -188,7 +189,7 @@ describe('construirMenu', () => {
     expect(resumir(construirMenu(usuarioConRol(ROL.Supervisor)))).toEqual([VENDER, CAJA, VENTAS, COMPRAS, REPORTES])
   })
 
-  it('Admin: todo, con Administración completa salvo Tenants y Nuevo tenant', () => {
+  it('Admin: todo, con Administración completa salvo Tenants, Nuevo tenant y Dominios', () => {
     expect(resumir(construirMenu(usuarioConRol(ROL.Admin)))).toEqual([
       VENDER,
       CAJA,

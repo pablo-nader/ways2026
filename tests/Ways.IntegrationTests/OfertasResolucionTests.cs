@@ -637,6 +637,83 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Empty(resultado!);
     }
 
+    private static AltaOferta OfertaDeFamiliaConMinimo(int idFamilia, decimal cantidadMinima, decimal precioUnitario) => new(
+        Nombre: "2 x 3500", IdEmpresa: null, IdArticulo: null, IdGrupo: null, IdCategoria: null,
+        FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
+        CantidadMinima: cantidadMinima, PrecioUnitario: precioUnitario, Porcentaje: null, ImporteFijo: null,
+        Prioridad: 0, Acumulable: false, IdFamilia: idFamilia);
+
+    /// <summary>Cuerpo crudo: <paramref name="agregacion"/> <c>null</c> omite la clave, como el POS ya
+    /// instalado.</summary>
+    private static Task<HttpResponseMessage> ResolverConAgregacionAsync(
+        HttpClient cliente, int idLista, object? agregacion, params int[] idsArticulo)
+    {
+        var cuerpo = new Dictionary<string, object?>
+        {
+            ["lineas"] = idsArticulo.Select(id => new { idArticulo = id, idEmpresa = (int?)null, idListaPrecio = idLista, cantidad = 1 }).ToList()
+        };
+        if (agregacion is not null)
+        {
+            cuerpo["agregacion"] = agregacion;
+        }
+
+        return cliente.PostAsJsonAsync("/api/ofertas/resolver", cuerpo);
+    }
+
+    /// <summary>Cláusula: el despacho por <see cref="AgregacionDeResolucion"/> de
+    /// <c>ServicioDeOfertas.ResolverSolicitudAsync</c>. Dos artículos de una familia con oferta
+    /// "2 x 3500" a cantidad 1: como documento (y sin el campo, el cuerpo de los POS instalados) suman
+    /// 2 y ambos descuentan; por línea cada uno es una unidad suelta a precio de lista.</summary>
+    [Theory]
+    [InlineData(null, 1750)]
+    [InlineData("Documento", 1750)]
+    [InlineData("PorLinea", 2000)]
+    public async Task ResolverRespetaLaAgregacionPedidaYSinCampoAgregaComoDocumento(string? agregacion, int precioEsperado)
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync($"Agregacion{agregacion ?? "Omitida"}");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idFamilia = await SembrarFamiliaAsync(idTenant, "Alfajores");
+        var a = await SembrarArticuloAsync(idTenant, "alfajor-a", idFamilia: idFamilia);
+        var b = await SembrarArticuloAsync(idTenant, "alfajor-b", idFamilia: idFamilia);
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        foreach (var id in new[] { a, b })
+        {
+            await SembrarPrecioAsync(idTenant, id, idLista, 2000m);
+        }
+
+        await CrearOfertaAsync(admin, OfertaDeFamiliaConMinimo(idFamilia, 2m, 1750m));
+
+        var respuesta = await ResolverConAgregacionAsync(admin, idLista, agregacion, a, b);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var resultado = await respuesta.Content.ReadFromJsonAsync<List<ResultadoDeResolucion>>();
+        Assert.Equal([precioEsperado, precioEsperado], resultado!.Select(r => (int)r.PrecioFinal!.Value));
+    }
+
+    /// <summary>Un nombre que no es de ninguna agregación lo rechaza el binding JSON (400
+    /// <c>cuerpo_invalido</c>, como cualquier otro enum de la API); un entero fuera del enum, que el
+    /// binding sí acepta, lo rechaza el servicio con <c>agregacion_invalida</c>.</summary>
+    [Theory]
+    [InlineData("Todas", "cuerpo_invalido")]
+    [InlineData(7, "agregacion_invalida")]
+    public async Task ResolverRechazaUnaAgregacionInvalida(object agregacion, string codigoEsperado)
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync($"AgregacionInvalida{agregacion}");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idArticulo = await SembrarArticuloAsync(idTenant, "cualquiera");
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+        await SembrarPrecioAsync(idTenant, idArticulo, idLista, 100m);
+
+        var respuesta = await ResolverConAgregacionAsync(admin, idLista, agregacion, idArticulo);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(codigoEsperado, problema.GetProperty("codigo").GetString());
+    }
+
     /// <summary>(judgment-day, item 1 — revisado) <c>{"lineas": null}</c> crudo bindea
     /// <c>null</c> más allá de <c>required</c> (STJ no valida miembros <c>required</c> en
     /// constructores <c>SetsRequiredMembers</c>) — <c>ResolverAsync</c> lo distingue de un lote
@@ -788,7 +865,7 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         }
         else
         {
-            await servicioDeOfertas.ResolverAsync(lineas, momento: null);
+            await servicioDeOfertas.ResolverDocumentoAsync(lineas, momento: null);
         }
 
         return contador.Consultas;

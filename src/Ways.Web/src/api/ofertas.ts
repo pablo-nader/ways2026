@@ -15,6 +15,7 @@ import type {
   ListaPrecioListado,
   OfertaListado,
   ResultadoDeResolucion,
+  AgregacionDeResolucion,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
 
@@ -29,8 +30,10 @@ export const clienteDeOfertas = {
   eliminar: (id: number) => api.delete(`/ofertas/${id}`),
   /** `POST /api/ofertas/resolver` (stage-4, re-gateado a `OperacionDePos` en stage-5): único
    * camino de precio del carrito del POS (spec: operacion-de-pos / "Cart Pricing Has Exactly
-   * One Path") — no muta nada, solo reporta precio final y ofertas aplicadas por línea. */
-  resolver: (lineas: LineaDeResolucion[]) => api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas }),
+   * One Path") — no muta nada, solo reporta precio final y ofertas aplicadas por línea.
+   * `agregacion` dice si el lote es un documento (el carrito, por omisión) o consultas sueltas. */
+  resolver: (lineas: LineaDeResolucion[], agregacion: AgregacionDeResolucion = 'Documento') =>
+    api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas, agregacion }),
 }
 
 export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria' | 'Familia'

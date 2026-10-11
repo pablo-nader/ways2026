@@ -9,6 +9,7 @@ using Ways.Application.Clientes;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Dispositivos;
+using Ways.Application.Dominios;
 using Ways.Application.Etiquetas;
 using Ways.Application.Familias;
 using Ways.Application.Fiscal;
@@ -46,6 +47,9 @@ public static class DependencyInjection
 
         // stage-desktop-pos: pairing/resolución de dispositivos de escritorio.
         services.AddScoped<ServicioDeDispositivos>();
+
+        // Dominios propios de cada tenant: alta, verificación y baja, solo plataforma.
+        services.AddScoped<ServicioDeDominios>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();

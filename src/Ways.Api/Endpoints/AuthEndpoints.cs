@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Dispositivos;
+using Ways.Application.Dominios;
 using Ways.Application.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 
@@ -19,6 +20,7 @@ public static class AuthEndpoints
             SolicitudDeLogin solicitud,
             ServicioDeAutenticacion servicio,
             TenantActualDeSesion tenantActual,
+            IDominioActual dominio,
             HttpContext contexto,
             IRelojDelSistema reloj,
             FormateadorDeTicketBearer formateadorBearer,
@@ -31,7 +33,9 @@ public static class AuthEndpoints
             // tenant resuelto todavía (gate #2 pendiente sobre las policies).
             tenantActual.Establecer(ModoDeAcceso.Login, idTenant: null);
 
-            var usuario = await servicio.IniciarSesionAsync(solicitud, ct);
+            // Bajo el dominio de un comercio el login queda acotado a ese tenant (mail y usuario);
+            // en el host de la plataforma `IdTenant` es null y rige el login por mail de siempre.
+            var usuario = await servicio.IniciarSesionAsync(solicitud, dominio.IdTenant, ct);
 
             // Con SolicitarBearer la sesión viaja SOLO como token: no se firma la cookie, porque
             // el llamador (la vinculación del POS de escritorio, en otro origen) no la puede

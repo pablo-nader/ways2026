@@ -85,7 +85,21 @@ public class ServicioDeOfertas(
 
         var items = await query.OrderBy(o => o.Nombre).ToListAsync(ct);
 
-        return items.Select(o => Proyectar(o, Array.Empty<int>())).ToList();
+        var idsArticulo = items.Where(o => o.IdArticulo is not null).Select(o => o.IdArticulo!.Value).Distinct().ToList();
+        var nombresDeArticulo = idsArticulo.Count == 0
+            ? new Dictionary<int, string>()
+            : await db.Articulos
+                .Where(a => idsArticulo.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.Nombre, ct);
+
+        return items
+            .Select(o => Proyectar(o, Array.Empty<int>()) with
+            {
+                NombreArticulo = o.IdArticulo is { } idArticulo && nombresDeArticulo.TryGetValue(idArticulo, out var nombre)
+                    ? nombre
+                    : null
+            })
+            .ToList();
     }
 
     public async Task<OfertaListado> ObtenerAsync(int id, CancellationToken ct = default)
@@ -357,8 +371,32 @@ public class ServicioDeOfertas(
     /// <paramref name="momento"/> del lote se descompone UNA vez con <see cref="TimeZoneInfo.Local"/>
     /// — no hay huso horario de tenant modelado todavía.</para>
     /// </summary>
-    public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
-        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverDocumentoAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
+        ResolverAsync(lineas, momento, agregarPorFamilia: true, ct);
+
+    /// <summary>Despacha según <see cref="SolicitudDeResolucion.Agregacion"/>. Un valor numérico fuera
+    /// del enum (el binding JSON acepta enteros) se rechaza: ningún valor llega al servicio sin uso.</summary>
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverSolicitudAsync(
+        SolicitudDeResolucion solicitud, CancellationToken ct = default) =>
+        solicitud.Agregacion switch
+        {
+            AgregacionDeResolucion.Documento => ResolverDocumentoAsync(solicitud.Lineas, solicitud.Momento, ct),
+            AgregacionDeResolucion.PorLinea => ResolverPorLineaAsync(solicitud.Lineas, solicitud.Momento, ct),
+            _ => throw new ErrorDominio(
+                "agregacion_invalida", "La agregación debe ser 'Documento' o 'PorLinea'.", 400),
+        };
+
+    /// <summary>Igual que <see cref="ResolverDocumentoAsync"/> pero cada línea se resuelve con SU
+    /// cantidad, sin sumar la familia: para lotes que no son un documento (una etiqueta precia UNA
+    /// unidad de UN artículo). Elegir entre las dos es decisión explícita del llamador.</summary>
+    public Task<IReadOnlyList<ResultadoDeResolucion>> ResolverPorLineaAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default) =>
+        ResolverAsync(lineas, momento, agregarPorFamilia: false, ct);
+
+    private async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
+        CancellationToken ct)
     {
         var lineasPedidas = ExigirLineas(lineas);
         if (lineasPedidas.Count == 0)
@@ -367,11 +405,12 @@ public class ServicioDeOfertas(
         }
 
         var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
+        var cantidadPorFamilia = agregarPorFamilia ? CantidadesPorFamilia(contexto, lineasPedidas) : null;
         var resultado = new List<ResultadoDeResolucion>(lineasPedidas.Count);
 
         foreach (var linea in lineasPedidas)
         {
-            if (Preparar(contexto, linea) is not { } preparada)
+            if (Preparar(contexto, linea, cantidadPorFamilia) is not { } preparada)
             {
                 resultado.Add(SinPrecio(linea));
                 continue;
@@ -385,7 +424,7 @@ public class ServicioDeOfertas(
     }
 
     /// <summary>
-    /// Igual que <see cref="ResolverAsync"/> (mismo contexto, mismas consultas, mismo resultado
+    /// Igual que <see cref="ResolverDocumentoAsync"/> (mismo contexto, mismas consultas, mismo resultado
     /// plano por línea) más la CURVA de precio por cantidad de cada línea: un
     /// <see cref="EscalonDeCantidad"/> por cada <c>cantidad_minima</c> mayor a la cantidad pedida
     /// que efectivamente cambia el resultado, ascendente, ya resuelto por el motor real
@@ -397,7 +436,7 @@ public class ServicioDeOfertas(
     /// oferta por volumen sin red. El dispositivo solo elige el último escalón cuyo umbral entra
     /// en la cantidad del carrito — nunca reimplementa el matching.</para>
     ///
-    /// <para>CERO consultas extra respecto de <see cref="ResolverAsync"/>: los escalones salen de
+    /// <para>CERO consultas extra respecto de <see cref="ResolverDocumentoAsync"/>: los escalones salen de
     /// las MISMAS <see cref="OfertaCandidata"/> ya materializadas por
     /// <see cref="ConstruirContextoAsync"/> (la <c>cantidad_minima</c> de cada candidata ya viaja
     /// ahí), resueltas en memoria a cada umbral. Un artículo sin ninguna candidata con umbral
@@ -418,7 +457,7 @@ public class ServicioDeOfertas(
 
         foreach (var linea in lineasPedidas)
         {
-            if (Preparar(contexto, linea) is not { } preparada)
+            if (Preparar(contexto, linea, cantidadPorFamilia: null) is not { } preparada)
             {
                 resultado.Add(new ResultadoDeResolucionConEscalones(SinPrecio(linea), []));
                 continue;
@@ -432,8 +471,17 @@ public class ServicioDeOfertas(
                     ProyectarAplicadas(e.Resolucion.Aplicadas)))
                 .ToList();
 
+            var celdas = EscalonesDeCantidad.ConstruirGrillaDeFamilia(preparada.Linea, preparada.Candidatas);
+            var escalonesDeFamilia = celdas.Count == 0
+                ? null
+                : celdas
+                    .Select(c => new EscalonDeFamilia(
+                        c.CantidadDeFamiliaDesde, c.CantidadDesde, c.Resolucion.PrecioFinal,
+                        c.Resolucion.DescuentoUnitario, ProyectarAplicadas(c.Resolucion.Aplicadas)))
+                    .ToList();
+
             resultado.Add(new ResultadoDeResolucionConEscalones(
-                ProyectarResultado(linea, curva.Base), escalones));
+                ProyectarResultado(linea, curva.Base), escalones, escalonesDeFamilia));
         }
 
         return resultado;
@@ -459,7 +507,7 @@ public class ServicioDeOfertas(
     private sealed record CandidataConEmpresa(int? IdEmpresa, OfertaCandidata Candidata);
 
     /// <summary>Todo lo que las consultas del lote produjeron, ya indexado: lo consumen por igual
-    /// <see cref="ResolverAsync"/> y <see cref="ResolverConEscalonesAsync"/>, sin volver a la base
+    /// <see cref="ResolverDocumentoAsync"/> y <see cref="ResolverConEscalonesAsync"/>, sin volver a la base
     /// ninguno de los dos.</summary>
     private sealed record ContextoDeResolucion(
         IReadOnlyDictionary<int, AlcanceDeArticulo> AlcancePorArticulo,
@@ -590,7 +638,8 @@ public class ServicioDeOfertas(
     /// filtro de empresa y la <see cref="LineaAResolver"/> armada. <c>null</c> ⇒ el par
     /// (artículo, lista) no tiene precio vigente en este momento.</summary>
     private static (LineaAResolver Linea, IReadOnlyList<OfertaCandidata> Candidatas)? Preparar(
-        ContextoDeResolucion contexto, LineaDeResolucion linea)
+        ContextoDeResolucion contexto, LineaDeResolucion linea,
+        IReadOnlyDictionary<int, decimal>? cantidadPorFamilia)
     {
         if (!contexto.Precios.TryGetValue((linea.IdArticulo, linea.IdListaPrecio), out var monto) || monto is null)
         {
@@ -604,12 +653,36 @@ public class ServicioDeOfertas(
 
         var alcance = contexto.AlcancePorArticulo[linea.IdArticulo];
 
+        var cantidadDeFamilia = alcance.IdFamilia is { } idFamilia && cantidadPorFamilia is not null
+            ? cantidadPorFamilia[idFamilia]
+            : linea.Cantidad;
+
         var lineaAResolver = new LineaAResolver(
             linea.IdArticulo, alcance.IdGrupo, alcance.IdsCategorias,
             linea.IdListaPrecio, linea.Cantidad, monto.Value,
-            contexto.Fecha, contexto.Hora, contexto.DiaSemana, alcance.IdFamilia);
+            contexto.Fecha, contexto.Hora, contexto.DiaSemana, alcance.IdFamilia, cantidadDeFamilia);
 
         return (lineaAResolver, candidatas);
+    }
+
+    /// <summary>Suma de cantidades por familia sobre TODAS las líneas del lote (las líneas sin
+    /// familia no se suman entre sí). Es el dato que las ofertas de alcance familia comparan contra
+    /// <c>cantidad_minima</c>. <c>ResolverConEscalonesAsync</c> no lo usa: su lote es el catálogo
+    /// entero a cantidad 1, no un documento.</summary>
+    private static Dictionary<int, decimal> CantidadesPorFamilia(
+        ContextoDeResolucion contexto, IReadOnlyList<LineaDeResolucion> lineas)
+    {
+        var cantidadPorFamilia = new Dictionary<int, decimal>();
+
+        foreach (var linea in lineas)
+        {
+            if (contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
+            {
+                cantidadPorFamilia[idFamilia] = cantidadPorFamilia.GetValueOrDefault(idFamilia) + linea.Cantidad;
+            }
+        }
+
+        return cantidadPorFamilia;
     }
 
     /// <summary>Par (artículo, lista) sin precio vigente: caso fuera de alcance de la spec de

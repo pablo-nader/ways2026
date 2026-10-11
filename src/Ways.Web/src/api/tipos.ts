@@ -348,6 +348,28 @@ export type TenantListado = {
 
 export type TenantEdicion = { nombre: string }
 
+/** `GET /api/publico/sitio`: lo que se sabe del sitio sin sesión. `nombreComercio` solo viene bajo
+ * el dominio verificado de un comercio; `admiteUsuario` dice si el login acepta el nombre de usuario
+ * (solo bajo ese dominio: bajo la plataforma el servidor lo rechaza con `usuario_requiere_dominio`). */
+export type SitioPublico = {
+  esPlataforma: boolean
+  nombreComercio: string | null
+  admiteUsuario: boolean
+}
+
+/** Dominio propio de un tenant (`GET /api/plataforma/tenants/{id}/dominios`). `verificadoEn` es
+ * `null` hasta que la plataforma lo marca: un dominio sin verificar todavía no resuelve. */
+export type DominioListado = {
+  id: number
+  idTenant: number
+  host: string
+  esPrincipal: boolean
+  verificadoEn: string | null
+  createdAt: string
+}
+
+export type DominioAlta = { host: string; esPrincipal: boolean }
+
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
  * empresa se sigue listando con el nombre en `null` y se muestra como anomalía en vez de
  * desaparecer. `idTenant` deja de renderizarse y pasa a ser la clave del filtro por tenant. */
@@ -904,7 +926,8 @@ export const DIAS_SEMANA: { valor: number; etiqueta: string }[] = [
 /** `idsListas` vacío ⇒ la oferta aplica a todas las listas del tenant (spec: Multi-Lista
  * Targeting via ofertas_listas). El listado no completa `idsListas` por fila (evita el N+1,
  * mismo criterio que `ArticuloListado.idsEmpresas`) — solo `obtener`/`crear`/`actualizar` lo
- * completan con el subconjunto real. */
+ * completan con el subconjunto real. `nombreArticulo` es el caso inverso: solo lo completa el
+ * listado, y viene nulo si la oferta no es de artículo o el artículo está dado de baja. */
 export type OfertaListado = {
   id: number
   nombre: string
@@ -926,6 +949,7 @@ export type OfertaListado = {
   acumulable: boolean
   activo: boolean
   idsListas: number[]
+  nombreArticulo?: string | null
 }
 
 /** Mismo shape para alta y edición: a diferencia de `ArticuloListado.codigoInterno`, acá no hay
@@ -992,6 +1016,11 @@ export type ArticuloEscaneado = {
   unidadVenta?: UnidadVenta
 }
 
+/** Cómo el servidor interpreta el lote de `POST /api/ofertas/resolver` (espejo de
+ * `AgregacionDeResolucion`): `Documento` suma las cantidades de una familia entre líneas (el carrito);
+ * `PorLinea` resuelve cada línea por separado (vista previa de búsquedas y consulta de precio). */
+export type AgregacionDeResolucion = 'Documento' | 'PorLinea'
+
 /** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
 export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
 
@@ -1032,6 +1061,21 @@ export type EscalonDeCantidad = {
   aplicadas: OfertaAplicada[]
 }
 
+/**
+ * Una celda de la grilla de familia — espejo de `EscalonDeFamilia`. Con `cantidadDeFamiliaDesde`
+ * unidades de la familia en el carrito y `cantidadDesde` del propio artículo, la línea resuelve a
+ * estos valores. Existe porque `escalones` solo describe la diagonal "la familia crece con el
+ * artículo": cuando la cantidad de la familia viene de OTROS artículos hace falta esta grilla. Al
+ * igual que el escalón, no trae `precioOriginal`.
+ */
+export type EscalonDeFamilia = {
+  cantidadDeFamiliaDesde: number
+  cantidadDesde: number
+  precioFinal: number
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+}
+
 /** Precio de un artículo en UNA lista — espejo de `PrecioDeListaDeInstantanea`. */
 export type PrecioDeListaDeInstantanea = {
   idListaPrecio: number
@@ -1043,6 +1087,9 @@ export type PrecioDeListaDeInstantanea = {
    * `cantidadDesde > 1` — nunca incluyen la entrada de cantidad 1, que es el precio plano de
    * arriba. Ausente/`null` significa que el precio plano rige a toda cantidad. */
   escalones?: EscalonDeCantidad[] | null
+  /** Grilla de ofertas de familia con cantidad mínima. Ausente/`null` — también en una instantánea
+   * guardada antes de que existiera — significa que ninguna llega al artículo y rige `escalones`. */
+  escalonesDeFamilia?: EscalonDeFamilia[] | null
 }
 
 /** Un artículo dentro de `InstantaneaDePos` — espejo de `ArticuloDeInstantanea`. Un artículo sin
@@ -1061,6 +1108,9 @@ export type ArticuloDeInstantanea = {
   preciosPorLista: PrecioDeListaDeInstantanea[]
   /** Ausente en una instantánea guardada antes de que existiera el campo: se toma como `true`. */
   acumulaEnVenta?: boolean
+  /** Familia del artículo; ausente/`null` si no tiene, o en una instantánea guardada antes de que
+   * existiera el campo (el carrito no suma nada para esa línea). */
+  idFamilia?: number | null
 }
 
 /** Un cliente visible para el punto de venta — espejo de `ClienteDeInstantanea`. `idListaPrecio`

@@ -140,6 +140,7 @@ const MODELO: EntradaDelModelo[] = [
           enlace(puedeGestionarCatalogos, 'Equipos POS', '/organizacion/equipos-pos'),
           enlace(puedeAprovisionarTenants, 'Tenants', '/organizacion/tenants'),
           enlace(puedeAprovisionarTenants, 'Nuevo tenant', '/organizacion/nuevo-tenant'),
+          enlace(puedeAprovisionarTenants, 'Dominios', '/organizacion/dominios'),
         ],
       },
     ],

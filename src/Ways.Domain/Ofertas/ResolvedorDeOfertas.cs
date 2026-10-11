@@ -113,7 +113,13 @@ public static class ResolvedorDeOfertas
             return false;
         }
 
-        return candidata.CantidadMinima is not { } cantidadMinima || linea.Cantidad >= cantidadMinima;
+        if (candidata.CantidadMinima is not { } cantidadMinima)
+        {
+            return true;
+        }
+
+        var cantidad = candidata.Alcance.IdFamilia is not null ? linea.CantidadDeFamilia : linea.Cantidad;
+        return cantidad >= cantidadMinima;
     }
 
     private static bool CoincideAlcance(in LineaAResolver linea, AlcanceDeOferta alcance)

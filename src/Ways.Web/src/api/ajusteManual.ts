@@ -2,15 +2,15 @@
  * Ajuste manual de precio por línea (porcentaje con signo: negativo = descuento, positivo =
  * recargo). Todo puro y sin DOM. La cuenta (`calcularTotalesDeLinea`, `totalesDeAjusteManual`) es
  * la única fuente que comparten la vista previa del carrito y el comprobante sintético de una venta
- * offline, para que ninguno pueda divergir del otro; la validación del texto que tipea el cajero y
- * los rótulos del porcentaje viven acá también. Las plantillas de impresión usan solo los rótulos
+ * offline, para que ninguno pueda divergir del otro; la validación del porcentaje con signo que tipea
+ * el cajero en la grilla y los rótulos del porcentaje viven acá también. Las plantillas de impresión usan solo los rótulos
  * y el formato del porcentaje (`rotuloDeAjusteManual`, `formatearPorcentajeDeAjuste`), nunca la
  * cuenta: imprimen los montos que ya trae el comprobante. El servidor recalcula cada monto con la
  * misma fórmula, en decimal, y es quien manda; acá solo se anticipa lo que va a cobrar.
  */
 import { productoAPeso, productoDeDiferenciaAPeso, redondearImporte } from '../formato/importes'
 
-/** Magnitud máxima admitida del porcentaje (el rango válido es de -100 a 100, sin incluir el 0). */
+/** Magnitud máxima admitida del porcentaje (el rango válido es de -100 a 100; el 0 no es un ajuste). */
 export const PORCENTAJE_MAXIMO_DE_AJUSTE = 100
 
 export type TipoDeAjusteManual = 'descuento' | 'recargo'
@@ -92,26 +92,36 @@ export function formatearPorcentajeDeAjuste(porcentaje: number): string {
   return String(Math.abs(porcentaje)).replace('.', ',')
 }
 
-export type ResultadoDeValidacionDePorcentaje = { ok: true; porcentaje: number } | { ok: false; mensaje: string }
+/** Porcentaje con signo para mostrar en el input de la grilla: el descuento lleva `-` y el recargo
+ * va sin `+`, con coma decimal y sin ceros de relleno (`-10`, `12,5`). */
+export function formatearPorcentajeDeAjusteConSigno(porcentaje: number): string {
+  return String(porcentaje).replace('.', ',')
+}
 
-const PATRON_DE_PORCENTAJE = /^\d{1,3}(?:[.,]\d{1,2})?$/
+/** `porcentaje: null` es "sin ajuste" (texto vacío o cero): quien lo recibe quita el ajuste de la línea. */
+export type ResultadoDeValidacionDePorcentaje = { ok: true; porcentaje: number | null } | { ok: false; mensaje: string }
+
+const PATRON_DE_PORCENTAJE = /^[+-]?\d{1,3}(?:[.,]\d{1,2})?$/
 
 /**
- * Valida el texto que tipea el cajero y le pone el signo según el tipo elegido. Se escribe la
- * magnitud sola (el tipo lo da el selector Descuento/Recargo): mayor que 0, hasta 100, hasta 2
- * decimales, con coma o punto decimal.
+ * Valida el texto que tipea el cajero en la columna "Ajuste %": negativo = descuento, positivo (con
+ * o sin `+`) = recargo, hasta 2 decimales con coma o punto, de -100 a 100. Vacío o cero no es un
+ * error: significa quitar el ajuste.
  */
-export function validarPorcentajeDeAjuste(texto: string, tipo: TipoDeAjusteManual): ResultadoDeValidacionDePorcentaje {
+export function validarPorcentajeDeAjuste(texto: string): ResultadoDeValidacionDePorcentaje {
   const limpio = texto.trim()
-  if (limpio === '') return { ok: false, mensaje: 'Ingresá el porcentaje del ajuste.' }
+  if (limpio === '') return { ok: true, porcentaje: null }
   if (!PATRON_DE_PORCENTAJE.test(limpio)) {
-    return { ok: false, mensaje: 'Ingresá el porcentaje sin signo y con hasta 2 decimales (por ejemplo 10 o 12,5).' }
+    return {
+      ok: false,
+      mensaje: 'Ingresá el porcentaje con hasta 2 decimales: negativo para descuento, positivo para recargo (por ejemplo -10 o 12,5).',
+    }
   }
-  const magnitud = Number(limpio.replace(',', '.'))
-  if (magnitud <= 0 || magnitud > PORCENTAJE_MAXIMO_DE_AJUSTE) {
-    return { ok: false, mensaje: `El porcentaje debe ser mayor que 0 y como máximo ${PORCENTAJE_MAXIMO_DE_AJUSTE}.` }
+  const porcentaje = Number(limpio.replace(',', '.'))
+  if (Math.abs(porcentaje) > PORCENTAJE_MAXIMO_DE_AJUSTE) {
+    return { ok: false, mensaje: `El porcentaje debe estar entre -${PORCENTAJE_MAXIMO_DE_AJUSTE} y ${PORCENTAJE_MAXIMO_DE_AJUSTE}.` }
   }
-  return { ok: true, porcentaje: tipo === 'descuento' ? -magnitud : magnitud }
+  return { ok: true, porcentaje: porcentaje === 0 ? null : porcentaje }
 }
 
 const CODIGO_DE_AJUSTE_INVALIDO = 'ajuste_manual_invalido'
