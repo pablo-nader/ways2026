@@ -23,6 +23,9 @@ import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFi
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
 import { cierreDeTurno, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import { MenuDeAcciones } from '../componentes/MenuDeAcciones'
+import type { ItemDeMenuDeAcciones } from '../componentes/MenuDeAcciones'
+import { ProveedorDeAccionesDePos, useAccionesDePos } from './AccionesDePosContext'
 import { AvisoDeActualizacion } from './AvisoDeActualizacion'
 import { ProveedorDeBorradoresDeTicket } from './BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
@@ -64,6 +67,113 @@ type Props = {
  * montarla. `CajaZ` (`/caja/turnos/:id/z`) se mantiene montada por si hace falta más adelante,
  * aunque ningún control de este shell navega ahí hoy.
  */
+type PropsCabeceraPos = {
+  dispositivo: DispositivoActual
+  usuario: UsuarioAutenticado
+  cerrandoSesion: boolean
+  /** Mientras se instala una actualización, el header no responde (ni el atajo F1). */
+  inerte: boolean
+  alCerrarSesion: () => void
+  refRanura: (nodo: HTMLDivElement | null) => void
+}
+
+/** Un modal abierto (`Modal` o el diálogo propio de la pantalla de venta) se anuncia con `role="dialog"`. */
+function hayUnDialogoAbierto(): boolean {
+  return document.querySelector('[role="dialog"]') !== null
+}
+
+/**
+ * Header del POS en una sola línea: título, navegación (Vender, Caja, Sistema), la ranura donde
+ * `Pos.tsx` monta los chips de estado y, a la derecha, tema y cierre de sesión. Las acciones de
+ * caja y sincronización viven en `Pos.tsx`; acá se piden por `useAccionesDePos`.
+ */
+function CabeceraPos({ dispositivo, usuario, cerrandoSesion, inerte, alCerrarSesion, refRanura }: PropsCabeceraPos) {
+  const { estado, solicitar } = useAccionesDePos()
+
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (evento.key !== 'F1') return
+      evento.preventDefault()
+      if (inerte || hayUnDialogoAbierto()) return
+      solicitar('enfocarEscaneo')
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [inerte, solicitar])
+
+  const habilitadas = estado?.habilitadas
+  const itemsDeCaja: ItemDeMenuDeAcciones[] = [
+    { clave: 'ventas', etiqueta: 'Ventas del turno', a: '/ventas-del-turno' },
+    { clave: 'historial', etiqueta: 'Historial de turnos', a: '/cierres-de-caja' },
+    { clave: 'gastos', etiqueta: 'Gastos', a: '/gastos-del-turno' },
+  ]
+  if (estado === null || estado.retiroOfrecido) {
+    itemsDeCaja.push({
+      clave: 'retirar',
+      etiqueta: 'Retirar efectivo',
+      separadorAntes: true,
+      deshabilitado: !habilitadas?.retirar,
+      alSeleccionar: () => solicitar('retirar'),
+    })
+  }
+  if (estado?.turnoAbierto) {
+    itemsDeCaja.push({
+      clave: 'cerrar-turno',
+      etiqueta: 'Cerrar turno',
+      deshabilitado: !habilitadas?.cerrarTurno,
+      alSeleccionar: () => solicitar('cerrarTurno'),
+    })
+  } else {
+    itemsDeCaja.push({
+      clave: 'abrir-turno',
+      etiqueta: 'Abrir turno',
+      deshabilitado: !habilitadas?.abrirTurno,
+      alSeleccionar: () => solicitar('abrirTurno'),
+    })
+  }
+
+  const itemsDeSistema: ItemDeMenuDeAcciones[] = []
+  if (enEscritorio()) {
+    itemsDeSistema.push({ clave: 'configuracion', etiqueta: 'Configuración', alSeleccionar: () => void abrirConfiguracion() })
+  }
+  itemsDeSistema.push({
+    clave: 'sincronizar',
+    etiqueta: estado?.sincronizando ? 'Sincronizando…' : 'Sincronizar',
+    deshabilitado: !habilitadas?.sincronizar,
+    alSeleccionar: () => solicitar('sincronizar'),
+  })
+
+  return (
+    <header className="navbar bg-body px-3 py-2 ways-navbar d-print-none flex-nowrap gap-3" inert={inerte}>
+      <div className="d-flex align-items-baseline gap-2 flex-shrink-1" style={{ minWidth: 0 }}>
+        <strong className="text-body text-truncate">{dispositivo.empresa.nombre}</strong>
+        <span className="text-body-tertiary" aria-hidden="true">
+          |
+        </span>
+        <small className="text-body-secondary text-truncate">
+          PV {dispositivo.puntoVenta.numero} — {dispositivo.puntoVenta.nombre} · {usuario.usuario}
+        </small>
+      </div>
+      <nav className="d-flex align-items-center gap-2 flex-shrink-0" aria-label="Principal">
+        <Link className="btn btn-success" to="/vender" aria-keyshortcuts="F1" title="Vender (F1)">
+          Vender <sup aria-hidden="true">(F1)</sup>
+        </Link>
+        <MenuDeAcciones etiqueta="Caja" items={itemsDeCaja} />
+        <MenuDeAcciones etiqueta="Sistema" items={itemsDeSistema} />
+      </nav>
+      {/* Contenedor vacío: `Pos.tsx` portalea acá los chips de estado (ver `RanuraHeaderPosContext`).
+          Nunca se renderiza nada directamente en este `div`. */}
+      <div className="d-flex align-items-center gap-2 flex-wrap ms-auto" style={{ minWidth: 0 }} ref={refRanura} />
+      <div className="d-flex align-items-center gap-2 flex-shrink-0">
+        <BotonDeTema className="btn btn-outline-secondary" />
+        <button type="button" className="btn btn-outline-secondary" disabled={cerrandoSesion} onClick={alCerrarSesion}>
+          {cerrandoSesion ? 'Saliendo…' : 'Cerrar sesión'}
+        </button>
+      </div>
+    </header>
+  )
+}
+
 export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: Props) {
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
   // Si el cajero sale de "Vender" con ítems en el carrito, el último valor informado se mantiene:
@@ -245,43 +355,16 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             curso sobreviva a navegar entre "Vender"/"Ventas del turno"/"Gastos" — el `Provider` es
             una sola instancia por sesión de este shell, nunca se remonta con la navegación. */}
         <ProveedorDeBorradoresDeTicket>
+        <ProveedorDeAccionesDePos>
         <div className="d-flex flex-column min-vh-100">
-          <header className="navbar bg-body px-3 py-2 ways-navbar d-print-none" inert={instalandoActualizacion}>
-            <div className="d-flex flex-column">
-              <strong className="text-body">{dispositivo.empresa.nombre}</strong>
-              <small className="text-body-secondary">
-                PV {dispositivo.puntoVenta.numero} — {dispositivo.puntoVenta.nombre} · {usuario.usuario}
-              </small>
-            </div>
-            {/* stage-pos-caja-en-cabecera: contenedor vacío — `Pos.tsx` portalea acá el badge +
-                "Abrir caja"/"Cerrar caja" (ver `RanuraHeaderPosContext`). Nunca se renderiza nada
-                directamente en este `div`, así que el propio `ref` alcanza para saber si está
-                vacío o no en pantallas sin turno (ej. sin punto de venta). */}
-            <div className="d-flex align-items-center gap-2 flex-wrap" ref={setNodoRanuraHeader} />
-            <div className="d-flex gap-2">
-              <Link className="btn btn-success" to="/vender">
-                Vender
-              </Link>
-              <Link className="btn btn-outline-secondary" to="/ventas-del-turno">
-                Ventas del turno
-              </Link>
-              <Link className="btn btn-outline-secondary" to="/gastos-del-turno">
-                Gastos
-              </Link>
-              <Link className="btn btn-outline-secondary" to="/cierres-de-caja">
-                Cierres
-              </Link>
-              {enEscritorio() && (
-                <button type="button" className="btn btn-outline-secondary" onClick={() => void abrirConfiguracion()}>
-                  Configuración
-                </button>
-              )}
-              <BotonDeTema className="btn btn-outline-secondary" />
-              <button type="button" className="btn btn-outline-secondary" disabled={cerrandoSesion} onClick={() => void cerrarSesion()}>
-                {cerrandoSesion ? 'Saliendo…' : 'Cerrar sesión'}
-              </button>
-            </div>
-          </header>
+          <CabeceraPos
+            dispositivo={dispositivo}
+            usuario={usuario}
+            cerrandoSesion={cerrandoSesion}
+            inerte={instalandoActualizacion}
+            alCerrarSesion={() => void cerrarSesion()}
+            refRanura={setNodoRanuraHeader}
+          />
 
           <AvisoDeActualizacion
             motivoDeBloqueo={
@@ -334,6 +417,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </Routes>
           </main>
         </div>
+        </ProveedorDeAccionesDePos>
         </ProveedorDeBorradoresDeTicket>
         </RanuraHeaderPosContext.Provider>
       </ProveedorDePuntoVentaFijo>

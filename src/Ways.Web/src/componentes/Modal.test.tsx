@@ -48,8 +48,23 @@ describe('Modal — estructura y accesibilidad', () => {
       </Modal>,
     )
 
-    expect(screen.getByRole('button', { name: 'Cerrar detalle' })).toHaveClass('btn-close')
     expect(screen.getAllByRole('button', { name: 'Cerrar' })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Cerrar detalle' })).toBeInTheDocument()
+  })
+
+  it('la × del header es un SVG en línea con currentColor, sin depender del fondo data: de btn-close (bloqueado por la CSP del escritorio)', () => {
+    render(
+      <Modal titulo="Nueva marca" onCerrar={() => {}}>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    const boton = screen.getByRole('button', { name: 'Cerrar' })
+    expect(boton).not.toHaveClass('btn-close')
+    const icono = boton.querySelector('svg')
+    expect(icono).not.toBeNull()
+    expect(icono).toHaveAttribute('stroke', 'currentColor')
+    expect(icono).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('clickear el fondo (fuera del diálogo) dispara onCerrar', () => {

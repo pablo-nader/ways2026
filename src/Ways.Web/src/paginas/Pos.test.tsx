@@ -7073,7 +7073,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  describe('sincronización: arranque, "Sincronizar ahora" e intervalo', () => {
+  describe('sincronización: arranque y "Sincronizar ahora"', () => {
     it('POS de escritorio: "Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', () =>
       comoPosDeEscritorio(async () => {
         await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
@@ -7147,21 +7147,17 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasGet('/pos/instantanea')).toHaveLength(2)
     })
 
-    it('el intervalo arranca en 5 minutos, se recorta al rango 1-60 y queda guardado en el dispositivo', async () => {
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
-      await prepararAlmacenOffline()
-      await montarConInstantanea()
+    it('no hay campo para configurar el intervalo, aunque el dispositivo conserve un valor viejo guardado', async () => {
+      localStorage.setItem('ways.pos.intervaloDeSincronizacionMinutos', '1')
+      try {
+        await prepararAlmacenOffline()
+        await montarConInstantanea()
 
-      const campo = screen.getByLabelText('Minutos entre sincronizaciones')
-      expect(campo).toHaveValue(5)
-
-      await userEvent.clear(campo)
-      await userEvent.type(campo, '90')
-      await userEvent.tab()
-
-      expect(campo).toHaveValue(60)
-      expect(localStorage.getItem('ways.pos.intervaloDeSincronizacionMinutos')).toBe('60')
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+        expect(await screen.findByRole('button', { name: 'Sincronizar ahora' })).toBeInTheDocument()
+        expect(screen.queryByLabelText('Minutos entre sincronizaciones')).not.toBeInTheDocument()
+      } finally {
+        localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+      }
     })
   })
 
