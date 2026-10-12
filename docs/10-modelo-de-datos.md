@@ -2545,6 +2545,15 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
 > `id_medio_pago` admite `NULL`, no cubre una fila de turno sin medio. RLS estándar.
 >
+> **ABM (`/api/cuentas-tesoreria`, solo Admin, lectura incluida).** `ServicioDeCuentasDeTesoreria`: alta con empresa del 
+> tenant (400 `referencia_invalida` si no existe o es de otro tenant), edición de nombre, estado y saldo inicial (la empresa no 
+> cambia), baja lógica. El nombre repetido entre las vivas de la empresa da 409 `cuenta_tesoreria_duplicada` (pre-chequeo y 
+> backstop del 23505 de `ux_cuentas_tesoreria_nombre_empresa`). El saldo inicial puede ser negativo y no cambia una vez que hay 
+> movimientos (409 `saldo_inicial_con_movimientos`): la edición lo comprueba tras el `FOR UPDATE` de la fila de la cuenta, con la 
+> que choca el `FOR KEY SHARE` de la FK de un primer movimiento concurrente. La baja solo procede sin referencias de 
+> `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
+> se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
+>
 > **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
 > debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
 > hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene
