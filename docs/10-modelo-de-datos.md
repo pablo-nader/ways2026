@@ -2522,7 +2522,10 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > mueven el `UPDATE ... RETURNING` y el `INSERT` del asiento de `EscriturasDePersonal`, en una misma
 > transacción sin reintento. Los tres valores del enum están declarados desde el inicio para que el
 > registro de pagos no necesite otra migración; hoy escriben `horas` (`POST /api/personal/{id}/horas`)
-> y `ajuste` (`POST /api/personal/{id}/ajustes`).
+> y `ajuste` (`POST /api/personal/{id}/ajustes`). La `fecha` es obligatoria en ambos (400
+> `fecha_requerida`): la manda el cliente con su día local y el servidor no deduce el día de negocio.
+> El estado de cuenta (`GET /api/personal/{id}/cuenta`) sin `historico` ni rango abarca desde un mes
+> atrás (contado desde la fecha UTC), sin tope superior; un `hasta` explícito sí lo aplica.
 >
 > **Sin `id_punto_venta`, a propósito** (desvío respecto de §8b): las cargas de horas y los ajustes
 > son de back office y no pasan por un turno; un pago llegará a un punto de venta únicamente a

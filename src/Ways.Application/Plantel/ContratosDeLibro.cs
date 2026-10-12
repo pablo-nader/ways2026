@@ -10,7 +10,8 @@ public record SolicitudDeCargaDeHoras(DateOnly? Fecha, decimal Horas, decimal? V
 
 /// <summary>Cuerpo de <c>POST /api/personal/{id}/ajustes</c>. <see cref="Importe"/> lleva signo (positivo
 /// aumenta lo que se le debe al empleado, negativo lo reduce) y no puede ser cero. <see cref="Detalle"/>
-/// es obligatorio. <see cref="Fecha"/> es opcional: sin ella se usa el día de hoy en UTC.</summary>
+/// es obligatorio. <see cref="Fecha"/> es obligatoria: la manda el cliente con su día local y el servidor nunca la
+/// deduce.</summary>
 public record SolicitudDeAjusteDePersonal(decimal Importe, string? Detalle, DateOnly? Fecha);
 
 public record MovimientoDePersonal(
@@ -28,7 +29,8 @@ public record MovimientoDePersonal(
 public record EncabezadoDeCuentaDePersonal(int IdPersonal, string Nombre, decimal Saldo);
 
 /// <summary>Los movimientos se ordenan por fecha y luego por id, del más nuevo al más viejo.
-/// Sin <c>historico</c> ni rango, la ventana es el último mes.</summary>
+/// Sin <c>historico</c> ni rango, la ventana va desde un mes atrás (contado desde la fecha UTC) y no
+/// tiene tope superior, así un movimiento con fecha de hoy en otra zona o a futuro nunca queda oculto.</summary>
 public record PaginaDeCuentaDePersonal(
     EncabezadoDeCuentaDePersonal Encabezado,
     IReadOnlyList<MovimientoDePersonal> Items,

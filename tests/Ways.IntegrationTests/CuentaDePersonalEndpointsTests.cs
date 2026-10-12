@@ -99,7 +99,7 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
             $"/api/personal/{id}/horas", new { fecha, horas, valorHora, detalle });
 
     private static Task<HttpResponseMessage> AjustarAsync(
-        HttpClient cliente, int id, decimal importe, string? detalle = "corrección de carga", string? fecha = null) =>
+        HttpClient cliente, int id, decimal importe, string? detalle = "corrección de carga", string? fecha = "2026-10-01") =>
         cliente.PostAsJsonAsync($"/api/personal/{id}/ajustes", new { importe, detalle, fecha });
 
     private static async Task<JsonElement> CuerpoAsync(HttpResponseMessage respuesta, HttpStatusCode esperado)
@@ -200,9 +200,9 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(JsonValueKind.Null, menos.GetProperty("horas").ValueKind);
         Assert.Equal(JsonValueKind.Null, menos.GetProperty("valorHora").ValueKind);
 
-        var mas = await CuerpoAsync(await AjustarAsync(ctx.Admin, id, 100m), HttpStatusCode.Created);
+        var mas = await CuerpoAsync(await AjustarAsync(ctx.Admin, id, 100m, fecha: "2026-10-03"), HttpStatusCode.Created);
         Assert.Equal(7599.75m, mas.GetProperty("saldoResultante").GetDecimal());
-        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), mas.GetProperty("fecha").GetString());
+        Assert.Equal("2026-10-03", mas.GetProperty("fecha").GetString());
         Assert.Equal(7599.75m, await SaldoAsync(ctx.Admin, id));
     }
 
@@ -638,6 +638,36 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
         var respuesta = await ctx.Admin.GetAsync($"/api/personal/{id}/cuenta{consulta}");
 
         Assert.Equal(codigo, await CodigoAsync(respuesta, HttpStatusCode.BadRequest));
+    }
+
+    [Fact]
+    public async Task UnAjusteSinFechaSeRechazaYNoEscribeNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnAjusteSinFechaSeRechazaYNoEscribeNada));
+        var id = await CrearPersonalAsync(ctx.Admin);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            $"/api/personal/{id}/ajustes", new { importe = 10m, detalle = "corrección de carga" });
+
+        Assert.Equal("fecha_requerida", await CodigoAsync(respuesta, HttpStatusCode.BadRequest));
+        Assert.Equal(0, (await CuentaAsync(ctx.Admin, id, "?historico=true")).GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task LaVentanaPorDefectoNoTieneTopeSuperiorPeroUnHastaExplicitoSiLoAplica()
+    {
+        var ctx = await PrepararAsync(nameof(LaVentanaPorDefectoNoTieneTopeSuperiorPeroUnHastaExplicitoSiLoAplica));
+        var id = await CrearPersonalAsync(ctx.Admin, valorHora: 100m);
+        var hoyUtc = DateOnly.FromDateTime(DateTime.UtcNow);
+        await CuerpoAsync(
+            await CargarAsync(ctx.Admin, id, hoyUtc.AddDays(1).ToString("yyyy-MM-dd"), 1m), HttpStatusCode.Created);
+
+        var porDefecto = await CuentaAsync(ctx.Admin, id);
+        var conTope = await CuentaAsync(ctx.Admin, id, $"?hasta={hoyUtc:yyyy-MM-dd}");
+
+        Assert.Equal(1, porDefecto.GetProperty("total").GetInt32());
+        Assert.Equal(JsonValueKind.Null, porDefecto.GetProperty("hasta").ValueKind);
+        Assert.Equal(0, conTope.GetProperty("total").GetInt32());
     }
 
     [Fact]

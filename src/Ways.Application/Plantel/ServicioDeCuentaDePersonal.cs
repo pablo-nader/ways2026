@@ -41,8 +41,12 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
         var idTenant = ExigirTenantDeLaSesion();
         await ResolverValorHoraAsync(idPersonal, ct);
 
+        if (solicitud.Fecha is not { } fecha || fecha == default)
+        {
+            throw new ErrorDominio("fecha_requerida", "La fecha del ajuste es obligatoria.", 400);
+        }
+
         var detalle = ReglaDeMovimientoDePersonal.ValidarAjuste(solicitud.Importe, solicitud.Detalle);
-        var fecha = solicitud.Fecha ?? HoyUtc();
 
         return await EscribirAsync(
             idTenant, idPersonal, fecha, TipoMovimientoPersonal.Ajuste, horas: null, valorHora: null,
