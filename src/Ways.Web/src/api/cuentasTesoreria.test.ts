@@ -102,6 +102,7 @@ describe('formularioVacio', () => {
     expect(formularioVacio([empresa(7, 'Comercio SA')])).toEqual({
       id: null,
       idEmpresa: 7,
+      nombreEmpresa: null,
       nombre: '',
       saldoInicial: 0,
       saldoInicialOriginal: null,
@@ -120,6 +121,7 @@ describe('aFormulario', () => {
     expect(aFormulario(cuenta({ saldoInicialEditable: false, activo: false }))).toEqual({
       id: 4,
       idEmpresa: 7,
+      nombreEmpresa: 'Comercio',
       nombre: 'Mercado Pago',
       saldoInicial: 100,
       saldoInicialOriginal: 100,

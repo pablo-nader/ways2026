@@ -150,7 +150,9 @@ export function CuentasTesoreria() {
           setErrorFormulario(errorAlGuardar(e))
           const rechazoDeSaldo = e instanceof ErrorApi && e.codigo === 'saldo_inicial_con_movimientos'
           if (rechazoDeSaldo) setFormulario((prev) => prev && conSaldoInicialBloqueado(prev))
-          if (habiaLecturaEnVuelo || rechazoDeSaldo) void cargar(++generacion.current)
+          // En un 404 la cuenta ya no existe: se recarga para que la fila vieja desaparezca.
+          const yaNoExiste = e instanceof ErrorApi && e.estado === 404
+          if (habiaLecturaEnVuelo || rechazoDeSaldo || yaNoExiste) void cargar(++generacion.current)
         }
 
         return
@@ -220,7 +222,17 @@ export function CuentasTesoreria() {
       try {
         await clienteDeCuentasTesoreria.eliminar(cuenta.id)
       } catch (e) {
-        setError(copiaDeBajaDeCuenta(e, cuenta.nombre))
+        const copia = copiaDeBajaDeCuenta(e, cuenta.nombre)
+        setError(copia)
+        if (e instanceof ErrorApi && e.estado === 404) {
+          // La cuenta ya no existe: la puerta no tiene qué confirmar y se recarga para quitar la fila vieja.
+          // Una lectura exitosa borra el error, así que el motivo se vuelve a poner cuando termina.
+          setBaja(null)
+          const recarga = ++generacion.current
+          void cargar(recarga).then(() => {
+            if (generacion.current === recarga) setError(copia)
+          })
+        }
 
         return
       }
@@ -455,7 +467,9 @@ function ModalDeCuenta({
               id="cta-empresa"
               className="form-control"
               readOnly
-              value={empresaDeLaCuenta ? nombreDeEmpresa(empresaDeLaCuenta) : `Empresa ${valor.idEmpresa}`}
+              value={
+                empresaDeLaCuenta ? nombreDeEmpresa(empresaDeLaCuenta) : (valor.nombreEmpresa ?? `Empresa ${valor.idEmpresa}`)
+              }
               aria-describedby="cta-empresa-ayuda"
             />
           )}

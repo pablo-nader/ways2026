@@ -44,6 +44,9 @@ export const LARGO_MAXIMO_DE_NOMBRE = 150
 export type Formulario = {
   id: number | null
   idEmpresa: number | null
+  /** Nombre de la empresa tal como vino en la fila: respaldo para mostrarla al editar si el listado de empresas no
+   * cargó o no la incluye. */
+  nombreEmpresa: string | null
   nombre: string
   saldoInicial: number | null
   saldoInicialOriginal: number | null
@@ -67,6 +70,7 @@ export function formularioVacio(empresas: readonly EmpresaListado[]): Formulario
   return {
     id: null,
     idEmpresa: empresas.length === 1 ? empresas[0].id : null,
+    nombreEmpresa: null,
     nombre: '',
     saldoInicial: 0,
     saldoInicialOriginal: null,
@@ -79,6 +83,7 @@ export function aFormulario(cuenta: CuentaTesoreriaListado): Formulario {
   return {
     id: cuenta.id,
     idEmpresa: cuenta.idEmpresa,
+    nombreEmpresa: cuenta.nombreEmpresa,
     nombre: cuenta.nombre,
     saldoInicial: cuenta.saldoInicial,
     saldoInicialOriginal: cuenta.saldoInicial,

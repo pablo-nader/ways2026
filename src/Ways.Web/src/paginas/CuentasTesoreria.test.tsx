@@ -344,6 +344,71 @@ describe('CuentasTesoreria — edición y saldo inicial', () => {
   })
 })
 
+describe('CuentasTesoreria — la cuenta ya no existe', () => {
+  it('un 404 al guardar recarga el listado y la fila vieja desaparece', async () => {
+    apiPutMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'x'))
+    const usuarioEvento = userEvent.setup()
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Editar Mercado Pago' }))
+    filas = []
+    const antes = llamadasAlListado()
+
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('La cuenta ya no existe. Actualizá la pantalla.')).toBeInTheDocument()
+    await waitFor(() => expect(llamadasAlListado()).toBe(antes + 1))
+    expect(await screen.findByText('Todavía no hay cuentas de tesorería.')).toBeInTheDocument()
+    expect(screen.queryByText('Mercado Pago')).not.toBeInTheDocument()
+  })
+
+  it('un 404 al dar de baja recarga el listado, cierra la puerta y conserva el motivo', async () => {
+    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'x'))
+    const usuarioEvento = userEvent.setup()
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Eliminar Mercado Pago' }))
+    filas = []
+    const antes = llamadasAlListado()
+
+    await usuarioEvento.click(await screen.findByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(llamadasAlListado()).toBe(antes + 1))
+    expect(await screen.findByText('Todavía no hay cuentas de tesorería.')).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'No se pudo dar de baja la cuenta "Mercado Pago". Ya no existe o no está a tu alcance. Actualizá el listado.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('al editar muestra la empresa de la fila si el listado de empresas no cargó', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/empresas' ? Promise.reject(new Error('sin red')) : Promise.resolve(filas),
+    )
+    const usuarioEvento = userEvent.setup()
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Editar Mercado Pago' }))
+
+    expect(screen.getByLabelText('Empresa')).toHaveValue('Comercio SA')
+  })
+
+  it('al editar sin empresa en el listado ni en la fila cae en "Empresa {id}"', async () => {
+    filas = [cuenta({ nombreEmpresa: null })]
+    empresas = []
+    const usuarioEvento = userEvent.setup()
+    renderPagina()
+    await screen.findByText('Mercado Pago')
+
+    await usuarioEvento.click(screen.getByRole('button', { name: 'Editar Mercado Pago' }))
+
+    expect(screen.getByLabelText('Empresa')).toHaveValue('Empresa 7')
+  })
+})
+
 describe('CuentasTesoreria — baja', () => {
   it('pide confirmación y, al confirmar, da de baja y refresca', async () => {
     apiDeleteMock.mockResolvedValue(undefined)
