@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
+import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
 
 /** Decodificador mínimo para los tests: ASCII pasa directo, LF se vuelve '\n', cualquier otro
@@ -556,22 +557,42 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
     expect(texto).toContain('8.000,00')
   })
 
-  it('incluye cada retiro (hora, importe y motivo) — incluido el de cierre — y el total de retiros', () => {
+  it('imprime cada retiro en UNA línea: hora, rótulo corto y importe, sin motivo largo ni empleado', () => {
+    const local = (h: number, m: number) => new Date(2026, 8, 19, h, m).toISOString()
     const resumen = resumenCierreFixture({
       retiros: [
-        { fecha: '2026-09-19T11:00:00-03:00', importe: 1000, motivo: 'Retiro de efectivo', empleado: 'jperez' },
-        { fecha: '2026-09-19T18:00:00-03:00', importe: 2000, motivo: 'Retiro de efectivo (cierre)', empleado: 'jperez' },
+        { fecha: local(16, 5), importe: 1000, motivo: 'Retiro de efectivo', empleado: 'jperez' },
+        { fecha: local(18, 0), importe: 5000, motivo: 'Retiro de cierre de turno', empleado: 'jperez' },
+        { fecha: local(19, 30), importe: 250, motivo: 'Pago de flete', empleado: 'jperez' },
       ],
-      totalRetiros: 3000,
+      totalRetiros: 6250,
     })
-    const texto = textoPlano(cierreDeTurno(resumen, CONTEXTO))
-    expect(texto).toContain('11:00')
-    expect(texto).toContain('1.000,00')
-    expect(texto).toContain('18:00')
-    expect(texto).toContain('2.000,00')
-    expect(texto).toContain('Retiro de efectivo (cierre)')
-    expect(texto).toContain('Total retiros')
-    expect(texto).toContain('3.000,00')
+    const lineas = lineasDeCierreDeTurno(resumen, CONTEXTO).map((l) => l.texto)
+    const desde = lineas.indexOf('Retiros:')
+    const hasta = lineas.findIndex((l) => l.startsWith('Total retiros'))
+
+    expect(lineas.slice(desde + 1, hasta)).toEqual([
+      dosColumnas('16:05 Efectivo', '$ 1.000,00'),
+      dosColumnas('18:00 Cierre', '$ 5.000,00'),
+      dosColumnas('19:30 Pago de flete', '$ 250,00'),
+    ])
+    expect(lineas.join('|')).not.toContain('jperez (')
+    expect(lineas.join('|')).not.toContain('Retiro de')
+    expect(lineas[hasta]).toBe(dosColumnas('Total retiros', '$ 6.250,00'))
+  })
+
+  it('un motivo libre largo se trunca y el importe queda siempre en la misma línea', () => {
+    const motivo = 'Pago al proveedor de limpieza por el servicio extraordinario del mes'
+    const resumen = resumenCierreFixture({
+      retiros: [{ fecha: new Date(2026, 8, 19, 9, 0).toISOString(), importe: 123456.78, motivo, empleado: 'jperez' }],
+      totalRetiros: 123456.78,
+    })
+    const lineas = lineasDeCierreDeTurno(resumen, CONTEXTO).map((l) => l.texto)
+    const linea = lineas[lineas.indexOf('Retiros:') + 1]
+
+    expect(linea).toHaveLength(COLUMNAS_FUENTE_A)
+    expect(linea.startsWith('09:00 Pago al proveedor')).toBe(true)
+    expect(linea.endsWith('$ 123.456,78')).toBe(true)
   })
 
   it('sin retiros en el turno, lo dice explícitamente en vez de una sección vacía', () => {

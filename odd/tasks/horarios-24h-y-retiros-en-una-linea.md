@@ -38,7 +38,7 @@ fraction-digit options).
 
 - [x] T1 — 24-hour date-time formatter and call-site migration. Route: delegated (writer; ~25 files).
       Checks: `formato/fechas.test.ts` proves 16:05 renders as `16:05` (RED first), full web suite, tsc, lint.
-- [ ] T2 — Withdrawals on one line in the closing ticket. Route: delegated (same writer).
+- [x] T2 — Withdrawals on one line in the closing ticket. Route: delegated (same writer).
       Checks: `impresion/plantillas.test.ts` RED first, full web suite.
 
 ## Acceptance criteria
@@ -50,7 +50,8 @@ fraction-digit options).
 
 ## Progress / evidence
 
-- T1 done. RED: fechas.test.ts 2 failed (fechaHoraATexto not a function); GREEN: fechas + plantillas 72 passed. tsc -b --noEmit: clean. oxlint: 0 errors (pre-existing warnings only). Full vitest: 206 files / 5781 tests passed. Residual rg for toLocaleString('es-AR')/toLocaleString() in non-test code: empty. Shared helper: fechaHoraATexto (hourCycle h23); 24 call sites + 7 tests migrated. formatearHora (hour12:false) renders 00:30 on this ICU, left unchanged.
+- T1 done. RED: fechas.test.ts 2 failed (fechaHoraATexto not a function); GREEN: fechas + plantillas 72 passed. tsc -b --noEmit: clean. oxlint: 0 errors (pre-existing warnings only). Full vitest: 206 files / 5781 tests passed. Residual rg for toLocaleString('es-AR')/toLocaleString() in non-test code: empty. Shared helper: fechaHoraATexto (hourCycle h23); 24 call sites + 7 tests migrated. formatearHora (hour12:false) renders 00:30 on this ICU, left unchanged. T1 commit 64acac5b.
+- T2 done. RED: plantillas.test.ts 2 failed (one-line withdrawals, long free-text motive); GREEN: fechas + plantillas 73 passed. tsc clean, oxlint 0 errors, full vitest 206 files / 5782 tests passed. Long motives are truncated by the existing dosColumnas (amount stays on the line).
 
 ## Next step
 

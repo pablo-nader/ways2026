@@ -288,6 +288,18 @@ export function lineasDeCierreDeTurno(resumen: ResumenDeCierrePorRetiro, context
   return armarCierreDeTurno(resumen, contexto).lineas()
 }
 
+/** Rótulos cortos de los motivos fijos: el POS escribe "Retiro de efectivo" y el servidor "Retiro de
+ * cierre de turno". Cualquier otro motivo (texto libre de un movimiento manual) se imprime tal cual;
+ * `lineaDeColumnas` lo trunca si no entra, sin desplazar el importe. */
+const ROTULOS_DE_RETIRO: Record<string, string> = {
+  'Retiro de efectivo': 'Efectivo',
+  'Retiro de cierre de turno': 'Cierre',
+}
+
+function rotuloDeRetiro(motivo: string): string {
+  return ROTULOS_DE_RETIRO[motivo] ?? motivo
+}
+
 function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): ConstructorDeTicket {
   const ticket = new ConstructorDeTicket()
   encabezado(ticket, contexto)
@@ -320,8 +332,7 @@ function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Context
 
   ticket.linea('Retiros:')
   for (const retiro of resumen.retiros) {
-    ticket.lineaDeColumnas(formatearHora(retiro.fecha), formatearMoneda(retiro.importe))
-    ticket.linea(`  ${retiro.motivo} (${retiro.empleado})`)
+    ticket.lineaDeColumnas(`${formatearHora(retiro.fecha)} ${rotuloDeRetiro(retiro.motivo)}`, formatearMoneda(retiro.importe))
   }
   if (resumen.retiros.length === 0) {
     ticket.linea('Sin retiros en el turno.')
