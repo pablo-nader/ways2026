@@ -5,7 +5,8 @@
  * wirea `POST /api/ventas` (checkout real, Slice 4, mergeado a main).
  */
 import { api } from './cliente'
-import { calcularTotalesDeLinea, totalesDeAjusteManual } from './ajusteManual'
+import { totalesDeAjusteManual } from './ajusteManual'
+import { calcularTotalesDeLineaConCombo } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearImporte } from '../formato/importes'
 import type {
@@ -95,31 +96,34 @@ export function indexarResolucionPorLinea(lineas: readonly LineaCarrito[], resul
   return indice
 }
 
-/** Previsualización de una línea con la fórmula del servidor (`calcularTotalesDeLinea`): bruto y
- * descuento por oferta se redondean cada uno, y el ajuste manual de la línea (si lo tiene) se
- * aplica sobre ese neto posterior a las ofertas. `total` ya incluye el ajuste y `ajusteManual` es
- * su monto con signo (0 sin ajuste). Nunca autoritativo (design decisión 3: el servidor vuelve a
- * resolver en el checkout). */
+/** Previsualización de una línea con la fórmula del servidor (`calcularTotalesDeLineaConCombo`): bruto y
+ * descuento por oferta se redondean cada uno, el ahorro del combo que consumió unidades de la línea (si lo
+ * hay) se suma al descuento, y el ajuste manual de la línea (si lo tiene) se aplica sobre ese neto
+ * posterior a ofertas y combo. `total` ya incluye el ajuste y `ajusteManual` es su monto con signo (0 sin
+ * ajuste). `ahorroDeCombo` es el importe de línea que el combo descuenta (0 sin combo). Nunca autoritativo
+ * (design decisión 3: el servidor vuelve a resolver en el checkout). */
 export function previaDeLinea(
   linea: LineaCarrito,
   resultado: ResultadoDeResolucion | undefined,
-): { precioUnitario: number | null; descuentoUnitario: number; total: number | null; ajusteManual: number } {
+): { precioUnitario: number | null; descuentoUnitario: number; total: number | null; ajusteManual: number; ahorroDeCombo: number } {
   if (!resultado || resultado.precioFinal === null) {
-    return { precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0 }
+    return { precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0, ahorroDeCombo: 0 }
   }
-  const totales = calcularTotalesDeLinea({
+  const totales = calcularTotalesDeLineaConCombo({
     cantidad: linea.cantidad,
     // `precioFinal` ya es el precio de lista menos el descuento por unidad; sin lista explícita se
     // reconstruye con esa misma identidad.
     precioOriginal: resultado.precioOriginal ?? resultado.precioFinal + resultado.descuentoUnitario,
     descuentoUnitario: resultado.descuentoUnitario,
     porcentaje: linea.ajusteManualPorcentaje,
+    combo: resultado.combo,
   })
   return {
     precioUnitario: resultado.precioFinal,
     descuentoUnitario: resultado.descuentoUnitario,
     total: totales.total,
     ajusteManual: totales.ajuste,
+    ahorroDeCombo: resultado.combo?.ahorro ?? 0,
   }
 }
 

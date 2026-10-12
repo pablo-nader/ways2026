@@ -23,3 +23,19 @@ describe('clienteDeOfertas.resolver — agregación', () => {
     expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', { lineas, agregacion: 'PorLinea' })
   })
 })
+
+describe('clienteDeOfertas.resolverConCombos — carrito del POS', () => {
+  beforeEach(() => apiPostMock.mockReset())
+
+  it('pega a la ruta hermana con el cuerpo del resolver, siempre como documento', async () => {
+    apiPostMock.mockResolvedValue({ lineas: [], combos: [] })
+    await clienteDeOfertas.resolverConCombos(lineas)
+    expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver-con-combos', { lineas, agregacion: 'Documento' })
+  })
+
+  it('el resolver de siempre no cambia de ruta: lo usan las búsquedas y la consulta de precio', async () => {
+    apiPostMock.mockResolvedValue([])
+    await clienteDeOfertas.resolver(lineas, 'PorLinea')
+    expect(apiPostMock).toHaveBeenCalledWith('/ofertas/resolver', { lineas, agregacion: 'PorLinea' })
+  })
+})

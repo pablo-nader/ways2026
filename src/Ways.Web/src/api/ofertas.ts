@@ -15,6 +15,7 @@ import type {
   ListaPrecioListado,
   OfertaListado,
   ResultadoDeResolucion,
+  ResolucionConCombos,
   AgregacionDeResolucion,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
@@ -34,6 +35,12 @@ export const clienteDeOfertas = {
    * `agregacion` dice si el lote es un documento (el carrito, por omisión) o consultas sueltas. */
   resolver: (lineas: LineaDeResolucion[], agregacion: AgregacionDeResolucion = 'Documento') =>
     api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas, agregacion }),
+  /** `POST /api/ofertas/resolver-con-combos`: el carrito del POS (documento completo). Mismo cuerpo que
+   * `resolver`, pero responde `{ lineas, combos }`: cada línea que un combo consumió trae `combo`. Toda
+   * línea tiene que mandar el `idEmpresa` del punto de venta y la lista del cliente (valores mezclados →
+   * 400). Las búsquedas y consultas de precio siguen en `resolver`: muestran un precio unitario por línea. */
+  resolverConCombos: (lineas: LineaDeResolucion[]) =>
+    api.post<ResolucionConCombos>('/ofertas/resolver-con-combos', { lineas, agregacion: 'Documento' }),
 }
 
 export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria' | 'Familia'
