@@ -138,6 +138,13 @@ export function puedeVerReportes(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDePersonal`: supervisor y admin leen el personal y su cuenta. El alta,
+ * la edición y la baja son de `puedeGestionarCatalogos`. Puramente cosmético: el servidor vuelve a
+ * exigir la política en cada request. */
+export function puedeVerPersonal(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 /** Espejo de `Politicas.LecturaDeRentabilidad` (stage-10-agregacion-dashboard, Slice 9): solo
  * admin ve el panel de rentabilidad — ni siquiera supervisor entra acá, el costo es el número más
  * sensible del sistema y esta etapa no amplía quién lo ve (spec rentabilidad-y-comisiones:
@@ -3246,4 +3253,34 @@ export type LibroIva = {
   zonaHoraria: string | null
   filas: FilaDeLibroIva[]
   totales: TotalesDeLibroIva
+}
+
+/** Espejo de `Ways.Application.Plantel.PersonalListado`. `nombreUsuario`/`nombreCliente` llegan en
+ * `null` cuando el vínculo no existe o apunta a una fila dada de baja. `saldo` positivo = la empresa
+ * le debe al empleado. */
+export type PersonalListado = {
+  id: number
+  nombre: string
+  documento: string | null
+  telefono: string | null
+  observaciones: string | null
+  valorHora: number
+  saldo: number
+  idEmpresa: number | null
+  idUsuario: number | null
+  nombreUsuario: string | null
+  idCliente: number | null
+  nombreCliente: string | null
+}
+
+/** Espejo de `Ways.Application.Plantel.DatosDePersonal`: cuerpo del alta y de la edición. */
+export type DatosDePersonal = {
+  nombre: string
+  documento: string | null
+  telefono: string | null
+  observaciones: string | null
+  valorHora: number
+  idEmpresa: number | null
+  idUsuario: number | null
+  idCliente: number | null
 }

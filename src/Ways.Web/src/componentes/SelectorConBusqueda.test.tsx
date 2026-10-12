@@ -275,6 +275,27 @@ describe('SelectorConBusqueda', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
+  it('reenvía aria-invalid y aria-describedby a la caja y, sin ellos, no los pone', () => {
+    const { rerender } = render(
+      <SelectorConBusqueda<Opcion> nombreAccesible="Cliente" opciones={OPCIONES} valor={1} onChange={() => {}} />,
+    )
+    expect(caja()).not.toHaveAttribute('aria-invalid')
+    expect(caja()).not.toHaveAttribute('aria-describedby')
+
+    rerender(
+      <SelectorConBusqueda<Opcion>
+        nombreAccesible="Cliente"
+        opciones={OPCIONES}
+        valor={1}
+        onChange={() => {}}
+        aria-invalid
+        aria-describedby="explicacion-del-error"
+      />,
+    )
+    expect(caja()).toHaveAttribute('aria-invalid', 'true')
+    expect(caja()).toHaveAttribute('aria-describedby', 'explicacion-del-error')
+  })
+
   it('un cambio del valor desde afuera se refleja en la caja cerrada', () => {
     const { rerender } = render(<SelectorConBusqueda<Opcion> nombreAccesible="Cliente" opciones={OPCIONES} valor={1} onChange={() => {}} />)
     expect(caja()).toHaveValue('#1 — Consumidor Final')

@@ -90,7 +90,8 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   que arman su lista de enums: 4 tests rotos) y advertencias de calidad de tests. Corregido
   en `85251b0a`, `75f3a8c1` y `3adcaf3c` (lección en el skill structural-guard-tests). La
   re-evaluación encontró dos fixtures más con el mismo defecto (2 tests rotos), corregidos
-  en el commit siguiente. Verificación final: suite de integración completa 2522/2522.
+  en el commit siguiente. Verificación final: el CI del PR #407 corrió la suite completa en
+  verde. La corrida local reportó 2522 tests y la suite tiene unos 3830: ese conteo no cierra.
   Cambios aceptados en la revisión: la fecha del ajuste es obligatoria (el servidor no
   adivina el día); la ventana por defecto del estado de cuenta no tiene tope superior; se
   quitó del CHECK de horas la cláusula `importe >= 0`, implicada por las otras.
@@ -131,9 +132,24 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   corrida); verificación del padre: integración de pago 52/52, web de gastos 110/110.
   Seguimientos: anular un pago; `CompraEditor` con `?desdeGasto=` de un gasto vinculado no
   se frena en pantalla (termina en 409); la etiqueta nueva del POS requiere release.
-- [ ] T4 — Pantalla de personal (web). Ruta: delegada.
+- [x] T4 — Pantalla de personal (web). Ruta: delegada.
   ABM con selector de usuario y de cliente, ruta, entrada de menú.
   Checks: tests de helpers de mapeo y de componente.
+  Evidencia: commits `a618af83` y `3c5db178`. Web completa 6119/6119, lint y build sin
+  errores, `RutasDeLaSpa` 106/106; verificación del padre: tests de la pantalla y del menú
+  93/93. RED observado en los helpers; los tests de pantalla se escribieron después y se
+  probaron por mutación.
+  Ruta `/personal` para Admin y Supervisor (solo lectura), en Administración > Terceros. El
+  Supervisor gana un grupo Administración en el menú. Usuario y cliente se eligen con
+  `SelectorConBusqueda` (el desplegable existente solo trae 25 clientes).
+  Judgment-day: ronda 1 sin críticos. Corregido en `ad503152` y `1b8827fc`: tests del
+  esqueleto asíncrono, listado que quedaba en "Cargando" tras un guardado rechazado,
+  enlace "Cuenta" inerte con la pantalla bloqueada, accesibilidad de los selectores, saldo
+  con signo legible. La re-evaluación dio todo por resuelto, sin defectos del arreglo; web
+  completa 6150/6150.
+  Seguimientos: el mismo defecto de "Cargando" existe en Proveedores (tarea sugerida aparte);
+  el término de búsqueda vigente se anota al iniciar la lectura y no al aplicarla.
+  El enlace "Cuenta" apunta a una ruta que se registra en T5.
 - [ ] T5 — Cuenta de personal (web). Ruta: delegada.
   Estado de cuenta, carga de horas, ajuste y pago con líneas.
   Checks: tests de componente y del cálculo de totales del pago.
@@ -143,4 +159,5 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
 T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migración).
 T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
 T2 mergeada en main (PR #407). T3 cerrada (2.492 líneas de autoría).
-Próximo paso: PR de T3, luego T4.
+T3 mergeada en main (PR #415). T4 cerrada (unas 2.500 líneas, más de la mitad tests).
+Próximo paso: PR de T4, luego T5.

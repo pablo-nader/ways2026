@@ -67,6 +67,10 @@ type Props<T extends OpcionDeSelector> = {
   id?: string
   className?: string
   placeholder?: string
+  /** Marca la caja como inválida para tecnología asistiva; la clase visual va aparte, en `className`. */
+  'aria-invalid'?: boolean
+  /** Id del elemento que explica el error de la caja. */
+  'aria-describedby'?: string
 }
 
 type PosicionDeLista = { estilo: CSSProperties }
@@ -113,6 +117,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
   id,
   className,
   placeholder,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
 }: Props<T>) {
   const idLista = useId()
   const cajaRef = useRef<HTMLInputElement>(null)
@@ -279,6 +285,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
         className={`form-select${className ? ` ${className}` : ''}`}
         aria-label={nombreAccesible}
         aria-autocomplete="list"
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
         aria-haspopup="listbox"
         aria-expanded={visible}
         aria-controls={visible ? idLista : undefined}
