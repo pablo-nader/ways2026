@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Combos;
 using Ways.Domain.Common;
@@ -63,6 +64,74 @@ public class ServicioDeCombos(
         var combo = await BuscarAsync(id, ct);
 
         return (await ProyectarAsync([combo], ct))[0];
+    }
+
+    /// <summary>El combo activo <paramref name="id"/> con los artículos que completan cada componente, para cargarlo en el
+    /// carrito del POS. <c>404</c> si no existe, está dado de baja, está inactivo, es de otro tenant o es de una empresa
+    /// distinta de <paramref name="idEmpresa"/> (<c>null</c> ⇒ solo vale uno de todo el tenant, como en la venta).</summary>
+    public Task<ComboCargable> ObtenerCargableAsync(int id, int? idEmpresa, CancellationToken ct = default) =>
+        CargarParaPosAsync(db, id, idEmpresa, ct);
+
+    /// <summary>
+    /// Tres consultas sin importar cuántos componentes o miembros haya: el combo, sus componentes con el nombre del
+    /// artículo o de la familia (LEFT JOIN: una fila dada de baja deja el componente con <c>Nombre</c> nulo en vez de
+    /// desaparecer, dangling-fk-read-models) y los artículos candidatos de todos los componentes juntos. Un candidato es
+    /// lo que el escaneo resuelve (<see cref="ServicioDeEscaneo"/>: artículo vivo y activo, sin mirar precio, que se
+    /// resuelve aparte) y además de unidad de venta <c>Unidad</c>, la única que un combo admite. Un miembro de una familia
+    /// dada de baja no cuenta.
+    /// </summary>
+    public static async Task<ComboCargable> CargarParaPosAsync(
+        IWaysDbContext db, int id, int? idEmpresa, CancellationToken ct = default)
+    {
+        var combo = await db.Combos
+            .Where(c => c.Id == id && c.Activo && (c.IdEmpresa == null || c.IdEmpresa == idEmpresa))
+            .Select(c => new { c.Id, c.Codigo, c.Nombre, c.Precio })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el combo {id}.");
+
+        var componentes = await (
+            from componente in db.CombosComponentes
+            where componente.IdCombo == combo.Id
+            join a in db.Articulos on componente.IdArticulo equals (int?)a.Id into articulos
+            from articulo in articulos.DefaultIfEmpty()
+            join f in db.Familias on componente.IdFamilia equals (int?)f.Id into familias
+            from familia in familias.DefaultIfEmpty()
+            orderby componente.Id
+            select new
+            {
+                componente.IdArticulo,
+                componente.IdFamilia,
+                componente.Cantidad,
+                Nombre = articulo != null ? articulo.Nombre : familia != null ? familia.Nombre : null
+            }).ToListAsync(ct);
+
+        var idsArticulos = componentes.Where(c => c.IdArticulo is not null).Select(c => c.IdArticulo!.Value).ToList();
+        var idsFamilias = componentes.Where(c => c.IdFamilia is not null).Select(c => c.IdFamilia!.Value).ToList();
+
+        var candidatos = await (
+            from a in db.Articulos
+            where a.Activo
+                && a.UnidadVenta == UnidadVenta.Unidad
+                && (idsArticulos.Contains(a.Id)
+                    || (a.IdFamilia != null
+                        && idsFamilias.Contains(a.IdFamilia.Value)
+                        && db.Familias.Any(f => f.Id == a.IdFamilia)))
+            orderby a.Nombre, a.Id
+            select new { a.Id, a.IdFamilia, a.CodigoInterno, a.Nombre, a.AcumulaEnVenta, a.UnidadVenta })
+            .ToListAsync(ct);
+
+        return new ComboCargable(
+            combo.Id, combo.Codigo, combo.Nombre, combo.Precio,
+            [
+                .. componentes.Select(c => new ComponenteCargable(
+                    c.IdArticulo, c.IdFamilia, c.Nombre, c.Cantidad,
+                    [
+                        .. candidatos
+                            .Where(x => c.IdArticulo is { } idArticulo ? x.Id == idArticulo : x.IdFamilia == c.IdFamilia)
+                            .Select(x => new ArticuloEscaneado(
+                                x.Id, x.CodigoInterno, x.Nombre, null, 1m, x.AcumulaEnVenta, x.UnidadVenta))
+                    ]))
+            ]);
     }
 
     public async Task<ComboListado> CrearAsync(AltaCombo datos, CancellationToken ct = default)

@@ -1210,6 +1210,48 @@ export type ComboDeInstantanea = {
   componentes: ComponenteDeComboDeInstantanea[]
 }
 
+/** Componente de `GET /api/combos` (espejo de `ComponenteDeComboListado`): exactamente uno entre `idArticulo` e
+ * `idFamilia`. `nombre` es el del artículo o de la familia; `null` con `disponible = false` cuando esa fila fue dada
+ * de baja. */
+export type ComponenteDeComboListado = {
+  idArticulo: number | null
+  idFamilia: number | null
+  nombre: string | null
+  cantidad: number
+  disponible: boolean
+}
+
+/** Combo de `GET /api/combos` (espejo de `ComboListado`). El listado trae también los inactivos: el POS filtra. */
+export type ComboListado = {
+  id: number
+  codigo: number
+  nombre: string
+  precio: number
+  idEmpresa: number | null
+  activo: boolean
+  componentes: ComponenteDeComboListado[]
+}
+
+/** Componente de `GET /api/combos/{id}/cargable` (espejo de `ComponenteCargable`). `candidatos` son los artículos con
+ * los que se completa, con la forma del escaneo (`cantidad = 1`): vacía cuando el componente no se puede vender. */
+export type ComponenteDeComboCargable = {
+  idArticulo: number | null
+  idFamilia: number | null
+  nombre: string | null
+  cantidad: number
+  candidatos: ArticuloEscaneado[]
+}
+
+/** Respuesta de `GET /api/combos/{id}/cargable` (espejo de `ComboCargable`): los componentes en el orden en que se armó
+ * el combo. */
+export type ComboCargableDeApi = {
+  id: number
+  codigo: number
+  nombre: string
+  precio: number
+  componentes: ComponenteDeComboCargable[]
+}
+
 /** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */
 export type MedioPagoDeInstantanea = {
   idMedioPago: number
