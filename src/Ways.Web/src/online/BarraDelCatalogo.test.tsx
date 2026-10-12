@@ -44,6 +44,25 @@ describe('BarraDelCatalogo', () => {
       expect(alBuscar).not.toHaveBeenCalled()
     })
 
+    it('con una búsqueda inicial llena la caja y no la vuelve a avisar, ni al montarse ni pasada la pausa', () => {
+      const campo = verBarra({ buscarInicial: 'yerba' })
+
+      expect(campo).toHaveValue('yerba')
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => void vi.advanceTimersByTime(400))
+
+      expect(alBuscar).not.toHaveBeenCalled()
+    })
+
+    it('con una búsqueda inicial, vaciar la caja sí busca (el catálogo ya estaba filtrado)', () => {
+      const campo = verBarra({ buscarInicial: 'yerba' })
+
+      escribir(campo, '')
+      act(() => void vi.advanceTimersByTime(300))
+
+      expect(alBuscar.mock.calls).toEqual([['']])
+    })
+
     it('busca una sola vez, con el último texto sin espacios sobrantes, pasada la pausa de 300 ms', () => {
       const campo = verBarra()
 

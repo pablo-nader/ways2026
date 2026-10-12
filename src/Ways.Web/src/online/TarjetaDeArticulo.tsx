@@ -1,34 +1,10 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef } from 'react'
 
-import { urlDeLaImagenDelArticulo, type ArticuloPublico } from '../api/publico'
-import { Chevrones } from '../publico/Glifos'
+import type { ArticuloPublico } from '../api/publico'
+import { ImagenDelArticulo } from '../publico/ImagenDelArticulo'
 import { articuloParaElCarrito, formatearPrecio } from './carrito'
 import { useAccionesDelCarrito } from './CarritoContext'
 import { ControlDeCantidad } from './ControlDeCantidad'
-
-/** Lado de la caja de la imagen en píxeles; fija la proporción antes de que cargue y evita saltos de layout. */
-const LADO_DE_LA_IMAGEN = 320
-
-function ImagenDelArticulo({ articulo }: { articulo: ArticuloPublico }) {
-  const [fallo, setFallo] = useState(false)
-
-  return (
-    <div className="publico-articulo-imagen">
-      {articulo.tieneImagen && !fallo ? (
-        <img
-          src={urlDeLaImagenDelArticulo(articulo.id, articulo.imagenVersion)}
-          alt=""
-          width={LADO_DE_LA_IMAGEN}
-          height={LADO_DE_LA_IMAGEN}
-          loading="lazy"
-          onError={() => setFallo(true)}
-        />
-      ) : (
-        <Chevrones className="publico-articulo-marca" />
-      )}
-    </div>
-  )
-}
 
 /**
  * Tarjeta de un artículo. Recibe su cantidad en el carrito por prop (0 = no está) y opera con las
