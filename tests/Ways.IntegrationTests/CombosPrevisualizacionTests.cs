@@ -72,9 +72,9 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
 
         var comboPancho = lineas[0].GetProperty("combo");
         Assert.Equal(1, comboPancho.GetProperty("unidadesConsumidas").GetInt32());
-        Assert.Equal(272.73m, comboPancho.GetProperty("ahorro").GetDecimal());
+        Assert.Equal(273m, comboPancho.GetProperty("ahorro").GetDecimal());
         Assert.Equal(combo, comboPancho.GetProperty("idCombo").GetInt32());
-        Assert.Equal(227.27m, lineas[1].GetProperty("combo").GetProperty("ahorro").GetDecimal());
+        Assert.Equal(227m, lineas[1].GetProperty("combo").GetProperty("ahorro").GetDecimal());
 
         var aplicado = Assert.Single(respuesta.GetProperty("combos").EnumerateArray());
         Assert.Equal(combo, aplicado.GetProperty("idCombo").GetInt32());

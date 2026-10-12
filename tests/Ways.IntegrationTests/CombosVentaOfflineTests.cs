@@ -78,12 +78,12 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(UnComboBienCalculadoPorElDispositivoSeGrabaTalCualYNoSeAudita));
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: combo),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo)));
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo)));
 
         Assert.Equal(5000m, emitido.Total);
-        Assert.Equal([272.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
-        Assert.Equal([2727.27m, 2272.73m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([273m, 227m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([2727m, 2273m], emitido.Items.Select(i => i.Total));
         Assert.All(emitido.Items, i =>
         {
             Assert.Equal(combo, i.IdCombo);
@@ -91,7 +91,7 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         });
 
         var persistidos = await apoyo.ItemsAsync(ctx, emitido.Id);
-        Assert.Equal([272.73m, 227.27m], persistidos.Select(i => i.Descuento));
+        Assert.Equal([273m, 227m], persistidos.Select(i => i.Descuento));
         Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
         Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
     }
@@ -105,11 +105,11 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         var oferta = await apoyo.OfertaDePrecioAsync(ctx, pancho, 2800m);
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 7800m, "TX",
-            Offline(pancho, 2m, 3000m, descuentoUnitario: 200m, unidades: 1, ahorro: 272.73m, idCombo: combo),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo)));
+            Offline(pancho, 2m, 3000m, descuentoUnitario: 200m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo)));
 
-        Assert.Equal([472.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
-        Assert.Equal([5527.27m, 2272.73m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([473m, 227m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([5527m, 2273m], emitido.Items.Select(i => i.Total));
         Assert.Equal(oferta, emitido.Items[0].IdOferta);
         Assert.Equal(combo, emitido.Items[0].IdCombo);
         Assert.All(emitido.Items, i => Assert.False(i.PrecioDiscrepante));
@@ -125,8 +125,8 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         await apoyo.OfertaDePrecioAsync(ctx, pancho, 2800m);
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: combo),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo)));
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo)));
 
         Assert.Null(emitido.Items[0].IdOferta);
         Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
@@ -153,7 +153,7 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(100m, item.GetProperty("combo_cobrado").GetProperty("ahorro").GetDecimal());
         Assert.Equal(combo, item.GetProperty("combo_cobrado").GetProperty("id_combo").GetInt32());
         Assert.False(item.GetProperty("combo_cobrado").GetProperty("inexistente").GetBoolean());
-        Assert.Equal(272.73m, item.GetProperty("combo_esperado").GetProperty("ahorro").GetDecimal());
+        Assert.Equal(273m, item.GetProperty("combo_esperado").GetProperty("ahorro").GetDecimal());
         Assert.Equal(1, item.GetProperty("combo_esperado").GetProperty("unidades").GetInt32());
         Assert.Equal(combo, item.GetProperty("combo_esperado").GetProperty("id_combo").GetInt32());
     }
@@ -218,11 +218,11 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         const int idInexistente = 987_654;
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: idInexistente),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo)));
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: idInexistente),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo)));
 
         Assert.Equal(5000m, emitido.Total);
-        Assert.Equal([272.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([273m, 227m], emitido.Items.Select(i => i.Descuento));
         Assert.Null(emitido.Items[0].IdCombo);
         Assert.Equal(combo, emitido.Items[1].IdCombo);
 
@@ -243,8 +243,8 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.NotEqual(0, panchoAjeno + cocaAjena);
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: comboAjeno),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: comboAjeno)));
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: comboAjeno),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: comboAjeno)));
 
         Assert.All(emitido.Items, i => Assert.Null(i.IdCombo));
         Assert.Single(await DiscrepanciasAuditadasAsync(ctx));
@@ -255,14 +255,48 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
     {
         var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(ElAjusteManualSeAplicaSobreElNetoConElComboYNoEsUnaDiscrepancia));
 
-        // −10 % sobre 2272,73 son 227,27 menos: la coca queda en 2045,46.
-        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 4772.73m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: combo),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo, ajusteManualPorcentaje: -10m)));
+        // −10 % sobre 2273 son 227 menos: la coca queda en 2046.
+        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 4773m, "TX",
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo, ajusteManualPorcentaje: -10m)));
 
-        Assert.Equal(2045.46m, emitido.Items[1].Total);
+        Assert.Equal(2046m, emitido.Items[1].Total);
         Assert.All(emitido.Items, i => Assert.False(i.PrecioDiscrepante));
         Assert.Empty(await DiscrepanciasAuditadasAsync(ctx));
+    }
+
+    /// <summary>Un dispositivo que parte el combo con centavos (272,50 y 227,50, suman 500) graba lo que mandó: cada
+    /// línea redondea su neto al peso por su cuenta (2727,50 sube a 2728, 2272,50 a 2273) y el total es 5001, un peso
+    /// más que el precio del combo. La línea se audita como discrepante contra lo que el servidor detecta (273 y 227).</summary>
+    [Fact]
+    public async Task UnaParteDeComboConCentavosDelDispositivoRedondeaPorLineaYSumaUnPesoDeMas()
+    {
+        var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(UnaParteDeComboConCentavosDelDispositivoRedondeaPorLineaYSumaUnPesoDeMas));
+
+        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5001m, "TX",
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.50m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.50m, idCombo: combo)));
+
+        Assert.Equal(5001m, emitido.Total);
+        Assert.Equal([272m, 227m], emitido.Items.Select(i => i.Descuento));
+        Assert.True(emitido.Items[0].PrecioDiscrepante);
+        Assert.False(emitido.Items[1].PrecioDiscrepante);
+        Assert.Single(await DiscrepanciasAuditadasAsync(ctx));
+    }
+
+    /// <summary>Con el mismo reparto con centavos, el pago de 5000 que el dispositivo cobró queda un peso por debajo del
+    /// total de 5001 del servidor y la venta se acepta porque ese peso entra en la tolerancia de pago por defecto (10): lo
+    /// que sostiene este caso es la tolerancia, no una regla de combos.</summary>
+    [Fact]
+    public async Task UnaParteDeComboConCentavosCobradaAlPrecioDelComboEntraEnLaToleranciaDePago()
+    {
+        var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(UnaParteDeComboConCentavosCobradaAlPrecioDelComboEntraEnLaToleranciaDePago));
+
+        var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.50m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.50m, idCombo: combo)));
+
+        Assert.Equal(5001m, emitido.Total);
     }
 
     // ---- Validación de la forma ----
@@ -411,14 +445,14 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         var (ctx, pancho, coca, combo) = await PanchoYCocaAsync(nameof(UnReenvioConOtraParteDeComboDevuelveElComprobanteOriginalSinPisarlo));
 
         var primera = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
-            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 272.73m, idCombo: combo),
-            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227.27m, idCombo: combo)));
+            Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 273m, idCombo: combo),
+            Offline(coca, 1m, 2500m, unidades: 1, ahorro: 227m, idCombo: combo)));
         var reenvio = await EmitirAsync(ctx, Venta(ctx, 1, 5000m, "TX",
             Offline(pancho, 1m, 3000m, unidades: 1, ahorro: 300m, idCombo: combo),
             Offline(coca, 1m, 2500m, unidades: 1, ahorro: 200m, idCombo: combo)));
 
         Assert.Equal(primera.Id, reenvio.Id);
-        Assert.Equal([272.73m, 227.27m], reenvio.Items.Select(i => i.Descuento));
-        Assert.Equal([272.73m, 227.27m], (await apoyo.ItemsAsync(ctx, primera.Id)).Select(i => i.Descuento));
+        Assert.Equal([273m, 227m], reenvio.Items.Select(i => i.Descuento));
+        Assert.Equal([273m, 227m], (await apoyo.ItemsAsync(ctx, primera.Id)).Select(i => i.Descuento));
     }
 }
