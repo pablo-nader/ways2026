@@ -35,7 +35,7 @@ public sealed record DecisionDeFacturacion(
 /// Un medio que se factura porque OTRO medio del ticket disparó (o porque el ticket es forzado)
 /// se debita su importe completo mientras solo devenga su propio porcentaje, así que su saldo puede
 /// volverse negativo sin cota inferior. Es intencional: lo facturado "por arrastre" cuenta para el
-/// cupo de ese medio. Acotarlo en el tiempo es responsabilidad de quien llama, no de esta política.
+/// cupo de ese medio. Esta política no lo acota.
 /// </summary>
 public static class PoliticaDeFacturacionPorMedio
 {

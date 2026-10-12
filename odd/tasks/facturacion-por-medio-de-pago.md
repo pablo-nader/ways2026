@@ -118,6 +118,13 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   Decisiones: sin tope de saldo por ahora; un medio con dos porcentajes en un ticket se
   rechaza; el cupo se mide contra el importe del medio en el ticket, no contra el total; los
   aportes son decimales exactos, así que la columna de saldo (T3) necesita escala suficiente.
+  Judgment-day ronda 1 (`a544ed7e`): ningún hallazgo severo; advertencias confirmadas por los
+  dos jueces y corregidas en `160ed928`: comentario que afirmaba de más, deriva del saldo de
+  un medio facturado por arrastre sin documentar ni fijar con tests, guardas de nulos y
+  prioridad de reglas sin test, cotas de convergencia flojas. Mutaciones tras la corrección,
+  todas en rojo. Re-juicio: los seis puntos resueltos, sin hallazgos severos.
+  JUDGMENT: APPROVED. `Ways.Domain.Tests` 1422/1422. La deriva por arrastre queda como
+  decisión abierta del dueño (cupo mensual o perpetuo) y se resuelve en T3.
 
 ## Próximo paso
 
