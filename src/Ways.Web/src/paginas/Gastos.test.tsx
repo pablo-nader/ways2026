@@ -131,6 +131,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
     origenFondos: 'Tesoreria',
     idComprobanteCompra: null,
     turnoAbierto: false,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }
@@ -657,6 +658,32 @@ describe('Gastos (administración) — vincular a una compra existente', () => {
 
     expect(await screen.findByText('Gasto vinculado a la compra.')).toBeInTheDocument()
     expect(screen.queryByText('Vincular a compra', { selector: 'h5' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Gastos (administración) — gasto de un pago de personal', () => {
+  it('deshabilita editar, eliminar, vincular y crear compra en un gasto de un pago y deja habilitados los de un gasto común', async () => {
+    mockearRutas({
+      pagina: paginaFixture([
+        gastoFixture({ id: 40, concepto: 'Pago de personal: Ana', idMovimientoPersonal: 9 }),
+        gastoFixture({ id: 41, concepto: 'Alquiler' }),
+      ]),
+    })
+    renderGastos()
+
+    // web-test-data-gates: se espera a la fila (el dato), no a la tabla.
+    const delPago = await screen.findByRole('button', { name: 'Editar gasto Pago de personal: Ana' })
+    expect(delPago).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Eliminar gasto Pago de personal: Ana' })).toBeDisabled()
+    const filaDelPago = delPago.closest('tr') as HTMLElement
+    expect(within(filaDelPago).getByRole('button', { name: 'Vincular a compra' })).toBeDisabled()
+    expect(within(filaDelPago).getByRole('button', { name: 'Crear compra' })).toBeDisabled()
+
+    expect(screen.getByRole('button', { name: 'Editar gasto Alquiler' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Eliminar gasto Alquiler' })).toBeEnabled()
+    const filaComun = screen.getByRole('button', { name: 'Editar gasto Alquiler' }).closest('tr') as HTMLElement
+    expect(within(filaComun).getByRole('button', { name: 'Vincular a compra' })).toBeEnabled()
+    expect(within(filaComun).getByRole('button', { name: 'Crear compra' })).toBeEnabled()
   })
 })
 

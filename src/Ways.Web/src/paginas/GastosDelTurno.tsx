@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeGastos, copiaDeFalloDeEdicion } from '../api/gastos'
+import { clienteDeGastos, copiaDeFalloDeEdicion, esGastoDeUnPagoDePersonal } from '../api/gastos'
 import { clienteDeProveedores } from '../api/proveedores'
 import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
 import type {
@@ -560,7 +560,7 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
                       <td>{medios?.find((m) => m.id === g.idMedioPago)?.nombre ?? `Medio #${g.idMedioPago}`}</td>
                       <td className="text-end">{formatearMoneda(g.importe)}</td>
                       <td className="text-end text-nowrap">
-                        {g.turnoAbierto && (
+                        {g.turnoAbierto && !esGastoDeUnPagoDePersonal(g) && (
                           <BotonIcono
                             icono="editar"
                             etiqueta={`Editar gasto ${g.concepto}`}

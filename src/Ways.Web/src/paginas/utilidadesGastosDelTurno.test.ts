@@ -48,6 +48,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     detalle: null,
     numeroFactura: null,
     idComprobanteCompra: null,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }
