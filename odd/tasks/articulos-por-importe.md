@@ -73,7 +73,7 @@ transaction that adds it, and the CHECKs reference it.
 - [x] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
   shortcut selector, descriptor tests; the two-unit assumptions in `cantidadPorUnidad`, stock and
   the online cart. Route: delegated writer.
-- [ ] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
+- [x] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
   queued payload and synthetic ticket. Route: delegated writer.
 - [ ] T5 — POS release (Ways.Desktop bump + tag), since POS web changes do not reach the tills
   without it.
@@ -102,7 +102,11 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
 
-- T4 — implemented in `100e96ec` on `pnader/importe-pos` (delegated writer). Not checked off yet.
+- T4 — implemented in `100e96ec` on `pnader/importe-pos` (delegated writer). Corrections K1–K5 in
+  `76318924`; judgment-day round 2 (scoped re-judgment by both judges): all five FIXED, no new
+  defect → APPROVED. After the corrections: Vitest 6086/6086, build and lint clean, Domain.Tests
+  1404/1404 (also re-run by the parent), integration filter `VentaPorImporte|Escaneo` 50/50;
+  the full integration suite is left to CI.
   - Observed: full Vitest suite 6066/6066, build and lint clean (writer); `tsc -b` and the
     amount/cart/sale/offline-engine tests 301/301 (parent). RED observed per layer; 20 mutants
     killed.
@@ -115,7 +119,10 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
     by-amount blocks charging and never receives a merge (both); K4 the F2 search must not add a
     by-amount article without an amount (one judge); K5 the shortcut's busy gates get tests or
     are removed (one judge).
-  - Follow-ups: the printed ticket does not mark by-amount lines.
+  - Follow-ups: the printed ticket does not mark by-amount lines; the stale-line check rebuilds a
+    catalogue index on every render; without a loaded snapshot a stale by-amount line is still
+    charged online and rejected by the server; a combo whose component became by-amount after
+    creation loads its other lines and rejects that one.
 
 - T3 — implemented in `d7ae939a` on `pnader/importe-backoffice` (delegated writer; the combo
   error mapping in `api/combosAbm.ts` was added inline by the parent). Judgment-day round 1, both
