@@ -93,6 +93,17 @@ public static class ValidadorDePagos
             }
         }
 
+        // 0c (mismo criterio que las reglas 0/0b, corta ANTES de la 1): un comprobante de total negativo (nota de crédito)
+        // no cobra, así que no lleva pagos. Sin esta regla la 1 y la 2 pasan con cualquier importe positivo y el cierre del
+        // turno suma ese dinero como cobrado (arqueo y cuenta de tesorería). Una fila en cero no mueve dinero y, como en una
+        // venta común, no se rechaza por sí sola; un vuelto positivo sí es dinero y se rechaza aunque el importe sea cero.
+        if (total < 0m && pagos.Any(p => p.Importe > 0m || p.Vuelto > 0m))
+        {
+            throw new ErrorDominio(
+                "pago_en_comprobante_negativo",
+                "Una nota de crédito no lleva pagos: la devolución no cobra.", 400);
+        }
+
         var sumaImportes = pagos.Sum(p => p.Importe);
         var sumaVueltos = pagos.Sum(p => p.Vuelto);
 

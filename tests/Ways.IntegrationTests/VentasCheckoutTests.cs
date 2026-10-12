@@ -650,6 +650,38 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(emitidoOriginal.Id, emitidoDevolucion.IdComprobanteAsociado);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada(bool conAsociado)
+    {
+        var ctx = await PrepararAsync(
+            $"{nameof(UnaDevolucionConPagosSeRechazaConPagoEnComprobanteNegativoYNoPersisteNada)}{conAsociado}");
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-pagos", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Pagos");
+
+        int? idAsociado = null;
+        if (conAsociado)
+        {
+            var original = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+                ctx.IdPuntoVenta, idCliente, "TX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)], null, null));
+            Assert.Equal(HttpStatusCode.Created, original.StatusCode);
+            idAsociado = (await original.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!.Id;
+        }
+
+        var devolucion = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", idAsociado, [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioTransferencia, 100m, "ref", 0m)], null, null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, devolucion.StatusCode);
+        var problema = await devolucion.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("pago_en_comprobante_negativo", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ComprobantesVenta.CountAsync(c => c.Total < 0m));
+    }
+
     [Fact]
     public async Task UnaDevolucionReResuelveElPrecioVigenteEnVezDePinearElDeLaVentaOriginal()
     {

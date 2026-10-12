@@ -89,6 +89,65 @@ public class ValidadorDePagosTests
         Validar(100m, [Efectivo(100m, vuelto: 0m)]);
     }
 
+    // ---- 0c: pago_en_comprobante_negativo -----------------------------------------------------
+
+    [Fact]
+    public void UnComprobanteConTotalNegativoConUnPagoPositivoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Tarjeta(100m)]));
+        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+        Assert.Equal(400, excepcion.EstadoHttp);
+    }
+
+    [Fact]
+    public void UnComprobanteConTotalNegativoConVariosPagosSeRechazaAunqueSoloUnoSeaPositivo()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(-100m, [Efectivo(0m), Tarjeta(0m), CuentaCorriente(1m)], esConsumidorFinal: false));
+        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnComprobanteConTotalNegativoConUnVueltoPositivoSeRechazaAunConImporteCero()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(0m, vuelto: 5m)]));
+        Assert.Equal("pago_en_comprobante_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnComprobanteConTotalNegativoSoloConFilasEnCeroSeAcepta()
+    {
+        // Una fila en cero no mueve dinero (igual que en una venta común, donde no se rechaza por sí sola).
+        Validar(-100m, [Efectivo(0m), Tarjeta(0m)]);
+    }
+
+    [Fact]
+    public void UnComprobanteConTotalNegativoSinPagosSeAcepta()
+    {
+        Validar(-100m, []);
+    }
+
+    [Fact]
+    public void UnComprobanteConTotalExactamenteCeroNoDisparaLaReglaDeTotalNegativo()
+    {
+        Validar(0m, [Efectivo(10m)]);
+    }
+
+    [Fact]
+    public void UnImporteNegativoEnUnComprobanteNegativoSigueDandoPagoImporteNegativo()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(-100m, [Efectivo(-5m), Tarjeta(10m)]));
+        Assert.Equal("pago_importe_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void ConTotalPositivoUnPagoPositivoSigueSiendoLoNormal()
+    {
+        Validar(100m, [Efectivo(100m)]);
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(100m, [Efectivo(0m)]));
+        Assert.Equal("pago_no_ingresado", excepcion.Codigo);
+    }
+
     // ---- 1: pago_no_ingresado -------------------------------------------------------------
 
     [Fact]
