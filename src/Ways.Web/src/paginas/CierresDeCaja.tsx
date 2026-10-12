@@ -5,11 +5,12 @@ import type { PaginaDeTurnos, ResumenDeCierrePorRetiro } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const TAMANIO_DE_PAGINA = 10
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 type Props = {

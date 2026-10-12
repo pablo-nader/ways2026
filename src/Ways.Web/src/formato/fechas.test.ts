@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dentroDeRango, esFechaReal, expandirAnio, formatearTipeo, formatearTipeoOPegado, isoATexto, textoAIso } from './fechas'
+import { dentroDeRango, esFechaReal, expandirAnio, fechaHoraATexto, formatearTipeo, formatearTipeoOPegado, isoATexto, textoAIso } from './fechas'
 
 describe('esFechaReal', () => {
   it('rechaza días inexistentes y acepta el 29/02 solo en bisiestos', () => {
@@ -122,5 +122,17 @@ describe('dentroDeRango', () => {
     expect(dentroDeRango('2026-08-05', '2026-08-05', '2026-08-05')).toBe(true)
     expect(dentroDeRango('2026-08-04', '2026-08-05')).toBe(false)
     expect(dentroDeRango('2026-08-06', undefined, '2026-08-05')).toBe(false)
+  })
+})
+
+describe('fechaHoraATexto', () => {
+  it('muestra la hora en formato de 24 horas: las 16:05:09 no se leen como 04:05:09', () => {
+    const texto = fechaHoraATexto(new Date(2026, 9, 12, 16, 5, 9))
+    expect(texto).toBe('12/10/2026, 16:05:09')
+  })
+
+  it('a las 00:30 muestra 00:30 y no 24:30', () => {
+    const texto = fechaHoraATexto(new Date(2026, 9, 12, 0, 30, 0).toISOString())
+    expect(texto).toBe('12/10/2026, 00:30:00')
   })
 })

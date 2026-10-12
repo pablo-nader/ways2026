@@ -38,6 +38,7 @@ import type {
 import { AuthContext } from '../auth/AuthContext'
 import { crearAlmacenIndexedDb, type AlmacenClaveValor } from '../pos/almacenPos'
 import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
+import { ProveedorDeAccionesDePos, useAccionesDePos } from '../pos/AccionesDePosContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
@@ -7073,7 +7074,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  describe('sincronización: arranque, "Sincronizar ahora" e intervalo', () => {
+  describe('sincronización: arranque y "Sincronizar ahora"', () => {
     it('POS de escritorio: "Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', () =>
       comoPosDeEscritorio(async () => {
         await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
@@ -7147,21 +7148,12 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasGet('/pos/instantanea')).toHaveLength(2)
     })
 
-    it('el intervalo arranca en 5 minutos, se recorta al rango 1-60 y queda guardado en el dispositivo', async () => {
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+    it('no ofrece ningún campo para configurar el intervalo de sincronización', async () => {
       await prepararAlmacenOffline()
       await montarConInstantanea()
 
-      const campo = screen.getByLabelText('Minutos entre sincronizaciones')
-      expect(campo).toHaveValue(5)
-
-      await userEvent.clear(campo)
-      await userEvent.type(campo, '90')
-      await userEvent.tab()
-
-      expect(campo).toHaveValue(60)
-      expect(localStorage.getItem('ways.pos.intervaloDeSincronizacionMinutos')).toBe('60')
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+      expect(await screen.findByRole('button', { name: 'Sincronizar ahora' })).toBeInTheDocument()
+      expect(screen.queryByLabelText('Minutos entre sincronizaciones')).not.toBeInTheDocument()
     })
   })
 
@@ -7370,6 +7362,38 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         )
         expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
         expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull()
+      }))
+
+    it('con el turno local vigente por una consulta lenta, el estado que ve el header coincide con el chip: se puede cerrar y retirar', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture({ id: 900 }))
+        await prepararCopiaLocal()
+        mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? new Promise<TurnoResumen | null>(() => {}) : undefined))
+        function EstadoVisibleParaElHeader() {
+          const { estado } = useAccionesDePos()
+          return (
+            <p data-testid="header">
+              {String(estado?.listo)}|{String(estado?.turnoAbierto)}|{String(estado?.habilitadas.cerrarTurno)}|{String(estado?.habilitadas.retirar)}
+            </p>
+          )
+        }
+
+        render(
+          <MemoryRouter initialEntries={['/pos']}>
+            <ProveedorDeAccionesDePos>
+              <EstadoVisibleParaElHeader />
+              <Routes>
+                <Route
+                  path="/pos"
+                  element={<Pos cajaDeEscritorio={{ contexto: { empresa: 'E', puntoVenta: 'PV 1', cajero: 'c' }, encolarImpresion: vi.fn() }} />}
+                />
+              </Routes>
+            </ProveedorDeAccionesDePos>
+          </MemoryRouter>,
+        )
+
+        expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
+        expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true')
       }))
 
     it('la lista de clientes del servidor que llega tarde no pisa al cliente que el cajero eligió de la copia local', () =>

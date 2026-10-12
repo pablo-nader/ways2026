@@ -14,9 +14,10 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { PanelDeCambio } from './PanelDeCambio'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Exportada para el test colocado (`Auditoria.test.tsx`, `web-descriptor-tests`). Fallback

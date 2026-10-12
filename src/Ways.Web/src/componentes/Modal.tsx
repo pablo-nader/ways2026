@@ -30,6 +30,36 @@ function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
 const pilaDeModales: string[] = []
 let modalesAbiertos = 0
 
+type PropsBotonCerrarModal = {
+  etiqueta?: string
+  disabled?: boolean
+  onClick?: () => void
+}
+
+/** La × del header: SVG en línea con `currentColor`. El `btn-close` de Bootstrap pinta su cruz con un
+ * fondo `data:`, que la CSP del POS de escritorio (`img-src 'self'`) bloquea. */
+export function BotonCerrarModal({ etiqueta = 'Cerrar', disabled = false, onClick }: PropsBotonCerrarModal) {
+  return (
+    <button type="button" className="boton-cerrar-modal" aria-label={etiqueta} disabled={disabled} onClick={onClick}>
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M6 6l12 12" />
+        <path d="M18 6L6 18" />
+      </svg>
+    </button>
+  )
+}
+
 export type TamanoDeModal = 'sm' | 'lg' | 'xl'
 
 const CLASE_POR_TAMANO: Record<TamanoDeModal, string> = {
@@ -244,7 +274,7 @@ export function Modal({
                 {titulo}
               </h5>
               {!noDescartable && (
-                <button type="button" className="btn-close" aria-label={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
+                <BotonCerrarModal etiqueta={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
               )}
             </div>
             <div className="modal-body">{children}</div>
