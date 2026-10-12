@@ -289,6 +289,39 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
   `idOferta` on the synthetic item). Scoped re-judgment: both judges, all resolved, 0 CRITICAL
   → APPROVED.
 
+- T5a delivered and merged: PR pablo-nader/ways2026#396.
+- T5b implemented on `pnader/combos-pos-carga` — commits `de2b14aa`, `d545b395` (judgment
+  round 1) and `1bb75683` (round 2). Route: delegated writer.
+  - Server: `GET /api/combos/{id}/cargable?idEmpresa=` (POS roles, 3 constant queries): each
+    component with its candidate articles in the scan's article shape (no cost fields); family
+    candidates are live active per-unit members; an unsellable component has no candidates;
+    404 for a missing, inactive, soft-deleted, other-tenant or other-empresa combo.
+  - Web: "Buscar combo (F4)" next to "Buscar artículo (F2)" opens a modal (code, name, price,
+    components; filter; keyboard). F4, not F3: F3 is the legacy "Dirección de entrega" key that
+    `docs/05` says to keep; F4 was unimplemented in the legacy POS. Typing the canonical code
+    `^[cC]([1-9]\d{0,5})$` loads the combo; `C012` is an article code. A family component with
+    several candidates opens one picker for the whole combo; the combo is added whole or not
+    at all, through the same path as a scanned article.
+  - Lookup order (local-first): snapshot combo → snapshot article (no combo request) → online
+    API probe (5 s limit; a miss is not asked again for that code for 60 s; cleared when the
+    modal opens) → article lookup. Offline: snapshot only. Web without snapshot: cached API
+    list, then articles. A combo that exists only on the server loses to a snapshot article
+    with the same code until the next sync (documented).
+  Observed (fix actor, round 2, from `src/Ways.Web`): `tsc -b` clean; lint 0 errors;
+  `src/pos src/api src/componentes` 1986/1986; `Pos.test.tsx` 347/347; whole suite 5016/5016.
+  Writer (server): build 0 errors, Application 835/835, integration
+  `Combos|SuperficieDeAutorizacion` 228/228. No RED (implementation first); mutation evidence
+  for every clause, including the double-Enter guard observed RED without its ref.
+- Judgment-day, T5b: round 1 — 0 CRITICAL; fixed S1 leading zeros, S2 swallowed read failures,
+  S3 re-entrancy and gating, S4 source, S5 list cache, S6 shortcut, S7 tests, S8 docs. Round-1
+  re-judgment: all resolved, but both judges found a WARNING caused by the fix itself (a
+  `C<n>` scan waited on the network before the local lookup). Round 2 fixed it (U1) plus stale
+  cache (U2), modifier keys (U3), catch coverage (U4). Final re-judgment: both judges, all
+  resolved, nothing blocking → APPROVED. Left as info: the web source without a snapshot has
+  no time limit on its list read; Shift+F4 still opens the modal.
+- Skills loop: no new skill; the round-1 regression (a fix that put the network in front of a
+  local answer) is the existing local-first rule, restated in doc 10.
+
 ## Next step
 
-PR for T5a (slice 6); then T5b, T5c, and T4 last.
+PR for T5b (slice 7); then T4 (back-office screen) and T5c (Desktop bump + `pos-v*` tag).

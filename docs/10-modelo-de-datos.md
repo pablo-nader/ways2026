@@ -1227,7 +1227,9 @@ idénticas), y es el carrito el que después detecta el combo por sí mismo. Hay
   combo con ese número en la instantánea: se carga, sin ninguna llamada; (2) si no, un ARTÍCULO que la instantánea resuelve
   con el texto tipeado (la misma búsqueda local de un escaneo común): se agrega, sin ninguna consulta de combos; (3) si la
   instantánea no conoce ni uno ni otro, se le pregunta a la API por un combo con ese número y después sigue la búsqueda de
-  artículos de siempre. Ese sondeo está acotado: vence a los 5 s (`TIEMPO_LIMITE_DE_RED_MS`) y cuenta como lectura fallida, y
+  artículos de siempre. Consecuencia del paso (2): si un combo con ese número existe solo en el servidor (la instantánea es
+  anterior a su alta) y la instantánea tiene un artículo con ese mismo código, gana el artículo hasta la próxima
+  sincronización. Ese sondeo está acotado: vence a los 5 s (`TIEMPO_LIMITE_DE_RED_MS`) y cuenta como lectura fallida, y
   tras no encontrar un combo con un código no se vuelve a preguntar por ese mismo código durante 60 s (se olvida al abrir
   "Buscar combo"). Sin conexión solo cuenta la instantánea y no hay ninguna llamada. Sin instantánea (web) el orden es la
   lista de combos de la API (guardada en memoria) y después la búsqueda de artículos. Un combo guardado que figura como no
