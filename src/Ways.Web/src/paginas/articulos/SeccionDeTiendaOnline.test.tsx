@@ -5,6 +5,7 @@ import { SeccionDeTiendaOnline } from './SeccionDeTiendaOnline'
 import { ErrorApi } from '../../api/cliente'
 import { ROL, type ArticuloListado, type UsuarioAutenticado } from '../../api/tipos'
 import { AuthContext } from '../../auth/AuthContext'
+import { Modal } from '../../componentes/Modal'
 
 // Sección "Tienda online" del formulario de artículo: la publicación y la imagen escriben por su cuenta.
 
@@ -207,7 +208,7 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     expect(alDeEscribir.mock.calls).toEqual([[true], [false]])
   })
 
-  it('un 404 dice que el artículo ya no existe', async () => {
+  it('un 404 dice que el artículo ya no existe y la grilla se entera, aunque la relectura también dé 404', async () => {
     const usuario = userEvent.setup()
     apiPutMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el artículo 7.'))
     apiGetMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el artículo 7.'))
@@ -216,9 +217,10 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     await usuario.click(screen.getByRole('switch', { name: SWITCH }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo publicar el artículo. El artículo ya no existe.')
+    await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
   })
 
-  it('un fallo incierto relee el artículo, muestra el estado real y deja el mensaje a la vista', async () => {
+  it('un fallo incierto relee el artículo, muestra el estado real, deja el mensaje a la vista y avisa a la grilla DESPUÉS de releer', async () => {
     const usuario = userEvent.setup()
     apiPutMock.mockRejectedValue(new ErrorApi(500, 'error', 'Error 500.'))
     apiGetMock.mockResolvedValue(articuloLeido({ publicadoWeb: true }))
@@ -227,12 +229,13 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     await usuario.click(screen.getByRole('switch', { name: SWITCH }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
     expect(apiGetMock).toHaveBeenCalledWith('/articulos/7')
     expect(screen.getByRole('switch', { name: SWITCH })).toBeChecked()
-    expect(alCambiar).not.toHaveBeenCalled()
+    expect(apiGetMock.mock.invocationCallOrder[0]).toBeLessThan(alCambiar.mock.invocationCallOrder[0])
   })
 
-  it('si la relectura también falla, el mensaje del fallo sigue a la vista', async () => {
+  it('si la relectura también falla, el mensaje del fallo sigue a la vista y la grilla igual se entera', async () => {
     const usuario = userEvent.setup()
     apiPutMock.mockRejectedValue(new Error('sin red'))
     apiGetMock.mockRejectedValue(new Error('sin red'))
@@ -241,6 +244,7 @@ describe('SeccionDeTiendaOnline — publicar', () => {
     await usuario.click(screen.getByRole('switch', { name: SWITCH }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo publicar el artículo. No se pudo confirmar el resultado')
+    await waitFor(() => expect(alCambiar).toHaveBeenCalledTimes(1))
     expect(screen.getByRole('switch', { name: SWITCH })).toBeEnabled()
   })
 
@@ -413,6 +417,41 @@ describe('SeccionDeTiendaOnline — imagen', () => {
     expect(await screen.findByRole('img', { name: 'Imagen del artículo' })).toBeInTheDocument()
   })
 
+  it('tras un fallo incierto la vista previa se vuelve a pedir con una versión nueva y se levanta el aviso de imagen rota', async () => {
+    const usuario = userEvent.setup()
+    const ahora = vi.spyOn(Date, 'now').mockReturnValue(1760000777)
+    try {
+      apiPutBinarioMock.mockRejectedValue(new ErrorApi(503, 'error', 'Error 503.'))
+      apiGetMock.mockResolvedValue(articuloLeido({ tieneImagen: true }))
+      montar({ tieneImagen: true })
+      expect(screen.getByRole('img', { name: 'Imagen del artículo' })).toHaveAttribute('src', '/api/articulos/7/imagen')
+      fireEvent.error(screen.getByRole('img', { name: 'Imagen del artículo' }))
+      expect(screen.getByText('No se pudo mostrar la imagen.')).toBeInTheDocument()
+
+      await usuario.upload(screen.getByLabelText('Reemplazar la imagen'), imagen())
+
+      expect(await screen.findByRole('img', { name: 'Imagen del artículo' })).toHaveAttribute(
+        'src',
+        '/api/articulos/7/imagen?v=1760000777',
+      )
+      expect(screen.queryByText('No se pudo mostrar la imagen.')).not.toBeInTheDocument()
+    } finally {
+      ahora.mockRestore()
+    }
+  })
+
+  it('si la relectura dice que no quedó imagen, se muestra que no hay y no queda vista previa', async () => {
+    const usuario = userEvent.setup()
+    apiPutBinarioMock.mockRejectedValue(new ErrorApi(503, 'error', 'Error 503.'))
+    apiGetMock.mockResolvedValue(articuloLeido({ tieneImagen: false }))
+    montar({ tieneImagen: true })
+
+    await usuario.upload(screen.getByLabelText('Reemplazar la imagen'), imagen())
+
+    expect(await screen.findByText('Todavía no hay una imagen cargada.')).toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
   it('si la vista previa no carga, se oculta la imagen rota y se dice; una subida nueva la trae de vuelta', async () => {
     const usuario = userEvent.setup()
     apiPutBinarioMock.mockResolvedValue({ idArticulo: 7, tieneImagen: true, imagenVersion: 5 })
@@ -515,6 +554,83 @@ describe('SeccionDeTiendaOnline — quitar la imagen', () => {
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * La sección vive dentro del `Modal` del artículo (en un portal): ahí la puerta de "Quitar imagen" comparte el Escape
+ * con el editor y no tiene una `Box` a la que devolver el foco.
+ */
+describe('SeccionDeTiendaOnline — dentro del modal del artículo', () => {
+  function montarEnModal() {
+    const alCerrarElModal = vi.fn()
+    render(
+      <AuthContext.Provider value={sesion(ROL.Admin)}>
+        <Modal titulo="Editar artículo" onCerrar={alCerrarElModal}>
+          <SeccionDeTiendaOnline
+            idArticulo={7}
+            inicial={{ publicadoWeb: false, tieneImagen: true }}
+            bloqueadoPorPadre={false}
+            alDeEscribir={alDeEscribir}
+            alCambiar={alCambiar}
+          />
+        </Modal>
+      </AuthContext.Provider>,
+    )
+
+    return { alCerrarElModal }
+  }
+
+  /**
+   * Cláusulas bajo prueba: la captura + corte de propagación de `ConfirmacionDeBaja` y el `defaultPrevented` de
+   * `Modal` (cada una tiene además su prueba propia en su componente). Con la puerta abierta Escape solo la cierra;
+   * ya cerrada, el siguiente Escape sí cierra el editor.
+   */
+  it('Escape cierra la puerta de "Quitar imagen" y no el editor; sin la puerta, el editor se cierra', async () => {
+    const usuario = userEvent.setup()
+    const confirmar = vi.spyOn(window, 'confirm')
+    const { alCerrarElModal } = montarEnModal()
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+
+    await usuario.keyboard('{Escape}')
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(alCerrarElModal).not.toHaveBeenCalled()
+    expect(confirmar).not.toHaveBeenCalled()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+
+    await usuario.keyboard('{Escape}')
+
+    expect(alCerrarElModal).toHaveBeenCalledTimes(1)
+    confirmar.mockRestore()
+  })
+
+  /**
+   * jsdom no aplica la *focus fixup rule*, pero acá el disparador se DESMONTA (ya no hay imagen que quitar), que sí es
+   * observable: sin el destino explícito, la puerta no encuentra una `Box` en el portal y el foco cae en `<body>`.
+   */
+  it('al confirmar, el botón "Quitar imagen" desaparece y el foco va al título de la sección', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockResolvedValue(undefined)
+    montarEnModal()
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar quitar imagen' }))
+
+    expect(await screen.findByText('Se quitó la imagen.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Quitar imagen' })).not.toBeInTheDocument()
+    expect(screen.getByText('Tienda online')).toHaveFocus()
+  })
+
+  it('al cancelar, el foco vuelve al botón "Quitar imagen"', async () => {
+    const usuario = userEvent.setup()
+    montarEnModal()
+    await usuario.click(screen.getByRole('button', { name: 'Quitar imagen' }))
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByRole('button', { name: 'Quitar imagen' })).toHaveFocus()
   })
 })
 

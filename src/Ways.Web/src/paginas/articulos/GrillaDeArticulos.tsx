@@ -282,7 +282,10 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <td>{formatearPrecio(a.costoNominal)}</td>
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
-                    <td>{a.publicadoWeb && <span className="badge text-bg-primary">Publicado</span>}</td>
+                    <td className="text-nowrap">
+                      {a.publicadoWeb && <span className="badge text-bg-primary me-1">Publicado</span>}
+                      {a.tieneImagen && <span className="badge text-bg-light border">Con imagen</span>}
+                    </td>
                     <td>
                       <span className={`badge ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {a.activo ? 'Activo' : 'Inactivo'}

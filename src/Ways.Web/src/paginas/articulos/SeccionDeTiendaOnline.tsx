@@ -21,7 +21,7 @@ type Props = {
   inicial: { publicadoWeb: boolean; tieneImagen: boolean }
   bloqueadoPorPadre: boolean
   alDeEscribir: (enCurso: boolean) => void
-  /** Una escritura de la tienda salió bien: la grilla muestra su estado y tiene que refrescarse. */
+  /** La tienda del artículo cambió, o una escritura falló sin decir qué quedó escrito: la grilla muestra su estado y tiene que refrescarse. */
   alCambiar: () => void
 }
 
@@ -66,6 +66,9 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   const [urlRota, setUrlRota] = useState<string | null>(null)
   /** Espejo SÍNCRONO de `ocupado` y única guarda de reentrancia: dos disparos del mismo tick leen el mismo render. */
   const ocupadoRef = useRef(false)
+  /** Adónde vuelve el foco si "Quitar imagen" desaparece con la confirmación: la sección vive en el portal del
+   * `Modal`, donde la puerta no encuentra una `Box` a la que subir. */
+  const tituloRef = useRef<HTMLElement>(null)
 
   const bloqueado = ocupado || bloqueadoPorPadre || puertaAbierta
   const urlDeLaImagen = urlDeImagenDeArticuloAdmin(idArticulo, version)
@@ -76,12 +79,18 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
     setAviso('')
   }
 
-  /** Tras un fallo que no dice qué quedó escrito se vuelve a leer el artículo para mostrar el estado real. */
+  /**
+   * Tras un fallo que no dice qué quedó escrito se vuelve a leer el artículo para mostrar el estado real. Si hay
+   * imagen, la versión pasa a ser la hora de la relectura: la subida pudo haber reemplazado la imagen sin que lo
+   * sepamos, y una URL nueva obliga al navegador a pedirla de nuevo. `urlRota` va por URL, así que no hace falta
+   * borrarla: la URL nueva ya no coincide con la que falló.
+   */
   async function releer() {
     try {
       const leido = await clienteDeArticulos.obtener(idArticulo)
       setPublicado(leido.publicadoWeb)
       setTieneImagen(leido.tieneImagen)
+      setVersion(leido.tieneImagen ? Date.now() : null)
     } catch {
       // El mensaje del fallo ya manda a verificar el estado del artículo.
     }
@@ -106,7 +115,11 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
         resultado = await escritura()
       } catch (e) {
         ponerError(copiaDeFalloDeTienda(e, encabezadoDelFallo))
-        if (debeReleerTrasFalloDeTienda(e)) await releer()
+        if (debeReleerTrasFalloDeTienda(e)) {
+          await releer()
+          // El fallo no dijo qué quedó escrito: la grilla también puede haber cambiado, haya salido bien la relectura o no.
+          alCambiar()
+        }
 
         return
       }
@@ -192,7 +205,7 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
 
   return (
     <section aria-labelledby="art-tienda-titulo">
-      <strong id="art-tienda-titulo" className="text-muted small text-uppercase">
+      <strong id="art-tienda-titulo" ref={tituloRef} tabIndex={-1} className="text-muted small text-uppercase">
         Tienda online
       </strong>
 
@@ -282,6 +295,7 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
             etiquetaEnCurso="Quitando…"
             ocupado={ocupado}
             disparador={disparador}
+            regreso={tituloRef}
             onConfirmar={() => void confirmarQuitarImagen()}
             onCancelar={cerrarPuerta}
           />

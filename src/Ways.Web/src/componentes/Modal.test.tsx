@@ -118,6 +118,34 @@ describe('Modal — pila de apilado (Escape solo cierra el tope)', () => {
   })
 })
 
+/**
+ * Cláusula bajo prueba: `evento.defaultPrevented` en el listener de Escape de `Modal.tsx`. Un Escape que
+ * otro control ya atendió no cierra el modal. El atendedor de la prueba solo llama `preventDefault` y NO corta
+ * la propagación, así que el único freno es esa comprobación. Mutación: quitar la línea hace fallar el test
+ * (`onCerrar` se invoca).
+ */
+describe('Modal — Escape ya atendido por otro control', () => {
+  it('un Escape con defaultPrevented no cierra el modal; uno sin atender sí', () => {
+    const onCerrar = vi.fn()
+    render(
+      <Modal titulo="Editor" onCerrar={onCerrar}>
+        <button type="button">dentro</button>
+      </Modal>,
+    )
+    const atender = (evento: KeyboardEvent) => evento.preventDefault()
+    document.addEventListener('keydown', atender, true)
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'dentro' }), { key: 'Escape' })
+    document.removeEventListener('keydown', atender, true)
+
+    expect(onCerrar).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'dentro' }), { key: 'Escape' })
+
+    expect(onCerrar).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('Modal — foco', () => {
   it('al abrir, enfoca el primer control focusable del contenido', () => {
     render(

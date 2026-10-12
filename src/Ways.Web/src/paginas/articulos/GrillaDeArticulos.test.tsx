@@ -172,12 +172,13 @@ describe('GrillaDeArticulos — columnas', () => {
     expect(within(filaSinCosto).getByText('—', { selector: 'td' })).toBeInTheDocument()
   })
 
-  // mutation-proof-tests: la celda sale de `publicadoWeb` de ESA fila; dos filas con valores distintos.
-  it('la columna Tienda marca "Publicado" solo en las filas publicadas, en su propia celda', async () => {
+  // mutation-proof-tests: cada marca sale de su propio campo de ESA fila; tres filas con combinaciones distintas.
+  it('la columna Tienda marca "Publicado" y "Con imagen" cada una por su campo, en su propia celda', async () => {
     mockearRutas(
       paginaFixture([
-        filaFixture({ id: 1, nombre: 'En la tienda', publicadoWeb: true, proveedor: 'Alfa SA' }),
-        filaFixture({ id: 2, nombre: 'Solo en el local', publicadoWeb: false, tieneImagen: true }),
+        filaFixture({ id: 1, nombre: 'En la tienda', publicadoWeb: true, tieneImagen: false, proveedor: 'Alfa SA' }),
+        filaFixture({ id: 2, nombre: 'Solo con foto', publicadoWeb: false, tieneImagen: true }),
+        filaFixture({ id: 3, nombre: 'Sin nada', publicadoWeb: false, tieneImagen: false }),
       ]),
     )
     renderGrilla()
@@ -187,12 +188,18 @@ describe('GrillaDeArticulos — columnas', () => {
     const posicion = columnas.indexOf('Tienda')
     expect(posicion).toBeGreaterThan(-1)
 
-    const publicada = screen.getByText('En la tienda').closest('tr')
-    const noPublicada = screen.getByText('Solo en el local').closest('tr')
-    if (!publicada || !noPublicada) throw new Error('No se encontraron las filas')
-    expect(within(publicada).getAllByRole('cell')[posicion]).toHaveTextContent('Publicado')
-    expect(within(noPublicada).getAllByRole('cell')[posicion]).toBeEmptyDOMElement()
-    expect(within(noPublicada).queryByText('Publicado')).not.toBeInTheDocument()
+    const celdaDe = (nombre: string) => {
+      const fila = screen.getByText(nombre).closest('tr')
+      if (!fila) throw new Error('No se encontró la fila')
+
+      return within(fila).getAllByRole('cell')[posicion]
+    }
+
+    expect(celdaDe('En la tienda')).toHaveTextContent('Publicado')
+    expect(celdaDe('En la tienda')).not.toHaveTextContent('Con imagen')
+    expect(celdaDe('Solo con foto')).toHaveTextContent('Con imagen')
+    expect(celdaDe('Solo con foto')).not.toHaveTextContent('Publicado')
+    expect(celdaDe('Sin nada')).toBeEmptyDOMElement()
   })
 
   it('la fila de "No hay artículos" abarca todas las columnas de la tabla', async () => {
