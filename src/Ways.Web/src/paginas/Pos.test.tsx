@@ -1915,7 +1915,8 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
       }
       if (ruta === '/clientes/2') {
         llamadasClienteId += 1
-        return Promise.resolve<ClienteListado>(clienteActualizado)
+        // La primera consulta es la de elegir al cliente (el servidor aún lo tiene como en el borrador).
+        return Promise.resolve<ClienteListado>(llamadasClienteId === 1 ? clienteEnBorrador : clienteActualizado)
       }
       return undefined
     })
@@ -1929,7 +1930,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     await screen.findByText('Acá no hay nada de Pos')
     await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
 
-    await waitFor(() => expect(llamadasClienteId).toBe(1))
+    await waitFor(() => expect(llamadasClienteId).toBe(2))
     expect(await screen.findByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -2163,6 +2164,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
   it('JD-1: pagar la cuenta corriente del cliente de la venta desde el modal refresca `clienteSeleccionado` — el chequeo local de crédito del ticket usa el saldo nuevo', async () => {
     const clienteAlLimite = { ...otroCliente, limiteCredito: 400, creditoIlimitado: false, saldo: 400 }
     let clienteRefrescado: ClienteListado | null = null
+    let pagoRegistrado = false
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
       if (ruta.startsWith('/clientes?busqueda=')) {
@@ -2180,7 +2182,8 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         )
       }
       if (ruta === '/clientes/2') {
-        clienteRefrescado = { ...clienteAlLimite, saldo: 200 }
+        // Antes del pago el servidor lo tiene al límite; después, con el saldo nuevo.
+        clienteRefrescado = pagoRegistrado ? { ...clienteAlLimite, saldo: 200 } : clienteAlLimite
         return Promise.resolve<ClienteListado>(clienteRefrescado)
       }
       return undefined
@@ -2193,6 +2196,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/clientes/2/cuenta-corriente/pagos') {
+        pagoRegistrado = true
         return Promise.resolve<ComprobanteEmitido>(comprobanteEmitidoFixture({ id: 901, numeroVisible: '0007-00000901', idCliente: 2 }))
       }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
