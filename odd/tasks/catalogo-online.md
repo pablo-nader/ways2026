@@ -148,8 +148,37 @@ T2 (commits `575aa5ba`, `eb507303`), all observed in `src/Ways.Web`:
 
 - `npx tsc -b`: exit 0. `npx oxlint`: exit 0 (16 pre-existing `only-export-components` warnings, none in new files).
 - `npx vitest run`: 188 files, 4997 tests passed.
-- New tests: `SeccionDeTiendaOnline.test.tsx` (41), `catalogoWeb.test.ts`, 6 page-level cases in
-  `Articulos.test.tsx`, 2 grid cases, 9 vitrina page cases, helper cases in `vitrinas.test.ts`.
+- New tests: `SeccionDeTiendaOnline.test.tsx` (43 at the T2 commits, 46 after the judgment-day fix round below),
+  `catalogoWeb.test.ts`, 6 page-level cases in `Articulos.test.tsx`, 2 grid cases, 9 vitrina page cases, helper cases
+  in `vitrinas.test.ts`.
+
+Judgment-day fix round (branch `pnader/catalogo-web-admin-ajustes`, commits `765553a9`, `a2f58776`), observed in
+`src/Ways.Web`: `npx tsc -b` exit 0; `npx oxlint` exit 0 (same pre-existing warnings); `npx vitest run src/paginas
+src/componentes` 110 files, 2927 tests passed; `npx vitest run` 188 files, 5009 tests passed.
+
+- L1 Escape: `ConfirmacionDeBaja` listens in the capture phase and stops propagation; `Modal` ignores an Escape that is
+  already `defaultPrevented`. Test inside a real `Modal` (gate closes, editor stays, no `confirm`, next Escape closes the editor).
+- L2: `alCambiar()` runs after the re-read of an uncertain failure or 404, success or failure of the re-read.
+- L3: `ConfirmacionDeBaja` takes an optional `regreso` ref; the section passes its heading (`tabIndex=-1`). Focus asserted after confirm and cancel.
+- L4: Root neither requests the lists nor renders the selector; the selector is no longer blocked when the lists fail
+  to load; `lista_invalida` copy changed. The server validates the list on every save, so a stale saved list is
+  rejected until the user picks another or the default.
+- L5: the re-read sets `version` to `Date.now()` when the article has an image. Clearing `urlRota` was dropped: it is
+  keyed by URL, so the new URL already revives the preview (the test passes without it).
+- L6: the grid's "Tienda" column shows a "Con imagen" badge from `tieneImagen`.
+
+| Clause | Killed by |
+|---|---|
+| `Modal` `evento.defaultPrevented` removed | Modal "Escape con defaultPrevented" case |
+| `ConfirmacionDeBaja` `stopImmediatePropagation` removed | its "no llega a los listeners de burbujeo" case |
+| both of the above removed (the original bug) | section-in-Modal Escape case |
+| `regreso={tituloRef}` removed | "al confirmar ... el foco va al título" case |
+| `alCambiar()` after re-read removed | the three uncertain-failure cases |
+| `setVersion` in the re-read removed | "vista previa se vuelve a pedir con una versión nueva" |
+| `\|\| errorDeListas !== ''` restored on the selector | the two failed-load cases |
+| `if (esRoot) return` removed from the lists effect | Root "no pide las listas" |
+| Root `lista_invalida` text mapping removed | Root `lista_invalida` case |
+| grid badge reads `publicadoWeb` instead of `tieneImagen` | grid "Con imagen" case |
 
 Mutation evidence (clause changed, tests run, reverted; each went red):
 
@@ -172,8 +201,9 @@ Deviations and decisions (to confirm):
 - The section's write responses are not token-gated: the modal stays inert during the write (`alDeEscribir`),
   the state belongs to the instance and nothing navigates (stated in the component doc).
 - Vitrina price lists come from `GET /api/catalogos/listas-precio` (`OperacionDePos`, so Root gets a 403 there):
-  the selector then stays disabled with a notice and Guardar keeps the current list. Root cannot choose a list
-  until the backend offers a readable endpoint for it.
+  Root does not request the lists nor see the selector (it reads "La lista de precios de la tienda la elige el
+  administrador del comercio."); an Admin whose lists fail to load keeps a usable selector with the saved list and
+  "Lista por defecto". Root cannot choose a list until the backend offers a readable endpoint for it.
 - `ArticuloListado`/`FilaDeGrillaDeArticulos` require `publicadoWeb`/`tieneImagen` (the server always sends
   them), so about 15 test fixtures got the two defaults.
 
