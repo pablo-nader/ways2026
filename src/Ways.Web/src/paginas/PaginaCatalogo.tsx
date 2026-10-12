@@ -22,7 +22,7 @@ const ID_FORMULARIO_CATALOGO = 'formulario-catalogo'
 
 /** Lectura aparte de las opciones de un select (`opcionesRemotas`), atada a la apertura del formulario que la pidió:
  * lo que llegó para una apertura anterior no se usa en la siguiente. */
-type LecturaRemota = { apertura: number; porClave: Record<string, { datos: unknown[] | null; fallo: boolean }> }
+type LecturaRemota = { apertura: number; porClave: Record<string, { datos: unknown; fallo: boolean }> }
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -554,6 +554,9 @@ function ModalDeCatalogo({
               )}
               {campo.ayuda && <div className="form-text">{campo.ayuda}</div>}
               {remota && lectura?.fallo && <div className="form-text text-danger">{remota.errorDeCarga}</div>}
+              {remota?.sinOpciones && lectura && !lectura.fallo && opciones.length === 0 && (
+                <div className="form-text">{remota.sinOpciones}</div>
+              )}
             </div>
           )
         })}

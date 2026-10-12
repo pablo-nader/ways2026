@@ -15,6 +15,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.IntegrationTests;
@@ -127,13 +128,30 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await comando.ExecuteNonQueryAsync();
     }
 
-    private async Task EsperarUnaSesionBloqueadaAsync()
+    private async Task<HttpClient> ClienteConRolAsync(Contexto ctx, string nombre, RolConocido rol)
+    {
+        var sufijo = rol.ToString().ToLowerInvariant();
+        var mail = $"{nombre.ToLowerInvariant()}-{sufijo}@ways.test";
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/usuarios", new CrearUsuario($"{sufijo}-{Guid.NewGuid():N}"[..16], mail, (int)rol, "otro-rol-password-larga"));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, "otro-rol-password-larga"));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return cliente;
+    }
+
+    /// <summary>Espera a que haya una sesión bloqueada en un lock cuya consulta contiene el fragmento dado: así no pasa
+    /// porque otra sesión de la base esté esperando por su cuenta.</summary>
+    private async Task EsperarUnaSesionBloqueadaAsync(string fragmentoDeConsulta)
     {
         await using var conexion = await fixture.AbrirConexionCrudaAsync("plataforma", null);
         await using var comando = conexion.CreateCommand();
         comando.CommandText =
             "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid() " +
-            "AND datname = current_database()";
+            "AND datname = current_database() AND query LIKE $1";
+        comando.Parameters.Add(new NpgsqlParameter { Value = $"%{fragmentoDeConsulta}%" });
 
         var limite = DateTime.UtcNow.AddSeconds(15);
         while (DateTime.UtcNow < limite)
@@ -146,7 +164,7 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
             await Task.Delay(50);
         }
 
-        Assert.Fail("Ninguna sesión llegó a quedar bloqueada esperando el lock.");
+        Assert.Fail($"Ninguna sesión con '{fragmentoDeConsulta}' llegó a quedar bloqueada esperando el lock.");
     }
 
     [Fact]
@@ -459,7 +477,7 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var pedido = ctx.Admin.PutAsJsonAsync(
             $"{Medios}/{medio.Id}", Cuerpo("Transf", ctx.IdEmpresa, "Electronico", ("idCuentaTesoreria", cuenta.Id)));
-        await EsperarUnaSesionBloqueadaAsync();
+        await EsperarUnaSesionBloqueadaAsync("FOR KEY SHARE");
         await transaccion.CommitAsync();
 
         var respuesta = await pedido;
@@ -467,6 +485,88 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal("referencia_invalida", await CodigoAsync(respuesta));
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Null((await db.MediosPago.SingleAsync(m => m.Id == medio.Id)).IdCuentaTesoreria);
+    }
+
+    [Fact]
+    public async Task SoloElAdminVeLaCuentaLaComisionYLasRetencionesEnElListadoYEnElGet()
+    {
+        var ctx = await PrepararAsync(nameof(SoloElAdminVeLaCuentaLaComisionYLasRetencionesEnElListadoYEnElGet));
+        using var _ = ctx.Admin;
+        using var supervisor = await ClienteConRolAsync(ctx, "pv", RolConocido.Supervisor);
+        using var vendedor = await ClienteConRolAsync(ctx, "pv", RolConocido.Vendedor);
+        var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
+        var medio = await CrearMedioOkAsync(ctx, Cuerpo(
+            "QR", ctx.IdEmpresa, "Electronico",
+            ("idCuentaTesoreria", cuenta.Id), ("comisionPorcentaje", 4.5m), ("retencionIibbPorcentaje", 1m),
+            ("retencionIvaPorcentaje", 2m), ("retencionGananciasPorcentaje", 3m)));
+
+        async Task<List<MedioPagoListado>> ListarComoAsync(HttpClient cliente) =>
+            (await cliente.GetFromJsonAsync<List<MedioPagoListado>>($"{Medios}?incluirInactivos=true", OpcionesJson))!;
+
+        var delAdmin = await LeerAsync(ctx, medio.Id);
+        Assert.Equal(cuenta.Id, delAdmin.IdCuentaTesoreria);
+        Assert.Equal(4.5m, delAdmin.ComisionPorcentaje);
+        Assert.Equal(3m, delAdmin.RetencionGananciasPorcentaje);
+        Assert.Equal(delAdmin, Assert.Single(await ListarComoAsync(ctx.Admin), m => m.Id == medio.Id));
+
+        foreach (var cliente in new[] { supervisor, vendedor })
+        {
+            var porGet = (await cliente.GetFromJsonAsync<MedioPagoListado>($"{Medios}/{medio.Id}", OpcionesJson))!;
+            var enLista = Assert.Single(await ListarComoAsync(cliente), m => m.Id == medio.Id);
+
+            foreach (var visto in new[] { porGet, enLista })
+            {
+                Assert.Equal("QR", visto.Nombre);
+                Assert.Null(visto.IdCuentaTesoreria);
+                Assert.Null(visto.ComisionPorcentaje);
+                Assert.Null(visto.RetencionIibbPorcentaje);
+                Assert.Null(visto.RetencionIvaPorcentaje);
+                Assert.Null(visto.RetencionGananciasPorcentaje);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UnProblemaDeNombreSeReportaAntesQueUnoDeCuentaComoEnElFlujoGenerico()
+    {
+        var ctx = await PrepararAsync(nameof(UnProblemaDeNombreSeReportaAntesQueUnoDeCuentaComoEnElFlujoGenerico));
+        using var _ = ctx.Admin;
+        await CrearMedioOkAsync(ctx, Cuerpo("Existente", ctx.IdEmpresa));
+        var otro = await CrearMedioOkAsync(ctx, Cuerpo("Otro", ctx.IdEmpresa));
+
+        var sinNombre = await ctx.Admin.PostAsJsonAsync(
+            Medios, Cuerpo("  ", ctx.IdEmpresa, "Electronico", ("idCuentaTesoreria", 999_999)));
+        Assert.Equal(HttpStatusCode.BadRequest, sinNombre.StatusCode);
+        Assert.Equal("nombre_requerido", await CodigoAsync(sinNombre));
+
+        var duplicadoConCuentaInexistente = await ctx.Admin.PutAsJsonAsync(
+            $"{Medios}/{otro.Id}", Cuerpo("Existente", ctx.IdEmpresa, "Electronico", ("idCuentaTesoreria", 999_999)));
+        Assert.Equal(HttpStatusCode.Conflict, duplicadoConCuentaInexistente.StatusCode);
+        Assert.Equal("nombre_duplicado", await CodigoAsync(duplicadoConCuentaInexistente));
+
+        var nombreMalYCuentaEnEfectivo = await ctx.Admin.PostAsJsonAsync(
+            Medios, Cuerpo("", ctx.IdEmpresa, "Efectivo", ("idCuentaTesoreria", 1)));
+        Assert.Equal("nombre_requerido", await CodigoAsync(nombreMalYCuentaEnEfectivo));
+    }
+
+    [Fact]
+    public async Task RenombrarUnMedioDeUnaEmpresaConCuentaFuncionaSiSeDevuelveSuEmpresaYSinElla400()
+    {
+        var ctx = await PrepararAsync(nameof(RenombrarUnMedioDeUnaEmpresaConCuentaFuncionaSiSeDevuelveSuEmpresaYSinElla400));
+        using var _ = ctx.Admin;
+        await CrearEmpresaAsync(ctx.IdTenant, "Segunda SA");
+        var cuenta = await CrearCuentaAsync(ctx, "De la primera");
+        var medio = await CrearMedioOkAsync(ctx, Cuerpo(
+            "Propio", ctx.IdEmpresa, "Electronico", ("idCuentaTesoreria", cuenta.Id), ("comisionPorcentaje", 2m)));
+
+        var conEmpresa = await ctx.Admin.PutAsJsonAsync($"{Medios}/{medio.Id}", Cuerpo("Propio renombrado", ctx.IdEmpresa));
+        Assert.Equal(HttpStatusCode.OK, conEmpresa.StatusCode);
+        var guardado = (await conEmpresa.Content.ReadFromJsonAsync<MedioPagoListado>(OpcionesJson))!;
+        Assert.Equal((ctx.IdEmpresa, cuenta.Id, 2m), (guardado.IdEmpresa, guardado.IdCuentaTesoreria, guardado.ComisionPorcentaje));
+
+        var sinEmpresa = await ctx.Admin.PutAsJsonAsync($"{Medios}/{medio.Id}", Cuerpo("Propio otra vez", null));
+        Assert.Equal(HttpStatusCode.BadRequest, sinEmpresa.StatusCode);
+        Assert.Equal("cuenta_tesoreria_requiere_empresa", await CodigoAsync(sinEmpresa));
     }
 
     [Theory]

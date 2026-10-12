@@ -43,15 +43,22 @@ public sealed record MedioPagoAlta(
     decimal? RecargoPorcentaje,
     decimal? PorcentajeFacturacion = null,
     bool Activo = true,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    CampoOpcional<int?> IdCuentaTesoreria = default,
     decimal? ComisionPorcentaje = null,
     decimal? RetencionIibbPorcentaje = null,
     decimal? RetencionIvaPorcentaje = null,
-    decimal? RetencionGananciasPorcentaje = null) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
+    decimal? RetencionGananciasPorcentaje = null) : AltaDeCatalogo(Nombre, IdEmpresa, Activo)
+{
+    /// <summary>Propiedad y no parámetro del constructor: un parámetro de tipo struct con valor por defecto hace que el
+    /// generador de OpenAPI intente serializar ese default y rompa el documento. En el esquema figura como entero o
+    /// null (<c>EsquemaDeCampoOpcional</c>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public CampoOpcional<int?> IdCuentaTesoreria { get; init; }
+}
 
 /// <summary>Listado de medios de pago. Una cuenta dada de baja se lista como "sin cuenta" (<c>IdCuentaTesoreria</c>
-/// null); una cuenta desactivada se lista con su nombre y <c>CuentaTesoreriaInactiva</c> en true.</summary>
+/// null); una cuenta desactivada se lista con su nombre y <c>CuentaTesoreriaInactiva</c> en true. La cuenta, la comisión
+/// y las retenciones solo las ven quienes administran el catálogo (Admin); para el resto vienen en null, igual que los
+/// costos para quien no los puede ver. El POS y las pantallas de operación leen este mismo listado.</summary>
 public sealed record MedioPagoListado(
     int Id,
     string Nombre,
@@ -64,12 +71,12 @@ public sealed record MedioPagoListado(
     decimal? RecargoPorcentaje,
     decimal PorcentajeFacturacion,
     int? IdCuentaTesoreria,
-    decimal ComisionPorcentaje,
-    decimal RetencionIibbPorcentaje,
-    decimal RetencionIvaPorcentaje,
-    decimal RetencionGananciasPorcentaje,
+    decimal? ComisionPorcentaje,
+    decimal? RetencionIibbPorcentaje,
+    decimal? RetencionIvaPorcentaje,
+    decimal? RetencionGananciasPorcentaje,
     string? NombreCuentaTesoreria = null,
-    bool CuentaTesoreriaInactiva = false) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
+    bool? CuentaTesoreriaInactiva = null) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
 public sealed record CategoriaAlta(
     string Nombre, int? IdEmpresa, int Orden, int? IdCategoriaPadre, bool Activo = true)

@@ -357,3 +357,17 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
     expect(remotas?.errorDeCarga).toContain('No se pudieron cargar las cuentas')
   })
 })
+
+describe('descriptorMediosPago — empresa de la fila', () => {
+  it('aValores lleva la empresa de la fila y aAlta la devuelve, para que editar no convierta el medio en uno de todo el tenant', () => {
+    const valores = descriptorMediosPago.aValores(medioFixture({ idEmpresa: 4 }))
+
+    expect(valores.idEmpresa).toBe('4')
+    expect(descriptorMediosPago.aAlta('QR', true, valores).idEmpresa).toBe(4)
+  })
+
+  it('un medio de todo el tenant y un alta nueva mandan idEmpresa null', () => {
+    expect(descriptorMediosPago.aValores(medioFixture({ idEmpresa: null })).idEmpresa).toBe('')
+    expect(descriptorMediosPago.aAlta('QR', true, descriptorMediosPago.valoresPorDefecto).idEmpresa).toBeNull()
+  })
+})

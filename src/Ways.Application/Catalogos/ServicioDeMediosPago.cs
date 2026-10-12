@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -13,13 +14,21 @@ namespace Ways.Application.Catalogos;
 /// la base: que la cuenta exista, sea de la empresa del medio y esté activa si es nueva. El alta y la edición corren sin
 /// reintento y bajo <c>FOR KEY SHARE</c> sobre la fila viva de la cuenta, que choca contra el <c>FOR UPDATE</c> de su
 /// baja: o la baja gana y la cuenta ya no existe para esta escritura, o espera y ve la referencia. La cuenta se lee una
-/// sola vez, dentro de la transacción y después del lock. El listado trae el nombre de la cuenta en la misma consulta.
+/// sola vez, dentro de la transacción y después del lock, que se toma al final: después de las validaciones baratas del
+/// flujo genérico (<see cref="AntesDeGuardarAsync"/>). El listado trae el nombre de la cuenta en la misma consulta.
+///
+/// La cuenta, la comisión y las retenciones son datos de tesorería que solo ve quien administra el catálogo (Admin);
+/// para los demás roles —el POS y las pantallas de operación leen este listado— salen en null, el mismo mecanismo que
+/// los costos para quien no los puede ver (<c>PuedeVerCostos</c>).
 /// </summary>
-public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+public class ServicioDeMediosPago(
+    IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda, IContextoDeUsuario contexto)
     : ServicioDeCatalogo<MedioPago, MedioPagoListado, MedioPagoAlta>(db, reloj, guarda)
 {
     // Copia del parámetro en un campo (no una captura): evita CS9107.
     private readonly GuardaDeReferencias guardaDeCuentas = guarda;
+
+    private bool PuedeVerLaCuenta => contexto.Rol is RolConocido.Admin;
 
     protected override DbSet<MedioPago> Conjunto => Db.MediosPago;
 
@@ -94,6 +103,18 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
     {
         var listado = Proyectar(fila.Medio);
 
+        if (!PuedeVerLaCuenta)
+        {
+            return listado with
+            {
+                IdCuentaTesoreria = null,
+                ComisionPorcentaje = null,
+                RetencionIibbPorcentaje = null,
+                RetencionIvaPorcentaje = null,
+                RetencionGananciasPorcentaje = null
+            };
+        }
+
         return fila.CuentaVisible
             ? listado with { NombreCuentaTesoreria = fila.NombreCuenta, CuentaTesoreriaInactiva = !fila.CuentaActiva }
             : listado with { IdCuentaTesoreria = null };
@@ -135,8 +156,8 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
     }
 
     /// <summary>Sin reintento: el alta no tiene clave de idempotencia y el lock de la cuenta vive en la transacción. El
-    /// orden es 404, reglas puras, cuenta (lock, lectura, reglas) y por último el flujo genérico. Si ni la cuenta ni
-    /// la empresa del medio cambian, no hay nada nuevo que validar ni que bloquear.</summary>
+    /// orden de las validaciones es el del flujo genérico (404, nombre, disponibilidad, porcentaje de facturación y reglas
+    /// puras de la cuenta); el lock de la cuenta llega al final, en <see cref="AntesDeGuardarAsync"/>.</summary>
     private async Task<int> GuardarAsync(int? id, MedioPagoAlta datos, CancellationToken ct)
     {
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(Db);
@@ -145,23 +166,35 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
         {
             await using var transaccion = await Db.Database.BeginTransactionAsync(ct);
 
-            var actual = id is { } existente ? await BuscarAsync(existente, ct) : null;
-            var cuenta = ResolverCuenta(actual ?? new MedioPago { Nombre = string.Empty }, datos);
-
-            if (cuenta.IdCuentaTesoreria is { } idCuenta
-                && (idCuenta != actual?.IdCuentaTesoreria || datos.IdEmpresa != actual.IdEmpresa))
-            {
-                await ExigirCuentaAsignableAsync(
-                    idCuenta, datos.IdEmpresa, asignacionNueva: idCuenta != actual?.IdCuentaTesoreria, ct);
-            }
-
-            var guardado = actual is null
-                ? await base.CrearAsync(datos, ct)
-                : await base.ActualizarAsync(actual.Id, datos, ct);
+            var guardado = id is { } existente
+                ? await base.ActualizarAsync(existente, datos, ct)
+                : await base.CrearAsync(datos, ct);
 
             await transaccion.CommitAsync(ct);
             return guardado.Id;
         });
+    }
+
+    /// <summary>Si ni la cuenta ni la empresa del medio cambian, no hay nada nuevo que validar ni que bloquear.
+    /// "Nueva" es una cuenta distinta de la guardada: solo esa debe estar activa.</summary>
+    protected override async Task AntesDeGuardarAsync(MedioPago entidad, CancellationToken ct)
+    {
+        if (entidad.IdCuentaTesoreria is not { } idCuenta)
+        {
+            return;
+        }
+
+        var entrada = Db.ChangeTracker.Entries<MedioPago>().FirstOrDefault(e => ReferenceEquals(e.Entity, entidad));
+        var esNuevo = entrada is null || entrada.State is EntityState.Added or EntityState.Detached;
+        var cuentaGuardada = esNuevo ? null : entrada!.Property(m => m.IdCuentaTesoreria).OriginalValue;
+        var empresaGuardada = esNuevo ? null : entrada!.Property(m => m.IdEmpresa).OriginalValue;
+
+        if (!esNuevo && idCuenta == cuentaGuardada && entidad.IdEmpresa == empresaGuardada)
+        {
+            return;
+        }
+
+        await ExigirCuentaAsignableAsync(idCuenta, entidad.IdEmpresa, asignacionNueva: idCuenta != cuentaGuardada, ct);
     }
 
     private async Task ExigirCuentaAsignableAsync(

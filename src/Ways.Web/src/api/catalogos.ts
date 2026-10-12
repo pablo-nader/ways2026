@@ -30,7 +30,7 @@ import type {
   TipoComprobanteListado,
 } from './tipos'
 import { COMPORTAMIENTOS_MEDIO_PAGO } from './tipos'
-import { clienteDeCuentasTesoreria, opcionesDeCuentas } from './cuentasTesoreria'
+import { clienteDeCuentasTesoreria, opcionesDeCuentas, type CuentaTesoreriaListado } from './cuentasTesoreria'
 
 /** Todo campo propio se maneja como texto en el formulario (incl. números y el select de
  * comportamiento) salvo los booleanos — simplifica el estado controlado; cada descriptor
@@ -61,9 +61,11 @@ export type CampoDescriptor = {
    * valores del formulario, así puede conservar la opción actual aunque la lectura no la traiga. `errorDeCarga` es el
    * aviso si falla; el formulario sigue funcionando. */
   opcionesRemotas?: {
-    cargar: () => Promise<unknown[]>
-    armar: (leido: unknown[] | null, valores: Record<string, ValorDeCampo>) => { valor: string; etiqueta: string }[]
+    cargar: () => Promise<unknown>
+    armar: (leido: unknown, valores: Record<string, ValorDeCampo>) => { valor: string; etiqueta: string }[]
     errorDeCarga: string
+    /** Aviso cuando la lectura llegó y no hay ninguna opción para elegir. */
+    sinOpciones?: string
   }
   /** Texto de la opción vacía de un select opcional: si está, la opción vacía se ofrece siempre. */
   opcionVacia?: string
@@ -231,14 +233,27 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
       opcionVacia: '— Sin cuenta —',
       ayuda: AYUDA_DE_LA_CUENTA,
       opcionesRemotas: {
-        cargar: () => clienteDeCuentasTesoreria.listar(),
-        armar: (leido, valores) =>
-          opcionesDeCuentas(
-            leido as Parameters<typeof opcionesDeCuentas>[0],
+        cargar: async () => {
+          const [cuentas, empresas] = await Promise.all([
+            clienteDeCuentasTesoreria.listar(),
+            api.get<{ id: number }[]>('/empresas'),
+          ])
+          return { cuentas, empresas }
+        },
+        armar: (leido, valores) => {
+          const lectura = leido as { cuentas: CuentaTesoreriaListado[]; empresas: { id: number }[] } | null
+          return opcionesDeCuentas(
+            lectura?.cuentas ?? null,
+            lectura?.empresas ?? null,
+            String(valores.idEmpresa ?? ''),
             String(valores.idCuentaTesoreria ?? ''),
             String(valores.nombreCuentaTesoreria ?? ''),
             Boolean(valores.cuentaTesoreriaInactiva),
-          ),
+          )
+        },
+        sinOpciones:
+          'No hay cuentas para este medio: un medio de todo el tenant solo puede tener cuenta si el tenant tiene una sola ' +
+          'empresa, y uno de una empresa solo toma cuentas de esa empresa.',
         errorDeCarga: 'No se pudieron cargar las cuentas de tesorería. Podés guardar el medio con la cuenta actual.',
       },
     },
@@ -254,6 +269,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
     requiereReferencia: false,
     recargoPorcentaje: '',
     porcentajeFacturacion: '0',
+    idEmpresa: '',
     idCuentaTesoreria: '',
     nombreCuentaTesoreria: '',
     cuentaTesoreriaInactiva: false,
@@ -269,6 +285,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
     requiereReferencia: item.requiereReferencia,
     recargoPorcentaje: item.recargoPorcentaje === null ? '' : String(item.recargoPorcentaje),
     porcentajeFacturacion: String(item.porcentajeFacturacion),
+    idEmpresa: item.idEmpresa === null ? '' : String(item.idEmpresa),
     idCuentaTesoreria: item.idCuentaTesoreria === null ? '' : String(item.idCuentaTesoreria),
     nombreCuentaTesoreria: item.nombreCuentaTesoreria ?? '',
     cuentaTesoreriaInactiva: item.cuentaTesoreriaInactiva,
@@ -279,7 +296,8 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
   }),
   aAlta: (nombre, activo, valores) => ({
     nombre,
-    idEmpresa: null,
+    // La edición devuelve la empresa de la fila: mandar null convertiría un medio de una empresa en uno de todo el tenant.
+    idEmpresa: numeroOVacio(valores.idEmpresa),
     activo,
     orden: numeroOVacio(valores.orden) ?? 1,
     comportamiento: (valores.comportamiento as string as MedioPagoAdministradoAlta['comportamiento']) ?? 'Efectivo',

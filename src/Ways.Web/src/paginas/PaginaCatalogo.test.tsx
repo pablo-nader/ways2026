@@ -657,10 +657,12 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     return { id, idEmpresa: 1, nombreEmpresa: 'Comercio', nombre, saldoInicial: 0, saldoActual: 0, activo, saldoInicialEditable: true }
   }
 
-  function responder(medios: MedioPagoAdministrado[], cuentas: () => Promise<unknown>) {
-    apiGetMock.mockImplementation((ruta: string) =>
-      ruta.startsWith('/catalogos/medios-pago') ? Promise.resolve(medios) : cuentas(),
-    )
+  function responder(medios: MedioPagoAdministrado[], cuentas: () => Promise<unknown>, empresas: { id: number }[] = [{ id: 1 }]) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/catalogos/medios-pago')) return Promise.resolve(medios)
+      if (ruta === '/empresas') return Promise.resolve(empresas)
+      return cuentas()
+    })
   }
 
   async function abrirEdicion(posicion = 0) {
@@ -710,6 +712,56 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
       retencionIvaPorcentaje: 0.125,
       retencionGananciasPorcentaje: 0,
     })
+  })
+
+  it('guardar devuelve la empresa de la fila y solo ofrece las cuentas de esa empresa', async () => {
+    const usuario = userEvent.setup()
+    const deOtraEmpresa = { ...cuentaDeApi(9, 'De la segunda'), idEmpresa: 2 }
+    responder(
+      [medio({ idEmpresa: 1, idCuentaTesoreria: 3 })],
+      () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago'), deOtraEmpresa]),
+      [{ id: 1 }, { id: 2 }],
+    )
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+    const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
+    await waitFor(() => expect(within(cuenta).getByRole('option', { name: 'Mercado Pago' })).toBeInTheDocument())
+    expect(within(cuenta).queryByRole('option', { name: 'De la segunda' })).not.toBeInTheDocument()
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idEmpresa: 1, idCuentaTesoreria: 3 })
+  })
+
+  it('un medio de todo el tenant en un tenant con varias empresas no ofrece cuentas y explica por qué', async () => {
+    responder(
+      [medio({ idEmpresa: null, idCuentaTesoreria: null, nombreCuentaTesoreria: null })],
+      () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago')]),
+      [{ id: 1 }, { id: 2 }],
+    )
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+
+    expect(await within(dialogo).findByText(/No hay cuentas para este medio/)).toBeInTheDocument()
+    const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
+    expect(within(cuenta).queryByRole('option', { name: 'Mercado Pago' })).not.toBeInTheDocument()
+  })
+
+  it('un medio nuevo se crea de todo el tenant', async () => {
+    const usuario = userEvent.setup()
+    responder([medio()], () => Promise.resolve([]))
+    apiPostMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await usuario.type(screen.getByLabelText('Nombre'), 'Nuevo')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ idEmpresa: null })
   })
 
   it('si la lectura de cuentas falla avisa, muestra la cuenta actual y el formulario se puede guardar', async () => {

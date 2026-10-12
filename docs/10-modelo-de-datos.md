@@ -345,7 +345,8 @@ decisión de qué tickets se facturan es de una etapa posterior.
 > **Cuenta, comisión y retenciones (cuentas de tesorería).** El ABM del catálogo (`/api/catalogos/medios-pago`)
 > guarda y devuelve `id_cuenta_tesoreria` y los cuatro porcentajes (`idCuentaTesoreria`, `comisionPorcentaje`,
 > `retencionIibbPorcentaje`, `retencionIvaPorcentaje`, `retencionGananciasPorcentaje`); el listado trae además el
-> nombre de la cuenta y si está inactiva, y trata una cuenta dada de baja como "sin cuenta". La instantánea del POS no los
+> nombre de la cuenta y si está inactiva (esos campos solo los recibe el Admin; para Supervisor y Vendedor, que leen este
+> listado, vienen en `null`, como los costos), y trata una cuenta dada de baja como "sin cuenta". La instantánea del POS no los
 > lleva. Una edición que omite un campo conserva lo guardado (igual que `porcentaje_facturacion`); uno enviado se aplica,
 > incluidos la cuenta en `null` y un porcentaje en `0`. Cada porcentaje va de 0 a 100 con hasta 3 decimales y los cuatro
 > suman a lo sumo 100. La cuenta y los porcentajes distintos de cero solo existen con `comportamiento = 'electronico'`:

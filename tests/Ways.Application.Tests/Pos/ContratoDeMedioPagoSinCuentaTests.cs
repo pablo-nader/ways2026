@@ -64,8 +64,8 @@ public class ContratoDeMedioPagoSinCuentaTests
         Assert.Equal(
             [
                 "Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion",
-                "IdCuentaTesoreria", "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
-                "RetencionGananciasPorcentaje"
+                "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
+                "RetencionGananciasPorcentaje", "IdCuentaTesoreria"
             ],
             Propiedades(typeof(MedioPagoAlta)));
     }
