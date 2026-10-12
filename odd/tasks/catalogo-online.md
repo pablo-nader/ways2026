@@ -173,6 +173,17 @@ Deviations and decisions (to confirm):
 - `ValidadorDeImagen` extracted from `Vitrina`; its public API (`ValidarLogo`, `DetectarTipoDeLogo`, …) is
   unchanged.
 
+### Judgment-day of T1 (target 2885c3ab, round 0, 2026-10-12)
+
+Judges A and B: no CRITICAL or HIGH finding. `JUDGMENT: APPROVED`. Coincident and cheap items
+fixed in `8a3197fd` without a new round: `pagina` clamped to 10.000 (a huge page wrapped the
+OFFSET into a 500), control characters stripped from `buscar`, the public search no longer
+matches `codigo_interno` (oracle for a hidden field), removed images are physically purged and
+the article baja removes its image, deactivating or moving a list used by a live vitrina
+answers 409 `lista_en_uso_por_vitrina`, and `PUT vitrina` revalidates `idListaPrecio` only when
+it changes. Follow-ups: per-request cost of the public catalog (three scans, no server cache,
+no rate limit); `PUT vitrina` is a full replace (T2 sends the field).
+
 ## Delivery slices
 
 - PR 7: T1 (stacked on #388). PR 8: T2. PR 9: T3.
