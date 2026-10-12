@@ -53,4 +53,8 @@ public class MovimientoCuentaCorriente
     /// únicamente por el paso 8 de la transacción de reliquidación, en la misma transacción que
     /// la fila que apunta.</summary>
     public int? IdMovimientoActualizacion { get; set; }
+
+    /// <summary>Pago de personal al que pertenece este movimiento. Solo lo llevan, y siempre, las filas
+    /// <see cref="TipoMovimientoCc.DescuentoPersonal"/>; a lo sumo una fila por pago.</summary>
+    public int? IdMovimientoPersonal { get; set; }
 }

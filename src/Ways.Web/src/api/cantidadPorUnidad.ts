@@ -1,7 +1,8 @@
 /**
  * Qué cantidades admite un artículo según su unidad de venta — espejo web de
  * `Ways.Domain.Articulos.ReglaDeCantidadDeVenta`: `Unidad` solo enteros; `Peso` hasta tres
- * decimales. Es el único lugar que decide el paso, el mínimo y la validez de un campo de cantidad:
+ * decimales; `Importe` solo enteros (la venta fija la cantidad en 1 por su cuenta: acá la granularidad
+ * es la de una cantidad que no es un peso, para los campos de compras y stock). Es el único lugar que decide el paso, el mínimo y la validez de un campo de cantidad:
  * las pantallas no repiten la regla.
  *
  * Una unidad ausente (`undefined`/`null`: una línea guardada antes de que existiera el dato, una
@@ -20,17 +21,22 @@ export type RestriccionDeCantidad = { step: number; min: number }
 
 type UnidadOAusente = UnidadVenta | null | undefined
 
+/** Un artículo por importe no es un peso: su cantidad nunca tiene fracción. */
+function esEntera(unidadVenta: UnidadOAusente): boolean {
+  return unidadVenta === 'Unidad' || unidadVenta === 'Importe'
+}
+
 /** `permiteCero` es para los campos donde cero es una cantidad legítima (lo contado en un
  * inventario, las unidades sueltas de una compra con bultos). */
 export function restriccionDeCantidad(unidadVenta: UnidadOAusente, opciones?: { permiteCero?: boolean }): RestriccionDeCantidad {
-  const paso = unidadVenta === 'Unidad' ? 1 : PASO_DE_PESO
+  const paso = esEntera(unidadVenta) ? 1 : PASO_DE_PESO
   return { step: paso, min: opciones?.permiteCero ? 0 : paso }
 }
 
 /** Granularidad sola, sin mirar el signo ni el cero (mismo alcance que la regla del dominio). */
 export function respetaGranularidad(unidadVenta: UnidadOAusente, cantidad: number): boolean {
   if (!Number.isFinite(cantidad)) return false
-  if (unidadVenta === 'Unidad') return Number.isInteger(cantidad)
+  if (esEntera(unidadVenta)) return Number.isInteger(cantidad)
   const escalada = cantidad * 10 ** DECIMALES_DE_PESO
   return Math.abs(escalada - Math.round(escalada)) < 1e-6
 }

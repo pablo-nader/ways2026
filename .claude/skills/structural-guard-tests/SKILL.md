@@ -62,12 +62,23 @@ its own author never ran it against.
    neighbouring entries. An endpoint that changes catalog data stacks `GestionDeCatalogo`
    instead.
 
+5. **Adding a VALUE to an existing native PG enum is not adding an enum.** It needs no
+   fixture mapping (the `MapEnum` row above is for a NEW type), but two rules apply
+   (personal payment, 2026-10-12, `DescuentoPersonal` in `tipo_movimiento_cc`):
+   1. Add it with `ALTER TYPE … ADD VALUE IF NOT EXISTS`, and write a `Down` that does NOT remove
+      the label (Postgres cannot drop an enum value). A `Down` that rebuilds or drops the type
+      breaks `FiscalSchemaTests.UpDownUp…`.
+   2. A CHECK constraint that names the new value must live in a LATER migration than the one
+      that adds it: Postgres refuses to use a new enum value inside the transaction that added
+      it. Split it in two migrations, as `PagoDePersonal` and `ChecksDelDescuentoDePersonal` do.
+
 ## Decision Gates
 
 | Situation | Action |
 |---|---|
 | The guard fails and the change is of the exempt kind | Update the golden or allow-list in the same commit |
 | The guard fails and the change is not of the exempt kind | Fix the code, not the list |
+| New value in an existing native enum | `ADD VALUE IF NOT EXISTS`, `Down` leaves the label, any CHECK naming it goes in a later migration (rule 5) |
 | Unsure which guards exist | `rg -l "EstructuralesTests|InventarioDeDependientes|SuperficieDeAutorizacion|AislamientoDeTenant" tests` |
 
 ## Output Contract

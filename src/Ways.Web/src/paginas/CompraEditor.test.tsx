@@ -1611,6 +1611,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeAdministracionListado> = {}):
     origenFondos: 'Tesoreria',
     idComprobanteCompra: null,
     turnoAbierto: false,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }

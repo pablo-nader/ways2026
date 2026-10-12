@@ -21,11 +21,12 @@ import {
   type AccionesDeFamiliaDelFormulario,
   type EstadoDeUnionAFamilia,
 } from './familia'
-import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './FormularioArticulo'
+import { aAlta, aEdicion, aFormulario, formularioVacio, type ErrorDeTecla, type Formulario } from './FormularioArticulo'
 import { mensajeDeFalloDeEscritura } from '../familias/mensajes'
 import { usePrevisualizacion } from '../familias/usePrevisualizacion'
 import type { PropsDeModalDeArticulo } from './ModalDeArticulo'
 import { useCatalogosDeArticulo } from './useCatalogosDeArticulo'
+import { rechazoDeTeclaTomada } from './teclaAtajo'
 import { useFamiliasDelFormulario } from './useFamiliasDelFormulario'
 
 export const MENSAJE_CONFIRMAR_DESCARTE = 'Hay cambios sin guardar en el artículo. ¿Descartarlos?'
@@ -108,6 +109,8 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
   const previsualizacionDeUnion = usePrevisualizacion()
   // El rechazo del servidor a la familia nueva de un alta: slot propio, junto a la sección de la familia (react-async-state regla 14).
   const [errorDeFamiliaNueva, setErrorDeFamiliaNueva] = useState('')
+  // La tecla de atajo que el servidor dijo tomada por otro artículo: slot propio, junto a su selector.
+  const [errorDeTecla, setErrorDeTecla] = useState<ErrorDeTecla | null>(null)
   // Única guarda de reentrancia de `guardar`, `sacarDeLaFamilia` y `confirmarUnion` (react-async-state regla 11): es un `ref` porque el
   // estado (`guardando`, `saliendoDeFamilia`) recién cambia en el próximo render, después de los dos clics de un mismo tick.
   const escrituraEnCursoRef = useRef(false)
@@ -150,6 +153,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     setUnionElegida('')
     setErrorDeUnion('')
     setErrorDeFamiliaNueva('')
+    setErrorDeTecla(null)
   }
 
   /** La propuesta de unión previsualiza lo que cambiaría con los valores GUARDADOS del artículo: si se guardó el artículo o uno de
@@ -313,6 +317,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
     setErrorGuardado('')
     setAvisoGuardado('')
     setErrorDeFamiliaNueva('')
+    setErrorDeTecla(null)
     // Lo que sigue a un rechazo que hay que resolver DESPUÉS de soltar el guardado (recargar el artículo o la
     // familia): ejecutado dentro del `catch`, `abrirEdicion` invalidaría el token y el `finally` dejaría el
     // formulario ocupado para siempre.
@@ -413,6 +418,12 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
         }
         if (e.codigo === 'familia_cambio') return () => recargarArticuloDesactualizado(idArticulo)
       }
+    }
+
+    const teclaTomada = rechazoDeTeclaTomada(e, enviado)
+    if (teclaTomada !== null) {
+      setErrorDeTecla(teclaTomada)
+      return null
     }
 
     setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -806,6 +817,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       accionesDeFamilia,
       union,
       errorDeFamiliaNueva,
+      errorDeTecla,
       sinGuardar: haySinGuardar(),
       preguntaDeAlcanceAbierta: decisionDeAlcance !== null,
       codigoProveedor:

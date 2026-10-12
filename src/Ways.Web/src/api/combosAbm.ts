@@ -314,6 +314,13 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
         'Un combo solo admite artículos que se venden por unidad: algún artículo (o algún artículo de una familia elegida) se vende por peso.',
     },
   ],
+  [
+    'combo_componente_por_importe',
+    {
+      campo: 'componentes',
+      mensaje: 'Un artículo que se vende por importe (o una familia que tiene uno) no puede ser componente de un combo.',
+    },
+  ],
   ['combo_codigo_invalido', { campo: 'codigo', mensaje: MENSAJE_CODIGO }],
   ['combo_codigo_duplicado', { campo: 'codigo', mensaje: 'Ya hay un combo con ese código. Elegí otro.' }],
   ['combo_codigo_agotado', { campo: 'codigo', mensaje: 'El último código posible ya está en uso: indicá un código libre.' }],

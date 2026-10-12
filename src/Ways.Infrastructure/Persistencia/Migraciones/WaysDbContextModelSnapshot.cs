@@ -52,7 +52,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "resultado_fiscal", new[] { "aprobado", "aprobado_con_observaciones", "pendiente", "rechazado" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_documento", new[] { "cuil", "cuit", "dni", "otro", "pasaporte" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_caja", new[] { "apertura_cajon", "refuerzo", "retiro" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "pago" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "descuento_personal", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "gasto", "retiro_caja" });
@@ -2608,6 +2608,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_movimiento_actualizacion");
 
+                    b.Property<int?>("IdMovimientoPersonal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_movimiento_personal");
+
                     b.Property<int?>("IdPagoComprobante")
                         .HasColumnType("integer")
                         .HasColumnName("id_pago_comprobante");
@@ -2654,6 +2658,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdMovimientoActualizacion", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_actualizacion");
 
+                    b.HasIndex("IdMovimientoPersonal", "IdTenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_movimientos_cuenta_corriente_movimiento_personal")
+                        .HasFilter("id_movimiento_personal IS NOT NULL");
+
                     b.HasIndex("IdPagoComprobante", "IdTenant")
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_pago_comprobante");
 
@@ -2663,7 +2672,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdCliente", "IdTenant", "Fecha")
                         .HasDatabaseName("ix_movimientos_cuenta_corriente_cliente_fecha");
 
-                    b.ToTable("movimientos_cuenta_corriente", (string)null);
+                    b.ToTable("movimientos_cuenta_corriente", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_movimientos_cuenta_corriente_descuento_personal", "tipo <> 'descuento_personal' OR (id_movimiento_personal IS NOT NULL AND id_comprobante_venta IS NULL AND id_pago_comprobante IS NULL AND importe < 0)");
+
+                            t.HasCheckConstraint("ck_movimientos_cuenta_corriente_vinculo_personal", "id_movimiento_personal IS NULL OR tipo = 'descuento_personal'");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.CuentaCorriente.MovimientoCuentaCorrienteProveedor", b =>
@@ -3031,6 +3045,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_medio_pago");
 
+                    b.Property<int?>("IdMovimientoPersonal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_movimiento_personal");
+
                     b.Property<int?>("IdProveedor")
                         .HasColumnType("integer")
                         .HasColumnName("id_proveedor");
@@ -3087,6 +3105,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdMedioPago", "IdTenant")
                         .HasDatabaseName("ix_gastos_medio_pago");
 
+                    b.HasIndex("IdMovimientoPersonal", "IdTenant")
+                        .HasDatabaseName("ix_gastos_movimiento_personal");
+
                     b.HasIndex("IdProveedor", "IdTenant")
                         .HasDatabaseName("ix_gastos_proveedor");
 
@@ -3101,6 +3122,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_gastos_caja_turno_requiere_turno", "origen_fondos <> 'caja_turno' OR id_turno_caja IS NOT NULL");
 
                             t.HasCheckConstraint("ck_gastos_importe_positivo", "importe > 0");
+
+                            t.HasCheckConstraint("ck_gastos_movimiento_personal_es_sueldo", "id_movimiento_personal IS NULL OR categoria = 'sueldos'");
                         });
                 });
 
@@ -3705,6 +3728,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasKey("Id")
                         .HasName("pk_movimientos_personal");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_movimientos_personal_id_movimiento_id_tenant");
 
                     b.HasIndex("IdEmpleado")
                         .HasDatabaseName("ix_movimientos_personal_empleado");
@@ -6212,6 +6238,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_movimientos_cuenta_corriente_actualizacion");
 
+                    b.HasOne("Ways.Domain.Plantel.MovimientoPersonal", null)
+                        .WithMany()
+                        .HasForeignKey("IdMovimientoPersonal", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_movimientos_cuenta_corriente_movimiento_personal");
+
                     b.HasOne("Ways.Domain.Ventas.PagoComprobante", null)
                         .WithMany()
                         .HasForeignKey("IdPagoComprobante", "IdTenant")
@@ -6379,6 +6412,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_gastos_medio_pago");
+
+                    b.HasOne("Ways.Domain.Plantel.MovimientoPersonal", null)
+                        .WithMany()
+                        .HasForeignKey("IdMovimientoPersonal", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_gastos_movimiento_personal");
 
                     b.HasOne("Ways.Domain.Proveedores.Proveedor", null)
                         .WithMany()

@@ -27,5 +27,6 @@ internal static class ProyeccionesDeGasto
             g.Concepto,
             g.Detalle,
             g.NumeroFactura,
-            g.IdComprobanteCompra);
+            g.IdComprobanteCompra,
+            g.IdMovimientoPersonal);
 }
