@@ -74,7 +74,8 @@ price; one image per article, stored like the logo (bytea ≤ 1 MB, png/jpeg/web
     block (upload-on-select, preview, quitar) like the vitrina logo; grid column/filter
     "Tienda".
   - Vitrina page: "Lista de precios de la tienda" select (default list when empty).
-- [ ] **T3 — Web `/online`: catalog and cart.** Delegated. PR 9.
+- [x] **T3 — Web `/online`: catalog and cart.** Delegated. PR 9. Done in `df705a12` and `b46a0f00`;
+  route: delegated direct (one writer; trigger: 2+ non-trivial files and broad reading).
   - Catalog grid with search box, category chips with counts, product cards (image or placeholder
     mark, name, price formatted `$ 1.234,56`, unit), pagination or "Ver más".
   - Cart: add/remove/change quantity per `unidad_venta` rules, totals, persisted in
@@ -142,12 +143,55 @@ Deviations and decisions (to confirm):
 - `ValidadorDeImagen` extracted from `Vitrina`; its public API (`ValidarLogo`, `DetectarTipoDeLogo`, …) is
   unchanged.
 
+T3 (commits `df705a12`, `b46a0f00`), all observed in `src/Ways.Web`:
+
+- `npx tsc -b`: clean. `npx oxlint`: no finding in `src/online`, `src/publico` or `src/api/publico.ts` (the
+  existing `only-export-components` warnings elsewhere are the baseline). `npx vite build`: built, `online` entry 15.9 kB.
+- `npx vitest run src/publico src/online src/landing`: 10 files, 208 passed. `npx vitest run` (whole suite, alone):
+  191 files, 4975 passed, 0 failed.
+- New tests (73; `src/online` totals 87 with the 14 of `Tienda.test.tsx`): `carrito.test.ts` (26: quantity rules, formatting, reducer, persistence),
+  `useCatalogo.test.tsx` (9: generation gates, append, errors), `CatalogoDeLaTienda.test.tsx` (22: render, search
+  debounce, chips, Ver más, states, add/steppers), `Carrito.test.tsx` (12: panel, vaciar, persistence, provider),
+  `clienteDelCatalogo.test.ts` (4), plus the existing `Tienda.test.tsx` adapted to the catalog mock.
+
+Mutation evidence (clause changed, `vitest run src/online`, reverted; every row went red):
+
+| Clause | Killed by |
+|---|---|
+| `Unidad` rule: cart validates every line as `Peso` | 6 tests (cart rules, typed text, persistence filter, reducer add/change, typed-quantity UI) |
+| storage key without the host | 4 (key test, round trip per host, provider with two hosts, other host's cart not visible) |
+| first-read response applied without the generation gate | stale-response test (hook) + stale search test (page) |
+| first-read failure applied without the gate | late-failure test (hook) |
+| Ver más response applied without the gate | late-page-after-filter-change test (hook) |
+| merge on add: replaces instead of summing / always appends a new line | 4 each (reducer merge, decimals and 999 cap, last price wins, same-tick double add) |
+| search without pause (immediate request per key) / pause shortened to 50 ms | debounce test (299 ms no request, 300 ms one request with the last term) |
+| Enter does not search | Enter test |
+| Ver más appends without dedupe by id / `hayMas` always true | append test / 4 tests |
+| persistence: `imagenVersion` not validated | corrupt-lines test |
+
+Design decisions (to confirm):
+
+- The cart line is a snapshot `{ idArticulo, nombre, precio, unidadVenta, cantidad, imagenVersion }`; adding the
+  same article again sums quantities and refreshes name, price and image version from the latest catalog read.
+  Prices of lines never re-added stay as they were: repricing is the job of `pedidos-online`.
+- Quantity rule reuses `api/cantidadPorUnidad.ts` (`Unidad` integers, `Peso` up to 3 decimals) plus a 999 cap per
+  line; the stepper buttons add one (`Unidad`) or half a kilo (`Peso`), the field accepts comma or point; going
+  below the minimum with "−" removes the line; a typed invalid value shows a hint and the cart keeps the last good one.
+- Cart `cantidad` (header badge) counts lines, not units. Persistence key `ways.tienda.carrito:<host>`; invalid or
+  repeated lines are discarded one by one, a corrupt blob or blocked storage gives an empty cart.
+- The "Todos" chip shows no count: the server's chip counts exclude uncategorised articles, so a total there would
+  not match the sum. A selected category that disappears from the chips after a search stays selected (nothing is
+  pressed) until the user picks "Todos"; the server answers with an empty page.
+- The catalog empty state ("El catálogo se está preparando.") only shows when there are no filters and the first
+  read returned no articles; with any filter the calm "No encontramos artículos para esa búsqueda." shows instead.
+- The cart provider owns the `aria-live` region ("X agregado al carrito", "X quitado del carrito", "Carrito vaciado").
+- Not done: syncing the cart between two open tabs (`storage` event), restoring focus to the "Agregar" button after
+  the stepper's "−" removes a line.
+
 ## Delivery slices
 
 - PR 7: T1 (stacked on #388). PR 8: T2. PR 9: T3.
 
 ## Next step
 
-T2 (web admin), against the contract above: `PUT /api/articulos/{id}/web`, `PUT/DELETE/GET
-/api/articulos/{id}/imagen`, `idListaPrecio` on the vitrina, `publicadoWeb`/`tieneImagen` on the article
-and grid DTOs.
+Feature complete; next: pedidos-online.
