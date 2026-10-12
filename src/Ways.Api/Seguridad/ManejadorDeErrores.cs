@@ -182,6 +182,12 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_cuentas_tesoreria_nombre_empresa" } =>
                 (StatusCodes.Status409Conflict, "Ya existe una cuenta de tesorería con ese nombre en esta empresa.", "cuenta_tesoreria_duplicada"),
 
+            // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
+            // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
+            // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Por nombre exacto, antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
+                (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 
