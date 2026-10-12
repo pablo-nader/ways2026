@@ -52,6 +52,7 @@ public sealed record PrecioDeListaDeInstantanea(
 /// cantidades de una familia; ausente si el artículo no tiene. <c>IdArea</c>,
 /// <c>EsProducto</c> y <c>ControlaLote</c> quedan afuera: el servidor los resuelve del artículo
 /// fresco al sincronizar (<c>ServicioDeVentas.MaterializarItems</c>), nunca del request.
+/// <see cref="TeclaAtajo"/> es la tecla de función del artículo por importe; ausente si no tiene.
 /// </summary>
 public sealed record ArticuloDeInstantanea(
     int IdArticulo,
@@ -64,7 +65,9 @@ public sealed record ArticuloDeInstantanea(
     UnidadVenta UnidadVenta,
     IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TeclaAtajo? TeclaAtajo = null);
 
 /// <summary>
 /// Un cliente visible para el punto de venta: activo y compartido o de la empresa del punto de
@@ -184,10 +187,12 @@ public sealed record SolicitudDeRendicionDeCola(string CodigoTipoComprobante, lo
 /// <summary>Recorte de <c>MedioPagoListado</c> (catálogo genérico) a lo que el checkout offline
 /// necesita para armar <c>PagoDeVenta</c> y decidir vuelto/referencia sin ida y vuelta — mismo
 /// criterio que <c>ComprobanteListado</c> vs. el detalle completo: nunca <c>IdEmpresa</c>/
-/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee.</summary>
+/// <c>Orden</c>/<c>RecargoPorcentaje</c>, que el checkout no lee. <c>PorcentajeFacturacion</c> sí viaja, para que
+/// la copia local del dispositivo lo conserve; hoy ningún consumidor lo lee.</summary>
 public sealed record MedioPagoDeInstantanea(
     int IdMedioPago,
     string Nombre,
     ComportamientoMedioPago Comportamiento,
     bool AdmiteVuelto,
-    bool RequiereReferencia);
+    bool RequiereReferencia,
+    decimal PorcentajeFacturacion);

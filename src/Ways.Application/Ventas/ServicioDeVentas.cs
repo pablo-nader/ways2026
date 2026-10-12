@@ -2356,6 +2356,14 @@ public class ServicioDeVentas(
             var articulo = articuloPorId[linea.IdArticulo];
             if (!ReglaDeCantidadDeVenta.EsCantidadAdmitida(articulo.UnidadVenta, linea.Cantidad))
             {
+                if (articulo.UnidadVenta == UnidadVenta.Importe)
+                {
+                    throw new ErrorDominio(
+                        "cantidad_importe_invalida",
+                        $"El artículo {articulo.CodigoInterno} se vende por importe: la cantidad es siempre 1.",
+                        400);
+                }
+
                 throw new ErrorDominio(
                     "cantidad_entera_requerida",
                     $"El artículo {articulo.CodigoInterno} se vende por unidad: la cantidad tiene que ser entera.",

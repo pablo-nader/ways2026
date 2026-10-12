@@ -200,6 +200,7 @@ export type MedioPagoListado = CatalogoListado & {
   admiteVuelto: boolean
   requiereReferencia: boolean
   recargoPorcentaje: number | null
+  porcentajeFacturacion: number
 }
 export type MedioPagoAlta = {
   nombre: string
@@ -209,6 +210,7 @@ export type MedioPagoAlta = {
   admiteVuelto: boolean
   requiereReferencia: boolean
   recargoPorcentaje: number | null
+  porcentajeFacturacion: number
   activo: boolean
 }
 
@@ -1302,6 +1304,8 @@ export type MedioPagoDeInstantanea = {
   comportamiento: ComportamientoMedioPago
   admiteVuelto: boolean
   requiereReferencia: boolean
+  /** Ausente en una copia guardada antes de este campo: se lee como 0. */
+  porcentajeFacturacion?: number
 }
 
 /** Respuesta de `GET /api/pos/instantanea?version=2` — espejo de `InstantaneaDePos`. `momento` es

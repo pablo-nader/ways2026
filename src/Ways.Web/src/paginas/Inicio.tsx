@@ -1,5 +1,6 @@
 import { Box } from '../componentes/Box'
 import { useAuth } from '../auth/useAuth'
+import { fechaHoraATexto } from '../formato/fechas'
 
 export function Inicio() {
   const { usuario } = useAuth()
@@ -14,7 +15,7 @@ export function Inicio() {
         </p>
         {usuario?.ultimaConexion && (
           <p className="text-muted mb-0">
-            Conexión anterior: {new Date(usuario.ultimaConexion).toLocaleString('es-AR')}
+            Conexión anterior: {fechaHoraATexto(usuario.ultimaConexion)}
           </p>
         )}
       </Box>

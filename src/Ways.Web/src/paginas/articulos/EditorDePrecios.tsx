@@ -10,6 +10,7 @@ import { PuntoVentaContext } from '../../puntoVenta/PuntoVentaContext'
 import { contextoDeAlcance, descripcionDeFamilia, mensajeDePrecioParaToda, type FamiliaDelArticulo } from './familia'
 import { ordenarListasParaTabla } from './ordenDeListas'
 import { PreguntaDeAlcance } from './PreguntaDeAlcance'
+import { fechaHoraATexto } from '../../formato/fechas'
 
 type EstadoDeLista = {
   monto: string
@@ -486,7 +487,7 @@ function PanelDeLista({
     <div className="p-2">
       {pendiente && (
         <div className="alert alert-warning py-1 px-2 small">
-          Precio programado: {formatearImporte(pendiente.precio, { simbolo: true })} desde {new Date(pendiente.vigenteDesde).toLocaleString()}
+          Precio programado: {formatearImporte(pendiente.precio, { simbolo: true })} desde {fechaHoraATexto(pendiente.vigenteDesde)}
         </div>
       )}
 
@@ -618,8 +619,8 @@ function PanelDeLista({
             {historial.map((h) => (
               <tr key={h.id}>
                 <td>{formatearImporte(h.precio, { simbolo: true })}</td>
-                <td>{new Date(h.vigenteDesde).toLocaleString()}</td>
-                <td>{h.vigenteHasta ? new Date(h.vigenteHasta).toLocaleString() : '—'}</td>
+                <td>{fechaHoraATexto(h.vigenteDesde)}</td>
+                <td>{h.vigenteHasta ? fechaHoraATexto(h.vigenteHasta) : '—'}</td>
               </tr>
             ))}
             {historial.length === 0 && (

@@ -13,6 +13,7 @@ using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
@@ -53,8 +54,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_caja", new[] { "apertura_cajon", "refuerzo", "retiro" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc", new[] { "actualizacion_precios", "ajuste", "consumo", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "gasto", "retiro_caja" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "peso", "unidad" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "unaccent");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -210,6 +212,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
 
+                    b.Property<string>("TeclaAtajo")
+                        .HasColumnType("text")
+                        .HasColumnName("tecla_atajo");
+
                     b.Property<UnidadVenta>("UnidadVenta")
                         .HasColumnType("unidad_venta")
                         .HasColumnName("unidad_venta");
@@ -257,6 +263,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_articulos_codigo_interno")
                         .HasFilter("deleted_at IS NULL");
 
+                    b.HasIndex("IdTenant", "TeclaAtajo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_articulos_tecla_atajo")
+                        .HasFilter("deleted_at IS NULL AND tecla_atajo IS NOT NULL");
+
                     b.HasIndex(new[] { "IdTenant" }, "ix_articulos_controla_lote")
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
@@ -268,6 +279,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("articulos", null, t =>
                         {
                             t.HasCheckConstraint("ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')");
+
+                            t.HasCheckConstraint("ck_articulos_importe_no_acumula", "unidad_venta <> 'importe' OR acumula_en_venta = false");
+
+                            t.HasCheckConstraint("ck_articulos_tecla_atajo", "tecla_atajo IN ('F5', 'F6', 'F7', 'F8')");
+
+                            t.HasCheckConstraint("ck_articulos_tecla_atajo_solo_importe", "tecla_atajo IS NULL OR unidad_venta = 'importe'");
                         });
                 });
 
@@ -1477,6 +1494,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("orden");
 
+                    b.Property<decimal>("PorcentajeFacturacion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(5,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("porcentaje_facturacion");
+
                     b.Property<decimal?>("RecargoPorcentaje")
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("recargo_porcentaje");
@@ -1510,7 +1533,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_medios_pago_nombre_empresa")
                         .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
 
-                    b.ToTable("medios_pago", (string)null);
+                    b.ToTable("medios_pago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_medios_pago_porcentaje_facturacion", "porcentaje_facturacion >= 0 AND porcentaje_facturacion <= 100");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Catalogos.Parametro", b =>
@@ -3621,6 +3647,180 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_vitrinas_tagline_largo", "tagline IS NULL OR char_length(tagline) <= 120");
 
                             t.HasCheckConstraint("ck_vitrinas_tema", "tema IN ('claro', 'oscuro')");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Plantel.MovimientoPersonal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_movimiento");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Detalle")
+                        .HasColumnType("text")
+                        .HasColumnName("detalle");
+
+                    b.Property<DateOnly>("Fecha")
+                        .HasColumnType("date")
+                        .HasColumnName("fecha");
+
+                    b.Property<decimal?>("Horas")
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("horas");
+
+                    b.Property<int>("IdEmpleado")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empleado");
+
+                    b.Property<int>("IdPersonal")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_personal");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal>("Importe")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("importe");
+
+                    b.Property<decimal>("SaldoResultante")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("saldo_resultante");
+
+                    b.Property<TipoMovimientoPersonal>("Tipo")
+                        .HasColumnType("tipo_movimiento_personal")
+                        .HasColumnName("tipo");
+
+                    b.Property<decimal?>("ValorHora")
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("valor_hora");
+
+                    b.HasKey("Id")
+                        .HasName("pk_movimientos_personal");
+
+                    b.HasIndex("IdEmpleado")
+                        .HasDatabaseName("ix_movimientos_personal_empleado");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_movimientos_personal_tenant");
+
+                    b.HasIndex("IdPersonal", "IdTenant", "Fecha")
+                        .HasDatabaseName("ix_movimientos_personal_personal_fecha");
+
+                    b.ToTable("movimientos_personal", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_movimientos_personal_ajuste", "tipo <> 'ajuste' OR (horas IS NULL AND valor_hora IS NULL AND importe <> 0)");
+
+                            t.HasCheckConstraint("ck_movimientos_personal_horas", "tipo <> 'horas' OR (horas IS NOT NULL AND horas > 0 AND horas <= 24 AND valor_hora IS NOT NULL AND valor_hora >= 0 AND importe = round(horas * valor_hora, 2))");
+
+                            t.HasCheckConstraint("ck_movimientos_personal_pago", "tipo <> 'pago' OR (horas IS NULL AND valor_hora IS NULL AND importe < 0)");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Plantel.Personal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_personal");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Documento")
+                        .HasMaxLength(30)
+                        .HasColumnType("citext")
+                        .HasColumnName("documento");
+
+                    b.Property<int?>("IdCliente")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_cliente");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<int?>("IdUsuario")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_usuario");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<string>("Observaciones")
+                        .HasColumnType("text")
+                        .HasColumnName("observaciones");
+
+                    b.Property<decimal>("Saldo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("saldo");
+
+                    b.Property<string>("Telefono")
+                        .HasMaxLength(50)
+                        .HasColumnType("citext")
+                        .HasColumnName("telefono");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<decimal>("ValorHora")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("valor_hora");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_personal_id_personal_id_tenant");
+
+                    b.HasIndex("IdCliente")
+                        .IsUnique()
+                        .HasDatabaseName("ux_personal_cliente")
+                        .HasFilter("deleted_at IS NULL AND id_cliente IS NOT NULL");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_personal_tenant");
+
+                    b.HasIndex("IdUsuario")
+                        .IsUnique()
+                        .HasDatabaseName("ux_personal_usuario")
+                        .HasFilter("deleted_at IS NULL AND id_usuario IS NOT NULL");
+
+                    b.HasIndex("IdCliente", "IdTenant")
+                        .HasDatabaseName("ix_personal_cliente");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_personal_empresa");
+
+                    b.ToTable("personal", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_personal_valor_hora", "valor_hora >= 0");
                         });
                 });
 
@@ -6327,6 +6527,61 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_vitrinas_lista_precio");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Plantel.MovimientoPersonal", b =>
+                {
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpleado")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_personal_empleado");
+
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_personal_tenant");
+
+                    b.HasOne("Ways.Domain.Plantel.Personal", null)
+                        .WithMany()
+                        .HasForeignKey("IdPersonal", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_movimientos_personal_personal");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Plantel.Personal", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_personal_tenant");
+
+                    b.HasOne("Ways.Domain.Usuarios.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IdUsuario")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_personal_usuario");
+
+                    b.HasOne("Ways.Domain.Clientes.Cliente", null)
+                        .WithMany()
+                        .HasForeignKey("IdCliente", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_personal_cliente");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_personal_empresa");
                 });
 
             modelBuilder.Entity("Ways.Domain.Precios.Precio", b =>

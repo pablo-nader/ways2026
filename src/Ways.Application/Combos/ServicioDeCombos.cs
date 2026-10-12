@@ -402,6 +402,25 @@ public class ServicioDeCombos(
                 "Una familia con artículos que se venden por peso no puede ser componente de un combo.",
                 400);
         }
+
+        if (idsArticulos.Count > 0
+            && await db.Articulos.AnyAsync(a => idsArticulos.Contains(a.Id) && a.UnidadVenta == UnidadVenta.Importe, ct))
+        {
+            throw new ErrorDominio(
+                "combo_componente_por_importe",
+                "Un artículo que se vende por importe no puede ser componente de un combo.",
+                400);
+        }
+
+        if (idsFamilias.Count > 0
+            && await db.Articulos.AnyAsync(
+                a => a.IdFamilia != null && idsFamilias.Contains(a.IdFamilia.Value) && a.UnidadVenta == UnidadVenta.Importe, ct))
+        {
+            throw new ErrorDominio(
+                "combo_componente_por_importe",
+                "Una familia con artículos que se venden por importe no puede ser componente de un combo.",
+                400);
+        }
     }
 
     private async Task<int> SiguienteCodigoLibreAsync(CancellationToken ct)

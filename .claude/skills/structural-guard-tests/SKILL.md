@@ -39,6 +39,7 @@ its own author never ran it against.
    | `RemoveRange`, `Remove`, `ExecuteDelete` or `DELETE FROM` in `src/` | `tests/Ways.Application.Tests/Organizacion/BajasEstructuralesTests.cs` | `RemoveRangePermitidos`, only for a replace-set of detail rows |
    | New non-GET endpoint that is not catalog management | `tests/Ways.IntegrationTests/SuperficieDeAutorizacionTests.cs` | Its `Allowlist`, plus a positive test driving the route with the role that needs it |
    | New top-level route in `src/Ways.Web/src/App.tsx` (a new back-office screen) | `tests/Ways.IntegrationTests/RutasDeLaSpaTests.cs` | `RutasHeredadasDelBackOffice` in `src/Ways.Api/Spa/RutasDeLaSpa.cs`, in sorted position — a web-only change still needs this backend line |
+   | New native PG enum (`HasPostgresEnum` / `MapEnum`) | `PendingModelChangesWarning` in every integration fixture that migrates to HEAD | Map it in `Ways.Infrastructure/DependencyInjection.cs`, `WaysDbContextFactory.cs`, `WaysApiFixture.cs` AND every integration fixture that hand-builds its enum list (`rg "MapEnum<.*TipoMovimientoCcProveedor>" tests`: some fixtures write the type fully qualified). The proof is the FULL integration suite: fixtures that migrate to HEAD are not all named `*Schema*`, `*Backfill*` or `*Migracion*` |
    | New `CreateExecutionStrategy` / write transaction | `tests/Ways.Application.Tests/Abstracciones/EscriturasSinReintentoEstructuralesTests.cs` | See `ef-retry-safe-writes` |
    | New writer of family-shared fields or prices | `tests/Ways.Application.Tests/Familias/EscritoresDeFamiliasEstructuralesTests.cs` | The writer follows the lock protocol |
 
@@ -46,7 +47,11 @@ its own author never ran it against.
    run the whole `tests/Ways.Application.Tests` project and, for a new endpoint, the
    integration filter `FullyQualifiedName~SuperficieDeAutorizacion`. For a new table also
    run `FullyQualifiedName~AislamientoDeTenant`. For a new route in `App.tsx` run
-   `FullyQualifiedName~RutasDeLaSpa`, even when the change is web only.
+   `FullyQualifiedName~RutasDeLaSpa`, even when the change is web only. For a new native PG
+   enum run the whole `tests/Ways.IntegrationTests` project: the fixtures that hand-build
+   their enum list fail with `PendingModelChangesWarning`, and no name filter covers them all
+   (personal ledger, 2026-10-12: four tests failed, and a `Schema|Backfill|Migracion` filter
+   then missed two more, in `ComprasTipoSeedTests` and `CuentaCorrienteEtapa7BackstopTests`).
 
 3. **When delegating, the brief carries the guard.** Put the guard's file (and its golden or
    allow-list) in the writer's allowed edit surfaces and its command in `## Verification`.

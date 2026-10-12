@@ -6,6 +6,7 @@ import { HistoricoDeCajas } from './HistoricoDeCajas'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
 import type { FilaDeHistoricoDeCajas, PaginaDeHistoricoDeCajas, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
@@ -231,7 +232,7 @@ describe('HistoricoDeCajas — listado (stage-11-exportacion-reportes, Slice 6a)
     await screen.findByText('#100')
     const filaRecalculada = screen.getByRole('row', { name: /#100/ })
     const insignia = within(filaRecalculada).getByText('Recalculado')
-    expect(insignia).toHaveAttribute('title', `Arqueo recalculado el ${new Date('2026-09-20T15:30:00Z').toLocaleString('es-AR')}`)
+    expect(insignia).toHaveAttribute('title', `Arqueo recalculado el ${fechaHoraATexto('2026-09-20T15:30:00Z')}`)
     expect(within(screen.getByRole('row', { name: /#101/ })).queryByText('Recalculado')).not.toBeInTheDocument()
   })
 

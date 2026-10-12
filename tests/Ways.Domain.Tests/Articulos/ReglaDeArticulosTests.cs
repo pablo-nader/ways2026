@@ -27,6 +27,37 @@ public class ReglaDeArticulosTests
     }
 
     [Fact]
+    public void UnImporteQueAcumulaEnVentaEsRechazadoYNoSeCorrige()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeArticulos.ValidarImporte(UnidadVenta.Importe, acumulaEnVenta: true, teclaAtajo: null));
+
+        Assert.Equal("importe_no_acumula", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(UnidadVenta.Unidad)]
+    [InlineData(UnidadVenta.Peso)]
+    public void UnaTeclaDeAtajoEnUnArticuloQueNoEsPorImporteEsRechazada(UnidadVenta unidad)
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeArticulos.ValidarImporte(unidad, acumulaEnVenta: false, teclaAtajo: TeclaAtajo.F5));
+
+        Assert.Equal("tecla_atajo_solo_importe", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Theory]
+    [InlineData(UnidadVenta.Importe, false, null)]
+    [InlineData(UnidadVenta.Importe, false, TeclaAtajo.F8)]
+    [InlineData(UnidadVenta.Unidad, true, null)]
+    [InlineData(UnidadVenta.Unidad, false, null)]
+    [InlineData(UnidadVenta.Peso, true, null)]
+    public void LosEstadosCoherentesDeImporteSePermiten(UnidadVenta unidad, bool acumula, TeclaAtajo? tecla) =>
+        Assert.Null(Record.Exception(() => ReglaDeArticulos.ValidarImporte(unidad, acumula, tecla)));
+
+    [Fact]
     public void MantenerDisponibleParaTodasSinSubsetEsPermitido()
     {
         var excepcion = Record.Exception(() =>

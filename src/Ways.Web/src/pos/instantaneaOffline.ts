@@ -525,6 +525,7 @@ export function aMedioPagoListado(m: MedioPagoDeInstantanea, indice: number): Me
     admiteVuelto: m.admiteVuelto,
     requiereReferencia: m.requiereReferencia,
     recargoPorcentaje: null,
+    porcentajeFacturacion: m.porcentajeFacturacion ?? 0,
   }
 }
 

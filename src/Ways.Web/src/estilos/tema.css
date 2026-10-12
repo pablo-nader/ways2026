@@ -185,6 +185,43 @@ body {
   color: #1d1d1f !important;
 }
 
+/* ----- Cierre de modales ----- */
+
+.boton-cerrar-modal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem;
+  border: 0;
+  border-radius: var(--bs-border-radius-sm);
+  background: transparent;
+  color: var(--bs-body-color);
+  opacity: 0.6;
+}
+
+/* Mismo acomodo que Bootstrap daba a `.btn-close` en el header: a la derecha, con el área de click
+   compensada por márgenes negativos para no agrandar el header. */
+.modal-header .boton-cerrar-modal {
+  padding: calc(var(--bs-modal-header-padding-y) * 0.5) calc(var(--bs-modal-header-padding-x) * 0.5);
+  margin: calc(-0.5 * var(--bs-modal-header-padding-y)) calc(-0.5 * var(--bs-modal-header-padding-x))
+    calc(-0.5 * var(--bs-modal-header-padding-y)) auto;
+}
+
+.boton-cerrar-modal:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.boton-cerrar-modal:focus-visible {
+  opacity: 1;
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.35);
+}
+
+.boton-cerrar-modal:disabled {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
 /* ----- Barra de navegación ----- */
 
 .navbar.ways-navbar.bg-body {
@@ -329,6 +366,38 @@ body {
 
 .btn-icono svg {
   flex: none;
+}
+
+@keyframes girar-icono {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-icono-ocupado svg {
+  animation: girar-icono 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-icono-ocupado svg {
+    animation: none;
+  }
+}
+
+/* Saldo del cliente en la cabecera del carrito (ChipDeSaldo). */
+.chip-saldo {
+  flex: none;
+  min-width: 9.5rem;
+  padding: 0.125rem 0.625rem 0.25rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-pill);
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.chip-saldo .progress {
+  height: 4px;
 }
 
 /* Chips con forma de píldora. */

@@ -53,9 +53,9 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
 
         await using var db = apoyo.Db(ctx.IdTenant);
         var guardadas = await db.Ofertas.ToDictionaryAsync(o => o.Nombre, o => o.DisponibleOnline);
-        Assert.Equal(true, guardadas["Sin campo"]);
-        Assert.Equal(false, guardadas["Apagada"]);
-        Assert.Equal(true, guardadas["Prendida"]);
+        Assert.True(guardadas["Sin campo"]);
+        Assert.False(guardadas["Apagada"]);
+        Assert.True(guardadas["Prendida"]);
 
         // El detalle y el listado leen lo guardado, con valores distintos por oferta.
         var detalle = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/ofertas/{idApagada}");
@@ -155,8 +155,8 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
 
         await using var db = apoyo.Db(ctx.IdTenant);
         var guardados = await db.Combos.ToDictionaryAsync(c => c.Nombre, c => c.DisponibleOnline);
-        Assert.Equal(true, guardados["Sin campo"]);
-        Assert.Equal(false, guardados["Apagado"]);
+        Assert.True(guardados["Sin campo"]);
+        Assert.False(guardados["Apagado"]);
 
         var listado = (await ctx.Admin.GetFromJsonAsync<JsonElement>("/api/combos")).EnumerateArray()
             .ToDictionary(c => c.GetProperty("nombre").GetString()!, c => c.GetProperty("disponibleOnline").GetBoolean());

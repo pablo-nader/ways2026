@@ -16,8 +16,15 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 {
     public void Configure(EntityTypeBuilder<Articulo> builder)
     {
-        builder.ToTable("articulos", t => t.HasCheckConstraint(
-            "ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')"));
+        builder.ToTable("articulos", t =>
+        {
+            t.HasCheckConstraint("ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')");
+            t.HasCheckConstraint("ck_articulos_tecla_atajo", "tecla_atajo IN ('F5', 'F6', 'F7', 'F8')");
+            t.HasCheckConstraint(
+                "ck_articulos_tecla_atajo_solo_importe", "tecla_atajo IS NULL OR unidad_venta = 'importe'");
+            t.HasCheckConstraint(
+                "ck_articulos_importe_no_acumula", "unidad_venta <> 'importe' OR acumula_en_venta = false");
+        });
 
         builder.HasKey(a => a.Id);
 
@@ -128,6 +135,11 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 
         builder.Property(a => a.IdFamilia).HasColumnName("id_familia");
 
+        builder.Property(a => a.TeclaAtajo)
+            .HasColumnName("tecla_atajo")
+            .HasColumnType("text")
+            .HasConversion<string>();
+
         builder.Property(a => a.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(a => a.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(a => a.DeletedAt).HasColumnName("deleted_at");
@@ -140,6 +152,13 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
         builder.HasIndex(a => new { a.IdTenant, a.CodigoInterno })
             .HasDatabaseName("ux_articulos_codigo_interno")
             .HasFilter("deleted_at IS NULL")
+            .IsUnique();
+
+        // Una tecla de atajo del POS apunta a un solo artículo vivo por tenant. Backstop del pre-chequeo de
+        // ServicioDeArticulos (409 tecla_atajo_duplicada): cubre la carrera.
+        builder.HasIndex(a => new { a.IdTenant, a.TeclaAtajo })
+            .HasDatabaseName("ux_articulos_tecla_atajo")
+            .HasFilter("deleted_at IS NULL AND tecla_atajo IS NOT NULL")
             .IsUnique();
 
         builder.HasIndex(a => a.IdTenant).HasDatabaseName("ix_articulos_tenant");
