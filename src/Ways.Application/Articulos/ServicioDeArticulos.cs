@@ -190,7 +190,7 @@ public class ServicioDeArticulos(
                 x.Articulo.CostoListaPor, x.Articulo.CostoListaIncluyeIva, x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
                 x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor,
-                x.Articulo.PublicadoWeb, x.TieneImagen))
+                x.Articulo.PublicadoWeb, x.TieneImagen, x.Articulo.TeclaAtajo))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -282,6 +282,8 @@ public class ServicioDeArticulos(
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
         ExigirCostoListaPorDefinido(datos.CostoListaPor);
         ExigirUnidadesParaCostoPorBulto(datos.CostoListaPor, datos.UnidadesPorBulto);
+        ExigirTeclaAtajoDefinida(datos.TeclaAtajo);
+        ReglaDeArticulos.ValidarImporte(datos.UnidadVenta, AcumulaEnVentaDe(datos), datos.TeclaAtajo);
 
         var porcentajeIva = await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
         var costoNominal = CalcularCostoNominal(
@@ -308,6 +310,11 @@ public class ServicioDeArticulos(
         if (codigoInterno is not null)
         {
             await ExigirCodigoInternoDisponibleAsync(codigoInterno, ct);
+        }
+
+        if (datos.TeclaAtajo is { } teclaAtajo)
+        {
+            await ExigirTeclaAtajoDisponibleAsync(teclaAtajo, excluirId: null, ct);
         }
 
         if (nombreFamiliaNueva is not null)
@@ -419,7 +426,8 @@ public class ServicioDeArticulos(
                     DisponibleParaTodas = datos.DisponibleParaTodas,
                     Activo = datos.Activo,
                     ControlaLote = datos.ControlaLote,
-                    AcumulaEnVenta = datos.AcumulaEnVenta,
+                    AcumulaEnVenta = AcumulaEnVentaDe(datos),
+                    TeclaAtajo = datos.TeclaAtajo,
                     IdFamilia = idFamiliaDelArticulo,
                     CreatedAt = ahora,
                     UpdatedAt = ahora
@@ -516,6 +524,8 @@ public class ServicioDeArticulos(
         {
             ExigirCostoListaPorDefinido(costoListaPorPedido);
         }
+
+        ExigirTeclaAtajoDefinida(datos.TeclaAtajo);
 
         var porcentajeIva = await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
@@ -636,6 +646,28 @@ public class ServicioDeArticulos(
                     ct);
             }
 
+            // Artículo por importe (sobre el estado resultante, con lo leído bajo los locks): ninguna de estas
+            // validaciones muta nada. Los CHECK de la tabla quedan de respaldo, no de contrato.
+            ReglaDeArticulos.ValidarImporte(pedido.UnidadVenta, pedido.AcumulaEnVenta, datos.TeclaAtajo);
+
+            if (datos.TeclaAtajo is { } teclaPedida && teclaPedida != editado.TeclaAtajo)
+            {
+                await ExigirTeclaAtajoDisponibleAsync(teclaPedida, id, ct);
+            }
+
+            if (resolucion == ResolucionDeAlcanceDeFamilia.TodaLaFamilia && pedido.UnidadVenta != UnidadVenta.Importe)
+            {
+                var conTecla = bloqueados.Miembros.FirstOrDefault(m => m.Id != editado.Id && m.TeclaAtajo is not null);
+
+                if (conTecla is not null)
+                {
+                    throw ErrorDominio.Conflicto(
+                        "familia_miembro_con_tecla_atajo",
+                        $"El artículo {conTecla.CodigoInterno} de la familia tiene la tecla de atajo {conTecla.TeclaAtajo}: " +
+                        "la unidad de venta de la familia no puede dejar de ser por importe mientras tenga una.");
+                }
+            }
+
             // Desde acá solo se escribe. Un solo "ahora" para todos los artículos que se escriben.
             var ahora = reloj.Ahora;
 
@@ -673,6 +705,7 @@ public class ServicioDeArticulos(
             editado.IdMarca = datos.IdMarca;
             editado.DisponibleParaTodas = datos.DisponibleParaTodas;
             editado.Activo = datos.Activo;
+            editado.TeclaAtajo = datos.TeclaAtajo;
 
             if (resolucion == ResolucionDeAlcanceDeFamilia.SalirDeLaFamilia)
             {
@@ -852,8 +885,13 @@ public class ServicioDeArticulos(
     /// alta. Un campo compartido nuevo no compila hasta que se lo pasa acá: el record es posicional.</summary>
     private static ValoresCompartidosDeFamilia ValoresCompartidosDe(AltaArticulo datos, decimal? costoNominal) => new(
         datos.IdArea, datos.IdCategoria, datos.IdGrupo, datos.IdProveedorHabitual, datos.IdAlicuotaIva,
-        datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, datos.AcumulaEnVenta,
+        datos.UnidadVenta, datos.UnidadesPorBulto, datos.EsProducto, datos.ControlaLote, AcumulaEnVentaDe(datos),
         datos.CostoLista, datos.CostoListaPor, datos.CostoListaIncluyeIva, datos.DescuentoProveedor, costoNominal);
+
+    /// <summary>El <c>acumula_en_venta</c> con el que nace el artículo: el del pedido, o, si no lo trae, el único válido
+    /// para su unidad de venta (un artículo por importe nunca acumula).</summary>
+    private static bool AcumulaEnVentaDe(AltaArticulo datos) =>
+        datos.AcumulaEnVenta ?? datos.UnidadVenta != UnidadVenta.Importe;
 
     /// <summary>Los quince campos compartidos (<see cref="ValoresCompartidosDeFamilia"/>) del pedido de
     /// edición. <see cref="EdicionArticulo.AcumulaEnVenta"/> puede venir <c>null</c> (conservar el valor
@@ -1200,6 +1238,31 @@ public class ServicioDeArticulos(
         }
     }
 
+    /// <summary>El JSON del servidor acepta el ordinal además del nombre: un ordinal fuera del enum se rechaza acá
+    /// y no llega al CHECK <c>ck_articulos_tecla_atajo</c>.</summary>
+    private static void ExigirTeclaAtajoDefinida(TeclaAtajo? teclaAtajo)
+    {
+        if (teclaAtajo is { } tecla && !Enum.IsDefined(tecla))
+        {
+            throw new ErrorDominio(
+                "tecla_atajo_invalida", "El campo tecla_atajo debe ser F5, F6, F7 o F8.", 400);
+        }
+    }
+
+    /// <summary>db-error-backstops: pre-chequeo best-effort — el backstop real es <c>ux_articulos_tecla_atajo</c>
+    /// (23505 → 409 <c>tecla_atajo_duplicada</c>, <c>ManejadorDeErrores</c>). Ve solo los artículos vivos del tenant,
+    /// igual que el índice parcial; <paramref name="excluirId"/> es el artículo que se edita.</summary>
+    private async Task ExigirTeclaAtajoDisponibleAsync(TeclaAtajo teclaAtajo, int? excluirId, CancellationToken ct)
+    {
+        var tomada = await db.Articulos.AnyAsync(a => a.TeclaAtajo == teclaAtajo && a.Id != excluirId, ct);
+
+        if (tomada)
+        {
+            throw ErrorDominio.Conflicto(
+                "tecla_atajo_duplicada", $"Ya hay un artículo con la tecla de atajo {teclaAtajo} en este tenant.");
+        }
+    }
+
     /// <summary>Un costo de lista por bulto no se puede llevar a costo por unidad sin las unidades del bulto.</summary>
     private static void ExigirUnidadesParaCostoPorBulto(CostoListaPor costoListaPor, decimal? unidadesPorBulto)
     {
@@ -1511,5 +1574,6 @@ public class ServicioDeArticulos(
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
         a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.CostoNominal,
         a.DisponibleParaTodas, idsEmpresas, a.Activo,
-        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.PublicadoWeb);
+        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.PublicadoWeb,
+        TeclaAtajo: a.TeclaAtajo);
 }

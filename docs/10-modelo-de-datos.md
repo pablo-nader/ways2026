@@ -380,6 +380,8 @@ personal (                    -- [catálogo]
     nombre citext, documento citext NULL, telefono citext NULL, observaciones,
     valor_hora          numeric(14,2) NOT NULL DEFAULT 0,  -- CHECK >= 0; valor por defecto de la
                                              -- próxima carga de horas, no el de cargas ya hechas
+    saldo               numeric(14,2) NOT NULL DEFAULT 0,  -- cache; positivo: la empresa le debe al
+                                             -- empleado. El libro es movimientos_personal (§8c)
     id_usuario          integer NULL,        -- FK simple a usuarios; único entre filas vivas
     id_cliente          integer NULL         -- FK compuesta (id_cliente, id_tenant) a clientes;
                                              -- único entre filas vivas; nunca el Consumidor Final
@@ -416,12 +418,16 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     id_area, id_categoria NULL, id_marca NULL, id_grupo NULL,
     id_proveedor_habitual integer NULL,      -- para reposición; no exclusivo
     id_alicuota_iva  integer NOT NULL,
-    unidad_venta     unidad_venta,           -- enum: unidad | peso  (pesables: cantidad 12,3)
+    unidad_venta     unidad_venta,           -- enum: unidad | peso | importe  (pesables: cantidad 12,3;
+                                             -- importe: rubro sin detalle cobrado por el monto que escribe el
+                                             -- cajero, cantidad siempre 1; solo ALTER TYPE ... ADD VALUE)
     unidades_por_bulto numeric(10,2) NULL,
     es_producto      boolean,                -- false = servicio: no toca stock
     controla_lote    boolean NOT NULL DEFAULT false, -- exige lote en todo movimiento de stock (§ lotes)
     acumula_en_venta boolean NOT NULL DEFAULT true,  -- true: agregar de nuevo suma cantidad en una línea;
                                              -- false: cada alta es una línea nueva (lo aplica el carrito)
+                                             -- CHECK ck_articulos_importe_no_acumula:
+                                             --   unidad_venta <> 'importe' OR acumula_en_venta = false
     costo_lista      numeric(14,2) NULL,     -- lista del proveedor, tal como se cargó (ver costo_lista_por / _incluye_iva)
     costo_lista_por  text NOT NULL DEFAULT 'Unidad', -- base del costo_lista: 'Unidad' | 'Bulto'
                                              -- CHECK ck_articulos_costo_lista_por; 'Bulto' exige unidades_por_bulto > 0
@@ -435,9 +441,22 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     activo,
     publicado_web    boolean NOT NULL DEFAULT false, -- se ofrece en la tienda online (§3, "Tienda online");
                                              -- por artículo: no es un campo compartido de la familia
-    id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
+    id_familia       integer NULL,           -- familia a la que pertenece (§3, "Familias de artículos");
                                              -- FK compuesta (id_familia, id_tenant), NULL = sin familia
+    tecla_atajo      text NULL               -- tecla de función del POS de un artículo por importe: F5..F8;
+                                             -- NULL = sin atajo. Por artículo: no es un campo compartido de la familia
+                                             -- CHECK ck_articulos_tecla_atajo: tecla_atajo IN ('F5', 'F6', 'F7', 'F8')
+                                             -- CHECK ck_articulos_tecla_atajo_solo_importe:
+                                             --   tecla_atajo IS NULL OR unidad_venta = 'importe'
 );
+-- ux_articulos_tecla_atajo UNIQUE (id_tenant, tecla_atajo) WHERE deleted_at IS NULL AND tecla_atajo IS NOT NULL
+-- (23505 -> 409 tecla_atajo_duplicada). Un artículo por importe nunca acumula (importe_no_acumula), solo él tiene
+-- tecla (tecla_atajo_solo_importe) y no puede ser componente de un combo (combo_componente_por_importe). Se rechaza,
+-- no se corrige: el alta sin acumula_en_venta toma false si es por importe; la edición exige mandar la tecla en
+-- null al pasar a otra unidad (null = sin atajo, a diferencia de acumula_en_venta). Con alcance de familia, cambiar
+-- la unidad compartida a una que no es por importe mientras OTRO miembro tiene tecla es 409
+-- familia_miembro_con_tecla_atajo, y agrupar un artículo con tecla contra una referencia que no es por importe es
+-- 409 articulo_con_tecla_atajo.
 -- ix_articulos_publicado_web (id_tenant) WHERE publicado_web AND activo AND deleted_at IS NULL
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
@@ -668,7 +687,7 @@ difiera de la familia):
    de menor `id_articulo`, leído una sola vez bajo esos locks;
 3. los quince campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
    `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
-   `acumula_en_venta` lleva su valor por defecto, `true`, y se compara como cualquier otro. Los rechazos se evalúan en ese orden
+   `acumula_en_venta` lleva su valor por defecto (`true`, o `false` en un artículo por importe) y se compara como cualquier otro. Los rechazos se evalúan en ese orden
    (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
 4. se inserta el artículo con `id_familia = F` y, en la misma transacción y con el mismo "ahora", se copia el
    estado de precios de la referencia en cada lista fija: el precio vigente a ese instante (la fila nueva
@@ -2495,6 +2514,47 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago
 > por compra re-sourced desde el ledger (Slice 4). Todos mergeados.
+
+### 8c. Cuenta corriente del personal
+
+```sql
+movimientos_personal (                    -- [operativa — libro append-only]
+    id_movimiento     integer       GENERATED BY DEFAULT AS IDENTITY,
+    id_tenant         integer       NOT NULL,
+    id_personal       integer       NOT NULL,   -- FK compuesta (id_personal, id_tenant)
+    id_empleado       integer       NOT NULL,   -- FK simple a usuarios: el usuario que registró el asiento
+    fecha             date          NOT NULL,   -- carga de horas: el día trabajado; resto: la fecha del asiento
+    tipo              tipo_movimiento_personal NOT NULL,  -- enum: horas | pago | ajuste
+    horas             numeric(6,2)  NULL,       -- solo 'horas'
+    valor_hora        numeric(14,2) NULL,       -- solo 'horas'; congelado, no sigue a personal.valor_hora
+    importe           numeric(14,2) NOT NULL,   -- + aumenta lo que se le debe, − lo reduce
+    saldo_resultante  numeric(14,2) NOT NULL,   -- foto de personal.saldo al insertar
+    detalle           text          NULL,       -- obligatorio en el ajuste (regla de servicio)
+    created_at        timestamptz   NOT NULL    -- IRelojDelSistema, sin DEFAULT now()
+);
+```
+
+> Ledger append-only, sin `EntidadBase` (sin `updated_at` ni soft delete) y con `id_tenant` escrito
+> explícito; una carga mal hecha se corrige con un `ajuste`, nunca editando. `personal.saldo` solo lo
+> mueven el `UPDATE ... RETURNING` y el `INSERT` del asiento de `EscriturasDePersonal`, en una misma
+> transacción sin reintento. Los tres valores del enum están declarados desde el inicio para que el
+> registro de pagos no necesite otra migración; hoy escriben `horas` (`POST /api/personal/{id}/horas`)
+> y `ajuste` (`POST /api/personal/{id}/ajustes`). La `fecha` es obligatoria en ambos (400
+> `fecha_requerida`): la manda el cliente con su día local y el servidor no deduce el día de negocio.
+> El estado de cuenta (`GET /api/personal/{id}/cuenta`) sin `historico` ni rango abarca desde un mes
+> atrás (contado desde la fecha UTC), sin tope superior; un `hasta` explícito sí lo aplica.
+>
+> **Sin `id_punto_venta`, a propósito** (desvío respecto de §8b): las cargas de horas y los ajustes
+> son de back office y no pasan por un turno; un pago llegará a un punto de venta únicamente a
+> través del gasto que genere.
+>
+> CHECK, uno por tipo: `ck_movimientos_personal_horas` (`horas` en (0, 24], `valor_hora >= 0` e
+> `importe = round(horas × valor_hora, 2)`, que ya implica el importe no negativo), `ck_movimientos_personal_ajuste`
+> (`horas` y `valor_hora` nulos, `importe <> 0`) y `ck_movimientos_personal_pago` (`horas` y
+> `valor_hora` nulos, `importe < 0`). FKs `fk_movimientos_personal_{tenant,personal,empleado}`, todas
+> RESTRICT. Índices: `ix_movimientos_personal_tenant`, `ix_movimientos_personal_personal_fecha`
+> `(id_personal, id_tenant, fecha)` y `ix_movimientos_personal_empleado`. RLS estándar. Un personal
+> con movimientos no se puede dar de baja (409 `personal_en_uso`).
 
 ## 9. Parámetros operativos
 

@@ -55,7 +55,8 @@ public class ValoresCompartidosDeFamiliaTests
         "id_marca",
         "activo",
         "disponible_para_todas",
-        "publicado_web"
+        "publicado_web",
+        "tecla_atajo"
     ];
 
     /// <summary>Cambia UNA sola columna compartida a un valor distinto del de <see cref="CrearArticulo"/>.</summary>
@@ -102,7 +103,8 @@ public class ValoresCompartidosDeFamiliaTests
             ["id_marca"] = a => a.IdMarca = 93,
             ["activo"] = a => a.Activo = false,
             ["disponible_para_todas"] = a => a.DisponibleParaTodas = false,
-            ["publicado_web"] = a => a.PublicadoWeb = true
+            ["publicado_web"] = a => a.PublicadoWeb = true,
+            ["tecla_atajo"] = a => a.TeclaAtajo = TeclaAtajo.F6
         };
 
     public static TheoryData<string> CamposCompartidos() => DatosDe(ColumnasCompartidas);
@@ -334,7 +336,8 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.IdMarca),
             nameof(Articulo.Activo),
             nameof(Articulo.DisponibleParaTodas),
-            nameof(Articulo.PublicadoWeb)
+            nameof(Articulo.PublicadoWeb),
+            nameof(Articulo.TeclaAtajo)
         ];
 
         string[] estructurales =

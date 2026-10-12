@@ -61,6 +61,7 @@ public interface IWaysDbContext
     DbSet<Cliente> Clientes { get; }
     DbSet<Proveedor> Proveedores { get; }
     DbSet<Personal> Personal { get; }
+    DbSet<MovimientoPersonal> MovimientosPersonal { get; }
     DbSet<ListaPrecio> ListasPrecio { get; }
     DbSet<NumeracionCliente> NumeracionesClientes { get; }
 

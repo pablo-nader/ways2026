@@ -16,7 +16,7 @@ public static class ArmadorDeInstantanea
     public sealed record ListaVisible(int Id, int? IdEmpresa, bool Activo, ModoLista Modo, int? IdListaBase, decimal? Porcentaje);
 
     /// <summary>Un artículo activo, antes de resolverle precios.</summary>
-    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta, int? IdFamilia = null);
+    public sealed record ArticuloAResolver(int Id, string CodigoInterno, string Nombre, int IdAlicuotaIva, bool AcumulaEnVenta, UnidadVenta UnidadVenta, int? IdFamilia = null, TeclaAtajo? TeclaAtajo = null);
 
     /// <summary>
     /// Listas a resolver, ascendentes por id: las activas compartidas o de la empresa del punto de
@@ -135,7 +135,8 @@ public static class ArmadorDeInstantanea
                 articulo.AcumulaEnVenta,
                 articulo.UnidadVenta,
                 precios,
-                articulo.IdFamilia));
+                articulo.IdFamilia,
+                articulo.TeclaAtajo));
         }
 
         return resultado;

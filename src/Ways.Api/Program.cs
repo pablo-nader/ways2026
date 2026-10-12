@@ -295,6 +295,7 @@ app.MapearDispositivos();
 app.MapearClientes();
 app.MapearProveedores();
 app.MapearPersonal();
+app.MapearCuentaDePersonal();
 app.MapearArticulos();
 // Familias de artículos (doc 10 §3): gestión, solo admin.
 app.MapearFamilias();

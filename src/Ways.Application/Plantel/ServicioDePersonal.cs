@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Usuarios;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -16,7 +17,7 @@ namespace Ways.Application.Plantel;
 /// real son los índices parciales <c>ux_personal_usuario</c> y <c>ux_personal_cliente</c>, que
 /// <c>ManejadorDeErrores</c> traduce al mismo 409.
 /// </summary>
-public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj)
+public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
 {
     private const decimal ValorHoraMaximo = 999_999_999_999.99m;
 
@@ -110,18 +111,32 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj)
     }
 
     /// <summary>Baja lógica: libera el usuario y el cliente vinculados (los índices únicos solo miran
-    /// filas vivas). Todavía no hay tablas que referencien al personal; quien agregue la primera
-    /// debe sumar la guarda de referencias de <c>GuardaDeReferencias</c> a este método.</summary>
+    /// filas vivas). Solo procede si ninguna fila referencia al personal (por ejemplo, un movimiento
+    /// de su cuenta): el lock de la fila va antes de la lectura y de la consulta de referencias, sin
+    /// reintento, como en la baja de proveedores.</summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var personal = await db.Personal.FirstOrDefaultAsync(p => p.Id == id, ct)
-            ?? throw SinPersonal(id);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        var ahora = reloj.Ahora;
-        personal.DeletedAt = ahora;
-        personal.UpdatedAt = ahora;
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        await db.SaveChangesAsync(ct);
+            await guarda.BloquearFilaAsync<Personal>(id, ct);
+
+            var personal = await db.Personal.FirstOrDefaultAsync(p => p.Id == id, ct)
+                ?? throw SinPersonal(id);
+
+            await guarda.ExigirSinReferenciasAsync(
+                personal, "personal_en_uso", "el personal", etiquetasPropias: null, ct);
+
+            var ahora = reloj.Ahora;
+            personal.DeletedAt = ahora;
+            personal.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
     }
 
     private static ErrorDominio SinPersonal(int id) =>
@@ -146,7 +161,7 @@ public class ServicioDePersonal(IWaysDbContext db, IRelojDelSistema reloj)
         var cliente = fila.ClienteVivo;
 
         return new PersonalListado(
-            p.Id, p.Nombre, p.Documento, p.Telefono, p.Observaciones, p.ValorHora, p.IdEmpresa,
+            p.Id, p.Nombre, p.Documento, p.Telefono, p.Observaciones, p.ValorHora, p.Saldo, p.IdEmpresa,
             fila.IdUsuarioVivo, fila.NombreUsuario,
             cliente?.Id, cliente is null ? null : NombreDeCliente(cliente));
     }

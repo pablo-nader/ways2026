@@ -124,6 +124,11 @@ public static class Politicas
     /// mueva quién ve al personal.</summary>
     public const string LecturaDePersonal = "lectura_personal";
 
+    /// <summary>Supervisor o admin — la puerta de las escrituras de la cuenta del personal (carga de
+    /// horas y ajuste). El ABM del personal sigue en <see cref="GestionDeCatalogo"/> y su lectura, incluido
+    /// el estado de cuenta, en <see cref="LecturaDePersonal"/>.</summary>
+    public const string GestionDeCuentaDePersonal = "gestion_cuenta_personal";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -191,6 +196,12 @@ public static class Politicas
                 politica.RequireAuthenticatedUser()
                         .RequireClaim(ClaimsWays.IdDispositivo))
             .AddPolicy(LecturaDePersonal, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(GestionDeCuentaDePersonal, politica =>
                 politica.RequireAuthenticatedUser()
                         .RequireClaim(
                             ClaimsWays.RolId,
