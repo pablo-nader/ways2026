@@ -66,7 +66,7 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
   CHECKs, docs/10. Tests: migration and RLS under `ways_app`, structural guards, CHECKs.
 - [x] **C2 — Accounts ABM** (delegated): service, endpoints, delete only without
   references, web screen/descriptor.
-- [ ] **C3 — Payment-method fields** (delegated): account + four percentages, validation,
+- [x] **C3 — Payment-method fields** (delegated): account + four percentages, validation,
   reject on non-electronic, clear on behaviour change, form; POS snapshot unchanged.
 - [ ] **C4 — Pure calculator** (delegated or inline): gross → components, rounding.
 - [ ] **C5 — Write at close** (delegated): per-account lock and writer, hook into both
@@ -81,11 +81,12 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
 | C1 | delegated (writer trigger: schema + tests, 35 files) | 8a145b66, 6dc997cb | #422 (merged) | build 0 errors; Domain.Tests 1514; Application.Tests 896; full integration suite 4017 passed on 8a145b66; after the fix: new classes + AislamientoDeTenant + Schema/Migracion classes 329 passed (full suite left to CI); has-pending-model-changes clean. judgment-day: round 1 no severe (implicit IX_ index, over-broad closing unique index, saldo_inicial semantics fixed in 6dc997cb), scoped re-judgment no severe |
-| C2 | delegated (writer trigger: server + web, 18 files) | c038890f, 3fadd761, efa43ffe, 52c09646 | this PR | build 0 errors; Domain.Tests 1533; Application.Tests 900; integration: CuentasTesoreria* + guards + BajasDeCatalogos 220 passed, then CuentasTesoreria* + binding guards 34 passed (full suite left to CI); tsc clean; oxlint clean on touched files; vitest 224 files / 6412. judgment-day: round 1 no severe (omitted body fields defaulted — fixed), scoped re-judgment no severe. Open follow-ups: stale delete-404 message if the user opens the form during the reload; save-404 leaves the modal open; "400 before 409" order not pinned by a test |
+| C2 | delegated (writer trigger: server + web, 18 files) | c038890f, 3fadd761, efa43ffe, 52c09646 | #424 (merged) | build 0 errors; Domain.Tests 1533; Application.Tests 900; integration: CuentasTesoreria* + guards + BajasDeCatalogos 220 passed, then CuentasTesoreria* + binding guards 34 passed (full suite left to CI); tsc clean; oxlint clean on touched files; vitest 224 files / 6412. judgment-day: round 1 no severe (omitted body fields defaulted — fixed), scoped re-judgment no severe. Open follow-ups: stale delete-404 message if the user opens the form during the reload; save-404 leaves the modal open; "400 before 409" order not pinned by a test |
+| C3 | delegated (writer trigger: server + web, 17+ files) | c7d33085, 6c5da07f, aab4379a, 7e2d8c64 | this PR | build 0 errors; Domain.Tests 1566; Application.Tests 904; integration: filtered classes 185 passed after round 1, 94 after the polish (full suite left to CI); tsc clean; vitest 229 files / 6855. judgment-day: round 1 no severe (fields exposed to every role; form sent idEmpresa null — fixed), scoped re-judgment no severe, polish 7e2d8c64. Admin-only visibility of account/fee/withholdings. Out of scope, pre-existing: every other generic catalog descriptor sends idEmpresa null on edit (an empresa-scoped row edited from the UI becomes tenant-wide) |
 
 ## Next step
 
-C3 (payment-method fields).
+C4 + C5 (pure calculator and write at close).
 
 Rules carried to later tasks:
 - C3: the account must belong to the method's empresa (tenant-wide method: only in a

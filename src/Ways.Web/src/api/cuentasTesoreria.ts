@@ -205,3 +205,36 @@ export function copiaDeBajaDeCuenta(e: unknown, nombre: string): string {
 
   return e.message.trim() || encabezado
 }
+
+export type OpcionDeCuenta = { valor: string; etiqueta: string }
+
+/**
+ * Opciones del selector de cuenta de un medio de pago: solo las que el medio puede tomar. Las de su empresa; si es de
+ * todo el tenant (`idEmpresaDelMedio` vacío), las de la única empresa del tenant y ninguna si hay varias, que es lo que
+ * exige el servidor. Solo las activas, más la que el medio ya tiene aunque se haya desactivado: una cuenta inactiva no
+ * se ofrece para asignaciones nuevas, pero quitarla en silencio al editar el medio sería pisarla. Si la lectura falló
+ * (`cuentas` o `empresas` en null) o no trae la actual, la actual sale con el nombre que ya conoce el formulario.
+ */
+export function opcionesDeCuentas(
+  cuentas: readonly CuentaTesoreriaListado[] | null,
+  empresas: readonly { id: number }[] | null,
+  idEmpresaDelMedio: string,
+  idActual: string,
+  nombreActual: string,
+  actualInactiva: boolean,
+): OpcionDeCuenta[] {
+  const empresaPermitida =
+    idEmpresaDelMedio !== '' ? Number(idEmpresaDelMedio) : empresas !== null && empresas.length === 1 ? empresas[0].id : null
+  const lista = (cuentas ?? []).filter((c) => c.idEmpresa === empresaPermitida)
+  const etiqueta = (nombre: string, inactiva: boolean) => `${nombre}${inactiva ? ' (inactiva)' : ''}`
+
+  const opciones = lista
+    .filter((c) => c.activo || String(c.id) === idActual)
+    .map((c) => ({ valor: String(c.id), etiqueta: etiqueta(c.nombre, !c.activo) }))
+
+  if (idActual !== '' && !opciones.some((o) => o.valor === idActual)) {
+    opciones.unshift({ valor: idActual, etiqueta: etiqueta(nombreActual || `Cuenta ${idActual}`, actualInactiva) })
+  }
+
+  return opciones
+}

@@ -11,6 +11,7 @@ import {
   errorAlGuardar,
   formularioVacio,
   nombreDeEmpresa,
+  opcionesDeCuentas,
   validarFormulario,
   type CuentaTesoreriaListado,
   type Formulario,
@@ -289,5 +290,53 @@ describe('copiaDeBajaDeCuenta', () => {
 
   it('otro 4xx rinde el mensaje del servidor', () => {
     expect(copiaDeBajaDeCuenta(new ErrorApi(400, 'otro', 'Algo pasó.'), 'MP')).toBe('Algo pasó.')
+  })
+})
+
+describe('opcionesDeCuentas', () => {
+  const activa = cuenta({ id: 1, nombre: 'Mercado Pago', idEmpresa: 7 })
+  const inactiva = cuenta({ id: 2, nombre: 'Banco viejo', idEmpresa: 7, activo: false })
+  const deOtra = cuenta({ id: 3, nombre: 'Galicia', idEmpresa: 8, nombreEmpresa: 'Sucursal' })
+  const unaEmpresa = [{ id: 7 }]
+  const dosEmpresas = [{ id: 7 }, { id: 8 }]
+
+  it('un medio de una empresa solo ofrece cuentas activas de esa empresa', () => {
+    expect(opcionesDeCuentas([activa, inactiva, deOtra], dosEmpresas, '7', '', '', false)).toEqual([
+      { valor: '1', etiqueta: 'Mercado Pago' },
+    ])
+    expect(opcionesDeCuentas([activa, inactiva, deOtra], dosEmpresas, '8', '', '', false)).toEqual([
+      { valor: '3', etiqueta: 'Galicia' },
+    ])
+  })
+
+  it('un medio de todo el tenant ofrece las cuentas de la única empresa y ninguna si hay varias', () => {
+    expect(opcionesDeCuentas([activa, deOtra], unaEmpresa, '', '', '', false)).toEqual([
+      { valor: '1', etiqueta: 'Mercado Pago' },
+    ])
+    expect(opcionesDeCuentas([activa, deOtra], dosEmpresas, '', '', '', false)).toEqual([])
+  })
+
+  it('conserva la cuenta actual aunque esté inactiva y la marca', () => {
+    expect(opcionesDeCuentas([activa, inactiva], unaEmpresa, '7', '2', 'Banco viejo', true)).toEqual([
+      { valor: '1', etiqueta: 'Mercado Pago' },
+      { valor: '2', etiqueta: 'Banco viejo (inactiva)' },
+    ])
+  })
+
+  it('la actual se conserva aunque sea de otra empresa (para que el servidor la rechace, no el formulario)', () => {
+    expect(opcionesDeCuentas([activa, deOtra], dosEmpresas, '7', '3', 'Galicia', false).map((o) => o.valor)).toEqual(['3', '1'])
+  })
+
+  it('si la lectura falló la actual sale con el nombre que el formulario ya conoce', () => {
+    expect(opcionesDeCuentas(null, null, '', '5', 'Cuenta guardada', false)).toEqual([{ valor: '5', etiqueta: 'Cuenta guardada' }])
+    expect(opcionesDeCuentas(null, null, '', '5', '', false)).toEqual([{ valor: '5', etiqueta: 'Cuenta 5' }])
+  })
+
+  it('la actual que la lectura no trae (borrada) no desaparece del selector', () => {
+    expect(opcionesDeCuentas([activa], unaEmpresa, '', '9', 'Se borró', false).map((o) => o.valor)).toEqual(['9', '1'])
+  })
+
+  it('sin cuenta actual y sin lectura no hay opciones', () => {
+    expect(opcionesDeCuentas(null, null, '', '', '', false)).toEqual([])
   })
 })

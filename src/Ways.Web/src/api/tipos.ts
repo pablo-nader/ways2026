@@ -221,6 +221,35 @@ export type MedioPagoAlta = {
   activo: boolean
 }
 
+/**
+ * Lo que el back office agrega a un medio de pago: la cuenta de tesorería a la que entra lo cobrado, la comisión de la
+ * plataforma y las tres retenciones. El POS no los usa ni los recibe en su instantánea, así que `MedioPagoListado`
+ * (que el POS arma desde ella) no los lleva. `idCuentaTesoreria` es null cuando el medio no tiene cuenta o la cuenta
+ * fue dada de baja. Solo el Admin recibe estos campos del servidor (para los demás roles vienen en null, como los costos pero con otros roles); el tipo describe
+ * lo que ve la pantalla de medios de pago, que es solo de Admin.
+ */
+export type CuentaDelMedioListado = {
+  idCuentaTesoreria: number | null
+  nombreCuentaTesoreria: string | null
+  /** Para el Admin siempre es un booleano (false si no hay cuenta). */
+  cuentaTesoreriaInactiva: boolean
+  comisionPorcentaje: number
+  retencionIibbPorcentaje: number
+  retencionIvaPorcentaje: number
+  retencionGananciasPorcentaje: number
+}
+export type MedioPagoAdministrado = MedioPagoListado & CuentaDelMedioListado
+
+/** Un alta o edición del back office manda siempre los cinco campos de la cuenta: la edición nunca depende de lo que
+ * el servidor conserve por omisión. */
+export type MedioPagoAdministradoAlta = MedioPagoAlta & {
+  idCuentaTesoreria: number | null
+  comisionPorcentaje: number
+  retencionIibbPorcentaje: number
+  retencionIvaPorcentaje: number
+  retencionGananciasPorcentaje: number
+}
+
 export type CategoriaListado = CatalogoListado & { orden: number; idCategoriaPadre: number | null }
 export type CategoriaAlta = {
   nombre: string

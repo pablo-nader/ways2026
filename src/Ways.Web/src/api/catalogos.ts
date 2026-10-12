@@ -24,12 +24,13 @@ import type {
   ListaPrecioListado,
   MarcaAlta,
   MarcaListado,
-  MedioPagoAlta,
-  MedioPagoListado,
+  MedioPagoAdministrado,
+  MedioPagoAdministradoAlta,
   ModoLista,
   TipoComprobanteListado,
 } from './tipos'
 import { COMPORTAMIENTOS_MEDIO_PAGO } from './tipos'
+import { clienteDeCuentasTesoreria, opcionesDeCuentas, type CuentaTesoreriaListado } from './cuentasTesoreria'
 
 /** Todo campo propio se maneja como texto en el formulario (incl. números y el select de
  * comportamiento) salvo los booleanos — simplifica el estado controlado; cada descriptor
@@ -55,6 +56,26 @@ export type CampoDescriptor = {
    * lista base ofrece las demás listas de la misma pantalla, no un catálogo aparte). El
    * descriptor concreto hace el cast desde `unknown[]` a su propio `TListado`. */
   opcionesDesdeListado?: (items: unknown[], idActual: number | null) => { valor: string; etiqueta: string }[]
+  /** Opciones de un select que salen de una lectura aparte (p. ej. las cuentas de tesorería): `cargar` corre cada vez
+   * que se abre el formulario y `armar` recibe lo leído (`null` mientras llega o si la lectura falló) junto con los
+   * valores del formulario, así puede conservar la opción actual aunque la lectura no la traiga. `errorDeCarga` es el
+   * aviso si falla; el formulario sigue funcionando. */
+  opcionesRemotas?: {
+    cargar: () => Promise<unknown>
+    armar: (leido: unknown, valores: Record<string, ValorDeCampo>) => { valor: string; etiqueta: string }[]
+    /** Aviso debajo del select según lo leído (`null` si la lectura rechazó) y las opciones resultantes; `error` lo pinta
+     * como falla. Devuelve null cuando no hay nada que avisar. */
+    aviso: (
+      leido: unknown,
+      opciones: { valor: string; etiqueta: string }[],
+    ) => { texto: string; error: boolean } | null
+  }
+  /** Texto de la opción vacía de un select opcional: si está, la opción vacía se ofrece siempre. */
+  opcionVacia?: string
+  /** Texto de ayuda debajo del campo. */
+  ayuda?: string
+  /** `step` del input numérico, cuando el valor por defecto (0.01) no alcanza. */
+  paso?: string
 }
 
 export type DescriptorDeCatalogo<TListado extends CatalogoListado, TAlta> = {
@@ -147,7 +168,81 @@ export const descriptorGrupos: DescriptorDeCatalogo<GrupoListado, GrupoAlta> = {
   sujetoDeBaja: 'el grupo',
 }
 
-export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioPagoAlta> = {
+const esElectronico = (valores: Record<string, ValorDeCampo>) => valores.comportamiento === 'Electronico'
+
+type LecturaDeCuentas = { cuentas: CuentaTesoreriaListado[] | null; empresas: { id: number }[] | null }
+
+const GUARDAR_CON_LA_ACTUAL = 'Podés guardar el medio con la cuenta actual.'
+
+/** Qué falló o por qué no hay cuentas para elegir: cada causa tiene su texto, no una sola frase para todo. */
+export function avisoDeLasCuentas(
+  leido: unknown,
+  opciones: { valor: string; etiqueta: string }[],
+): { texto: string; error: boolean } | null {
+  const lectura = leido as LecturaDeCuentas | null
+  if (lectura === null || lectura.cuentas === null) {
+    return { texto: `No se pudieron cargar las cuentas de tesorería. ${GUARDAR_CON_LA_ACTUAL}`, error: true }
+  }
+  if (lectura.empresas === null) {
+    return {
+      texto: `No se pudo cargar la lista de empresas, así que no se ofrecen cuentas para elegir. ${GUARDAR_CON_LA_ACTUAL}`,
+      error: true,
+    }
+  }
+  if (opciones.length > 0) return null
+  if (lectura.cuentas.length === 0) {
+    return { texto: 'Todavía no hay cuentas de tesorería: creá una en Cuentas de tesorería.', error: false }
+  }
+
+  return {
+    texto:
+      'No hay cuentas para este medio: un medio de todo el tenant solo puede tener cuenta si el tenant tiene una sola ' +
+      'empresa, y uno de una empresa solo toma cuentas de esa empresa.',
+    error: false,
+  }
+}
+
+const AYUDA_DE_LA_CUENTA =
+  'Lo cobrado con este medio entra a la cuenta neto de la comisión y las retenciones. Sin cuenta, no entra a ninguna. ' +
+  'Un medio de todo el tenant solo puede tener cuenta si hay una sola empresa.'
+
+const AYUDA_DE_LA_COMISION = 'La comisión y las retenciones se descuentan de lo cobrado; sumadas no pueden superar el 100%.'
+
+function campoDeCuenta(clave: string, etiqueta: string, ayuda?: string): CampoDescriptor {
+  return { clave, etiqueta, tipo: 'numeroDecimal', paso: '0.001', visibleSi: esElectronico, ayuda }
+}
+
+/**
+ * La cuenta, la comisión y las retenciones que viajan al servidor. Con el medio no electrónico los campos quedan
+ * ocultos y se mandan limpios (sin cuenta, todo en 0): el servidor los rechaza con valores y el formulario no puede
+ * mandar lo que quedó cargado antes de cambiar el comportamiento.
+ */
+export function cuentaDelFormulario(
+  valores: Record<string, ValorDeCampo>,
+): Pick<
+  MedioPagoAdministradoAlta,
+  'idCuentaTesoreria' | 'comisionPorcentaje' | 'retencionIibbPorcentaje' | 'retencionIvaPorcentaje' | 'retencionGananciasPorcentaje'
+> {
+  if (!esElectronico(valores)) {
+    return {
+      idCuentaTesoreria: null,
+      comisionPorcentaje: 0,
+      retencionIibbPorcentaje: 0,
+      retencionIvaPorcentaje: 0,
+      retencionGananciasPorcentaje: 0,
+    }
+  }
+
+  return {
+    idCuentaTesoreria: numeroOVacio(valores.idCuentaTesoreria),
+    comisionPorcentaje: numeroOVacio(valores.comisionPorcentaje) ?? 0,
+    retencionIibbPorcentaje: numeroOVacio(valores.retencionIibbPorcentaje) ?? 0,
+    retencionIvaPorcentaje: numeroOVacio(valores.retencionIvaPorcentaje) ?? 0,
+    retencionGananciasPorcentaje: numeroOVacio(valores.retencionGananciasPorcentaje) ?? 0,
+  }
+}
+
+export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, MedioPagoAdministradoAlta> = {
   recurso: 'medios-pago',
   titulo: 'Medios de pago',
   tituloSingular: 'medio de pago',
@@ -165,6 +260,42 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     { clave: 'requiereReferencia', etiqueta: 'Requiere referencia', tipo: 'booleano' },
     { clave: 'recargoPorcentaje', etiqueta: 'Recargo (%)', tipo: 'numeroDecimal' },
     { clave: 'porcentajeFacturacion', etiqueta: 'Porcentaje a facturar (%)', tipo: 'numeroDecimal' },
+    {
+      clave: 'idCuentaTesoreria',
+      etiqueta: 'Cuenta de tesorería',
+      tipo: 'select',
+      visibleSi: esElectronico,
+      opcionVacia: '— Sin cuenta —',
+      ayuda: AYUDA_DE_LA_CUENTA,
+      opcionesRemotas: {
+        cargar: async () => {
+          const [cuentas, empresas] = await Promise.allSettled([
+            clienteDeCuentasTesoreria.listar(),
+            api.get<{ id: number }[]>('/empresas'),
+          ])
+          return {
+            cuentas: cuentas.status === 'fulfilled' ? cuentas.value : null,
+            empresas: empresas.status === 'fulfilled' ? empresas.value : null,
+          }
+        },
+        armar: (leido, valores) => {
+          const lectura = leido as LecturaDeCuentas | null
+          return opcionesDeCuentas(
+            lectura?.cuentas ?? null,
+            lectura?.empresas ?? null,
+            String(valores.idEmpresa ?? ''),
+            String(valores.idCuentaTesoreria ?? ''),
+            String(valores.nombreCuentaTesoreria ?? ''),
+            Boolean(valores.cuentaTesoreriaInactiva),
+          )
+        },
+        aviso: avisoDeLasCuentas,
+      },
+    },
+    campoDeCuenta('comisionPorcentaje', 'Comisión (%)', AYUDA_DE_LA_COMISION),
+    campoDeCuenta('retencionIibbPorcentaje', 'Retención IIBB (%)'),
+    campoDeCuenta('retencionIvaPorcentaje', 'Retención IVA (%)'),
+    campoDeCuenta('retencionGananciasPorcentaje', 'Retención Ganancias (%)'),
   ],
   valoresPorDefecto: {
     orden: '1',
@@ -173,6 +304,14 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     requiereReferencia: false,
     recargoPorcentaje: '',
     porcentajeFacturacion: '0',
+    idEmpresa: '',
+    idCuentaTesoreria: '',
+    nombreCuentaTesoreria: '',
+    cuentaTesoreriaInactiva: false,
+    comisionPorcentaje: '0',
+    retencionIibbPorcentaje: '0',
+    retencionIvaPorcentaje: '0',
+    retencionGananciasPorcentaje: '0',
   },
   aValores: (item) => ({
     orden: String(item.orden),
@@ -181,17 +320,27 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     requiereReferencia: item.requiereReferencia,
     recargoPorcentaje: item.recargoPorcentaje === null ? '' : String(item.recargoPorcentaje),
     porcentajeFacturacion: String(item.porcentajeFacturacion),
+    idEmpresa: item.idEmpresa === null ? '' : String(item.idEmpresa),
+    idCuentaTesoreria: item.idCuentaTesoreria === null ? '' : String(item.idCuentaTesoreria),
+    nombreCuentaTesoreria: item.nombreCuentaTesoreria ?? '',
+    cuentaTesoreriaInactiva: item.cuentaTesoreriaInactiva,
+    comisionPorcentaje: String(item.comisionPorcentaje),
+    retencionIibbPorcentaje: String(item.retencionIibbPorcentaje),
+    retencionIvaPorcentaje: String(item.retencionIvaPorcentaje),
+    retencionGananciasPorcentaje: String(item.retencionGananciasPorcentaje),
   }),
   aAlta: (nombre, activo, valores) => ({
     nombre,
-    idEmpresa: null,
+    // La edición devuelve la empresa de la fila: mandar null convertiría un medio de una empresa en uno de todo el tenant.
+    idEmpresa: numeroOVacio(valores.idEmpresa),
     activo,
     orden: numeroOVacio(valores.orden) ?? 1,
-    comportamiento: (valores.comportamiento as string as MedioPagoAlta['comportamiento']) ?? 'Efectivo',
+    comportamiento: (valores.comportamiento as string as MedioPagoAdministradoAlta['comportamiento']) ?? 'Efectivo',
     admiteVuelto: Boolean(valores.admiteVuelto),
     requiereReferencia: Boolean(valores.requiereReferencia),
     recargoPorcentaje: numeroOVacio(valores.recargoPorcentaje),
     porcentajeFacturacion: numeroOVacio(valores.porcentajeFacturacion) ?? 0,
+    ...cuentaDelFormulario(valores),
   }),
   sujetoDeBaja: 'el medio de pago',
 }

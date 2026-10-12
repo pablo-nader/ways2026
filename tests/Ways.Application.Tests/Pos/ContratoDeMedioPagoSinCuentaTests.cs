@@ -7,9 +7,9 @@ using Ways.Domain.Catalogos;
 namespace Ways.Application.Tests.Pos;
 
 /// <summary>
-/// Las columnas de cuenta de tesorería, comisión y retenciones de <c>medios_pago</c> todavía no
-/// viajan: ni en la instantánea del POS ni en el listado y el alta del catálogo. Fija la lista exacta
-/// de propiedades de los tres contratos, así que agregar una (o quitar una existente) falla acá.
+/// La cuenta de tesorería, la comisión y las retenciones de <c>medios_pago</c> viajan en el catálogo del back office
+/// pero NO en la instantánea del POS. Fija la lista exacta de propiedades de la instantánea y de su JSON, así que
+/// agregar una (o quitar una existente) falla acá; los contratos del catálogo se fijan aparte, con los campos de cuenta.
 /// </summary>
 public class ContratoDeMedioPagoSinCuentaTests
 {
@@ -42,18 +42,31 @@ public class ContratoDeMedioPagoSinCuentaTests
     }
 
     [Fact]
-    public void ElListadoDelCatalogoConservaSuFormaSinCamposDeCuenta()
+    public void ElListadoDelCatalogoTraeLosCamposDeCuentaPeroNoLosDeLaInstantanea()
     {
+        var listado = Propiedades(typeof(MedioPagoListado));
+
         Assert.Equal(
-            ["Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion"],
-            Propiedades(typeof(MedioPagoListado)));
+            [
+                "Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion",
+                "IdCuentaTesoreria", "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
+                "RetencionGananciasPorcentaje", "NombreCuentaTesoreria", "CuentaTesoreriaInactiva"
+            ],
+            listado);
+        Assert.All(
+            Propiedades(typeof(MedioPagoDeInstantanea)),
+            propiedad => Assert.DoesNotContain("Cuenta", propiedad));
     }
 
     [Fact]
-    public void ElAltaDelCatalogoConservaSuFormaSinCamposDeCuenta()
+    public void ElAltaDelCatalogoTraeLosCamposDeCuenta()
     {
         Assert.Equal(
-            ["Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion"],
+            [
+                "Orden", "Comportamiento", "AdmiteVuelto", "RequiereReferencia", "RecargoPorcentaje", "PorcentajeFacturacion",
+                "ComisionPorcentaje", "RetencionIibbPorcentaje", "RetencionIvaPorcentaje",
+                "RetencionGananciasPorcentaje", "IdCuentaTesoreria"
+            ],
             Propiedades(typeof(MedioPagoAlta)));
     }
 }
