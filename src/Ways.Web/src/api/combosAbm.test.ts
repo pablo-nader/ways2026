@@ -5,6 +5,7 @@ import {
   aSolicitudDeCombo,
   aValoresCombo,
   CANTIDAD_MAXIMA,
+  cantidadTrasElegirArticulo,
   comboCoincideConAlta,
   COMPONENTES_MAXIMOS,
   errorDeServidorDeCombo,
@@ -18,10 +19,12 @@ import {
   MENSAJE_COMBO_INEXISTENTE,
   MENSAJE_COMPONENTE_NO_DISPONIBLE,
   mensajeDeFalloDeBajaDeCombo,
+  numeroDeCantidadDeComponente,
   PRECIO_MAXIMO,
   resumenDeComponentes,
   resumenDeFormulario,
   tieneComponentesNoDisponibles,
+  unidadDeFila,
   validarCombo,
   type FilaDeComponente,
   type FormularioCombo,
@@ -34,6 +37,14 @@ function fila(sobrescribir: Partial<FilaDeComponente> = {}): FilaDeComponente {
 
 function articulo(id: number, cantidad = '1'): FilaDeComponente {
   return fila({ tipo: 'Articulo', idArticulo: id, idFamilia: '', nombre: `Art ${id}`, cantidad })
+}
+
+function pesable(id: number, cantidad = '0,2'): FilaDeComponente {
+  return { ...articulo(id, cantidad), unidadVenta: 'Peso' }
+}
+
+function porUnidad(id: number, cantidad = '1'): FilaDeComponente {
+  return { ...articulo(id, cantidad), unidadVenta: 'Unidad' }
 }
 
 function familia(id: number, cantidad = '1'): FilaDeComponente {
@@ -99,6 +110,15 @@ describe('aValoresCombo', () => {
     ])
   })
 
+  it('una cantidad con decimales llega al formulario con coma y sin unidad conocida', () => {
+    const f = aValoresCombo(comboListado({ componentes: [componenteListado({ cantidad: 0.2 }), componenteListado({ idArticulo: 2, cantidad: 0.125 })] }))
+
+    expect(f.componentes.map((c) => [c.cantidad, c.unidadVenta])).toEqual([
+      ['0,2', null],
+      ['0,125', null],
+    ])
+  })
+
   it('conserva la empresa, el estado inactivo y el nombre vacío con disponible falso de un componente dado de baja', () => {
     const f = aValoresCombo(
       comboListado({
@@ -145,6 +165,15 @@ describe('aSolicitudDeCombo', () => {
 
     expect(cuerpo.nombre).toBe('Combo')
     expect(cuerpo.componentes[0]).toStrictEqual({ idArticulo: 1, cantidad: 3 })
+  })
+
+  it('0,200 kg de dos pesables viajan como 0.2: la coma decimal se convierte', () => {
+    const cuerpo = aSolicitudDeCombo(formulario({ componentes: [pesable(1, '0,200'), pesable(2, ' 0.2 ')] }))
+
+    expect(cuerpo.componentes).toStrictEqual([
+      { idArticulo: 1, cantidad: 0.2 },
+      { idArticulo: 2, cantidad: 0.2 },
+    ])
   })
 
   it('un código vacío no viaja ni siquiera en la edición: el servidor conserva el actual', () => {
@@ -216,6 +245,16 @@ describe('resumenDeComponentes', () => {
     expect(resumenDeComponentes(comboListado().componentes)).toBe('1 × Pancho + 2 × Línea Coca 500 (familia)')
   })
 
+  it('una cantidad con decimales se muestra con coma y en kg', () => {
+    expect(
+      resumenDeComponentes([
+        componenteListado({ nombre: 'Jamón', cantidad: 0.2 }),
+        componenteListado({ idArticulo: 2, nombre: 'Queso', cantidad: 0.125 }),
+        componenteListado({ idArticulo: 3, nombre: 'Pancho', cantidad: 2 }),
+      ]),
+    ).toBe('0,2 kg × Jamón + 0,125 kg × Queso + 2 × Pancho')
+  })
+
   it('un componente dado de baja se nombra por su número y se marca como no disponible', () => {
     expect(
       resumenDeComponentes([
@@ -240,6 +279,12 @@ describe('resumenDeFormulario', () => {
     expect(resumenDeFormulario(formulario({ precio: 5000 }))).toBe('1 × Art 1 + 1 × Fam 7 (familia) por $ 5.000,00')
   })
 
+  it('un pesable se muestra con coma y en kg, también cuando la cantidad es entera; una cantidad con decimales de unidad no conocida también', () => {
+    expect(resumenDeFormulario(formulario({ componentes: [pesable(1, '0,2'), pesable(2, '2'), articulo(3, '0,5')], precio: null }))).toBe(
+      '0,2 kg × Art 1 + 2 kg × Art 2 + 0,5 kg × Art 3',
+    )
+  })
+
   it('omite el precio mientras no es un importe positivo', () => {
     expect(resumenDeFormulario(formulario({ precio: null }))).toBe('1 × Art 1 + 1 × Fam 7 (familia)')
     expect(resumenDeFormulario(formulario({ precio: 0 }))).toBe('1 × Art 1 + 1 × Fam 7 (familia)')
@@ -247,7 +292,7 @@ describe('resumenDeFormulario', () => {
 
   it('omite las filas sin referencia o con cantidad inválida, y es vacío si no queda ninguna', () => {
     const sinElegir = fila({ idArticulo: '', nombre: '' })
-    expect(resumenDeFormulario(formulario({ componentes: [articulo(1, '2'), sinElegir, articulo(3, 'x'), articulo(4, '0')] }))).toBe(
+    expect(resumenDeFormulario(formulario({ componentes: [articulo(1, '2'), sinElegir, articulo(3, 'x'), articulo(4, '0'), pesable(5, '0,0001')] }))).toBe(
       '2 × Art 1 por $ 5.000,00',
     )
     expect(resumenDeFormulario(formulario({ componentes: [sinElegir] }))).toBe('')
@@ -341,31 +386,69 @@ describe('validarCombo — componentes', () => {
     expect(errores.filas[baja.clave]).toEqual({ referencia: MENSAJE_COMPONENTE_NO_DISPONIBLE })
   })
 
+  const ENTERA = 'La cantidad tiene que ser un entero entre 1 y 999999.'
+  const CON_DECIMALES = 'La cantidad tiene que ser mayor a cero, con hasta 3 decimales y no superar 999999.'
+
   it.each([
     ['', 'Ingresá la cantidad.'],
     ['   ', 'Ingresá la cantidad.'],
-    ['0', 'La cantidad tiene que ser un entero entre 1 y 999999.'],
-    ['1.5', 'La cantidad tiene que ser un entero entre 1 y 999999.'],
-    ['-1', 'La cantidad tiene que ser un entero entre 1 y 999999.'],
-    ['abc', 'La cantidad tiene que ser un entero entre 1 y 999999.'],
-    [String(CANTIDAD_MAXIMA + 1), 'La cantidad tiene que ser un entero entre 1 y 999999.'],
-  ])('rechaza la cantidad %j', (cantidad, mensaje) => {
-    const mala = articulo(1, cantidad)
+    ['0', ENTERA],
+    ['1.5', ENTERA],
+    ['1,5', ENTERA],
+    ['-1', ENTERA],
+    ['abc', ENTERA],
+    [String(CANTIDAD_MAXIMA + 1), ENTERA],
+  ])('un artículo por unidad rechaza la cantidad %j', (cantidad, mensaje) => {
+    const mala = porUnidad(1, cantidad)
 
     expect(validarCombo(formulario({ componentes: [mala, articulo(2, '5')] })).filas[mala.clave]).toEqual({ cantidad: mensaje })
+  })
+
+  it.each([
+    ['', 'Ingresá la cantidad.'],
+    ['0', CON_DECIMALES],
+    ['0,000', CON_DECIMALES],
+    ['0,2001', CON_DECIMALES],
+    ['0.2001', CON_DECIMALES],
+    ['-0,2', CON_DECIMALES],
+    ['1e1', CON_DECIMALES],
+    ['0,2,3', CON_DECIMALES],
+    ['abc', CON_DECIMALES],
+    [String(CANTIDAD_MAXIMA + 1), CON_DECIMALES],
+  ])('un pesable rechaza la cantidad %j', (cantidad, mensaje) => {
+    const mala = pesable(1, cantidad)
+
+    expect(validarCombo(formulario({ componentes: [mala, pesable(2)] })).filas[mala.clave]).toEqual({ cantidad: mensaje })
+  })
+
+  it.each(['0,2', '0.2', '0,200', '0,001', '1', '12,5', String(CANTIDAD_MAXIMA)])('un pesable admite la cantidad %j', (cantidad) => {
+    expect(hayErrores(validarCombo(formulario({ componentes: [pesable(1, cantidad), pesable(2)] })))).toBe(false)
+  })
+
+  it('una fila de unidad desconocida (componente guardado o familia) admite hasta 3 decimales y deja el resto al servidor', () => {
+    expect(hayErrores(validarCombo(formulario({ componentes: [articulo(1, '0,25'), familia(7, '0,5')] })))).toBe(false)
+    const mala = familia(7, '0,2501')
+    expect(validarCombo(formulario({ componentes: [articulo(1), mala] })).filas[mala.clave]).toEqual({ cantidad: CON_DECIMALES })
   })
 
   it('admite el máximo de cantidad', () => {
     expect(hayErrores(validarCombo(formulario({ componentes: [articulo(1, String(CANTIDAD_MAXIMA)), articulo(2)] })))).toBe(false)
   })
 
-  it('exige al menos dos unidades en total: una fila de 1 no alcanza, una de 2 o dos de 1 sí', () => {
-    const MENSAJE = 'El combo tiene que sumar al menos 2 unidades entre todos sus componentes.'
+  it('exige dos componentes, o uno solo de cantidad 2 o más: un pesable de 0,4 no alcanza y uno de 2 sí', () => {
+    const MENSAJE = 'El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.'
 
     expect(validarCombo(formulario({ componentes: [articulo(1, '1')] })).componentes).toBe(MENSAJE)
     expect(validarCombo(formulario({ componentes: [] })).componentes).toBe(MENSAJE)
+    expect(validarCombo(formulario({ componentes: [pesable(1, '0,4')] })).componentes).toBe(MENSAJE)
+    expect(validarCombo(formulario({ componentes: [pesable(1, '1,999')] })).componentes).toBe(MENSAJE)
     expect(validarCombo(formulario({ componentes: [articulo(1, '2')] })).componentes).toBeUndefined()
+    expect(validarCombo(formulario({ componentes: [pesable(1, '2')] })).componentes).toBeUndefined()
     expect(validarCombo(formulario({ componentes: [articulo(1, '1'), articulo(2, '1')] })).componentes).toBeUndefined()
+  })
+
+  it('dos componentes alcanzan aunque sus cantidades sumen menos de dos: 0,200 kg + 0,200 kg es un combo', () => {
+    expect(hayErrores(validarCombo(formulario({ componentes: [pesable(1, '0,200'), pesable(2, '0,200')] })))).toBe(false)
   })
 
   it('con una cantidad inválida no suma unidades: el error queda en la fila y no en el conjunto', () => {
@@ -408,7 +491,7 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
     [409, 'combo_componente_duplicado', 'componentes'],
     [400, 'combo_unidades_insuficientes', 'componentes'],
     [400, 'combo_componentes_excedidos', 'componentes'],
-    [400, 'combo_componente_no_unitario', 'componentes'],
+    [400, 'combo_cantidad_no_admitida', 'componentes'],
     [400, 'combo_codigo_invalido', 'codigo'],
     [409, 'combo_codigo_duplicado', 'codigo'],
     [409, 'combo_codigo_agotado', 'codigo'],
@@ -424,7 +507,16 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
   })
 
   it('el mensaje de cada código dice lo suyo', () => {
-    expect(errorDeServidorDeCombo(rechazo(400, 'combo_componente_no_unitario')).mensaje).toContain('por peso')
+    expect(errorDeServidorDeCombo(rechazo(400, 'combo_cantidad_no_admitida')).mensaje).toBe(
+      'La cantidad de algún componente no la admite su unidad de venta: un artículo por unidad solo admite cantidades enteras y uno por peso, hasta 3 decimales. Lo mismo vale para los artículos de una familia elegida.',
+    )
+    expect(errorDeServidorDeCombo(rechazo(400, 'combo_unidades_insuficientes')).mensaje).toBe(
+      'El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.',
+    )
+    expect(errorDeServidorDeCombo(rechazo(400, 'combo_cantidad_invalida')).mensaje).toBe(
+      'La cantidad tiene que ser mayor a cero, con hasta 3 decimales y no superar 999999.',
+    )
+    expect(errorDeServidorDeCombo(rechazo(400, 'combo_componente_no_unitario')).campo).toBe('formulario')
     expect(errorDeServidorDeCombo(rechazo(409, 'combo_codigo_duplicado')).mensaje).toBe('Ya hay un combo con ese código. Elegí otro.')
     expect(errorDeServidorDeCombo(rechazo(400, 'combo_componentes_excedidos')).mensaje).toContain('50')
   })
@@ -504,9 +596,55 @@ describe('mensajeDeFalloDeBajaDeCombo', () => {
 })
 
 describe('esArticuloElegibleParaCombo', () => {
-  it('solo los artículos por unidad y activos pueden ser componentes', () => {
+  it('los artículos activos pueden ser componentes, se vendan por unidad o por peso', () => {
     expect(esArticuloElegibleParaCombo({ unidadVenta: 'Unidad', activo: true })).toBe(true)
-    expect(esArticuloElegibleParaCombo({ unidadVenta: 'Peso', activo: true })).toBe(false)
+    expect(esArticuloElegibleParaCombo({ unidadVenta: 'Peso', activo: true })).toBe(true)
+  })
+
+  it('un artículo inactivo no puede ser componente', () => {
     expect(esArticuloElegibleParaCombo({ unidadVenta: 'Unidad', activo: false })).toBe(false)
+    expect(esArticuloElegibleParaCombo({ unidadVenta: 'Peso', activo: false })).toBe(false)
+  })
+})
+
+describe('numeroDeCantidadDeComponente', () => {
+  it.each([
+    ['1', 1],
+    [' 3 ', 3],
+    ['0,2', 0.2],
+    ['0.2', 0.2],
+    ['0,200', 0.2],
+    ['12,125', 12.125],
+  ])('convierte %j en %s', (texto, esperado) => {
+    expect(numeroDeCantidadDeComponente(texto)).toBe(esperado)
+  })
+
+  it.each(['', '  ', 'abc', '1e1', '-1', '+1', '.5', '1.', '1,2,3', '1.2.3', '1,2.3', '0x10'])('%j no es una cantidad: NaN', (texto) => {
+    expect(numeroDeCantidadDeComponente(texto)).toBeNaN()
+  })
+})
+
+describe('unidadDeFila', () => {
+  it('es la del artículo elegido; una familia o un artículo cuya unidad no se conoce no tienen', () => {
+    expect(unidadDeFila(pesable(1))).toBe('Peso')
+    expect(unidadDeFila(porUnidad(1))).toBe('Unidad')
+    expect(unidadDeFila(articulo(1))).toBeNull()
+    expect(unidadDeFila({ ...familia(7), unidadVenta: 'Peso' })).toBeNull()
+  })
+})
+
+describe('cantidadTrasElegirArticulo', () => {
+  it('conserva la cantidad escrita si la unidad del artículo elegido la admite', () => {
+    expect(cantidadTrasElegirArticulo('0,2', 'Peso')).toBe('0,2')
+    expect(cantidadTrasElegirArticulo('3', 'Unidad')).toBe('3')
+    expect(cantidadTrasElegirArticulo('2', 'Peso')).toBe('2')
+  })
+
+  it('vuelve a 1 si no la admite, para no dejar una cantidad inválida sin que se note', () => {
+    expect(cantidadTrasElegirArticulo('0,2', 'Unidad')).toBe('1')
+    expect(cantidadTrasElegirArticulo('1,5', 'Unidad')).toBe('1')
+    expect(cantidadTrasElegirArticulo('', 'Peso')).toBe('1')
+    expect(cantidadTrasElegirArticulo('0', 'Peso')).toBe('1')
+    expect(cantidadTrasElegirArticulo('0,2001', 'Peso')).toBe('1')
   })
 })

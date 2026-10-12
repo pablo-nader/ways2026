@@ -34,7 +34,7 @@ const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar el listado. Volvé a entra
 const AVISO_ALTA_CONFIRMADA_POR_LECTURA = 'El combo se creó. No se pudo confirmar la respuesta del servidor.'
 
 /**
- * ABM de combos (solo Admin): un combo son dos o más unidades, cada componente un artículo o una familia con su
+ * ABM de combos (solo Admin): un combo son dos o más componentes, cada uno un artículo o una familia con su
  * cantidad, a un precio fijo. El alta y la edición viven en un `Modal`; la baja pasa por `ConfirmacionDeBaja`.
  *
  * Lecturas (listado) con generación: la más nueva gana. Las escrituras no la acuñan: mientras una está en vuelo,
@@ -282,7 +282,7 @@ export function Combos() {
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo="Combos" variante="inverse" herramientas={herramientas}>
         <p className="text-muted">
-          Un combo junta dos o más unidades de artículos o familias a un precio fijo. En la caja se carga tipeando su código con
+          Un combo junta dos o más componentes (artículos o familias, por unidad o por peso) a un precio fijo. En la caja se carga tipeando su código con
           la C adelante (por ejemplo, C12).
         </p>
 

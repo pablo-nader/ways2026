@@ -42,7 +42,7 @@ Out: scale-label barcodes with embedded weight, POS desktop release (separate bu
 - [x] **T2 — Offline engine and POS (TypeScript).** Route: delegated writer. `motorDeCombos.ts` (thousandths),
   `instantaneaOffline.ts`, `fuenteDeCombos.ts`, `cargaDeCombos.ts`, `SelectorDeMiembrosDeCombo`, parity cases with
   fractional quantities mirrored in C#. Checks: `vitest run` for pos/api/componentes + C# parity test.
-- [ ] **T3 — Back-office editor.** Route: delegated writer. `combosAbm.ts`, `EditorDeComponentes.tsx`,
+- [x] **T3 — Back-office editor.** Route: delegated writer. `combosAbm.ts`, `EditorDeComponentes.tsx`,
   `SelectorDeArticuloDeCombo.tsx`, copy and error messages; descriptor tests. Checks: `vitest run` + `tsc`.
 - [ ] **T4 — Delivery.** judgment-day until a clean round, PR with auto-merge and Auto-fix; amend D5 in
   `odd/tasks/combos.md`.
@@ -125,4 +125,25 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
   - Checks: `tsc -b` exit 0; `oxlint` exit 0; `vitest run` 5839/5839 (206 files); `dotnet test
     tests/Ways.Domain.Tests` 1384/1384. 27 mutations killed, 1 survivor removed (the zero-take guard above).
 
-Next step: T3.
+- T3 implemented on the same branch. Route: delegated writer.
+  - `combosAbm.ts`: a row (`FilaDeComponente`) gained `unidadVenta` (`null` for a family and for a component that comes from
+    the server: the listing does not carry the unit). Per-row validation: unit article → integer (`entero entre 1 y 999999`),
+    weighable or unknown → > 0, up to 3 decimals, <= 999999 (`mayor a cero, con hasta 3 decimales`), via `esCantidadValida`.
+    A decimal comma is accepted by `numeroDeCantidadDeComponente` (decimal only: no sign, exponent or thousands).
+    Minimum per A2 (`alcanzaElMinimo`, mirror of `ReglaDeCombos.AlcanzaElMinimo`). The error code
+    `combo_componente_no_unitario` became `combo_cantidad_no_admitida`; an old code now falls into the generic form error.
+  - Editor: a quantity input of type `number` (min 1, step 1, as before) only for an article known to be sold by unit; for a
+    weighable article or a family it is a text input with `inputMode="decimal"` (so the decimal comma works) and a `kg`
+    suffix for the weighable. Choosing an article keeps the typed quantity when its unit admits it and resets it to 1 otherwise
+    (`cantidadTrasElegirArticulo`). The selector offers every active article and labels weighables `(por peso)`.
+  - Summary line: `0,2 kg × Jamón`; `kg` shows for a weighable row and for any non-integer quantity of the listing.
+  - Decisions not covered by A1–A5: a saved component that is edited keeps an unknown unit until its article is chosen again,
+    so its quantity is validated as "up to 3 decimals" and the server decides (`combo_cantidad_no_admitida`); no `min`/`step`
+    attributes on the decimal input (a text input has none), the validation message carries the rule instead.
+  - `docs/10-modelo-de-datos.md`: the ReglaDeCombos paragraph and the API error list were updated. Still stale there, outside
+    this slice's instruction: the sale-side lines that say weighables are excluded from detection (`CombosEnVenta`, online
+    combos, offline snapshot).
+  - D5 of `odd/tasks/combos.md` carries a one-line amendment pointing here.
+  - Checks: `tsc -b` exit 0; `npm run lint` exit 0; `vitest run` 5895/5895 (206 files). 18 mutations killed.
+
+Next step: T4.

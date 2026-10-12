@@ -37,6 +37,7 @@ combos out of parity as "una etapa nueva con su propio diseño". Requested by th
 - D4. The combo price does not depend on the price list.
 - D5. Components are `UnidadVenta.Unidad` only (integer quantities). Weighed articles cannot be
   components in v1.
+  Amended 2026-10-12: weighable components are now allowed; see `odd/tasks/combos-pesables.md`.
 - D6. Several combos competing for the same units: greatest real gain first (what those
   units cost with their ofertas minus the combo price; the winner is applied as many times as
   its current line assignment allows, then everything is re-evaluated), ties by lowest

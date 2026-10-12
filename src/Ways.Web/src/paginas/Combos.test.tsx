@@ -46,6 +46,7 @@ const pancho = articuloFixture(1, 'Pancho')
 const gaseosa = articuloFixture(2, 'Gaseosa 500')
 const queso = articuloFixture(3, 'Queso por kilo', { unidadVenta: 'Peso' })
 const viejo = articuloFixture(4, 'Pancho viejo', { activo: false })
+const jamon = articuloFixture(6, 'Jamón cocido', { unidadVenta: 'Peso' })
 
 const lineaCoca: FamiliaListado = { id: 7, nombre: 'Línea Coca 500', activo: true, cantidadArticulos: 3 }
 const empresa = { id: 3, razonSocial: 'Alsina SA', nombreFantasia: null } as EmpresaListado
@@ -97,7 +98,7 @@ function mockearApiGet({
   })
 }
 
-const ARTICULOS = { pancho: [pancho, queso, viejo, gaseosa], gaseosa: [gaseosa] }
+const ARTICULOS = { pancho: [pancho, viejo, gaseosa], gaseosa: [gaseosa], fiambre: [jamon, queso] }
 
 let usuario: ReturnType<typeof userEvent.setup>
 
@@ -313,7 +314,7 @@ describe('Combos — alta', () => {
     expect((apiPostMock.mock.calls[0][1] as { activo: boolean }).activo).toBe(false)
   })
 
-  it('no ofrece artículos pesables ni inactivos y lo avisa; sin ninguno elegible lo dice', async () => {
+  it('no ofrece artículos inactivos y lo avisa', async () => {
     await abrirNuevo()
 
     await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'pancho')
@@ -321,12 +322,26 @@ describe('Combos — alta', () => {
 
     const lista = await fila(1).findByRole('listbox')
     expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual(['A1 — Pancho', 'A2 — Gaseosa 500'])
-    expect(fila(1).getByText(/Se ocultaron 2 resultados de los mostrados/)).toBeInTheDocument()
+    expect(fila(1).getByText(/Se ocultó 1 resultado de los mostrados/)).toBeInTheDocument()
     expect(fila(1).queryByText(/Se muestran los primeros/)).not.toBeInTheDocument()
   })
 
+  it('ofrece los artículos que se venden por peso y los rotula', async () => {
+    await abrirNuevo()
+
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'fiambre')
+    await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
+
+    const lista = await fila(1).findByRole('listbox')
+    expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'A6 — Jamón cocido (por peso)',
+      'A3 — Queso por kilo (por peso)',
+    ])
+    expect(fila(1).queryByText(/Se ocult/)).not.toBeInTheDocument()
+  })
+
   it('con más resultados que los recibidos avisa que son los primeros y aclara que lo oculto es de lo mostrado', async () => {
-    mockearApiGet({ articulos: { mixto: [pancho, queso] }, totales: { mixto: 60 } })
+    mockearApiGet({ articulos: { mixto: [pancho, viejo] }, totales: { mixto: 60 } })
     await abrirNuevo()
 
     await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'mixto')
@@ -338,27 +353,27 @@ describe('Combos — alta', () => {
     expect(fila(1).getByText(/Se ocultó 1 resultado de los mostrados/)).toBeInTheDocument()
   })
 
-  it('si la primera página es toda de pesables y hay más, no afirma que no hay artículos por unidad', async () => {
-    mockearApiGet({ articulos: { queso: [queso, articuloFixture(8, 'Fiambre', { unidadVenta: 'Peso' })] }, totales: { queso: 60 } })
+  it('si la primera página es toda de inactivos y hay más, no afirma que no hay artículos activos', async () => {
+    mockearApiGet({ articulos: { viejo: [viejo, articuloFixture(8, 'Fiambre viejo', { activo: false })] }, totales: { viejo: 60 } })
     await abrirNuevo()
 
-    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'queso')
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'viejo')
     await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
 
     expect(await fila(1).findByText('Se muestran los primeros 2 de 60 resultados. Refiná la búsqueda.')).toBeInTheDocument()
     expect(fila(1).getByText('Ninguno de los resultados mostrados puede ser componente.')).toBeInTheDocument()
-    expect(fila(1).queryByText('No hay artículos por unidad que coincidan.')).not.toBeInTheDocument()
+    expect(fila(1).queryByText('No hay artículos activos que coincidan.')).not.toBeInTheDocument()
     expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
   })
 
-  it('una búsqueda que solo trae pesables dice que no hay artículos por unidad', async () => {
-    mockearApiGet({ articulos: { queso: [queso] } })
+  it('una búsqueda que solo trae inactivos dice que no hay artículos activos', async () => {
+    mockearApiGet({ articulos: { viejo: [viejo] } })
     await abrirNuevo()
 
-    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'queso')
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'viejo')
     await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
 
-    expect(await fila(1).findByText('No hay artículos por unidad que coincidan.')).toBeInTheDocument()
+    expect(await fila(1).findByText('No hay artículos activos que coincidan.')).toBeInTheDocument()
     expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
   })
 
@@ -493,7 +508,7 @@ describe('Combos — validación del cliente', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('con una sola unidad en total marca el conjunto', async () => {
+  it('con un solo componente de cantidad 1 marca el conjunto', async () => {
     await abrirNuevo()
     await usuario.type(screen.getByLabelText('Nombre'), 'Solo')
     await usuario.type(screen.getByLabelText('Precio del combo ($)'), '100')
@@ -504,7 +519,7 @@ describe('Combos — validación del cliente', () => {
 
     expect(
       await within(screen.getByRole('group', { name: 'Componentes' })).findByText(
-        'El combo tiene que sumar al menos 2 unidades entre todos sus componentes.',
+        'El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.',
       ),
     ).toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
@@ -545,11 +560,11 @@ describe('Combos — rechazos del servidor', () => {
 
   it.each([
     ['combo_componente_invalido', 400, 'Cada componente tiene que ser un artículo o una familia.'],
-    ['combo_cantidad_invalida', 400, 'La cantidad tiene que ser un entero entre 1 y 999999.'],
+    ['combo_cantidad_invalida', 400, 'La cantidad tiene que ser mayor a cero, con hasta 3 decimales y no superar 999999.'],
     ['combo_componente_duplicado', 409, 'Un artículo o una familia puede figurar una sola vez en el combo.'],
-    ['combo_unidades_insuficientes', 400, 'El combo tiene que sumar al menos 2 unidades'],
+    ['combo_unidades_insuficientes', 400, 'El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.'],
     ['combo_componentes_excedidos', 400, 'Un combo admite hasta 50 componentes.'],
-    ['combo_componente_no_unitario', 400, 'se vende por peso'],
+    ['combo_cantidad_no_admitida', 400, 'no la admite su unidad de venta'],
   ])('%s se muestra en la sección de componentes', async (codigo, estado, texto) => {
     apiPostMock.mockRejectedValue(new ErrorApi(estado, codigo, 'mensaje crudo'))
     await abrirNuevo()
@@ -609,6 +624,154 @@ describe('Combos — rechazos del servidor', () => {
 
     expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
     expect(guardar()).toBeEnabled()
+  })
+})
+
+describe('Combos — componentes por peso', () => {
+  async function armarCabecera() {
+    await abrirNuevo()
+    await usuario.type(screen.getByLabelText('Nombre'), 'Fiambres')
+    await usuario.type(screen.getByLabelText('Precio del combo ($)'), '3000')
+  }
+
+  async function elegirDosPesables() {
+    await armarCabecera()
+    await elegirArticulo(1, 'fiambre', 6)
+    await elegirArticulo(2, 'fiambre', 3)
+  }
+
+  const cantidadDe = (n: number) => fila(n).getByLabelText(`Cantidad del componente ${n}`)
+
+  it('crea un combo de 0,200 kg + 0,200 kg: los dos componentes viajan con cantidad 0.2', async () => {
+    apiPostMock.mockResolvedValue(comboFixture())
+    await elegirDosPesables()
+    await cambiarCantidad(1, '0,200')
+    await cambiarCantidad(2, '0,200')
+    expect(await screen.findByText('0,2 kg × Jamón cocido + 0,2 kg × Queso por kilo por $ 3.000,00')).toBeInTheDocument()
+
+    await usuario.click(guardar())
+
+    await screen.findByText('Combo "Fiambres" creado.')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect((apiPostMock.mock.calls[0][1] as { componentes: unknown[] }).componentes).toStrictEqual([
+      { idArticulo: 6, cantidad: 0.2 },
+      { idArticulo: 3, cantidad: 0.2 },
+    ])
+  })
+
+  it('un pesable muestra la unidad kg junto a la cantidad y admite decimales; uno por unidad no tiene kg', async () => {
+    await armarCabecera()
+    await elegirArticulo(1, 'fiambre', 6)
+    await elegirArticulo(2, 'pancho', 1)
+
+    expect(fila(1).getByText('kg')).toBeInTheDocument()
+    expect(cantidadDe(1)).toHaveAttribute('type', 'text')
+    expect(cantidadDe(1)).toHaveAttribute('inputmode', 'decimal')
+    expect(fila(2).queryByText('kg')).not.toBeInTheDocument()
+    expect(cantidadDe(2)).toHaveAttribute('type', 'number')
+    expect(cantidadDe(2)).toHaveAttribute('min', '1')
+    expect(cantidadDe(2)).toHaveAttribute('step', '1')
+  })
+
+  it('un artículo por unidad rechaza 1,5 en su fila y no envía', async () => {
+    await armarCabecera()
+    await elegirArticulo(1, 'pancho', 1)
+    await elegirArticulo(2, 'fiambre', 6)
+    await cambiarCantidad(1, '1.5')
+
+    await usuario.click(guardar())
+
+    expect(await fila(1).findByText('La cantidad tiene que ser un entero entre 1 y 999999.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['0,2001', '0'])('un pesable rechaza la cantidad %s en su fila y no envía', async (cantidad) => {
+    await elegirDosPesables()
+    await cambiarCantidad(1, cantidad)
+
+    await usuario.click(guardar())
+
+    expect(
+      await fila(1).findByText('La cantidad tiene que ser mayor a cero, con hasta 3 decimales y no superar 999999.'),
+    ).toBeInTheDocument()
+    expect(fila(2).queryByText(/La cantidad tiene que/)).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('un solo pesable de 0,4 no alcanza el mínimo y uno de 2 sí', async () => {
+    apiPostMock.mockResolvedValue(comboFixture())
+    await armarCabecera()
+    await elegirArticulo(1, 'fiambre', 6)
+    await usuario.click(screen.getByRole('button', { name: 'Quitar componente 2' }))
+    await cambiarCantidad(1, '0,4')
+
+    await usuario.click(guardar())
+
+    const grupo = screen.getByRole('group', { name: 'Componentes' })
+    expect(
+      await within(grupo).findByText('El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.'),
+    ).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    await cambiarCantidad(1, '2')
+    await usuario.click(guardar())
+
+    await screen.findByText('Combo "Fiambres" creado.')
+    expect((apiPostMock.mock.calls[0][1] as { componentes: unknown[] }).componentes).toStrictEqual([{ idArticulo: 6, cantidad: 2 }])
+  })
+
+  it('al cambiar a un artículo por unidad una cantidad con decimales vuelve a 1, y una entera se conserva', async () => {
+    await armarCabecera()
+    await elegirArticulo(1, 'fiambre', 6)
+    await cambiarCantidad(1, '0,2')
+    await elegirArticulo(1, 'pancho', 1)
+
+    expect(cantidadDe(1)).toHaveValue(1)
+    expect(cantidadDe(1)).toHaveAttribute('type', 'number')
+    expect(fila(1).queryByText('kg')).not.toBeInTheDocument()
+
+    await cambiarCantidad(1, '3')
+    await elegirArticulo(1, 'fiambre', 3)
+
+    expect(cantidadDe(1)).toHaveValue('3')
+    expect(fila(1).getByText('kg')).toBeInTheDocument()
+  })
+
+  it('al elegir una familia la cantidad admite decimales y no muestra unidad', async () => {
+    await armarCabecera()
+    await elegirArticulo(1, 'fiambre', 6)
+    await usuario.selectOptions(fila(1).getByLabelText('Tipo del componente 1'), 'Familia')
+
+    expect(cantidadDe(1)).toHaveAttribute('type', 'text')
+    expect(fila(1).queryByText('kg')).not.toBeInTheDocument()
+
+    await usuario.selectOptions(fila(1).getByLabelText('Tipo del componente 1'), 'Artículo')
+
+    expect(fila(1).queryByText('kg')).not.toBeInTheDocument()
+  })
+
+  it('al editar, una cantidad con decimales se ve con coma y el combo conserva su cantidad', async () => {
+    const combo = comboFixture({
+      componentes: [
+        { idArticulo: 6, idFamilia: null, nombre: 'Jamón cocido', cantidad: 0.2, disponible: true },
+        { idArticulo: 3, idFamilia: null, nombre: 'Queso por kilo', cantidad: 0.2, disponible: true },
+      ],
+    })
+    mockearApiGet({ combos: [combo], articulos: ARTICULOS })
+    apiPutMock.mockResolvedValue(combo)
+    render(<Combos />)
+    expect(await screen.findByText('0,2 kg × Jamón cocido + 0,2 kg × Queso por kilo')).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Editar Pancho y Coca' }))
+    await screen.findByRole('dialog', { name: 'Editar combo' })
+
+    expect(cantidadDe(1)).toHaveValue('0,2')
+    await usuario.click(guardar())
+
+    await screen.findByText('Combo "Pancho y Coca" actualizado.')
+    expect((apiPutMock.mock.calls[0][1] as { componentes: unknown[] }).componentes).toStrictEqual([
+      { idArticulo: 6, cantidad: 0.2 },
+      { idArticulo: 3, cantidad: 0.2 },
+    ])
   })
 })
 
@@ -1029,7 +1192,7 @@ describe('Combos — buscador de artículo asincrónico', () => {
 
     expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
     expect(campoDeBusqueda(1)).toHaveAttribute('aria-expanded', 'false')
-    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos por unidad/)).not.toBeInTheDocument()
+    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos activos/)).not.toBeInTheDocument()
     expect(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' })).toBeEnabled()
   })
 
@@ -1051,7 +1214,7 @@ describe('Combos — buscador de artículo asincrónico', () => {
 
     expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
     expect(fila(1).getByText('Elegido:', { exact: false })).toHaveTextContent('Gaseosa 500')
-    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos por unidad/)).not.toBeInTheDocument()
+    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos activos/)).not.toBeInTheDocument()
   })
 
   it('una respuesta que llega después de cerrar el modal no rompe nada ni aparece al reabrirlo', async () => {
@@ -1118,8 +1281,8 @@ describe('Combos — asociación de errores y foco del editor', () => {
     await usuario.click(guardar())
 
     const grupo = await screen.findByRole('group', { name: 'Componentes' })
-    await within(grupo).findByText('El combo tiene que sumar al menos 2 unidades entre todos sus componentes.')
-    expect(textoDe(grupo)).toBe('El combo tiene que sumar al menos 2 unidades entre todos sus componentes.')
+    await within(grupo).findByText('El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.')
+    expect(textoDe(grupo)).toBe('El combo tiene que tener al menos dos componentes, o uno solo con cantidad dos o más.')
   })
 
   it('el error de componentes del servidor también queda asociado al grupo', async () => {

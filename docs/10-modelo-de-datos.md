@@ -1035,13 +1035,15 @@ UNIQUE (id_combo, id_familia)  WHERE id_familia  IS NOT NULL;  -- ux_combos_comp
 -- FK (id_combo, id_tenant) -> combos (Cascade)
 ```
 
-Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conjunto suma al menos dos unidades en
-total, las cantidades son enteros entre 1 y 999.999 (`combo_cantidad_invalida`), el precio es mayor a cero, tiene hasta dos
+Reglas que el esquema no puede expresar y que viven en `ReglaDeCombos`: el conjunto tiene al menos dos
+componentes, o uno solo con cantidad dos o más (`combo_unidades_insuficientes`), las cantidades son mayores a cero, de
+hasta 3 decimales y no superan 999.999 (`combo_cantidad_invalida`), el precio es mayor a cero, tiene hasta dos
 decimales y no supera 999.999.999.999,99 (`combo_precio_invalido`), para que ningún valor llegue a la base como 22003 ni
 la respuesta muestre un precio sin redondear, y el combo tiene hasta 50 componentes (`combo_componentes_excedidos`,
-`ReglaDeCombos.ComponentesMaximos`; cada uno cuesta un `FOR KEY SHARE` bajo el lock por tenant). Que los artículos
-pesables no sean componentes (solo `UnidadVenta.Unidad`) NO lo valida `ReglaDeCombos`, que no recibe la unidad de
-venta: lo exige `ServicioDeCombos` (ver "API" más abajo). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
+`ReglaDeCombos.ComponentesMaximos`; cada uno cuesta un `FOR KEY SHARE` bajo el lock por tenant). Que la cantidad
+sea la que admite la unidad de venta del artículo (entera para `Unidad`, hasta 3 decimales para `Peso`) NO lo valida
+`ReglaDeCombos`, que no recibe la unidad de venta: lo exige `ServicioDeCombos` (`combo_cantidad_no_admitida`; ver "API"
+más abajo). `ResolvedorDeCombos` (dominio puro) detecta los conjuntos completos en el
 documento y reparte el ahorro entre las líneas consumidas:
 
 - Un combo aplica tantas veces como conjuntos completos haya; cada unidad la consume un solo combo. El algoritmo es
@@ -1287,15 +1289,15 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   `combo_componente_duplicado`, `combo_unidades_insuficientes`, `combo_componentes_excedidos`), `activo_requerido`
   (solo PUT), `combo_codigo_invalido`, `nombre_requerido`,
   `nombre_muy_largo` (150), `referencia_invalida` (artículo, familia o empresa que no existe, está dada de baja o es de
-  otro tenant) y `combo_componente_no_unitario` (un componente artículo con `UnidadVenta.Peso`, o una familia con algún
-  miembro vivo `Peso`; los servicios, `es_producto = false`, sí se aceptan). `409`: `combo_codigo_duplicado` (código en
+  otro tenant) y `combo_cantidad_no_admitida` (la cantidad de un componente no la admite la unidad de venta del artículo, o la de
+  algún miembro vivo de la familia; los servicios, `es_producto = false`, sí se aceptan). `409`: `combo_codigo_duplicado` (código en
   uso por otro combo vivo) y `combo_codigo_agotado` (alta sin código con el 999.999 ya ocupado).
 - Toda escritura toma un lock advisory por tenant como primera sentencia de su transacción: serializa la asignación del
   código, el pre-chequeo de código y el reemplazo del conjunto. Cada artículo o familia referenciado se toma `FOR KEY
   SHARE` sobre su fila viva en esa transacción, de modo que una baja que ya tiene la fila hace fallar el alta o la
-  edición con `referencia_invalida` en vez de dejar un componente colgante. Que el artículo no sea pesable se comprueba
-  en ese momento y solo en ese momento: cambiar después un componente a pesable, o sumar un artículo pesable a una familia
-  que ya usa un combo, no se bloquea. La ruta de venta (T3) debe excluir los artículos pesables de la detección por su
+  edición con `referencia_invalida` en vez de dejar un componente colgante. Que la cantidad sea admitida por la unidad de venta se comprueba
+  en ese momento y solo en ese momento: cambiar después la unidad de un artículo componente, o sumar a una familia que ya
+  usa un combo un artículo que no admite su cantidad, no se bloquea (en la venta ese miembro deja de ser candidato). La ruta de venta (T3) debe excluir los artículos pesables de la detección por su
   unidad de venta, no por la cantidad.
 - Respaldos de esquema (`ManejadorDeErrores`): `ux_combos_codigo` → `409 combo_codigo_duplicado`;
   `ux_combos_componentes_articulo` y `ux_combos_componentes_familia` → `409 combo_componente_duplicado`. Solo una
