@@ -5,18 +5,21 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
-import type {
-  AlicuotaIvaListado,
-  AreaListado,
-  ArticuloListado,
-  CategoriaListado,
-  CondicionFiscalListado,
-  EmpresaListado,
-  FilaDeGrillaDeArticulos,
-  GrupoListado,
-  MarcaListado,
-  PaginaDeGrillaDeArticulos,
-  ProveedorListado,
+import { AuthContext } from '../auth/AuthContext'
+import {
+  ROL,
+  type AlicuotaIvaListado,
+  type AreaListado,
+  type ArticuloListado,
+  type CategoriaListado,
+  type CondicionFiscalListado,
+  type EmpresaListado,
+  type FilaDeGrillaDeArticulos,
+  type GrupoListado,
+  type MarcaListado,
+  type PaginaDeGrillaDeArticulos,
+  type ProveedorListado,
+  type UsuarioAutenticado,
 } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -44,6 +47,8 @@ vi.mock('../api/cliente', () => ({
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',
@@ -79,6 +84,8 @@ const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Ar
  * de arriba (que sigue sirviendo el detalle por id, `/articulos/{id}`). */
 function filaGrillaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',
@@ -315,13 +322,22 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
  * `App.tsx`, para que React Router no la remonte al abrir/cerrar el modal ni al pasar de
  * `/create` a `/edit/{id}` recién creado.
  */
-function renderArticulos(rutaInicial = '/articulos') {
-  return render(
+function renderArticulos(rutaInicial = '/articulos', rolId?: number) {
+  const pantalla = (
     <MemoryRouter initialEntries={[rutaInicial]}>
       <Routes>
         <Route path="/articulos/*" element={<Articulos />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+  )
+  if (rolId === undefined) return render(pantalla)
+
+  const usuario: UsuarioAutenticado = { id: 1, usuario: 'ana', mail: 'ana@comercio.test', rolId, rol: 'Rol', ultimaConexion: null, idTenant: 1 }
+
+  return render(
+    <AuthContext.Provider value={{ usuario, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }}>
+      {pantalla}
+    </AuthContext.Provider>,
   )
 }
 
@@ -2924,5 +2940,88 @@ describe('Articulos — sección Costos', () => {
       expect(screen.getByLabelText(etiqueta), etiqueta).toBeInTheDocument()
     }
     expect(screen.getByText('Costos', { selector: 'strong' })).toBeInTheDocument()
+  })
+})
+
+describe('Articulos — tienda online del artículo', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('al editar como admin muestra la sección, y publicar usa su propio PUT sin tocar el formulario', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiPutMock.mockResolvedValue({ idArticulo: 1, publicado: true })
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    const interruptor = await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
+
+    await userEvent.click(interruptor)
+
+    expect(await within(dialogo).findByText('El artículo quedó publicado en la tienda.')).toBeInTheDocument()
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(apiPutMock).toHaveBeenCalledWith('/articulos/1/web', { publicado: true })
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('una escritura de la tienda refresca la grilla con el estado nuevo', async () => {
+    apiPutMock.mockResolvedValue({ idArticulo: 1, publicado: true })
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    const interruptor = await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
+    expect(screen.queryByText('Publicado', { selector: '.badge' })).not.toBeInTheDocument()
+    mockearApiGet({
+      grilla: paginaGrillaFixture([filaGrillaFixture({ id: 1, nombre: 'Articulo Uno', publicadoWeb: true }), filaGrillaDos]),
+    })
+
+    await userEvent.click(interruptor)
+
+    expect(await screen.findByText('Publicado', { selector: '.badge' })).toBeInTheDocument()
+  })
+
+  it('el PUT de la edición del artículo no lleva el estado de la tienda', async () => {
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1 }))
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
+
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/articulos/1')
+    const campos = Object.keys(apiPutMock.mock.calls[0][1] as object)
+    expect(campos).not.toContain('publicadoWeb')
+    expect(campos).not.toContain('tieneImagen')
+  })
+
+  it('la sección arranca con lo que trajo el detalle del artículo', async () => {
+    mockearApiGet({ articulos: [articuloFixture({ id: 1, publicadoWeb: true, tieneImagen: true }), articuloDos] })
+    renderArticulos('/articulos/edit/1', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+
+    expect(await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })).toBeChecked()
+    expect(within(dialogo).getByRole('img', { name: 'Imagen del artículo' })).toBeInTheDocument()
+  })
+
+  it('en un alta no hay sección: primero hay que guardar el artículo', async () => {
+    renderArticulos('/articulos/create', ROL.Admin)
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(within(dialogo).getByText('Guardá el artículo para poder cargar códigos de barra y precios.')).toBeInTheDocument()
+    expect(within(dialogo).queryByText('Tienda online')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByRole('switch')).not.toBeInTheDocument()
+  })
+
+  it('quien no administra el catálogo no ve la sección', async () => {
+    renderArticulos('/articulos/edit/1', ROL.Vendedor)
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await within(dialogo).findByText('Códigos de barra')
+
+    expect(within(dialogo).queryByText('Tienda online')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByRole('switch', { name: 'Publicado en la tienda' })).not.toBeInTheDocument()
   })
 })

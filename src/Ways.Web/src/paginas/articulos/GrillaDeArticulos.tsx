@@ -184,6 +184,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                   <th scope="col">Costo</th>
                   <th scope="col">{tituloColumnaPrecio}</th>
                   <th scope="col">Proveedor</th>
+                  <th scope="col">Tienda</th>
                   <th scope="col">Estado</th>
                   <th scope="col" className="text-end">
                     Acciones
@@ -250,6 +251,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       ))}
                     </select>
                   </th>
+                  <th scope="col" />
                   <th scope="col">
                     <select
                       className="form-select form-select-sm"
@@ -280,6 +282,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                     <td>{formatearPrecio(a.costoNominal)}</td>
                     <td>{formatearPrecio(a.precio)}</td>
                     <td>{a.proveedor ?? '—'}</td>
+                    <td>{a.publicadoWeb && <span className="badge text-bg-primary">Publicado</span>}</td>
                     <td>
                       <span className={`badge ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
                         {a.activo ? 'Activo' : 'Inactivo'}
@@ -307,7 +310,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                 ))}
                 {pagina !== null && pagina.items.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center text-muted py-4">
+                    <td colSpan={8} className="text-center text-muted py-4">
                       No hay artículos que coincidan con los filtros.
                     </td>
                   </tr>

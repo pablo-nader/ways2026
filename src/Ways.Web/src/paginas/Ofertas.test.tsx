@@ -43,6 +43,8 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
     nombre: 'Coca Cola 1L',

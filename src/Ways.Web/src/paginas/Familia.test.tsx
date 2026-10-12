@@ -78,6 +78,8 @@ function detalleSabores(sobrescribir: Partial<FamiliaDetalle> = {}): FamiliaDeta
 
 function articulo(id: number, sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id,
     codigoInterno: `A00${id}`,
     nombre: `Articulo ${id}`,

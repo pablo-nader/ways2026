@@ -58,6 +58,8 @@ const valores: ValoresCompartidosDeLaFamilia = {
 function articulo(id: number, sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   const nombres: Record<number, string> = { 31: 'Vainilla', 32: 'Frutilla', 33: 'Chocolate' }
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id,
     codigoInterno: `A00${id}`,
     nombre: nombres[id] ?? `Articulo ${id}`,

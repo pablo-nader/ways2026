@@ -714,6 +714,10 @@ export type ArticuloListado = {
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
+  /** El artículo se ofrece en la tienda online. Se escribe aparte (`PUT /api/articulos/{id}/web`), nunca con la edición. */
+  publicadoWeb: boolean
+  /** El artículo tiene una imagen cargada; los bytes salen de `GET /api/articulos/{id}/imagen`. */
+  tieneImagen: boolean
 }
 
 /** `codigoInterno: null` deja que el servidor lo autogenere desde el contador atómico del
@@ -810,6 +814,9 @@ export type FilaDeGrillaDeArticulos = {
   idProveedorHabitual: number | null
   proveedor: string | null
   activo: boolean
+  /** Estado del artículo en la tienda online: si se publica y si tiene una imagen viva. */
+  publicadoWeb: boolean
+  tieneImagen: boolean
 }
 
 /** `nombreListaPrecio: null` cuando el tenant no tiene lista de precio default configurada — en
