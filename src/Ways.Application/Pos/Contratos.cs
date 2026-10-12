@@ -52,6 +52,7 @@ public sealed record PrecioDeListaDeInstantanea(
 /// cantidades de una familia; ausente si el artículo no tiene. <c>IdArea</c>,
 /// <c>EsProducto</c> y <c>ControlaLote</c> quedan afuera: el servidor los resuelve del artículo
 /// fresco al sincronizar (<c>ServicioDeVentas.MaterializarItems</c>), nunca del request.
+/// <see cref="TeclaAtajo"/> es la tecla de función del artículo por importe; ausente si no tiene.
 /// </summary>
 public sealed record ArticuloDeInstantanea(
     int IdArticulo,
@@ -64,7 +65,9 @@ public sealed record ArticuloDeInstantanea(
     UnidadVenta UnidadVenta,
     IReadOnlyList<PrecioDeListaDeInstantanea> PreciosPorLista,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    int? IdFamilia = null);
+    int? IdFamilia = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TeclaAtajo? TeclaAtajo = null);
 
 /// <summary>
 /// Un cliente visible para el punto de venta: activo y compartido o de la empresa del punto de

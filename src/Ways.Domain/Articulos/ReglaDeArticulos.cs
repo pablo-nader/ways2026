@@ -36,4 +36,27 @@ public static class ReglaDeArticulos
                 400);
         }
     }
+
+    /// <summary>Las dos invariantes del artículo por importe, sobre el ESTADO RESULTANTE: no acumula en el carrito
+    /// (<c>importe_no_acumula</c>) y la tecla de atajo solo la tiene un artículo por importe
+    /// (<c>tecla_atajo_solo_importe</c>). Se rechaza, no se corrige en silencio. Los CHECK
+    /// <c>ck_articulos_importe_no_acumula</c> y <c>ck_articulos_tecla_atajo_solo_importe</c> quedan de respaldo.</summary>
+    public static void ValidarImporte(UnidadVenta unidadVenta, bool acumulaEnVenta, TeclaAtajo? teclaAtajo)
+    {
+        if (unidadVenta == UnidadVenta.Importe && acumulaEnVenta)
+        {
+            throw new ErrorDominio(
+                "importe_no_acumula",
+                "Un artículo que se vende por importe no puede acumular en la venta.",
+                400);
+        }
+
+        if (teclaAtajo is not null && unidadVenta != UnidadVenta.Importe)
+        {
+            throw new ErrorDominio(
+                "tecla_atajo_solo_importe",
+                "Solo un artículo que se vende por importe puede tener una tecla de atajo.",
+                400);
+        }
+    }
 }

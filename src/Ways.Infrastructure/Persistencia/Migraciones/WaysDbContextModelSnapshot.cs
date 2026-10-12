@@ -56,7 +56,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_cc_proveedor", new[] { "ajuste", "apertura", "compra", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_personal", new[] { "ajuste", "horas", "pago" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "tipo_movimiento_tesoreria", new[] { "ajuste", "deposito", "gasto", "retiro_caja" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "peso", "unidad" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "unidad_venta", new[] { "importe", "peso", "unidad" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "unaccent");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -206,6 +206,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDefaultValue(false)
                         .HasColumnName("publicado_web");
 
+                    b.Property<string>("TeclaAtajo")
+                        .HasColumnType("text")
+                        .HasColumnName("tecla_atajo");
+
                     b.Property<UnidadVenta>("UnidadVenta")
                         .HasColumnType("unidad_venta")
                         .HasColumnName("unidad_venta");
@@ -253,6 +257,11 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_articulos_codigo_interno")
                         .HasFilter("deleted_at IS NULL");
 
+                    b.HasIndex("IdTenant", "TeclaAtajo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_articulos_tecla_atajo")
+                        .HasFilter("deleted_at IS NULL AND tecla_atajo IS NOT NULL");
+
                     b.HasIndex(new[] { "IdTenant" }, "ix_articulos_controla_lote")
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
@@ -264,6 +273,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("articulos", null, t =>
                         {
                             t.HasCheckConstraint("ck_articulos_costo_lista_por", "costo_lista_por IN ('Unidad', 'Bulto')");
+
+                            t.HasCheckConstraint("ck_articulos_importe_no_acumula", "unidad_venta <> 'importe' OR acumula_en_venta = false");
+
+                            t.HasCheckConstraint("ck_articulos_tecla_atajo", "tecla_atajo IN ('F5', 'F6', 'F7', 'F8')");
+
+                            t.HasCheckConstraint("ck_articulos_tecla_atajo_solo_importe", "tecla_atajo IS NULL OR unidad_venta = 'importe'");
                         });
                 });
 

@@ -418,12 +418,16 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     id_area, id_categoria NULL, id_marca NULL, id_grupo NULL,
     id_proveedor_habitual integer NULL,      -- para reposición; no exclusivo
     id_alicuota_iva  integer NOT NULL,
-    unidad_venta     unidad_venta,           -- enum: unidad | peso  (pesables: cantidad 12,3)
+    unidad_venta     unidad_venta,           -- enum: unidad | peso | importe  (pesables: cantidad 12,3;
+                                             -- importe: rubro sin detalle cobrado por el monto que escribe el
+                                             -- cajero, cantidad siempre 1; solo ALTER TYPE ... ADD VALUE)
     unidades_por_bulto numeric(10,2) NULL,
     es_producto      boolean,                -- false = servicio: no toca stock
     controla_lote    boolean NOT NULL DEFAULT false, -- exige lote en todo movimiento de stock (§ lotes)
     acumula_en_venta boolean NOT NULL DEFAULT true,  -- true: agregar de nuevo suma cantidad en una línea;
                                              -- false: cada alta es una línea nueva (lo aplica el carrito)
+                                             -- CHECK ck_articulos_importe_no_acumula:
+                                             --   unidad_venta <> 'importe' OR acumula_en_venta = false
     costo_lista      numeric(14,2) NULL,     -- lista del proveedor, tal como se cargó (ver costo_lista_por / _incluye_iva)
     costo_lista_por  text NOT NULL DEFAULT 'Unidad', -- base del costo_lista: 'Unidad' | 'Bulto'
                                              -- CHECK ck_articulos_costo_lista_por; 'Bulto' exige unidades_por_bulto > 0
@@ -437,9 +441,22 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     activo,
     publicado_web    boolean NOT NULL DEFAULT false, -- se ofrece en la tienda online (§3, "Tienda online");
                                              -- por artículo: no es un campo compartido de la familia
-    id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
+    id_familia       integer NULL,           -- familia a la que pertenece (§3, "Familias de artículos");
                                              -- FK compuesta (id_familia, id_tenant), NULL = sin familia
+    tecla_atajo      text NULL               -- tecla de función del POS de un artículo por importe: F5..F8;
+                                             -- NULL = sin atajo. Por artículo: no es un campo compartido de la familia
+                                             -- CHECK ck_articulos_tecla_atajo: tecla_atajo IN ('F5', 'F6', 'F7', 'F8')
+                                             -- CHECK ck_articulos_tecla_atajo_solo_importe:
+                                             --   tecla_atajo IS NULL OR unidad_venta = 'importe'
 );
+-- ux_articulos_tecla_atajo UNIQUE (id_tenant, tecla_atajo) WHERE deleted_at IS NULL AND tecla_atajo IS NOT NULL
+-- (23505 -> 409 tecla_atajo_duplicada). Un artículo por importe nunca acumula (importe_no_acumula), solo él tiene
+-- tecla (tecla_atajo_solo_importe) y no puede ser componente de un combo (combo_componente_por_importe). Se rechaza,
+-- no se corrige: el alta sin acumula_en_venta toma false si es por importe; la edición exige mandar la tecla en
+-- null al pasar a otra unidad (null = sin atajo, a diferencia de acumula_en_venta). Con alcance de familia, cambiar
+-- la unidad compartida a una que no es por importe mientras OTRO miembro tiene tecla es 409
+-- familia_miembro_con_tecla_atajo, y agrupar un artículo con tecla contra una referencia que no es por importe es
+-- 409 articulo_con_tecla_atajo.
 -- ix_articulos_publicado_web (id_tenant) WHERE publicado_web AND activo AND deleted_at IS NULL
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
@@ -670,7 +687,7 @@ difiera de la familia):
    de menor `id_articulo`, leído una sola vez bajo esos locks;
 3. los quince campos compartidos del pedido tienen que ser idénticos a los de la referencia: si no,
    `409 familia_valores_distintos`, que nombra las columnas que difieren. El pedido que no trae
-   `acumula_en_venta` lleva su valor por defecto, `true`, y se compara como cualquier otro. Los rechazos se evalúan en ese orden
+   `acumula_en_venta` lleva su valor por defecto (`true`, o `false` en un artículo por importe) y se compara como cualquier otro. Los rechazos se evalúan en ese orden
    (inactiva, sin artículos, valores distintos) y siempre antes de insertar nada;
 4. se inserta el artículo con `id_familia = F` y, en la misma transacción y con el mismo "ahora", se copia el
    estado de precios de la referencia en cada lista fija: el precio vigente a ese instante (la fila nueva
