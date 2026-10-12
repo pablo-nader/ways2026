@@ -11,6 +11,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Pos;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
+using Ways.Application.Catalogos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Ofertas;
@@ -464,6 +465,35 @@ public class InstantaneaDePosEndpointsTests(WaysApiFixture fixture) : IClassFixt
         // ParametroConocido.ToleranciaPago.ValorPorDefecto == "10", sin fila en `parametros` para
         // este tenant nuevo.
         Assert.Equal(10m, instantanea.ToleranciaPago);
+    }
+
+    [Fact]
+    public async Task LosMediosDePagoDeLaInstantaneaTraenSuPorcentajeDeFacturacion()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(LosMediosDePagoDeLaInstantaneaTraenSuPorcentajeDeFacturacion));
+        var cajero = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "pctfact");
+        using var _cajero = cajero;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var efectivo = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo).FirstAsync();
+        var transferencia = await db.MediosPago.Where(m => m.Comportamiento == ComportamientoMedioPago.Electronico).FirstAsync();
+
+        var put = await admin.PutAsJsonAsync(
+            $"/api/catalogos/medios-pago/{transferencia.Id}",
+            new MedioPagoAlta(
+                transferencia.Nombre, transferencia.IdEmpresa, transferencia.Orden, transferencia.Comportamiento,
+                transferencia.AdmiteVuelto, transferencia.RequiereReferencia, transferencia.RecargoPorcentaje,
+                PorcentajeFacturacion: 37.5m));
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        admin.Dispose();
+        VaciarCacheDeInstantaneas();
+
+        var respuesta = await cajero.GetAsync("/api/pos/instantanea");
+        var instantanea = (await respuesta.Content.ReadFromJsonAsync<InstantaneaLegadaDePos>(OpcionesJson))!;
+
+        Assert.Equal(37.5m, Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == transferencia.Id).PorcentajeFacturacion);
+        Assert.Equal(0m, Assert.Single(instantanea.MediosDePago, m => m.IdMedioPago == efectivo.Id).PorcentajeFacturacion);
     }
 
     // --- version=2: precios por lista, clientes, ETag/304 ---
