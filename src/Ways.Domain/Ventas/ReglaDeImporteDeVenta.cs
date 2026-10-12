@@ -32,10 +32,18 @@ public static class ReglaDeImporteDeVenta
 
     /// <summary>Lee el texto que el cajero escribe antes del <c>*</c> de un escaneo. Solo dígitos con punto decimal
     /// opcional: sin signo, sin separador de miles y sin coma, para que <c>150,50</c> o <c>1,500</c> nunca se lean
-    /// como otro monto. Devuelve <c>false</c> si el texto no es un importe válido.</summary>
+    /// como otro monto. Con más de dos dígitos tras el punto, ceros incluidos, también se rechaza: <c>1.500</c> es
+    /// mil quinientos para quien lo tipea y no un peso con cincuenta. Espeja <c>leerImporteTipeado</c> de la web
+    /// (<c>importeDeVenta.ts</c>). Devuelve <c>false</c> si el texto no es un importe válido.</summary>
     public static bool TryParsear(string? texto, out decimal importe)
     {
         importe = 0m;
+
+        var punto = texto?.IndexOf('.') ?? -1;
+        if (punto >= 0 && texto!.Length - punto - 1 > DecimalesMaximos)
+        {
+            return false;
+        }
 
         if (!decimal.TryParse(texto, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var leido)
             || !EsValido(leido))

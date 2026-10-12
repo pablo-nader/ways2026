@@ -31,6 +31,10 @@ public class ReglaDeImporteDeVentaTests
     [InlineData("1 500")]
     [InlineData("1e3")]
     [InlineData("150.505")]
+    [InlineData("1.500")]
+    [InlineData("150.000")]
+    [InlineData("0.100")]
+    [InlineData("150.500")]
     [InlineData("1000000000000")]
     public void UnTextoQuePodriaLeerseComoOtroMontoNoEsUnImporte(string? texto)
     {

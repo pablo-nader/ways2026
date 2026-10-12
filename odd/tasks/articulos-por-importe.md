@@ -73,7 +73,7 @@ transaction that adds it, and the CHECKs reference it.
 - [x] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
   shortcut selector, descriptor tests; the two-unit assumptions in `cantidadPorUnidad`, stock and
   the online cart. Route: delegated writer.
-- [ ] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
+- [x] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
   queued payload and synthetic ticket. Route: delegated writer.
 - [ ] T5 — POS release (Ways.Desktop bump + tag), since POS web changes do not reach the tills
   without it.
@@ -101,6 +101,28 @@ Strategy: `auto-chain`, `stacked-to-main` (owner's standing preference). Forecas
 authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
+
+- T4 — implemented in `100e96ec` on `pnader/importe-pos` (delegated writer). Corrections K1–K5 in
+  `76318924`; judgment-day round 2 (scoped re-judgment by both judges): all five FIXED, no new
+  defect → APPROVED. After the corrections: Vitest 6086/6086, build and lint clean, Domain.Tests
+  1404/1404 (also re-run by the parent), integration filter `VentaPorImporte|Escaneo` 50/50;
+  the full integration suite is left to CI.
+  - Observed: full Vitest suite 6066/6066, build and lint clean (writer); `tsc -b` and the
+    amount/cart/sale/offline-engine tests 301/301 (parent). RED observed per layer; 20 mutants
+    killed.
+  - The key→article mapping comes from the POS snapshot (`teclaAtajo`), which the browser POS
+    loads too. The web POS never builds a credit note.
+  - Judgment-day round 1 (both judges read the whole diff): no severe finding. Accepted
+    corrections, in progress: K1 an amount with more than 2 digits after the separator is
+    rejected on web and server, so `1.500*500` no longer charges $2 (both judges); K2 the empty
+    cart shows "—" again (both); K3 a line carrying an amount whose article stopped being
+    by-amount blocks charging and never receives a merge (both); K4 the F2 search must not add a
+    by-amount article without an amount (one judge); K5 the shortcut's busy gates get tests or
+    are removed (one judge).
+  - Follow-ups: the printed ticket does not mark by-amount lines; the stale-line check rebuilds a
+    catalogue index on every render; without a loaded snapshot a stale by-amount line is still
+    charged online and rejected by the server; a combo whose component became by-amount after
+    creation loads its other lines and rejects that one.
 
 - T3 — implemented in `d7ae939a` on `pnader/importe-backoffice` (delegated writer; the combo
   error mapping in `api/combosAbm.ts` was added inline by the parent). Judgment-day round 1, both

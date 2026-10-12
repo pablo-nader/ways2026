@@ -26,6 +26,17 @@ import {
   type LineaCarrito,
 } from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
+import {
+  entradaConPuntoDecimal,
+  esTeclaDeAtajo,
+  MENSAJE_DE_ATAJO_SIN_DATOS,
+  MENSAJE_DE_CANTIDAD_DE_IMPORTE,
+  MENSAJE_DE_IMPORTE_INVALIDO,
+  mensajeDeAtajoSinArticulo,
+  mensajeDeLineaPorImporteObsoleta,
+  mensajeDeAtajoSinImporte,
+  mensajeDeImporteRequerido,
+} from '../api/importeDeVenta'
 import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
@@ -65,6 +76,7 @@ import type {
   PresupuestoParaVenta,
   ResumenDeCierrePorRetiro,
   SolicitudDeCierrePorRetiro,
+  TeclaAtajo,
   TurnoResumen,
 } from '../api/tipos'
 import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
@@ -109,9 +121,12 @@ import { elegirFuenteDeCombos, fuenteDesdeApi, type ComboDeLista } from '../pos/
 import {
   aClienteListado,
   aMedioPagoListado,
-  buscarArticuloOffline,
+  atajosDeImporteOffline,
   buscarClientesOffline,
   formatearVejezDeInstantanea,
+  lineasConImporteDeArticuloOrdinario,
+  resolverAtajoOffline,
+  resolverEscaneoOffline,
   resolverPreviaOffline,
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
@@ -132,6 +147,18 @@ const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('me
 const MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO = 'No se agregó el combo: hay un cobro en curso.'
 /** Se agrega al aviso de un artículo que no apareció cuando tampoco se pudieron leer los combos con ese código. */
 const MENSAJE_DE_COMBOS_SIN_LEER = 'No se pudieron leer los combos.'
+
+/** Escaneo en el servidor. Un importe con coma (`150,50*500`) que el servidor rechaza se reintenta UNA vez con punto: para un
+ * artículo común el servidor lee la coma como separador de miles, así que la corrección solo se prueba después de su rechazo. */
+async function escanearEnElServidor(entrada: string): Promise<ArticuloEscaneado> {
+  try {
+    return await clienteDeArticulos.escanear(entrada)
+  } catch (e) {
+    const conPunto = e instanceof ErrorApi && e.codigo === 'importe_invalido' ? entradaConPuntoDecimal(entrada) : null
+    if (conPunto === null) throw e
+    return clienteDeArticulos.escanear(conPunto)
+  }
+}
 
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
@@ -1094,6 +1121,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       ? sincronizacionOffline.instantanea
       : null
 
+  // Los atajos F5 a F8 salen de la misma instantánea: es lo único que trae la tecla de cada artículo por importe.
+  const atajosDeImporte = useMemo(() => (instantaneaDelPuntoVenta ? atajosDeImporteOffline(instantaneaDelPuntoVenta) : []), [instantaneaDelPuntoVenta])
   // Opciones del selector de cliente y su búsqueda en la copia local: estables entre renders para que la
   // lista no recalcule el filtro de todos los clientes en cada cambio de la pantalla.
   const opcionesDeCliente = useMemo(
@@ -2238,6 +2267,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   /** Suma al carrito lo que resolvió un escaneo. Una fracción de un artículo que se vende por
    * unidad no entra: se avisa donde se avisan los demás errores de escaneo. */
   function agregarEscaneado(articulo: ArticuloEscaneado): boolean {
+    // Un artículo por importe sin el monto (se escaneó su código a secas) no tiene precio: se pide el importe.
+    if (articulo.unidadVenta === 'Importe' && articulo.importe == null) {
+      setErrorEscaneo(mensajeDeImporteRequerido(articulo.codigoInterno))
+      return false
+    }
     const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
     if (fraccionaUnaUnidad(linea.unidadVenta, cantidad)) {
       setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
@@ -2432,6 +2466,50 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     else evento.currentTarget.blur()
   }
 
+  /** Agrega lo que la instantánea local resuelve para `entrada`. `noEncontrado` es que no la conoce y sigue la búsqueda en el
+   * servidor; `rechazado` es que la conoce pero no se pudo agregar (el motivo ya quedó en el aviso del escaneo). */
+  function agregarDesdeInstantanea(instantanea: InstantaneaDePos, entrada: string): 'agregado' | 'rechazado' | 'noEncontrado' {
+    const resultado = resolverEscaneoOffline(instantanea, entrada)
+    if (resultado.tipo === 'noEncontrado') return 'noEncontrado'
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return 'rechazado'
+    }
+    return agregarEscaneado(resultado.articulo) ? 'agregado' : 'rechazado'
+  }
+
+  /** F5 a F8 (o el botón de la tecla): agrega el artículo por importe de la tecla con el importe que hay en el campo de código,
+   * con el mismo resultado que tipear `importe*código`. Sin datos, sin importe o con una tecla sin artículo avisa y no agrega. */
+  function agregarPorAtajo(tecla: TeclaAtajo) {
+    // Mismas compuertas que F2 y F4: nada se agrega detrás de un modal ni durante un cobro o una lectura en vuelo.
+    if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || bloqueadoPorTurno) return
+    if (buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada !== null || confirmandoCobro || cajaDeEscritorioOcupada) return
+
+    if (!instantaneaDelPuntoVenta) {
+      setErrorEscaneo(MENSAJE_DE_ATAJO_SIN_DATOS)
+      return
+    }
+    const texto = entradaEscaneo.trim()
+    const resultado = resolverAtajoOffline(instantaneaDelPuntoVenta, tecla, texto)
+    if (resultado.tipo === 'sinArticulo') {
+      setErrorEscaneo(mensajeDeAtajoSinArticulo(tecla))
+      return
+    }
+    if (texto === '') {
+      setErrorEscaneo(mensajeDeAtajoSinImporte(tecla))
+      return
+    }
+    if (resultado.tipo === 'importeInvalido') {
+      setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
+      return
+    }
+    if (agregarEscaneado(resultado.articulo)) {
+      setEntradaEscaneo('')
+      setErrorEscaneo('')
+    }
+    focoPendienteRef.current = true
+  }
+
   /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
    * con un código que nunca pasó por `entradaEscaneo` — el buffer de teclado del modal "Venta
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
@@ -2460,7 +2538,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // Con instantánea y conexión la caja no espera a la red si la copia local puede responder: primero los combos de la
           // instantánea, después sus artículos, y solo si no conoce ninguno de los dos se le pregunta a la API.
           desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarSinRed)
-          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && buscarArticuloOffline(instantaneaDelPuntoVenta, entrada))) {
+          if (desenlace === 'sin_combo' && !(instantaneaDelPuntoVenta && resolverEscaneoOffline(instantaneaDelPuntoVenta, entrada).tipo !== 'noEncontrado')) {
             desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo, buscarEnLaApi)
           }
         } else {
@@ -2489,9 +2567,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
     // un código que no está (un artículo nuevo que todavía no sincronizó) va a buscarse online.
     if (instantaneaDelPuntoVenta) {
-      const desdeInstantanea = buscarArticuloOffline(instantaneaDelPuntoVenta, entrada)
-      if (desdeInstantanea) {
-        if (agregarEscaneado(desdeInstantanea)) {
+      const desenlace = agregarDesdeInstantanea(instantaneaDelPuntoVenta, entrada)
+      if (desenlace !== 'noEncontrado') {
+        if (desenlace === 'agregado') {
           setEntradaEscaneo('')
           setErrorEscaneo('')
         }
@@ -2504,7 +2582,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setEscaneando(true)
     setErrorEscaneo('')
     try {
-      const articulo = await clienteDeArticulos.escanear(entrada)
+      const articulo = await escanearEnElServidor(entrada)
       if (tokenEscaneoRef.current !== token) return
       if (agregarEscaneado(articulo)) setEntradaEscaneo('')
       focoPendienteRef.current = true
@@ -2517,13 +2595,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // para otro cliente este es su único fallback. Mismo mapeo `ArticuloEscaneado` que la
       // respuesta online, así `aLineaDeCarritoDesdeEscaneo` no necesita saber de dónde vino.
       if (e instanceof ErrorDeRed && sincronizacionOffline.instantanea) {
-        const desdeInstantanea = buscarArticuloOffline(sincronizacionOffline.instantanea, entrada)
-        if (desdeInstantanea) {
-          if (agregarEscaneado(desdeInstantanea)) setEntradaEscaneo('')
+        const desenlace = agregarDesdeInstantanea(sincronizacionOffline.instantanea, entrada)
+        if (desenlace === 'agregado') setEntradaEscaneo('')
+        if (desenlace !== 'noEncontrado') {
           focoPendienteRef.current = true
           return
         }
         setErrorEscaneo(conAvisoDeCombos('Sin conexión: no se encontró ese código en la última instantánea local.'))
+        return
+      }
+
+      // El importe que tipeó el cajero no es válido: el texto del servidor habla de punto decimal y acá la coma también vale.
+      if (e instanceof ErrorApi && e.codigo === 'importe_invalido') {
+        setErrorEscaneo(MENSAJE_DE_IMPORTE_INVALIDO)
         return
       }
 
@@ -2548,6 +2632,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
    * siempre, nunca este handler. */
   function agregarDesdeBusqueda(linea: ArticuloParaCarrito, cantidad: number) {
+    // Un artículo por importe no tiene precio sin el monto, y el buscador no lo pide: es la misma regla del escaneo a secas.
+    if (linea.unidadVenta === 'Importe' && linea.importe === undefined) {
+      setErrorEscaneo(mensajeDeImporteRequerido(linea.codigoInterno))
+      setBuscadorAbierto(false)
+      focoPendienteRef.current = true
+      return
+    }
     mutarCarrito({ tipo: 'escanear', linea, cantidad, idLinea: nuevoIdLinea() })
     setBuscadorAbierto(false)
     focoPendienteRef.current = true
@@ -2614,6 +2705,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     setVentaFinalizada(null)
   }
+
+  // F5 a F8 son los atajos de los artículos por importe. El comportamiento del navegador se evita SIEMPRE, mientras esta pantalla
+  // esté montada y haya o no artículo, modal abierto o modificadores: F5 (también con Ctrl o Shift) recarga la página y con ella se
+  // pierde el estado del POS, y F6/F7 mueven el foco o piden el modo cursor. Solo la tecla sola, sin repetición, agrega una línea.
+  // El listener se registra una vez y llama a la versión del render actual por un ref, para no depender de las compuertas.
+  const alAtajoDeImporteRef = useRef(agregarPorAtajo)
+  useEffect(() => {
+    alAtajoDeImporteRef.current = agregarPorAtajo
+  })
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (!esTeclaDeAtajo(evento.key)) return
+      evento.preventDefault()
+      if (evento.repeat || evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return
+      alAtajoDeImporteRef.current(evento.key)
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [])
 
   // F2 abre el buscador de artículos (spec pos-buscador-articulos) — solo con la venta libre
   // operable: nunca bajo `?idPresupuesto=` (carrito congelado, sin escaneo), nunca con el
@@ -2768,6 +2878,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
   // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
   const hayAjusteSinConfirmar = Object.keys(ajustesEnEdicion).length > 0
+  const lineasPorImporteObsoletas = instantaneaDelPuntoVenta ? lineasConImporteDeArticuloOrdinario(lineas, instantaneaDelPuntoVenta) : []
   const precondicionesListas = modoPresupuesto
     ? presupuesto !== null &&
       presupuesto.convertible &&
@@ -2783,6 +2894,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // sin él. Como `puedeCobrar` y el F9 cuelgan de esta condición, el botón "Cobrar" y el atajo
       // quedan inertes hasta que se confirma o se descarta.
       !hayAjusteSinConfirmar &&
+      lineasPorImporteObsoletas.length === 0 &&
       lineas.length > 0 &&
       lineas.every((l) => esCantidadValida(l.unidadVenta, l.cantidad)) &&
       clienteSeleccionado !== null &&
@@ -3743,7 +3855,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             )}
 
             {!modoPresupuesto && (
-              <div className="input-group mb-3">
+              <div className={`input-group ${atajosDeImporte.length > 0 ? 'mb-2' : 'mb-3'}`}>
                 <input
                   ref={inputEscaneoRef}
                   type="text"
@@ -3788,6 +3900,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   Buscar combo <sup aria-hidden="true">(F4)</sup>
                 </button>
+              </div>
+            )}
+            {/* Atajos de los artículos por importe: la tecla toma el importe tipeado en el campo de código (F5 a F8). */}
+            {!modoPresupuesto && atajosDeImporte.length > 0 && (
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                {atajosDeImporte.map((atajo) => (
+                  <button
+                    key={atajo.teclaAtajo}
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
+                    aria-keyshortcuts={atajo.teclaAtajo}
+                    onClick={() => agregarPorAtajo(atajo.teclaAtajo)}
+                  >
+                    {atajo.nombre} <sup aria-hidden="true">({atajo.teclaAtajo})</sup>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -3871,9 +4000,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                                 className={`form-control form-control-sm${cantidadInvalida(l) ? ' is-invalid' : ''}`}
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 aria-invalid={cantidadInvalida(l) || undefined}
-                                title={fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l))) ? MENSAJE_DE_CANTIDAD_ENTERA : undefined}
+                                title={
+                                  l.importe !== undefined
+                                    ? MENSAJE_DE_CANTIDAD_DE_IMPORTE
+                                    : fraccionaUnaUnidad(l.unidadVenta, Number(textoCantidad(l)))
+                                      ? MENSAJE_DE_CANTIDAD_ENTERA
+                                      : undefined
+                                }
                                 value={textoCantidad(l)}
-                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                                disabled={pantallaCobroInerte || bloqueadoPorTurno || l.importe !== undefined}
                                 onChange={(e) => cambiarCantidad(l.idLinea, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idLinea)}
                               />
@@ -4104,6 +4239,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             </div>
 
             {rechazoLocal && <div className="alert alert-warning py-1 px-2 small">{rechazoLocal.mensaje}</div>}
+
+            {lineasPorImporteObsoletas.length > 0 && (
+              <div className="alert alert-warning py-1 px-2 small" role="status">
+                {mensajeDeLineaPorImporteObsoleta(lineasPorImporteObsoletas[0].nombre)}
+              </div>
+            )}
 
             {hayAjusteSinConfirmar && (
               <div className="alert alert-warning py-1 px-2 small" role="status">

@@ -35,6 +35,9 @@ export type LineaCarrito = {
    * Ausente o `null` = línea sin ajuste. Un borrador guardado antes de que existiera el campo
    * restaura sin ajuste, sin necesitar migración. */
   ajusteManualPorcentaje?: number | null
+  /** Solo en una línea de un artículo por importe: el monto que el cajero tipeó, que es su precio unitario (la cantidad es
+   * siempre 1). Ausente en cualquier otra línea y en un borrador guardado antes de que existiera el campo. */
+  importe?: number
 }
 
 /** Datos de un artículo listo para agregarse al carrito: todo menos la identidad de la línea y
@@ -55,13 +58,18 @@ export type AccionCarrito =
  * Línea sobre la que sumaría un escaneo de `articulo`, o `null` si el escaneo abre una línea
  * nueva. Solo acumula un artículo con `acumulaEnVenta`, y siempre sobre la ÚLTIMA línea de ese
  * artículo: es la que el cajero acaba de ver crecer, y con el flag activo normalmente es la única.
+ * Una línea con importe nunca recibe cantidad: su cantidad es 1 aunque el artículo haya cambiado de unidad de venta.
  * Decide por el flag del escaneo entrante (dato fresco del catálogo), no por el de la línea ya
  * cargada.
  */
-export function idLineaDestinoDeEscaneo(lineas: readonly LineaCarrito[], articulo: Pick<ArticuloParaCarrito, 'idArticulo' | 'acumulaEnVenta'>): string | null {
-  if (!articulo.acumulaEnVenta) return null
+export function idLineaDestinoDeEscaneo(
+  lineas: readonly LineaCarrito[],
+  articulo: Pick<ArticuloParaCarrito, 'idArticulo' | 'acumulaEnVenta' | 'importe'>,
+): string | null {
+  // Un artículo por importe abre una línea por cada importe tipeado, sea cual sea su flag.
+  if (!articulo.acumulaEnVenta || articulo.importe !== undefined) return null
   for (let i = lineas.length - 1; i >= 0; i--) {
-    if (lineas[i].idArticulo === articulo.idArticulo) return lineas[i].idLinea
+    if (lineas[i].idArticulo === articulo.idArticulo && lineas[i].importe === undefined) return lineas[i].idLinea
   }
   return null
 }
@@ -70,7 +78,8 @@ export function idLineaDestinoDeEscaneo(lineas: readonly LineaCarrito[], articul
  * Único punto de mutación del carrito. `escanear` de un artículo que acumula y ya está en el
  * carrito SUMA la cantidad a su línea (spec: codigos-barra / "Re-scanning sums quantity instead
  * of duplicating the line"); un artículo que no acumula siempre agrega una línea nueva. El resto
- * de las acciones apunta a una sola línea por `idLinea`.
+ * de las acciones apunta a una sola línea por `idLinea`. La cantidad de una línea por importe no se edita: es 1
+ * y el importe se corrige quitando la línea y tipeándola de nuevo.
  *
  * El ajuste manual vive en la línea: re-escanear y editar la cantidad lo conservan (los dos
  * construyen sobre `...l`) y quitar la línea se lo lleva. `fijarAjusteManual` no valida el
@@ -98,7 +107,7 @@ export function reducirCarrito(lineas: LineaCarrito[], accion: AccionCarrito): L
     }
 
     case 'editarCantidad':
-      return lineas.map((l) => (l.idLinea === accion.idLinea ? { ...l, cantidad: accion.cantidad } : l))
+      return lineas.map((l) => (l.idLinea === accion.idLinea && l.importe === undefined ? { ...l, cantidad: accion.cantidad } : l))
 
     case 'quitarLinea':
       return lineas.filter((l) => l.idLinea !== accion.idLinea)
@@ -143,12 +152,17 @@ export function migrarLineasDeBorrador(
 ): { lineas: LineaCarrito[]; cantidadesEnEdicion: Record<string, string> } {
   const idPorArticuloMigrado = new Map<string, string>()
   const migradas = lineas.map((cruda) => {
-    const l = cruda as Omit<LineaCarrito, 'idLinea' | 'acumulaEnVenta'> & { idLinea?: unknown; acumulaEnVenta?: unknown }
+    const { importe, ...l } = cruda as Omit<LineaCarrito, 'idLinea' | 'acumulaEnVenta' | 'importe'> & {
+      idLinea?: unknown
+      acumulaEnVenta?: unknown
+      importe?: unknown
+    }
     const idLinea = typeof l.idLinea === 'string' && l.idLinea !== '' ? l.idLinea : null
     const linea: LineaCarrito = {
       ...l,
       idLinea: idLinea ?? generarId(),
       acumulaEnVenta: l.acumulaEnVenta !== false,
+      ...(typeof importe === 'number' && Number.isFinite(importe) ? { importe } : {}),
     }
     if (idLinea === null) idPorArticuloMigrado.set(String(l.idArticulo), linea.idLinea)
     return linea
