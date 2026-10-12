@@ -20,8 +20,15 @@ describe('filtroInicialDeLaUrl', () => {
     expect(filtroInicialDeLaUrl('?categoria=3&buscar=yerba')).toEqual({ buscar: 'yerba', idCategoria: 3 })
   })
 
-  it.each(['0', '-2', '1.5', 'abc', '', '3x', '99999999999'])('una categoría %j no es un id y se ignora', (valor) => {
-    expect(filtroInicialDeLaUrl(`?categoria=${valor}`).idCategoria).toBeNull()
+  it.each(['0', '-2', '1.5', 'abc', '', '3x', '99999999999', '3000000000', '2147483648'])(
+    'una categoría %j no es un id y se ignora',
+    (valor) => {
+      expect(filtroInicialDeLaUrl(`?categoria=${valor}`).idCategoria).toBeNull()
+    },
+  )
+
+  it('el mayor id de 32 bits todavía es una categoría', () => {
+    expect(filtroInicialDeLaUrl('?categoria=2147483647').idCategoria).toBe(2147483647)
   })
 
   it('una búsqueda de puros espacios se ignora y una muy larga se corta al tope del campo', () => {

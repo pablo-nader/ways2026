@@ -1,15 +1,23 @@
-/** Atención "24 hs", "24 horas", "24h", "24/7" o "24x7", con el 24 como número entero (no `124 hs` ni `10:24 hs`). */
-const PATRON_DE_VEINTICUATRO_HORAS = /(?:^|[^\d:.,])24\s*(?:hs?\b|horas?\b|\/\s*7|x\s*7)/i
+/**
+ * Textos que dicen, enteros y sin nada más, que se atiende las 24 horas: `24 hs`, `abierto las 24 horas`,
+ * `24/7`, `todos los días 24 hs`. Se compara el texto completo (no se busca un 24 suelto) porque cualquier
+ * otro dato lo contradice o lo acota: `9 a 24 hs`, `Lun a Sáb 24 hs, Dom cerrado`, `Guardia 24 hs`.
+ */
+const PATRON_DE_HORARIO_DE_VEINTICUATRO_HORAS =
+  /^(?:todos los d[ií]as[,:]?\s+)?(?:abierto\s+)?(?:(?:las\s+)?24\s*(?:hs|h|horas)|24\s*(?:\/|x)\s*7)(?:[,\s]+todos los d[ií]as)?$/
 
-/** Un cierre a las 24 (`8 a 24 hs`, `9-24`, `hasta las 24 hs`): cierra a medianoche, no atiende todo el día. */
-const PATRON_DE_RANGO_HASTA_24 = /(?:\d\s*(?:a|al|-|–|—)|hasta(?:\s+las)?)\s*24/i
-
-/** El horario dice que se atiende las 24 horas; un horario que solo llega hasta las 24 no lo dice. */
+/** Un horario que es, entero, una de las formas conocidas de "24 horas"; cualquier otro texto no se interpreta. */
 export function atiendeLasVeinticuatroHoras(horario: string): boolean {
-  return PATRON_DE_VEINTICUATRO_HORAS.test(horario) && !PATRON_DE_RANGO_HASTA_24.test(horario)
+  const normalizado = horario
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,;:!]+$/, '')
+
+  return PATRON_DE_HORARIO_DE_VEINTICUATRO_HORAS.test(normalizado)
 }
 
-/** Texto del sello de la portada: "Abierto 24 hs" si atiende todo el día; si no, el horario tal como lo cargó el comercio. */
+/** Texto del sello de la portada: "Abierto 24 hs" si el horario es solo eso; si no, el horario tal como lo cargó el comercio. */
 export function textoDelSello(horario: string): string {
   const texto = horario.trim()
 

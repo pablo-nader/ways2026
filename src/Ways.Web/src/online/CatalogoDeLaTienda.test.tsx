@@ -307,6 +307,13 @@ describe('catálogo de la tienda', () => {
       expect(llamadas()).toEqual([{ buscar: '', idCategoria: null, pagina: 1, tamano: 24 }])
     })
 
+    it('una categoría mayor que el id de 32 bits se ignora y no viaja al API', async () => {
+      abrirCon('?categoria=3000000000')
+      await verCatalogo()
+
+      expect(llamadas()).toEqual([{ buscar: '', idCategoria: null, pagina: 1, tamano: 24 }])
+    })
+
     it('sin parámetros el catálogo arranca sin filtros', async () => {
       await verCatalogo()
 
