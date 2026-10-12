@@ -31,6 +31,7 @@ Empresa | ofertas | id_empresa,id_tenant | marcado
 Empresa | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | parametros | id_empresa,id_tenant | marcado
+Empresa | personal | id_empresa,id_tenant | marcado
 Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | proveedores | id_empresa,id_tenant | marcado
 Empresa | puntos_venta | id_empresa,id_tenant | marcado
@@ -130,6 +131,7 @@ Tenant | ordenes_compra | id_tenant | marcado
 Tenant | pagos_comprobante | id_tenant | marcado
 Tenant | parametros | id_tenant | marcado
 Tenant | percepciones_comprobante_compra | id_tenant | marcado
+Tenant | personal | id_tenant | marcado
 Tenant | precios | id_tenant | marcado
 Tenant | presupuestos | id_tenant | marcado
 Tenant | proveedores | id_tenant | marcado
@@ -153,6 +155,7 @@ Usuario | movimientos_stock | id_empleado | sinmarca
 Usuario | movimientos_tesoreria | id_empleado | sinmarca
 Usuario | ordenes_compra | id_empleado | marcado
 Usuario | ordenes_compra | id_empleado_cierre | marcado
+Usuario | personal | id_usuario | marcado
 Usuario | presupuestos | id_empleado | marcado
 Usuario | remitos | id_empleado | marcado
 Usuario | turnos_caja | id_empleado_apertura | marcado

@@ -171,6 +171,14 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } =>
                 (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
 
+            // Backstop de los pre-chequeos de `ServicioDePersonal`: dos altas o ediciones
+            // concurrentes pueden pasar el chequeo y chocar recién en el índice parcial.
+            { SqlState: "23505", ConstraintName: "ux_personal_usuario" } =>
+                (StatusCodes.Status409Conflict, "Ese usuario ya está vinculado a otro personal.", "usuario_ya_vinculado"),
+
+            { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
+                (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
+
             // Mismo backstop que el de arriba, para la otra unicidad de `usuarios`
             // (`usuario` por tenant, ADR-7): la misma carrera entre el chequeo previo de
             // `ServicioDeUsuarios` y el `SaveChangesAsync` puede chocar acá.

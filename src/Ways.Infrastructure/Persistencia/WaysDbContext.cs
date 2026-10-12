@@ -23,6 +23,7 @@ using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Precios;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -73,6 +74,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // Application en su propio lote).
     public DbSet<Cliente> Clientes => Set<Cliente>();
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+    public DbSet<Personal> Personal => Set<Personal>();
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 

@@ -71,6 +71,7 @@ public static class EtiquetasDeTablas
             ["pagos_comprobante"] = "pagos",
             ["parametros"] = "parámetros",
             ["percepciones_comprobante_compra"] = "compras",
+            ["personal"] = "personal",
             ["precios"] = "precios",
             ["presupuestos"] = "presupuestos",
             ["proveedores"] = "proveedores",
