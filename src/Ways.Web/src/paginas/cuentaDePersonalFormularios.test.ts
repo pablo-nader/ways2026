@@ -4,8 +4,11 @@ import {
   aSolicitudDeHoras,
   aSolicitudDePago,
   avisoDeUbicacionDelPago,
+  avisoDeResultadoIncierto,
   deudaDeCliente,
-  etiquetaDeOrigen,
+  descripcionDeAjuste,
+  descripcionDeHoras,
+  descripcionDePago,
   etiquetaDeTipo,
   formularioDeAjusteVacio,
   formularioDeHorasVacio,
@@ -14,8 +17,10 @@ import {
   importeFirmadoDeAjuste,
   MAXIMO_DE_LINEAS,
   mediosOfrecidos,
+  parsearHoras,
   saldoTrasMovimiento,
   saldoTrasPago,
+  sanearTipeoDeHoras,
   textoDeLineaDeDesglose,
   textoDeSaldo,
   totalDelPago,
@@ -96,16 +101,17 @@ describe('aSolicitudDeHoras', () => {
 })
 
 describe('ajuste', () => {
-  const valido = { ...formularioDeAjusteVacio(HOY), importe: 100, detalle: 'Corrección de carga' }
+  const valido = { ...formularioDeAjusteVacio(HOY), sentido: 'aFavor' as const, importe: 100, detalle: 'Corrección de carga' }
 
-  it('arranca con hoy, a favor del empleado y sin importe', () => {
-    expect(formularioDeAjusteVacio(HOY)).toEqual({ fecha: HOY, sentido: 'aFavor', importe: null, detalle: '' })
+  it('arranca con hoy, sin sentido elegido y sin importe', () => {
+    expect(formularioDeAjusteVacio(HOY)).toEqual({ fecha: HOY, sentido: null, importe: null, detalle: '' })
   })
 
   it('el sentido pone el signo: a favor suma, en contra resta', () => {
     expect(importeFirmadoDeAjuste(valido)).toBe(100)
     expect(importeFirmadoDeAjuste({ ...valido, sentido: 'enContra' })).toBe(-100)
     expect(importeFirmadoDeAjuste({ ...valido, importe: null })).toBeNull()
+    expect(importeFirmadoDeAjuste({ ...valido, sentido: null })).toBeNull()
   })
 
   it('acepta un ajuste completo en cualquiera de los dos sentidos', () => {
@@ -117,8 +123,15 @@ describe('ajuste', () => {
     expect(validarAjuste({ ...valido, fecha: '' })?.campo).toBe('fecha')
   })
 
-  it.each([null, 0, -5])('rechaza el importe %s: el signo no se escribe, se elige', (importe) => {
-    expect(validarAjuste({ ...valido, importe })?.campo).toBe('importe')
+  it('exige elegir el sentido, con su propio mensaje, aunque el resto esté completo', () => {
+    expect(validarAjuste({ ...valido, sentido: null })).toEqual({
+      campo: 'sentido',
+      mensaje: 'Elegí si el ajuste es a favor o en contra del empleado.',
+    })
+  })
+
+  it.each([null, 0, -5])('rechaza el importe %s', (importe) => {
+    expect(validarAjuste({ ...valido, importe })).toEqual({ campo: 'importe', mensaje: 'Ingresá un importe mayor que cero.' })
   })
 
   it('exige un detalle de al menos cinco caracteres sin contar los espacios de los bordes', () => {
@@ -407,11 +420,6 @@ describe('etiquetas', () => {
     expect(etiquetaDeTipo('Ajuste')).toBe('Ajuste')
   })
 
-  it('traduce el origen de los fondos', () => {
-    expect(etiquetaDeOrigen('Tesoreria')).toBe('Tesorería')
-    expect(etiquetaDeOrigen('CajaTurno')).toBe('Cajón del turno')
-  })
-
   it('describe una línea del desglose con medio, importe, origen y referencia', () => {
     const base = {
       idGasto: 1,
@@ -422,12 +430,83 @@ describe('etiquetas', () => {
       referencia: null,
     }
 
-    expect(textoDeLineaDeDesglose(base)).toBe('Efectivo: $ 1.500,00 (Cajón del turno)')
+    expect(textoDeLineaDeDesglose(base)).toBe('Efectivo: $ 1.500,00 (Caja del turno)')
     expect(textoDeLineaDeDesglose({ ...base, referencia: 'op-7', origenFondos: 'Tesoreria' })).toBe(
-      'Efectivo: $ 1.500,00 (Tesorería), ref. op-7',
+      'Efectivo: $ 1.500,00 (Caja general), ref. op-7',
     )
     expect(textoDeLineaDeDesglose({ ...base, nombreMedioPago: null })).toBe(
-      'Medio de pago dado de baja: $ 1.500,00 (Cajón del turno)',
+      'Medio de pago dado de baja: $ 1.500,00 (Caja del turno)',
+    )
+  })
+})
+
+describe('sanearTipeoDeHoras y parsearHoras — las horas son una cantidad: "," y "." son decimales', () => {
+  it.each([
+    ['1.5', '1,5'],
+    ['1,5', '1,5'],
+    ['7.5', '7,5'],
+    ['8', '8'],
+    ['0,75', '0,75'],
+    ['.5', ',5'],
+    ['1,', '1,'],
+    ['', ''],
+  ])('"%s" se muestra como "%s"', (tipeado, esperado) => {
+    expect(sanearTipeoDeHoras(tipeado)).toBe(esperado)
+  })
+
+  it('recorta a dos decimales, deja un solo separador y descarta lo que no es dígito', () => {
+    expect(sanearTipeoDeHoras('1,234')).toBe('1,23')
+    expect(sanearTipeoDeHoras('1.2.3')).toBe('1,23')
+    expect(sanearTipeoDeHoras('1,2,3')).toBe('1,23')
+    expect(sanearTipeoDeHoras('a1-x,5')).toBe('1,5')
+  })
+
+  it.each([
+    ['1.5', 1.5],
+    ['1,5', 1.5],
+    ['7.5', 7.5],
+    ['8', 8],
+    ['0,75', 0.75],
+    ['.5', 0.5],
+    ['1,', 1],
+  ])('"%s" son %s horas', (texto, horas) => {
+    expect(parsearHoras(texto)).toBe(horas)
+  })
+
+  it.each(['', ',', '.', 'abc'])('"%s" todavía no es un número', (texto) => {
+    expect(parsearHoras(texto)).toBeNull()
+  })
+})
+
+describe('descripción y aviso de una escritura de resultado incierto', () => {
+  it('nombra la carga de horas con sus horas, el día y el importe', () => {
+    const f = { ...formularioDeHorasVacio('2026-10-01', 3500), horas: 7.5 }
+
+    expect(descripcionDeHoras(f)).toBe('carga de 7,50 horas del 01/10/2026 por $ 26.250,00')
+  })
+
+  it('nombra el ajuste con su día y su importe con signo', () => {
+    const f = { ...formularioDeAjusteVacio('2026-10-02'), sentido: 'enContra' as const, importe: 250 }
+
+    expect(descripcionDeAjuste(f)).toBe('ajuste del 02/10/2026 por -$ 250,00')
+    expect(descripcionDeAjuste({ ...f, sentido: 'aFavor' })).toBe('ajuste del 02/10/2026 por +$ 250,00')
+  })
+
+  it('nombra el pago con su día y el total de descuento y líneas', () => {
+    const f = { ...formularioDePagoVacio('2026-10-03'), descuento: 500, lineas: [{ clave: 1, idMedioPago: 4, importe: 6000, referencia: '' }] }
+
+    expect(descripcionDePago(f)).toBe('pago del 03/10/2026 por $ 6.500,00')
+  })
+
+  it('dice que no se pudo confirmar y manda a revisar los movimientos antes de volver a cargarla', () => {
+    expect(avisoDeResultadoIncierto('pago del 03/10/2026 por $ 6.500,00', true)).toBe(
+      'No se pudo confirmar si se registró esta operación: pago del 03/10/2026 por $ 6.500,00. Revisá los movimientos que se muestran abajo antes de volver a cargarla.',
+    )
+  })
+
+  it('si tampoco se pudo releer la cuenta, manda a recargar la pantalla', () => {
+    expect(avisoDeResultadoIncierto('pago del 03/10/2026 por $ 6.500,00', false)).toBe(
+      'No se pudo confirmar si se registró esta operación: pago del 03/10/2026 por $ 6.500,00. Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.',
     )
   })
 })

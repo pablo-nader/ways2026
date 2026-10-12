@@ -15,9 +15,10 @@ import type {
 } from './tipos'
 
 export type FiltrosDeCuentaDePersonal = {
-  /** `YYYY-MM-DD` o `''` (sin límite). */
+  /** `YYYY-MM-DD`. Vacío no pide "sin límite": el servidor aplica su default de un mes atrás, y la única
+   * forma de quitar el límite inferior es `historico`. */
   desde: string
-  /** `YYYY-MM-DD` o `''` (sin límite). */
+  /** `YYYY-MM-DD` o `''` (sin tope superior). */
   hasta: string
   historico: boolean
   pagina: number
@@ -30,8 +31,39 @@ export function filtrosDeCuentaDePersonalIniciales(ahora: Date = new Date()): Fi
   return { desde: rangoUltimoMes(ahora).desde, hasta: '', historico: false, pagina: 1, tamanio: 25 }
 }
 
+/** Los filtros con el rango EFECTIVO que aplicó el servidor: un "Desde" vacío se ve como la ventana de
+ * un mes que el servidor usó en su lugar. Con `historico` el servidor no devuelve rango y los filtros
+ * quedan como están. */
+export function conElRangoEfectivo(
+  filtros: FiltrosDeCuentaDePersonal,
+  respuesta: Pick<PaginaDeCuentaDePersonal, 'historico' | 'desde' | 'hasta'>,
+): FiltrosDeCuentaDePersonal {
+  if (respuesta.historico) return filtros
+
+  return { ...filtros, desde: respuesta.desde ?? '', hasta: respuesta.hasta ?? '' }
+}
+
+/** Ensancha el rango para que una fecha recién escrita figure en la tabla; `ampliado` dice si hubo que
+ * hacerlo. Con `historico`, o con un "Desde" vacío (el servidor decide el suyo), no hay nada que ensanchar. */
+export function ampliarRangoParaFecha(
+  filtros: FiltrosDeCuentaDePersonal,
+  fecha: string,
+): { filtros: FiltrosDeCuentaDePersonal; ampliado: boolean } {
+  if (filtros.historico) return { filtros, ampliado: false }
+
+  const antes = filtros.desde !== '' && fecha < filtros.desde
+  const despues = filtros.hasta !== '' && fecha > filtros.hasta
+  if (!antes && !despues) return { filtros, ampliado: false }
+
+  return {
+    filtros: { ...filtros, desde: antes ? fecha : filtros.desde, hasta: despues ? fecha : filtros.hasta },
+    ampliado: true,
+  }
+}
+
 /** El servidor recibe `DateOnly`: las fechas viajan planas, sin hora ni desplazamiento. Con `historico`
- * el rango no viaja, porque el servidor lo ignora. */
+ * el rango no viaja, porque el servidor lo ignora. Un límite vacío no viaja: sin `desde` el servidor
+ * aplica su default de un mes. */
 export function construirQueryDeCuentaDePersonal(filtros: FiltrosDeCuentaDePersonal): string {
   const parametros = new URLSearchParams()
 

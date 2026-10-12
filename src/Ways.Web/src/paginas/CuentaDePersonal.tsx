@@ -5,7 +5,9 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { clienteDeClientes } from '../api/clientes'
 import { fechaDeHoyParaPago } from '../api/compras'
 import {
+  ampliarRangoParaFecha,
   clienteDeCuentaDePersonal,
+  conElRangoEfectivo,
   filtrosDeCuentaDePersonalIniciales,
   type FiltrosDeCuentaDePersonal,
 } from '../api/cuentaDePersonal'
@@ -16,6 +18,7 @@ import type {
   MedioPagoAlta,
   MedioPagoListado,
   MovimientoDePersonal,
+  OrigenFondosGasto,
   PaginaDeCuentaDePersonal,
   PersonalListado,
 } from '../api/tipos'
@@ -27,11 +30,15 @@ import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { isoATexto } from '../formato/fechas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { ModalDeAjuste, ModalDeHoras, ModalDePago } from './CuentaDePersonalModales'
-import { errorDeEscritura, type Escritura } from './cuentaDePersonalErrores'
+import { desactualizaLaDeuda, errorDeEscritura, esRechazoCierto, type Escritura } from './cuentaDePersonalErrores'
 import {
   aSolicitudDeAjuste,
   aSolicitudDeHoras,
   aSolicitudDePago,
+  avisoDeResultadoIncierto,
+  descripcionDeAjuste,
+  descripcionDeHoras,
+  descripcionDePago,
   deudaDeCliente,
   etiquetaDeTipo,
   mediosOfrecidos,
@@ -50,12 +57,29 @@ import {
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
 const AVISO_REFRESCO_FALLIDO = 'Pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_SIN_MEDIOS = 'No se pudieron cargar todos los datos del pago: no se pueden agregar líneas de dinero.'
+const AVISO_SIN_EMPRESAS =
+  'No se pudieron cargar las empresas: no se puede pagar desde la caja general. El pago desde la caja del turno y el descuento siguen disponibles.'
 
 function moneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
+const notaDeRangoAmpliado = (fecha: string) => `Se amplió el rango del estado de cuenta para incluir el ${isoATexto(fecha)}.`
+
 type ModalAbierta = 'horas' | 'ajuste' | 'pago' | null
+
+/** Una escritura en curso: lo que la identifica ante el usuario y lo que la pantalla necesita saber de ella. */
+type Operacion = {
+  escritura: Escritura
+  /** Día del movimiento: el rango del estado de cuenta tiene que incluirlo para que la fila se vea. */
+  fecha: string
+  /** Cómo se nombra si no se puede confirmar si quedó registrada. */
+  descripcion: string
+  mensajeOk: string
+  /** Origen de fondos enviado, o `null` si la escritura no lleva dinero. */
+  origenDelPago: OrigenFondosGasto | null
+}
 
 function SinEmpleado() {
   return (
@@ -81,13 +105,21 @@ function SinEmpleado() {
  * el refresco posterior aterrizó, y la modal no se puede cerrar mientras tanto; por eso la respuesta propia de
  * la escritura no lleva generación: nada puede reemplazar ni reabrir lo que escribe y no navega. Un refresco
  * fallido nunca convierte en error una escritura ya confirmada.
+ *
+ * Las escrituras no llevan clave de idempotencia: reintentar a ciegas una que quizá se hizo puede registrar
+ * dos veces el mismo pago (y sus gastos, el egreso de caja o tesorería y el descuento al cliente). Por eso un
+ * resultado incierto (red cortada, cualquier 5xx) cierra la modal y descarta el formulario, relee la cuenta,
+ * el saldo y la deuda, y deja un aviso persistente (`avisoIncierto`, con su propio estado: es una
+ * precondición vigente que ninguna acción posterior borra) que manda a revisar los movimientos antes de
+ * volver a cargarla. Solo un rechazo cierto (4xx) deja la modal abierta con el error en su campo.
  */
 function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const { usuario } = useAuth()
   const esAdmin = usuario !== null && puedeGestionarCatalogos(usuario.rolId)
   const { puntoVenta } = usePuntoVenta()
 
-  const [hoy] = useState(() => fechaDeHoyParaPago())
+  /** El día de hoy que ve la modal abierta: se toma al abrirla, no al montar la pantalla. */
+  const [hoy, setHoy] = useState('')
   const [empleado, setEmpleado] = useState<PersonalListado | null>(null)
   const [errorEmpleado, setErrorEmpleado] = useState('')
   const [noEncontrado, setNoEncontrado] = useState(false)
@@ -103,11 +135,13 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
-  const [errorDeCatalogos, setErrorDeCatalogos] = useState('')
+  const [mediosFallaron, setMediosFallaron] = useState(false)
+  const [empresasFallaron, setEmpresasFallaron] = useState(false)
 
   const [modal, setModal] = useState<ModalAbierta>(null)
   const [errorDeModal, setErrorDeModal] = useState<ErrorDeCuenta | null>(null)
   const [aviso, setAviso] = useState('')
+  const [avisoIncierto, setAvisoIncierto] = useState('')
   const [escribiendo, setEscribiendo] = useState(false)
   const contenedorRef = useRef<HTMLDivElement>(null)
 
@@ -138,6 +172,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
         const resultado = await clienteDeCuentaDePersonal.obtener(idPersonal, pedidos)
         if (generacionDeLaCuenta.current !== token) return
         setCuenta(resultado)
+        setFiltros((previos) => conElRangoEfectivo(previos, resultado))
         setErrorCuenta('')
       } catch (e) {
         if (generacionDeLaCuenta.current !== token) return
@@ -180,11 +215,10 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   }, [idCliente, cargarDeuda])
 
   // Catálogos del pago. La empresa solo la elige el Admin (pagar de la tesorería); el Supervisor ni la pide.
+  // Cada catálogo que falla tiene su propia bandera: sin medios no hay líneas de dinero; sin empresas no se
+  // ofrece la tesorería, pero el cajón del turno y el descuento siguen funcionando.
   useEffect(() => {
     let vigente = true
-    const falla = () => {
-      if (vigente) setErrorDeCatalogos('No se pudieron cargar todos los datos del pago: no se pueden agregar líneas de dinero.')
-    }
 
     clienteMediosPago
       .listar(false)
@@ -194,7 +228,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
       .catch(() => {
         if (!vigente) return
         setMedios([])
-        falla()
+        setMediosFallaron(true)
       })
 
     if (esAdmin) {
@@ -206,7 +240,7 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
         .catch(() => {
           if (!vigente) return
           setEmpresas([])
-          falla()
+          setEmpresasFallaron(true)
         })
     }
 
@@ -221,20 +255,38 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
     void cargarCuenta(siguientes)
   }
 
-  /** El refresco va fuera del try/catch de la escritura: una escritura ya confirmada nunca se reporta fallida. */
-  async function refrescarTrasEscribir(mensajeOk: string) {
-    setAviso(mensajeOk)
-    const primera = { ...filtros, pagina: 1 }
+  /** Relee el estado de cuenta desde la primera página, con el rango ensanchado hasta el día de lo escrito, y la
+   * deuda del cliente. Va fuera del try/catch de la escritura y nunca lanza: `fallo` dice si alguna lectura falló. */
+  async function releerTrasEscribir(fecha: string) {
+    const { filtros: primera, ampliado } = ampliarRangoParaFecha({ ...filtros, pagina: 1 }, fecha)
     setFiltros(primera)
 
     const lecturas = await Promise.allSettled([
       cargarCuenta(primera, true),
       idCliente === null ? Promise.resolve() : cargarDeuda(idCliente, true),
     ])
-    if (lecturas.some((l) => l.status === 'rejected')) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+
+    return { ampliado, fallo: lecturas.some((l) => l.status === 'rejected') }
   }
 
-  async function escribir(escritura: Escritura, accion: () => Promise<MovimientoDePersonal>, mensajeOk: string) {
+  /** El rechazo dejó vieja la deuda o el cliente vinculado: se releen, así el tope del formulario se corrige. */
+  async function releerEmpleadoYDeuda() {
+    await Promise.all([cargarEmpleado(), idCliente === null ? Promise.resolve() : cargarDeuda(idCliente)])
+  }
+
+  /** El POST no se pudo dar por hecho ni por no hecho: la modal se cierra con su formulario, la cuenta se relee
+   * y queda el aviso persistente. Reabrir arranca de cero, así repetir la operación exige volver a cargarla. */
+  async function resolverResultadoIncierto(operacion: Operacion) {
+    setModal(null)
+    setAviso('')
+    setAvisoIncierto(avisoDeResultadoIncierto(operacion.descripcion, true))
+
+    const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
+    const nota = ampliado ? ` ${notaDeRangoAmpliado(operacion.fecha)}` : ''
+    setAvisoIncierto(`${avisoDeResultadoIncierto(operacion.descripcion, !fallo)}${nota}`)
+  }
+
+  async function escribir(operacion: Operacion, accion: () => Promise<MovimientoDePersonal>) {
     if (ocupadoRef.current) return
 
     ocupadoRef.current = true
@@ -244,13 +296,21 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
       try {
         await accion()
       } catch (e) {
-        setErrorDeModal(errorDeEscritura(e, escritura))
+        if (esRechazoCierto(e)) {
+          setErrorDeModal(errorDeEscritura(e, operacion.escritura, operacion.origenDelPago))
+          if (desactualizaLaDeuda(e)) await releerEmpleadoYDeuda()
+        } else {
+          await resolverResultadoIncierto(operacion)
+        }
 
         return
       }
 
       setModal(null)
-      await refrescarTrasEscribir(mensajeOk)
+      setAviso(operacion.mensajeOk)
+      const { ampliado, fallo } = await releerTrasEscribir(operacion.fecha)
+      const notas = [ampliado && notaDeRangoAmpliado(operacion.fecha), fallo && AVISO_REFRESCO_FALLIDO].filter(Boolean)
+      setAviso([operacion.mensajeOk, ...notas].join(' '))
     } finally {
       ocupadoRef.current = false
       setEscribiendo(false)
@@ -261,26 +321,48 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
     const rechazo = validarHoras(f)
     if (rechazo) return setErrorDeModal(rechazo)
 
-    void escribir('horas', () => clienteDeCuentaDePersonal.cargarHoras(idPersonal, aSolicitudDeHoras(f)), 'Horas cargadas.')
+    const operacion: Operacion = {
+      escritura: 'horas',
+      fecha: f.fecha,
+      descripcion: descripcionDeHoras(f),
+      mensajeOk: 'Horas cargadas.',
+      origenDelPago: null,
+    }
+    void escribir(operacion, () => clienteDeCuentaDePersonal.cargarHoras(idPersonal, aSolicitudDeHoras(f)))
   }
 
   function enviarAjuste(f: FormularioDeAjuste) {
     const rechazo = validarAjuste(f)
     if (rechazo) return setErrorDeModal(rechazo)
 
-    void escribir('ajuste', () => clienteDeCuentaDePersonal.registrarAjuste(idPersonal, aSolicitudDeAjuste(f)), 'Ajuste registrado.')
+    const operacion: Operacion = {
+      escritura: 'ajuste',
+      fecha: f.fecha,
+      descripcion: descripcionDeAjuste(f),
+      mensajeOk: 'Ajuste registrado.',
+      origenDelPago: null,
+    }
+    void escribir(operacion, () => clienteDeCuentaDePersonal.registrarAjuste(idPersonal, aSolicitudDeAjuste(f)))
   }
 
   function enviarPago(f: FormularioDePago, ctx: ContextoDePago) {
     const rechazo = validarPago(f, ctx)
     if (rechazo) return setErrorDeModal(rechazo)
 
-    void escribir('pago', () => clienteDeCuentaDePersonal.pagar(idPersonal, aSolicitudDePago(f, ctx)), 'Pago registrado.')
+    const operacion: Operacion = {
+      escritura: 'pago',
+      fecha: f.fecha,
+      descripcion: descripcionDePago(f),
+      mensajeOk: 'Pago registrado.',
+      origenDelPago: f.lineas.length > 0 && f.origen !== '' ? f.origen : null,
+    }
+    void escribir(operacion, () => clienteDeCuentaDePersonal.pagar(idPersonal, aSolicitudDePago(f, ctx)))
   }
 
   function abrir(cual: Exclude<ModalAbierta, null>) {
     setAviso('')
     setErrorDeModal(null)
+    setHoy(fechaDeHoyParaPago())
     setModal(cual)
   }
 
@@ -297,6 +379,8 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   const puedeEscribir = empleado !== null && cuenta !== null && !bloqueado
   const totalDePaginas = cuenta ? Math.max(1, Math.ceil(cuenta.total / cuenta.tamanio)) : 1
   const deudaDelCliente = saldoDelCliente === null || errorDeuda ? null : deudaDeCliente(saldoDelCliente)
+  const leyendoDeuda = hayClienteVigente && !errorDeuda && saldoDelCliente === null
+  const errorDeCatalogos = mediosFallaron ? AVISO_SIN_MEDIOS : empresasFallaron ? AVISO_SIN_EMPRESAS : ''
 
   const volver = (
     <Link
@@ -315,6 +399,11 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
   return (
     <div ref={contenedorRef} tabIndex={-1} style={{ outline: 'none' }} className="container-fluid py-4">
       <Box titulo={`Cuenta de ${cuenta?.encabezado.nombre ?? empleado?.nombre ?? 'personal'}`} variante="inverse" herramientas={volver}>
+        {avisoIncierto && (
+          <div role="alert" className="alert alert-warning border border-warning fw-semibold">
+            {avisoIncierto}
+          </div>
+        )}
         {aviso && <div className="alert alert-success">{aviso}</div>}
         {errorEmpleado && (
           <div className="alert alert-danger d-flex justify-content-between align-items-center">
@@ -456,10 +545,10 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
                 Página {cuenta.pagina} de {totalDePaginas} — {cuenta.total} movimiento(s)
               </span>
               <div className="d-flex gap-2">
-                <button type="button" className="btn btn-sm btn-outline-secondary" disabled={cuenta.pagina <= 1 || cargandoCuenta || bloqueado} onClick={() => cambiarFiltros({ pagina: filtros.pagina - 1 }, false)}>
+                <button type="button" className="btn btn-sm btn-outline-secondary" disabled={cuenta.pagina <= 1 || cargandoCuenta || bloqueado} onClick={() => cambiarFiltros({ pagina: cuenta.pagina - 1 }, false)}>
                   Anterior
                 </button>
-                <button type="button" className="btn btn-sm btn-outline-secondary" disabled={cuenta.pagina >= totalDePaginas || cargandoCuenta || bloqueado} onClick={() => cambiarFiltros({ pagina: filtros.pagina + 1 }, false)}>
+                <button type="button" className="btn btn-sm btn-outline-secondary" disabled={cuenta.pagina >= totalDePaginas || cargandoCuenta || bloqueado} onClick={() => cambiarFiltros({ pagina: cuenta.pagina + 1 }, false)}>
                   Siguiente
                 </button>
               </div>
@@ -500,8 +589,10 @@ function PantallaDeCuentaDePersonal({ idPersonal }: { idPersonal: number }) {
           puntoVenta={puntoVenta}
           nombreCliente={hayClienteVigente ? empleado.nombreCliente : null}
           deudaDelCliente={deudaDelCliente}
+          leyendoDeuda={leyendoDeuda}
           medios={medios ?? []}
           empresas={empresas ?? []}
+          ofreceTesoreria={esAdmin && !empresasFallaron}
           errorDeCatalogos={errorDeCatalogos}
           error={errorDeModal}
           escribiendo={escribiendo}

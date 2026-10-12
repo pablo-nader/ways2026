@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ErrorApi } from '../api/cliente'
-import { errorDeEscritura, type CampoDeCuenta } from './cuentaDePersonalErrores'
+import { desactualizaLaDeuda, errorDeEscritura, esRechazoCierto, type CampoDeCuenta } from './cuentaDePersonalErrores'
 
 function rechazo(estado: number, codigo: string, mensaje = 'Mensaje del servidor.') {
   return new ErrorApi(estado, codigo, mensaje)
@@ -27,7 +27,7 @@ describe('errorDeEscritura — por código, en el campo que corresponde', () => 
     ['pago_personal_empresa_no_aplica', 400, 'empresa'],
     ['pago_personal_punto_venta_requerido', 400, 'general'],
     ['turno_no_abierto', 409, 'origen'],
-    ['personal_sin_cliente_vinculado', 409, 'descuento'],
+    ['personal_sin_cliente_vinculado', 409, 'general'],
     ['descuento_supera_la_deuda', 409, 'descuento'],
     ['gasto_fecha_futura', 400, 'fecha'],
     ['gasto_medio_pago_cuenta_corriente_invalido', 400, 'lineas'],
@@ -54,10 +54,20 @@ describe('errorDeEscritura — por código, en el campo que corresponde', () => 
 })
 
 describe('errorDeEscritura — por estado', () => {
-  it('un 403 en el pago es la tesorería del Supervisor, en el origen', () => {
-    expect(errorDeEscritura(rechazo(403, 'prohibido'), 'pago')).toEqual({
+  it('un 403 en un pago de tesorería es la tesorería del Supervisor, en el origen', () => {
+    expect(errorDeEscritura(rechazo(403, 'prohibido'), 'pago', 'Tesoreria')).toEqual({
       campo: 'origen',
       mensaje: 'Pagar desde la tesorería requiere ser administrador.',
+    })
+  })
+
+  it.each([
+    ['el cajón del turno', 'CajaTurno'],
+    ['un pago sin líneas de dinero', null],
+  ] as const)('un 403 en un pago con %s no habla de la tesorería y va arriba del formulario', (_caso, origen) => {
+    expect(errorDeEscritura(rechazo(403, 'prohibido'), 'pago', origen)).toEqual({
+      campo: 'general',
+      mensaje: 'No tenés permiso para registrar esto.',
     })
   })
 
@@ -74,18 +84,6 @@ describe('errorDeEscritura — por estado', () => {
     expect(errorDeEscritura(rechazo(404, 'no_encontrado'), 'pago').mensaje).toContain('medio de pago')
   })
 
-  it('un commit ambiguo rinde el texto del servidor, que ya dice qué verificar', () => {
-    expect(errorDeEscritura(rechazo(503, 'resultado_incierto', 'Verificá la cuenta del empleado.'), 'pago')).toEqual({
-      campo: 'general',
-      mensaje: 'Verificá la cuenta del empleado.',
-    })
-  })
-
-  it('un 5xx sin texto útil, o un fallo que no es del servidor, no promete que no se escribió', () => {
-    expect(errorDeEscritura(rechazo(500, 'error', ''), 'pago').mensaje).toContain('estado de cuenta')
-    expect(errorDeEscritura(new Error('Failed to fetch'), 'horas').mensaje).toContain('estado de cuenta')
-  })
-
   it('un código desconocido de 4xx muestra el mensaje del servidor, o uno genérico si viene vacío', () => {
     expect(errorDeEscritura(rechazo(400, 'otro', ' Dato inválido. '), 'ajuste')).toEqual({
       campo: 'general',
@@ -96,5 +94,30 @@ describe('errorDeEscritura — por estado', () => {
 
   it('un código como "constructor" no resuelve contra el prototipo', () => {
     expect(errorDeEscritura(rechazo(400, 'constructor', 'Raro.'), 'horas').mensaje).toBe('Raro.')
+  })
+})
+
+describe('esRechazoCierto — qué escrituras se pueden dar por no hechas', () => {
+  it.each([400, 401, 403, 404, 409, 422])('un %i es un rechazo del servidor: la escritura no se hizo', (estado) => {
+    expect(esRechazoCierto(rechazo(estado, 'x'))).toBe(true)
+  })
+
+  it.each([500, 502, 503])('un %i no dice si el servidor llegó a escribir', (estado) => {
+    expect(esRechazoCierto(rechazo(estado, 'resultado_incierto'))).toBe(false)
+  })
+
+  it('un fallo sin respuesta (red cortada, tiempo agotado) tampoco lo dice', () => {
+    expect(esRechazoCierto(new Error('Failed to fetch'))).toBe(false)
+    expect(esRechazoCierto(undefined)).toBe(false)
+  })
+})
+
+describe('desactualizaLaDeuda', () => {
+  it.each(['descuento_supera_la_deuda', 'personal_sin_cliente_vinculado'])('%s deja vieja la deuda o el cliente', (codigo) => {
+    expect(desactualizaLaDeuda(rechazo(409, codigo))).toBe(true)
+  })
+
+  it('otros rechazos no piden releer nada', () => {
+    expect(desactualizaLaDeuda(rechazo(409, 'turno_no_abierto'))).toBe(false)
   })
 })

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import type { InputHTMLAttributes, ReactNode } from 'react'
+import { ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
 import type { EmpresaListado, MedioPagoListado, OrigenFondosGasto, PuntoVentaListado } from '../api/tipos'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { CampoFecha } from '../componentes/CampoFecha'
@@ -9,7 +10,6 @@ import { Modal } from '../componentes/Modal'
 import { formatearImporte } from '../formato/importes'
 import {
   avisoDeUbicacionDelPago,
-  etiquetaDeOrigen,
   formularioDeAjusteVacio,
   formularioDeHorasVacio,
   formularioDePagoVacio,
@@ -18,7 +18,9 @@ import {
   LONGITUD_MAXIMA_DE_DETALLE,
   LONGITUD_MAXIMA_DE_REFERENCIA,
   MAXIMO_DE_LINEAS,
+  parsearHoras,
   saldoTrasMovimiento,
+  sanearTipeoDeHoras,
   saldoTrasPago,
   textoDeSaldo,
   totalDelPago,
@@ -123,6 +125,31 @@ type PropsDeHoras = PropsComunes & {
   onEnviar: (f: FormularioDeHoras) => void
 }
 
+type PropsCampoDeHoras = Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & {
+  onChange: (horas: number | null) => void
+}
+
+/** Las horas son una cantidad, no un importe: tanto "," como "." son el separador decimal (`CampoImporte`
+ * descartaría el "." como si fuera de miles y "1.5" pasaría a ser 15 horas). Hasta dos decimales. */
+function CampoDeHoras({ onChange, className, ...resto }: PropsCampoDeHoras) {
+  const [texto, setTexto] = useState('')
+
+  return (
+    <input
+      {...resto}
+      type="text"
+      inputMode="decimal"
+      className={['text-end', className].filter(Boolean).join(' ')}
+      value={texto}
+      onChange={(e) => {
+        const saneado = sanearTipeoDeHoras(e.target.value)
+        setTexto(saneado)
+        onChange(parsearHoras(saneado))
+      }}
+    />
+  )
+}
+
 export function ModalDeHoras({ hoy, valorHoraInicial, onEnviar, onCambio, ...resto }: PropsDeHoras) {
   const [f, setF] = useState<FormularioDeHoras>(() => formularioDeHorasVacio(hoy, valorHoraInicial))
   const { error, escribiendo } = resto
@@ -142,7 +169,7 @@ export function ModalDeHoras({ hoy, valorHoraInicial, onEnviar, onCambio, ...res
       </div>
       <div className="col-md-4">
         <Campo id="horas-horas" etiqueta="Horas" error={error} campo="horas">
-          <CampoImporte id="horas-horas" autoFocus className={claseDeInput(error, 'horas')} valor={f.horas} disabled={escribiendo} onChange={(horas) => cambiar({ horas })} {...atributosDeError('horas-horas', error, 'horas')} />
+          <CampoDeHoras id="horas-horas" autoFocus className={claseDeInput(error, 'horas')} disabled={escribiendo} onChange={(horas) => cambiar({ horas })} {...atributosDeError('horas-horas', error, 'horas')} />
         </Campo>
       </div>
       <div className="col-md-4">
@@ -200,7 +227,7 @@ export function ModalDeAjuste({ hoy, saldo, onEnviar, onCambio, ...resto }: Prop
           <CampoFecha id="ajuste-fecha" className={claseDeInput(error, 'fecha')} value={f.fecha} disabled={escribiendo} onChange={(fecha) => cambiar({ fecha })} {...atributosDeError('ajuste-fecha', error, 'fecha')} />
         </Campo>
       </div>
-      <fieldset className="col-md-8">
+      <fieldset className="col-md-8" {...atributosDeError('ajuste-sentido', error, 'sentido')}>
         <legend className="form-label fs-6">Sentido del ajuste</legend>
         {SENTIDOS.map((s) => (
           <div className="form-check" key={s.valor}>
@@ -210,6 +237,11 @@ export function ModalDeAjuste({ hoy, saldo, onEnviar, onCambio, ...resto }: Prop
             </label>
           </div>
         ))}
+        {error?.campo === 'sentido' && (
+          <div id="ajuste-sentido-error" role="alert" className="invalid-feedback d-block">
+            {error.mensaje}
+          </div>
+        )}
       </fieldset>
       <div className="col-md-4">
         <Campo id="ajuste-importe" etiqueta="Importe" error={error} campo="importe">
@@ -240,9 +272,13 @@ type PropsDePago = PropsComunes & {
   nombreCliente: string | null
   /** Lo que el cliente debe hoy (nunca negativo) o `null` si no se pudo leer. */
   deudaDelCliente: number | null
+  /** La deuda todavía se está leyendo: distinto de "no se pudo leer" (`deudaDelCliente` es `null` en ambos). */
+  leyendoDeuda: boolean
   medios: MedioPagoListado[]
   /** Solo se carga para el Admin, el único que puede pagar de la tesorería. */
   empresas: EmpresaListado[]
+  /** La tesorería se ofrece solo al Admin y mientras haya podido leer las empresas: sin ellas no hay con qué pagar. */
+  ofreceTesoreria: boolean
   errorDeCatalogos: string
   onEnviar: (f: FormularioDePago, ctx: ContextoDePago) => void
 }
@@ -258,14 +294,16 @@ export function ModalDePago({
   puntoVenta,
   nombreCliente,
   deudaDelCliente,
+  leyendoDeuda,
   medios,
   empresas,
+  ofreceTesoreria,
   errorDeCatalogos,
   onEnviar,
   onCambio,
   ...resto
 }: PropsDePago) {
-  const [f, setF] = useState<FormularioDePago>(() => {
+  const [formulario, setF] = useState<FormularioDePago>(() => {
     const vacio = formularioDePagoVacio(hoy)
     const empresaDelPuntoVenta = empresas.find((e) => e.id === puntoVenta?.idEmpresa)
 
@@ -273,6 +311,8 @@ export function ModalDePago({
   })
   const [proximaClave, setProximaClave] = useState(1)
   const { error, escribiendo } = resto
+  // Si el empleado ya no tiene cliente vinculado el campo del descuento no se dibuja: lo que quedó cargado no cuenta.
+  const f = nombreCliente === null && formulario.descuento !== null ? { ...formulario, descuento: null } : formulario
 
   const ctx: ContextoDePago = {
     deudaDelCliente,
@@ -323,7 +363,8 @@ export function ModalDePago({
             <CampoImporte id="pago-descuento" className={claseDeInput(error, 'descuento')} valor={f.descuento} disabled={escribiendo || !puedeDescontar} onChange={(descuento) => cambiar({ descuento })} {...atributosDeError('pago-descuento', error, 'descuento')} />
           </Campo>
           <div className="form-text">
-            {!deudaLeida && 'No se pudo leer la deuda del cliente: recargá la pantalla para poder descontar.'}
+            {leyendoDeuda && 'Leyendo la deuda del cliente…'}
+            {!leyendoDeuda && !deudaLeida && 'No se pudo leer la deuda del cliente: recargá la pantalla para poder descontar.'}
             {deudaLeida && deudaDelCliente > 0 && `Deuda actual: ${moneda(deudaDelCliente)}. El descuento no mueve dinero.`}
             {deudaLeida && deudaDelCliente === 0 && 'El cliente no tiene deuda que descontar.'}
           </div>
@@ -374,8 +415,11 @@ export function ModalDePago({
             <Campo id="pago-origen" etiqueta="Origen del dinero" error={error} campo="origen">
               <select id="pago-origen" className={`form-select${error?.campo === 'origen' ? ' is-invalid' : ''}`} value={f.origen} disabled={escribiendo} onChange={(e) => cambiar({ origen: e.target.value as OrigenFondosGasto | '' })} {...atributosDeError('pago-origen', error, 'origen')}>
                 <option value="">Elegí de dónde sale el dinero…</option>
-                <option value="CajaTurno">{etiquetaDeOrigen('CajaTurno')}</option>
-                {esAdmin && <option value="Tesoreria">{etiquetaDeOrigen('Tesoreria')}</option>}
+                {ORIGENES_DE_FONDOS_GASTO.filter((o) => o.valor !== 'Tesoreria' || ofreceTesoreria).map((o) => (
+                  <option key={o.valor} value={o.valor}>
+                    {o.etiqueta}
+                  </option>
+                ))}
               </select>
             </Campo>
             {f.origen === 'CajaTurno' && (

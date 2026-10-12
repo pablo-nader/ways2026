@@ -198,14 +198,40 @@ function mockearRutas(rutas: Rutas = {}) {
   })
 }
 
+/** Un servidor que responde con el rango que le pidieron (o con la ventana de un mes si no hubo "desde") y con la
+ * página pedida, sobre los mismos movimientos de siempre. */
+function paginaSegunLaRuta(ruta: string, sobrescribir: Partial<PaginaDeCuentaDePersonal> = {}): PaginaDeCuentaDePersonal {
+  const query = new URLSearchParams(ruta.split('?')[1])
+  const historico = query.get('historico') === 'true'
+
+  return paginaDeCuenta({
+    historico,
+    desde: historico ? null : (query.get('desde') ?? VENTANA_POR_DEFECTO),
+    hasta: historico ? null : query.get('hasta'),
+    pagina: Number(query.get('pagina')),
+    ...sobrescribir,
+  })
+}
+
+/** El "desde" que aplica el servidor cuando la solicitud no trae uno. */
+const VENTANA_POR_DEFECTO = '2026-09-01'
+
 const lecturas = (prefijo: string) => apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith(prefijo))
 const lecturasDeCuenta = () => lecturas('/personal/1/cuenta')
 
 type Evento = ReturnType<typeof userEvent.setup>
 
-/** Espera al DATO (el nombre del empleado en el título y el saldo), no a un elemento que ya estaba. */
+/** Espera a los DATOS de los que dependen los botones, no a un elemento que ya estaba: un movimiento del
+ * estado de cuenta (`cuenta`) y el valor hora vigente del empleado (`empleado`). */
 async function esperarCuenta() {
   await screen.findByText('Turno mañana')
+  const valorHora = screen.getByText('Valor hora vigente').parentElement as HTMLElement
+  await within(valorHora).findByText('$ 3.500,00')
+}
+
+/** El sentido del ajuste no tiene un valor por defecto: cada test que envía un ajuste lo elige. */
+async function elegirSentido(evento: Evento, dialogo: HTMLElement, sentido: 'aFavor' | 'enContra') {
+  await evento.click(within(dialogo).getByLabelText(sentido === 'aFavor' ? /^A favor del empleado/ : /^En contra del empleado/))
 }
 
 /** Abre la modal esperando a que el botón se habilite: lo habilita la llegada de los catálogos. */
@@ -257,9 +283,9 @@ describe('CuentaDePersonal — lectura', () => {
 
     const pago = screen.getByText('Descuento de cuenta corriente: $ 500,00').closest('tr') as HTMLElement
     expect(within(pago).getByText('-$ 6.500,00')).toBeInTheDocument()
-    expect(within(pago).getByText('Efectivo: $ 6.000,00 (Cajón del turno)')).toBeInTheDocument()
+    expect(within(pago).getByText('Efectivo: $ 6.000,00 (Caja del turno)')).toBeInTheDocument()
     expect(
-      within(pago).getByText('Medio de pago dado de baja: $ 0,50 (Tesorería), ref. op-9'),
+      within(pago).getByText('Medio de pago dado de baja: $ 0,50 (Caja general), ref. op-9'),
     ).toBeInTheDocument()
   })
 
@@ -420,6 +446,50 @@ describe('CuentaDePersonal — filtros y paginación', () => {
     await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
   })
 
+  /** Cláusula bajo prueba: el paso parte de la página que se ve (`cuenta.pagina`), no de la pedida (`filtros.pagina`).
+   * Una por botón: cada uno lleva su propia resta o suma. */
+  it.each([
+    ['Siguiente', 'pagina=3&'],
+    ['Anterior', 'pagina=1&'],
+  ])('tras un cambio de página fallido, "%s" parte de la página que se ve y pide %s', async (boton, pedida) => {
+    let tercerasPedidas = 0
+    mockearRutas({
+      cuenta: (ruta) =>
+        ruta.includes('pagina=3') && ++tercerasPedidas === 1
+          ? Promise.reject(new ErrorApi(500, 'error', 'Se cayó la página tres.'))
+          : Promise.resolve(paginaSegunLaRuta(ruta, { total: 60 })),
+    })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Se cayó la página tres.')
+    expect(screen.getByText('Página 2 de 3 — 60 movimiento(s)')).toBeInTheDocument()
+
+    await evento.click(screen.getByRole('button', { name: boton }))
+
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toContain(pedida))
+  })
+
+  /** Cláusula bajo prueba: `conElRangoEfectivo`, que vuelca en los filtros el rango que el servidor aplicó. */
+  it('vaciar "Desde" muestra la ventana de un mes que aplicó el servidor, y el histórico sigue siendo la única forma de quitar el límite', async () => {
+    mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta)) })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+
+    await evento.clear(screen.getByLabelText('Desde'))
+
+    await waitFor(() => expect(screen.getByLabelText('Desde')).toHaveValue('01/09/2026'))
+    expect(lecturasDeCuenta().at(-1)?.[0]).toBe('/personal/1/cuenta?pagina=1&tamanio=25')
+
+    await evento.click(screen.getByLabelText('Ver histórico completo'))
+
+    await waitFor(() => expect(lecturasDeCuenta().at(-1)?.[0]).toBe('/personal/1/cuenta?historico=true&pagina=1&tamanio=25'))
+  })
+
   /** Cláusula bajo prueba: la generación de `cargarCuenta`. */
   it('una respuesta vieja que llega después de la nueva no pisa la pantalla', async () => {
     const vieja = diferido<PaginaDeCuentaDePersonal>()
@@ -459,8 +529,8 @@ describe('CuentaDePersonal — según el rol', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Agregar línea' }))
 
     const origen = within(dialogo).getByLabelText('Origen del dinero')
-    expect(within(origen).getByRole('option', { name: 'Tesorería' })).toBeInTheDocument()
-    expect(within(origen).getByRole('option', { name: 'Cajón del turno' })).toBeInTheDocument()
+    expect(within(origen).getByRole('option', { name: 'Caja general' })).toBeInTheDocument()
+    expect(within(origen).getByRole('option', { name: 'Caja del turno' })).toBeInTheDocument()
     expect(lecturas('/empresas')).toHaveLength(1)
   })
 
@@ -473,18 +543,32 @@ describe('CuentaDePersonal — según el rol', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Agregar línea' }))
 
     const origen = within(dialogo).getByLabelText('Origen del dinero')
-    expect(within(origen).queryByRole('option', { name: 'Tesorería' })).not.toBeInTheDocument()
-    expect(within(origen).getByRole('option', { name: 'Cajón del turno' })).toBeInTheDocument()
+    expect(within(origen).queryByRole('option', { name: 'Caja general' })).not.toBeInTheDocument()
+    expect(within(origen).getByRole('option', { name: 'Caja del turno' })).toBeInTheDocument()
     expect(lecturas('/empresas')).toHaveLength(0)
   })
 
-  it('el Supervisor sí puede cargar horas y registrar ajustes', async () => {
+  it('el Supervisor sí puede cargar horas y registrar ajustes: ambas requests salen con su rol', async () => {
     rolActual = ROL.Supervisor
+    apiPostMock.mockResolvedValue(MOV_HORAS)
+    const evento = userEvent.setup()
     renderCuenta()
     await esperarCuenta()
 
-    expect(screen.getByRole('button', { name: 'Cargar horas' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Ajuste manual' })).toBeEnabled()
+    const horas = await abrir(evento, 'Cargar horas')
+    await evento.type(within(horas).getByLabelText('Horas'), '8')
+    await evento.click(within(horas).getByRole('button', { name: 'Cargar horas' }))
+    await screen.findByText('Horas cargadas.')
+    expect(apiPostMock).toHaveBeenLastCalledWith('/personal/1/horas', { fecha: HOY, horas: 8, valorHora: 3500 })
+
+    const ajuste = await abrir(evento, 'Ajuste manual')
+    await elegirSentido(evento, ajuste, 'aFavor')
+    await evento.type(within(ajuste).getByLabelText('Importe'), '100')
+    await evento.type(within(ajuste).getByLabelText(/^Detalle/), 'Horas olvidadas')
+    await evento.click(within(ajuste).getByRole('button', { name: 'Registrar ajuste' }))
+    await screen.findByText('Ajuste registrado.')
+    expect(apiPostMock).toHaveBeenLastCalledWith('/personal/1/ajustes', { fecha: HOY, importe: 100, detalle: 'Horas olvidadas' })
+    expect(apiPostMock).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -517,12 +601,17 @@ describe('CuentaDePersonal — cargar horas', () => {
     expect(await screen.findByText('Horas cargadas.')).toBeInTheDocument()
   })
 
-  it('tras escribir refresca el estado de cuenta desde la primera página y la deuda del cliente', async () => {
+  /** Cláusula bajo prueba: `pagina: 1` del refresco posterior a una escritura. Se escribe parado en la página dos. */
+  it('tras escribir desde la página dos refresca el estado de cuenta desde la primera página y la deuda del cliente', async () => {
+    mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta, { total: 60 })) })
     apiPostMock.mockResolvedValue(MOV_HORAS)
     const evento = userEvent.setup()
     renderCuenta()
     await esperarCuenta()
     await screen.findByText('Deuda: $ 750,00')
+    await evento.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Página 2 de 3 — 60 movimiento(s)')
+    expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=2')
     const antesCuenta = lecturasDeCuenta().length
     const antesDeuda = lecturas('/clientes/21').length
     const dialogo = await abrir(evento, 'Cargar horas')
@@ -531,8 +620,40 @@ describe('CuentaDePersonal — cargar horas', () => {
     await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
 
     await screen.findByText('Horas cargadas.')
+    await screen.findByText('Página 1 de 3 — 60 movimiento(s)')
     expect(lecturasDeCuenta()).toHaveLength(antesCuenta + 1)
+    expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=1&')
     expect(lecturas('/clientes/21')).toHaveLength(antesDeuda + 1)
+  })
+
+  it.each([
+    ['1.5', '1,5', 1.5, '$ 5.250,00'],
+    ['1,5', '1,5', 1.5, '$ 5.250,00'],
+    ['7.5', '7,5', 7.5, '$ 26.250,00'],
+  ])('las horas "%s" se entienden como %s: el punto y la coma son decimales, no separador de miles', async (tipeado, mostrado, horas, importe) => {
+    apiPostMock.mockResolvedValue(MOV_HORAS)
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    const dialogo = await abrir(evento, 'Cargar horas')
+
+    await evento.type(within(dialogo).getByLabelText('Horas'), tipeado)
+
+    expect(within(dialogo).getByLabelText('Horas')).toHaveValue(mostrado)
+    expect(within(dialogo).getByText(`Importe: ${importe}`)).toBeInTheDocument()
+    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/personal/1/horas', { fecha: HOY, horas, valorHora: 3500 }))
+  })
+
+  it('un tercer decimal no se puede tipear', async () => {
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    const dialogo = await abrir(evento, 'Cargar horas')
+
+    await evento.type(within(dialogo).getByLabelText('Horas'), '1,234')
+
+    expect(within(dialogo).getByLabelText('Horas')).toHaveValue('1,23')
   })
 
   it('sin horas no llama a la API y marca el campo', async () => {
@@ -575,7 +696,7 @@ describe('CuentaDePersonal — cargar horas', () => {
     expect(
       await within(dialogo).findByText('Las horas deben ser mayores que 0 y hasta 24, con hasta dos decimales.'),
     ).toBeInTheDocument()
-    expect(within(dialogo).getByLabelText('Horas')).toHaveValue('8,00')
+    expect(within(dialogo).getByLabelText('Horas')).toHaveValue('8')
     expect(screen.queryByText('texto del servidor')).not.toBeInTheDocument()
   })
 
@@ -645,6 +766,7 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     await esperarCuenta()
 
     const ajuste = await abrir(evento, 'Ajuste manual')
+    await elegirSentido(evento, ajuste, 'aFavor')
     await evento.type(within(ajuste).getByLabelText('Importe'), '100')
     await evento.type(within(ajuste).getByLabelText(/^Detalle/), 'Corrección')
     const enviarAjuste = within(ajuste).getByRole('button', { name: 'Registrar ajuste' })
@@ -817,19 +939,6 @@ describe('CuentaDePersonal — esqueleto asíncrono de las escrituras', () => {
     await screen.findByRole('dialog', { name: 'Ajuste manual' })
     expect(screen.queryByText('Horas cargadas.')).not.toBeInTheDocument()
   })
-
-  it('un fallo de red en la escritura no promete que no se escribió', async () => {
-    apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
-    const evento = userEvent.setup()
-    renderCuenta()
-    const dialogo = await prepararCargaDeHoras(evento)
-
-    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
-
-    expect(
-      await within(dialogo).findByText('No se pudo confirmar el resultado: revisá el estado de cuenta antes de reintentar.'),
-    ).toBeInTheDocument()
-  })
 })
 
 describe('CuentaDePersonal — ajuste', () => {
@@ -839,14 +948,32 @@ describe('CuentaDePersonal — ajuste', () => {
     return abrir(evento, 'Ajuste manual')
   }
 
-  it('explica que así se corrige una carga equivocada y arranca con la fecha de hoy', async () => {
+  it('explica que así se corrige una carga equivocada y arranca con la fecha de hoy y sin sentido elegido', async () => {
     const evento = userEvent.setup()
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
     expect(within(dialogo).getByText(/una carga equivocada se corrige acá/)).toBeInTheDocument()
     expect(within(dialogo).getByLabelText('Fecha')).toHaveValue(HOY.split('-').reverse().join('/'))
-    expect(within(dialogo).getByLabelText(/^A favor del empleado/)).toBeChecked()
+    expect(within(dialogo).getByLabelText(/^A favor del empleado/)).not.toBeChecked()
+    expect(within(dialogo).getByLabelText(/^En contra del empleado/)).not.toBeChecked()
+  })
+
+  it('sin elegir el sentido se rechaza en el propio campo y no se llama a la API', async () => {
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirAjuste(evento)
+
+    await evento.type(within(dialogo).getByLabelText('Importe'), '100')
+    await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'Corrección')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await within(dialogo).findByText('Elegí si el ajuste es a favor o en contra del empleado.')).toBeInTheDocument()
+    expect(within(dialogo).getByRole('group', { name: 'Sentido del ajuste' })).toHaveAttribute('aria-invalid', 'true')
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    await elegirSentido(evento, dialogo, 'enContra')
+    expect(within(dialogo).queryByText('Elegí si el ajuste es a favor o en contra del empleado.')).not.toBeInTheDocument()
   })
 
   it('"en contra" manda el importe negativo y la vista previa baja el saldo', async () => {
@@ -855,7 +982,7 @@ describe('CuentaDePersonal — ajuste', () => {
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
-    await evento.click(within(dialogo).getByLabelText(/^En contra del empleado/))
+    await elegirSentido(evento, dialogo, 'enContra')
     await evento.type(within(dialogo).getByLabelText('Importe'), '250')
     expect(within(dialogo).getByText('Saldo después del ajuste: $ 11.750,00')).toBeInTheDocument()
     await evento.type(within(dialogo).getByLabelText(/^Detalle/), ' Corrección de una carga ')
@@ -876,6 +1003,7 @@ describe('CuentaDePersonal — ajuste', () => {
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
+    await elegirSentido(evento, dialogo, 'aFavor')
     await evento.type(within(dialogo).getByLabelText('Importe'), '100')
     await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'Horas olvidadas')
     await evento.click(within(dialogo).getByRole('button', { name: 'Registrar ajuste' }))
@@ -888,6 +1016,7 @@ describe('CuentaDePersonal — ajuste', () => {
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
+    await elegirSentido(evento, dialogo, 'aFavor')
     await evento.type(within(dialogo).getByLabelText('Importe'), '100')
     await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'abcd')
     await evento.click(within(dialogo).getByRole('button', { name: 'Registrar ajuste' }))
@@ -896,15 +1025,17 @@ describe('CuentaDePersonal — ajuste', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('sin importe se rechaza y se explica que el sentido se elige', async () => {
+  it('sin importe se rechaza en el campo del importe, ya con el sentido elegido', async () => {
     const evento = userEvent.setup()
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
+    await elegirSentido(evento, dialogo, 'aFavor')
     await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'Corrección')
     await evento.click(within(dialogo).getByRole('button', { name: 'Registrar ajuste' }))
 
-    expect(await within(dialogo).findByText(/elegí si es a favor o en contra/)).toBeInTheDocument()
+    expect(await within(dialogo).findByText('Ingresá un importe mayor que cero.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Importe')).toHaveAttribute('aria-invalid', 'true')
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
@@ -914,6 +1045,7 @@ describe('CuentaDePersonal — ajuste', () => {
     renderCuenta()
     const dialogo = await abrirAjuste(evento)
 
+    await elegirSentido(evento, dialogo, 'aFavor')
     await evento.type(within(dialogo).getByLabelText('Importe'), '100')
     await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'Corrección')
     await evento.click(within(dialogo).getByRole('button', { name: 'Registrar ajuste' }))
@@ -1166,10 +1298,8 @@ describe('CuentaDePersonal — pago', () => {
   })
 
   it.each([
-    ['prohibido', 403, 'origen', 'Pagar desde la tesorería requiere ser administrador.'],
     ['turno_no_abierto', 409, 'origen', 'No hay un turno abierto en el punto de venta de la sesión. Abrí el turno desde Caja y volvé a intentar.'],
-    ['personal_sin_cliente_vinculado', 409, 'descuento', 'El empleado no tiene un cliente vinculado vigente para descontar de su cuenta corriente.'],
-    ['descuento_supera_la_deuda', 409, 'descuento', 'El descuento supera la deuda actual del cliente vinculado. Actualizá la pantalla.'],
+    ['descuento_supera_la_deuda', 409, 'descuento', 'El descuento supera la deuda actual del cliente vinculado. Revisá la deuda que muestra este formulario.'],
   ])('el rechazo %s (%i) se muestra en el campo %s', async (codigo, estado, campo, mensaje) => {
     apiPostMock.mockRejectedValue(new ErrorApi(estado, codigo, 'texto del servidor'))
     const evento = userEvent.setup()
@@ -1224,5 +1354,439 @@ describe('CuentaDePersonal — pago', () => {
 
     expect(await screen.findByText('$ 5.500,00')).toBeInTheDocument()
     expect(lecturas('/clientes/21')).toHaveLength(2)
+  })
+
+  /** Cláusulas bajo prueba: el `pidePuntoVenta` del descuento con tesorería y la regla de empresa con descuento. */
+  it('tesorería con descuento: manda el descuento, la empresa del punto de venta y el punto de venta; con otra empresa no sale', async () => {
+    apiPostMock.mockResolvedValue(MOV_PAGO)
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '500')
+    await agregarLinea(evento, dialogo, 1, '4', '6000')
+    await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'Tesoreria')
+    await evento.selectOptions(within(dialogo).getByLabelText('Empresa que paga'), '3')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(
+      await within(dialogo).findByText('Con descuento de cuenta corriente, la empresa tiene que ser la del punto de venta de la sesión.'),
+    ).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Empresa que paga')).toHaveAttribute('aria-invalid', 'true')
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    await evento.selectOptions(within(dialogo).getByLabelText('Empresa que paga'), '2')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/personal/1/pagos', {
+        fecha: HOY,
+        descuentoDeCuentaCorriente: 500,
+        origenFondos: 'Tesoreria',
+        lineas: [{ idMedioPago: 4, importe: 6000 }],
+        idEmpresa: 2,
+        idPuntoVenta: 9,
+      }),
+    )
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('si solo fallan las empresas no ofrece la caja general, lo dice, y el pago desde la caja del turno sigue funcionando', async () => {
+    mockearRutas({ empresas: () => Promise.reject(new ErrorApi(500, 'error', 'x')) })
+    apiPostMock.mockResolvedValue(MOV_PAGO)
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    expect(
+      within(dialogo).getByText(
+        'No se pudieron cargar las empresas: no se puede pagar desde la caja general. El pago desde la caja del turno y el descuento siguen disponibles.',
+      ),
+    ).toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Agregar línea' })).toBeEnabled()
+    await agregarLinea(evento, dialogo, 1, '4', '1000')
+    const origen = within(dialogo).getByLabelText('Origen del dinero')
+    expect(within(origen).queryByRole('option', { name: 'Caja general' })).not.toBeInTheDocument()
+    await evento.selectOptions(origen, 'CajaTurno')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/personal/1/pagos', {
+        fecha: HOY,
+        origenFondos: 'CajaTurno',
+        idPuntoVenta: 9,
+        lineas: [{ idMedioPago: 4, importe: 1000 }],
+      }),
+    )
+  })
+
+  it('un 403 de un pago de tesorería se explica en el origen', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'texto del servidor'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    await agregarLinea(evento, dialogo, 1, '4', '1000')
+    await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'Tesoreria')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await within(dialogo).findByText('Pagar desde la tesorería requiere ser administrador.')).toBeInTheDocument()
+    expect(within(dialogo).getByLabelText('Origen del dinero')).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  /** Cláusula bajo prueba: el 403 solo va al origen cuando el origen enviado fue la tesorería. */
+  it.each([
+    ['con el cajón del turno', async (evento: Evento, dialogo: HTMLElement) => {
+      await agregarLinea(evento, dialogo, 1, '4', '1000')
+      await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'CajaTurno')
+    }],
+    ['solo con descuento, sin campo de origen', async (evento: Evento, dialogo: HTMLElement) => {
+      await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '100')
+    }],
+  ])('un 403 de un pago %s va arriba del formulario, sin hablar de la tesorería', async (_caso, preparar) => {
+    apiPostMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'texto del servidor'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    await preparar(evento, dialogo)
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await within(dialogo).findByText('No tenés permiso para registrar esto.')).toBeInTheDocument()
+    expect(within(dialogo).queryByText('Pagar desde la tesorería requiere ser administrador.')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByLabelText('Origen del dinero')?.getAttribute('aria-invalid')).not.toBe('true')
+  })
+
+  /** Cláusula bajo prueba: `desactualizaLaDeuda` en `escribir`, que relee al empleado y la deuda tras el rechazo. */
+  it('si el descuento supera la deuda, la deuda se relee: el formulario muestra la nueva y su tope', async () => {
+    let lecturasDeDeuda = 0
+    mockearRutas({ cliente: () => Promise.resolve(cliente(++lecturasDeDeuda === 1 ? 750 : 300)) })
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'descuento_supera_la_deuda', 'texto del servidor'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+    const antesEmpleado = lecturas('/personal/1').filter((c) => c[0] === '/personal/1').length
+
+    await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '700')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(
+      await within(dialogo).findByText('El descuento supera la deuda actual del cliente vinculado. Revisá la deuda que muestra este formulario.'),
+    ).toBeInTheDocument()
+    expect(await within(dialogo).findByText('Deuda actual: $ 300,00. El descuento no mueve dinero.')).toBeInTheDocument()
+    expect(lecturas('/personal/1').filter((c) => c[0] === '/personal/1')).toHaveLength(antesEmpleado + 1)
+    expect(screen.getByRole('dialog', { name: 'Registrar pago' })).toBeInTheDocument()
+
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await within(dialogo).findByText('El descuento no puede superar la deuda del cliente ($ 300,00).')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('si el empleado ya no tiene cliente vinculado, se relee al empleado: el descuento desaparece y no viaja', async () => {
+    let lecturasDelEmpleado = 0
+    mockearRutas({
+      empleado: () =>
+        Promise.resolve(++lecturasDelEmpleado === 1 ? empleadoBase() : empleadoBase({ idCliente: null, nombreCliente: null })),
+    })
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'personal_sin_cliente_vinculado', 'texto del servidor'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await abrirPago(evento)
+
+    await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '100')
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(
+      await within(dialogo).findByText(
+        'El empleado no tiene un cliente vinculado vigente para descontar de su cuenta corriente. Sacá el descuento o revisá el cliente vinculado.',
+      ),
+    ).toBeInTheDocument()
+    await waitFor(() => expect(within(dialogo).queryByLabelText(/Descuento de la cuenta corriente/)).not.toBeInTheDocument())
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+
+    await evento.click(within(dialogo).getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await within(dialogo).findByText('Cargá un descuento de cuenta corriente o al menos una línea de dinero.')).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: `leyendoDeuda`. Con la lectura en vuelo la deuda es `null`, igual que si hubiera fallado. */
+  it('con la deuda todavía leyéndose, el formulario no dice que no se pudo leer', async () => {
+    const lectura = diferido<ClienteListado>()
+    mockearRutas({ cliente: () => lectura.promesa })
+    const evento = userEvent.setup()
+    renderCuenta()
+    await esperarCuenta()
+    const dialogo = await abrir(evento, 'Registrar pago')
+
+    expect(within(dialogo).getByText('Leyendo la deuda del cliente…')).toBeInTheDocument()
+    expect(within(dialogo).queryByText(/No se pudo leer la deuda del cliente/)).not.toBeInTheDocument()
+    expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toBeDisabled()
+
+    await act(async () => {
+      lectura.resolver(cliente(750))
+      await lectura.promesa
+    })
+
+    expect(await within(dialogo).findByText('Deuda actual: $ 750,00. El descuento no mueve dinero.')).toBeInTheDocument()
+    expect(within(dialogo).queryByText('Leyendo la deuda del cliente…')).not.toBeInTheDocument()
+    expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toBeEnabled()
+  })
+})
+
+describe('CuentaDePersonal — el día de hoy se toma al abrir la modal', () => {
+  /** Cláusula bajo prueba: `setHoy` en `abrir`. Una por modal: cada una recibe `hoy` por su cuenta. */
+  it.each([
+    ['Cargar horas', 'Día trabajado'],
+    ['Ajuste manual', 'Fecha'],
+    ['Registrar pago', 'Fecha del pago'],
+  ])('"%s" arranca con el día en que se abre, no con el del montaje, aunque cruce la medianoche', async (boton, etiqueta) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(2026, 9, 12, 23, 59, 0))
+      const evento = userEvent.setup()
+      renderCuenta()
+      await esperarCuenta()
+
+      vi.setSystemTime(new Date(2026, 9, 13, 0, 1, 0))
+      const dialogo = await abrir(evento, boton)
+
+      expect(within(dialogo).getByLabelText(etiqueta)).toHaveValue('13/10/2026')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('CuentaDePersonal — una escritura de resultado incierto', () => {
+  const FECHA_DE_HOY = HOY.split('-').reverse().join('/')
+  /** Una fecha anterior a cualquier "desde" por defecto: la fila nueva quedaría fuera del rango activo. */
+  const FECHA_VIEJA = { tipeada: '15012020', iso: '2020-01-15', texto: '15/01/2020' }
+
+  type Escritor = {
+    nombre: string
+    boton: string
+    envio: string
+    etiquetaDeFecha: string
+    /** Completa una operación entera en la modal ya abierta. */
+    cargar: (evento: Evento, dialogo: HTMLElement) => Promise<void>
+    descripcion: (fechaTexto: string) => string
+    /** Lo que se afirma sobre una modal recién reabierta: nada de lo cargado antes sobrevive. */
+    estaVacia: (dialogo: HTMLElement) => void
+  }
+
+  const ESCRITORES: Escritor[] = [
+    {
+      nombre: 'cargar horas',
+      boton: 'Cargar horas',
+      envio: 'Cargar horas',
+      etiquetaDeFecha: 'Día trabajado',
+      cargar: async (evento, dialogo) => {
+        await evento.type(within(dialogo).getByLabelText('Horas'), '7,5')
+      },
+      descripcion: (fecha) => `carga de 7,50 horas del ${fecha} por $ 26.250,00`,
+      estaVacia: (dialogo) => {
+        expect(within(dialogo).getByLabelText('Horas')).toHaveValue('')
+      },
+    },
+    {
+      nombre: 'ajuste',
+      boton: 'Ajuste manual',
+      envio: 'Registrar ajuste',
+      etiquetaDeFecha: 'Fecha',
+      cargar: async (evento, dialogo) => {
+        await elegirSentido(evento, dialogo, 'enContra')
+        await evento.type(within(dialogo).getByLabelText('Importe'), '250')
+        await evento.type(within(dialogo).getByLabelText(/^Detalle/), 'Corrección de una carga')
+      },
+      descripcion: (fecha) => `ajuste del ${fecha} por -$ 250,00`,
+      estaVacia: (dialogo) => {
+        expect(within(dialogo).getByLabelText('Importe')).toHaveValue('')
+        expect(within(dialogo).getByLabelText(/^En contra del empleado/)).not.toBeChecked()
+      },
+    },
+    {
+      nombre: 'pago',
+      boton: 'Registrar pago',
+      envio: 'Registrar pago',
+      etiquetaDeFecha: 'Fecha del pago',
+      cargar: async (evento, dialogo) => {
+        await evento.type(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/), '500')
+        await evento.click(within(dialogo).getByRole('button', { name: 'Agregar línea' }))
+        await evento.selectOptions(within(dialogo).getByLabelText('Medio de pago de la línea 1'), '4')
+        await evento.type(within(dialogo).getByLabelText('Importe de la línea 1'), '6000')
+        await evento.selectOptions(within(dialogo).getByLabelText('Origen del dinero'), 'CajaTurno')
+      },
+      descripcion: (fecha) => `pago del ${fecha} por $ 6.500,00`,
+      estaVacia: (dialogo) => {
+        expect(within(dialogo).getByLabelText(/^Descuento de la cuenta corriente/)).toHaveValue('')
+        expect(within(dialogo).queryByLabelText('Medio de pago de la línea 1')).not.toBeInTheDocument()
+      },
+    },
+  ]
+
+  const avisoIncierto = (descripcion: string) =>
+    `No se pudo confirmar si se registró esta operación: ${descripcion}. Revisá los movimientos que se muestran abajo antes de volver a cargarla.`
+
+  /** La cuenta que ve el usuario antes del POST y la que ve cuando se relee: el saldo cambia. */
+  function cuentaQueSeReleeConOtroSaldo() {
+    let lecturasHechas = 0
+    mockearRutas({
+      cuenta: (ruta) =>
+        Promise.resolve(
+          paginaSegunLaRuta(ruta, ++lecturasHechas === 1 ? {} : { encabezado: { idPersonal: 1, nombre: 'Ana Gómez', saldo: 9000 } }),
+        ),
+    })
+  }
+
+  async function prepararEscritura(evento: Evento, escritor: Escritor, fecha?: string) {
+    await esperarCuenta()
+    await screen.findByText('Deuda: $ 750,00')
+    const dialogo = await abrir(evento, escritor.boton)
+    if (fecha) {
+      await evento.clear(within(dialogo).getByLabelText(escritor.etiquetaDeFecha))
+      await evento.type(within(dialogo).getByLabelText(escritor.etiquetaDeFecha), fecha)
+    }
+    await escritor.cargar(evento, dialogo)
+
+    return dialogo
+  }
+
+  /** Cláusula bajo prueba: la rama de resultado incierto de `escribir`. Una por escritura: cada una arma su descripción. */
+  it.each(ESCRITORES)('$nombre: un fallo de red cierra la modal, relee la cuenta y avisa sin confirmar, con la operación a la vista', async (escritor) => {
+    cuentaQueSeReleeConOtroSaldo()
+    apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const antesCuenta = () => lecturasDeCuenta().length
+    const dialogo = await prepararEscritura(evento, escritor)
+    const cuentaAntes = antesCuenta()
+    const deudaAntes = lecturas('/clientes/21').length
+
+    await evento.click(within(dialogo).getByRole('button', { name: escritor.envio }))
+
+    const aviso = await screen.findByText(avisoIncierto(escritor.descripcion(FECHA_DE_HOY)))
+    expect(aviso).toHaveClass('alert-warning')
+    expect(aviso).not.toHaveClass('alert-success')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(await screen.findByText('$ 9.000,00')).toBeInTheDocument()
+    expect(lecturasDeCuenta()).toHaveLength(cuentaAntes + 1)
+    expect(lecturasDeCuenta().at(-1)?.[0]).toContain('pagina=1&')
+    expect(lecturas('/clientes/21')).toHaveLength(deudaAntes + 1)
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+
+    const reabierta = await abrir(evento, escritor.boton)
+    escritor.estaVacia(reabierta)
+    expect(screen.getByText(avisoIncierto(escritor.descripcion(FECHA_DE_HOY)))).toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['un 500', new ErrorApi(500, 'error', 'Se cayó.')],
+    ['un 503 resultado_incierto', new ErrorApi(503, 'resultado_incierto', 'Verificá la cuenta del empleado.')],
+  ])('%s también es incierto: cierra la modal y avisa, sin mostrar el texto del servidor en un formulario', async (_caso, fallo) => {
+    cuentaQueSeReleeConOtroSaldo()
+    apiPostMock.mockRejectedValue(fallo)
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await prepararEscritura(evento, ESCRITORES[0])
+
+    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+    expect(await screen.findByText(avisoIncierto(ESCRITORES[0].descripcion(FECHA_DE_HOY)))).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Verificá la cuenta del empleado.')).not.toBeInTheDocument()
+  })
+
+  it('si la relectura también falla, el aviso lo dice y manda a recargar la pantalla', async () => {
+    let lecturasHechas = 0
+    mockearRutas({
+      cuenta: (ruta) =>
+        ++lecturasHechas === 1 ? Promise.resolve(paginaSegunLaRuta(ruta)) : Promise.reject(new ErrorApi(500, 'error', 'Se cayó la cuenta.')),
+    })
+    apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await prepararEscritura(evento, ESCRITORES[0])
+
+    await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+    const aviso = await screen.findByText(
+      `No se pudo confirmar si se registró esta operación: ${ESCRITORES[0].descripcion(FECHA_DE_HOY)}. Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.`,
+    )
+    expect(aviso).toHaveClass('alert-warning')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: solo un 4xx deja la modal abierta; el incierto no. Una por escritura. */
+  it.each(ESCRITORES)('$nombre: un rechazo cierto (400) deja la modal abierta con el error en su campo y no relee ni avisa de incertidumbre', async (escritor) => {
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'fecha_requerida', 'x'))
+    const evento = userEvent.setup()
+    renderCuenta()
+    const dialogo = await prepararEscritura(evento, escritor)
+    const cuentaAntes = lecturasDeCuenta().length
+
+    await evento.click(within(dialogo).getByRole('button', { name: escritor.envio }))
+
+    expect(await within(dialogo).findByText('Ingresá la fecha.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.queryByText(/No se pudo confirmar/)).not.toBeInTheDocument()
+    expect(lecturasDeCuenta()).toHaveLength(cuentaAntes)
+  })
+
+  describe('el movimiento cae fuera del rango activo', () => {
+    function servidorQueEcoaElRango() {
+      mockearRutas({ cuenta: (ruta) => Promise.resolve(paginaSegunLaRuta(ruta)) })
+    }
+
+    /** Cláusula bajo prueba: `ampliarRangoParaFecha` tras una escritura confirmada. */
+    it('con una escritura confirmada, ensancha el "desde" hasta esa fecha, relee con ese rango y lo dice en el aviso', async () => {
+      servidorQueEcoaElRango()
+      apiPostMock.mockResolvedValue(MOV_HORAS)
+      const evento = userEvent.setup()
+      renderCuenta()
+      const dialogo = await prepararEscritura(evento, ESCRITORES[0], FECHA_VIEJA.tipeada)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+      expect(
+        await screen.findByText(`Horas cargadas. Se amplió el rango del estado de cuenta para incluir el ${FECHA_VIEJA.texto}.`),
+      ).toBeInTheDocument()
+      expect(lecturasDeCuenta().at(-1)?.[0]).toBe(`/personal/1/cuenta?desde=${FECHA_VIEJA.iso}&pagina=1&tamanio=25`)
+      expect(screen.getByLabelText('Desde')).toHaveValue(FECHA_VIEJA.texto)
+    })
+
+    it('con un resultado incierto, la relectura incluye también la fecha cargada y el aviso lo dice', async () => {
+      servidorQueEcoaElRango()
+      apiPostMock.mockRejectedValue(new Error('Failed to fetch'))
+      const evento = userEvent.setup()
+      renderCuenta()
+      const dialogo = await prepararEscritura(evento, ESCRITORES[0], FECHA_VIEJA.tipeada)
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+      expect(
+        await screen.findByText(
+          `${avisoIncierto(ESCRITORES[0].descripcion(FECHA_VIEJA.texto))} Se amplió el rango del estado de cuenta para incluir el ${FECHA_VIEJA.texto}.`,
+        ),
+      ).toBeInTheDocument()
+      expect(lecturasDeCuenta().at(-1)?.[0]).toBe(`/personal/1/cuenta?desde=${FECHA_VIEJA.iso}&pagina=1&tamanio=25`)
+    })
+
+    it('una fecha dentro del rango no lo toca ni lo menciona', async () => {
+      servidorQueEcoaElRango()
+      apiPostMock.mockResolvedValue(MOV_HORAS)
+      const evento = userEvent.setup()
+      renderCuenta()
+      const dialogo = await prepararEscritura(evento, ESCRITORES[0])
+      const desdeAntes = (screen.getByLabelText('Desde') as HTMLInputElement).value
+
+      await evento.click(within(dialogo).getByRole('button', { name: 'Cargar horas' }))
+
+      expect(await screen.findByText('Horas cargadas.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Desde')).toHaveValue(desdeAntes)
+    })
   })
 })

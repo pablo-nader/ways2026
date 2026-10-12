@@ -1,5 +1,5 @@
 import { ErrorApi } from '../api/cliente'
-import { CODIGO_RESULTADO_INCIERTO } from '../api/bajas'
+import type { OrigenFondosGasto } from '../api/tipos'
 import type { CampoDeCuenta, ErrorDeCuenta } from './cuentaDePersonalFormularios'
 
 export type { CampoDeCuenta, ErrorDeCuenta }
@@ -8,7 +8,13 @@ export type { CampoDeCuenta, ErrorDeCuenta }
 export type Escritura = 'horas' | 'ajuste' | 'pago'
 
 const COPIA_GENERICA = 'No se pudo registrar.'
-const COPIA_INCIERTA = 'No se pudo confirmar el resultado: revisá el estado de cuenta antes de reintentar.'
+
+/** `true` solo para un rechazo del servidor (4xx): la escritura no se hizo. Un 5xx o un fallo sin
+ * respuesta (red cortada, tiempo agotado) no dicen si el servidor llegó a escribir, y como las tres
+ * escrituras no llevan clave de idempotencia, reintentarlas a ciegas puede registrarlas dos veces. */
+export function esRechazoCierto(e: unknown): e is ErrorApi {
+  return e instanceof ErrorApi && e.estado < 500
+}
 
 /** Se elige por `codigo`, nunca por `mensaje`. Es un `Map` porque el código viene del servidor: sobre un
  * objeto, `'constructor'` resolvería contra el prototipo. Los códigos son los de `ReglaDeMovimientoDePersonal`,
@@ -63,16 +69,21 @@ const ERROR_POR_CODIGO: ReadonlyMap<string, ErrorDeCuenta> = new Map<string, Err
       mensaje: 'No hay un turno abierto en el punto de venta de la sesión. Abrí el turno desde Caja y volvé a intentar.',
     },
   ],
+  // Va arriba del formulario: si el empleado ya no tiene cliente vinculado, el campo del descuento desaparece.
   [
     'personal_sin_cliente_vinculado',
     {
-      campo: 'descuento',
-      mensaje: 'El empleado no tiene un cliente vinculado vigente para descontar de su cuenta corriente.',
+      campo: 'general',
+      mensaje:
+        'El empleado no tiene un cliente vinculado vigente para descontar de su cuenta corriente. Sacá el descuento o revisá el cliente vinculado.',
     },
   ],
   [
     'descuento_supera_la_deuda',
-    { campo: 'descuento', mensaje: 'El descuento supera la deuda actual del cliente vinculado. Actualizá la pantalla.' },
+    {
+      campo: 'descuento',
+      mensaje: 'El descuento supera la deuda actual del cliente vinculado. Revisá la deuda que muestra este formulario.',
+    },
   ],
   ['gasto_fecha_futura', { campo: 'fecha', mensaje: 'La fecha del pago no puede ser futura.' }],
   [
@@ -85,15 +96,20 @@ const ERROR_POR_CODIGO: ReadonlyMap<string, ErrorDeCuenta> = new Map<string, Err
   ],
 ])
 
-/** El rechazo de una escritura de la cuenta, ubicado en el campo que corresponde. */
-export function errorDeEscritura(e: unknown, escritura: Escritura): ErrorDeCuenta {
-  if (!(e instanceof ErrorApi)) return { campo: 'general', mensaje: COPIA_INCIERTA }
+/** Los rechazos que dejan vieja la deuda del cliente o el cliente vinculado del empleado: la pantalla los relee. */
+export function desactualizaLaDeuda(e: ErrorApi): boolean {
+  return e.codigo === 'descuento_supera_la_deuda' || e.codigo === 'personal_sin_cliente_vinculado'
+}
 
+/** El rechazo de una escritura de la cuenta, ubicado en el campo que corresponde. `origenDelPago` es el
+ * origen de fondos que se envió (`null` si el pago no llevaba líneas): un 403 solo se explica con la
+ * tesorería cuando fue la tesorería lo que se pidió. */
+export function errorDeEscritura(e: ErrorApi, escritura: Escritura, origenDelPago: OrigenFondosGasto | null = null): ErrorDeCuenta {
   const propio = ERROR_POR_CODIGO.get(e.codigo)
   if (propio) return propio
 
   if (e.estado === 403) {
-    return escritura === 'pago'
+    return escritura === 'pago' && origenDelPago === 'Tesoreria'
       ? { campo: 'origen', mensaje: 'Pagar desde la tesorería requiere ser administrador.' }
       : { campo: 'general', mensaje: 'No tenés permiso para registrar esto.' }
   }
@@ -108,13 +124,5 @@ export function errorDeEscritura(e: unknown, escritura: Escritura): ErrorDeCuent
     }
   }
 
-  const delServidor = e.message.trim()
-
-  if (e.estado >= 500) {
-    const esCommitAmbiguo = e.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
-
-    return { campo: 'general', mensaje: esCommitAmbiguo ? delServidor : COPIA_INCIERTA }
-  }
-
-  return { campo: 'general', mensaje: delServidor || COPIA_GENERICA }
+  return { campo: 'general', mensaje: e.message.trim() || COPIA_GENERICA }
 }

@@ -8,13 +8,16 @@ import type {
   SolicitudDePagoDePersonal,
   TipoMovimientoPersonal,
 } from '../api/tipos'
-import { formatearImporte, productoRedondeado, redondearImporte } from '../formato/importes'
+import { isoATexto } from '../formato/fechas'
+import { formatearImporte, formatearImporteConSigno, productoRedondeado, redondearImporte } from '../formato/importes'
+import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
 
 /** Campo de un formulario de la cuenta donde se muestra un rechazo; `general` va arriba del formulario. */
 export type CampoDeCuenta =
   | 'fecha'
   | 'horas'
   | 'valorHora'
+  | 'sentido'
   | 'importe'
   | 'detalle'
   | 'descuento'
@@ -71,6 +74,29 @@ export function importeDeHoras(horas: number | null, valorHora: number | null): 
   return productoRedondeado([horas, valorHora])
 }
 
+const DECIMALES_DE_HORAS = 2
+
+/** Tipeo del campo de horas. Las horas son una cantidad, no un importe: tanto "," como "." son el
+ * separador decimal (en un importe el "." es de miles y se descarta). Se queda con el primer separador,
+ * lo normaliza a "," y recorta a dos decimales. */
+export function sanearTipeoDeHoras(bruto: string): string {
+  const soloValidos = bruto.replace(/[^0-9.,]/g, '')
+  const posicion = soloValidos.search(/[.,]/)
+  if (posicion === -1) return soloValidos
+
+  const decimales = soloValidos.slice(posicion + 1).replace(/[.,]/g, '').slice(0, DECIMALES_DE_HORAS)
+
+  return `${soloValidos.slice(0, posicion)},${decimales}`
+}
+
+/** Texto tipeado → horas, o `null` si todavía no hay un número ("", ","). */
+export function parsearHoras(texto: string): number | null {
+  const saneado = sanearTipeoDeHoras(texto)
+  if (saneado === '' || saneado === ',') return null
+
+  return Number(saneado.replace(',', '.'))
+}
+
 export function validarHoras(f: FormularioDeHoras): ErrorDeCuenta | null {
   if (f.fecha === '') return error('fecha', 'Ingresá el día trabajado.')
 
@@ -106,18 +132,19 @@ export type SentidoDeAjuste = 'aFavor' | 'enContra'
 
 export type FormularioDeAjuste = {
   fecha: string
-  sentido: SentidoDeAjuste
+  /** `null` mientras no se eligió: el signo no tiene un valor por defecto. */
+  sentido: SentidoDeAjuste | null
   /** Magnitud, siempre positiva: el sentido le pone el signo. */
   importe: number | null
   detalle: string
 }
 
 export function formularioDeAjusteVacio(hoy: string): FormularioDeAjuste {
-  return { fecha: hoy, sentido: 'aFavor', importe: null, detalle: '' }
+  return { fecha: hoy, sentido: null, importe: null, detalle: '' }
 }
 
 export function importeFirmadoDeAjuste(f: FormularioDeAjuste): number | null {
-  if (f.importe === null) return null
+  if (f.importe === null || f.sentido === null) return null
 
   return f.sentido === 'aFavor' ? f.importe : -f.importe
 }
@@ -125,9 +152,9 @@ export function importeFirmadoDeAjuste(f: FormularioDeAjuste): number | null {
 export function validarAjuste(f: FormularioDeAjuste): ErrorDeCuenta | null {
   if (f.fecha === '') return error('fecha', 'Ingresá la fecha del ajuste.')
 
-  if (f.importe === null || f.importe <= 0) {
-    return error('importe', 'Ingresá un importe mayor que cero y elegí si es a favor o en contra del empleado.')
-  }
+  if (f.sentido === null) return error('sentido', 'Elegí si el ajuste es a favor o en contra del empleado.')
+
+  if (f.importe === null || f.importe <= 0) return error('importe', 'Ingresá un importe mayor que cero.')
 
   if (f.detalle.trim().length < LONGITUD_MINIMA_DETALLE_AJUSTE) {
     return error('detalle', `El detalle es obligatorio y tiene que tener al menos ${LONGITUD_MINIMA_DETALLE_AJUSTE} caracteres.`)
@@ -330,13 +357,41 @@ export function etiquetaDeTipo(tipo: TipoMovimientoPersonal): string {
   }
 }
 
-export function etiquetaDeOrigen(origen: OrigenFondosGasto): string {
-  return origen === 'Tesoreria' ? 'Tesorería' : 'Cajón del turno'
-}
-
 export function textoDeLineaDeDesglose(l: LineaDeDesgloseDePago): string {
   const medio = l.nombreMedioPago ?? 'Medio de pago dado de baja'
   const referencia = l.referencia ? `, ref. ${l.referencia}` : ''
 
-  return `${medio}: ${formatearImporte(l.importe, { simbolo: true })} (${etiquetaDeOrigen(l.origenFondos)})${referencia}`
+  return `${medio}: ${formatearImporte(l.importe, { simbolo: true })} (${etiquetaDeOrigenFondos(l.origenFondos)})${referencia}`
+}
+
+// ---- Resultado incierto ------------------------------------------------------------------
+
+/** Cómo se nombra una escritura cuyo resultado no se pudo confirmar: tipo, día y monto, para que quien
+ * lee el aviso la reconozca entre los movimientos de la tabla. */
+export function descripcionDeHoras(f: FormularioDeHoras): string {
+  const importe = importeDeHoras(f.horas, f.valorHora)
+
+  return `carga de ${f.horas === null ? '—' : formatearImporte(f.horas)} horas del ${isoATexto(f.fecha)} por ${importe === null ? '—' : formatearImporte(importe, { simbolo: true })}`
+}
+
+export function descripcionDeAjuste(f: FormularioDeAjuste): string {
+  const firmado = importeFirmadoDeAjuste(f)
+
+  return `ajuste del ${isoATexto(f.fecha)} por ${firmado === null ? '—' : formatearImporteConSigno(firmado, { simbolo: true })}`
+}
+
+export function descripcionDePago(f: FormularioDePago): string {
+  return `pago del ${isoATexto(f.fecha)} por ${formatearImporte(totalDelPago(f), { simbolo: true })}`
+}
+
+const CIERRE_DEL_AVISO_INCIERTO = 'Revisá los movimientos que se muestran abajo antes de volver a cargarla.'
+
+/** Aviso persistente de una escritura cuyo resultado no se pudo confirmar. Con `vistaActualizada` en
+ * `false` ni siquiera se pudo releer la cuenta, así que lo que sigue es recargar la pantalla. */
+export function avisoDeResultadoIncierto(descripcion: string, vistaActualizada: boolean): string {
+  const encabezado = `No se pudo confirmar si se registró esta operación: ${descripcion}.`
+
+  return vistaActualizada
+    ? `${encabezado} ${CIERRE_DEL_AVISO_INCIERTO}`
+    : `${encabezado} Tampoco se pudo actualizar la vista: recargá la pantalla y revisá los movimientos antes de volver a cargarla.`
 }
