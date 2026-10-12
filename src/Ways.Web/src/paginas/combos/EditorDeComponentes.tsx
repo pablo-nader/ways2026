@@ -101,10 +101,8 @@ export function EditorDeComponentes({
             <div className="row g-2 align-items-start">
               <div className="col-md-2">
                 <select
-                  className={`form-select form-select-sm ${referenciaInvalida ? 'is-invalid' : ''}`}
+                  className="form-select form-select-sm"
                   aria-label={`Tipo del componente ${numero}`}
-                  aria-invalid={referenciaInvalida ? true : undefined}
-                  aria-describedby={ayudaDeReferencia}
                   value={fila.tipo}
                   onChange={(e) => cambiarTipo(fila, e.target.value as TipoDeComponente)}
                 >

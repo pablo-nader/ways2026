@@ -5,6 +5,7 @@ import {
   aSolicitudDeCombo,
   aValoresCombo,
   clienteDeCombosAbm,
+  comboCoincideConAlta,
   errorDeServidorDeCombo,
   esComboInexistente,
   esResultadoIncierto,
@@ -21,7 +22,7 @@ import {
 } from '../api/combosAbm'
 import { clienteDeFamilias } from '../api/familias'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import type { ComboListado, EmpresaListado, FamiliaListado } from '../api/tipos'
+import type { AltaCombo, ComboListado, EmpresaListado, FamiliaListado } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -158,18 +159,17 @@ export function Combos() {
     }
   }
 
-  /** Tras un alta de resultado incierto, relee el listado y dice si ya figura un combo vivo con ese nombre que antes no
-   * estaba. Un fallo de la lectura no concluye nada. Avanza la generación para descartar una lectura anterior todavía en
+  /** Tras un alta de resultado incierto, relee el listado y dice si ya figura un combo que antes no estaba y coincide en
+   * todo con lo enviado (el nombre solo no alcanza: no es único). Un fallo de la lectura no concluye nada. Avanza la generación para descartar una lectura anterior todavía en
    * vuelo; su propia respuesta no se compara contra la generación porque la pantalla está inerte mientras escribe y
    * ninguna lectura más nueva puede empezar. */
-  async function altaConfirmadaPorLectura(nombre: string, idsPrevios: ReadonlySet<number>): Promise<boolean> {
+  async function altaConfirmadaPorLectura(cuerpo: AltaCombo, idsPrevios: ReadonlySet<number>): Promise<boolean> {
     generacionRef.current += 1
     try {
       const filas = await clienteDeCombos.listar()
       setCombos(filas)
       setErrorDeCarga('')
-      const buscado = nombre.trim().toLowerCase()
-      return filas.some((c) => !idsPrevios.has(c.id) && c.nombre.trim().toLowerCase() === buscado)
+      return filas.some((c) => !idsPrevios.has(c.id) && comboCoincideConAlta(cuerpo, c))
     } catch {
       return false
     }
@@ -206,7 +206,7 @@ export function Combos() {
           await cargar(++generacionRef.current)
           return
         }
-        if (datos.id === null && idsPrevios !== null && esResultadoIncierto(e) && (await altaConfirmadaPorLectura(datos.nombre, idsPrevios))) {
+        if (datos.id === null && idsPrevios !== null && esResultadoIncierto(e) && (await altaConfirmadaPorLectura(aSolicitudDeCombo(datos), idsPrevios))) {
           // El POST no tiene idempotencia: si el combo ya figura, reintentar crearía un segundo.
           setFormulario(null)
           setAviso(AVISO_ALTA_CONFIRMADA_POR_LECTURA)

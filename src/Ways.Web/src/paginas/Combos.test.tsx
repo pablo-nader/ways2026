@@ -981,6 +981,23 @@ describe('Combos — buscador de artículo con teclado', () => {
     expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
     expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
   })
+
+  // Cláusula que prueba: el mousedown del contenedor de la lista no le saca el foco al campo (barra de desplazamiento, hueco).
+  it('apretar el mouse sobre el contenedor de la lista (barra, hueco) no la cierra', async () => {
+    await abrirConResultados()
+    const lista = fila(1).getByRole('listbox')
+
+    await usuario.pointer({ keys: '[MouseLeft>]', target: lista })
+
+    expect(campoDeBusqueda(1)).toHaveFocus()
+    expect(fila(1).getByRole('listbox')).toBeInTheDocument()
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-expanded', 'true')
+    expect(fireEvent.mouseDown(lista)).toBe(false)
+
+    await usuario.pointer({ keys: '[/MouseLeft]' })
+    await usuario.click(within(lista).getByRole('option', { name: 'A2 — Gaseosa 500' }))
+    expect(await fila(1).findByText('Elegido:', { exact: false })).toHaveTextContent('Gaseosa 500')
+  })
 })
 
 describe('Combos — buscador de artículo asincrónico', () => {
@@ -998,6 +1015,22 @@ describe('Combos — buscador de artículo asincrónico', () => {
     await act(async () => pendientes.uno.resolver(pagina([pancho])))
 
     expect(opcionesDe(1).map((o) => o.textContent)).toEqual(['A2 — Gaseosa 500'])
+  })
+
+  // Cláusula que prueba: cambiar el texto invalida la búsqueda en vuelo.
+  it('una respuesta del término anterior no reabre la lista después de seguir tipeando', async () => {
+    const pendientes = mockearBusquedasDiferidas()
+    await abrirNuevo()
+    await buscarConBoton(1, 'uno')
+    await waitFor(() => expect(pendientes.uno).toBeDefined())
+    await usuario.type(campoDeBusqueda(1), 'x')
+
+    await act(async () => pendientes.uno.resolver(pagina([pancho, gaseosa])))
+
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-expanded', 'false')
+    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos por unidad/)).not.toBeInTheDocument()
+    expect(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' })).toBeEnabled()
   })
 
   // Cláusula que prueba: elegir invalida la búsqueda en vuelo.
@@ -1056,8 +1089,9 @@ describe('Combos — asociación de errores y foco del editor', () => {
 
     expect(textoDe(campoDeBusqueda(1))).toBe('Elegí un artículo.')
     expect(campoDeBusqueda(1)).toHaveAttribute('aria-invalid', 'true')
-    expect(textoDe(fila(1).getByLabelText('Tipo del componente 1'))).toBe('Elegí un artículo.')
-    expect(fila(1).getByLabelText('Tipo del componente 1')).toHaveAttribute('aria-invalid', 'true')
+    expect(fila(1).getByLabelText('Tipo del componente 1')).not.toHaveAttribute('aria-invalid')
+    expect(fila(1).getByLabelText('Tipo del componente 1')).not.toHaveAttribute('aria-describedby')
+    expect(fila(1).getByLabelText('Tipo del componente 1')).not.toHaveClass('is-invalid')
     expect(textoDe(fila(1).getByLabelText('Cantidad del componente 1'))).toBe('Ingresá la cantidad.')
     expect(fila(1).getByLabelText('Cantidad del componente 1')).toHaveAttribute('aria-invalid', 'true')
     expect(fila(2).getByLabelText('Cantidad del componente 2')).not.toHaveAttribute('aria-invalid')
@@ -1202,6 +1236,45 @@ describe('Combos — alta con resultado incierto', () => {
     expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.queryByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).not.toBeInTheDocument()
+  })
+
+  async function altaConRelecturaDe(creado: ComboListado) {
+    let lecturas = 0
+    mockearApiGet({
+      articulos: ARTICULOS,
+      combos: () => {
+        lecturas += 1
+        return Promise.resolve(lecturas === 1 ? [] : [creado])
+      },
+    })
+    apiPostMock.mockRejectedValue(sinRespuesta())
+    await abrirNuevo()
+    await llenarAltaValida()
+    await usuario.click(guardar())
+  }
+
+  // Cláusula que prueba: la coincidencia exige todo lo enviado, no solo el nombre.
+  it.each<[string, Partial<ComboListado>]>([
+    ['precio', { precio: 6000 }],
+    ['empresa', { idEmpresa: 3 }],
+    ['estado', { activo: false }],
+    ['cantidad de un componente', { componentes: [comboFixture().componentes[0], { ...comboFixture().componentes[1], cantidad: 3 }] }],
+    ['familia de un componente', { componentes: [comboFixture().componentes[0], { ...comboFixture().componentes[1], idFamilia: 8 }] }],
+  ])('un combo nuevo del mismo nombre pero con otro %s no cuenta como creado: el formulario queda con los datos', async (_campo, cambio) => {
+    await altaConRelecturaDe(comboFixture({ id: 9, ...cambio }))
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Pancho y Coca')
+    expect(screen.getByLabelText('Precio del combo ($)')).toHaveValue('5.000,00')
+    expect(screen.queryByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).not.toBeInTheDocument()
+  })
+
+  it('un combo nuevo que coincide en todo (componentes en otro orden) cierra el formulario con la confirmación', async () => {
+    await altaConRelecturaDe(comboFixture({ id: 9, componentes: comboFixture().componentes.slice().reverse() }))
+
+    expect(await screen.findByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('si la relectura falla mantiene el formulario abierto con el aviso de resultado incierto', async () => {

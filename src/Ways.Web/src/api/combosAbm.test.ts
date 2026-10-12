@@ -5,6 +5,7 @@ import {
   aSolicitudDeCombo,
   aValoresCombo,
   CANTIDAD_MAXIMA,
+  comboCoincideConAlta,
   COMPONENTES_MAXIMOS,
   errorDeServidorDeCombo,
   esArticuloElegibleParaCombo,
@@ -25,7 +26,7 @@ import {
   type FilaDeComponente,
   type FormularioCombo,
 } from './combosAbm'
-import type { ComboListado, ComponenteDeComboListado } from './tipos'
+import type { AltaCombo, ComboListado,ComponenteDeComboListado } from './tipos'
 
 function fila(sobrescribir: Partial<FilaDeComponente> = {}): FilaDeComponente {
   return { ...filaDeComponenteVacia(), idArticulo: 1, nombre: 'Pancho', cantidad: '1', ...sobrescribir }
@@ -148,6 +149,59 @@ describe('aSolicitudDeCombo', () => {
 
   it('un código vacío no viaja ni siquiera en la edición: el servidor conserva el actual', () => {
     expect('codigo' in aSolicitudDeCombo(formulario({ id: 4, codigo: '   ' }))).toBe(false)
+  })
+})
+
+describe('comboCoincideConAlta', () => {
+  const cuerpo: AltaCombo = {
+    nombre: 'Pancho y Coca',
+    precio: 5000,
+    idEmpresa: null,
+    activo: true,
+    componentes: [
+      { idArticulo: 1, cantidad: 1 },
+      { idFamilia: 7, cantidad: 2 },
+    ],
+  }
+
+  it('coincide cuando todo es igual, con el nombre sin espacios ni mayúsculas y sin código tipeado', () => {
+    expect(comboCoincideConAlta(cuerpo, comboListado())).toBe(true)
+    expect(comboCoincideConAlta(cuerpo, comboListado({ nombre: '  pancho Y COCA ', codigo: 99 }))).toBe(true)
+  })
+
+  it('los componentes reordenados siguen coincidiendo', () => {
+    const invertidos = comboListado().componentes.slice().reverse()
+    expect(comboCoincideConAlta(cuerpo, comboListado({ componentes: invertidos }))).toBe(true)
+  })
+
+  it('el orden del cuerpo enviado tampoco importa', () => {
+    const alReves: AltaCombo = { ...cuerpo, componentes: cuerpo.componentes.slice().reverse() }
+    expect(comboCoincideConAlta(alReves, comboListado())).toBe(true)
+  })
+
+  it('un componente de más en el listado no coincide', () => {
+    const conExtra = [...comboListado().componentes, componenteListado({ idArticulo: null, idFamilia: 9 })]
+    expect(comboCoincideConAlta(cuerpo, comboListado({ componentes: conExtra }))).toBe(false)
+  })
+
+  it.each<[string, Partial<ComboListado>]>([
+    ['nombre', { nombre: 'Otro' }],
+    ['precio', { precio: 5001 }],
+    ['empresa', { idEmpresa: 3 }],
+    ['activo', { activo: false }],
+    ['cantidad de un componente', { componentes: [componenteListado(), componenteListado({ idArticulo: null, idFamilia: 7, cantidad: 3 })] }],
+    ['artículo de un componente', { componentes: [componenteListado({ idArticulo: 2 }), componenteListado({ idArticulo: null, idFamilia: 7, cantidad: 2 })] }],
+    ['familia de un componente', { componentes: [componenteListado(), componenteListado({ idArticulo: null, idFamilia: 8, cantidad: 2 })] }],
+    ['tipo de un componente', { componentes: [componenteListado(), componenteListado({ idArticulo: 7, idFamilia: null, cantidad: 2 })] }],
+    ['cantidad de componentes', { componentes: [componenteListado()] }],
+  ])('no coincide si difiere %s', (_campo, cambio) => {
+    expect(comboCoincideConAlta(cuerpo, comboListado(cambio))).toBe(false)
+  })
+
+  it('con código tipeado exige el mismo código; sin código tipeado lo ignora', () => {
+    expect(comboCoincideConAlta({ ...cuerpo, codigo: 12 }, comboListado({ codigo: 12 }))).toBe(true)
+    expect(comboCoincideConAlta({ ...cuerpo, codigo: 12 }, comboListado({ codigo: 13 }))).toBe(false)
+    expect(comboCoincideConAlta(cuerpo, comboListado({ codigo: 13 }))).toBe(true)
   })
 })
 

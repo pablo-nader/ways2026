@@ -129,6 +129,25 @@ export function aSolicitudDeCombo(f: FormularioCombo): AltaCombo {
   }
 }
 
+function claveDeComponente(c: { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }): string {
+  return c.idArticulo != null ? `a${c.idArticulo}x${c.cantidad}` : `f${c.idFamilia}x${c.cantidad}`
+}
+
+/** `true` si el combo del listado es el que se pidió crear: nombre (sin espacios ni mayúsculas), precio, empresa, estado
+ * y conjunto de componentes (mismos artículos o familias con las mismas cantidades, sin importar el orden) iguales al
+ * cuerpo enviado, y el mismo código cuando el cuerpo trajo uno. El nombre solo no alcanza: no es único. */
+export function comboCoincideConAlta(cuerpo: AltaCombo, combo: ComboListado): boolean {
+  if (cuerpo.codigo !== undefined && combo.codigo !== cuerpo.codigo) return false
+  if (combo.nombre.trim().toLowerCase() !== cuerpo.nombre.trim().toLowerCase()) return false
+  if (combo.precio !== cuerpo.precio) return false
+  if (combo.idEmpresa !== cuerpo.idEmpresa) return false
+  if (combo.activo !== cuerpo.activo) return false
+  if (combo.componentes.length !== cuerpo.componentes.length) return false
+  const esperados = cuerpo.componentes.map(claveDeComponente).sort()
+  const reales = combo.componentes.map(claveDeComponente).sort()
+  return esperados.every((clave, i) => clave === reales[i])
+}
+
 /** Lo que el cajero tipea en el POS para cargar el combo. */
 export function etiquetaDeCodigoDeCombo(codigo: number): string {
   return `C${codigo}`

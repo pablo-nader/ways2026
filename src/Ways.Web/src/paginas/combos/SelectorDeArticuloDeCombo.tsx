@@ -142,6 +142,9 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
           value={termino}
           disabled={disabled}
           onChange={(e) => {
+            // Invalida la búsqueda en vuelo: su respuesta es de un término que ya no está en el campo.
+            generacionRef.current += 1
+            setBuscando(false)
             setTermino(e.target.value)
             setAbierta(false)
           }}
@@ -173,6 +176,9 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
         className="list-group list-group-flush border rounded mt-1"
         style={{ maxHeight: '11rem', overflowY: 'auto' }}
         hidden={!abierta || resultados.length === 0}
+        // Ni las opciones, ni la barra de desplazamiento, ni el hueco entre ellas le sacan el foco al campo: si no, el blur
+        // cerraría la lista a mitad de un desplazamiento o antes de elegir.
+        onMouseDown={(e) => e.preventDefault()}
       >
         {abierta &&
           resultados.map((a, i) => (
@@ -183,8 +189,6 @@ export function SelectorDeArticuloDeCombo({ numero, idArticulo, nombre, disabled
               aria-selected={i === activo}
               className={`list-group-item list-group-item-action py-1 px-2 small${i === activo ? ' active' : ''}`}
               style={{ cursor: 'pointer' }}
-              // El clic no le saca el foco al campo: si no, el blur cerraría la lista antes de elegir.
-              onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setIndiceActivo(i)}
               onClick={() => elegir(a)}
             >
