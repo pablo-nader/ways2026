@@ -17,6 +17,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { formatearImporte } from '../formato/importes'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -25,7 +26,7 @@ function formatearMoneda(valor: number): string {
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 function etiquetaCategoriaGasto(categoria: CategoriaGasto): string {

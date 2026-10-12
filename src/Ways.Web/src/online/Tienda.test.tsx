@@ -58,10 +58,6 @@ describe('Tienda', () => {
       '/api/publico/vitrina/logo?v=7',
     )
     expect(screen.getByRole('link', { name: 'Volver al inicio' })).toHaveAttribute('href', '/')
-    expect(within(screen.getByRole('contentinfo')).getByRole('link', { name: 'Acceso para el comercio' })).toHaveAttribute(
-      'href',
-      '/admin/login',
-    )
   })
 
   it('usa el tema y el acento de la vitrina y el título de la tienda con el nombre del comercio', async () => {

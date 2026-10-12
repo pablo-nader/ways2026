@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fechaHoraATexto } from '../formato/fechas'
 import { ModalDetalleDeTurno } from './ModalDetalleDeTurno'
 import type {
   DetalleDeTurno,
@@ -151,8 +152,8 @@ describe('ModalDetalleDeTurno', () => {
     await within(dialogo).findByText('jperez')
 
     expect(within(dialogo).getByText('PV 7 — Local Centro')).toBeInTheDocument()
-    expect(within(dialogo).getByText(new Date('2026-09-16T12:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
-    expect(within(dialogo).getByText(new Date('2026-09-16T20:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+    expect(within(dialogo).getByText(fechaHoraATexto('2026-09-16T12:00:00Z'))).toBeInTheDocument()
+    expect(within(dialogo).getByText(fechaHoraATexto('2026-09-16T20:00:00Z'))).toBeInTheDocument()
     expect(within(dialogo).getByText('mgomez')).toBeInTheDocument()
     expect(within(dialogo).getByText('Fondo inicial').nextElementSibling).toHaveTextContent('$ 500,00')
 

@@ -21,6 +21,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Application.Pos;
 using Ways.Application.Precios;
+using Ways.Application.Plantel;
 using Ways.Application.Proveedores;
 using Ways.Application.Reportes;
 using Ways.Application.Stock;
@@ -73,6 +74,7 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeClientes>();
         services.AddScoped<ServicioDeProveedores>();
+        services.AddScoped<ServicioDePersonal>();
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeFamilias>();

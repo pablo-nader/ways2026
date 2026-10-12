@@ -1,4 +1,5 @@
 import type { GastoDeTurno, TicketDeTurno } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 import { formatearImporte } from '../formato/importes'
 import { etiquetaDeOrigenFondos } from '../paginas/utilidadesGastosDelTurno'
 
@@ -7,7 +8,7 @@ function formatearMoneda(valor: number): string {
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 type Props = {

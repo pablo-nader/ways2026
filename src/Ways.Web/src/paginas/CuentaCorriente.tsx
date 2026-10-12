@@ -35,6 +35,7 @@ import { Cargando } from '../componentes/Cargando'
 import { guardarPuntoVentaSeleccionado, leerPuntoVentaGuardado, ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -43,7 +44,7 @@ function formatearMoneda(valor: number): string {
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 function formatearDisponibilidad(valor: number | null): string {
@@ -655,7 +656,7 @@ function PantallaCuentaCorriente({
             Rango: {historico ? 'Histórico completo' : `${desde} a ${hasta}`}
           </div>
           <div className="small">
-            Generado: {new Date().toLocaleString('es-AR')} — {usuario?.usuario ?? '—'}
+            Generado: {fechaHoraATexto(new Date())} — {usuario?.usuario ?? '—'}
           </div>
         </div>
 

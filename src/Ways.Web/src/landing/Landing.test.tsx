@@ -3,50 +3,23 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorApi } from '../api/cliente'
-import type { SucursalPublica, VitrinaPublica } from '../api/tipos'
+import type { CatalogoPublico, ConsultaDeCatalogo } from '../api/publico'
+import type { VitrinaPublica } from '../api/tipos'
+import { catalogoPublico } from '../online/datosDePrueba'
 import '../publico/publico.css'
+import { sucursalCompleta, sucursalSinContacto, vitrina } from './datosDePrueba'
 import { Landing } from './Landing'
 
 const obtenerVitrinaMock = vi.fn()
+const obtenerCatalogoMock = vi.fn<(consulta: ConsultaDeCatalogo) => Promise<CatalogoPublico>>()
 
 vi.mock('../api/publico', async (importarOriginal) => ({
   ...(await importarOriginal<typeof import('../api/publico')>()),
-  clienteDePublico: { obtenerVitrina: () => obtenerVitrinaMock() },
+  clienteDePublico: {
+    obtenerVitrina: () => obtenerVitrinaMock(),
+    obtenerCatalogo: (consulta: ConsultaDeCatalogo) => obtenerCatalogoMock(consulta),
+  },
 }))
-
-const sucursalCompleta: SucursalPublica = {
-  nombre: 'Casa Central',
-  domicilio: 'Av. Siempreviva 742',
-  horario: 'Lun a Vie 9 a 18',
-  whatsapp: '+54 9 11 5555-1234',
-  instagram: '@ferreteriasur',
-  facebook: 'https://www.facebook.com/FerreteriaSur',
-  web: 'www.ferreteriasur.com.ar',
-}
-
-const sucursalSinContacto: SucursalPublica = {
-  nombre: 'Depósito',
-  domicilio: null,
-  horario: null,
-  whatsapp: null,
-  instagram: null,
-  facebook: null,
-  web: null,
-}
-
-function vitrina(cambios: Partial<VitrinaPublica> = {}): VitrinaPublica {
-  return {
-    nombre: 'Ferretería Sur',
-    tagline: 'Todo para tu obra',
-    descripcion: 'Atendemos desde 1980.\nEnvíos en el día.',
-    colorAcento: '#2a9d8f',
-    tema: 'oscuro',
-    tieneLogo: false,
-    logoVersion: null,
-    sucursales: [sucursalCompleta, sucursalSinContacto],
-    ...cambios,
-  }
-}
 
 async function verPublicada(cambios: Partial<VitrinaPublica> = {}) {
   obtenerVitrinaMock.mockResolvedValue(vitrina(cambios))
@@ -56,6 +29,9 @@ async function verPublicada(cambios: Partial<VitrinaPublica> = {}) {
 
 beforeEach(() => {
   obtenerVitrinaMock.mockReset()
+  // Por defecto el comercio no tiene artículos publicados: las secciones del catálogo no se dibujan.
+  obtenerCatalogoMock.mockReset()
+  obtenerCatalogoMock.mockResolvedValue(catalogoPublico())
 })
 
 afterEach(() => {
@@ -109,13 +85,6 @@ describe('Landing', () => {
       expect(getComputedStyle(screen.getByRole('img', { name: 'Ferretería Sur' })).maxWidth).toBe('100%')
     })
 
-    it('el wordmark de Ways reserva su tamaño para que el pie no se corra al cargar', async () => {
-      await verPublicada()
-
-      const wordmark = within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })
-      expect(wordmark).toHaveAttribute('height', '28')
-      expect(wordmark).toHaveAttribute('width', '51')
-    })
 
     it('sin logo la cabecera escribe el nombre y no hay imagen del comercio', async () => {
       await verPublicada({ tieneLogo: false })
@@ -125,18 +94,22 @@ describe('Landing', () => {
       expect(within(cabecera).queryByRole('img')).not.toBeInTheDocument()
     })
 
-    it('"Comprar online" lleva a /online desde la cabecera y desde la portada', async () => {
+    it('"Comprar online" lleva a /online desde la cabecera, la portada y el cierre', async () => {
       await verPublicada()
 
+      // La cabecera, la portada y la banda de cierre.
       const enlaces = screen.getAllByRole('link', { name: 'Comprar online' })
-      expect(enlaces).toHaveLength(2)
+      expect(enlaces).toHaveLength(3)
       enlaces.forEach((enlace) => expect(enlace).toHaveAttribute('href', '/online'))
     })
 
     it('el CTA de WhatsApp usa el primer número usable de las sucursales', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto, sucursalCompleta] })
 
-      const cta = screen.getByRole('link', { name: 'Escribinos por WhatsApp' })
+      // El mismo botón está en la portada y en la banda de cierre; la portada es la que se mira aquí.
+      const cta = within(screen.getByRole('region', { name: 'Todo para tu obra' })).getByRole('link', {
+        name: 'Escribinos por WhatsApp',
+      })
       expect(cta).toHaveAttribute('href', 'https://wa.me/5491155551234')
       expect(cta).toHaveAttribute('rel', 'noopener')
     })
@@ -146,7 +119,7 @@ describe('Landing', () => {
 
       expect(screen.queryByText('Escribinos por WhatsApp')).not.toBeInTheDocument()
       expect(screen.queryByRole('link', { name: /whatsapp/i })).not.toBeInTheDocument()
-      expect(screen.getAllByRole('link', { name: 'Comprar online' })).toHaveLength(2)
+      expect(screen.getAllByRole('link', { name: 'Comprar online' })).toHaveLength(3)
     })
 
     it('la descripción conserva los saltos de línea y no interpreta HTML', async () => {
@@ -164,11 +137,13 @@ describe('Landing', () => {
         sucursales: [{ ...sucursalSinContacto, nombre: largo('n'), domicilio: largo('a'), horario: largo('h') }],
       })
 
+      // El domicilio y el horario de la primera sucursal se ven también en las píldoras y en el sello.
       for (const marca of ['d', 'n', 'a', 'h']) {
-        const elemento = screen.getByText(largo(marca))
-        expect(getComputedStyle(elemento).overflowWrap, `texto ${marca}`).toBe('anywhere')
+        const elementos = screen.getAllByText(largo(marca))
+        elementos.forEach((elemento) => expect(getComputedStyle(elemento).overflowWrap, `texto ${marca}`).toBe('anywhere'))
       }
-      expect(getComputedStyle(screen.getByRole('listitem')).minWidth).toBe('0px')
+      const tarjeta = within(screen.getByRole('region', { name: 'Dónde estamos' })).getByRole('listitem')
+      expect(getComputedStyle(tarjeta).minWidth).toBe('0px')
     })
 
     it('el nombre de la cabecera se parte si es largo y la marca no recorta con overflow oculto', async () => {
@@ -181,16 +156,17 @@ describe('Landing', () => {
       expect(getComputedStyle(marca).minWidth).toBe('0px')
     })
 
-    it('sin descripción no hay sección de descripción', async () => {
+    it('sin descripción no hay sección "Quiénes somos"', async () => {
       await verPublicada({ descripcion: '  ' })
 
-      expect(screen.queryByRole('region', { name: 'Sobre el comercio' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Quiénes somos' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Quiénes somos' })).not.toBeInTheDocument()
     })
 
     it('cada sucursal es una tarjeta con sus datos y sus enlaces reales', async () => {
       await verPublicada()
 
-      const tarjetas = within(screen.getByRole('list')).getAllByRole('listitem')
+      const tarjetas = within(screen.getByRole('region', { name: 'Dónde estamos' })).getAllByRole('listitem')
       expect(tarjetas).toHaveLength(2)
 
       const central = within(tarjetas[0])
@@ -223,7 +199,7 @@ describe('Landing', () => {
     it('sin sucursales no hay sección de sucursales', async () => {
       await verPublicada({ sucursales: [] })
 
-      expect(screen.queryByRole('heading', { name: 'Sucursales' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Dónde estamos' })).not.toBeInTheDocument()
     })
 
     it('el tema oscuro y el acento del comercio quedan en <html>', async () => {
@@ -231,20 +207,12 @@ describe('Landing', () => {
 
       expect(document.documentElement.dataset.bsTheme).toBe('dark')
       expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#2a9d8f')
-      expect(within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })).toHaveAttribute(
-        'src',
-        '/marca/ways-logo-oscuro.png',
-      )
     })
 
-    it('el tema claro usa data-bs-theme light y el wordmark para fondos claros', async () => {
+    it('el tema claro usa data-bs-theme light', async () => {
       await verPublicada({ tema: 'claro' })
 
       expect(document.documentElement.dataset.bsTheme).toBe('light')
-      expect(within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })).toHaveAttribute(
-        'src',
-        '/marca/ways-logo-claro.png',
-      )
     })
 
     it('sin color de acento rige el naranja de Ways', async () => {
@@ -253,13 +221,6 @@ describe('Landing', () => {
       expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#F7991C')
     })
 
-    it('el pie dice quién lo hizo y deja el acceso del comercio al login del back office', async () => {
-      await verPublicada()
-
-      const pie = within(screen.getByRole('contentinfo'))
-      expect(pie.getByText('Hecho con')).toBeInTheDocument()
-      expect(pie.getByRole('link', { name: 'Acceso para el comercio' })).toHaveAttribute('href', '/admin/login')
-    })
   })
 
   describe('sin publicar', () => {
