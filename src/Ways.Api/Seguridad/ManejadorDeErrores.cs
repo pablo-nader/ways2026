@@ -410,6 +410,23 @@ public class ManejadorDeErrores(
                 when string.Equals(uxFamiliaNombre, "ux_familias_nombre", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe una familia con ese nombre.", "familia_nombre_duplicado"),
 
+            // Combos (db-error-backstops): ux_combos_codigo — código único por tenant entre los combos vivos.
+            // Nombre EXACTO antes del brazo genérico de ClasificarUnicidad: "ux_combos_codigo" contiene
+            // "_codigo" y caería en codigo_duplicado ("un registro con ese código"). ServicioDeCombos serializa
+            // sus escrituras con un lock por tenant, así que solo una escritura fuera de banda llega acá.
+            { SqlState: "23505", ConstraintName: string uxComboCodigo }
+                when string.Equals(uxComboCodigo, "ux_combos_codigo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un combo con ese código.", "combo_codigo_duplicado"),
+
+            // ux_combos_componentes_articulo / _familia: un artículo o una familia figura una vez por combo. El
+            // servicio lo rechaza antes con 400 (ReglaDeCombos); este 409 es el respaldo de esquema, con el mismo código.
+            { SqlState: "23505", ConstraintName: string uxComboComponente }
+                when string.Equals(uxComboComponente, "ux_combos_componentes_articulo", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(uxComboComponente, "ux_combos_componentes_familia", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Un artículo o una familia puede figurar una sola vez en el combo.",
+                    "combo_componente_duplicado"),
+
             // Dominios por tenant (db-error-backstops): ux_dominios_host — un host resuelve a un solo
             // tenant, así que dos altas del mismo host (incluso de tenants distintos, que el lock por
             // tenant de ServicioDeDominios no serializa) chocan acá. Exact-match ANTES del brazo

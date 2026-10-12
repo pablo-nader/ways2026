@@ -911,6 +911,13 @@ public class ServicioDeArticulos(
 
             var articulo = await BuscarAsync(id, ct);
 
+            // Los componentes de un combo dado de baja se borran con él: toda fila que exista es de un combo vivo.
+            if (await db.CombosComponentes.AnyAsync(c => c.IdArticulo == id, ct))
+            {
+                throw ErrorDominio.Conflicto(
+                    "articulo_en_uso", "No se puede dar de baja el artículo porque tiene combos.");
+            }
+
             var ahora = reloj.Ahora;
             articulo.DeletedAt = ahora;
             articulo.UpdatedAt = ahora;

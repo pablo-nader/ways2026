@@ -22,7 +22,7 @@ public class BajasEstructuralesTests
 {
     /// <summary>
     /// Los únicos <c>RemoveRange</c> que el repositorio tiene derecho a tener hoy, congelados por
-    /// receptor. Ocho son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
+    /// receptor. Nueve son reemplazos de conjuntos de DETALLE (ítems de un comprobante, filas
     /// de junction) y <c>ImagenesArticulo</c> es la purga de la imagen de la tienda (un derivado
     /// sin historia, ver <c>ServicioDeCatalogoWeb.QuitarImagenAsync</c>): ninguno es la baja de una
     /// entidad ni toca <c>tenants</c>, <c>empresas</c>, <c>puntos_venta</c> ni <c>usuarios</c>. La lista está congelada a propósito — un borrado
@@ -32,6 +32,7 @@ public class BajasEstructuralesTests
     [
         "AlicuotasComprobanteCompra",
         "ArticulosEmpresas",
+        "CombosComponentes",
         "ImagenesArticulo",
         "ItemsComprobanteCompra",
         "ItemsOrdenCompra",

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Ways.Application.Ofertas;
 
 /// <summary><see cref="IdsListas"/> (mismo criterio judgment-day que
@@ -129,14 +131,38 @@ public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal Desc
 /// Reported, Never Persisted) — <see cref="PrecioOriginal"/>/<see cref="PrecioFinal"/> son
 /// <c>null</c> cuando el lote de precios no tiene ningún precio vigente para el par
 /// (artículo, lista) consultado (caso fuera de alcance de la spec de ofertas: sin precio no hay
-/// nada que descontar, <see cref="Aplicadas"/> queda vacía).</summary>
+/// nada que descontar, <see cref="Aplicadas"/> queda vacía).
+///
+/// <see cref="Combo"/> solo lo completa <c>POST /api/ofertas/resolver-con-combos</c> (vista previa de lo que la venta
+/// online cobrará) y solo en las líneas con unidades consumidas por un combo; en cualquier otro camino es <c>null</c> y
+/// el <see cref="JsonIgnoreAttribute"/> deja la clave ausente, así que la respuesta de <c>/resolver</c> es
+/// byte por byte la de siempre.</summary>
 public sealed record ResultadoDeResolucion(
     int IdArticulo,
     int IdListaPrecio,
     decimal? PrecioOriginal,
     decimal? PrecioFinal,
     decimal DescuentoUnitario,
-    IReadOnlyList<OfertaAplicadaDto> Aplicadas);
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    ComboDeLineaDto? Combo = null);
+
+/// <summary>Lo que los combos le hacen a una línea del documento, igual que lo grabará la venta online:
+/// <see cref="UnidadesConsumidas"/> de la línea entran a un combo (las demás conservan su oferta unitaria),
+/// <see cref="Ahorro"/> es la parte del combo como IMPORTE DE LÍNEA (no unitario) y <see cref="IdCombo"/> el combo que
+/// la venta guardará en la línea (el de menor id entre los que consumieron unidades). El descuento de la línea es
+/// <c>round(DescuentoUnitario × (cantidad − UnidadesConsumidas)) + Ahorro</c>, la misma fórmula del checkout.</summary>
+public sealed record ComboDeLineaDto(int UnidadesConsumidas, decimal Ahorro, int IdCombo);
+
+/// <summary>Un combo aplicado en el documento: <see cref="Veces"/> que se aplicó y <see cref="Ahorro"/> total (suma de lo
+/// repartido a las líneas por ese combo). <see cref="Codigo"/> es el número que se tipea tras la <c>C</c>.</summary>
+public sealed record ComboAplicadoDto(int IdCombo, int Codigo, string Nombre, int Veces, decimal Ahorro);
+
+/// <summary>Respuesta de <c>POST /api/ofertas/resolver-con-combos</c>: <see cref="Lineas"/> en el orden de la
+/// solicitud (cada una con su <see cref="ResultadoDeResolucion.Combo"/> si un combo la consumió) y los
+/// <see cref="Combos"/> aplicados al documento, ascendentes por id (vacío si ninguno).</summary>
+public sealed record ResolucionConCombos(
+    IReadOnlyList<ResultadoDeResolucion> Lineas, IReadOnlyList<ComboAplicadoDto> Combos);
 
 /// <summary>Un escalón de la curva de precio por cantidad, forma HTTP de
 /// <c>Ways.Domain.Ofertas.EscalonResuelto</c>: desde <see cref="CantidadDesde"/> unidades (y hasta

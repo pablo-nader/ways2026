@@ -631,3 +631,76 @@ describe('Proveedores — impuestos de la compra', () => {
     })
   })
 })
+
+describe('Proveedores — error y foco de la modal', () => {
+  it('un guardado rechazado expone el error como alerta adentro del diálogo', async () => {
+    mockearConCondicion()
+    apiPostMock.mockRejectedValue(new ErrorApi(409, 'cuit_duplicado', 'Ya existe un proveedor con ese CUIT.'))
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    const alerta = await within(screen.getByRole('dialog')).findByRole('alert')
+    expect(alerta).toHaveTextContent('Ya existe un proveedor con ese CUIT.')
+  })
+
+  it('al abrir, el foco queda en el primer campo y no en la ×', async () => {
+    mockearConCondicion()
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByLabelText('Razón social')).toHaveFocus())
+  })
+
+  it('con el refresco en vuelo tras guardar, el foco queda en el contenedor de la pantalla y no en <body>', async () => {
+    let liberarRefresco: (pagina: PaginaDe<ProveedorListado>) => void = () => {}
+    let cargas = 0
+    mockearRutasBase((ruta) => {
+      if (ruta === '/proveedores') {
+        cargas += 1
+        return cargas === 1
+          ? Promise.resolve(paginaFixture([proveedorFixture()]))
+          : new Promise<PaginaDe<ProveedorListado>>((resolver) => {
+              liberarRefresco = resolver
+            })
+      }
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([CONDICION_RI])
+      return undefined
+    })
+    apiPostMock.mockResolvedValue(proveedorFixture({ id: 2 }))
+    const usuario = userEvent.setup()
+    const { container } = renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.type(screen.getByLabelText('Razón social'), 'Nuevo SA')
+    await usuario.selectOptions(screen.getByLabelText('Condición fiscal'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Proveedor "Nuevo SA" creado.')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(container.firstElementChild)
+
+    await act(async () => liberarRefresco(paginaFixture([proveedorFixture()])))
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
+    expect(document.activeElement).toBe(container.firstElementChild)
+  })
+
+  it('cancelar devuelve el foco al botón que abrió la modal', async () => {
+    mockearConCondicion()
+    const usuario = userEvent.setup()
+    renderProveedores()
+
+    await abrirAlta(usuario)
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByRole('button', { name: 'Agregar' })).toHaveFocus()
+  })
+})
