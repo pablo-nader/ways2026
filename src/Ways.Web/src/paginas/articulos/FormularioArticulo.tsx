@@ -42,6 +42,7 @@ import {
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
+import { SeccionDeTiendaOnline } from './SeccionDeTiendaOnline'
 
 export type Formulario = {
   id: number | null
@@ -82,6 +83,10 @@ export type Formulario = {
   /** En un alta, el nombre de la familia que el servidor crea junto con el artículo (él queda como su referencia); `''` si no
    * se pidió ninguna. Excluyente con `idFamilia`. */
   nombreFamiliaNueva: string
+  /** Estado del artículo en la tienda online tal como se cargó. Solo lectura: la sección "Tienda online" los toma al
+   * montar y escribe por su cuenta, así que no entran en `aAlta`/`aEdicion` ni cuentan como cambios sin guardar. */
+  publicadoWeb: boolean
+  tieneImagen: boolean
 }
 
 /** El campo del código con el que el proveedor habitual conoce al artículo: no es un dato del artículo sino de su
@@ -122,6 +127,8 @@ export function formularioVacio(): Formulario {
     acumulaEnVenta: true,
     idFamilia: '',
     nombreFamiliaNueva: '',
+    publicadoWeb: false,
+    tieneImagen: false,
   }
 }
 
@@ -163,6 +170,8 @@ export function aFormulario(a: ArticuloListado): Formulario {
     acumulaEnVenta: a.acumulaEnVenta,
     idFamilia: a.idFamilia ?? '',
     nombreFamiliaNueva: '',
+    publicadoWeb: a.publicadoWeb,
+    tieneImagen: a.tieneImagen,
   }
 }
 
@@ -255,6 +264,7 @@ export function FormularioArticulo({
   onGuardar,
   onCancelar,
   alDeEscribir,
+  alCambiarTienda,
   onCategoriaCreada,
   onMarcaCreada,
   onGrupoCreada,
@@ -294,6 +304,8 @@ export function FormularioArticulo({
   onGuardar: () => void
   onCancelar: () => void
   alDeEscribir: (enCurso: boolean) => void
+  /** La sección "Tienda online" escribió algo que la grilla de artículos muestra (publicación o imagen). */
+  alCambiarTienda: () => void
   onCategoriaCreada: (categoria: CategoriaListado) => void
   onMarcaCreada: (marca: MarcaListado) => void
   onGrupoCreada: (grupo: GrupoListado) => void
@@ -1039,6 +1051,14 @@ export function FormularioArticulo({
             alSalirDeLaFamilia={accionesDeFamilia.alSalirDeLaFamilia}
             alEscribirPrecio={accionesDeFamilia.alEscribirPrecio}
             alCambiarLaFamilia={accionesDeFamilia.alCambiarLaFamilia}
+          />
+          <hr />
+          <SeccionDeTiendaOnline
+            idArticulo={valor.id}
+            inicial={{ publicadoWeb: valor.publicadoWeb, tieneImagen: valor.tieneImagen }}
+            bloqueadoPorPadre={bloqueado}
+            alDeEscribir={alDeEscribir}
+            alCambiar={alCambiarTienda}
           />
         </>
       )}

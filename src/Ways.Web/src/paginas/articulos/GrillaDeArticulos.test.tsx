@@ -28,6 +28,8 @@ vi.mock('../../api/cliente', () => ({
 
 function filaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
     nombre: 'Articulo Uno',
@@ -168,6 +170,46 @@ describe('GrillaDeArticulos — columnas', () => {
     expect(within(filaConCosto).getByText('$ 100,00')).toBeInTheDocument()
     expect(within(filaSinCosto).getByText('$ 250,00')).toBeInTheDocument()
     expect(within(filaSinCosto).getByText('—', { selector: 'td' })).toBeInTheDocument()
+  })
+
+  // mutation-proof-tests: cada marca sale de su propio campo de ESA fila; tres filas con combinaciones distintas.
+  it('la columna Tienda marca "Publicado" y "Con imagen" cada una por su campo, en su propia celda', async () => {
+    mockearRutas(
+      paginaFixture([
+        filaFixture({ id: 1, nombre: 'En la tienda', publicadoWeb: true, tieneImagen: false, proveedor: 'Alfa SA' }),
+        filaFixture({ id: 2, nombre: 'Solo con foto', publicadoWeb: false, tieneImagen: true }),
+        filaFixture({ id: 3, nombre: 'Sin nada', publicadoWeb: false, tieneImagen: false }),
+      ]),
+    )
+    renderGrilla()
+
+    await screen.findByText('En la tienda')
+    const columnas = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    const posicion = columnas.indexOf('Tienda')
+    expect(posicion).toBeGreaterThan(-1)
+
+    const celdaDe = (nombre: string) => {
+      const fila = screen.getByText(nombre).closest('tr')
+      if (!fila) throw new Error('No se encontró la fila')
+
+      return within(fila).getAllByRole('cell')[posicion]
+    }
+
+    expect(celdaDe('En la tienda')).toHaveTextContent('Publicado')
+    expect(celdaDe('En la tienda')).not.toHaveTextContent('Con imagen')
+    expect(celdaDe('Solo con foto')).toHaveTextContent('Con imagen')
+    expect(celdaDe('Solo con foto')).not.toHaveTextContent('Publicado')
+    expect(celdaDe('Sin nada')).toBeEmptyDOMElement()
+  })
+
+  it('la fila de "No hay artículos" abarca todas las columnas de la tabla', async () => {
+    mockearRutas(paginaFixture([]))
+    renderGrilla()
+
+    const celda = (await screen.findByText('No hay artículos que coincidan con los filtros.')).closest('td')
+    const filaDeTitulos = screen.getAllByRole('row')[0]
+
+    expect(celda).toHaveAttribute('colspan', String(within(filaDeTitulos).getAllByRole('columnheader').length))
   })
 
   it('precio null se muestra "—"', async () => {
@@ -943,7 +985,7 @@ describe('GrillaDeArticulos — accesibilidad de headers (GW16)', () => {
   /**
    * Cláusula bajo prueba: `scope="col"` en cada `<th>` del `<thead>` (ambas filas: títulos y
    * filtros). Mutation-proof-tests: sacar el atributo de cualquier header lo dejaría sin `scope`,
-   * y este test fallaría porque exige exactamente 12 headers con `scope="col"`.
+   * y este test fallaría porque exige exactamente 16 headers con `scope="col"`.
    */
   it('todas las celdas de header (ambas filas) tienen scope="col"', async () => {
     mockearRutas(paginaFixture([filaFixture()]))
@@ -951,7 +993,7 @@ describe('GrillaDeArticulos — accesibilidad de headers (GW16)', () => {
     await screen.findByText('Articulo Uno')
 
     const headers = container.querySelectorAll('thead th')
-    expect(headers.length).toBe(14)
+    expect(headers.length).toBe(16)
     headers.forEach((th) => expect(th).toHaveAttribute('scope', 'col'))
   })
 })

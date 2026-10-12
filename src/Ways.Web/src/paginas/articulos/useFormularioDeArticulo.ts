@@ -816,6 +816,7 @@ export function useFormularioDeArticulo({ alCrear, alGuardar, precargaInicial, c
       actualizarFormulario,
       onGuardar: pedirGuardado,
       alDeEscribir,
+      alCambiarTienda: () => alGuardar?.(),
       onCategoriaCreada: catalogos.alCrearCategoria,
       onMarcaCreada: catalogos.alCrearMarca,
       onGrupoCreada: catalogos.alCrearGrupo,

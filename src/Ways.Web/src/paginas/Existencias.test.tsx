@@ -106,6 +106,8 @@ function minimosFixture(sobrescribir: Partial<MinimosDeStock> = {}): MinimosDeSt
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 50,
     codigoInterno: 'ART-50',
     nombre: 'Arroz largo fino 1kg',
