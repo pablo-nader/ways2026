@@ -1560,6 +1560,39 @@ movimientos, y los movimientos no se editan.
 > offline. Sin tablas nuevas: ambas columnas viven en tablas operativas que ya tienen
 > `id_tenant` y RLS.
 
+> **Estado (artículos por importe — venta): implementada**, sin cambio de esquema: la línea ya guarda
+> `precio_unitario`. Un artículo `unidad_venta = 'importe'` se vende por el monto que escribe el cajero. La línea del
+> request (`LineaDeVenta`) y la de la vista previa (`LineaDeResolucion`, `POST /api/ofertas/resolver` y
+> `resolver-con-combos`) suman `importe` (`decimal?`): **obligatorio** en un artículo por importe (`400
+> importe_requerido`) y **rechazado** en cualquier otro (`400 importe_no_admitido`, en vez de ignorarse); mayor a cero,
+> con a lo sumo 2 decimales y dentro de `numeric(14,2)` (`400 importe_invalido`, `ReglaDeImporteDeVenta`); la cantidad es
+> exactamente 1 (`400 cantidad_importe_invalida`) y junto a `precioUnitario` no tiene destino (`400
+> importe_con_precio_no_admitido`). `ServicioDeOfertas` resuelve la línea sin mirar lista, ofertas ni combos: precio
+> original = precio final = importe, descuento 0, sin ofertas aplicadas (`articulo_sin_precio_vigente` no aplica). La
+> venta persiste el item como cualquier otro: `cantidad` 1, `precio_unitario` = importe, `descuento` 0, `id_oferta`
+> NULL, `id_combo` NULL, `id_lista_precio` la del cliente. El ajuste manual (`ajusteManualPorcentaje`) se aplica encima y
+> el total de la línea sigue la regla de peso entero de `CalculadorDeTotales`: un importe con centavos conserva el
+> precio unitario tipeado (150,50) y el total de la línea sale al peso (151).
+>
+> - **Offline.** La línea por importe lleva `importe` y nunca `precioUnitario`/`descuentoUnitario`; el "todas o ninguna" del
+>   precio offline se mide solo sobre las líneas de lista, así que una venta solo de importes y una mixta se aceptan. No es
+>   una discrepancia de precio. Una línea que el dispositivo ya cobró con precio de lista para un artículo que hoy es por
+>   importe se honra (no se le exige `importe`).
+> - **Devolución (NCX).** Cada línea por importe lleva el importe devuelto; con comprobante asociado tiene que existir en él
+>   una línea de ese artículo (cantidad positiva) con ese precio unitario (`400 importe_devolucion_inexistente`). No se lleva
+>   la cuenta de lo ya devuelto, igual que las cantidades de una devolución común. Una devolución offline (con número
+>   pre-asignado) no se compara.
+> - **Escaneo.** `GET /api/articulos/escaneo?entrada=150*500` sobre un artículo por importe responde `cantidad` 1 e
+>   `importe` 150; con el código solo, sin `importe` (la clave se omite) y el cliente lo pide. El prefijo de un artículo por
+>   importe se lee estricto (solo dígitos y punto decimal): uno vacío, cero, negativo, ilegible, con coma, con más de 2
+>   decimales o fuera de rango es `400 importe_invalido`, en vez de caer a "cantidad 1" como en los demás artículos.
+> - **Instantánea del POS.** El artículo por importe viaja siempre con `preciosPorLista` vacío (aunque conserve un precio de
+>   lista, que el dispositivo no debe usar).
+> - **Reliquidación de cuenta corriente.** La línea por importe conserva el monto tipeado: no se reprecifica, el detalle la
+>   marca como omitida con su motivo y el delta es cero.
+> - **Presupuestos y remitos** rechazan un artículo por importe (`400 articulo_por_importe_no_admitido`). **Tienda online:**
+>   no se puede publicar (`400 articulo_por_importe_no_publicable`) y el catálogo público no lo lista.
+
 ### Fiscal ARCA (Etapa 19a)
 
 El núcleo fiscal buildable sin credenciales (`openspec/changes/stage-19-fiscal-arca/`, slice 1

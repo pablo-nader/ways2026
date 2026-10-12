@@ -176,7 +176,7 @@ public class ServicioDeVentas(
         // idPresupuestoOrigen, la resolución YA está congelada en items_presupuesto — este
         // llamado se salta entero (decisión 2: "resolucion ←→ sintetizada desde items_presupuesto").
         var lineasDeResolucion = lineas
-            .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad))
+            .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad, l.Importe))
             .ToList();
         var resolucion = presupuestoOrigen is null
             ? await servicioDeOfertas.ResolverDocumentoAsync(lineasDeResolucion, momento, ct)
@@ -197,6 +197,12 @@ public class ServicioDeVentas(
         if (solicitud.NumeroPreasignado is null && presupuestoOrigen is null && tipo.Signo > 0)
         {
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
+        }
+
+        // La conversión de un presupuesto trae sus líneas congeladas, sin importe: no se le exige uno de nuevo.
+        if (presupuestoOrigen is null)
+        {
+            ExigirImporteEnLosArticulosPorImporte(lineas, articuloPorId);
         }
 
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
@@ -233,6 +239,12 @@ public class ServicioDeVentas(
         var devolucionesDeCombo = asociado is not null && solicitud.NumeroPreasignado is null
             ? await ResolverDevolucionesDeComboAsync(asociado.Id, lineas, ct)
             : SinDevolucionesDeCombo;
+
+        // Una devolución offline (con número pre-asignado) ya se cobró en la caja: no se rechaza por esta comparación.
+        if (asociado is not null && solicitud.NumeroPreasignado is null)
+        {
+            await ExigirImportesDeLaVentaAsociadaAsync(asociado.Id, lineas, ct);
+        }
 
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
             ? MaterializarItems(
@@ -2332,9 +2344,73 @@ public class ServicioDeVentas(
             }
 
             ReglaDeAjusteManual.Validar(linea.AjusteManualPorcentaje);
+
+            if (linea.Importe is not null && linea.PrecioUnitario is not null)
+            {
+                throw new ErrorDominio(
+                    "importe_con_precio_no_admitido",
+                    "Una línea por importe lleva su importe y nunca un precio unitario: el precio de lista no tiene " +
+                    "destino en ella.",
+                    400);
+            }
         }
 
         return lineas;
+    }
+
+    /// <summary>Un artículo por importe se vende por el monto que tipea el cajero: sin él (400 <c>importe_requerido</c>) nadie
+    /// le inventa un precio de lista. Queda fuera la línea que trae el precio ya cobrado por un dispositivo offline: ese
+    /// precio es el que el cliente tiene en su ticket. Que un importe sobre un artículo común no se ignore en silencio lo
+    /// resuelve <c>ServicioDeOfertas</c> (400 <c>importe_no_admitido</c>).</summary>
+    private static void ExigirImporteEnLosArticulosPorImporte(
+        IReadOnlyList<LineaDeVenta> lineas, IReadOnlyDictionary<int, Articulo> articuloPorId)
+    {
+        foreach (var linea in lineas)
+        {
+            if (linea.Importe is null
+                && linea.PrecioUnitario is null
+                && articuloPorId[linea.IdArticulo].UnidadVenta == UnidadVenta.Importe)
+            {
+                throw new ErrorDominio(
+                    "importe_requerido",
+                    $"El artículo {articuloPorId[linea.IdArticulo].CodigoInterno} se vende por importe: hay que indicar el importe.",
+                    400);
+            }
+        }
+    }
+
+    /// <summary>Una nota de crédito asociada devuelve una línea por importe por el monto con que se vendió: la venta
+    /// asociada tiene que tener una línea de ese artículo (cantidad positiva) con ese precio unitario, si no 400
+    /// <c>importe_devolucion_inexistente</c>. Cuesta UNA consulta y solo si alguna línea trae importe. No lleva la cuenta de
+    /// lo ya devuelto: igual que las cantidades de una devolución común, no se compara contra devoluciones anteriores.</summary>
+    private async Task ExigirImportesDeLaVentaAsociadaAsync(
+        int idComprobanteAsociado, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    {
+        var devueltas = lineas.Where(l => l.Importe is not null).ToList();
+        if (devueltas.Count == 0)
+        {
+            return;
+        }
+
+        var idsArticulo = devueltas.Select(l => l.IdArticulo).Distinct().ToList();
+        var vendidos = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == idComprobanteAsociado
+                && i.Cantidad > 0m
+                && i.IdArticulo != null
+                && idsArticulo.Contains(i.IdArticulo.Value))
+            .Select(i => new { IdArticulo = i.IdArticulo!.Value, i.PrecioUnitario })
+            .ToListAsync(ct);
+
+        foreach (var linea in devueltas)
+        {
+            if (!vendidos.Any(v => v.IdArticulo == linea.IdArticulo && v.PrecioUnitario == linea.Importe))
+            {
+                throw new ErrorDominio(
+                    "importe_devolucion_inexistente",
+                    $"El comprobante asociado no tiene una línea del artículo {linea.IdArticulo} vendida por {linea.Importe}.",
+                    400);
+            }
+        }
     }
 
     /// <summary>Un artículo que se vende por <see cref="UnidadVenta.Unidad"/> no admite fracciones
@@ -2389,7 +2465,8 @@ public class ServicioDeVentas(
     /// excepción) y SIEMPRE completo: todas las líneas con precio, o ninguna (400
     /// <c>precio_offline_incompleto</c>) — una mezcla dejaría media venta al precio de HOY y media
     /// al precio congelado del dispositivo, sin ningún significado económico ni una regla que
-    /// diga cuál de las dos mitades es la verdad. Un <c>descuentoUnitario</c> sin
+    /// diga cuál de las dos mitades es la verdad. Las líneas por importe (<see cref="LineaDeVenta.Importe"/>)
+    /// quedan fuera de esa cuenta: llevan su importe y nunca un precio, y el resto de la venta sigue siendo todo o nada. Un <c>descuentoUnitario</c> sin
     /// <c>precioUnitario</c> tampoco tiene destino (dto-contract-honesty regla 1): mismo código,
     /// se rechaza en vez de ignorarse. Negativo en cualquiera de los dos ⇒ 400
     /// <c>precio_offline_invalido</c>.
@@ -2435,7 +2512,11 @@ public class ServicioDeVentas(
                 400);
         }
 
-        if (lineas.Any(l => l.PrecioUnitario is null))
+        // La línea por importe nunca trae precio de lista (su importe es el dato del cajero), así que el todas-o-ninguna
+        // se mide solo sobre las demás.
+        var deLista = lineas.Where(l => l.Importe is null).ToList();
+
+        if (deLista.Any(l => l.PrecioUnitario is null))
         {
             throw new ErrorDominio(
                 "precio_offline_incompleto",
@@ -2443,7 +2524,7 @@ public class ServicioDeVentas(
                 400);
         }
 
-        if (lineas.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0
+        if (deLista.Any(l => l.PrecioUnitario!.Value < 0 || (l.DescuentoUnitario ?? 0m) < 0
                 || (l.DescuentoUnitario ?? 0m) > l.PrecioUnitario!.Value))
         {
             throw new ErrorDominio(

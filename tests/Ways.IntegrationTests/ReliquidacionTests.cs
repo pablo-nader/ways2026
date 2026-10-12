@@ -1170,4 +1170,44 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         // reliquidación (5000 + 10).
         Assert.Equal(primera.Delta + segunda.Delta, saldoFinal);
     }
+    // ---- artículo por importe: el importe tipeado no se reprecia -------------------------------
+
+    /// <summary>La línea por importe conserva el monto que se tipeó aunque el artículo tenga hoy un precio de lista
+    /// distinto: la reliquidación solo mueve la línea de lista, y el detalle dice por qué dejó la otra.</summary>
+    [Fact]
+    public async Task LaReliquidacionNoReprecificaUnaLineaPorImporteYSiLaDeLista()
+    {
+        var ctx = await PrepararAsync(nameof(LaReliquidacionNoReprecificaUnaLineaPorImporteYSiLaDeLista));
+        var idComun = await SembrarArticuloConPrecioAsync(ctx, "articulo-comun", 100m);
+        var idPorImporte = await SembrarArticuloConPrecioAsync(ctx, "articulo-importe", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente importe");
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var articulo = await db.Articulos.SingleAsync(a => a.Id == idPorImporte);
+            articulo.UnidadVenta = Ways.Domain.Articulos.UnidadVenta.Importe;
+            articulo.AcumulaEnVenta = false;
+            await db.SaveChangesAsync();
+        }
+
+        var venta = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idComun, 1m, null), new LineaDeVenta(idPorImporte, 1m, null, Importe: 150m)],
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, 250m, null, 0m)], null, null);
+        var emitida = await ctx.Admin.PostAsJsonAsync("/api/ventas", venta);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
+
+        await SubirPrecioAsync(ctx, idComun, 130m);
+        await SubirPrecioAsync(ctx, idPorImporte, 999m);
+
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+
+        Assert.Equal(30m, resultado.Delta);
+        var lineas = Assert.Single(resultado.Detalle).Lineas;
+        var deLista = Assert.Single(lineas, l => l.IdArticulo == idComun);
+        Assert.Equal((130m, 30m), (deLista.TotalDelDia, deLista.Delta));
+        var porImporte = Assert.Single(lineas, l => l.IdArticulo == idPorImporte);
+        Assert.Equal((0m, (decimal?)null, 150m), (porImporte.Delta, porImporte.TotalDelDia, porImporte.TotalHistorico));
+        Assert.Contains("importe", porImporte.Motivo, StringComparison.OrdinalIgnoreCase);
+    }
 }

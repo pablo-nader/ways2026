@@ -111,6 +111,21 @@ public class ResolucionConEscalonesTests
         return oferta.Id;
     }
 
+    /// <summary>La curva de precio por cantidad es del catálogo a cantidad 1: una línea con importe (que es del carrito)
+    /// no tiene destino ahí y se rechaza en vez de ignorarse.</summary>
+    [Fact]
+    public async Task UnaLineaConImporteNoTieneDestinoEnLaCurvaYSeRechaza()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idArticulo, idLista) = await SembrarArticuloConPrecioAsync(nombreDeBase, precio: 100m);
+        var servicio = CrearServicio(nombreDeBase);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ResolverConEscalonesAsync(
+            [new LineaDeResolucion(idArticulo, null, idLista, 1m, Importe: 150m)], momento: null));
+
+        Assert.Equal("importe_no_admitido", error.Codigo);
+    }
+
     /// <summary>El cableado completo: el resultado plano sigue siendo el de cantidad 1 (sin
     /// descuento, porque la oferta arranca en 6) y la curva viaja aparte, con el precio final y la
     /// oferta aplicada YA resueltos por el motor.</summary>

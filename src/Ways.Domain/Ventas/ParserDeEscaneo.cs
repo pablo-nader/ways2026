@@ -13,8 +13,11 @@ public enum ObjetivoDeEscaneo
 
 /// <summary>Resultado puro de <see cref="ParserDeEscaneo.Parsear"/> — <see cref="Codigo"/> y
 /// <see cref="Objetivo"/> le dicen a <see cref="Application.Ventas.ServicioDeEscaneo"/> qué
-/// columna consultar, sin que este tipo sepa nada de persistencia.</summary>
-public readonly record struct EntradaDeEscaneo(decimal Cantidad, string Codigo, ObjetivoDeEscaneo Objetivo);
+/// columna consultar, sin que este tipo sepa nada de persistencia. <see cref="Prefijo"/> es el texto exacto que había
+/// antes del <c>*</c> (<c>null</c> si la entrada no traía <c>*</c>; vacío si el <c>*</c> estaba solo): lo necesita
+/// un artículo por importe, para el que un prefijo ilegible no puede degradarse a "cantidad 1" como en los demás.</summary>
+public readonly record struct EntradaDeEscaneo(
+    decimal Cantidad, string Codigo, ObjetivoDeEscaneo Objetivo, string? Prefijo = null);
 
 /// <summary>
 /// Parsea la entrada cruda de un escaneo de POS (design decision 7, spec: codigos-barra / Scan
@@ -37,7 +40,7 @@ public static class ParserDeEscaneo
             throw new ErrorDominio("escaneo_invalido", "El código escaneado no puede estar vacío.", 400);
         }
 
-        var (cantidad, codigo) = SepararCantidadYCodigo(texto);
+        var (cantidad, codigo, prefijo) = SepararCantidadYCodigo(texto);
 
         if (string.IsNullOrEmpty(codigo))
         {
@@ -48,7 +51,7 @@ public static class ParserDeEscaneo
             ? ObjetivoDeEscaneo.CodigoInterno
             : ObjetivoDeEscaneo.CodigoBarra;
 
-        return new EntradaDeEscaneo(cantidad, codigo, objetivo);
+        return new EntradaDeEscaneo(cantidad, codigo, objetivo, prefijo);
     }
 
     /// <summary>Sintaxis <c>&lt;cantidad&gt;*&lt;codigo&gt;</c> (p.ej. <c>"3*7790001"</c>).
@@ -56,13 +59,13 @@ public static class ParserDeEscaneo
     /// escaneo — cae a cantidad 1 (spec: "defaults an empty or 0 cantidad to 1"; una entrada
     /// "rara" antes del <c>*</c> se trata igual que una ausente, nunca como error de parseo —
     /// el <c>*</c> es a lo sumo un separador opcional, no sintaxis obligatoria).</summary>
-    private static (decimal Cantidad, string Codigo) SepararCantidadYCodigo(string texto)
+    private static (decimal Cantidad, string Codigo, string? Prefijo) SepararCantidadYCodigo(string texto)
     {
         var indice = texto.IndexOf('*');
 
         if (indice < 0)
         {
-            return (1m, texto);
+            return (1m, texto, null);
         }
 
         var prefijo = texto[..indice].Trim();
@@ -73,6 +76,6 @@ public static class ParserDeEscaneo
                 ? parseada
                 : 1m;
 
-        return (cantidad, codigo);
+        return (cantidad, codigo, prefijo);
     }
 }
