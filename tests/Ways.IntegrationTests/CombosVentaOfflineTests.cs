@@ -181,11 +181,16 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     /// <summary>Un combo que el dispositivo calculó y el servidor no detecta (el combo se desactivó después de que el
-    /// dispositivo bajó su instantánea) se graba y se audita.</summary>
+    /// dispositivo bajó su instantánea) se graba y se audita, y <c>combo_esperado</c> es <c>null</c> (el servidor no
+    /// detectó ninguno). El único combo del tenant es el dado de baja: con uno activo sobre los mismos artículos el
+    /// servidor sí detectaría algo.</summary>
     [Fact]
     public async Task UnComboQueElServidorNoDetectaSeGrabaConSuIdYSeAudita()
     {
-        var (ctx, pancho, coca, _) = await PanchoYCocaAsync(nameof(UnComboQueElServidorNoDetectaSeGrabaConSuIdYSeAudita));
+        var ctx = await apoyo.PrepararAsync(nameof(UnComboQueElServidorNoDetectaSeGrabaConSuIdYSeAudita), ModoPuntoVenta.Escritorio);
+        await ReservarBloqueAsync(ctx);
+        var pancho = await apoyo.ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await apoyo.ArticuloAsync(ctx, "coca", 2500m);
         var dadoDeBaja = await apoyo.ComboAsync(ctx, 4000m, [Art(pancho), Art(coca)], dadoDeBaja: true);
 
         var emitido = await EmitirAsync(ctx, Venta(ctx, 1, 4000m, "TX",
@@ -195,7 +200,12 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         // La baja es lógica: la fila sigue, así que la venta que ya ocurrió conserva su combo.
         Assert.All(emitido.Items, i => Assert.Equal(dadoDeBaja, i.IdCombo));
         Assert.Equal(4000m, emitido.Total);
-        Assert.Single(await DiscrepanciasAuditadasAsync(ctx));
+
+        var fila = Assert.Single(await DiscrepanciasAuditadasAsync(ctx));
+        var item = fila.GetProperty("items")[0];
+        Assert.Equal(dadoDeBaja, item.GetProperty("combo_cobrado").GetProperty("id_combo").GetInt32());
+        Assert.False(item.GetProperty("combo_cobrado").GetProperty("inexistente").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("combo_esperado").ValueKind);
     }
 
     /// <summary>Decisión: un id de combo que el tenant nunca tuvo no se puede grabar (la FK lo rechazaría y la venta
@@ -295,6 +305,7 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
     [InlineData(1, 3000.01, true)]   // parte por encima del bruto de las unidades consumidas
     [InlineData(1, 100.005, true)]   // más de dos decimales
     [InlineData(1, 100, false)]      // id de combo no positivo
+    [InlineData(int.MaxValue, 100, true)] // unidades enormes
     public async Task UnDatoDeComboFueraDeRangoSeRechaza(int unidades, double ahorro, bool conIdValido)
     {
         var (ctx, pancho, _, combo) = await PanchoYCocaAsync(nameof(UnDatoDeComboFueraDeRangoSeRechaza));
@@ -340,6 +351,21 @@ public class CombosVentaOfflineTests(WaysApiFixture fixture) : IClassFixture<Way
         var respuesta = await ctx.Cajero!.PostAsJsonAsync("/api/ventas", cuerpo);
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cuerpo_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Cláusula: el bruto de las unidades consumidas se calcula DESPUÉS de acotar las unidades a 1..cantidad. Con
+    /// <c>int.MaxValue</c> unidades y un precio grande la multiplicación desborda el decimal: calculada antes de las
+    /// guardas, esa línea terminaba en 500 en vez de en el 400 de contrato.</summary>
+    [Fact]
+    public async Task UnasUnidadesDeComboEnormesSeRechazanSinDesbordarElBruto()
+    {
+        var (ctx, pancho, _, combo) = await PanchoYCocaAsync(nameof(UnasUnidadesDeComboEnormesSeRechazanSinDesbordarElBruto));
+
+        var linea = Offline(pancho, 1m, 100_000_000_000_000_000_000m, unidades: int.MaxValue, ahorro: 0m, idCombo: combo);
+
+        Assert.Equal("combo_offline_invalido", await CodigoDeRechazoAsync(ctx, Venta(ctx, 1, 0m, "TX", linea)));
     }
 
     [Fact]

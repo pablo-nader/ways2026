@@ -444,9 +444,15 @@ public class ServicioDeOfertas(
     /// traer la misma <see cref="LineaDeResolucion.IdEmpresa"/> (incluida la ausencia): si no, 400
     /// <c>empresa_inconsistente</c>. Con la empresa ausente solo participan los combos de todo el tenant. (El
     /// <c>/resolver</c> de siempre no rechaza una mezcla porque filtra las ofertas línea por línea; los combos
-    /// se detectan sobre el documento entero y una empresa por documento es la única lectura coherente.)</para>
+    /// se detectan sobre el documento entero y una empresa por documento es la única lectura coherente.) Lo mismo
+    /// vale para la lista de precios: la venta cotiza todas las líneas con la lista del cliente, así que una mezcla
+    /// de <see cref="LineaDeResolucion.IdListaPrecio"/> es 400 <c>lista_inconsistente</c>.</para>
     ///
-    /// <para>Presupuesto: las 7 consultas de la resolución más UNA de candidatos de combos, que se omite si el
+    /// <para>El cliente tiene que enviar en cada línea la empresa del punto de venta y la lista del cliente: la venta
+    /// no las lee del cuerpo sino de su punto de venta y de su cliente, y una vista previa con otros valores no es el
+    /// total de la venta.</para>
+    ///
+    /// <para>Presupuesto: las 5 consultas de la resolución más UNA de candidatos de combos, que se omite si el
     /// documento suma menos de 2 unidades. No escribe nada.</para>
     /// </summary>
     public async Task<ResolucionConCombos> ResolverConCombosAsync(
@@ -459,6 +465,7 @@ public class ServicioDeOfertas(
 
         var lineasPedidas = ExigirLineas(solicitud.Lineas);
         var idEmpresa = ExigirUnaSolaEmpresa(lineasPedidas);
+        ExigirUnaSolaLista(lineasPedidas);
 
         var (resultados, contexto) = await ResolverConContextoAsync(
             lineasPedidas, solicitud.Momento, agregarPorFamilia: true, ct);
@@ -508,6 +515,18 @@ public class ServicioDeOfertas(
         }
 
         return empresas.Count == 1 ? empresas[0] : null;
+    }
+
+    private static void ExigirUnaSolaLista(IReadOnlyList<LineaDeResolucion> lineas)
+    {
+        if (lineas.Select(l => l.IdListaPrecio).Distinct().Count() > 1)
+        {
+            throw new ErrorDominio(
+                "lista_inconsistente",
+                "Las líneas de un documento con combos tienen que usar todas la misma lista de precios " +
+                "(la del cliente).",
+                400);
+        }
     }
 
     /// <summary>

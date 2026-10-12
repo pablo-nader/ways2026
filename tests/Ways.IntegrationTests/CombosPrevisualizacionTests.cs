@@ -323,6 +323,76 @@ public class CombosPrevisualizacionTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(HttpStatusCode.OK, heredado.StatusCode);
     }
 
+    /// <summary>Cláusula: <c>ExigirUnaSolaLista</c>. La venta cotiza todas las líneas con la lista del cliente, así que una
+    /// vista previa con listas mezcladas no es el total de ninguna venta: 400.</summary>
+    [Fact]
+    public async Task LineasConListasDePreciosDistintasSeRechazan()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LineasConListasDePreciosDistintasSeRechazan), ModoPuntoVenta.Web);
+        var a = await apoyo.ArticuloAsync(ctx, "a", 1000m);
+        var b = await apoyo.ArticuloAsync(ctx, "b", 1000m);
+        var mezcla = new SolicitudDeResolucion(
+        [
+            new LineaDeResolucion(a, ctx.IdEmpresa, ctx.IdListaPrecio, 1m),
+            new LineaDeResolucion(b, ctx.IdEmpresa, ctx.IdListaPrecio + 1000, 1m)
+        ]);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(Ruta, mezcla);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lista_inconsistente", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Documenta el requisito del contrato (doc 10, "Vista previa del carrito"): la vista previa usa la empresa que
+    /// ENVÍA el cliente y la venta la de su punto de venta. Un combo propio de la empresa no aparece en la vista previa si
+    /// el cliente omite <c>idEmpresa</c>, aunque la venta SÍ lo aplica: sin la empresa del punto de venta en cada línea, la
+    /// vista previa no es el total de la venta.</summary>
+    [Fact]
+    public async Task SiElClienteOmiteLaEmpresaLaVistaPreviaNoMuestraUnComboPropioQueLaVentaSiAplica()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(SiElClienteOmiteLaEmpresaLaVistaPreviaNoMuestraUnComboPropioQueLaVentaSiAplica), ModoPuntoVenta.Web);
+        var a = await apoyo.ArticuloAsync(ctx, "a", 1000m);
+        var b = await apoyo.ArticuloAsync(ctx, "b", 1000m);
+        var combo = await apoyo.ComboAsync(ctx, 1500m, [Art(a), Art(b)], idEmpresa: ctx.IdEmpresa);
+
+        var conEmpresa = await PrevisualizarAsync(ctx, (a, 1m), (b, 1m));
+        var sinEmpresaRespuesta = await ctx.Admin.PostAsJsonAsync(
+            Ruta, new SolicitudDeResolucion([Linea(ctx, a, 1m, idEmpresa: null), Linea(ctx, b, 1m, idEmpresa: null)]));
+        Assert.Equal(HttpStatusCode.OK, sinEmpresaRespuesta.StatusCode);
+        var sinEmpresa = JsonDocument.Parse(await sinEmpresaRespuesta.Content.ReadAsStringAsync()).RootElement;
+
+        Assert.Equal(combo, Assert.Single(conEmpresa.GetProperty("combos").EnumerateArray()).GetProperty("idCombo").GetInt32());
+        Assert.Equal(0, sinEmpresa.GetProperty("combos").GetArrayLength());
+
+        var venta = await ctx.Admin.PostAsJsonAsync("/api/ventas", new SolicitudDeVenta(
+            ctx.IdPuntoVenta, null, "TX", null, [new LineaDeVenta(a, 1m, null), new LineaDeVenta(b, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 1500m, null, 0m)], null, null));
+        var cuerpo = await venta.Content.ReadAsStringAsync();
+        Assert.True(venta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+        Assert.Equal(1500m, emitido.Total);
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    /// <summary>Cláusula: la ruta queda en el allowlist de <c>SuperficieDeAutorizacionTests</c> (sin
+    /// <c>GestionDeCatalogo</c>), así que un cajero Vendedor de dispositivo tiene que poder llamarla y recibir el combo.</summary>
+    [Fact]
+    public async Task UnVendedorPrevisualizaElCarritoConCombos()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(UnVendedorPrevisualizaElCarritoConCombos), ModoPuntoVenta.Escritorio);
+        var pancho = await apoyo.ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await apoyo.ArticuloAsync(ctx, "coca", 2500m);
+        var combo = await apoyo.ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        var respuesta = await ctx.Cajero!.PostAsJsonAsync(
+            Ruta, new SolicitudDeResolucion([Linea(ctx, pancho, 1m), Linea(ctx, coca, 1m)]));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var cuerpo = JsonDocument.Parse(await respuesta.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(combo, Assert.Single(cuerpo.GetProperty("combos").EnumerateArray()).GetProperty("idCombo").GetInt32());
+    }
+
     // ---- PorLinea y la ruta de siempre ----
 
     [Fact]

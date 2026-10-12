@@ -2170,12 +2170,8 @@ public class ServicioDeVentas(
                     ? new ComboDeAuditoria(
                         linea.UnidadesConsumidasPorCombo, linea.AhorroDeCombo, linea.IdCombo, comboInexistente)
                     : null,
-                ComboEsperado: discrepante || comboInexistente
-                    ? new ComboDeAuditoria(
-                        tieneComboDetectado ? detectado.UnidadesConsumidas : null,
-                        tieneComboDetectado ? detectado.Ahorro : null,
-                        tieneComboDetectado ? detectado.IdCombo : null,
-                        false)
+                ComboEsperado: (discrepante || comboInexistente) && tieneComboDetectado
+                    ? new ComboDeAuditoria(detectado.UnidadesConsumidas, detectado.Ahorro, detectado.IdCombo, false)
                     : null));
         }
 
@@ -2473,13 +2469,14 @@ public class ServicioDeVentas(
                 400);
         }
 
-        var brutoConsumido = Math.Round(unidades * linea.PrecioUnitario!.Value, 2, MidpointRounding.AwayFromZero);
+        // El bruto de las unidades consumidas se calcula al final del cortocircuito: unidades fuera de 1..Cantidad no
+        // llegan a la multiplicación por el precio.
         if (unidades < 1
             || unidades > linea.Cantidad
             || ahorro < 0m
             || decimal.Round(ahorro, 2) != ahorro
-            || ahorro > brutoConsumido
-            || idCombo <= 0)
+            || idCombo <= 0
+            || ahorro > Math.Round(unidades * linea.PrecioUnitario!.Value, 2, MidpointRounding.AwayFromZero))
         {
             throw new ErrorDominio(
                 "combo_offline_invalido",
