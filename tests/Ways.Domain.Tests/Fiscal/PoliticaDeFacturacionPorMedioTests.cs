@@ -220,10 +220,10 @@ public class PoliticaDeFacturacionPorMedioTests
             maxAbsSaldo = Math.Max(maxAbsSaldo, Math.Abs(saldos[Efectivo]));
         }
 
-        // Tolerancia: el desvío (facturado - 10 % de lo vendido) es el saldo, acotado por el importe (100).
-        Assert.InRange(facturado - vendido * 0.10m, -100m, 100m);
+        // El desvío (10 % de lo vendido - facturado) es el saldo, acotado por la mitad del importe (50).
+        Assert.InRange(vendido * 0.10m - facturado, -50m, 50m);
         Assert.Equal(10_000m, facturado);
-        Assert.True(maxAbsSaldo <= 100m, $"El saldo máximo fue {maxAbsSaldo}.");
+        Assert.True(maxAbsSaldo <= 50m, $"El saldo máximo fue {maxAbsSaldo}.");
     }
 
     [Fact]
@@ -251,9 +251,10 @@ public class PoliticaDeFacturacionPorMedioTests
 
         // Identidad: saldo = 25 % de lo vendido - lo facturado.
         Assert.Equal(vendido * 0.25m - facturado, saldos[Efectivo]);
-        // Tolerancia: el saldo (el desvío) nunca supera el mayor importe de la secuencia.
-        Assert.True(maxAbsSaldo <= mayorImporte, $"Saldo máximo {maxAbsSaldo} > mayor importe {mayorImporte}.");
-        Assert.InRange(facturado / vendido, 0.25m - mayorImporte / vendido, 0.25m + mayorImporte / vendido);
+        // El saldo (el desvío) nunca supera la mitad del mayor importe de la secuencia.
+        Assert.True(maxAbsSaldo <= mayorImporte / 2m, $"Saldo máximo {maxAbsSaldo} > mitad del mayor importe {mayorImporte / 2m}.");
+        Assert.InRange(
+            facturado / vendido, 0.25m - mayorImporte / 2m / vendido, 0.25m + mayorImporte / 2m / vendido);
     }
 
     [Fact]
@@ -289,6 +290,121 @@ public class PoliticaDeFacturacionPorMedioTests
             Saldos(), forzada: false);
 
         Assert.Equal([Efectivo, Transferencia, Tarjeta], decision.Aportes.Select(a => a.IdMedioPago));
+    }
+
+    [Fact]
+    public void ElMedioAlCienPorCientoTienePrioridadSobreElCupoAlcanzadoDeOtroMedio()
+    {
+        // Efectivo: 45 + 10 = 55 > 50 alcanzaría el cupo, pero Transferencia al 100 % se evalúa antes.
+        var decision = PoliticaDeFacturacionPorMedio.Decidir(
+            [Pago(Efectivo, 100m, 10m), Pago(Transferencia, 100m, 100m)],
+            Saldos((Efectivo, 45m)), forzada: false);
+
+        Assert.True(decision.Facturar);
+        Assert.Equal(MotivoDeFacturacion.MedioExigeFactura, decision.Motivo);
+    }
+
+    [Fact]
+    public void LaForzadaTienePrioridadSobreElMedioAlCienYSobreElCupoAlcanzado()
+    {
+        var decision = PoliticaDeFacturacionPorMedio.Decidir(
+            [Pago(Efectivo, 100m, 10m), Pago(Transferencia, 100m, 100m)],
+            Saldos((Efectivo, 45m)), forzada: true);
+
+        Assert.True(decision.Facturar);
+        Assert.Equal(MotivoDeFacturacion.Forzada, decision.Motivo);
+    }
+
+    [Fact]
+    public void UnFlujoDeDosMediosParcialesFacturaCuandoElPrimeroAlcanzaSuCupoYElSegundoNuncaDisparaSolo()
+    {
+        var saldos = Saldos();
+        var facturados = new List<int>();
+
+        for (var ticket = 1; ticket <= 100; ticket++)
+        {
+            var decision = PoliticaDeFacturacionPorMedio.Decidir(
+                [Pago(Efectivo, 100m, 10m), Pago(Tarjeta, 100m, 5m)], saldos, forzada: false);
+            if (decision.Facturar)
+            {
+                facturados.Add(ticket);
+                // Siempre dispara Efectivo: el cupo de Tarjeta (saldo tentativo > 50) nunca se alcanza.
+                Assert.Equal(MotivoDeFacturacion.CupoAlcanzado, decision.Motivo);
+                Assert.True(saldos.GetValueOrDefault(Tarjeta) + 5m <= 50m);
+            }
+
+            Aplicar(saldos, decision.Aportes);
+        }
+
+        Assert.Equal([6, 16, 26, 36, 46, 56, 66, 76, 86, 96], facturados);
+        // Tarjeta devenga 5 x 100 y se debita 100 en cada una de las 10 facturas.
+        Assert.Equal(5m * 100 - 100m * 10, saldos[Tarjeta]);
+        Assert.Equal(0m, saldos[Efectivo]);
+    }
+
+    [Fact]
+    public void UnMedioAlCienArrastraAlOtroMedioQueQuedaConSaldoNegativoSinCota()
+    {
+        var saldos = Saldos();
+        const int tickets = 40;
+
+        for (var i = 0; i < tickets; i++)
+        {
+            var decision = PoliticaDeFacturacionPorMedio.Decidir(
+                [Pago(Transferencia, 1000m, 100m), Pago(Tarjeta, 100m, 10m)], saldos, forzada: false);
+
+            Assert.True(decision.Facturar);
+            Assert.Equal(MotivoDeFacturacion.MedioExigeFactura, decision.Motivo);
+            Aplicar(saldos, decision.Aportes);
+        }
+
+        Assert.Equal(-90m * tickets, saldos[Tarjeta]);
+        Assert.Equal(0m, saldos[Transferencia]);
+    }
+
+    [Fact]
+    public void ElSaldoNegativoPorArrastreDiferiraLaFacturaDeUnTicketSoloDeEseMedio()
+    {
+        var saldos = Saldos();
+        for (var i = 0; i < 3; i++)
+        {
+            var arrastre = PoliticaDeFacturacionPorMedio.Decidir(
+                [Pago(Transferencia, 1000m, 100m), Pago(Tarjeta, 100m, 10m)], saldos, forzada: false);
+            Aplicar(saldos, arrastre.Aportes);
+        }
+
+        Assert.Equal(-270m, saldos[Tarjeta]);
+
+        var decision = PoliticaDeFacturacionPorMedio.Decidir(
+            [Pago(Tarjeta, 100m, 10m)], saldos, forzada: false);
+
+        Assert.False(decision.Facturar);
+        Assert.Equal(MotivoDeFacturacion.NoRequerida, decision.Motivo);
+        Assert.Equal(10m, AporteDe(decision, Tarjeta));
+    }
+
+    [Fact]
+    public void UnaListaDePagosNulaSeRechaza()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() =>
+            PoliticaDeFacturacionPorMedio.Decidir(null!, Saldos(), forzada: false));
+        Assert.Equal("pagos", error.ParamName);
+    }
+
+    [Fact]
+    public void UnDiccionarioDeSaldosNuloSeRechaza()
+    {
+        // Con factura forzada los saldos no se leen: solo la guarda de entrada puede rechazarlos.
+        var error = Assert.Throws<ArgumentNullException>(() =>
+            PoliticaDeFacturacionPorMedio.Decidir([Pago(Efectivo, 100m, 10m)], null!, forzada: true));
+        Assert.Equal("saldosPorMedio", error.ParamName);
+    }
+
+    [Fact]
+    public void RevertirUnaListaDeAportesNulaSeRechaza()
+    {
+        var error = Assert.Throws<ArgumentNullException>(() => PoliticaDeFacturacionPorMedio.Revertir(null!));
+        Assert.Equal("aportes", error.ParamName);
     }
 
     [Fact]

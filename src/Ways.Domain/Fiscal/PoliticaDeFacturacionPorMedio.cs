@@ -31,6 +31,11 @@ public sealed record DecisionDeFacturacion(
 ///      importe del ticket para ese medio.
 ///   4. Facturado, cada medio del ticket (también los de 0 %) queda en saldo tentativo menos su
 ///      importe; sin facturar, queda en el saldo tentativo.
+///
+/// Un medio que se factura porque OTRO medio del ticket disparó (o porque el ticket es forzado)
+/// se debita su importe completo mientras solo devenga su propio porcentaje, así que su saldo puede
+/// volverse negativo sin cota inferior. Es intencional: lo facturado "por arrastre" cuenta para el
+/// cupo de ese medio. Acotarlo en el tiempo es responsabilidad de quien llama, no de esta política.
 /// </summary>
 public static class PoliticaDeFacturacionPorMedio
 {
@@ -59,7 +64,7 @@ public static class PoliticaDeFacturacionPorMedio
         }
         else if (medios.Any(m => m.Porcentaje > 0m && Tentativo(m, saldosPorMedio) > m.Importe / 2m))
         {
-            // Redondeo al más cercano: facturar deja el saldo más cerca de cero que no facturar.
+            // Redondeo al más cercano: para el medio que dispara, facturar lo deja más cerca de cero que no facturar.
             motivo = MotivoDeFacturacion.CupoAlcanzado;
         }
 
