@@ -384,9 +384,22 @@ src/paginas src/api src/componentes` 153 files, 4562 tests passed; whole suite 2
 
 `dotnet test tests/Ways.IntegrationTests`, once and alone, on the final tree (before this doc commit): 3797 passed, 0 failed, 39 min 54 s.
 
+### Merge with main (commit `72acfd46`)
+
+`origin/main` (e1e113f0) landed `tecla_atajo` and unidad de venta por importe on `articulos` while this
+feature replaced `publicado_web`. Five files conflicted (`Articulos/Contratos.cs`, `ServicioDeArticulos.cs`,
+`ValoresCompartidosDeFamiliaTests.cs`, the model snapshot and docs/10); each resolution keeps both sides:
+`DisponibleOnline`/`DisponibleVenta` replace `PublicadoWeb`, `TeclaAtajo` is added after them. The five
+boolean `Assert.Equal` in `OfertasYCombosDisponibleOnlineTests` became `Assert.True/False` (xUnit2004).
+Verification on the merged tree (one verifier, sequential): `dotnet build Ways.slnx` 0 errors (6 baseline
+warnings in IntegrationTests); `Ways.Api -warnaserror` clean; Domain 1429, Application 871; IntegrationTests
+filter (Articulos, Disponibilidad, TeclaAtajo, Importe, Familia, CatalogoPublico, CombosPublicos, Vitrina,
+Ofertas, Combos, Instantanea) 1196 passed in 10 m 35 s; web `tsc -b`, `oxlint` (22 baseline warnings),
+`vitest run` 216 files / 6097 tests, `vite build` ok. Parent spot check: Domain 1429 passed.
+
 ## Delivery slices
 
-- PR 11: T1 + T2 (stacked on #403). PR 12: T3.
+- PR 11: T1 + T2, against main (#403 already merged). PR 12: T3, stacked on PR 11.
 
 ## Next step
 
