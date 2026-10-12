@@ -15,6 +15,7 @@ internal enum ClaseDeSentencia
 {
     Insert,
     Update,
+    Delete,
 
     /// <summary>Una LECTURA. La usa el caso del método seguro: <c>ManejadorDeErrores</c> parte la
     /// copia del fallo transitorio por método HTTP, y probar el lado <c>GET</c> exige romper un
@@ -68,6 +69,7 @@ internal sealed class InterceptorQueRompeLaPrimeraEscritura : DbCommandIntercept
         var verbo = clase switch
         {
             ClaseDeSentencia.Update => "UPDATE",
+            ClaseDeSentencia.Delete => "DELETE FROM",
             ClaseDeSentencia.Select => "FROM",
             _ => "INSERT INTO"
         };

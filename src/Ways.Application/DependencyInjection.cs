@@ -4,6 +4,7 @@ using Ways.Application.Articulos;
 using Ways.Application.Auditoria;
 using Ways.Application.Bajas;
 using Ways.Application.Caja;
+using Ways.Application.CatalogoOnline;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Combos;
@@ -55,6 +56,10 @@ public static class DependencyInjection
 
         // Vitrina pública de cada empresa: la administra el admin del tenant.
         services.AddScoped<ServicioDeVitrinas>();
+
+        // Tienda online: publicación e imagen de cada artículo (admin) y consulta del catálogo público.
+        services.AddScoped<ServicioDeCatalogoWeb>();
+        services.AddScoped<ConsultaDeCatalogoPublico>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();

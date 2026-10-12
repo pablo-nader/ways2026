@@ -1,13 +1,33 @@
-import { hrefDeAdmin } from '../config/rutasPublicas'
+import { PREFIJO_ONLINE } from '../config/rutasPublicas'
+import { CabeceraPublica } from '../publico/CabeceraPublica'
+import { PiePublico } from '../publico/PiePublico'
+import { PorEstadoDeVitrina } from '../publico/PorEstadoDeVitrina'
+import { temaDeVitrina } from '../publico/tema'
+import { useVitrinaPublica } from '../publico/useVitrinaPublica'
+import { Descripcion } from './Descripcion'
+import { Portada } from './Portada'
+import { Sucursales } from './Sucursales'
 
 export function Landing() {
+  const { resultado, recargar } = useVitrinaPublica()
+
   return (
-    <main className="min-vh-100 d-flex flex-column align-items-center justify-content-center gap-3 p-4 text-center">
-      <h1 className="display-3 fw-bold text-primary m-0">Ways</h1>
-      <p className="lead text-body-secondary m-0">La página de este comercio se está preparando.</p>
-      <a className="btn btn-primary" href={hrefDeAdmin('/login')}>
-        Ingresar
-      </a>
-    </main>
+    <PorEstadoDeVitrina resultado={resultado} recargar={recargar}>
+      {(vitrina) => (
+        <div className="publico-pagina">
+          <CabeceraPublica vitrina={vitrina}>
+            <a className="publico-boton publico-boton-acento publico-boton-chico" href={PREFIJO_ONLINE}>
+              Comprar online
+            </a>
+          </CabeceraPublica>
+          <main>
+            <Portada vitrina={vitrina} />
+            <Descripcion texto={vitrina.descripcion} />
+            <Sucursales sucursales={vitrina.sucursales} />
+          </main>
+          <PiePublico tema={temaDeVitrina(vitrina.tema)} />
+        </div>
+      )}
+    </PorEstadoDeVitrina>
   )
 }

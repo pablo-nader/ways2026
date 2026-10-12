@@ -198,6 +198,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("citext")
                         .HasColumnName("nombre");
 
+                    b.Property<bool>("PublicadoWeb")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("publicado_web");
+
                     b.Property<UnidadVenta>("UnidadVenta")
                         .HasColumnType("unidad_venta")
                         .HasColumnName("unidad_venta");
@@ -248,6 +254,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex(new[] { "IdTenant" }, "ix_articulos_controla_lote")
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ix_articulos_publicado_web")
+                        .HasDatabaseName("ix_articulos_publicado_web")
+                        .HasFilter("publicado_web AND activo AND deleted_at IS NULL");
 
                     b.ToTable("articulos", null, t =>
                         {
@@ -450,6 +460,69 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasFilter("deleted_at IS NULL");
 
                     b.ToTable("familias", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Articulos.ImagenDeArticulo", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_imagen_articulo");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("ActualizadoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("actualizado_en");
+
+                    b.Property<byte[]>("Contenido")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("contenido");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int>("IdArticulo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_articulo");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_imagenes_articulo");
+
+                    b.HasIndex("IdArticulo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_imagenes_articulo_articulo")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_imagenes_articulo_tenant");
+
+                    b.HasIndex("IdArticulo", "IdTenant")
+                        .HasDatabaseName("ix_imagenes_articulo_articulo");
+
+                    b.ToTable("imagenes_articulo", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_imagenes_articulo_contenido", "octet_length(contenido) BETWEEN 1 AND 1048576 AND content_type IS NOT NULL AND content_type IN ('image/png', 'image/jpeg', 'image/webp')");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Articulos.NumeracionArticulo", b =>
@@ -3456,6 +3529,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empresa");
 
+                    b.Property<int?>("IdListaPrecio")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_lista_precio");
+
                     b.Property<int>("IdTenant")
                         .HasColumnType("integer")
                         .HasColumnName("id_tenant");
@@ -3503,6 +3580,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_vitrinas_empresa");
+
+                    b.HasIndex("IdListaPrecio", "IdTenant")
+                        .HasDatabaseName("ix_vitrinas_lista_precio");
 
                     b.HasIndex(new[] { "IdTenant" }, "ix_vitrinas_tenant")
                         .HasDatabaseName("ix_vitrinas_tenant");
@@ -5252,6 +5332,24 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasConstraintName("fk_familias_tenant");
                 });
 
+            modelBuilder.Entity("Ways.Domain.Articulos.ImagenDeArticulo", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_imagenes_articulo_tenant");
+
+                    b.HasOne("Ways.Domain.Articulos.Articulo", null)
+                        .WithMany()
+                        .HasForeignKey("IdArticulo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_imagenes_articulo_articulo");
+                });
+
             modelBuilder.Entity("Ways.Domain.Articulos.NumeracionArticulo", b =>
                 {
                     b.HasOne("Ways.Domain.Organizacion.Tenant", null)
@@ -6204,6 +6302,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_vitrinas_empresa");
+
+                    b.HasOne("Ways.Domain.Catalogos.ListaPrecio", null)
+                        .WithMany()
+                        .HasForeignKey("IdListaPrecio", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vitrinas_lista_precio");
                 });
 
             modelBuilder.Entity("Ways.Domain.Precios.Precio", b =>

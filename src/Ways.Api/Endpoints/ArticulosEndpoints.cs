@@ -1,5 +1,6 @@
 using Ways.Api.Seguridad;
 using Ways.Application.Articulos;
+using Ways.Application.CatalogoOnline;
 using Ways.Application.Precios;
 using Ways.Application.Ventas;
 
@@ -99,6 +100,44 @@ public static class ArticulosEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del artículo.");
+
+        // Tienda online: publicar el artículo y su imagen. Mismo grupo y misma policy que editar el artículo.
+        grupo.MapPut("/{id:int}/web", (
+            ServicioDeCatalogoWeb servicio, int id, SolicitudDePublicacionWeb datos, CancellationToken ct) =>
+            servicio.PublicarAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Publica o despublica el artículo en la tienda online. Idempotente. Se publica por artículo: no es un "
+            + "campo de la familia.");
+
+        // El cuerpo es la imagen cruda y no JSON: el servicio lo lee acotado y valida el tipo por contenido.
+        grupo.MapPut("/{id:int}/imagen", (
+            ServicioDeCatalogoWeb servicio, int id, HttpRequest peticion, CancellationToken ct) =>
+            servicio.GuardarImagenAsync(id, peticion.ContentType, peticion.Body, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary(
+            "Sube la imagen del artículo (image/png, image/jpeg o image/webp, hasta 1 MB) como cuerpo de la request; "
+            + "reemplaza la anterior.");
+
+        // Vista previa del admin: sirve la imagen aunque el artículo no esté publicado, sin caché compartida ni del
+        // navegador (se ve lo último que se subió), pero con ETag para que una condicional no reenvíe los bytes.
+        grupo.MapGet("/{id:int}/imagen", (
+            ServicioDeCatalogoWeb servicio, int id, HttpContext contexto, CancellationToken ct) =>
+            PublicoEndpoints.ServirImagenAsync(
+                contexto,
+                "private, no-store",
+                () => PublicoEndpoints.SinImagen("El artículo no tiene una imagen cargada."),
+                () => servicio.ObtenerVersionDeImagenAsync(id, ct),
+                () => servicio.ObtenerImagenAsync(id, ct)))
+        .WithSummary("Los bytes de la imagen del artículo, publicado o no, con ETag; 404 imagen_no_encontrada si no tiene.");
+
+        grupo.MapDelete("/{id:int}/imagen", async (ServicioDeCatalogoWeb servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.QuitarImagenAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Quita la imagen del artículo. Idempotente: sin imagen también contesta 204.");
 
         grupo.MapPost("/{id:int}/codigos-barra", async (
             ServicioDeArticulos servicio, int id, AltaCodigoBarra datos, CancellationToken ct) =>

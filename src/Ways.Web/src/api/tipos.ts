@@ -357,6 +357,30 @@ export type SitioPublico = {
   admiteUsuario: boolean
 }
 
+/** Un punto de venta activo tal como lo muestra la landing (`GET /api/publico/vitrina`). */
+export type SucursalPublica = {
+  nombre: string
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
+/** La vitrina publicada de un comercio, sin sesión. `tema` llega como texto y la landing lo reduce
+ * a `claro`/`oscuro`; `logoVersion` solo rompe la caché del `<img>` cuando se sube otro logo. */
+export type VitrinaPublica = {
+  nombre: string
+  tagline: string | null
+  descripcion: string | null
+  colorAcento: string | null
+  tema: string
+  tieneLogo: boolean
+  logoVersion: number | null
+  sucursales: SucursalPublica[]
+}
+
 /** Dominio propio de un tenant (`GET /api/plataforma/tenants/{id}/dominios`). `verificadoEn` es
  * `null` hasta que la plataforma lo marca: un dominio sin verificar todavía no resuelve. */
 export type DominioListado = {
@@ -386,16 +410,20 @@ export type VitrinaAdmin = {
   tema: string
   tieneLogo: boolean
   logoVersion: number | null
+  /** Lista de precios del catálogo de la tienda; `null` es la lista por defecto del comercio. */
+  idListaPrecio: number | null
 }
 
-/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los cinco campos
- * se guardan, ninguno se descarta. El logo viaja aparte. */
+/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los seis campos
+ * se guardan, ninguno se descarta. El logo viaja aparte. `idListaPrecio: null` vuelve a la lista
+ * por defecto. */
 export type VitrinaEdicion = {
   publicada: boolean
   tagline: string | null
   descripcion: string | null
   colorAcento: string | null
   tema: TemaDeVitrina
+  idListaPrecio: number | null
 }
 
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
@@ -690,6 +718,10 @@ export type ArticuloListado = {
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
+  /** El artículo se ofrece en la tienda online. Se escribe aparte (`PUT /api/articulos/{id}/web`), nunca con la edición. */
+  publicadoWeb: boolean
+  /** El artículo tiene una imagen cargada; los bytes salen de `GET /api/articulos/{id}/imagen`. */
+  tieneImagen: boolean
 }
 
 /** `codigoInterno: null` deja que el servidor lo autogenere desde el contador atómico del
@@ -786,6 +818,9 @@ export type FilaDeGrillaDeArticulos = {
   idProveedorHabitual: number | null
   proveedor: string | null
   activo: boolean
+  /** Estado del artículo en la tienda online: si se publica y si tiene una imagen viva. */
+  publicadoWeb: boolean
+  tieneImagen: boolean
 }
 
 /** `nombreListaPrecio: null` cuando el tenant no tiene lista de precio default configurada — en

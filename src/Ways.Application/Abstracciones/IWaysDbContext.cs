@@ -74,6 +74,8 @@ public interface IWaysDbContext
     DbSet<CodigoBarra> CodigosBarra { get; }
     DbSet<CodigoProveedor> CodigosProveedor { get; }
     DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
+
+    DbSet<ImagenDeArticulo> ImagenesArticulo { get; }
     DbSet<Precio> Precios { get; }
 
     DbSet<Familia> Familias { get; }

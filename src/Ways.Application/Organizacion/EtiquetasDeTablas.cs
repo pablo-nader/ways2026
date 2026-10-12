@@ -50,6 +50,7 @@ public static class EtiquetasDeTablas
             ["familias"] = "familias de artículos",
             ["gastos"] = "gastos",
             ["grupos"] = "grupos",
+            ["imagenes_articulo"] = "imágenes de artículos",
             ["items_comprobante_compra"] = "compras",
             ["items_comprobante_venta"] = "ventas",
             ["items_orden_compra"] = "órdenes de compra",
