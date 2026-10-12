@@ -45,8 +45,9 @@ function SinVincular() {
 
 /**
  * ABM del personal. Mismo esqueleto que `Proveedores.tsx` (token de generación, `ocupadoRef` de
- * re-entrancia compartido entre guardado y baja, `bloqueado` deja inerte la pantalla entera mientras
- * una escritura está en vuelo). El Supervisor solo lee: las acciones de escritura existen
+ * re-entrancia compartido entre guardado y baja, `bloqueado` deja inertes todos los controles de la
+ * pantalla —botones, búsqueda y el enlace a la cuenta— mientras una escritura está en vuelo o la
+ * confirmación de baja está abierta; la barra de navegación de la aplicación sigue viva). El Supervisor solo lee: las acciones de escritura existen
  * únicamente para quien `puedeGestionarCatalogos`, igual que la política del servidor.
  */
 export function Personal() {
@@ -84,8 +85,12 @@ export function Personal() {
   const generacion = useRef(0)
   /** Espejo síncrono de "hay una escritura en vuelo": la ÚNICA guarda de re-entrancia válida. */
   const ocupadoRef = useRef(false)
+  /** Último término que el usuario pidió buscar (o `''` al entrar): el refresco posterior a una
+   * escritura recarga con ese, nunca con el texto tipeado en la caja y todavía no enviado. */
+  const terminoVigente = useRef('')
 
   const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
+    terminoVigente.current = termino
     setCargando(true)
     try {
       const resultado = await clienteDePersonal.listar(termino)
@@ -148,7 +153,7 @@ export function Personal() {
 
     setAviso(mensajeOk)
     try {
-      await cargar(token, busqueda, true)
+      await cargar(token, terminoVigente.current, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
@@ -164,6 +169,9 @@ export function Personal() {
       return
     }
 
+    // Una lectura en vuelo queda invalidada por el token de esta escritura: no va a dejar datos ni a
+    // bajar `cargando`. Si la escritura falla no hay refresco que lo repare, así que se vuelve a pedir.
+    const habiaLecturaEnVuelo = cargando
     const token = ++generacion.current
     ocupadoRef.current = true
     setGuardando(true)
@@ -179,7 +187,10 @@ export function Personal() {
           await clienteDePersonal.actualizar(datos.id, cuerpo)
         }
       } catch (e) {
-        if (generacion.current === token) setErrorFormulario(errorAlGuardar(e))
+        if (generacion.current === token) {
+          setErrorFormulario(errorAlGuardar(e))
+          if (habiaLecturaEnVuelo) void cargar(++generacion.current, terminoVigente.current)
+        }
 
         return
       }
@@ -358,14 +369,15 @@ export function Personal() {
           <Cargando />
         ) : (
           <div className="table-responsive">
+            <p className="small text-muted mb-2">
+              Saldo positivo: la empresa le debe al empleado. Saldo negativo: adelanto ya pagado al empleado.
+            </p>
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
                   <th>Nombre</th>
                   <th className="text-end">Valor hora</th>
-                  <th className="text-end" title="Positivo: la empresa le debe al empleado.">
-                    Saldo
-                  </th>
+                  <th className="text-end">Saldo</th>
                   <th>Usuario</th>
                   <th>Cliente</th>
                   <th className="text-end">Acciones</th>
@@ -379,14 +391,24 @@ export function Personal() {
                       {p.documento && <div className="text-muted small">{p.documento}</div>}
                     </td>
                     <td className="text-end">{formatearMoneda(p.valorHora)}</td>
-                    <td className="text-end">{formatearMoneda(p.saldo)}</td>
+                    <td className="text-end">
+                      {formatearMoneda(p.saldo)}
+                      {p.saldo < 0 && <div className="small text-warning-emphasis">Adelanto ya pagado</div>}
+                    </td>
                     <td>{p.nombreUsuario ?? <SinVincular />}</td>
                     <td>{p.nombreCliente ?? <SinVincular />}</td>
                     <td className="text-end text-nowrap">
+                      {/* Un `<Link>` no admite `disabled`: `disabled` de Bootstrap y `tabIndex` son solo
+                          presentación; el `preventDefault` es lo que cancela la navegación. */}
                       <Link
                         to={`/personal/${p.id}/cuenta`}
-                        className="btn btn-sm btn-outline-secondary me-1"
+                        className={`btn btn-sm btn-outline-secondary me-1${bloqueado ? ' disabled' : ''}`}
                         aria-label={`Cuenta de ${p.nombre}`}
+                        aria-disabled={bloqueado}
+                        tabIndex={bloqueado ? -1 : undefined}
+                        onClick={(evento) => {
+                          if (bloqueado) evento.preventDefault()
+                        }}
                       >
                         Cuenta
                       </Link>
@@ -630,6 +652,15 @@ function CampoDeVinculo({
   alBuscar: (texto: string) => Promise<OpcionDeVinculo[]>
   onElegir: (opcion: OpcionDeVinculo | null) => void
 }) {
+  const idError = `${id}-error`
+
+  /** Quitar desmonta el botón que tenía el foco: se lo devuelve al combobox, que sigue en pantalla. */
+  function quitar() {
+    const caja = document.getElementById(id)
+    onElegir(null)
+    caja?.focus()
+  }
+
   return (
     <div className="col-md-4">
       <label className="form-label" htmlFor={id}>
@@ -641,6 +672,8 @@ function CampoDeVinculo({
             id={id}
             nombreAccesible={etiqueta}
             className={error ? 'is-invalid' : undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? idError : undefined}
             opciones={opciones}
             valor={valor}
             placeholder="Sin vincular"
@@ -654,7 +687,7 @@ function CampoDeVinculo({
             type="button"
             className="btn btn-outline-secondary text-nowrap"
             aria-label={`Quitar ${etiqueta.toLowerCase()}`}
-            onClick={() => onElegir(null)}
+            onClick={quitar}
             disabled={bloqueado}
           >
             Quitar
@@ -662,7 +695,7 @@ function CampoDeVinculo({
         )}
       </div>
       {error && (
-        <div role="alert" className="invalid-feedback d-block">
+        <div id={idError} role="alert" className="invalid-feedback d-block">
           {error.mensaje}
         </div>
       )}

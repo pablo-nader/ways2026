@@ -25,7 +25,7 @@ export type ErrorDePersonal = { campo: CampoConError; mensaje: string }
 export type OpcionDeVinculo = { id: number; etiqueta: string }
 
 /** Lo mínimo del vínculo actual del registro que se edita, para no perderlo si el listado de
- * referencia no lo trae (dado de baja, inactivo o fuera de la primera página). */
+ * referencia no lo trae (inactivo o fuera de la primera página). */
 export type VinculoActual = { id: number; nombre: string }
 
 /** Tope de `valor_hora` que acepta el servidor. */
