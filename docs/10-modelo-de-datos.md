@@ -1212,10 +1212,11 @@ funcionalidad. El ETag es el hash del contenido serializado, así que cambia cua
 
 Un combo viaja ENTERO o no viaja (`ArmadorDeInstantanea.ArmarCombos`): uno parcial haría creer al dispositivo que puede
 armarlo. Se descarta si algún componente no se puede vender con esta instantánea: un componente artículo tiene que figurar
-en ella (activo y con precio en alguna lista; un artículo dado de baja ya no figura) y venderse por `Unidad` (como en la venta
-online, un artículo pesable nunca consume un combo); un componente familia necesita al menos un artículo vendible de esa
-familia en la instantánea (la misma regla de emparejamiento que la venta online, que compara la familia del artículo; una
-familia dada de baja deja de contar cuando sus artículos dejan de figurar). Una cantidad no entera descarta el combo. Es la
+en ella (activo y con precio en alguna lista; un artículo dado de baja ya no figura) y su unidad de venta tiene que admitir la
+cantidad del componente (entera para `Unidad`, hasta 3 decimales para `Peso`, como en la venta online); un componente
+familia necesita al menos un artículo vendible de esa familia en la instantánea cuya unidad admita la cantidad (la misma
+regla de emparejamiento que la venta online, que compara la familia del artículo; una familia dada de baja deja de contar
+cuando sus artículos dejan de figurar). Es la
 lectura de la regla de `dangling-fk-read-models` para este caso: una referencia que apunta a algo no vendible se trata igual
 que una ausente, y como el motor del dispositivo necesita el conjunto completo, la ausencia descarta el combo y no solo el
 componente.
@@ -1297,8 +1298,8 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   SHARE` sobre su fila viva en esa transacción, de modo que una baja que ya tiene la fila hace fallar el alta o la
   edición con `referencia_invalida` en vez de dejar un componente colgante. Que la cantidad sea admitida por la unidad de venta se comprueba
   en ese momento y solo en ese momento: cambiar después la unidad de un artículo componente, o sumar a una familia que ya
-  usa un combo un artículo que no admite su cantidad, no se bloquea (en la venta ese miembro deja de ser candidato). La ruta de venta (T3) debe excluir los artículos pesables de la detección por su
-  unidad de venta, no por la cantidad.
+  usa un combo un artículo que no admite su cantidad, no se bloquea (en la venta ese miembro deja de ser candidato). La ruta de venta decide si una línea es candidata por la unidad de venta
+  del artículo, no por la forma de la cantidad.
 - Respaldos de esquema (`ManejadorDeErrores`): `ux_combos_codigo` → `409 combo_codigo_duplicado`;
   `ux_combos_componentes_articulo` y `ux_combos_componentes_familia` → `409 combo_componente_duplicado`. Solo una
   escritura fuera de banda las alcanza, porque el lock por tenant serializa las del servicio.
