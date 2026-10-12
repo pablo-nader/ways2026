@@ -2,7 +2,7 @@ namespace Ways.Domain.Plantel;
 
 /// <summary>
 /// Tipo de un <see cref="MovimientoPersonal"/>. Enum nativo de Postgres
-/// (<c>tipo_movimiento_personal</c>); el orden de los miembros es el de la migración.
+/// (<c>tipo_movimiento_personal</c>); Npgsql lo mapea por nombre, no por posición.
 /// <see cref="Pago"/> está declarado para el registro de pagos, que todavía no tiene escritor.
 /// </summary>
 public enum TipoMovimientoPersonal

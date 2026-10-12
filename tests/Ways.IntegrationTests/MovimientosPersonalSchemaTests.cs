@@ -11,8 +11,11 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// Esquema del libro de personal con SQL crudo sobre la conexión <c>ways_app</c> (NOBYPASSRLS):
-/// una prueba por cláusula de cada CHECK, las claves foráneas, el aislamiento por tenant y los
-/// valores del enum. Cada CHECK se aserta por SQLSTATE y por nombre de constraint.
+/// una fila que viola solo una cláusula por cada cláusula de los CHECK de ajuste y pago y por las
+/// cláusulas de horas, valor hora, importe calculado y nulidad de <c>ck_movimientos_personal_horas</c>
+/// (el importe no negativo de una carga lo implican esas cláusulas y no se prueba aparte), las claves
+/// foráneas, el aislamiento por tenant y los valores del enum. Cada CHECK se aserta por SQLSTATE y por
+/// nombre de constraint.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -90,6 +93,7 @@ public class MovimientosPersonalSchemaTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("horas", "0", "100", "0", "ck_movimientos_personal_horas")]
     [InlineData("horas", "24.01", "100", "2401", "ck_movimientos_personal_horas")]
     [InlineData("horas", "8", "-1", "-8", "ck_movimientos_personal_horas")]
+    [InlineData("horas", "0.01", "-0.01", "0.00", "ck_movimientos_personal_horas")]
     [InlineData("horas", "8", "100", "799.99", "ck_movimientos_personal_horas")]
     [InlineData("horas", "NULL", "100", "0", "ck_movimientos_personal_horas")]
     [InlineData("horas", "8", "NULL", "0", "ck_movimientos_personal_horas")]

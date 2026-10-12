@@ -2528,8 +2528,8 @@ movimientos_personal (                    -- [operativa — libro append-only]
 > son de back office y no pasan por un turno; un pago llegará a un punto de venta únicamente a
 > través del gasto que genere.
 >
-> CHECK, uno por tipo: `ck_movimientos_personal_horas` (`horas` en (0, 24], `valor_hora >= 0`,
-> `importe >= 0` e `importe = round(horas × valor_hora, 2)`), `ck_movimientos_personal_ajuste`
+> CHECK, uno por tipo: `ck_movimientos_personal_horas` (`horas` en (0, 24], `valor_hora >= 0` e
+> `importe = round(horas × valor_hora, 2)`, que ya implica el importe no negativo), `ck_movimientos_personal_ajuste`
 > (`horas` y `valor_hora` nulos, `importe <> 0`) y `ck_movimientos_personal_pago` (`horas` y
 > `valor_hora` nulos, `importe < 0`). FKs `fk_movimientos_personal_{tenant,personal,empleado}`, todas
 > RESTRICT. Índices: `ix_movimientos_personal_tenant`, `ix_movimientos_personal_personal_fecha`

@@ -228,11 +228,12 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
     [InlineData("2026-10-01", 24.5, null, "horas_invalidas")]
     [InlineData("2026-10-01", 1.001, null, "horas_invalidas")]
     [InlineData("2026-10-01", 8, -1.0, "valor_hora_invalido")]
+    [InlineData("2026-10-01", 8, 1000000000000.0, "valor_hora_invalido")]
     [InlineData(null, 8, null, "fecha_requerida")]
     public async Task UnaCargaInvalidaSeRechazaConSuCodigoYNoEscribeNada(
         string? fecha, double horas, double? valorHora, string codigo)
     {
-        var ctx = await PrepararAsync(nameof(UnaCargaInvalidaSeRechazaConSuCodigoYNoEscribeNada) + codigo + horas);
+        var ctx = await PrepararAsync(nameof(UnaCargaInvalidaSeRechazaConSuCodigoYNoEscribeNada) + codigo + horas + valorHora);
         var id = await CrearPersonalAsync(ctx.Admin);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync(
@@ -402,28 +403,252 @@ public class CuentaDePersonalEndpointsTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(acumulado, cuenta.GetProperty("encabezado").GetProperty("saldo").GetDecimal());
     }
 
-    [Fact]
-    public async Task UnaBajaYUnaCargaEnCarreraTerminanEnUnParConsistente()
+    private static async Task<bool> EsperarBackendBloqueadoAsync(NpgsqlConnection conexionPoll, int pidExcluido1, int pidExcluido2)
     {
-        var ctx = await PrepararAsync(nameof(UnaBajaYUnaCargaEnCarreraTerminanEnUnParConsistente));
-
-        for (var vuelta = 0; vuelta < 6; vuelta++)
+        var limite = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < limite)
         {
-            var id = await CrearPersonalAsync(ctx.Admin, nombre: $"Carrera {vuelta}");
+            await using var comando = new NpgsqlCommand(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND pid <> $1 AND pid <> $2",
+                conexionPoll);
+            comando.Parameters.AddWithValue(pidExcluido1);
+            comando.Parameters.AddWithValue(pidExcluido2);
 
-            var carga = CargarAsync(ctx.Admin, id, "2026-10-01", 1m);
-            var baja = ctx.Admin.DeleteAsync($"/api/personal/{id}");
-            await Task.WhenAll(carga, baja);
+            if ((long)(await comando.ExecuteScalarAsync())! > 0)
+            {
+                return true;
+            }
 
-            var cargaOk = carga.Result.StatusCode == HttpStatusCode.Created;
-            var bajaOk = baja.Result.StatusCode == HttpStatusCode.NoContent;
-
-            // O gana la carga (y la baja se rechaza por uso) o gana la baja (y la carga responde 404):
-            // nunca un movimiento sobre un personal dado de baja.
-            Assert.True(cargaOk ^ bajaOk, $"carga {carga.Result.StatusCode}, baja {baja.Result.StatusCode}");
-            Assert.Equal(cargaOk ? HttpStatusCode.Conflict : HttpStatusCode.NotFound,
-                cargaOk ? baja.Result.StatusCode : carga.Result.StatusCode);
+            await Task.Delay(25);
         }
+
+        return false;
+    }
+
+    private static async Task<int> BackendPidAsync(NpgsqlConnection conexion) =>
+        (int)(await new NpgsqlCommand("SELECT pg_backend_pid()", conexion).ExecuteScalarAsync())!;
+
+    private async Task<T> EscalarDelDuenoAsync<T>(string sql, params object[] parametros)
+    {
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        await using var comando = new NpgsqlCommand(sql, conexion);
+        foreach (var valor in parametros)
+        {
+            comando.Parameters.AddWithValue(valor);
+        }
+
+        return (T)(await comando.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>Una carga sin comitear toma <c>FOR KEY SHARE</c> sobre el personal por su FK, que choca
+    /// contra el <c>FOR UPDATE</c> de <c>BloquearFilaAsync</c>: la baja tiene que esperar, y al comitear
+    /// la carga la baja ve la referencia ya comiteada y responde 409. Sin el lock la baja no espera, no
+    /// ve la fila sin comitear y responde 204.</summary>
+    [Fact]
+    public async Task UnaCargaSinComitearHaceEsperarALaBajaYGanaLaReferencia()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCargaSinComitearHaceEsperarALaBajaYGanaLaReferencia));
+        var id = await CrearPersonalAsync(ctx.Admin);
+        var idUsuario = await EscalarDelDuenoAsync<int>(
+            "SELECT id_usuario FROM usuarios WHERE id_tenant = $1 ORDER BY id_usuario LIMIT 1", ctx.IdTenant);
+
+        await using var conexionEscritor = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var pidEscritor = await BackendPidAsync(conexionEscritor);
+        await using var transaccionEscritor = await conexionEscritor.BeginTransactionAsync();
+        await using (var insertar = new NpgsqlCommand(
+            "INSERT INTO movimientos_personal " +
+            "(id_tenant, id_personal, id_empleado, fecha, tipo, importe, saldo_resultante, created_at) " +
+            "VALUES ($1, $2, $3, DATE '2026-10-01', 'ajuste', 10, 10, now())",
+            conexionEscritor, transaccionEscritor))
+        {
+            insertar.Parameters.AddWithValue(ctx.IdTenant);
+            insertar.Parameters.AddWithValue(id);
+            insertar.Parameters.AddWithValue(idUsuario);
+            await insertar.ExecuteNonQueryAsync();
+        }
+
+        var bajaTask = ctx.Admin.DeleteAsync($"/api/personal/{id}");
+
+        await using var conexionPoll = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var pidPoll = await BackendPidAsync(conexionPoll);
+        var observado = await EsperarBackendBloqueadoAsync(conexionPoll, pidEscritor, pidPoll);
+        Assert.True(observado, "La baja nunca se observó esperando un lock: la prueba no está probando la carrera.");
+
+        await transaccionEscritor.CommitAsync();
+
+        Assert.Equal("personal_en_uso", await CodigoAsync(await bajaTask, HttpStatusCode.Conflict));
+        Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.GetAsync($"/api/personal/{id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ElEncabezadoDelEstadoDeCuentaEsPersonalSaldoYNuncaSeDerivaDelLibro()
+    {
+        var ctx = await PrepararAsync(nameof(ElEncabezadoDelEstadoDeCuentaEsPersonalSaldoYNuncaSeDerivaDelLibro));
+        var id = await CrearPersonalAsync(ctx.Admin, valorHora: 100m);
+        await CuerpoAsync(await CargarAsync(ctx.Admin, id, "2026-10-01", 1m), HttpStatusCode.Created);
+
+        await using (var conexion = new NpgsqlConnection(fixture.OwnerConnectionString))
+        {
+            await conexion.OpenAsync();
+            await using var desincronizar = new NpgsqlCommand(
+                "UPDATE personal SET saldo = 777.77 WHERE id_personal = $1", conexion);
+            desincronizar.Parameters.AddWithValue(id);
+            Assert.Equal(1, await desincronizar.ExecuteNonQueryAsync());
+        }
+
+        var cuenta = await CuentaAsync(ctx.Admin, id, "?historico=true");
+
+        Assert.Equal(777.77m, cuenta.GetProperty("encabezado").GetProperty("saldo").GetDecimal());
+        Assert.Equal(100m, cuenta.GetProperty("items")[0].GetProperty("saldoResultante").GetDecimal());
+    }
+
+    [Fact]
+    public async Task ElEstadoDeCuentaDevuelveCadaCampoPersistidoYElUsuarioQueCargo()
+    {
+        const string nombre = nameof(ElEstadoDeCuentaDevuelveCadaCampoPersistidoYElUsuarioQueCargo);
+        var ctx = await PrepararAsync(nombre);
+        var id = await CrearPersonalAsync(ctx.Admin, valorHora: 1000m);
+        var idAdmin = await EscalarDelDuenoAsync<int>(
+            "SELECT id_usuario FROM usuarios WHERE mail = $1", $"{nombre.ToLowerInvariant()}@ways.test");
+        var idSupervisor = await EscalarDelDuenoAsync<int>(
+            "SELECT id_usuario FROM usuarios WHERE mail = $1", $"{nombre.ToLowerInvariant()}-supervisor@ways.test");
+        Assert.NotEqual(idAdmin, idSupervisor);
+
+        var carga = await CuerpoAsync(
+            await CargarAsync(ctx.Supervisor, id, "2026-10-01", 2.5m, detalle: "  turno tarde "), HttpStatusCode.Created);
+        var ajuste = await CuerpoAsync(
+            await AjustarAsync(ctx.Admin, id, -100m, " descuento acordado ", "2026-10-02"), HttpStatusCode.Created);
+
+        var cuenta = await CuentaAsync(ctx.Admin, id, "?historico=true");
+        var items = cuenta.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("idMovimiento").GetInt32());
+
+        var deLaCarga = items[carga.GetProperty("idMovimiento").GetInt32()];
+        Assert.Equal("horas", deLaCarga.GetProperty("tipo").GetString(), ignoreCase: true);
+        Assert.Equal(2.5m, deLaCarga.GetProperty("horas").GetDecimal());
+        Assert.Equal(1000m, deLaCarga.GetProperty("valorHora").GetDecimal());
+        Assert.Equal(2500m, deLaCarga.GetProperty("importe").GetDecimal());
+        Assert.Equal("turno tarde", deLaCarga.GetProperty("detalle").GetString());
+        Assert.Equal("2026-10-01", deLaCarga.GetProperty("fecha").GetString());
+
+        var delAjuste = items[ajuste.GetProperty("idMovimiento").GetInt32()];
+        Assert.Equal("ajuste", delAjuste.GetProperty("tipo").GetString(), ignoreCase: true);
+        Assert.Equal(JsonValueKind.Null, delAjuste.GetProperty("horas").ValueKind);
+        Assert.Equal("descuento acordado", delAjuste.GetProperty("detalle").GetString());
+        Assert.Equal(2400m, delAjuste.GetProperty("saldoResultante").GetDecimal());
+
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        foreach (var (movimiento, esperado) in new[]
+        {
+            (deLaCarga, idSupervisor), (delAjuste, idAdmin)
+        })
+        {
+            await using var lectura = new NpgsqlCommand(
+                "SELECT id_empleado, created_at FROM movimientos_personal WHERE id_movimiento = $1", conexion);
+            lectura.Parameters.AddWithValue(movimiento.GetProperty("idMovimiento").GetInt32());
+            await using var lector = await lectura.ExecuteReaderAsync();
+            Assert.True(await lector.ReadAsync());
+
+            Assert.Equal(esperado, lector.GetInt32(0));
+            var creadoEn = movimiento.GetProperty("creadoEn").GetDateTimeOffset();
+            Assert.Equal(lector.GetFieldValue<DateTimeOffset>(1), creadoEn);
+            Assert.True(Math.Abs((creadoEn - DateTimeOffset.UtcNow).TotalMinutes) < 5);
+        }
+    }
+
+    [Fact]
+    public async Task ElEstadoDeCuentaDeUnPersonalNoMezclaLosMovimientosDeOtroDelMismoTenant()
+    {
+        var ctx = await PrepararAsync(nameof(ElEstadoDeCuentaDeUnPersonalNoMezclaLosMovimientosDeOtroDelMismoTenant));
+        var ana = await CrearPersonalAsync(ctx.Admin, valorHora: 100m, nombre: "Ana");
+        var beto = await CrearPersonalAsync(ctx.Admin, valorHora: 10m, nombre: "Beto");
+
+        var deAna = new List<int>
+        {
+            (await CuerpoAsync(await CargarAsync(ctx.Admin, ana, "2026-10-01", 2m), HttpStatusCode.Created))
+                .GetProperty("idMovimiento").GetInt32(),
+            (await CuerpoAsync(await AjustarAsync(ctx.Admin, ana, -50m), HttpStatusCode.Created))
+                .GetProperty("idMovimiento").GetInt32()
+        };
+        var deBeto = new List<int>
+        {
+            (await CuerpoAsync(await CargarAsync(ctx.Admin, beto, "2026-10-01", 3m), HttpStatusCode.Created))
+                .GetProperty("idMovimiento").GetInt32(),
+            (await CuerpoAsync(await CargarAsync(ctx.Admin, beto, "2026-10-02", 1m), HttpStatusCode.Created))
+                .GetProperty("idMovimiento").GetInt32(),
+            (await CuerpoAsync(await AjustarAsync(ctx.Admin, beto, 5m), HttpStatusCode.Created))
+                .GetProperty("idMovimiento").GetInt32()
+        };
+
+        var cuentaAna = await CuentaAsync(ctx.Admin, ana, "?historico=true");
+        var cuentaBeto = await CuentaAsync(ctx.Admin, beto, "?historico=true");
+
+        Assert.Equal(2, cuentaAna.GetProperty("total").GetInt32());
+        Assert.Equal(
+            deAna.Order(),
+            cuentaAna.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("idMovimiento").GetInt32()).Order());
+        Assert.Equal(150m, cuentaAna.GetProperty("encabezado").GetProperty("saldo").GetDecimal());
+
+        Assert.Equal(3, cuentaBeto.GetProperty("total").GetInt32());
+        Assert.Equal(
+            deBeto.Order(),
+            cuentaBeto.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("idMovimiento").GetInt32()).Order());
+        Assert.Equal(45m, cuentaBeto.GetProperty("encabezado").GetProperty("saldo").GetDecimal());
+    }
+
+    [Fact]
+    public async Task LosExtremosDelRangoDeFechasSonInclusivos()
+    {
+        var ctx = await PrepararAsync(nameof(LosExtremosDelRangoDeFechasSonInclusivos));
+        var id = await CrearPersonalAsync(ctx.Admin, valorHora: 100m);
+        foreach (var fecha in new[] { "2026-09-09", "2026-09-10", "2026-09-11" })
+        {
+            await CuerpoAsync(await CargarAsync(ctx.Admin, id, fecha, 1m), HttpStatusCode.Created);
+        }
+
+        Assert.Equal(2, (await CuentaAsync(ctx.Admin, id, "?desde=2026-09-10")).GetProperty("total").GetInt32());
+        Assert.Equal(2, (await CuentaAsync(ctx.Admin, id, "?desde=2026-09-01&hasta=2026-09-10")).GetProperty("total").GetInt32());
+        Assert.Equal(1, (await CuentaAsync(ctx.Admin, id, "?desde=2026-09-10&hasta=2026-09-10")).GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task LosImportesExactamenteEnElMaximoSeAceptan()
+    {
+        var ctx = await PrepararAsync(nameof(LosImportesExactamenteEnElMaximoSeAceptan));
+        var conCarga = await CrearPersonalAsync(ctx.Admin, nombre: "Carga");
+        var conAjuste = await CrearPersonalAsync(ctx.Admin, nombre: "Ajuste");
+
+        var carga = await CuerpoAsync(
+            await CargarAsync(ctx.Admin, conCarga, "2026-10-01", 1m, valorHora: 999_999_999_999.99m), HttpStatusCode.Created);
+        var ajuste = await CuerpoAsync(await AjustarAsync(ctx.Admin, conAjuste, 999_999_999_999.99m), HttpStatusCode.Created);
+
+        Assert.Equal(999_999_999_999.99m, carga.GetProperty("importe").GetDecimal());
+        Assert.Equal(999_999_999_999.99m, ajuste.GetProperty("saldoResultante").GetDecimal());
+    }
+
+    [Theory]
+    [InlineData("?hasta=0001-01-15", "fecha_invalida")]
+    [InlineData("?pagina=2147483647", "pagina_invalida")]
+    public async Task UnRangoOUnaPaginaFueraDeLimiteRespondeBadRequestYNoUn500(string consulta, string codigo)
+    {
+        var ctx = await PrepararAsync(nameof(UnRangoOUnaPaginaFueraDeLimiteRespondeBadRequestYNoUn500) + codigo);
+        var id = await CrearPersonalAsync(ctx.Admin);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/personal/{id}/cuenta{consulta}");
+
+        Assert.Equal(codigo, await CodigoAsync(respuesta, HttpStatusCode.BadRequest));
+    }
+
+    [Fact]
+    public async Task UnHastaEnElPrimerMesDeLaEraTodaviaSeResuelve()
+    {
+        var ctx = await PrepararAsync(nameof(UnHastaEnElPrimerMesDeLaEraTodaviaSeResuelve));
+        var id = await CrearPersonalAsync(ctx.Admin);
+
+        var cuenta = await CuentaAsync(ctx.Admin, id, "?hasta=0001-02-01");
+
+        Assert.Equal("0001-01-01", cuenta.GetProperty("desde").GetString());
     }
 
     [Fact]

@@ -62,6 +62,16 @@ public sealed class ServicioDeCuentaDePersonal(IWaysDbContext db, IRelojDelSiste
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
+        if ((long)(pagina - 1) * tamanio > int.MaxValue)
+        {
+            throw new ErrorDominio("pagina_invalida", "La página pedida está fuera de rango.", 400);
+        }
+
+        if (hasta is { } hastaPedido && hastaPedido < DateOnly.MinValue.AddMonths(1))
+        {
+            throw new ErrorDominio("fecha_invalida", "La fecha hasta está fuera de rango.", 400);
+        }
+
         DateOnly? desdeEfectivo = null;
         DateOnly? hastaEfectivo = null;
         if (!historico)

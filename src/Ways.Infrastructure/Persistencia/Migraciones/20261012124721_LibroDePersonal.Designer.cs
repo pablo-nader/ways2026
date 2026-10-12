@@ -3680,7 +3680,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         {
                             t.HasCheckConstraint("ck_movimientos_personal_ajuste", "tipo <> 'ajuste' OR (horas IS NULL AND valor_hora IS NULL AND importe <> 0)");
 
-                            t.HasCheckConstraint("ck_movimientos_personal_horas", "tipo <> 'horas' OR (horas IS NOT NULL AND horas > 0 AND horas <= 24 AND valor_hora IS NOT NULL AND valor_hora >= 0 AND importe >= 0 AND importe = round(horas * valor_hora, 2))");
+                            t.HasCheckConstraint("ck_movimientos_personal_horas", "tipo <> 'horas' OR (horas IS NOT NULL AND horas > 0 AND horas <= 24 AND valor_hora IS NOT NULL AND valor_hora >= 0 AND importe = round(horas * valor_hora, 2))");
 
                             t.HasCheckConstraint("ck_movimientos_personal_pago", "tipo <> 'pago' OR (horas IS NULL AND valor_hora IS NULL AND importe < 0)");
                         });
