@@ -22,12 +22,15 @@ export type AccionesDelCarrito = {
 
 /**
  * El carrito de la tienda. `cantidad` cuenta las líneas (artículos y combos distintos), no las
- * unidades: es lo que muestra el botón de la cabecera. `cantidades` y `cantidadesDeCombos` dan la
- * cantidad de cada artículo o combo que está en el carrito (los que no están, no figuran).
+ * unidades. `cantidadQueSuma` es lo mismo sin las líneas de combo que ya no están disponibles
+ * (se ven en el panel pero no suman al total): es lo que cuenta el botón de la cabecera.
+ * `cantidades` y `cantidadesDeCombos` dan la cantidad de cada artículo o combo que está en el
+ * carrito (los que no están, no figuran).
  */
 export type EstadoDelCarrito = AccionesDelCarrito & {
   items: readonly ItemDelCarrito[]
   cantidad: number
+  cantidadQueSuma: number
   total: number
   cantidades: ReadonlyMap<number, number>
   cantidadesDeCombos: ReadonlyMap<number, number>

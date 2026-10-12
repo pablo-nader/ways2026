@@ -138,7 +138,7 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
                       <p className="publico-carrito-unitario">Combo · {formatearPrecio(item.precio)}</p>
                       <p className="publico-carrito-componentes">{item.componentes.map(descripcionDelComponente).join(' · ')}</p>
                       {item.noDisponible === true ? (
-                        <p className="publico-carrito-aviso">Ya no está disponible. No se suma al total.</p>
+                        <p className="publico-carrito-aviso" role="status">Ya no está disponible. No se suma al total.</p>
                       ) : (
                         <>
                           <ControlDeCantidad

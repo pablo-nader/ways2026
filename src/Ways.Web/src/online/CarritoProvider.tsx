@@ -8,6 +8,7 @@ import {
   totalDelCarrito,
   type ArticuloParaElCarrito,
   type ComboParaElCarrito,
+  type ItemDelCarrito,
 } from './carrito'
 import { AccionesDelCarritoContext, CarritoContext } from './CarritoContext'
 
@@ -22,6 +23,19 @@ function almacenDelNavegador(): AlmacenDelCarrito | null {
 }
 
 type Anuncio = { texto: string; numero: number }
+
+/** Lo que cambió de disponibilidad entre dos estados del carrito, una frase por línea de combo que se marcó o se desmarcó. */
+function avisosDeDisponibilidad(antes: readonly ItemDelCarrito[], despues: readonly ItemDelCarrito[]): string[] {
+  const estabaNoDisponible = new Map(antes.flatMap((i) => (i.tipo === 'combo' ? [[i.idCombo, i.noDisponible === true] as const] : [])))
+
+  return despues.flatMap((i) => {
+    if (i.tipo !== 'combo') return []
+    const antesNoDisponible = estabaNoDisponible.get(i.idCombo)
+    if (antesNoDisponible === undefined || antesNoDisponible === (i.noDisponible === true)) return []
+
+    return [`${i.nombre} ${i.noDisponible === true ? 'ya no está disponible' : 'volvió a estar disponible'}`]
+  })
+}
 
 /**
  * Dueño del carrito: lo lee del navegador al montar y lo guarda en cada cambio, bajo una clave que
@@ -132,10 +146,16 @@ export function CarritoProvider({
     despachar({ tipo: 'cambiarCantidadCombo', idCombo, cantidad })
   }, [])
 
-  const sincronizarCombos = useCallback((combos: readonly ComboParaElCarrito[]) => {
-    ultimosCombos.current = combos
-    despachar({ tipo: 'sincronizarCombos', combos })
-  }, [])
+  const sincronizarCombos = useCallback(
+    (combos: readonly ComboParaElCarrito[]) => {
+      ultimosCombos.current = combos
+      const accion = { tipo: 'sincronizarCombos', combos } as const
+      const avisos = avisosDeDisponibilidad(itemsRef.current, reducirCarrito(itemsRef.current, accion))
+      despachar(accion)
+      if (avisos.length > 0) anunciar(avisos.join('. '))
+    },
+    [anunciar],
+  )
 
   const sincronizar = useCallback((articulos: readonly ArticuloParaElCarrito[]) => {
     ultimosArticulos.current = articulos
@@ -167,6 +187,7 @@ export function CarritoProvider({
       ...acciones,
       items,
       cantidad: items.length,
+      cantidadQueSuma: items.filter((i) => i.tipo !== 'combo' || i.noDisponible !== true).length,
       total: totalDelCarrito(items),
       cantidades: new Map(items.flatMap((i) => (i.tipo === 'articulo' ? [[i.idArticulo, i.cantidad] as const] : []))),
       cantidadesDeCombos: new Map(items.flatMap((i) => (i.tipo === 'combo' ? [[i.idCombo, i.cantidad] as const] : []))),

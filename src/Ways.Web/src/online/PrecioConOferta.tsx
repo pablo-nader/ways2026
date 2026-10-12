@@ -40,8 +40,7 @@ export function PrecioConOferta({
     <>
       {precioOriginal !== undefined && (
         <>
-          <EtiquetaDeOferta oferta={oferta} />
-          <PrecioAnterior precioOriginal={precioOriginal} />
+          <EtiquetaDeOferta oferta={oferta} /> <PrecioAnterior precioOriginal={precioOriginal} />{' '}
         </>
       )}
       <span className="publico-precio">

@@ -86,7 +86,7 @@ describe('panel del carrito con artículos', () => {
     expect(lineas[1]).toHaveTextContent('Clavos')
     expect(lineas[1]).toHaveTextContent('$ 2.000,00 por kg')
     expect(within(panel).getByText('Total').closest('p')).toHaveTextContent('$ 3.500,50')
-    expect(screen.getByRole('button', { name: 'Carrito, 2 artículos' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carrito, 2 ítems' })).toBeInTheDocument()
   })
 
   it('cambiar la cantidad en el panel recalcula el subtotal y el total', async () => {
@@ -247,7 +247,7 @@ describe('persistencia en el navegador', () => {
     primera.unmount()
     await verTienda()
 
-    expect(screen.getByRole('button', { name: 'Carrito, 1 artículo' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carrito, 1 ítem' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Cantidad de Martillo' })).toHaveValue('2')
   })
 

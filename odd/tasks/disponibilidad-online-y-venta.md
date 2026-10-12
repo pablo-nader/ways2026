@@ -75,8 +75,8 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   - Sale enforcement: POS snapshot, `/escaneo`, sale search, `EmitirAsync` 409
     `articulo_no_vendible`, presupuestos reuse the same guard if they share the line validation.
   - Public: `GET /api/publico/catalogo` returns `precio` (final) and `precioOriginal` (when an
-    available offer applies) plus `oferta` (name) per article; `combos: [{ id, codigo, nombre,
-    precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` on the first
+    available offer applies) plus `oferta` (name) per article; `combos: [{ id, nombre,
+    precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` (no `codigo`) on the first
     unfiltered page (and `GET /api/publico/combos` for the storefront). Public image of a combo:
     none (cards show component images).
   - Tests: unit (defaults, guard), integration (isolation of the four new policies with raw
@@ -211,7 +211,8 @@ Added:
   when no offer lowers the price; `precio` is the final price. The response gains `combos` (always present, `[]` unless the request is
   `pagina = 1` with no `buscar` and no `idCategoria`).
 - `GET /api/publico/combos` (anonymous, `Cache-Control: public, max-age=60`, `404 vitrina_no_publicada`):
-  `[{ id, codigo, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. A combo has no
+  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. The public combo has no
+  `codigo`: the backend fix branch (judgment-day amendment) removes it, and the web never reads it. A combo has no
   image of its own: use `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components.
 - The storefront never sees articles with `disponible_venta = false`, so a `combo` cart line must reference only listed combos;
   the checkout (later) re-detects combos server-side.
@@ -244,13 +245,15 @@ Mutation evidence (mutate, run the named files, revert; each went red in the nam
 | combos read error treated as an empty list (marks every cart combo unavailable) | `Combos.test` "si la lectura de combos falla ... ninguno se marca" |
 | section shown for an empty list | `Combos.test` "con una lista vacía no hay sección" |
 | section shown with a search or category filter active | `Combos.test` (two filter cases) |
-| combos read without the generation gate | `Combos.test` stale response under StrictMode |
+| combos read without the generation gate | `Combos.test` stale response (originally under StrictMode; after the judgment-day adjustments, two catalog reads in a row) |
 
 Decisions:
 
 1. **Storage format 2** is `{ version: 2, items }` under the same key. A legacy array (version 1, lines without `tipo`) is read as articles and
    rewritten as format 2 on the next save; a line without `tipo` inside format 2, and any other `version`, is discarded.
-   An old tab reading format 2 sees no cart (it expects an array), which only costs that tab its in-memory view.
+   Mixed-format risk, stated honestly: a tab still running the old bundle that adopts a format-2 cart (storage event) sees it empty, and
+   its next local write replaces the shared key with a legacy array, so the tabs on the new bundle lose their combo lines (and lose the
+   `noDisponible` marks). Accepted because both bundles deploy together and the window closes with one page reload of the old tab.
 2. **Combos are identified by `id` only**: per the coordinator's amendment (backend judgment-day) `ComboPublico` has no `codigo`;
    the web renders and stores no code, and no "ahorrás" claim exists anywhere (component prices are not in the payload).
 3. **`sincronizarCombos` is its own cart action** (sibling of `sincronizar`) fed by `GET /api/publico/combos`. It runs only after a good read:
@@ -261,6 +264,17 @@ Decisions:
 5. **Accent usage**: the offer tag uses the accent as background with the theme-computed ink (`--pub-tinta-sobre-acento`); prices stay
    in the text colour, because the accent as text colour is not contrast-safe for an arbitrary commerce colour.
 6. **`ControlDeCantidad` no longer reads the cart**: it receives `alCambiar` and an optional `maximo` (99 for combos), so both line types share it.
+
+### T3 — judgment-day adjustments (branch `pnader/disponibilidad-web-tienda-ajustes`)
+
+- Combos are re-read with every catalog read (first load, filter change, "Ver más", "Reintentar") through `useCatalogo().lecturas`; a failed
+  re-read keeps the last good list. Each unavailable/available transition of a combo line is announced once in the polite region (several in
+  one sentence list); the header badge and label count only lines that sum ("N ítems"); the panel notice has `role="status"`.
+- `PrecioConOferta` separates tag, struck price and final price with spaces; the combo thumbnails are capped at 96 px with a fixed strip height.
+- Mutation evidence (each went red in the named file and green after the revert): re-sync on cross-tab adoption removed → `Combos.test`
+  adoption tests (2); adoption re-sync unconditional with `?? []` → `Combos.test` "sin una lista buena leída"; `useCombos` ignoring `lecturas`
+  → six `Combos.test` tests; generation gate removed → `Combos.test` stale response; announcement removed → three `Combos.test` tests;
+  badge counting every line → two `Combos.test` tests; `max-width` removed → `estilosDeLaTienda.test`; spaces removed → `Ofertas.test` (2).
 
 ## Delivery slices
 

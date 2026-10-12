@@ -886,15 +886,19 @@
 .publico-combo-miniaturas {
   display: flex;
   gap: 6px;
+  /* Alto fijo: con una, dos o tres imágenes las tarjetas de una fila quedan parejas. */
+  height: 96px;
 }
 
 .publico-combo-miniatura {
   display: flex;
-  flex: 1 1 0;
+  /* Cada miniatura mide hasta 96 px de ancho y no se estira para llenar la tarjeta cuando hay pocas. */
+  flex: 0 1 96px;
+  max-width: 96px;
   align-items: center;
   justify-content: center;
   min-width: 0;
-  aspect-ratio: 1 / 1;
+  height: 100%;
   overflow: hidden;
   background: var(--pub-fondo);
   border-radius: 0.375rem;

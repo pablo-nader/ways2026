@@ -63,7 +63,7 @@ export function CatalogoDeLaTienda() {
   const [buscar, setBuscar] = useState(filtroInicial.buscar)
   const [idCategoria, setIdCategoria] = useState(filtroInicial.idCategoria)
   const catalogo = useCatalogo({ buscar, idCategoria })
-  const combos = useCombos()
+  const combos = useCombos(catalogo.lecturas)
   const { cantidades, cantidadesDeCombos, sincronizar, sincronizarCombos } = useCarrito()
 
   // Cada lista que llega (primera lectura, otro filtro, "Ver más") pone al día las líneas del
@@ -73,8 +73,8 @@ export function CatalogoDeLaTienda() {
     sincronizar(articulosLeidos.map(articuloParaElCarrito))
   }, [articulosLeidos, sincronizar])
 
-  // Los combos se leen aparte: la lista que llega pone al día las líneas de combo del carrito, y las que
-  // ya no figuran quedan marcadas. Una lectura que falló no llega acá (`combos` sigue en `null`).
+  // Los combos se releen con cada lectura del catálogo: la lista que llega pone al día las líneas de combo
+  // del carrito, y las que ya no figuran quedan marcadas. Una lectura que falló no cambia `combos`.
   useEffect(() => {
     if (combos !== null) sincronizarCombos(combos.map(comboParaElCarrito))
   }, [combos, sincronizarCombos])

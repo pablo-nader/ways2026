@@ -25,6 +25,8 @@ export type EstadoDelCatalogo = {
   vacioAlEntrar: boolean
   cargandoMas: boolean
   errorDeMas: boolean
+  /** Cuántas lecturas se pidieron (primera página, otro filtro, reintento, "Ver más"): quien relee algo aparte la usa como disparador. */
+  lecturas: number
 }
 
 const INICIAL: EstadoDelCatalogo = {
@@ -38,6 +40,7 @@ const INICIAL: EstadoDelCatalogo = {
   vacioAlEntrar: false,
   cargandoMas: false,
   errorDeMas: false,
+  lecturas: 0,
 }
 
 /**
@@ -59,7 +62,7 @@ export function useCatalogo({ buscar, idCategoria }: FiltroDelCatalogo) {
 
   const cargarPrimera = useCallback(async () => {
     const mia = ++generacion.current
-    setEstado((prev) => ({ ...prev, fase: 'cargando', cargandoMas: false, errorDeMas: false }))
+    setEstado((prev) => ({ ...prev, fase: 'cargando', cargandoMas: false, errorDeMas: false, lecturas: prev.lecturas + 1 }))
     try {
       const catalogo = await clienteDePublico.obtenerCatalogo({ buscar, idCategoria, pagina: 1, tamano: TAMANO_DE_PAGINA })
       if (generacion.current !== mia) return
@@ -75,6 +78,7 @@ export function useCatalogo({ buscar, idCategoria }: FiltroDelCatalogo) {
         vacioAlEntrar: prev.cargadoAlgunaVez ? prev.vacioAlEntrar : sinFiltros && catalogo.total === 0,
         cargandoMas: false,
         errorDeMas: false,
+        lecturas: prev.lecturas,
       }))
     } catch {
       if (generacion.current !== mia) return
@@ -95,7 +99,7 @@ export function useCatalogo({ buscar, idCategoria }: FiltroDelCatalogo) {
   const paginaCargada = estado.pagina
   const cargarMas = useCallback(async () => {
     const mia = ++generacion.current
-    setEstado((prev) => ({ ...prev, cargandoMas: true, errorDeMas: false }))
+    setEstado((prev) => ({ ...prev, cargandoMas: true, errorDeMas: false, lecturas: prev.lecturas + 1 }))
     try {
       const catalogo = await clienteDePublico.obtenerCatalogo({
         buscar,

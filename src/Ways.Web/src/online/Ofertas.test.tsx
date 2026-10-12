@@ -89,6 +89,18 @@ describe('precio con oferta en la tarjeta', () => {
     expect(document.querySelector('s')).toHaveTextContent('Antes $ 0,00')
   })
 
+  it('el texto plano (copiar y pegar, modo lectura) separa cartelito, precio de lista y precio final con espacios', () => {
+    const { container } = render(<PrecioConOferta precio={80} precioOriginal={100} unidadVenta="Unidad" />)
+
+    expect(container.textContent).toBe('Oferta Antes $ 100,00 Ahora $ 80,00')
+  })
+
+  it('con el nombre de la oferta y por peso, el texto plano sigue separado', () => {
+    const { container } = render(<PrecioConOferta precio={1800} precioOriginal={2000} oferta="Semana" unidadVenta="Peso" />)
+
+    expect(container.textContent).toBe('Oferta: Semana Antes $ 2.000,00 Ahora $ 1.800,00 por kg')
+  })
+
   it('la etiqueta usa el acento del comercio y el texto que el tema calcula sobre él', () => {
     const hoja = Array.from(document.styleSheets).flatMap((h) => Array.from(h.cssRules))
     const regla = hoja.find((r) => r instanceof CSSStyleRule && r.selectorText === '.publico-etiqueta-oferta') as CSSStyleRule

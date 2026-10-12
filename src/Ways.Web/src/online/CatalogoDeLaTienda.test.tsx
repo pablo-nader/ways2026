@@ -491,7 +491,7 @@ describe('catálogo de la tienda', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
 
-      expect(screen.getByRole('button', { name: 'Carrito, 1 artículo' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Carrito, 1 ítem' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Agregar Martillo al carrito' })).not.toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Cantidad de Martillo' })).toHaveValue('1')
       expect(screen.getByRole('button', { name: 'Agregar Clavos al carrito' })).toBeInTheDocument()

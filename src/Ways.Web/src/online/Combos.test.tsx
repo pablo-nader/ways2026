@@ -71,6 +71,10 @@ function seccionDeCombos() {
   return screen.getByRole('region', { name: 'Combos' })
 }
 
+function regionDeAnuncios() {
+  return document.querySelector('.publico-solo-lectura[aria-live="polite"]') as HTMLElement
+}
+
 function tarjetaDelCombo(nombre: string) {
   return screen.getByRole('heading', { level: 3, name: nombre }).closest('li') as HTMLElement
 }
@@ -85,6 +89,8 @@ function totalDelPanel(panel: HTMLElement) {
   return (within(panel).getByText('Total').parentElement as HTMLElement).textContent
 }
 
+const scrollIntoViewOriginal = Element.prototype.scrollIntoView
+
 beforeEach(() => {
   obtenerVitrinaMock.mockReset()
   obtenerCatalogoMock.mockReset()
@@ -93,6 +99,9 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  // jsdom no define `scrollIntoView`: los tests de `#combos` lo reemplazan y acá se vuelve a como estaba, pase o falle la prueba.
+  if (scrollIntoViewOriginal === undefined) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  else Element.prototype.scrollIntoView = scrollIntoViewOriginal
   localStorage.clear()
   window.history.replaceState(null, '', '/')
   document.documentElement.removeAttribute('data-bs-theme')
@@ -218,18 +227,14 @@ describe('sección de combos de la tienda', () => {
       expect(screen.queryByRole('region', { name: 'Combos' })).toBeNull()
     })
 
-    it('una respuesta tardía de una lectura vieja no pisa a la más nueva (primera pasada del modo estricto)', async () => {
+    it('una respuesta tardía de una lectura vieja no pisa a la más nueva (dos lecturas del catálogo seguidas)', async () => {
       const primera = diferida<ComboPublico[]>()
       const segunda = diferida<ComboPublico[]>()
       obtenerCombosMock.mockReturnValueOnce(primera.promesa).mockReturnValueOnce(segunda.promesa)
       obtenerVitrinaMock.mockResolvedValue(vitrina)
-      obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [martillo] }))
-      render(
-        <StrictMode>
-          <Tienda />
-        </StrictMode>,
-      )
-      await screen.findByRole('heading', { level: 2, name: 'Martillo' })
+      obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [martillo], total: 30 }))
+      render(<Tienda />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Ver más' }))
       await waitFor(() => expect(obtenerCombosMock).toHaveBeenCalledTimes(2))
 
       await act(async () => segunda.resolver([asado]))
@@ -240,7 +245,9 @@ describe('sección de combos de la tienda', () => {
       expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Combo asado'])
     })
 
-    it('una respuesta que llega con la tienda ya desmontada no rompe nada', async () => {
+    // Solo prueba que no se lanza ni se registra un error: React 19 no avisa de un `setState` sobre un componente desmontado,
+    // así que el descarte por generación no es observable desde acá.
+    it('una respuesta que llega con la tienda ya desmontada termina sin lanzar ni registrar errores', async () => {
       const lectura = diferida<ComboPublico[]>()
       obtenerCombosMock.mockReturnValue(lectura.promesa)
       obtenerVitrinaMock.mockResolvedValue(vitrina)
@@ -267,7 +274,6 @@ describe('sección de combos de la tienda', () => {
 
       expect(llevar).toHaveBeenCalledTimes(1)
       expect(llevar.mock.contexts[0]).toBe(seccionDeCombos())
-      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
     })
 
     it('sin el ancla no mueve la página', async () => {
@@ -278,7 +284,6 @@ describe('sección de combos de la tienda', () => {
       await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
 
       expect(llevar).not.toHaveBeenCalled()
-      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
     })
   })
 })
@@ -292,7 +297,7 @@ describe('combos en el carrito', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Agregar uno más de Combo merienda' }))
 
     expect(screen.getByRole('textbox', { name: 'Cantidad de Combo merienda' })).toHaveValue('2')
-    expect(screen.getByRole('button', { name: 'Carrito, 1 artículo' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Carrito, 1 ítem' })).toBeInTheDocument()
     expect(itemsGuardados(localStorage.getItem(claveDelCarrito(window.location.host)))).toEqual([
       expect.objectContaining({ tipo: 'combo', idCombo: 1, nombre: 'Combo merienda', precio: 500, cantidad: 2 }),
     ])
@@ -383,7 +388,7 @@ describe('combos en el carrito', () => {
       const panel = await abrirElPanel()
       const linea = within(panel).getByText('Combo de verano').closest('li') as HTMLElement
 
-      expect(within(linea).getByText(/Ya no está disponible/)).toBeInTheDocument()
+      expect(within(linea).getByRole('status')).toHaveTextContent('Ya no está disponible. No se suma al total.')
       expect(linea).toHaveTextContent('2 × Helado')
       expect(within(linea).queryByRole('textbox')).toBeNull()
       expect(within(linea).queryByText('$ 2.400,00')).toBeNull()
@@ -438,5 +443,179 @@ describe('combos en el carrito', () => {
         ]),
       )
     })
+
+    it('lo anuncia en la región polite, con el nombre del combo', async () => {
+      guardarDosCombos()
+      await verTienda([merienda])
+
+      await waitFor(() => expect(regionDeAnuncios()).toHaveTextContent('Combo de verano ya no está disponible'))
+      expect(regionDeAnuncios()).not.toHaveTextContent('Combo merienda')
+    })
+
+    it('si hay varios, los anuncia en uno solo para que ninguno pise al otro', async () => {
+      guardarDosCombos()
+      await verTienda([])
+
+      await waitFor(() =>
+        expect(regionDeAnuncios()).toHaveTextContent('Combo merienda ya no está disponible. Combo de verano ya no está disponible'),
+      )
+    })
+
+    it('el botón del carrito no cuenta la línea no disponible', async () => {
+      guardarDosCombos()
+      await verTienda([merienda])
+
+      expect(await screen.findByRole('button', { name: 'Carrito, 1 ítem' })).toHaveTextContent('1')
+      expect(screen.queryByRole('button', { name: 'Carrito, 2 ítems' })).toBeNull()
+    })
+
+    it('con todas las líneas no disponibles el carrito no está vacío, pero nada suma', async () => {
+      guardarDosCombos()
+      await verTienda([])
+
+      const boton = await screen.findByRole('button', { name: 'Carrito, sin ítems disponibles' })
+
+      expect(boton).toHaveTextContent('0')
+      expect((await abrirElPanel()).textContent).not.toContain('Tu carrito está vacío')
+    })
+  })
+})
+
+describe('los combos se releen con cada lectura del catálogo', () => {
+  function prepararCatalogoPaginado(combos: ComboPublico[][]) {
+    obtenerVitrinaMock.mockResolvedValue(vitrina)
+    obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [martillo], total: 30 }))
+    for (const lectura of combos) obtenerCombosMock.mockResolvedValueOnce(lectura)
+  }
+
+  it('"Ver más" relee los combos y la sección muestra la lista nueva', async () => {
+    prepararCatalogoPaginado([[merienda], [merienda, asado]])
+    render(<Tienda />)
+    await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
+    expect(screen.queryByRole('heading', { level: 3, name: 'Combo asado' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ver más' }))
+
+    await screen.findByRole('heading', { level: 3, name: 'Combo asado' })
+    expect(obtenerCombosMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('"Reintentar" tras un error del catálogo también relee los combos', async () => {
+    obtenerVitrinaMock.mockResolvedValue(vitrina)
+    obtenerCatalogoMock.mockRejectedValueOnce(new Error('sin red')).mockResolvedValue(catalogoPublico({ articulos: [martillo] }))
+    obtenerCombosMock.mockResolvedValueOnce([merienda]).mockResolvedValueOnce([asado])
+    render(<Tienda />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reintentar' }))
+
+    await screen.findByRole('heading', { level: 3, name: 'Combo asado' })
+    expect(screen.queryByRole('heading', { level: 3, name: 'Combo merienda' })).toBeNull()
+    expect(obtenerCombosMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('cambiar la búsqueda relee los combos aunque con el filtro activo no se vean', async () => {
+    await verTienda([merienda])
+    await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
+    expect(obtenerCombosMock).toHaveBeenCalledTimes(1)
+
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Buscar artículos' }), 'mart{Enter}')
+
+    await waitFor(() => expect(obtenerCombosMock).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('region', { name: 'Combos' })).toBeNull()
+  })
+
+  it('una relectura que falla conserva la última lista buena', async () => {
+    prepararCatalogoPaginado([[merienda]])
+    obtenerCombosMock.mockRejectedValueOnce(new Error('sin red'))
+    render(<Tienda />)
+    await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ver más' }))
+    await waitFor(() => expect(obtenerCombosMock).toHaveBeenCalledTimes(2))
+    await reposar()
+
+    expect(screen.getByRole('heading', { level: 3, name: 'Combo merienda' })).toBeInTheDocument()
+  })
+
+  it('una relectura que sí llega pone al día las líneas del carrito y anuncia el cambio de disponibilidad en ambos sentidos', async () => {
+    const verano = comboPublico(9, { nombre: 'Combo de verano', precio: 800, componentes: [componenteDeCombo(90, { nombre: 'Helado', cantidad: 2 })] })
+    localStorage.setItem(
+      claveDelCarrito(window.location.host),
+      JSON.stringify({
+        version: 2,
+        items: [{ tipo: 'combo', idCombo: 9, nombre: 'Combo de verano', precio: 800, cantidad: 3, componentes: [{ idArticulo: 90, nombre: 'Helado', cantidad: 2, imagenVersion: null }] }],
+      }),
+    )
+    prepararCatalogoPaginado([[merienda], [merienda, verano]])
+    render(<Tienda />)
+    await waitFor(() => expect(regionDeAnuncios()).toHaveTextContent('Combo de verano ya no está disponible'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ver más' }))
+
+    await waitFor(() => expect(regionDeAnuncios()).toHaveTextContent('Combo de verano volvió a estar disponible'))
+    const panel = await abrirElPanel()
+    expect(within(panel).queryByText(/Ya no está disponible/)).toBeNull()
+    expect(totalDelPanel(panel)).toBe('Total$ 2.400,00')
+  })
+})
+
+describe('adoptar el carrito de otra pestaña con líneas de combo', () => {
+  const clave = () => claveDelCarrito(window.location.host)
+  const componentes = [{ idArticulo: 90, nombre: 'Helado', cantidad: 2, imagenVersion: null }]
+  const lineaDeCombo = (idCombo: number, nombre: string, extra: Record<string, unknown> = {}) => ({
+    tipo: 'combo',
+    idCombo,
+    nombre,
+    precio: 800,
+    cantidad: 2,
+    componentes,
+    ...extra,
+  })
+
+  function adoptar(items: unknown[]) {
+    localStorage.setItem(clave(), JSON.stringify({ version: 2, items }))
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: clave(), storageArea: localStorage }))
+    })
+  }
+
+  it('con una lista buena leída, las líneas adoptadas se ponen al día con ella y las que no figuran se marcan', async () => {
+    await verTienda([merienda])
+    await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
+
+    adoptar([lineaDeCombo(1, 'Viejo', { precio: 300 }), lineaDeCombo(9, 'Combo de verano')])
+
+    const panel = await abrirElPanel()
+    expect(within(panel).queryByText('Viejo')).toBeNull()
+    expect(within(panel).getByText('Combo merienda').closest('li')).toHaveTextContent('2 × Coca Cola 1,5 L · 1 × Pan')
+    expect(within(within(panel).getByText('Combo de verano').closest('li') as HTMLElement).getByRole('status')).toHaveTextContent(
+      'Ya no está disponible',
+    )
+    expect(totalDelPanel(panel)).toBe('Total$ 1.000,00')
+  })
+
+  it('una línea adoptada con la marca de no disponible se desmarca si el combo figura en la lista leída', async () => {
+    await verTienda([merienda])
+    await screen.findByRole('heading', { level: 3, name: 'Combo merienda' })
+
+    adoptar([lineaDeCombo(1, 'Combo merienda', { precio: 500, noDisponible: true })])
+
+    const panel = await abrirElPanel()
+    expect(within(panel).queryByText(/Ya no está disponible/)).toBeNull()
+    expect(within(panel).getByRole('textbox', { name: 'Cantidad de Combo merienda' })).toBeInTheDocument()
+    expect(totalDelPanel(panel)).toBe('Total$ 1.000,00')
+  })
+
+  it('sin una lista buena leída no se marca ninguna línea adoptada', async () => {
+    await verTienda(new Error('sin red'))
+    await waitFor(() => expect(obtenerCombosMock).toHaveBeenCalledTimes(1))
+    await reposar()
+
+    adoptar([lineaDeCombo(9, 'Combo de verano')])
+
+    const panel = await abrirElPanel()
+    expect(within(panel).getByText('Combo de verano')).toBeInTheDocument()
+    expect(within(panel).queryByText(/Ya no está disponible/)).toBeNull()
+    expect(totalDelPanel(panel)).toBe('Total$ 1.600,00')
   })
 })
