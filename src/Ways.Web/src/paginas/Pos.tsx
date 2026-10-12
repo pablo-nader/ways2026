@@ -28,7 +28,7 @@ import {
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi, ErrorDeRed } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
-import { nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
+import { esSaldoEstimado, nombreCompletoDeCliente, saldosDeUnPagoACuenta } from '../api/cuentaCorriente'
 import { corriendoEnTauri, establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from '../pos/finDeSesionLocal'
 import { clienteDeOfertas } from '../api/ofertas'
@@ -82,6 +82,7 @@ import { useAuth } from '../auth/useAuth'
 import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
+import { conTiempoLimite } from '../pos/tiempoLimite'
 import { Cargando } from '../componentes/Cargando'
 import { ChipDeSaldo } from '../componentes/ChipDeSaldo'
 import { Modal } from '../componentes/Modal'
@@ -629,9 +630,28 @@ function VentaFinalizada({
  * impresoras — `medios` viaja junto porque es lo único que le falta al llamador para resolver el
  * nombre/comportamiento de cada pago del comprobante (`ComprobanteEmitido.pagos` solo trae
  * `idMedioPago`). En la app web normal el prop queda `undefined` y no cambia nada. */
+/** Lo que la pantalla sabe del saldo de un cliente identificado al emitir su venta, para que el ticket
+ * lo muestre como dato o como estimación. */
+export type SaldoParaTicket = {
+  /** Cuenta corriente de sus ventas en la cola sin enviar, sin contar la que se emite; `null` si no se pudo leer. */
+  consumoPendiente: number | null
+  /** El saldo en pantalla vino de una lectura del servidor posterior a la selección, el último pago o la última venta. */
+  saldoConfirmado: boolean
+}
+
+export type AlEmitirVenta = (
+  comprobante: ComprobanteEmitido,
+  cliente: ClienteListado,
+  medios: MedioPagoListado[],
+  saldo?: SaldoParaTicket,
+) => void
+
+/** Espera máxima por la lectura de la cola para el ticket: sin respuesta, el saldo se imprime como estimado. */
+const ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS = 2_000
+
 type PropsPantallaPos = {
   idPresupuesto: number | null
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web navega a la ruta
    * libre `/caja/cierre` con `useNavigate` (comportamiento sin cambios, "camino viejo"). El shell
    * de escritorio dejó de pasar esto (stage-pos-retiros-y-cierre-por-retiro, etapa 5): con
@@ -730,6 +750,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // generación propia + chequeo del id vigente vía updater funcional — si el cajero cambió de
   // cliente mientras el refetch estaba en vuelo, la respuesta desactualizada se descarta.
   const generacionClienteSeleccionadoRef = useRef(0)
+  // El `ClienteListado` que una lectura del servidor dejó como cliente de la venta. Cualquier otro objeto (de la
+  // lista, de la copia local, de un borrador, o el mismo tras un pago o una venta que cambió su saldo) es no confirmado.
+  const saldoConfirmadoRef = useRef<ClienteListado | null>(null)
   const refrescarClienteSeleccionado = useCallback((idCliente: number) => {
     const miGeneracion = (generacionClienteSeleccionadoRef.current += 1)
     clienteDeClientes
@@ -737,6 +760,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .then((actualizado) => {
         if (generacionClienteSeleccionadoRef.current !== miGeneracion) return
         setClienteSeleccionado((prev) => (prev && prev.id === idCliente ? actualizado : prev))
+        // Solo este objeto, el que quedó en pantalla, cuenta como saldo confirmado por el servidor.
+        saldoConfirmadoRef.current = actualizado
       })
       .catch(() => {
         // silencioso: si falla el refetch, se conserva el cliente en pantalla con el saldo que
@@ -3148,6 +3173,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         }
       }
 
+      // La lectura de la cola se pide antes de emitir: la cola atiende en orden, así que no incluye la venta que
+      // se está encolando ahora (ni se la cuenta dos veces si es online).
+      const saldoConfirmado = saldoConfirmadoRef.current === clienteSeleccionado
+      const lecturaDeLaCola = clienteSeleccionado.esConsumidorFinal
+        ? null
+        : conTiempoLimite(() => sincronizacionOffline.consumoPendienteDeCuentaCorriente(clienteSeleccionado.id), ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS).catch(() => null)
       const resultado = await emitirOEncolar()
       if (resultado === null) return
       const { emitido, pendienteDeSincronizar, avisoLimiteDeCredito } = resultado
@@ -3171,7 +3202,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
-      alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      saldoConfirmadoRef.current = null
+      if (lecturaDeLaCola === null) {
+        alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
+      } else {
+        const clienteDeLaVenta = clienteSeleccionado
+        void lecturaDeLaCola.then((consumoPendiente) => alEmitir?.(emitido, clienteDeLaVenta, medios ?? [], { consumoPendiente, saldoConfirmado }))
+      }
       setLineas([])
       setPrecios({})
       setCombosAplicados([])
@@ -3312,12 +3349,17 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   /** Recibo del pago a cuenta por la misma cola que el resto de los tickets. El pago ya está
    * registrado: si la impresión falla, lo informa el aviso con "Reimprimir" de la cola. */
-  function imprimirReciboDePago(pago: PagoACuentaRegistrado) {
+  async function imprimirReciboDePago(pago: PagoACuentaRegistrado) {
     if (!cajaDeEscritorio) return
+    const consumoPendiente = await conTiempoLimite(
+      () => sincronizacionOffline.consumoPendienteDeCuentaCorriente(pago.cliente.id),
+      ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS,
+    ).catch(() => null)
     const saldos = saldosDeUnPagoACuenta({
       pagos: pago.comprobante.pagos,
       saldoEnPantalla: pago.saldoEnPantalla,
       saldoPosterior: pago.saldoPosterior,
+      consumoPendiente: consumoPendiente ?? 0,
     })
     cajaDeEscritorio.encolarImpresion(
       'el recibo del pago a cuenta',
@@ -3327,6 +3369,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           cliente: { numero: pago.cliente.numero, nombre: nombreCompletoDeCliente(pago.cliente) },
           saldoAnterior: saldos.anterior,
           saldoNuevo: saldos.nuevo,
+          estimado: esSaldoEstimado({ confirmado: pago.saldoPosterior !== null, consumoPendiente }),
         },
         cajaDeEscritorio.contexto,
         medios ?? [],
@@ -4144,7 +4187,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             setModalCuentaCorrienteAbierto(false)
             pedirFocoEnElCodigo()
           }}
-          onPagoRegistrado={refrescarClienteSeleccionado}
+          onPagoRegistrado={(idCliente) => {
+            // El saldo en pantalla quedó viejo: deja de ser confirmado hasta que la lectura nueva lo reemplace.
+            saldoConfirmadoRef.current = null
+            refrescarClienteSeleccionado(idCliente)
+          }}
           onReciboListo={cajaDeEscritorio ? imprimirReciboDePago : undefined}
         />
       )}
@@ -4357,7 +4404,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
  * siendo el POS de siempre).
  */
 type PropsPos = {
-  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alEmitir?: AlEmitirVenta
   alIrACerrarCaja?: (idTurno: number) => void
   cajaDeEscritorio?: CajaDeEscritorio
   alCambiarVentaEnCurso?: (enCurso: boolean) => void

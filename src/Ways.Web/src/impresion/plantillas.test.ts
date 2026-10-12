@@ -223,6 +223,38 @@ describe('ticketDeVenta — cliente identificado con su saldo', () => {
     expect(texto).not.toContain('Cliente:')
   })
 
+  it('un saldo no confirmado se rotula "(estimado)" en las dos líneas', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, estimado: true } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 500,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual (estimado)', '$ 1.200,00'))
+  })
+
+  it('un saldo confirmado no lleva la marca de estimado', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, estimado: false } }))
+    expect(texto).not.toContain('estimado')
+  })
+
+  it('un saldo negativo se imprime "a favor" con su valor absoluto, nunca con signo', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -80, saldoDespues: -30 } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor', '$ 80,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual a favor', '$ 30,00'))
+    expect(lineas.filter((l) => l.includes('-$'))).toEqual([])
+  })
+
+  it('un saldo que pasa de a favor a deuda rotula cada línea por su signo', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -30, saldoDespues: 70 } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor', '$ 30,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual', '$ 70,00'))
+  })
+
+  it('un nombre largo se recorta al ancho del ticket en vez de partir la línea', () => {
+    const nombre = 'Distribuidora Mayorista de Productos Regionales Sociedad Anonima'
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, nombre } }))
+    const linea = lineas.find((l) => l.startsWith('Cliente:'))!
+    expect(linea.length).toBeLessThanOrEqual(48)
+    expect(linea).toBe(`Cliente: #2 - ${nombre}`.slice(0, 47))
+  })
+
   it('conserva el pulso del cajón y el corte al final', () => {
     const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE })
     expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
@@ -276,6 +308,29 @@ describe('ticketDePagoACuenta', () => {
     const nuevo = lineas.indexOf(dosColumnas('Saldo nuevo', '$ 350,00'))
     expect(anterior).toBeGreaterThan(-1)
     expect(nuevo).toBeGreaterThan(anterior)
+  })
+
+  it('un saldo estimado (consulta posterior fallida o ventas en cola) se rotula "(estimado)"', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, estimado: true }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 1.000,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nuevo (estimado)', '$ 350,00'))
+  })
+
+  it('un saldo confirmado no lleva la marca de estimado', () => {
+    expect(textoPlano(ticketDePagoACuenta({ ...DATOS, estimado: false }, CONTEXTO, MEDIOS))).not.toContain('estimado')
+  })
+
+  it('un saldo nuevo negativo se imprime "a favor" con el valor absoluto', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, saldoAnterior: 100, saldoNuevo: -550 }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior', '$ 100,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nuevo a favor', '$ 550,00'))
+    expect(lineas.filter((l) => l.includes('-$'))).toEqual([])
+  })
+
+  it('un nombre largo se recorta al ancho del ticket', () => {
+    const nombre = 'Distribuidora Mayorista de Productos Regionales Sociedad Anonima'
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, cliente: { numero: 2, nombre } }, CONTEXTO, MEDIOS))
+    expect(lineas.find((l) => l.startsWith('Cliente:'))).toBe(`Cliente: #2 - ${nombre}`.slice(0, 47))
   })
 
   it('un medio que no está en la lista se rotula por su número', () => {

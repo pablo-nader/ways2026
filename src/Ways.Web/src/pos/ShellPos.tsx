@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
-import { nombreCompletoDeCliente, saldosDeUnaVenta } from '../api/cuentaCorriente'
+import { clienteParaElTicketDeVenta } from '../api/cuentaCorriente'
 import { establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from './finDeSesionLocal'
 import type {
@@ -18,7 +18,7 @@ import { CajaZ } from '../paginas/CajaZ'
 import { CierresDeCaja } from '../paginas/CierresDeCaja'
 import { GastosDelTurno } from '../paginas/GastosDelTurno'
 import { Pos } from '../paginas/Pos'
-import type { CajaDeEscritorio } from '../paginas/Pos'
+import type { CajaDeEscritorio, SaldoParaTicket } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
@@ -256,7 +256,8 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
 
   /** "Reimprimir" de un aviso puntual — guarda de reentrancia POR aviso (react-async-state regla
    * 11): un doble click en el mismo tick sobre el mismo aviso no encola dos reintentos, pero
-   * "Reimprimir" de OTRO aviso en simultáneo sigue andando. */
+   * "Reimprimir" de OTRO aviso en simultáneo sigue andando. Reenvía los mismos bytes, pulso del
+   * cajón incluido: el trabajo falló entero, así que el cajón nunca se abrió y el reintento debe abrirlo. */
   function reimprimir(aviso: AvisoDeImpresion) {
     if (aviso.reintentando) return
     setAvisosDeImpresion((prev) => prev.map((a) => (a.id === aviso.id ? { ...a, reintentando: true } : a)))
@@ -326,12 +327,16 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     }
   }
 
-  function alEmitirVenta(comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) {
-    // El saldo anterior es el que tenía la pantalla al cobrar; el consumidor final no tiene cuenta.
-    const saldos = cliente.esConsumidorFinal ? null : saldosDeUnaVenta({ saldoAntes: cliente.saldo, pagos: comprobante.pagos, medios })
-    const opciones = saldos
-      ? { cliente: { numero: cliente.numero, nombre: nombreCompletoDeCliente(cliente), saldoAntes: saldos.antes, saldoDespues: saldos.despues } }
-      : {}
+  function alEmitirVenta(comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[], saldo?: SaldoParaTicket) {
+    // Sin lectura de la cola o sin saldo confirmado, el saldo se rotula estimado.
+    const clienteConSaldo = clienteParaElTicketDeVenta({
+      cliente,
+      pagos: comprobante.pagos,
+      medios,
+      consumoPendiente: saldo?.consumoPendiente ?? null,
+      saldoConfirmado: saldo?.saldoConfirmado ?? false,
+    })
+    const opciones = clienteConSaldo ? { cliente: clienteConSaldo } : {}
     // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
     // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
     // ni descartada por otro trabajo de impresión que esté (o quede) en vuelo.

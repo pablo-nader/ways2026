@@ -19,6 +19,9 @@ import { ModalPagoACuenta } from './ModalPagoACuenta'
 
 const DIAS_DE_MOVIMIENTOS_POR_DEFECTO = 7
 
+/** Cuánto se espera la consulta posterior al pago antes de imprimir el recibo con saldos estimados. */
+export const ESPERA_MAXIMA_DEL_RECIBO_MS = 4_000
+
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
@@ -50,7 +53,8 @@ type Props = {
   onCerrar: () => void
   /** Se avisa apenas se registra el pago, para que la venta en curso refresque el saldo de su cliente. */
   onPagoRegistrado: (idCliente: number) => void
-  /** Se avisa una sola vez por pago, cuando se conoce el saldo posterior o se supo que no se puede leer. */
+  /** Se avisa una sola vez por pago: cuando se conoce el saldo posterior, o cuando la consulta falla o
+   * vence `ESPERA_MAXIMA_DEL_RECIBO_MS` (con `saldoPosterior: null`). */
   onReciboListo?: (pago: PagoACuentaRegistrado) => void
 }
 
@@ -118,6 +122,13 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
         setCargandoEstado(false)
       })
   }, [])
+
+  // Un error de carga no deja la consulta pedida en el mismo estado: sin esto, el efecto no la repetiría.
+  function reintentar() {
+    if (idClienteElegido === null || motivoDeRango !== null) return
+    consultaPedidaRef.current = null
+    cargarEstado(idClienteElegido, { desde, hasta })
+  }
 
   const idClienteElegido = clienteElegido?.id ?? null
   useEffect(() => {
@@ -192,9 +203,17 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
           setDesde(rango.desde)
           setHasta(rango.hasta)
           // regla 6: el refetch queda aislado del try/catch de la escritura del modal de pago.
-          cargarEstado(cliente.id, rango, (saldoPosterior) =>
-            onReciboListo?.({ comprobante, cliente, saldoEnPantalla, saldoPosterior }),
-          )
+          // El recibo sale una sola vez: con la consulta, o al vencer la espera sin ella. Una respuesta
+          // tardía todavía actualiza la pantalla, pero no imprime un segundo recibo.
+          let entregado = false
+          const entregarRecibo = (saldoPosterior: number | null) => {
+            if (entregado) return
+            entregado = true
+            clearTimeout(temporizador)
+            onReciboListo?.({ comprobante, cliente, saldoEnPantalla, saldoPosterior })
+          }
+          const temporizador = setTimeout(() => entregarRecibo(null), ESPERA_MAXIMA_DEL_RECIBO_MS)
+          cargarEstado(cliente.id, rango, entregarRecibo)
           // Si el cliente pagado es el de la venta en curso, su copia del saldo quedó vieja.
           onPagoRegistrado(cliente.id)
         }}
@@ -263,7 +282,14 @@ export function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, on
       ) : (
         <>
           {aviso && <div className="alert alert-success py-1 px-2 small">{aviso}</div>}
-          {errorEstado && <div className="alert alert-danger py-1 px-2 small">{errorEstado}</div>}
+          {errorEstado && (
+            <div className="alert alert-danger py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+              <span>{errorEstado}</span>
+              <button type="button" className="btn btn-outline-danger btn-sm" disabled={cargandoEstado} onClick={reintentar}>
+                Reintentar
+              </button>
+            </div>
+          )}
 
           {cargandoEstado && <Cargando texto="Cargando estado de cuenta…" />}
 

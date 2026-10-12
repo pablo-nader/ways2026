@@ -2319,7 +2319,34 @@ describe('Pos — recibo del pago a cuenta en el escritorio', () => {
 
     await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
     expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
-      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 500, saldoNuevo: 200 }, CONTEXTO, MEDIOS_DEL_POS),
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 500, saldoNuevo: 200, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('con una venta del cliente (100) todavía en la cola, el recibo desplaza ambos saldos y los marca estimados: nuevo 250 = 150 + 100, anterior 550', async () => {
+    prepararPago(150, comprobanteDePago)
+    // El envío de la venta en cola queda colgado: sigue en el outbox mientras se imprime el recibo.
+    const postBase = apiPostMock.getMockImplementation()!
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => (ruta === '/ventas' ? new Promise(() => {}) : postBase(ruta, cuerpo)))
+    await agregarAOutbox(crearAlmacenIndexedDb(), {
+      idLocal: 'pendiente-del-cliente',
+      numeroPreasignado: 400,
+      idPuntoVenta: 7,
+      creadoEn: '2026-09-20T09:00:00.000Z',
+      solicitud: { idPuntoVenta: 7, idCliente: 2, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+      consumoCuentaCorriente: 100,
+    })
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar(caja)
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta(
+        { comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 550, saldoNuevo: 250, estimado: true },
+        CONTEXTO,
+        MEDIOS_DEL_POS,
+      ),
     )
   })
 
@@ -6431,8 +6458,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   /** Monta `Pos` con la instantánea local ya cargada en el hook. El botón "Sincronizar ahora"
    * solo existe con una instantánea en memoria, así que es la señal de que el DATO llegó (no solo
    * la pantalla) — y el Consumidor Final ya quedó elegido. */
-  async function montarConInstantanea() {
-    renderPos()
+  async function montarConInstantanea(props: ComponentProps<typeof Pos> = {}) {
+    renderPos('/pos', props)
     await esperarAlConsumidorFinal()
     await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
   }
@@ -6977,7 +7004,15 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       idListaPrecio: 2, limiteCredito: 1000, creditoIlimitado: false, saldo: 0,
     })
 
-    async function armarVentaEnCuentaCorriente(params: { saldoEnInstantanea: number; saldoAlElegir?: number; consulta: () => Promise<unknown> }) {
+    async function armarVentaEnCuentaCorriente(params: {
+      saldoEnInstantanea: number
+      saldoAlElegir?: number
+      consulta: () => Promise<unknown>
+      /** La lectura al elegir el cliente falla: su saldo en pantalla es el de la copia local. */
+      fallaLaLecturaAlElegir?: boolean
+      ventasEnLaCola?: { idLocal: string; numeroPreasignado: number; idCliente: number; consumoCuentaCorriente: number }[]
+      props?: ComponentProps<typeof Pos>
+    }) {
       const articulo: ArticuloDeInstantanea = {
         ...articuloDeInstantaneaFixture(),
         preciosPorLista: [
@@ -6998,11 +7033,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         }),
         bloque: { desde: 500, hasta: 599, proximo: 500 },
       })
+      for (const v of params.ventasEnLaCola ?? []) {
+        await agregarAOutbox(crearAlmacenIndexedDb(), {
+          idLocal: v.idLocal,
+          numeroPreasignado: v.numeroPreasignado,
+          idPuntoVenta: 7,
+          creadoEn: '2026-09-20T09:00:00.000Z',
+          solicitud: { idPuntoVenta: 7, idCliente: v.idCliente, codigoTipoComprobante: 'TX', idComprobanteAsociado: null, pagos: [], direccionEntrega: null, observaciones: null },
+          consumoCuentaCorriente: v.consumoCuentaCorriente,
+        })
+      }
       let consultasDelCliente = 0
       mockearApiGet((ruta) => {
         if (ruta.startsWith('/clientes?busqueda=')) return Promise.resolve<PaginaDe<ClienteListado>>({ items: [], total: 0, pagina: 1, tamanio: 25 })
         if (ruta === '/clientes/30') {
           consultasDelCliente += 1
+          if (consultasDelCliente === 1 && params.fallaLaLecturaAlElegir) return Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
           return consultasDelCliente === 1 ? Promise.resolve({ ...joseGomez, saldo: params.saldoAlElegir ?? 0 }) : params.consulta()
         }
         return undefined
@@ -7010,7 +7056,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       apiPostMock.mockImplementation((ruta: string) =>
         ruta === '/ventas' ? new Promise(() => {}) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
       )
-      await montarConInstantanea()
+      await montarConInstantanea(params.props)
 
       await buscarYElegirCliente('gomez', '#30 — José Gómez')
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
@@ -7037,6 +7083,53 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(venta.solicitud.lineas?.[0]).toMatchObject({ precioUnitario: 80 })
       expect(llamadasGet('/clientes/30')).toHaveLength(2)
       expect(llamadasPost(RUTA_RESOLVER_DEL_CARRITO)).toEqual([])
+    })
+
+    describe('saldo para el ticket (alEmitir)', () => {
+      const consultaQueCabe = () => Promise.resolve({ ...joseGomez, saldo: 0 })
+      const emitidoA = (alEmitir: ReturnType<typeof vi.fn>) => {
+        expect(alEmitir).toHaveBeenCalledTimes(1)
+        return { cliente: alEmitir.mock.calls[0][1] as ClienteListado, saldo: alEmitir.mock.calls[0][3] }
+      }
+
+      it('con la cola vacía y el saldo leído del servidor, informa pendiente 0 y saldo confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: true })
+      })
+
+      it('con ventas del mismo cliente en la cola informa su suma (100) sin contar la que se emite ni las de otro cliente (900)', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({
+          saldoEnInstantanea: 0,
+          consulta: consultaQueCabe,
+          ventasEnLaCola: [
+            { idLocal: 'propia-previa', numeroPreasignado: 400, idCliente: 30, consumoCuentaCorriente: 100 },
+            { idLocal: 'de-otro', numeroPreasignado: 401, idCliente: 99, consumoCuentaCorriente: 900 },
+          ],
+          props: { alEmitir },
+        })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 100, saldoConfirmado: true })
+        expect(await leerOutbox(crearAlmacenIndexedDb())).toHaveLength(3)
+      })
+
+      it('si la lectura del cliente al elegirlo falló, el saldo no está confirmado', async () => {
+        const alEmitir = vi.fn()
+        await armarVentaEnCuentaCorriente({ saldoEnInstantanea: 0, consulta: consultaQueCabe, fallaLaLecturaAlElegir: true, props: { alEmitir } })
+
+        await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+        await waitFor(() => expect(alEmitir).toHaveBeenCalled())
+        expect(emitidoA(alEmitir).saldo).toEqual({ consumoPendiente: 0, saldoConfirmado: false })
+      })
     })
 
     it('con el servidor diciendo que supera el límite, informa el rechazo y no encola ni cobra online', async () => {

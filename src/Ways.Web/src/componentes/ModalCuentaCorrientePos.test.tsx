@@ -1,11 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ModalCuentaCorrientePos } from './ModalCuentaCorrientePos'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ESPERA_MAXIMA_DEL_RECIBO_MS, ModalCuentaCorrientePos } from './ModalCuentaCorrientePos'
 import type { PagoACuentaRegistrado } from './ModalCuentaCorrientePos'
-import { rangoDeLosUltimosDias } from '../api/cuentaCorriente'
 import type { ClienteListado, ComprobanteEmitido, EstadoDeCuenta, MedioPagoListado, MovimientoDeCuentaCorriente, PuntoVentaListado } from '../api/tipos'
-import { isoATexto } from '../formato/fechas'
 
 const obtenerEstadoMock = vi.fn()
 const registrarPagoMock = vi.fn()
@@ -157,11 +155,20 @@ async function escribirFecha(etiqueta: 'Desde' | 'Hasta', texto: string) {
   await userEvent.type(campo, texto)
 }
 
+/** Miércoles 16/09/2026: los últimos siete días son del 09/09 al 16/09. Solo se congela `Date`, el resto de los relojes corre normal. */
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 8, 16, 12, 0, 0))
   obtenerEstadoMock.mockReset()
   registrarPagoMock.mockReset()
   clienteListarMock.mockReset()
   obtenerEstadoMock.mockResolvedValue(estado())
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('ModalCuentaCorrientePos — forma del diálogo', () => {
@@ -232,13 +239,12 @@ describe('ModalCuentaCorrientePos — forma del diálogo', () => {
 describe('ModalCuentaCorrientePos — rango de fechas', () => {
   it('arranca con los últimos siete días y consulta ese rango', async () => {
     montar()
-    const rango = rangoDeLosUltimosDias(7)
 
     await dialogo().findByText('Movimientos')
     expect(obtenerEstadoMock).toHaveBeenCalledTimes(1)
-    expect(obtenerEstadoMock).toHaveBeenCalledWith(2, rango.desde, rango.hasta, false)
-    expect(dialogo().getByLabelText('Desde')).toHaveValue(isoATexto(rango.desde))
-    expect(dialogo().getByLabelText('Hasta')).toHaveValue(isoATexto(rango.hasta))
+    expect(obtenerEstadoMock).toHaveBeenCalledWith(2, '2026-09-09', '2026-09-16', false)
+    expect(dialogo().getByLabelText('Desde')).toHaveValue('09/09/2026')
+    expect(dialogo().getByLabelText('Hasta')).toHaveValue('16/09/2026')
   })
 
   it('el título de la sección ya no dice "recientes"', async () => {
@@ -250,11 +256,9 @@ describe('ModalCuentaCorrientePos — rango de fechas', () => {
   it('cambiar una fecha vuelve a consultar con el rango nuevo', async () => {
     montar()
     await dialogo().findByText('Movimientos')
-    const hasta = rangoDeLosUltimosDias(7).hasta
-
     await escribirFecha('Desde', '01/01/2020')
 
-    await waitFor(() => expect(obtenerEstadoMock).toHaveBeenLastCalledWith(2, '2020-01-01', hasta, false))
+    await waitFor(() => expect(obtenerEstadoMock).toHaveBeenLastCalledWith(2, '2020-01-01', '2026-09-16', false))
   })
 
   it('una respuesta vieja que llega después de la del rango nuevo no la pisa', async () => {
@@ -329,15 +333,13 @@ describe('ModalCuentaCorrientePos — rango de fechas', () => {
   it('sin movimientos, el texto nombra el rango consultado', async () => {
     obtenerEstadoMock.mockResolvedValue(estado(0, []))
     montar()
-    const rango = rangoDeLosUltimosDias(7)
 
-    expect(await dialogo().findByText(`Sin movimientos entre el ${isoATexto(rango.desde)} y el ${isoATexto(rango.hasta)}.`)).toBeInTheDocument()
+    expect(await dialogo().findByText('Sin movimientos entre el 09/09/2026 y el 16/09/2026.')).toBeInTheDocument()
   })
 
   it('el texto sin movimientos sigue el rango ya consultado, no el que se está editando', async () => {
     obtenerEstadoMock.mockResolvedValue(estado(0, []))
     montar()
-    const rango = rangoDeLosUltimosDias(7)
     await dialogo().findByText(/Sin movimientos entre/)
 
     const pendientes = consultaControlable()
@@ -345,7 +347,7 @@ describe('ModalCuentaCorrientePos — rango de fechas', () => {
     await waitFor(() => expect(pendientes).toHaveLength(1))
     pendientes[0].resolver(estado(0, []))
 
-    expect(await dialogo().findByText(`Sin movimientos entre el 01/01/2020 y el ${isoATexto(rango.hasta)}.`)).toBeInTheDocument()
+    expect(await dialogo().findByText('Sin movimientos entre el 01/01/2020 y el 16/09/2026.')).toBeInTheDocument()
   })
 })
 
@@ -421,9 +423,116 @@ describe('ModalCuentaCorrientePos — pago a cuenta y recibo', () => {
 
     await registrarPagoDe300()
 
-    const rango = rangoDeLosUltimosDias(7)
-    await waitFor(() => expect(obtenerEstadoMock).toHaveBeenLastCalledWith(2, rango.desde, rango.hasta, false))
+    await waitFor(() => expect(obtenerEstadoMock).toHaveBeenLastCalledWith(2, '2026-09-09', '2026-09-16', false))
     expect(obtenerEstadoMock).toHaveBeenCalledTimes(3)
-    expect(dialogo().getByLabelText('Desde')).toHaveValue(isoATexto(rango.desde))
+    expect(dialogo().getByLabelText('Desde')).toHaveValue('09/09/2026')
+  })
+})
+
+describe('ModalCuentaCorrientePos — el recibo no espera para siempre', () => {
+  /** Además de `Date`, se congelan `setTimeout`/`clearTimeout` para mandar el reloj del recibo; el
+   * tipeo no usa temporizadores (`delay: null`) y los `waitFor` siguen sondeando con `setInterval`. */
+  async function pagarConRelojFalso() {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date(2026, 8, 16, 12, 0, 0))
+    // Testing Library detecta los relojes falsos por el global `jest`: sin él, esperar a un `findBy` cuelga.
+    vi.stubGlobal('jest', { advanceTimersByTime: vi.advanceTimersByTime })
+    const usuario = userEvent.setup({ delay: null })
+    registrarPagoMock.mockResolvedValue(comprobanteDePago())
+    const siguientes: { resolver: (e: EstadoDeCuenta) => void; rechazar: (e: Error) => void }[] = []
+    obtenerEstadoMock.mockReset()
+    obtenerEstadoMock.mockResolvedValueOnce(estado(500))
+    obtenerEstadoMock.mockImplementation(
+      () =>
+        new Promise<EstadoDeCuenta>((resolver, rechazar) => {
+          siguientes.push({ resolver, rechazar })
+        }),
+    )
+    const modal = montar()
+    await waitFor(() => expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await usuario.click(dialogo().getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const pago = within(screen.getAllByRole('dialog').at(-1)!)
+    await usuario.selectOptions(pago.getByLabelText('Medio de pago'), 'Efectivo')
+    await usuario.type(pago.getByLabelText('Importe'), '300')
+    await usuario.click(pago.getByRole('button', { name: 'Registrar pago' }))
+    await waitFor(() => expect(siguientes).toHaveLength(1))
+    return { ...modal, siguientes }
+  }
+
+  it('consulta rápida: un único recibo con el saldo posterior, y el vencimiento posterior no imprime otro', async () => {
+    const { onReciboListo, siguientes } = await pagarConRelojFalso()
+
+    await act(async () => siguientes[0].resolver(estado(150)))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+    expect(onReciboListo.mock.calls[0][0].saldoPosterior).toBe(150)
+
+    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS * 2))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+  })
+
+  it('consulta lenta: al vencer la espera sale un único recibo sin saldo posterior; la respuesta tardía actualiza la pantalla pero no imprime otro', async () => {
+    const { onReciboListo, siguientes } = await pagarConRelojFalso()
+
+    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS - 1))
+    expect(onReciboListo).not.toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+    expect(onReciboListo.mock.calls[0][0]).toMatchObject({ saldoEnPantalla: 500, saldoPosterior: null })
+
+    await act(async () => siguientes[0].resolver(estado(150)))
+    expect(await dialogo().findByText('$ 150,00', { selector: '.fs-5' })).toBeInTheDocument()
+    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS * 2))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+  })
+
+  it('consulta fallida: un único recibo sin saldo posterior, y el vencimiento posterior no imprime otro', async () => {
+    const { onReciboListo, siguientes } = await pagarConRelojFalso()
+
+    await act(async () => siguientes[0].rechazar(new Error('sin red')))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+    expect(onReciboListo.mock.calls[0][0].saldoPosterior).toBeNull()
+
+    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS * 2))
+    expect(onReciboListo).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ModalCuentaCorrientePos — reintentar tras un error de carga', () => {
+  it('con la carga inicial fallida muestra "Reintentar", que recarga el mismo cliente y rango y habilita "Registrar pago"', async () => {
+    obtenerEstadoMock.mockReset()
+    obtenerEstadoMock.mockRejectedValueOnce(new Error('sin red')).mockResolvedValueOnce(estado(500))
+    montar()
+
+    expect(await dialogo().findByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument()
+    expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeDisabled()
+
+    await userEvent.click(dialogo().getByRole('button', { name: 'Reintentar' }))
+
+    expect(await dialogo().findByText('$ 500,00', { selector: '.fs-5' })).toBeInTheDocument()
+    expect(obtenerEstadoMock).toHaveBeenLastCalledWith(2, '2026-09-09', '2026-09-16', false)
+    expect(obtenerEstadoMock).toHaveBeenCalledTimes(2)
+    expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeEnabled()
+    expect(dialogo().queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+  })
+
+  it('tras un pago cuya consulta posterior falla, "Reintentar" recupera el saldo nuevo', async () => {
+    registrarPagoMock.mockResolvedValue(comprobanteDePago())
+    obtenerEstadoMock.mockReset()
+    obtenerEstadoMock.mockResolvedValueOnce(estado(500)).mockRejectedValueOnce(new Error('sin red')).mockResolvedValueOnce(estado(200))
+    montar()
+    await dialogo().findByText('Movimientos')
+    await userEvent.click(dialogo().getByRole('button', { name: 'Registrar pago' }))
+    const pago = within(await screen.findByRole('dialog'))
+    await userEvent.selectOptions(pago.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(pago.getByLabelText('Importe'), '300')
+    await userEvent.click(pago.getByRole('button', { name: 'Registrar pago' }))
+
+    await dialogo().findByRole('button', { name: 'Reintentar' })
+    expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeDisabled()
+    await userEvent.click(dialogo().getByRole('button', { name: 'Reintentar' }))
+
+    expect(await dialogo().findByText('$ 200,00', { selector: '.fs-5' })).toBeInTheDocument()
+    expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeEnabled()
   })
 })

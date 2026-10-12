@@ -640,7 +640,30 @@ describe('ShellPos — ticket de venta de un cliente identificado', () => {
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
     expect(imprimirMock.mock.calls[0][0]).toEqual(
       ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
-        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600 },
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600, estimado: true },
+      }),
+    )
+  })
+
+  it('con el saldo leído del servidor al elegir el cliente y la cola vacía, los saldos salen sin marca de estimado', async () => {
+    escritorioMock = true
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes/2') return Promise.resolve(clienteIdentificado)
+      return undefined
+    })
+    mockearClientesYMedios()
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) => (ruta === '/clientes/2' ? Promise.resolve(clienteIdentificado) : base(ruta)))
+    const comprobante = { ...comprobanteEmitidoFixture(), pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] }
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioCuentaCorriente)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600, estimado: false },
       }),
     )
   })
@@ -657,7 +680,7 @@ describe('ShellPos — ticket de venta de un cliente identificado', () => {
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
     expect(imprimirMock.mock.calls[0][0]).toEqual(
       ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
-        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 500 },
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 500, estimado: true },
       }),
     )
   })
