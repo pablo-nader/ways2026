@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, MouseEvent, RefObject } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
+import { clienteDePrecios } from '../api/precios'
 import { clienteDePublico } from '../api/publico'
-import type { EmpresaListado, SitioPublico, VitrinaAdmin } from '../api/tipos'
+import { ROL } from '../api/tipos'
+import type { EmpresaListado, ListaPrecioListado, SitioPublico, VitrinaAdmin } from '../api/tipos'
 import {
   ACEPTAR_LOGO,
   COLOR_DE_MARCA,
@@ -21,18 +23,26 @@ import {
   guardarVitrina,
   obtenerVitrina,
   opcionesDeEmpresaParaVitrina,
+  opcionesDeListaDeLaTienda,
   quitarLogo,
   subirLogo,
   urlDelLogoAdmin,
   validarLogo,
 } from '../api/vitrinas'
 import type { BorradorDeVitrina } from '../api/vitrinas'
+import { AuthContext } from '../auth/AuthContext'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 
 const COLA_DEL_REFRESCO_FALLIDO = 'pero no se pudo actualizar la vista. Recargá la pantalla.'
 const COPIA_COLOR_INVALIDO = 'Usá el formato #rrggbb, por ejemplo #f7991c.'
+const COPIA_LISTAS_NO_CARGARON =
+  'No se pudieron cargar las listas de precios: solo podés conservar la lista actual o volver a la lista por defecto.'
+const COPIA_LISTA_DE_LA_TIENDA_LA_ELIGE_EL_ADMIN =
+  'La lista de precios de la tienda la elige el administrador del comercio.'
+const COPIA_LISTA_GUARDADA_NO_DISPONIBLE_PARA_ROOT =
+  'La lista de precios guardada de la tienda ya no está disponible: pedile al administrador del comercio que elija otra.'
 
 type Rechazo = { codigo: string | null; texto: string }
 type Puerta = 'logo' | 'vitrina'
@@ -48,8 +58,8 @@ type Puerta = 'logo' | 'vitrina'
  * empresa, guardar y eliminar reinician el borrador. Elegir otra empresa con cambios sin guardar
  * pide confirmación antes (`empresaPendiente`); mientras se decide, la pantalla queda inerte.
  *
- * Contrato de invalidación (`react-async-state` reglas 2-4): tres lecturas, cada una con su
- * generación. `generacionEmpresas` y `generacionSitio` las acuña el montaje. `generacionVitrina` la
+ * Contrato de invalidación (`react-async-state` reglas 2-4): cuatro lecturas, cada una con su
+ * generación. `generacionEmpresas`, `generacionSitio` y `generacionListas` las acuña el montaje. `generacionVitrina` la
  * acuña toda acción que cambia lo que la pantalla muestra de la vitrina —elegir empresa y cada
  * relectura posterior a una escritura— ANTES de tocar el estado, y cada aplicación posterior a un
  * `await` la vuelve a chequear.
@@ -60,10 +70,16 @@ type Puerta = 'logo' | 'vitrina'
  * las lecturas.
  */
 export function Vitrina() {
+  // Root no puede leer las listas de precios (el endpoint es del POS y le contesta 403) y el servidor valida la lista
+  // en cada guardado: la lista de la tienda la elige el administrador del comercio y acá solo se conserva.
+  const esRoot = useContext(AuthContext)?.usuario?.rolId === ROL.Root
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [errorDeEmpresas, setErrorDeEmpresas] = useState('')
   /** `null` mientras se lee; `'fallo'` si no se pudo leer. */
   const [sitio, setSitio] = useState<SitioPublico | 'fallo' | null>(null)
+  /** Listas de precios que se pueden ofrecer a la tienda; `null` mientras se leen. */
+  const [listas, setListas] = useState<ListaPrecioListado[] | null>(null)
+  const [errorDeListas, setErrorDeListas] = useState('')
 
   const [idEmpresa, setIdEmpresa] = useState('')
   const [vitrina, setVitrina] = useState<VitrinaAdmin | null>(null)
@@ -91,6 +107,7 @@ export function Vitrina() {
 
   const generacionEmpresas = useRef(0)
   const generacionSitio = useRef(0)
+  const generacionListas = useRef(0)
   const generacionVitrina = useRef(0)
   /** Espejo SÍNCRONO de `ocupado` y única guarda de re-entrancia: dos disparos del mismo tick leen
    * el mismo render. Se apaga en el `finally` de cada escritura, sin gate. */
@@ -173,6 +190,22 @@ export function Vitrina() {
         if (generacionSitio.current === token) setSitio('fallo')
       })
   }, [])
+
+  useEffect(() => {
+    const token = ++generacionListas.current
+    if (esRoot) return
+
+    clienteDePrecios
+      .listasDePrecio()
+      .then((leidas) => {
+        if (generacionListas.current === token) setListas(leidas)
+      })
+      .catch(() => {
+        if (generacionListas.current !== token) return
+        setListas([])
+        setErrorDeListas(COPIA_LISTAS_NO_CARGARON)
+      })
+  }, [esRoot])
 
   /** La relectura va fuera del try/catch de la escritura: una escritura que ya commiteó nunca se
    * reporta como fallida (regla 6). */
@@ -455,6 +488,10 @@ export function Vitrina() {
                 <>
                   <FormularioDeVitrina
                     borrador={borrador}
+                    idEmpresa={idElegido}
+                    listas={listas}
+                    errorDeListas={errorDeListas}
+                    listaLaEligeElAdmin={esRoot}
                     rechazo={rechazoDeGuardado}
                     inerte={inerte}
                     guardando={escribiendo === 'guardar'}
@@ -527,6 +564,11 @@ function ConfirmacionDeDescarte({ nombre, retorno, onDescartar, onSeguir }: Prop
 
 type PropsDelFormulario = {
   borrador: BorradorDeVitrina
+  idEmpresa: number
+  listas: ListaPrecioListado[] | null
+  errorDeListas: string
+  /** `true` para Root: no ve las listas, así que no hay selector y el borrador conserva la lista guardada. */
+  listaLaEligeElAdmin: boolean
   rechazo: Rechazo | null
   inerte: boolean
   guardando: boolean
@@ -538,6 +580,10 @@ type PropsDelFormulario = {
 
 function FormularioDeVitrina({
   borrador,
+  idEmpresa,
+  listas,
+  errorDeListas,
+  listaLaEligeElAdmin,
   rechazo,
   inerte,
   guardando,
@@ -550,8 +596,27 @@ function FormularioDeVitrina({
   const colorInvalido = color !== '' && !esColorHex(color)
   const errorDeColor = colorInvalido ? COPIA_COLOR_INVALIDO : rechazo?.codigo === 'color_invalido' ? rechazo.texto : ''
   const errorDeTema = rechazo?.codigo === 'tema_invalido' ? rechazo.texto : ''
+  const rechazoDeLista = rechazo?.codigo === 'lista_invalida'
+  // Root no tiene selector: su rechazo de lista va junto a las acciones y no le dice que elija una lista que no puede elegir.
+  const errorDeLista = rechazoDeLista && !listaLaEligeElAdmin ? rechazo.texto : ''
+  const textoDelRechazo = rechazoDeLista && listaLaEligeElAdmin ? COPIA_LISTA_GUARDADA_NO_DISPONIBLE_PARA_ROOT : rechazo?.texto
   /** Todo rechazo que no tiene un campo propio queda junto a las acciones. */
-  const errorGeneral = rechazo && !errorDeColor && !errorDeTema ? rechazo.texto : ''
+  const errorGeneral = rechazo && !errorDeColor && !errorDeTema && !errorDeLista ? (textoDelRechazo ?? '') : ''
+
+  const opcionesDeLista = listas === null ? [] : opcionesDeListaDeLaTienda(listas, idEmpresa)
+  // La lista guardada puede no estar entre las ofrecidas (se dio de baja, es de otra empresa o las listas no cargaron):
+  // se muestra tal cual para que el selector diga lo que hay guardado. Guardar la manda sin cambiarla, pero el servidor
+  // valida la lista en cada guardado: si ya no es válida lo rechaza con `lista_invalida` y hay que elegir otra o la
+  // lista por defecto. Por eso el selector se puede usar aunque las listas no hayan cargado (siempre ofrece esa salida).
+  const listaFueraDeLasOpciones =
+    borrador.idListaPrecio !== '' && !opcionesDeLista.some((o) => o.valor === borrador.idListaPrecio)
+  const etiquetaDeLaListaActual =
+    listas === null
+      ? 'Cargando listas…'
+      : errorDeListas
+        ? `Lista ${borrador.idListaPrecio}`
+        : `Lista ${borrador.idListaPrecio} (no disponible)`
+  const selectorDeListaBloqueado = inerte || listas === null
 
   return (
     <form className="row g-3 border p-3 mb-4 bg-body" onSubmit={onGuardar}>
@@ -684,6 +749,48 @@ function FormularioDeVitrina({
           </div>
         )}
       </fieldset>
+
+      <div className="col-md-5">
+        {listaLaEligeElAdmin ? (
+          <p className="text-muted small mb-0">{COPIA_LISTA_DE_LA_TIENDA_LA_ELIGE_EL_ADMIN}</p>
+        ) : (
+          <>
+            <label className="form-label" htmlFor="vit-lista">
+              Lista de precios de la tienda
+            </label>
+            <select
+              id="vit-lista"
+              className="form-select"
+              value={borrador.idListaPrecio}
+              onChange={(e) => onEditar({ idListaPrecio: e.target.value })}
+              disabled={selectorDeListaBloqueado}
+              aria-invalid={errorDeLista !== ''}
+              aria-describedby={errorDeLista ? 'vit-lista-ayuda vit-lista-error' : 'vit-lista-ayuda'}
+            >
+              <option value="">Lista por defecto</option>
+              {listaFueraDeLasOpciones && <option value={borrador.idListaPrecio}>{etiquetaDeLaListaActual}</option>}
+              {opcionesDeLista.map((o) => (
+                <option key={o.valor} value={o.valor}>
+                  {o.etiqueta}
+                </option>
+              ))}
+            </select>
+            <div id="vit-lista-ayuda" className="form-text">
+              La tienda online muestra los precios de esta lista. Sin elegir, usa la lista por defecto del comercio.
+            </div>
+            {errorDeListas && (
+              <div className="text-warning-emphasis small mt-1" role="status">
+                {errorDeListas}
+              </div>
+            )}
+            {errorDeLista && (
+              <div id="vit-lista-error" className="text-danger small mt-1" role="alert">
+                {errorDeLista}
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {errorGeneral && (
         <div className="col-12">

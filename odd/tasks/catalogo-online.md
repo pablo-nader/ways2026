@@ -68,11 +68,13 @@ price; one image per article, stored like the logo (bytea ≤ 1 MB, png/jpeg/web
   - Tests: unit (flag, image sniffing reuse), integration (isolation: an unpublished or other
     tenant's article never appears; the derived-list price; the empresa availability; 404s;
     admin round-trips; mutation evidence on the policy predicates and the availability clause).
-- [ ] **T2 — Web admin: publish toggle and image on the article, price list on the vitrina.**
-  Delegated. PR 8.
+- [x] **T2 — Web admin: publish toggle and image on the article, price list on the vitrina.**
+  Delegated. PR 8. Done in `575aa5ba` (article, grid) and `eb507303` (vitrina); route: delegated
+  direct (one writer; trigger: 2+ non-trivial files and broad reading).
   - Article form: "Publicado en la tienda" switch (own write, not the big article PUT) and image
-    block (upload-on-select, preview, quitar) like the vitrina logo; grid column/filter
-    "Tienda".
+    block (upload-on-select, preview, quitar) like the vitrina logo; grid column "Tienda".
+    The grid filter "Solo publicados" is NOT done: `GET /api/articulos/grilla` has no such
+    parameter and filtering the loaded page on the client would lie under pagination.
   - Vitrina page: "Lista de precios de la tienda" select (default list when empty).
 - [ ] **T3 — Web `/online`: catalog and cart.** Delegated. PR 9.
   - Catalog grid with search box, category chips with counts, product cards (image or placeholder
@@ -184,12 +186,75 @@ answers 409 `lista_en_uso_por_vitrina`, and `PUT vitrina` revalidates `idListaPr
 it changes. Follow-ups: per-request cost of the public catalog (three scans, no server cache,
 no rate limit); `PUT vitrina` is a full replace (T2 sends the field).
 
+T2 (commits `575aa5ba`, `eb507303`), all observed in `src/Ways.Web`:
+
+- `npx tsc -b`: exit 0. `npx oxlint`: exit 0 (16 pre-existing `only-export-components` warnings, none in new files).
+- `npx vitest run`: 188 files, 4997 tests passed.
+- New tests: `SeccionDeTiendaOnline.test.tsx` (43 at the T2 commits, 46 after the judgment-day fix round below),
+  `catalogoWeb.test.ts`, 6 page-level cases in `Articulos.test.tsx`, 2 grid cases, 9 vitrina page cases, helper cases
+  in `vitrinas.test.ts`.
+
+Judgment-day fix round (branch `pnader/catalogo-web-admin-ajustes`, commits `765553a9`, `a2f58776`), observed in
+`src/Ways.Web`: `npx tsc -b` exit 0; `npx oxlint` exit 0 (same pre-existing warnings); `npx vitest run src/paginas
+src/componentes` 110 files, 2927 tests passed; `npx vitest run` 188 files, 5009 tests passed.
+
+- L1 Escape: `ConfirmacionDeBaja` listens in the capture phase and stops propagation; `Modal` ignores an Escape that is
+  already `defaultPrevented`. Test inside a real `Modal` (gate closes, editor stays, no `confirm`, next Escape closes the editor).
+- L2: `alCambiar()` runs after the re-read of an uncertain failure or 404, success or failure of the re-read.
+- L3: `ConfirmacionDeBaja` takes an optional `regreso` ref; the section passes its heading (`tabIndex=-1`). Focus asserted after confirm and cancel.
+- L4: Root neither requests the lists nor renders the selector; the selector is no longer blocked when the lists fail
+  to load; `lista_invalida` copy changed. The server validates the list on every save, so a stale saved list is
+  rejected until the user picks another or the default.
+- L5: the re-read sets `version` to `Date.now()` when the article has an image. Clearing `urlRota` was dropped: it is
+  keyed by URL, so the new URL already revives the preview (the test passes without it).
+- L6: the grid's "Tienda" column shows a "Con imagen" badge from `tieneImagen`.
+
+| Clause | Killed by |
+|---|---|
+| `Modal` `evento.defaultPrevented` removed | Modal "Escape con defaultPrevented" case |
+| `ConfirmacionDeBaja` `stopImmediatePropagation` removed | its "no llega a los listeners de burbujeo" case |
+| both of the above removed (the original bug) | section-in-Modal Escape case |
+| `regreso={tituloRef}` removed | "al confirmar ... el foco va al título" case |
+| `alCambiar()` after re-read removed | the three uncertain-failure cases |
+| `setVersion` in the re-read removed | "vista previa se vuelve a pedir con una versión nueva" |
+| `\|\| errorDeListas !== ''` restored on the selector | the two failed-load cases |
+| `if (esRoot) return` removed from the lists effect | Root "no pide las listas" |
+| Root `lista_invalida` text mapping removed | Root `lista_invalida` case |
+| grid badge reads `publicadoWeb` instead of `tieneImagen` | grid "Con imagen" case |
+
+Mutation evidence (clause changed, tests run, reverted; each went red):
+
+| Clause | Killed by |
+|---|---|
+| section role gate (`puedeGestionarCatalogos` removed) | vendedor / supervisor / root cases + page-level "quien no administra" |
+| re-entrancy ref in `escribir` removed | double click on the switch, double file change, double confirm |
+| client size check `>` → `> x1000` and `>` → `>=` | unit boundary cases + "más de 1 MB" and "exactamente 1 MB" component cases |
+| `lista_invalida` field placement (code compared against another string) | "se explica junto al campo" (vitrina page) |
+| `lista_invalida` copy entry removed | copy unit case + the same page case |
+
+Deviations and decisions (to confirm):
+
+- The section is shown only to Admin (`puedeGestionarCatalogos`), not Root: the three writes need
+  `GestionDeCatalogo`, which excludes Root. The gate reads `AuthContext` directly and hides the section
+  without a provider.
+- `Formulario` gained read-only `publicadoWeb`/`tieneImagen` (initial state of the section); they are not in
+  `aAlta`/`aEdicion` and do not count as unsaved changes. After a write the grid is refreshed through the
+  existing `alGuardar` request (`alCambiarTienda`).
+- The section's write responses are not token-gated: the modal stays inert during the write (`alDeEscribir`),
+  the state belongs to the instance and nothing navigates (stated in the component doc).
+- Vitrina price lists come from `GET /api/catalogos/listas-precio` (`OperacionDePos`, so Root gets a 403 there):
+  Root does not request the lists nor see the selector (it reads "La lista de precios de la tienda la elige el
+  administrador del comercio."); an Admin whose lists fail to load keeps a usable selector with the saved list and
+  "Lista por defecto". Root cannot choose a list until the backend offers a readable endpoint for it.
+- `ArticuloListado`/`FilaDeGrillaDeArticulos` require `publicadoWeb`/`tieneImagen` (the server always sends
+  them), so about 15 test fixtures got the two defaults.
+
 ## Delivery slices
 
 - PR 7: T1 (stacked on #388). PR 8: T2. PR 9: T3.
 
 ## Next step
 
-T2 (web admin), against the contract above: `PUT /api/articulos/{id}/web`, `PUT/DELETE/GET
-/api/articulos/{id}/imagen`, `idListaPrecio` on the vitrina, `publicadoWeb`/`tieneImagen` on the article
-and grid DTOs.
+T2 is committed on `pnader/catalogo-web-admin`; it still needs its judgment-day round before PR 8. Open
+follow-up: a `soloPublicados` parameter on `GET /api/articulos/grilla` (and its filter in the grid). Then T3
+(web `/online`: catalog and cart).

@@ -166,6 +166,8 @@ function listaPrecioFixture(sobrescribir: Partial<ListaPrecioListado> = {}): Lis
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
+    publicadoWeb: false,
+    tieneImagen: false,
     id: 20,
     codigoInterno: 'ART-20',
     nombre: 'Leche en polvo 800g',
