@@ -73,9 +73,17 @@ type Escenario = {
   empresas?: EmpresaListado[] | null
   /** Resultados de la búsqueda de artículos por término. */
   articulos?: Record<string, ArticuloListado[]>
+  /** `total` que el servidor informa por término; por defecto, la cantidad de ítems (sin más páginas). */
+  totales?: Record<string, number>
 }
 
-function mockearApiGet({ combos = [], familias = [lineaCoca], empresas = [empresa], articulos = {} }: Escenario = {}) {
+function mockearApiGet({
+  combos = [],
+  familias = [lineaCoca],
+  empresas = [empresa],
+  articulos = {},
+  totales = {},
+}: Escenario = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/combos') return typeof combos === 'function' ? combos() : Promise.resolve(combos)
     if (ruta === '/familias') return familias === null ? Promise.reject(new Error('sin red')) : Promise.resolve(familias)
@@ -83,7 +91,7 @@ function mockearApiGet({ combos = [], familias = [lineaCoca], empresas = [empres
     if (ruta.startsWith('/articulos?')) {
       const termino = new URLSearchParams(ruta.split('?')[1]).get('busqueda') ?? ''
       const items = articulos[termino] ?? []
-      return Promise.resolve<PaginaDe<ArticuloListado>>({ items, total: items.length, pagina: 1, tamanio: 20 })
+      return Promise.resolve<PaginaDe<ArticuloListado>>({ items, total: totales[termino] ?? items.length, pagina: 1, tamanio: 20 })
     }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
@@ -110,7 +118,7 @@ async function elegirArticulo(n: number, termino: string, id: number) {
   await usuario.type(fila(n).getByLabelText(`Buscar artículo del componente ${n}`), termino)
   await usuario.click(fila(n).getByRole('button', { name: `Buscar artículos del componente ${n}` }))
   const lista = await fila(n).findByRole('listbox', { name: `Resultados del componente ${n}` })
-  await usuario.selectOptions(lista, String(id))
+  await usuario.click(within(lista).getByRole('option', { name: new RegExp(`^A${id} — `) }))
   await fila(n).findByText('Elegido:', { exact: false })
 }
 
@@ -312,12 +320,35 @@ describe('Combos — alta', () => {
     await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
 
     const lista = await fila(1).findByRole('listbox')
-    expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Elegí un resultado…',
-      'A1 — Pancho',
-      'A2 — Gaseosa 500',
-    ])
-    expect(fila(1).getByText(/Se ocultaron 2 resultados/)).toBeInTheDocument()
+    expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual(['A1 — Pancho', 'A2 — Gaseosa 500'])
+    expect(fila(1).getByText(/Se ocultaron 2 resultados de los mostrados/)).toBeInTheDocument()
+    expect(fila(1).queryByText(/Se muestran los primeros/)).not.toBeInTheDocument()
+  })
+
+  it('con más resultados que los recibidos avisa que son los primeros y aclara que lo oculto es de lo mostrado', async () => {
+    mockearApiGet({ articulos: { mixto: [pancho, queso] }, totales: { mixto: 60 } })
+    await abrirNuevo()
+
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'mixto')
+    await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
+
+    const lista = await fila(1).findByRole('listbox')
+    expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual(['A1 — Pancho'])
+    expect(fila(1).getByText('Se muestran los primeros 2 de 60 resultados. Refiná la búsqueda.')).toBeInTheDocument()
+    expect(fila(1).getByText(/Se ocultó 1 resultado de los mostrados/)).toBeInTheDocument()
+  })
+
+  it('si la primera página es toda de pesables y hay más, no afirma que no hay artículos por unidad', async () => {
+    mockearApiGet({ articulos: { queso: [queso, articuloFixture(8, 'Fiambre', { unidadVenta: 'Peso' })] }, totales: { queso: 60 } })
+    await abrirNuevo()
+
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'queso')
+    await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
+
+    expect(await fila(1).findByText('Se muestran los primeros 2 de 60 resultados. Refiná la búsqueda.')).toBeInTheDocument()
+    expect(fila(1).getByText('Ninguno de los resultados mostrados puede ser componente.')).toBeInTheDocument()
+    expect(fila(1).queryByText('No hay artículos por unidad que coincidan.')).not.toBeInTheDocument()
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
   })
 
   it('una búsqueda que solo trae pesables dice que no hay artículos por unidad', async () => {
@@ -700,7 +731,7 @@ describe('Combos — edición', () => {
 
     await usuario.click(guardar())
 
-    expect(await screen.findByText('El combo ya no existe: otra persona lo dio de baja. Se actualizó el listado.')).toBeInTheDocument()
+    expect(await screen.findByText('El combo ya no existe. Se actualizó el listado.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await waitFor(() => expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/combos')).toHaveLength(2))
   })
@@ -817,7 +848,8 @@ describe('Combos — baja', () => {
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    expect(await screen.findByText('El combo ya no existe: otra persona lo dio de baja. Se actualizó el listado.')).toBeInTheDocument()
+    expect(await screen.findByText('El combo ya no existe. Se actualizó el listado.')).toBeInTheDocument()
+    expect(screen.queryByText(/otra persona/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     await waitFor(() => expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/combos')).toHaveLength(2))
   })
@@ -831,5 +863,424 @@ describe('Combos — baja', () => {
     expect(await screen.findByText('No se puede.')).toBeInTheDocument()
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+  })
+})
+
+function pagina(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
+  return { items, total: items.length, pagina: 1, tamanio: 25 }
+}
+
+type BusquedaPendiente = ReturnType<typeof diferida<PaginaDe<ArticuloListado>>>
+
+/** Cada término de búsqueda queda pendiente hasta que el test lo resuelve, para controlar el orden de las respuestas. */
+function mockearBusquedasDiferidas() {
+  const pendientes: Record<string, BusquedaPendiente> = {}
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta === '/combos') return Promise.resolve([])
+    if (ruta === '/familias') return Promise.resolve([lineaCoca])
+    if (ruta === '/empresas') return Promise.resolve([empresa])
+    if (ruta.startsWith('/articulos?')) {
+      const termino = new URLSearchParams(ruta.split('?')[1]).get('busqueda') ?? ''
+      pendientes[termino] ??= diferida<PaginaDe<ArticuloListado>>()
+      return pendientes[termino].promesa
+    }
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+  return pendientes
+}
+
+function opcionesDe(n: number) {
+  return within(fila(n).getByRole('listbox')).getAllByRole('option')
+}
+
+async function opcionDe(n: number, nombre: string) {
+  return within(await fila(n).findByRole('listbox')).getByRole('option', { name: nombre })
+}
+
+function campoDeBusqueda(n: number) {
+  return fila(n).getByRole('combobox', { name: `Buscar artículo del componente ${n}` })
+}
+
+async function buscarConBoton(n: number, termino: string) {
+  await usuario.type(campoDeBusqueda(n), termino)
+  await usuario.click(fila(n).getByRole('button', { name: `Buscar artículos del componente ${n}` }))
+}
+
+describe('Combos — buscador de artículo con teclado', () => {
+  async function abrirConResultados() {
+    await abrirNuevo()
+    await buscarConBoton(1, 'pancho')
+    await fila(1).findByRole('listbox', { name: 'Resultados del componente 1' })
+    await waitFor(() => expect(campoDeBusqueda(1)).toHaveFocus())
+  }
+
+  it('las flechas mueven la opción resaltada sin elegir, y el campo la anuncia con aria-activedescendant', async () => {
+    await abrirConResultados()
+    const opciones = opcionesDe(1)
+    expect(opciones[0]).toHaveAttribute('aria-selected', 'true')
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-activedescendant', opciones[0].id)
+
+    await usuario.keyboard('{ArrowDown}')
+
+    expect(opciones[1]).toHaveAttribute('aria-selected', 'true')
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-activedescendant', opciones[1].id)
+    expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
+
+    await usuario.keyboard('{ArrowDown}')
+    expect(opciones[0]).toHaveAttribute('aria-selected', 'true')
+    await usuario.keyboard('{ArrowUp}')
+    expect(opciones[1]).toHaveAttribute('aria-selected', 'true')
+    expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
+  })
+
+  it('Enter elige la opción resaltada y no la primera', async () => {
+    await abrirConResultados()
+
+    await usuario.keyboard('{ArrowDown}{Enter}')
+
+    expect(await fila(1).findByText('Elegido:', { exact: false })).toHaveTextContent('Gaseosa 500')
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('Enter con el campo editado busca de nuevo en vez de elegir', async () => {
+    await abrirConResultados()
+
+    await usuario.type(campoDeBusqueda(1), 'x{Enter}')
+
+    expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
+    await waitFor(() => expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/articulos?'))).toHaveLength(2))
+  })
+
+  it('un clic en una opción la elige', async () => {
+    await abrirConResultados()
+
+    await usuario.click(within(fila(1).getByRole('listbox')).getByRole('option', { name: 'A2 — Gaseosa 500' }))
+
+    expect(await fila(1).findByText('Elegido:', { exact: false })).toHaveTextContent('Gaseosa 500')
+  })
+
+  it('Escape cierra la lista sin elegir y sin cerrar el modal', async () => {
+    await abrirConResultados()
+
+    await usuario.keyboard('{Escape}')
+
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-expanded', 'false')
+    expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await usuario.keyboard('{ArrowDown}')
+    expect(opcionesDe(1)).toHaveLength(2)
+  })
+
+  it('salir del campo cierra la lista sin elegir', async () => {
+    await abrirConResultados()
+
+    await usuario.click(screen.getByLabelText('Nombre'))
+
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+    expect(fila(1).queryByText('Elegido:', { exact: false })).not.toBeInTheDocument()
+  })
+})
+
+describe('Combos — buscador de artículo asincrónico', () => {
+  // Cláusula que prueba: la generación de `buscar` descarta la respuesta de una búsqueda superada.
+  it('dos búsquedas que se superponen y responden al revés muestran solo la más nueva', async () => {
+    const pendientes = mockearBusquedasDiferidas()
+    await abrirNuevo()
+    await buscarConBoton(1, 'uno')
+    await waitFor(() => expect(pendientes.uno).toBeDefined())
+    await usuario.clear(campoDeBusqueda(1))
+    await usuario.type(campoDeBusqueda(1), 'dos{Enter}')
+    await waitFor(() => expect(pendientes.dos).toBeDefined())
+
+    await act(async () => pendientes.dos.resolver(pagina([gaseosa])))
+    await act(async () => pendientes.uno.resolver(pagina([pancho])))
+
+    expect(opcionesDe(1).map((o) => o.textContent)).toEqual(['A2 — Gaseosa 500'])
+  })
+
+  // Cláusula que prueba: elegir invalida la búsqueda en vuelo.
+  it('una respuesta que llega después de elegir un artículo no reabre la lista ni pisa lo elegido', async () => {
+    const pendientes = mockearBusquedasDiferidas()
+    await abrirNuevo()
+    await buscarConBoton(1, 'uno')
+    await waitFor(() => expect(pendientes.uno).toBeDefined())
+    await act(async () => pendientes.uno.resolver(pagina([pancho, gaseosa])))
+    await fila(1).findByRole('listbox')
+    await usuario.type(campoDeBusqueda(1), 'x{Enter}')
+    await waitFor(() => expect(pendientes.unox).toBeDefined())
+    await usuario.keyboard('{ArrowDown}')
+    await usuario.click(await opcionDe(1, 'A2 — Gaseosa 500'))
+    await fila(1).findByText('Elegido:', { exact: false })
+
+    await act(async () => pendientes.unox.resolver(pagina([pancho])))
+
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+    expect(fila(1).getByText('Elegido:', { exact: false })).toHaveTextContent('Gaseosa 500')
+    expect(fila(1).queryByText(/Se muestran los primeros|No hay artículos por unidad/)).not.toBeInTheDocument()
+  })
+
+  it('una respuesta que llega después de cerrar el modal no rompe nada ni aparece al reabrirlo', async () => {
+    const errores = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const pendientes = mockearBusquedasDiferidas()
+    render(<Combos />)
+    await usuario.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('dialog')
+    await buscarConBoton(1, 'uno')
+    await waitFor(() => expect(pendientes.uno).toBeDefined())
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => pendientes.uno.resolver(pagina([pancho])))
+
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('dialog')
+    expect(fila(1).queryByRole('listbox')).not.toBeInTheDocument()
+    expect(errores).not.toHaveBeenCalled()
+    errores.mockRestore()
+  })
+})
+
+describe('Combos — asociación de errores y foco del editor', () => {
+  function textoDe(elemento: HTMLElement) {
+    const id = elemento.getAttribute('aria-describedby')
+    return id === null ? null : (document.getElementById(id)?.textContent ?? null)
+  }
+
+  it('los errores de la fila quedan asociados a su tipo, a su buscador y a su cantidad', async () => {
+    await abrirNuevo()
+    await cambiarCantidad(1, '')
+    await usuario.click(guardar())
+    await fila(1).findByText('Elegí un artículo.')
+
+    expect(textoDe(campoDeBusqueda(1))).toBe('Elegí un artículo.')
+    expect(campoDeBusqueda(1)).toHaveAttribute('aria-invalid', 'true')
+    expect(textoDe(fila(1).getByLabelText('Tipo del componente 1'))).toBe('Elegí un artículo.')
+    expect(fila(1).getByLabelText('Tipo del componente 1')).toHaveAttribute('aria-invalid', 'true')
+    expect(textoDe(fila(1).getByLabelText('Cantidad del componente 1'))).toBe('Ingresá la cantidad.')
+    expect(fila(1).getByLabelText('Cantidad del componente 1')).toHaveAttribute('aria-invalid', 'true')
+    expect(fila(2).getByLabelText('Cantidad del componente 2')).not.toHaveAttribute('aria-invalid')
+    expect(fila(2).getByLabelText('Cantidad del componente 2')).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('el select de familia sin elegir queda inválido y asociado a su mensaje', async () => {
+    await abrirNuevo()
+    await usuario.selectOptions(fila(2).getByLabelText('Tipo del componente 2'), 'Familia')
+    await usuario.click(guardar())
+    await fila(2).findByText('Elegí una familia.')
+
+    const familia = fila(2).getByLabelText('Familia del componente 2')
+    expect(familia).toHaveAttribute('aria-invalid', 'true')
+    expect(textoDe(familia)).toBe('Elegí una familia.')
+  })
+
+  it('el error del conjunto queda asociado al grupo de componentes', async () => {
+    await abrirNuevo()
+    await usuario.type(screen.getByLabelText('Nombre'), 'Solo')
+    await usuario.type(screen.getByLabelText('Precio del combo ($)'), '100')
+    await elegirArticulo(1, 'pancho', 1)
+    await usuario.click(screen.getByRole('button', { name: 'Quitar componente 2' }))
+    await usuario.click(guardar())
+
+    const grupo = await screen.findByRole('group', { name: 'Componentes' })
+    await within(grupo).findByText('El combo tiene que sumar al menos 2 unidades entre todos sus componentes.')
+    expect(textoDe(grupo)).toBe('El combo tiene que sumar al menos 2 unidades entre todos sus componentes.')
+  })
+
+  it('el error de componentes del servidor también queda asociado al grupo', async () => {
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'combo_componentes_excedidos', 'x'))
+    await abrirNuevo()
+    await llenarAltaValida()
+    await usuario.click(guardar())
+
+    const grupo = screen.getByRole('group', { name: 'Componentes' })
+    await within(grupo).findByText('Un combo admite hasta 50 componentes.')
+    expect(textoDe(grupo)).toBe('Un combo admite hasta 50 componentes.')
+  })
+
+  it('el resumen no es una región viva: no se re-anuncia en cada tecla', async () => {
+    await abrirNuevo()
+    await elegirArticulo(1, 'pancho', 1)
+
+    const resumen = await screen.findByText('1 × Pancho', { exact: false })
+
+    expect(resumen.closest('[aria-live]')).toBeNull()
+  })
+
+  it('al quitar un componente el foco pasa al botón de quitar de la fila siguiente', async () => {
+    await abrirNuevo()
+    const quitarSegundo = screen.getByRole('button', { name: 'Quitar componente 2' })
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar componente 1' }))
+
+    expect(quitarSegundo).toHaveFocus()
+    expect(quitarSegundo).toHaveAccessibleName('Quitar componente 1')
+  })
+
+  it('al quitar el último componente el foco pasa a Agregar componente', async () => {
+    await abrirNuevo()
+
+    await usuario.click(screen.getByRole('button', { name: 'Quitar componente 2' }))
+
+    expect(screen.getByRole('button', { name: 'Agregar componente' })).toHaveFocus()
+  })
+})
+
+describe('Combos — alta con resultado incierto', () => {
+  const sinRespuesta = () => new ErrorApi(500, 'error_interno', 'boom')
+
+  function leerCombos() {
+    return apiGetMock.mock.calls.filter(([ruta]) => ruta === '/combos')
+  }
+
+  it('si tras el 5xx el combo ya figura en el listado cierra el formulario y avisa que se creó, sin reintentar', async () => {
+    let lecturas = 0
+    mockearApiGet({
+      articulos: ARTICULOS,
+      combos: () => {
+        lecturas += 1
+        return Promise.resolve(lecturas === 1 ? [] : [comboFixture({ id: 9, nombre: '  pancho Y coca ' })])
+      },
+    })
+    apiPostMock.mockRejectedValue(sinRespuesta())
+    await abrirNuevo()
+    await llenarAltaValida()
+
+    await usuario.click(guardar())
+
+    expect(await screen.findByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('C12')).toBeInTheDocument()
+  })
+
+  it('un fallo sin respuesta también se resuelve releyendo el listado', async () => {
+    let lecturas = 0
+    mockearApiGet({
+      articulos: ARTICULOS,
+      combos: () => {
+        lecturas += 1
+        return Promise.resolve(lecturas === 1 ? [] : [comboFixture({ id: 9 })])
+      },
+    })
+    apiPostMock.mockRejectedValue(new Error('sin red'))
+    await abrirNuevo()
+    await llenarAltaValida()
+
+    await usuario.click(guardar())
+
+    expect(await screen.findByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('si el listado sigue sin el combo mantiene el formulario abierto con el aviso de resultado incierto', async () => {
+    apiPostMock.mockRejectedValue(sinRespuesta())
+    await abrirNuevo()
+    await llenarAltaValida()
+
+    await usuario.click(guardar())
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await waitFor(() => expect(guardar()).toBeEnabled())
+    expect(leerCombos()).toHaveLength(2)
+    expect(screen.queryByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).not.toBeInTheDocument()
+  })
+
+  it('un combo del mismo nombre que ya estaba antes del intento no cuenta como creado', async () => {
+    mockearApiGet({ articulos: ARTICULOS, combos: [comboFixture({ id: 4, nombre: 'Pancho y Coca' })] })
+    apiPostMock.mockRejectedValue(sinRespuesta())
+    render(<Combos />)
+    await screen.findByText('C12')
+    await usuario.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByRole('dialog')
+    await llenarAltaValida()
+
+    await usuario.click(guardar())
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.queryByText('El combo se creó. No se pudo confirmar la respuesta del servidor.')).not.toBeInTheDocument()
+  })
+
+  it('si la relectura falla mantiene el formulario abierto con el aviso de resultado incierto', async () => {
+    let lecturas = 0
+    mockearApiGet({
+      articulos: ARTICULOS,
+      combos: () => {
+        lecturas += 1
+        return lecturas === 1 ? Promise.resolve([]) : Promise.reject(new Error('sin red'))
+      },
+    })
+    apiPostMock.mockRejectedValue(sinRespuesta())
+    await abrirNuevo()
+    await llenarAltaValida()
+
+    await usuario.click(guardar())
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('en una edición el 5xx sigue igual: aviso en el formulario, sin releer el listado', async () => {
+    mockearApiGet({ combos: [comboFixture()] })
+    apiPutMock.mockRejectedValue(sinRespuesta())
+    render(<Combos />)
+    await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
+    await screen.findByRole('dialog')
+
+    await usuario.click(guardar())
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('No se pudo confirmar el resultado')
+    expect(guardar()).toBeEnabled()
+    expect(leerCombos()).toHaveLength(1)
+  })
+})
+
+describe('Combos — rótulo de una empresa o familia que falta', () => {
+  async function abrirEdicionDe(combo: ComboListado) {
+    render(<Combos />)
+    await usuario.click(await screen.findByRole('button', { name: `Editar ${combo.nombre}` }))
+    await screen.findByRole('dialog')
+  }
+
+  const comboConFamilia = (idFamilia: number, disponible = true) =>
+    comboFixture({
+      idEmpresa: 9,
+      componentes: [
+        { idArticulo: 1, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+        { idArticulo: null, idFamilia, nombre: null, cantidad: 2, disponible },
+      ],
+    })
+
+  it('con los listados caídos rotula por número, sin decir "no disponible"', async () => {
+    mockearApiGet({ combos: [comboConFamilia(7)], familias: null, empresas: null })
+    await abrirEdicionDe(comboConFamilia(7))
+    await screen.findByText(/No se pudieron cargar las familias/)
+    await screen.findByText(/No se pudieron cargar las empresas/)
+
+    expect(screen.getByRole('option', { name: 'Empresa #9' })).toBeInTheDocument()
+    expect(fila(2).getByRole('option', { name: 'Familia #7' })).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).queryByText(/no disponible/)).not.toBeInTheDocument()
+  })
+
+  it('con los listados cargados, un id que no figura se rotula "no disponible"', async () => {
+    mockearApiGet({ combos: [comboConFamilia(8)] })
+    await abrirEdicionDe(comboConFamilia(8))
+    await screen.findByRole('option', { name: 'Alsina SA' })
+    await fila(2).findByRole('option', { name: 'Línea Coca 500' })
+
+    expect(screen.getByRole('option', { name: 'Empresa #9 (no disponible)' })).toBeInTheDocument()
+    expect(fila(2).getByRole('option', { name: 'Familia #8 (no disponible)' })).toBeInTheDocument()
+  })
+
+  it('un componente que el servidor devolvió como no disponible lo dice aunque el listado haya caído', async () => {
+    mockearApiGet({ combos: [comboConFamilia(7, false)], familias: null, empresas: null })
+    await abrirEdicionDe(comboConFamilia(7, false))
+    await screen.findByText(/No se pudieron cargar las familias/)
+
+    expect(fila(2).getByRole('option', { name: 'Familia #7 (no disponible)' })).toBeInTheDocument()
+    expect(fila(2).getByText('Este componente ya no está disponible: quitalo o reemplazalo para poder guardar.')).toBeInTheDocument()
   })
 })

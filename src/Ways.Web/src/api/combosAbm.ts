@@ -18,6 +18,7 @@ import type {
   EdicionCombo,
 } from './tipos'
 import { formatearImporte } from '../formato/importes'
+import { tieneMasDeDosDecimales } from '../pos/motorDeCombos'
 
 export const UNIDADES_MINIMAS = 2
 export const COMPONENTES_MAXIMOS = 50
@@ -190,10 +191,6 @@ export type ErroresDeCombo = {
   filas: Record<number, ErrorDeFila>
 }
 
-function tieneMasDeDosDecimales(valor: number): boolean {
-  return Math.abs(valor * 100 - Math.round(valor * 100)) > 1e-6
-}
-
 export function validarCombo(f: FormularioCombo): ErroresDeCombo {
   const errores: ErroresDeCombo = { filas: {} }
 
@@ -265,7 +262,7 @@ export type CampoDeError = 'nombre' | 'precio' | 'codigo' | 'componentes' | 'for
 
 export type ErrorDeServidorDeCombo = { campo: CampoDeError; mensaje: string }
 
-export const MENSAJE_COMBO_INEXISTENTE = 'El combo ya no existe: otra persona lo dio de baja. Se actualizó el listado.'
+export const MENSAJE_COMBO_INEXISTENTE = 'El combo ya no existe. Se actualizó el listado.'
 
 /** Dónde cae cada rechazo conocido. Es un `Map` y no un objeto: el `codigo` viene del servidor y un código exótico
  * (`constructor`) no debe resolver contra el prototipo. El texto no se parsea nunca: el código es el contrato. */
@@ -313,7 +310,7 @@ export function esComboInexistente(e: unknown): boolean {
 }
 
 /** Un 5xx o un fallo sin respuesta no dice si el servidor llegó a escribir: se avisa antes de reintentar. */
-function esResultadoIncierto(e: unknown): boolean {
+export function esResultadoIncierto(e: unknown): boolean {
   return !(e instanceof ErrorApi) || e.estado >= 500
 }
 

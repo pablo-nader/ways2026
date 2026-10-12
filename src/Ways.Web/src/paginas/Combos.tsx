@@ -7,6 +7,7 @@ import {
   clienteDeCombosAbm,
   errorDeServidorDeCombo,
   esComboInexistente,
+  esResultadoIncierto,
   etiquetaDeCodigoDeCombo,
   formularioComboVacio,
   hayErrores,
@@ -29,6 +30,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ModalDeCombo } from './combos/ModalDeCombo'
 
 const AVISO_REFRESCO_FALLIDO = 'No se pudo actualizar el listado. Volvé a entrar para ver el cambio.'
+const AVISO_ALTA_CONFIRMADA_POR_LECTURA = 'El combo se creó. No se pudo confirmar la respuesta del servidor.'
 
 /**
  * ABM de combos (solo Admin): un combo son dos o más unidades, cada componente un artículo o una familia con su
@@ -43,6 +45,9 @@ export function Combos() {
   const [combos, setCombos] = useState<ComboListado[] | null>(null)
   const [familias, setFamilias] = useState<FamiliaListado[]>([])
   const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
+  /** `true` solo cuando el listado respectivo cargó: sin él, una empresa o familia ausente no se rotula "no disponible". */
+  const [familiasListas, setFamiliasListas] = useState(false)
+  const [empresasListas, setEmpresasListas] = useState(false)
   const [avisosCatalogos, setAvisosCatalogos] = useState<string[]>([])
   const [cargando, setCargando] = useState(true)
   const [errorDeCarga, setErrorDeCarga] = useState('')
@@ -84,7 +89,10 @@ export function Combos() {
     void cargar(++generacionRef.current)
     clienteDeFamilias
       .listar()
-      .then(setFamilias)
+      .then((lista) => {
+        setFamilias(lista)
+        setFamiliasListas(true)
+      })
       .catch(() => {
         setFamilias([])
         agregarAvisoCatalogo(
@@ -93,7 +101,10 @@ export function Combos() {
       })
     clienteDeOrganizacion
       .listarEmpresas()
-      .then(setEmpresas)
+      .then((lista) => {
+        setEmpresas(lista)
+        setEmpresasListas(true)
+      })
       .catch(() => {
         setEmpresas([])
         agregarAvisoCatalogo(
@@ -147,6 +158,23 @@ export function Combos() {
     }
   }
 
+  /** Tras un alta de resultado incierto, relee el listado y dice si ya figura un combo vivo con ese nombre que antes no
+   * estaba. Un fallo de la lectura no concluye nada. Avanza la generación para descartar una lectura anterior todavía en
+   * vuelo; su propia respuesta no se compara contra la generación porque la pantalla está inerte mientras escribe y
+   * ninguna lectura más nueva puede empezar. */
+  async function altaConfirmadaPorLectura(nombre: string, idsPrevios: ReadonlySet<number>): Promise<boolean> {
+    generacionRef.current += 1
+    try {
+      const filas = await clienteDeCombos.listar()
+      setCombos(filas)
+      setErrorDeCarga('')
+      const buscado = nombre.trim().toLowerCase()
+      return filas.some((c) => !idsPrevios.has(c.id) && c.nombre.trim().toLowerCase() === buscado)
+    } catch {
+      return false
+    }
+  }
+
   async function guardar() {
     if (!formulario || ocupadoRef.current) return
 
@@ -158,6 +186,7 @@ export function Combos() {
     }
 
     const datos = formulario
+    const idsPrevios = combos === null ? null : new Set(combos.map((c) => c.id))
     ocupadoRef.current = true
     setGuardando(true)
     setError('')
@@ -175,6 +204,12 @@ export function Combos() {
           setFormulario(null)
           setError(MENSAJE_COMBO_INEXISTENTE)
           await cargar(++generacionRef.current)
+          return
+        }
+        if (datos.id === null && idsPrevios !== null && esResultadoIncierto(e) && (await altaConfirmadaPorLectura(datos.nombre, idsPrevios))) {
+          // El POST no tiene idempotencia: si el combo ya figura, reintentar crearía un segundo.
+          setFormulario(null)
+          setAviso(AVISO_ALTA_CONFIRMADA_POR_LECTURA)
           return
         }
         const rechazo = errorDeServidorDeCombo(e)
@@ -336,6 +371,8 @@ export function Combos() {
           valor={formulario}
           familias={familias}
           empresas={empresas}
+          familiasListas={familiasListas}
+          empresasListas={empresasListas}
           guardando={guardando}
           ocupado={guardando}
           mostrarErrores={mostrarErrores}

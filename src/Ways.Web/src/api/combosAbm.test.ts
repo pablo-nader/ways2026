@@ -9,6 +9,7 @@ import {
   errorDeServidorDeCombo,
   esArticuloElegibleParaCombo,
   esComboInexistente,
+  esResultadoIncierto,
   etiquetaDeCodigoDeCombo,
   filaDeComponenteVacia,
   formularioComboVacio,
@@ -224,7 +225,15 @@ describe('validarCombo — precio', () => {
   it('rechaza más de dos decimales y admite dos', () => {
     expect(validarCombo(formulario({ precio: 10.005 })).precio).toBe('El precio admite hasta dos decimales.')
     expect(validarCombo(formulario({ precio: 12.34 })).precio).toBeUndefined()
-    expect(validarCombo(formulario({ precio: 0.1 + 0.2 })).precio).toBeUndefined()
+  })
+
+  // Cláusula que prueba: la comparación de decimales es exacta (la de punto flotante rechazaba importes grandes válidos).
+  it.each([1234567890.12, 600000000.07, 999999999999.99, 0.01])('admite %s: tiene dos decimales exactos', (precio) => {
+    expect(validarCombo(formulario({ precio })).precio).toBeUndefined()
+  })
+
+  it.each([10.005, 0.001, 1234567890.123])('rechaza %s: tiene más de dos decimales', (precio) => {
+    expect(validarCombo(formulario({ precio })).precio).toBe('El precio admite hasta dos decimales.')
   })
 
   it('admite el máximo y rechaza lo que lo supera', () => {
@@ -403,6 +412,22 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
     expect(errorDeServidorDeCombo(rechazo(503, 'resultado_incierto', 'Verificá el listado.')).mensaje).toBe(
       'No se pudo guardar el combo. Verificá el listado.',
     )
+  })
+})
+
+describe('MENSAJE_COMBO_INEXISTENTE', () => {
+  it('es neutro: no atribuye la baja a otra persona (una baja reintentada también lo recibe)', () => {
+    expect(MENSAJE_COMBO_INEXISTENTE).toBe('El combo ya no existe. Se actualizó el listado.')
+  })
+})
+
+describe('esResultadoIncierto', () => {
+  it('es verdadero para un 5xx y para un fallo sin respuesta, no para un rechazo 4xx', () => {
+    expect(esResultadoIncierto(rechazo(500, 'error_interno'))).toBe(true)
+    expect(esResultadoIncierto(rechazo(503, 'resultado_incierto'))).toBe(true)
+    expect(esResultadoIncierto(new Error('sin red'))).toBe(true)
+    expect(esResultadoIncierto(rechazo(409, 'combo_codigo_duplicado'))).toBe(false)
+    expect(esResultadoIncierto(rechazo(404, 'no_encontrado'))).toBe(false)
   })
 })
 

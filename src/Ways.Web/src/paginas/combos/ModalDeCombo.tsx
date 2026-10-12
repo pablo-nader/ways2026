@@ -17,6 +17,9 @@ type Props = {
   valor: FormularioCombo
   familias: FamiliaListado[]
   empresas: EmpresaListado[]
+  /** `false` mientras el listado correspondiente no cargó o falló: lo que no figura no se rotula "no disponible". */
+  familiasListas: boolean
+  empresasListas: boolean
   guardando: boolean
   ocupado: boolean
   /** Los errores de validación solo se ven después de un intento de guardar y se recalculan con cada cambio. */
@@ -43,6 +46,8 @@ export function ModalDeCombo({
   valor,
   familias,
   empresas,
+  familiasListas,
+  empresasListas,
   guardando,
   ocupado,
   mostrarErrores,
@@ -164,7 +169,12 @@ export function ModalDeCombo({
               onChange={(e) => onCambio({ ...valor, idEmpresa: e.target.value === '' ? '' : Number(e.target.value) })}
             >
               <option value="">Todo el tenant</option>
-              {empresaFaltante && <option value={valor.idEmpresa}>Empresa #{valor.idEmpresa} (no disponible)</option>}
+              {empresaFaltante && (
+                <option value={valor.idEmpresa}>
+                  Empresa #{valor.idEmpresa}
+                  {empresasListas ? ' (no disponible)' : ''}
+                </option>
+              )}
               {empresas.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.razonSocial}
@@ -193,8 +203,10 @@ export function ModalDeCombo({
             <EditorDeComponentes
               filas={valor.componentes}
               familias={familias}
+              familiasListas={familiasListas}
               errores={validacion.filas}
               errorDelConjunto={errorDelConjunto}
+              idDelErrorDelConjunto="cb-componentes-error"
               resumen={resumenDeFormulario(valor)}
               disabled={ocupado}
               onCambio={(componentes) => onCambio({ ...valor, componentes })}
