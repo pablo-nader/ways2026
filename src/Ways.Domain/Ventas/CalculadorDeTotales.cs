@@ -11,10 +11,10 @@ namespace Ways.Domain.Ventas;
 /// <see cref="UnidadesConsumidasPorCombo"/> son las unidades de la línea que un combo ya consumió
 /// (mismo signo que <see cref="Cantidad"/>) y <see cref="AhorroDeCombo"/> es el importe de LÍNEA que
 /// el combo les repartió (positivo, sin signo de cantidad). El descuento de la línea es
-/// <c>bruto − neto</c>, con el neto <c>round(Cantidad × Precio − DescuentoUnitario × (Cantidad −
-/// UnidadesConsumidasPorCombo) − AhorroDeCombo)</c> al peso entero, redondeado una sola vez: la
-/// oferta unitaria solo alcanza a las unidades que el combo no consumió. Con ambos en cero el
-/// cálculo es el de siempre.</summary>
+/// <c>bruto − neto</c>, con el neto <c>round((Cantidad − UnidadesConsumidasPorCombo) × (Precio −
+/// DescuentoUnitario)) + round(UnidadesConsumidasPorCombo × Precio − AhorroDeCombo)</c> al peso
+/// entero: la oferta unitaria solo alcanza a las unidades que el combo no consumió, y la parte del
+/// combo es un importe entero por construcción. Con ambos en cero el cálculo es el de siempre.</summary>
 public readonly record struct LineaParaCalcular(
     decimal Cantidad, decimal PrecioUnitario, decimal DescuentoUnitario, decimal? AjusteManualPorcentaje = null,
     decimal UnidadesConsumidasPorCombo = 0m, decimal AhorroDeCombo = 0m);
@@ -97,8 +97,11 @@ public static class CalculadorDeTotales
         RedondeoDePeso.APesoEntero(cantidadConSigno * precioUnitario);
 
     /// <summary>Neto de la línea antes del ajuste manual: el neto VERDADERO (cantidad por precio
-    /// final unitario, menos el ahorro de combo) redondeado una sola vez. La oferta unitaria solo
-    /// alcanza a las unidades que el combo no consumió. El descuento de línea es <c>bruto − neto</c>,
+    /// final unitario) redondeado al peso. La oferta unitaria solo alcanza a las unidades que el
+    /// combo no consumió, y esas unidades se redondean por su cuenta; la parte del combo (importe de
+    /// lista de las unidades consumidas menos su ahorro) es un importe entero por construcción, que
+    /// reparte <c>ResolvedorDeCombos</c>, y se suma sin que el redondeo de la otra parte lo
+    /// altere. El descuento de línea es <c>bruto − neto</c>,
     /// nunca una cifra redondeada por separado: dos redondeos independientes dejarían centavos o
     /// cobrarían distinto de cantidad × precio final (1166.66 × 3 = 3499.98 cobra 3500). La reusan
     /// el diagnóstico de discrepancia offline y la reliquidación para no tener una segunda fórmula;
@@ -106,10 +109,8 @@ public static class CalculadorDeTotales
     public static decimal NetoDeLinea(
         decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario,
         decimal unidadesConsumidasPorCombo = 0m, decimal ahorroDeCombo = 0m) =>
-        RedondeoDePeso.APesoEntero(
-            (cantidadConSigno * precioUnitario)
-            - (descuentoUnitario * (cantidadConSigno - unidadesConsumidasPorCombo))
-            - ahorroDeCombo);
+        RedondeoDePeso.APesoEntero((cantidadConSigno - unidadesConsumidasPorCombo) * (precioUnitario - descuentoUnitario))
+        + RedondeoDePeso.APesoEntero((unidadesConsumidasPorCombo * precioUnitario) - ahorroDeCombo);
 
     /// <summary>Monto del ajuste manual sobre el neto de la línea (bruto − descuento de oferta), con
     /// el signo de <paramref name="porcentaje"/> aplicado a ese neto. Única fórmula del ajuste: la

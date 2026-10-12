@@ -491,17 +491,28 @@ public class CalculadorDeTotalesTests
     }
 
     [Fact]
-    public void ElNetoDeUnaLineaConComboSeRedondeaUnaSolaVezYElDescuentoEsLaDiferenciaConElBruto()
+    public void ElNetoDeUnaLineaConComboRedondeaLasUnidadesFueraDelComboAparteYElDescuentoEsLaDiferenciaConElBruto()
     {
-        // 4 × 10 = 40; la unidad no consumida pierde 0.5 de oferta y el combo repartió 4:
-        // neto = 40 − 0.5 − 4 = 35.5 → 36 (lejos de cero). Redondear la oferta por su cuenta
-        // (0.5 → 1) daría descuento 5 y neto 35.
+        // 4 × 10 = 40; la unidad no consumida cuesta 10 − 0.5 = 9.5 → 10 y las 3 del combo cuestan
+        // 30 − 4 = 26 (entero por construcción): neto 36 y descuento 40 − 36.
         var resultado = CalculadorDeTotales.Calcular(
             [new LineaParaCalcular(4m, 10m, 0.5m, UnidadesConsumidasPorCombo: 3m, AhorroDeCombo: 4m)]);
 
         Assert.Equal(40m, resultado.Subtotal);
         Assert.Equal(4m, resultado.Items[0].Descuento);
         Assert.Equal(36m, resultado.Items[0].Total);
+    }
+
+    [Fact]
+    public void LaParteDelComboYLasUnidadesFueraDelComboSeRedondeanCadaUnaPorSuCuenta()
+    {
+        // Con un ahorro que no es entero (el resolvedor nunca lo entrega así) la fórmula única se
+        // observa: 9.50 → 10 de la unidad fuera del combo y 10 − 0.50 = 9.50 → 10 de la del combo.
+        // Redondear la línea entera, 19, daría 19.
+        var resultado = CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(2m, 10m, 0.50m, UnidadesConsumidasPorCombo: 1m, AhorroDeCombo: 0.50m)]);
+
+        Assert.Equal(20m, resultado.Items[0].Total);
     }
 
     [Fact]
