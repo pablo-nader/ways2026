@@ -260,6 +260,35 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
   cart that matches an active combo is recorded at what it charged and audited as discrepant.
   Another reason for T4 (the screen that creates combos) to ship after the POS release.
 
+- T3b delivered and merged: PR pablo-nader/ways2026#394.
+- T5 split (2026-10-11): T5a cart pricing and display (this entry), T5b combo entry ("Buscar
+  combo", `C` + digits, family member picker), T5c Desktop bump + `pos-v*` tag.
+- T5a implemented on `pnader/combos-pos-carrito` — commits `4f1e9beb` and `c15a6ac3`
+  (judgment fixes). Route: delegated writer, web only. `src/Ways.Web/src/pos/motorDeCombos.ts`
+  is the TypeScript port of `ResolvedorDeCombos` in exact `bigint` arithmetic; every C# engine
+  test case is mirrored with the same numbers. One shared rule, `resolverDocumentoOffline`
+  (`pos/instantaneaOffline.ts`), feeds the offline preview, the queued payload and the
+  synthetic ticket; the line formula is `calcularTotalesDeLineaConCombo` (`api/combos.ts`).
+  Online, the cart preview calls `resolver-con-combos` (it already sent the point of sale's
+  empresa and the customer's list) and falls back to `/ofertas/resolver` on 404/405. UI: a
+  badge on each consumed line and one row per applied combo in "Datos de la venta"; no new
+  buttons. Snapshot combos are sanitized (a malformed one is dropped, the snapshot stays
+  valid). A combo block with more units than the line is ignored until the preview
+  re-resolves. A share with more than 2 decimals drops combos for that offline document.
+  The printed ticket shows the combo only inside the per-line "Descuento" (the template
+  prints no oferta names either). Observed (fix actor, from `src/Ways.Web`): `tsc -b` clean;
+  lint 0 errors; `vitest run src/pos src/api` 1646/1646; `Pos.test.tsx` 281/281; whole suite
+  4847/4848 — the one failure, `NuevaFamilia.test.tsx` timing out at 5 s under load, passed
+  alone (49/49) and again in the parent's run. Parent: `ventas.ts` aligned with
+  `comboVigenteDeLinea` inline, `tsc -b` clean, `ventas.test.ts` + `NuevaFamilia.test.tsx`
+  92/92. RED observed for the engine suite only; mutation evidence for the rest.
+- Judgment-day, T5a: round 1 — 0 CRITICAL; both judges traced engine parity against the C#
+  code line by line. Confirmed and fixed: R1 malformed combos invalidated the whole snapshot,
+  R2 badge name with several combos, R3 no fallback against a server without the route; plus
+  R4–R9 (stale combo on a reduced quantity, sub-cent shares, comments, dead guard, test gaps,
+  `idOferta` on the synthetic item). Scoped re-judgment: both judges, all resolved, 0 CRITICAL
+  → APPROVED.
+
 ## Next step
 
-PR for T3b (slice 5); then T5 (POS web + Desktop release), then T4.
+PR for T5a (slice 6); then T5b, T5c, and T4 last.
