@@ -107,6 +107,17 @@ public class CalculadorDeMovimientosDeCuentaTests
     }
 
     [Fact]
+    public void LaSumaDeLosComponentesRedondeadosPuedePasarDelBrutoPorCentavosYNadaLoCompensa()
+    {
+        // 0.50 x 25% = 0.125 -> 0.13 por componente: cuatro componentes suman 0.52 sobre un bruto de 0.50.
+        var componentes = CalculadorDeMovimientosDeCuenta.Calcular(0.50m, new PorcentajesDeCobro(25m, 25m, 25m, 25m));
+
+        Assert.Equal(5, componentes.Count);
+        Assert.All(componentes.Skip(1), c => Assert.Equal(0.13m, c.Egreso));
+        Assert.Equal(-0.02m, EfectoNeto(componentes));
+    }
+
+    [Fact]
     public void LosPorcentajesQueSumanCienDejanElEfectoNetoEnCero()
     {
         var componentes = CalculadorDeMovimientosDeCuenta.Calcular(800m, new PorcentajesDeCobro(40m, 30m, 20m, 10m));

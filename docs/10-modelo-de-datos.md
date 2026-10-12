@@ -2571,23 +2571,31 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > del resumen de cierre) y `CalculadorDeMovimientosDeCuenta` (puro) lo descompone en filas, en este orden: `cobro` por el
 > bruto (`ingreso` si es positivo, `egreso` si es negativo), y `comision`, `retencion_iibb`, `retencion_iva` y
 > `retencion_ganancias` por `bruto × porcentaje / 100`, cada una redondeada por separado a 2 decimales con el punto medio
-> hacia afuera del cero, del lado contrario al cobro (una nota de crédito devuelve su parte proporcional). Un componente que
-> redondea a cero se omite y un bruto cero no escribe nada. Cada fila congela `base_bruta` (el bruto con signo) y
+> hacia afuera del cero, del lado contrario al cobro cuando el bruto es negativo. Cada componente se redondea por separado y
+> nada compensa el redondeo: la suma puede pasar del bruto por centavos (bruto 0,50 con cuatro porcentajes de 25 % da cuatro
+> egresos de 0,13 y un neto de −0,02), y se acepta. Un componente que redondea a cero se omite y un bruto cero no escribe nada. Cada fila congela `base_bruta` (el bruto con signo) y
 > `porcentaje_aplicado` (nulo en el cobro), lleva `id_turno_caja`, `id_medio_pago` (siempre, porque el índice único no
 > deduplica `NULL`), `id_empleado` (quien cierra) y la `fecha` del cierre, la misma de la fila de tesorería de efectivo. Los
 > medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
 > recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
 > una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
 > (`ck_pagos_comprobante_importe_no_negativo`) y una nota de crédito no lleva pagos, así que hoy el bruto del cierre no es
-> negativo; el escritor igual lo soporta.
+> negativo; el escritor lo soporta como una capacidad que ningún camino actual ejerce.
+>
+> **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
+> descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
+> ajuste manual. (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+> cuenta. (c) Riesgo abierto: la API admite una nota de crédito con pagos de importe positivo (`ValidadorDePagos` no relaciona
+> el signo del total con los pagos) y el cierre los suma como un cobro: una devolución de 100 "pagada" con un medio del 10 %
+> de comisión acredita 90 en vez de descontarlos (fijado por `UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro`).
 >
 > **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
-> `FOR SHARE` por id ascendente → cuentas `FOR NO KEY UPDATE` por id ascendente. El medio se lee una sola vez bajo su lock (cuenta
+> `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta
 > y porcentajes consistentes hasta el commit; una edición del medio en curso hace esperar al cierre) y cada cuenta se lee con
 > su lock (`saldo_inicial` y empresa) antes de leer la cola de la cadena. `FOR NO KEY UPDATE` choca con el `FOR UPDATE` del ABM y
 > con sí mismo, pero no con el `FOR KEY SHARE` de los chequeos de FK, que no se bloquean. La idempotencia la da primero el
 > UPDATE guardado por estado del turno (409 `turno_ya_cerrado`); si una fila de cierre repetida llegara a la base,
-> `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409. Recalcular el arqueo de un turno
+> `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409 (supone que solo el cierre escribe filas cubiertas por ese índice). Recalcular el arqueo de un turno
 > cerrado (edición de gastos) no toca `movimientos_cuenta`.
 >
 > **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento

@@ -10,25 +10,35 @@ namespace Ways.Application.Caja;
 /// retenciones (doc 10 §7). Es el único escritor del libro <c>movimientos_cuenta</c> por esta vía y corre dentro de la
 /// transacción del cierre, ya con el lock exclusivo del turno y con el lock de empresa de la tesorería de efectivo.
 ///
-/// Orden de locks: turno (exclusivo) → empresa (advisory) → medios <c>FOR SHARE</c> por id ascendente → cuentas
-/// <c>FOR NO KEY UPDATE</c> por id ascendente. El medio se lee una sola vez bajo su lock, así que su cuenta y sus
-/// porcentajes no cambian entre la lectura y el commit. La cuenta se bloquea con <c>FOR NO KEY UPDATE</c>: choca con el
-/// <c>FOR UPDATE</c> del ABM de cuentas y con otro cierre que acredite la misma cuenta, que es lo que serializa su cadena,
-/// pero no con el <c>FOR KEY SHARE</c> de los chequeos de FK, así que asignar una cuenta a un medio o insertar un
-/// movimiento no queda bloqueado. Ninguno de esos escritores espera algo que este tome: el ABM de cuentas solo lee los
-/// medios, el guardado de un medio solo pide <c>FOR KEY SHARE</c> sobre la cuenta y los gastos solo toman el lock de empresa.
+/// Orden de locks: turno (exclusivo) → empresa (advisory) → medios <c>FOR SHARE</c> por id ascendente → cuentas de la
+/// empresa del turno <c>FOR NO KEY UPDATE</c> por id ascendente. El medio se lee una sola vez bajo su lock, así que su
+/// cuenta y sus porcentajes no cambian entre la lectura y el commit; guardar un medio espera a ese lock hasta que el cierre
+/// termina. Solo se bloquean las cuentas de la empresa del turno: una cuenta de otra empresa no se acredita y por lo tanto
+/// tampoco se bloquea. <c>FOR NO KEY UPDATE</c> choca con el <c>FOR UPDATE</c> del ABM de cuentas y con otro cierre que
+/// acredite la misma cuenta, que es lo que serializa su cadena, pero no con el <c>FOR KEY SHARE</c> de los chequeos de FK, así
+/// que insertar un movimiento o asignar la cuenta a un medio no queda bloqueado. Ninguno de esos escritores forma un ciclo
+/// con este: el ABM de cuentas solo lee los medios, el guardado de un medio pide <c>FOR KEY SHARE</c> sobre la cuenta (que no
+/// choca) y los gastos solo toman el lock de empresa. El saldo de partida se lee de la fila de la cuenta ya bloqueada y la
+/// cola de la cadena después, nunca antes.
+///
 /// Que el medio sea electrónico no se vuelve a chequear: <c>ck_medios_pago_cuenta_solo_electronico</c> impide que un
 /// medio de otro comportamiento tenga cuenta, así que "tiene cuenta" ya implica "es electrónico".
-/// El saldo de partida se lee de la fila de la cuenta ya bloqueada y la cola de la cadena después, nunca antes.
+///
+/// Lo que el libro todavía NO refleja: (a) una devolución por nota de crédito de una venta cobrada con un medio digital
+/// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
+/// un ajuste manual; (b) un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+/// cuenta; (c) una nota de crédito creada con pagos positivos (la API lo admite) se acredita como un cobro. El soporte de un
+/// bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún camino actual ejerce: un
+/// pago nunca es negativo y una nota de crédito sin pagos no aporta bruto.
 /// </summary>
 public static class EscriturasDeCuentaDeTesoreria
 {
     private sealed record MedioAcreditable(
         int IdMedioPago, string Nombre, int IdCuenta, decimal Bruto, PorcentajesDeCobro Porcentajes);
 
-    private sealed record CuentaBloqueada(int IdEmpresa, decimal SaldoInicial);
+    private sealed record CuentaBloqueada(decimal SaldoInicial);
 
-    /// <summary>Sin cuenta (o con una cuenta dada de baja o de otra empresa) un medio electrónico no escribe nada y no
+    /// <summary>Sin cuenta (o con una cuenta dada de baja o de otra empresa que la del turno) un medio electrónico no escribe nada y no
     /// frena el cierre. Un bruto cero no genera filas. Una cuenta inactiva igual recibe movimientos: desactivarla solo
     /// impide asignarla a medios nuevos.</summary>
     public static async Task AcreditarAsync(
@@ -51,16 +61,11 @@ public static class EscriturasDeCuentaDeTesoreria
         }
 
         var cuentas = await LeerYBloquearCuentasAsync(
-            conexion, transaccion, idTenant, medios.Select(m => m.IdCuenta).Distinct().Order().ToList(), ct);
+            conexion, transaccion, idTenant, idEmpresa, medios.Select(m => m.IdCuenta).Distinct().Order().ToList(), ct);
 
         var saldos = new Dictionary<int, decimal>();
         foreach (var (idCuenta, cuenta) in cuentas.OrderBy(c => c.Key))
         {
-            if (cuenta.IdEmpresa != idEmpresa)
-            {
-                continue;
-            }
-
             var ultimoFinal = await db.MovimientosCuenta
                 .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
                 .OrderByDescending(m => m.Id)
@@ -148,22 +153,24 @@ public static class EscriturasDeCuentaDeTesoreria
     }
 
     private static async Task<Dictionary<int, CuentaBloqueada>> LeerYBloquearCuentasAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, List<int> idsDeCuenta, CancellationToken ct)
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idEmpresa, List<int> idsDeCuenta,
+        CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
-            "SELECT id_cuenta_tesoreria, id_empresa, saldo_inicial FROM cuentas_tesoreria " +
-            "WHERE id_tenant = $1 AND id_cuenta_tesoreria = ANY($2) AND deleted_at IS NULL " +
+            "SELECT id_cuenta_tesoreria, saldo_inicial FROM cuentas_tesoreria " +
+            "WHERE id_tenant = $1 AND id_empresa = $2 AND id_cuenta_tesoreria = ANY($3) AND deleted_at IS NULL " +
             "ORDER BY id_cuenta_tesoreria FOR NO KEY UPDATE";
         ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idEmpresa);
         ParametrosDeComando.Agregar(comando, idsDeCuenta.ToArray());
 
         var cuentas = new Dictionary<int, CuentaBloqueada>();
         await using var lector = await comando.ExecuteReaderAsync(ct);
         while (await lector.ReadAsync(ct))
         {
-            cuentas[lector.GetInt32(0)] = new CuentaBloqueada(lector.GetInt32(1), lector.GetDecimal(2));
+            cuentas[lector.GetInt32(0)] = new CuentaBloqueada(lector.GetDecimal(1));
         }
 
         return cuentas;

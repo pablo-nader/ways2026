@@ -13,6 +13,9 @@ using Ways.Application.Caja;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Application.Ventas;
+using Ways.Domain.Articulos;
+using Ways.Domain.Precios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
@@ -33,7 +36,6 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
-    private const string RolApp = "ways_app";
 
     private static readonly JsonSerializerOptions OpcionesJson = new()
     {
@@ -415,6 +417,60 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.StartsWith("Devolución de comisión", libro[1].Concepto);
     }
 
+    /// <summary>Riesgo abierto, fijado como está hoy: la API acepta una nota de crédito (total negativo) con un pago de importe
+    /// positivo (<c>ValidadorDePagos</c> no relaciona el signo del total con los pagos), y el cierre suma ese pago como si
+    /// fuera un cobro. Una devolución de 100 pagada "con" un medio digital del 10 % de comisión acredita 100 − 10 = 90 en la
+    /// cuenta en vez de descontarlos. Si algún día se rechaza ese pago o el cierre aplica el signo, este test debe cambiar.</summary>
+    [Fact]
+    public async Task UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro()
+    {
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro));
+        using var _ = ctx.Admin;
+        var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
+        var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 10m);
+        int idArticulo;
+        await using (var db = Db(ctx))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var area = new Area { IdTenant = ctx.IdTenant, Nombre = "Area NCX", Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
+            db.Areas.Add(area);
+            await db.SaveChangesAsync();
+            var articulo = new Articulo
+            {
+                IdTenant = ctx.IdTenant, CodigoInterno = $"ncx-{Guid.NewGuid():N}", Nombre = "Articulo NCX", IdArea = area.Id,
+                IdAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync(), UnidadVenta = UnidadVenta.Unidad,
+                EsProducto = true, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.Articulos.Add(articulo);
+            await db.SaveChangesAsync();
+            var idLista = await db.Clientes.Where(c => c.Id == ctx.IdCliente).Select(c => c.IdListaPrecio).FirstAsync();
+            db.Precios.Add(new Precio
+            {
+                IdTenant = ctx.IdTenant, IdArticulo = articulo.Id, IdListaPrecio = idLista, Monto = 100m,
+                VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+            idArticulo = articulo.Id;
+        }
+
+        var turno = await AbrirTurnoAsync(ctx);
+        var devolucion = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas",
+            new SolicitudDeVenta(
+                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", null, [new LineaDeVenta(idArticulo, 1m, null)],
+                [new PagoDeVenta(medio, 100m, null, 0m)], null, null));
+        var cuerpo = await devolucion.Content.ReadAsStringAsync();
+        Assert.True(devolucion.StatusCode == HttpStatusCode.Created, cuerpo);
+        Assert.Equal(-100m, JsonDocument.Parse(cuerpo).RootElement.GetProperty("total").GetDecimal());
+
+        await CerrarOkAsync(ctx, turno);
+
+        var libro = await LibroAsync(ctx, cuenta);
+        Assert.Equal(2, libro.Count);
+        AfirmarFila(libro[0], TipoMovimientoCuenta.Cobro, 0m, 100m, 0m, 100m, 100m, null);
+        AfirmarFila(libro[1], TipoMovimientoCuenta.Comision, 100m, 0m, 10m, 90m, 100m, 10m);
+    }
+
     [Fact]
     public async Task UnTurnoSinPagosDigitalesOConUnPagoDeCeroNoEscribeFilas()
     {
@@ -444,34 +500,89 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         var turno = await AbrirTurnoAsync(ctx);
         await SembrarPagoAsync(ctx, turno, medio, 1000m);
 
-        await using (var owner = new NpgsqlConnection(fixture.OwnerConnectionString))
-        {
-            await owner.OpenAsync();
-            await using var revocar = owner.CreateCommand();
-            revocar.CommandText = $"REVOKE INSERT ON movimientos_cuenta FROM {RolApp}";
-            await revocar.ExecuteNonQueryAsync();
-        }
-
+        var falla = new FallaAlInsertarEnMovimientosCuenta();
         HttpResponseMessage respuesta;
-        try
+        using (fixture.ConInterceptorEnElHost(falla))
         {
             respuesta = await CerrarAsync(ctx, turno, "retiro");
         }
-        finally
-        {
-            await using var owner = new NpgsqlConnection(fixture.OwnerConnectionString);
-            await owner.OpenAsync();
-            await using var restaurar = owner.CreateCommand();
-            restaurar.CommandText = $"GRANT INSERT ON movimientos_cuenta TO {RolApp}";
-            await restaurar.ExecuteNonQueryAsync();
-        }
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        // La falla es la inducida, no otra: se inyectó en el INSERT de la cuenta, y la fila de tesorería de efectivo ya se había
+        // escrito en la misma transacción (el INSERT corrió) antes de que se deshiciera todo.
+        Assert.True(falla.Inducida);
+        Assert.True(falla.InsertoEnTesoreriaDeEfectivoAntes);
         await using var db = Db(ctx);
         Assert.Equal(EstadoTurno.Abierto, await db.TurnosCaja.Where(t => t.Id == turno).Select(t => t.Estado).SingleAsync());
         Assert.Equal(0, await db.ArqueosTurno.CountAsync(a => a.IdTurnoCaja == turno));
         Assert.Equal(0, await db.MovimientosTesoreria.CountAsync(m => m.IdTurnoCaja == turno));
         Assert.Equal(0, await db.MovimientosCuenta.CountAsync());
+    }
+
+    /// <summary>Falla el primer INSERT en <c>movimientos_cuenta</c> sin tocar la base (ni permisos globales) y registra que antes
+    /// corrió el INSERT en <c>movimientos_tesoreria</c>.</summary>
+    private sealed class FallaAlInsertarEnMovimientosCuenta : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor
+    {
+        public bool Inducida { get; private set; }
+
+        public bool InsertoEnTesoreriaDeEfectivoAntes { get; private set; }
+
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("INSERT INTO movimientos_tesoreria", StringComparison.Ordinal))
+            {
+                InsertoEnTesoreriaDeEfectivoAntes = true;
+            }
+
+            if (command.CommandText.Contains("INSERT INTO movimientos_cuenta", StringComparison.Ordinal))
+            {
+                Inducida = true;
+                throw new InvalidOperationException("Falla inducida por la prueba al insertar en movimientos_cuenta.");
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task UnCierreCuyoMedioApuntaALaCuentaDeOtraEmpresaNoEsperaEseLock()
+    {
+        var ctx = await PrepararAsync(nameof(UnCierreCuyoMedioApuntaALaCuentaDeOtraEmpresaNoEsperaEseLock));
+        using var _ = ctx.Admin;
+        int idOtraEmpresa;
+        await using (var plataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var otra = new Empresa { IdTenant = ctx.IdTenant, RazonSocial = "Otra empresa", CreatedAt = ahora, UpdatedAt = ahora };
+            plataforma.Empresas.Add(otra);
+            await plataforma.SaveChangesAsync();
+            idOtraEmpresa = otra.Id;
+        }
+
+        var cuentaAjena = await CrearCuentaAsync(ctx, "Cuenta de la otra", idEmpresa: idOtraEmpresa);
+        var medio = await CrearMedioAsync(ctx, "QR ajeno", cuentaAjena, comision: 3m);
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarPagoAsync(ctx, turno, medio, 700m);
+
+        await using var conexionAbm = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        await using var transaccionAbm = await conexionAbm.BeginTransactionAsync();
+        await using (var bloquear = new NpgsqlCommand(
+            $"SELECT 1 FROM cuentas_tesoreria WHERE id_cuenta_tesoreria = {cuentaAjena} FOR UPDATE", conexionAbm, transaccionAbm))
+        {
+            await bloquear.ExecuteScalarAsync();
+        }
+
+        var cierre = CerrarAsync(ctx, turno, "retiro");
+        var primero = await Task.WhenAny(cierre, Task.Delay(TimeSpan.FromSeconds(20)));
+
+        Assert.Same(cierre, primero);
+        Assert.Equal(HttpStatusCode.OK, (await cierre).StatusCode);
+        await transaccionAbm.RollbackAsync();
+        Assert.Empty(await LibroAsync(ctx, cuentaAjena));
     }
 
     [Fact]

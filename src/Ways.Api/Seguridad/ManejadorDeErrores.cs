@@ -184,7 +184,9 @@ public class ManejadorDeErrores(
 
             // Backstop de la idempotencia del cierre de turno: un segundo cierre que llegara a escribir las filas de la cuenta
             // del mismo turno y medio choca acá. La primera defensa es el UPDATE guardado por estado, que ya responde
-            // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Por nombre exacto, antes de ClasificarUnicidad.
+            // turno_ya_cerrado; este caso devuelve el mismo 409 si esa defensa se saltara. Supone que solo el cierre de turno escribe filas
+            // cubiertas por este índice (cobro, comisión y retenciones con turno): un escritor futuro de esos tipos con turno que choque
+            // acá recibiría este mensaje equivocado y tendría que tener su propio caso. Por nombre exacto, antes de ClasificarUnicidad.
             { SqlState: "23505", ConstraintName: "ux_movimientos_cuenta_cierre" } =>
                 (StatusCodes.Status409Conflict, "El turno ya está cerrado.", "turno_ya_cerrado"),
 

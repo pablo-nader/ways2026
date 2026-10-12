@@ -19,10 +19,12 @@ public static class CalculadorDeMovimientosDeCuenta
     private const int Decimales = 2;
 
     /// <summary>Devuelve, en orden, el cobro y luego comisión, IIBB, IVA y Ganancias. El cobro va por ingreso si el bruto es
-    /// positivo y por egreso si es negativo (las notas de crédito superaron a las ventas); la comisión y las retenciones
-    /// van del lado contrario, porque una nota de crédito devuelve su parte proporcional. Cada importe se redondea por
-    /// separado, con el punto medio hacia afuera del cero. Un componente que redondea a cero se omite, y un bruto cero no
-    /// genera ninguno.</summary>
+    /// positivo y por egreso si es negativo; la comisión y las retenciones van del lado contrario, porque un bruto negativo
+    /// devuelve su parte proporcional. Hoy ningún camino produce un bruto negativo (un pago nunca es negativo y una nota de
+    /// crédito no lleva pagos): es una capacidad que nadie ejerce todavía. Cada importe se redondea por separado, con el
+    /// punto medio hacia afuera del cero, y no hay un componente que compense el redondeo: la suma de los componentes puede
+    /// pasar del bruto por centavos (bruto 0,50 con cuatro porcentajes de 25 % da cuatro egresos de 0,13 y un neto de −0,02),
+    /// y eso se acepta. Un componente que redondea a cero se omite, y un bruto cero no genera ninguno.</summary>
     public static IReadOnlyList<ComponenteDeMovimientoDeCuenta> Calcular(decimal bruto, PorcentajesDeCobro porcentajes)
     {
         if (bruto == 0m)
