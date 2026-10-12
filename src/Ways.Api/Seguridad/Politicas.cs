@@ -118,6 +118,17 @@ public static class Politicas
     /// para que un cambio en quién lee reportes no mueva quién ve costos.</summary>
     public const string LecturaDeCostos = "lectura_costos";
 
+    /// <summary>Supervisor o admin — la puerta de lectura del personal (<c>GET /api/personal</c>).
+    /// La escritura del ABM sigue en <see cref="GestionDeCatalogo"/>. Mismo claim set que
+    /// <see cref="LecturaDeReportes"/>, con nombre propio para que cambiar quién lee reportes no
+    /// mueva quién ve al personal.</summary>
+    public const string LecturaDePersonal = "lectura_personal";
+
+    /// <summary>Supervisor o admin — la puerta de las escrituras de la cuenta del personal (carga de
+    /// horas y ajuste). El ABM del personal sigue en <see cref="GestionDeCatalogo"/> y su lectura, incluido
+    /// el estado de cuenta, en <see cref="LecturaDePersonal"/>.</summary>
+    public const string GestionDeCuentaDePersonal = "gestion_cuenta_personal";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -184,6 +195,18 @@ public static class Politicas
             .AddPolicy(RequiereDispositivo, politica =>
                 politica.RequireAuthenticatedUser()
                         .RequireClaim(ClaimsWays.IdDispositivo))
+            .AddPolicy(LecturaDePersonal, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(GestionDeCuentaDePersonal, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()))
             .AddPolicy(LecturaDeCostos, politica =>
                 politica.RequireAuthenticatedUser()
                         .RequireClaim(

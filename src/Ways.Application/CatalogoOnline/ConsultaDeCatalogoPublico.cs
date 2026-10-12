@@ -164,11 +164,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
 
         var conPrecio = filas
             .Where(f => montos.ContainsKey(f.Id))
-            .Select(f => (
-                Fila: f,
-                Precio: lista.Porcentaje is { } porcentaje
-                    ? ResolvedorDePrecios.ResolverPrecioDerivado(montos[f.Id], porcentaje)
-                    : montos[f.Id]))
+            .Select(f => (Fila: f, Precio: PrecioDeLista(montos[f.Id], lista)))
             .ToList();
 
         var ofertas = await ResolverOfertasAsync(
@@ -195,6 +191,33 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
             .ToList();
 
         return new CatalogoPublico(categorias, articulos, total, pagina, tamano);
+    }
+
+    /// <summary>El monto de la fila de <c>precios</c> llevado a la lista de la tienda: el mismo si es fija, el derivado si no.</summary>
+    private static decimal PrecioDeLista(decimal monto, ListaDePrecios lista) =>
+        lista.Porcentaje is { } porcentaje ? ResolvedorDePrecios.ResolverPrecioDerivado(monto, porcentaje) : monto;
+
+    /// <summary>Lo que el resolvedor de ofertas necesita saber de un artículo además de su precio.</summary>
+    internal sealed record DimensionesDeArticulo(int Id, int? IdCategoria, int? IdGrupo, int? IdFamilia);
+
+    /// <summary>
+    /// El precio final de tienda de cada artículo (el de lista con la oferta online aplicada, a cantidad 1), por la misma
+    /// ruta que el catálogo. Un artículo sin precio vigente en la lista no figura.
+    /// </summary>
+    internal async Task<Dictionary<int, decimal>> PreciosFinalesAsync(
+        IReadOnlyList<DimensionesDeArticulo> articulos, ListaDePrecios lista, int idEmpresa, DateTimeOffset ahora,
+        CancellationToken ct)
+    {
+        var montos = await MontosVigentesAsync([.. articulos.Select(a => a.Id)], lista.IdListaConPrecios, ahora, ct);
+
+        var conPrecio = articulos
+            .Where(a => montos.ContainsKey(a.Id))
+            .Select(a => new ArticuloConPrecio(a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia, PrecioDeLista(montos[a.Id], lista)))
+            .ToList();
+
+        var ofertas = await ResolverOfertasAsync(conPrecio, lista.IdListaOriginal, idEmpresa, ahora, ct);
+
+        return conPrecio.ToDictionary(a => a.Id, a => ofertas.GetValueOrDefault(a.Id)?.Precio ?? a.Precio);
     }
 
     /// <summary>Tipo y marca de carga de la imagen de un artículo publicado y disponible para la empresa de la
@@ -392,7 +415,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
     /// <summary>Quita los caracteres de control (un <c> </c> que llegara a Postgres lo rechaza con un error) y
     /// recorta los espacios; lo que queda vacío es "sin búsqueda". El largo se acota para que un término enorme no
     /// llegue al <c>LIKE</c>.</summary>
-    private static string? Normalizar(string? buscar)
+    public static string? Normalizar(string? buscar)
     {
         if (buscar is null)
         {

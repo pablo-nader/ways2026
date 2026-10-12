@@ -7,6 +7,7 @@ import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
+import { fechaHoraATexto } from '../formato/fechas'
 
 /** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
  * vuelven a pedir acá. */
@@ -20,13 +21,13 @@ function formatearMoneda(valor: number): string {
 /** Mismo formato que el resto de las pantallas — sin forzar timezone, la máquina del escritorio
  * ya corre en la zona horaria del comercio. */
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Solo hora:minuto — usado en el detalle de retiros del ticket de cierre, donde la fecha ya
  * está dada por la propia jornada del turno y repetirla en cada fila sería ruido. */
 function formatearHora(iso: string): string {
-  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
 function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion): void {
@@ -57,7 +58,7 @@ export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
  * las filas "Desc. manual" y "Recargo". Un comprobante sin ajustes imprime exactamente lo de antes.
  * Los campos son nuevos: un servidor anterior no los manda, y ahí no se imprime nada de esto.
  *
- * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
+ * `opciones.reimpresion` (stage-desktop-pos, acción "Imprimir" de "Ventas del turno"): imprime
  * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
  * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
  * dueño: reimprimir no es una venta nueva, abrir el cajón sin eso es un agujero de control de
@@ -287,6 +288,18 @@ export function lineasDeCierreDeTurno(resumen: ResumenDeCierrePorRetiro, context
   return armarCierreDeTurno(resumen, contexto).lineas()
 }
 
+/** Rótulos cortos de los motivos fijos: el POS escribe "Retiro de efectivo" y el servidor "Retiro de
+ * cierre de turno". Cualquier otro motivo (texto libre de un movimiento manual) se imprime tal cual;
+ * `lineaDeColumnas` lo trunca si no entra, sin desplazar el importe. */
+const ROTULOS_DE_RETIRO: Record<string, string> = {
+  'Retiro de efectivo': 'Efectivo',
+  'Retiro de cierre de turno': 'Cierre',
+}
+
+function rotuloDeRetiro(motivo: string): string {
+  return ROTULOS_DE_RETIRO[motivo] ?? motivo
+}
+
 function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): ConstructorDeTicket {
   const ticket = new ConstructorDeTicket()
   encabezado(ticket, contexto)
@@ -319,8 +332,7 @@ function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Context
 
   ticket.linea('Retiros:')
   for (const retiro of resumen.retiros) {
-    ticket.lineaDeColumnas(formatearHora(retiro.fecha), formatearMoneda(retiro.importe))
-    ticket.linea(`  ${retiro.motivo} (${retiro.empleado})`)
+    ticket.lineaDeColumnas(`${formatearHora(retiro.fecha)} ${rotuloDeRetiro(retiro.motivo)}`, formatearMoneda(retiro.importe))
   }
   if (resumen.retiros.length === 0) {
     ticket.linea('Sin retiros en el turno.')

@@ -194,6 +194,20 @@ describe('useSincronizacionOffline — carga inicial (goal A: sobrevive un resta
     expect(result.current.outboxCount).toBe(1)
   })
 
+  it('sin intervaloMs el ciclo automático se programa cada 10 minutos', async () => {
+    const espiaDeIntervalo = vi.spyOn(globalThis, 'setInterval')
+    try {
+      renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen: almacenFake() }))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      const periodos = espiaDeIntervalo.mock.calls.map(([, ms]) => ms)
+      expect(periodos).toContain(10 * 60_000)
+    } finally {
+      espiaDeIntervalo.mockRestore()
+    }
+  })
+
   it('sin punto de venta, queda inerte: sin instantánea, sin outbox, sin llamar a la red', async () => {
     const almacen = almacenFake()
     renderHook(() => useSincronizacionOffline({ idPuntoVenta: null, activo: true, almacen, intervaloMs: 60_000 }))

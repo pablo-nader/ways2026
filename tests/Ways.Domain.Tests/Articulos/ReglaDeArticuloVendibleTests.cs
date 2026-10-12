@@ -51,6 +51,7 @@ public class ReglaDeArticuloVendibleTests
         Assert.Equal("articulo_no_vendible", error.Codigo);
         Assert.Equal(409, error.EstadoHttp);
         Assert.Contains("INT-1", error.Message);
+        Assert.Contains("Artículo INT-1", error.Message);
     }
 
     [Fact]

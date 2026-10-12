@@ -9,8 +9,8 @@ namespace Ways.IntegrationTests;
 
 /// <summary>
 /// "Disponible online" de ofertas y combos se escribe por su POST y su PUT de siempre (un solo destino por campo): el
-/// alta lo toma como <c>true</c> si falta, la edición lo exige (<c>400 disponible_online_requerido</c>, después del
-/// 404), y el listado y el detalle lo devuelven. Cada test siembra dos filas con valores distintos para que un cruce
+/// alta lo toma como <c>true</c> si falta, la edición lo deja como estaba si falta (un cliente anterior al campo no saca
+/// nada de la tienda), y el listado y el detalle lo devuelven. Cada test siembra dos filas con valores distintos para que un cruce
 /// entre ellas o un <c>Where</c> perdido no pasen.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -53,9 +53,9 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
 
         await using var db = apoyo.Db(ctx.IdTenant);
         var guardadas = await db.Ofertas.ToDictionaryAsync(o => o.Nombre, o => o.DisponibleOnline);
-        Assert.Equal(true, guardadas["Sin campo"]);
-        Assert.Equal(false, guardadas["Apagada"]);
-        Assert.Equal(true, guardadas["Prendida"]);
+        Assert.True(guardadas["Sin campo"]);
+        Assert.False(guardadas["Apagada"]);
+        Assert.True(guardadas["Prendida"]);
 
         // El detalle y el listado leen lo guardado, con valores distintos por oferta.
         var detalle = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/ofertas/{idApagada}");
@@ -93,27 +93,33 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
         Assert.True((await despues.Ofertas.SingleAsync(o => o.Id == editada)).DisponibleOnline);
     }
 
-    /// <summary>El PUT sin <c>disponibleOnline</c> es 400 y no escribe (ni el resto de los campos); un id que no existe,
-    /// dado de baja o de otro tenant da 404 ANTES de mirar la falta del campo.</summary>
+    /// <summary>El PUT sin <c>disponibleOnline</c> conserva lo guardado, sea <c>true</c> o <c>false</c>, y aplica el resto
+    /// del cuerpo; un id que no existe o dado de baja da 404.</summary>
     [Fact]
-    public async Task EditarUnaOfertaSinDisponibleOnlineDa400PeroUnaQueNoExisteDa404Primero()
+    public async Task EditarUnaOfertaSinDisponibleOnlineConservaLoGuardadoYUnaQueNoExisteDa404()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(EditarUnaOfertaSinDisponibleOnlineDa400PeroUnaQueNoExisteDa404Primero), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(EditarUnaOfertaSinDisponibleOnlineConservaLoGuardadoYUnaQueNoExisteDa404), ModoPuntoVenta.Web);
         var articulo = await apoyo.ArticuloAsync(ctx, "articulo", 100m);
-        var id = (await (await ctx.Admin.PostAsJsonAsync("/api/ofertas", CuerpoDeOferta(articulo, "Original", false))).Content
+        var apagada = (await (await ctx.Admin.PostAsJsonAsync("/api/ofertas", CuerpoDeOferta(articulo, "Apagada", false))).Content
+            .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+        var prendida = (await (await ctx.Admin.PostAsJsonAsync("/api/ofertas", CuerpoDeOferta(articulo, "Prendida", true))).Content
             .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
         var eliminada = (await (await ctx.Admin.PostAsJsonAsync("/api/ofertas", CuerpoDeOferta(articulo, "Se elimina", true))).Content
             .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
         Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/ofertas/{eliminada}")).StatusCode);
 
-        var sinCampo = await ctx.Admin.PutAsJsonAsync($"/api/ofertas/{id}", CuerpoDeOferta(articulo, "Cambiada", null, porcentaje: 50m));
+        var sobreLaApagada = await ctx.Admin.PutAsJsonAsync($"/api/ofertas/{apagada}", CuerpoDeOferta(articulo, "Apagada editada", null, porcentaje: 50m));
+        var sobreLaPrendida = await ctx.Admin.PutAsJsonAsync($"/api/ofertas/{prendida}", CuerpoDeOferta(articulo, "Prendida editada", null, porcentaje: 50m));
 
-        Assert.Equal(HttpStatusCode.BadRequest, sinCampo.StatusCode);
-        Assert.Equal("disponible_online_requerido", await CodigoAsync(sinCampo));
+        Assert.Equal(HttpStatusCode.OK, sobreLaApagada.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, sobreLaPrendida.StatusCode);
+        Assert.False((await sobreLaApagada.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("disponibleOnline").GetBoolean());
+        Assert.True((await sobreLaPrendida.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("disponibleOnline").GetBoolean());
         await using (var db = apoyo.Db(ctx.IdTenant))
         {
-            var intacta = await db.Ofertas.SingleAsync(o => o.Id == id);
-            Assert.Equal(("Original", false, 10m), (intacta.Nombre, intacta.DisponibleOnline, intacta.Porcentaje));
+            var guardadas = await db.Ofertas.ToDictionaryAsync(o => o.Id);
+            Assert.Equal(("Apagada editada", false, 50m), (guardadas[apagada].Nombre, guardadas[apagada].DisponibleOnline, guardadas[apagada].Porcentaje));
+            Assert.Equal(("Prendida editada", true, 50m), (guardadas[prendida].Nombre, guardadas[prendida].DisponibleOnline, guardadas[prendida].Porcentaje));
         }
 
         foreach (var inexistente in new[] { 987_654_321, eliminada })
@@ -149,8 +155,8 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
 
         await using var db = apoyo.Db(ctx.IdTenant);
         var guardados = await db.Combos.ToDictionaryAsync(c => c.Nombre, c => c.DisponibleOnline);
-        Assert.Equal(true, guardados["Sin campo"]);
-        Assert.Equal(false, guardados["Apagado"]);
+        Assert.True(guardados["Sin campo"]);
+        Assert.False(guardados["Apagado"]);
 
         var listado = (await ctx.Admin.GetFromJsonAsync<JsonElement>("/api/combos")).EnumerateArray()
             .ToDictionary(c => c.GetProperty("nombre").GetString()!, c => c.GetProperty("disponibleOnline").GetBoolean());
@@ -180,26 +186,34 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
         Assert.True((await db.Combos.SingleAsync(c => c.Id == vecino)).DisponibleOnline);
     }
 
+    /// <summary>El PUT sin <c>disponibleOnline</c> conserva lo guardado, sea <c>true</c> o <c>false</c>, y aplica el resto
+    /// del cuerpo; un id que no existe o dado de baja da 404.</summary>
     [Fact]
-    public async Task EditarUnComboSinDisponibleOnlineDa400PeroUnoQueNoExisteDa404Primero()
+    public async Task EditarUnComboSinDisponibleOnlineConservaLoGuardadoYUnoQueNoExisteDa404()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(EditarUnComboSinDisponibleOnlineDa400PeroUnoQueNoExisteDa404Primero), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(EditarUnComboSinDisponibleOnlineConservaLoGuardadoYUnoQueNoExisteDa404), ModoPuntoVenta.Web);
         var a = await apoyo.ArticuloAsync(ctx, "a", 100m);
         var b = await apoyo.ArticuloAsync(ctx, "b", 100m);
-        var id = (await (await ctx.Admin.PostAsJsonAsync("/api/combos", CuerpoDeCombo(a, b, "Original", false))).Content
+        var apagado = (await (await ctx.Admin.PostAsJsonAsync("/api/combos", CuerpoDeCombo(a, b, "Apagado", false))).Content
+            .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+        var prendido = (await (await ctx.Admin.PostAsJsonAsync("/api/combos", CuerpoDeCombo(a, b, "Prendido", true))).Content
             .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
         var eliminado = (await (await ctx.Admin.PostAsJsonAsync("/api/combos", CuerpoDeCombo(a, b, "Se elimina", true))).Content
             .ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
         Assert.Equal(HttpStatusCode.NoContent, (await ctx.Admin.DeleteAsync($"/api/combos/{eliminado}")).StatusCode);
 
-        var sinCampo = await ctx.Admin.PutAsJsonAsync($"/api/combos/{id}", CuerpoDeCombo(a, b, "Cambiado", null));
+        var sobreElApagado = await ctx.Admin.PutAsJsonAsync($"/api/combos/{apagado}", CuerpoDeCombo(a, b, "Apagado editado", null));
+        var sobreElPrendido = await ctx.Admin.PutAsJsonAsync($"/api/combos/{prendido}", CuerpoDeCombo(a, b, "Prendido editado", null));
 
-        Assert.Equal(HttpStatusCode.BadRequest, sinCampo.StatusCode);
-        Assert.Equal("disponible_online_requerido", await CodigoAsync(sinCampo));
+        Assert.Equal(HttpStatusCode.OK, sobreElApagado.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, sobreElPrendido.StatusCode);
+        Assert.False((await sobreElApagado.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("disponibleOnline").GetBoolean());
+        Assert.True((await sobreElPrendido.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("disponibleOnline").GetBoolean());
         await using (var db = apoyo.Db(ctx.IdTenant))
         {
-            var intacto = await db.Combos.SingleAsync(c => c.Id == id);
-            Assert.Equal(("Original", false), (intacto.Nombre, intacto.DisponibleOnline));
+            var guardados = await db.Combos.ToDictionaryAsync(c => c.Id);
+            Assert.Equal(("Apagado editado", false), (guardados[apagado].Nombre, guardados[apagado].DisponibleOnline));
+            Assert.Equal(("Prendido editado", true), (guardados[prendido].Nombre, guardados[prendido].DisponibleOnline));
         }
 
         foreach (var inexistente in new[] { 987_654_321, eliminado })
@@ -211,9 +225,9 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
     }
 
     [Fact]
-    public async Task SinElCampoDeDisponibleOnlineElJsonDeLaEdicionDeUnComboNoLoLeeComoFalso()
+    public async Task SinElCampoDeDisponibleOnlineElJsonCrudoDeLaEdicionDeUnComboNoLoLeeComoFalso()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(SinElCampoDeDisponibleOnlineElJsonDeLaEdicionDeUnComboNoLoLeeComoFalso), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(SinElCampoDeDisponibleOnlineElJsonCrudoDeLaEdicionDeUnComboNoLoLeeComoFalso), ModoPuntoVenta.Web);
         var a = await apoyo.ArticuloAsync(ctx, "a", 100m);
         var b = await apoyo.ArticuloAsync(ctx, "b", 100m);
         var id = await apoyo.ComboAsync(ctx, 150m, [Art(a), Art(b)]);
@@ -221,8 +235,9 @@ public class OfertasYCombosDisponibleOnlineTests(WaysApiFixture fixture) : IClas
         var cuerpo = $"{{\"nombre\":\"Crudo\",\"precio\":150,\"activo\":true,\"componentes\":[{{\"idArticulo\":{a},\"cantidad\":1}},{{\"idArticulo\":{b},\"cantidad\":1}}]}}";
         var respuesta = await ctx.Admin.PutAsync($"/api/combos/{id}", Json(cuerpo));
 
-        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         await using var db = apoyo.Db(ctx.IdTenant);
-        Assert.True((await db.Combos.SingleAsync(c => c.Id == id)).DisponibleOnline);
+        var guardado = await db.Combos.SingleAsync(c => c.Id == id);
+        Assert.Equal(("Crudo", true), (guardado.Nombre, guardado.DisponibleOnline));
     }
 }

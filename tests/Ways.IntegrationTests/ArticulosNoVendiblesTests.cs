@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Ventas;
 using static Ways.IntegrationTests.CombosApoyo;
 
 namespace Ways.IntegrationTests;
@@ -137,6 +138,45 @@ public class ArticulosNoVendiblesTests(WaysApiFixture fixture) : IClassFixture<W
         }
     }
 
+    /// <summary>Una devolución necesita el artículo de uso interno: con <c>incluirNoVendibles=true</c> el escaneo lo
+    /// resuelve por código interno y por código de barras, y <c>=false</c> sigue siendo 404. Mata el <c>||</c> de las dos
+    /// ramas de la consulta del escaneo.</summary>
+    [Fact]
+    public async Task ElEscaneoConIncluirNoVendiblesResuelveElArticuloDeUsoInterno()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(ElEscaneoConIncluirNoVendiblesResuelveElArticuloDeUsoInterno), ModoPuntoVenta.Web);
+        var interno = await apoyo.ArticuloAsync(ctx, "interno", 1000m, disponibleVenta: false);
+        await MarcarAsync(ctx, interno, "4832", "7791234500035");
+
+        foreach (var entrada in new[] { "4832", "7791234500035" })
+        {
+            var con = await ctx.Admin.GetFromJsonAsync<ArticuloEscaneado>(
+                $"/api/articulos/escaneo?entrada={entrada}&incluirNoVendibles=true", OpcionesJson);
+            Assert.Equal(interno, con!.IdArticulo);
+
+            var sin = await ctx.Admin.GetAsync($"/api/articulos/escaneo?entrada={entrada}&incluirNoVendibles=false");
+            Assert.Equal(HttpStatusCode.NotFound, sin.StatusCode);
+        }
+    }
+
+    /// <summary>El parámetro no abre más que la vendibilidad: un artículo inactivo sigue sin resolverse.</summary>
+    [Fact]
+    public async Task ElEscaneoConIncluirNoVendiblesSigueExigiendoQueElArticuloEsteActivo()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(ElEscaneoConIncluirNoVendiblesSigueExigiendoQueElArticuloEsteActivo), ModoPuntoVenta.Web);
+        var inactivo = await apoyo.ArticuloAsync(ctx, "inactivo interno", 1000m, disponibleVenta: false);
+        await MarcarAsync(ctx, inactivo, "4833");
+        await using (var db = apoyo.Db(ctx.IdTenant))
+        {
+            (await db.Articulos.SingleAsync(a => a.Id == inactivo)).Activo = false;
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ctx.Admin.GetAsync("/api/articulos/escaneo?entrada=4833&incluirNoVendibles=true");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
     /// <summary>La búsqueda de la caja pide <c>soloVendibles=true</c> y no ve el artículo; sin el parámetro (compras,
     /// back-office) el listado los trae a todos. Mata las dos mitades: el filtro y que no sea el comportamiento por defecto.</summary>
     [Fact]
@@ -156,6 +196,27 @@ public class ArticulosNoVendiblesTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal([sano], await BuscarAsync("&soloVendibles=true"));
         Assert.Equal([sano, interno], await BuscarAsync(string.Empty));
         Assert.Equal([sano, interno], await BuscarAsync("&soloVendibles=false"));
+    }
+
+    /// <summary>La búsqueda de una devolución manda <c>soloVendibles=true&amp;incluirNoVendibles=true</c> y ve también el
+    /// artículo de uso interno; <c>incluirNoVendibles=false</c> no cambia el filtro. Mata la anulación en el endpoint.</summary>
+    [Fact]
+    public async Task LaBusquedaConIncluirNoVendiblesVeElArticuloDeUsoInternoAunConSoloVendibles()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(LaBusquedaConIncluirNoVendiblesVeElArticuloDeUsoInternoAunConSoloVendibles), ModoPuntoVenta.Web);
+        var sano = await apoyo.ArticuloAsync(ctx, "lavandina sana", 1000m);
+        var interno = await apoyo.ArticuloAsync(ctx, "lavandina interna", 1000m, disponibleVenta: false);
+
+        async Task<List<int>> BuscarAsync(string consulta)
+        {
+            var pagina = await ctx.Admin.GetFromJsonAsync<JsonElement>($"/api/articulos?busqueda=lavandina{consulta}", OpcionesJson);
+
+            return [.. pagina.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("id").GetInt32()).Order()];
+        }
+
+        Assert.Equal([sano, interno], await BuscarAsync("&soloVendibles=true&incluirNoVendibles=true"));
+        Assert.Equal([sano], await BuscarAsync("&soloVendibles=true&incluirNoVendibles=false"));
+        Assert.Equal([sano], await BuscarAsync("&soloVendibles=true"));
     }
 
     /// <summary>Cargar un combo en el carrito: un componente artículo no vendible queda sin candidatos (el combo se
@@ -260,6 +321,115 @@ public class ArticulosNoVendiblesTests(WaysApiFixture fixture) : IClassFixture<W
         var presupuestoSano = await ctx.Admin.PostAsJsonAsync(
             "/api/presupuestos", new SolicitudDePresupuesto(ctx.IdPuntoVenta, null, null, [new LineaDePresupuesto(sano, 1m)]));
         Assert.Equal(HttpStatusCode.Created, presupuestoSano.StatusCode);
+    }
+
+    private async Task CambiarVendibleAsync(Escenario ctx, int idArticulo, bool vendible)
+    {
+        await using var db = apoyo.Db(ctx.IdTenant);
+        (await db.Articulos.SingleAsync(a => a.Id == idArticulo)).DisponibleVenta = vendible;
+        await db.SaveChangesAsync();
+    }
+
+    private static string? CodigoDeError(JsonElement problema) => problema.GetProperty("codigo").GetString();
+
+    /// <summary>Un borrador anterior a la regla no la esquiva: el presupuesto enviado con un artículo que después pasó
+    /// a uso interno no se convierte en venta (409 con el nombre del artículo, sin comprobante), y vuelve a convertirse
+    /// cuando el artículo vuelve a venderse, que descarta cualquier otra causa del rechazo. Mata la excepción
+    /// <c>presupuestoOrigen is null</c> de la regla en <c>EmitirAsync</c>.</summary>
+    [Fact]
+    public async Task ConvertirUnPresupuestoViejoConUnArticuloQueYaNoSeVendeDa409()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(ConvertirUnPresupuestoViejoConUnArticuloQueYaNoSeVendeDa409), ModoPuntoVenta.Web);
+        var articulo = await apoyo.ArticuloAsync(ctx, "se volvera interno", 100m);
+        var creado = await ctx.Admin.PostAsJsonAsync(
+            "/api/presupuestos", new SolicitudDePresupuesto(ctx.IdPuntoVenta, null, null, [new LineaDePresupuesto(articulo, 1m)]));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+        var borrador = (await creado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+        var enviado = await ctx.Admin.PostAsJsonAsync(
+            $"/api/presupuestos/{borrador.Id}/enviar", new SolicitudDeEnvio(DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30))));
+        Assert.Equal(HttpStatusCode.OK, enviado.StatusCode);
+        var presupuesto = (await enviado.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
+        await CambiarVendibleAsync(ctx, articulo, vendible: false);
+
+        SolicitudDeVenta Conversion() => new(
+            ctx.IdPuntoVenta, null, "TX", null, null, [new PagoDeVenta(ctx.IdMedioEfectivo, presupuesto.Total, null, 0m)],
+            null, null, IdPresupuestoOrigen: presupuesto.Id);
+
+        var rechazada = await ctx.Admin.PostAsJsonAsync("/api/ventas", Conversion());
+
+        Assert.Equal(HttpStatusCode.Conflict, rechazada.StatusCode);
+        var problema = await rechazada.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("articulo_no_vendible", CodigoDeError(problema));
+        Assert.Contains("se volvera interno", problema.GetProperty("title").GetString());
+        Assert.Equal(0, await ComprobantesAsync(ctx));
+
+        await CambiarVendibleAsync(ctx, articulo, vendible: true);
+        var aceptada = await ctx.Admin.PostAsJsonAsync("/api/ventas", Conversion());
+
+        Assert.Equal(HttpStatusCode.Created, aceptada.StatusCode);
+    }
+
+    private static async Task<RemitoDetalle> CrearRemitoAsync(Escenario ctx, int idArticulo)
+    {
+        var creado = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos", new SolicitudDeRemito(ctx.IdPuntoVenta, null, null, null, [new LineaDeRemito(idArticulo, 1m, null)]));
+        Assert.Equal(HttpStatusCode.Created, creado.StatusCode);
+
+        return (await creado.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+    }
+
+    /// <summary>Un remito en borrador anterior a la regla no sale: emitirlo con un artículo que pasó a uso interno da
+    /// 409, no gasta número ni mueve stock y el remito sigue en borrador; con el artículo vendible otra vez emite. Mata
+    /// la regla agregada en <c>ServicioDeRemitos.EmitirAsync</c>.</summary>
+    [Fact]
+    public async Task EmitirUnRemitoViejoConUnArticuloQueYaNoSeVendeDa409YNoMueveNada()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(EmitirUnRemitoViejoConUnArticuloQueYaNoSeVendeDa409YNoMueveNada), ModoPuntoVenta.Web);
+        var articulo = await apoyo.ArticuloAsync(ctx, "remito interno", 100m);
+        var borrador = await CrearRemitoAsync(ctx, articulo);
+        await CambiarVendibleAsync(ctx, articulo, vendible: false);
+
+        var rechazado = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, rechazado.StatusCode);
+        Assert.Equal("articulo_no_vendible", CodigoDeError(await rechazado.Content.ReadFromJsonAsync<JsonElement>()));
+        await using (var db = apoyo.Db(ctx.IdTenant))
+        {
+            var remito = await db.Remitos.SingleAsync(r => r.Id == borrador.Id);
+            Assert.Equal((EstadoRemito.Borrador, null), (remito.Estado, remito.Numero));
+            Assert.Empty(await db.Stock.Where(s => s.IdArticulo == articulo).ToListAsync());
+        }
+
+        await CambiarVendibleAsync(ctx, articulo, vendible: true);
+        var emitido = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, emitido.StatusCode);
+    }
+
+    /// <summary>Facturar un remito ya emitido se acepta aunque su artículo haya pasado a uso interno después: la
+    /// mercadería ya salió, así que la liquidación no es una venta nueva. Mata la regla de venta si se vuelve a exigir
+    /// en <c>ServicioDeFacturacionDeRemitos.FacturarAsync</c>.</summary>
+    [Fact]
+    public async Task FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible()
+    {
+        var ctx = await apoyo.PrepararAsync(nameof(FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible), ModoPuntoVenta.Web);
+        var articulo = await apoyo.ArticuloAsync(ctx, "remito a facturar", 100m);
+        var borrador = await CrearRemitoAsync(ctx, articulo);
+        var emitido = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
+        Assert.Equal(HttpStatusCode.OK, emitido.StatusCode);
+        var remito = (await emitido.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+        await CambiarVendibleAsync(ctx, articulo, vendible: false);
+
+        SolicitudDeFacturacionDeRemitos Facturacion() => new(
+            ctx.IdPuntoVenta, [remito.Id], [new PagoDeVenta(ctx.IdMedioEfectivo, remito.Total, null, 0m)], null);
+
+        var aceptada = await ctx.Admin.PostAsJsonAsync("/api/remitos/facturacion", Facturacion());
+
+        Assert.Equal(HttpStatusCode.Created, aceptada.StatusCode);
+        await using var db = apoyo.Db(ctx.IdTenant);
+        var guardado = await db.Remitos.SingleAsync(r => r.Id == remito.Id);
+        Assert.Equal(EstadoRemito.Facturado, guardado.Estado);
+        Assert.NotNull(guardado.IdComprobanteVenta);
     }
 
     /// <summary>Lo ya cobrado offline no se reescribe: la venta de un dispositivo con número preasignado se acepta aunque

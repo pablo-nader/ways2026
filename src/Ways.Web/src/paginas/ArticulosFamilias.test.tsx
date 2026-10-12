@@ -20,6 +20,7 @@ import type {
   ProveedorListado,
   ValoresCompartidosDeLaFamilia,
 } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 /**
  * Familias de artículos en la pantalla de artículos (doc 10 §3): el alta dentro de una familia, la edición de
@@ -111,7 +112,8 @@ function familiaListado(sobrescribir: Partial<FamiliaListado> = {}): FamiliaList
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -155,7 +157,8 @@ function miembro(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
 
 function filaGrilla(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -583,7 +586,7 @@ describe('Articulos — alta: elegir una familia', () => {
 
     await abrirAltaEnLaFamilia()
 
-    expect(await screen.findByText(`$ 1.200,00 · programado $ 1.300,00 desde ${new Date(iso).toLocaleString('es-AR')}`)).toBeInTheDocument()
+    expect(await screen.findByText(`$ 1.200,00 · programado $ 1.300,00 desde ${fechaHoraATexto(iso)}`)).toBeInTheDocument()
   })
 
   /** Cláusula bajo prueba: `altaConFamiliaLista` en el `disabled` de "Guardar": el aviso "Cargando la familia…"

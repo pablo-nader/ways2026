@@ -5,7 +5,9 @@ namespace Ways.Domain.Articulos;
 /// <summary>
 /// Un artículo con <see cref="Articulo.DisponibleVenta"/> en <c>false</c> es de uso interno: se compra y se stockea,
 /// pero ninguna línea de venta puede llevarlo. Pura, sin base de datos, para que los documentos de venta
-/// (venta, presupuesto, remito) compartan una sola regla y un solo código de error.
+/// (venta, presupuesto, remito) compartan una sola regla y un solo código de error. Se exige al guardar el borrador y
+/// otra vez cuando el documento se concreta (convertir un presupuesto, emitir un remito, facturar remitos): un borrador
+/// viejo no la esquiva. Quedan fuera la venta que un dispositivo ya cobró offline y la devolución.
 /// </summary>
 public static class ReglaDeArticuloVendible
 {
@@ -22,7 +24,7 @@ public static class ReglaDeArticuloVendible
             {
                 throw ErrorDominio.Conflicto(
                     CodigoDeError,
-                    $"El artículo {articulo.CodigoInterno} no está disponible a la venta.");
+                    $"El artículo {articulo.Nombre} ({articulo.CodigoInterno}) no está disponible a la venta.");
             }
         }
     }

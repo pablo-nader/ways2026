@@ -85,6 +85,7 @@ const medioEfectivo: MedioPagoListado = {
   admiteVuelto: true,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 const medioCuentaCorriente: MedioPagoListado = {
@@ -97,6 +98,7 @@ const medioCuentaCorriente: MedioPagoListado = {
   admiteVuelto: false,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 function proveedorFixture(sobrescribir: Partial<OpcionDeProveedor> = {}): OpcionDeProveedor {
@@ -196,6 +198,23 @@ describe('GastosDelTurno — sin turno abierto', () => {
     await screen.findByText('No hay un turno abierto en este punto de venta.')
     expect(screen.queryByLabelText('Importe')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Registrar/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('GastosDelTurno — actualizar', () => {
+  it('"Actualizar" es un botón de ícono con tooltip y vuelve a pedir el turno abierto', async () => {
+    mockearRutas({})
+    render(<GastosDelTurno />)
+    const turnosPedidos = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/caja/turnos/abierto')).length
+    const boton = await screen.findByRole('button', { name: 'Actualizar' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    expect(boton).toHaveAttribute('title', 'Actualizar')
+    expect(screen.queryByRole('button', { name: 'Refrescar' })).not.toBeInTheDocument()
+    const antes = turnosPedidos()
+
+    await userEvent.click(boton)
+
+    await waitFor(() => expect(turnosPedidos()).toBe(antes + 1))
   })
 })
 

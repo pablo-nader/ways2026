@@ -7,7 +7,7 @@ import {
   descriptorMarcas,
   descriptorMediosPago,
 } from './catalogos'
-import type { ListaPrecioListado } from './tipos'
+import type { ListaPrecioListado, MedioPagoListado } from './tipos'
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
   return {
@@ -175,5 +175,52 @@ describe('descriptorListasPrecio campo idListaBase — opcionesDesdeListado', ()
       { valor: '1', etiqueta: 'Fija activa' },
       { valor: '4', etiqueta: 'Otra fija activa' },
     ])
+  })
+})
+
+function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
+  return {
+    id: 1,
+    nombre: 'Transferencia',
+    activo: true,
+    idEmpresa: null,
+    orden: 2,
+    comportamiento: 'Electronico',
+    admiteVuelto: false,
+    requiereReferencia: false,
+    recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
+    ...sobrescribir,
+  }
+}
+
+describe('descriptorMediosPago.porcentajeFacturacion', () => {
+  it('arranca en 0 en el alta', () => {
+    expect(descriptorMediosPago.valoresPorDefecto.porcentajeFacturacion).toBe('0')
+  })
+
+  it('declara el campo numérico decimal con su etiqueta', () => {
+    const campo = descriptorMediosPago.campos.find((c) => c.clave === 'porcentajeFacturacion')
+    expect(campo).toMatchObject({ etiqueta: 'Porcentaje a facturar (%)', tipo: 'numeroDecimal' })
+  })
+
+  it('aValores lleva el número del servidor a texto, incluido el cero', () => {
+    expect(descriptorMediosPago.aValores(medioFixture({ porcentajeFacturacion: 37.5 })).porcentajeFacturacion).toBe('37.5')
+    expect(descriptorMediosPago.aValores(medioFixture({ porcentajeFacturacion: 0 })).porcentajeFacturacion).toBe('0')
+  })
+
+  it('aAlta convierte el texto a número', () => {
+    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '12.5' })
+    expect(alta.porcentajeFacturacion).toBe(12.5)
+  })
+
+  it('aAlta manda 0 cuando el campo queda vacío, nunca null', () => {
+    const alta = descriptorMediosPago.aAlta('QR', true, { ...descriptorMediosPago.valoresPorDefecto, porcentajeFacturacion: '' })
+    expect(alta.porcentajeFacturacion).toBe(0)
+  })
+
+  it('ida y vuelta: aValores y aAlta conservan el porcentaje', () => {
+    const valores = descriptorMediosPago.aValores(medioFixture({ porcentajeFacturacion: 100 }))
+    expect(descriptorMediosPago.aAlta('Transferencia', true, valores).porcentajeFacturacion).toBe(100)
   })
 })

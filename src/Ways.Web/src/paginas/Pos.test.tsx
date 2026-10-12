@@ -38,6 +38,7 @@ import type {
 import { AuthContext } from '../auth/AuthContext'
 import { crearAlmacenIndexedDb, type AlmacenClaveValor } from '../pos/almacenPos'
 import { claveIndexedDbDeBorrador, ProveedorDeBorradoresDeTicket } from '../pos/BorradorDeTicketContext'
+import { ProveedorDeAccionesDePos, useAccionesDePos } from '../pos/AccionesDePosContext'
 import { guardarInstantaneaLocal } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal } from '../pos/turnoConfirmadoLocal'
 import { agregarAOutbox, agregarARechazada, guardarBloque, leerOutbox } from '../pos/outboxOffline'
@@ -66,6 +67,29 @@ function arbolDePos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
       </Routes>
     </MemoryRouter>
   )
+}
+
+/** Misma etiqueta que arma la pantalla para un cliente: "#numero — nombre". */
+function etiquetaDeClienteDePrueba(c: ClienteListado): string {
+  return `#${c.numero} — ${c.razonSocial ?? [c.nombre, c.apellido].filter(Boolean).join(' ')}`
+}
+
+/** El cliente por defecto llegó a la caja del selector de la cabecera del carrito: espera al dato, no a la caja. */
+async function esperarAlConsumidorFinal() {
+  await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(consumidorFinal)))
+}
+
+/** Abre el selector de cliente y elige la opción que ya está en la lista, sin tipear. */
+async function elegirCliente(nombre: string | RegExp) {
+  await userEvent.click(screen.getByLabelText('Cliente'))
+  await userEvent.click(await screen.findByRole('option', { name: nombre }))
+}
+
+/** Tipea `texto` en el selector de cliente y elige la opción que coincide con `nombre`. */
+async function buscarYElegirCliente(texto: string, nombre: string | RegExp) {
+  await userEvent.click(screen.getByLabelText('Cliente'))
+  await userEvent.keyboard(texto)
+  await userEvent.click(await screen.findByRole('option', { name: nombre }))
 }
 
 function renderPos(ruta = '/pos', props: ComponentProps<typeof Pos> = {}) {
@@ -194,7 +218,8 @@ function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {})
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 9,
     codigoInterno: 'A0009',
@@ -235,6 +260,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }
@@ -547,7 +573,7 @@ beforeEach(async () => {
  * medio Efectivo elegido, importe = total. Punto de partida de los tests de checkout. */
 async function armarVentaLista(props: ComponentProps<typeof Pos> = {}) {
   renderPos('/pos', props)
-  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await esperarAlConsumidorFinal()
 
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -565,7 +591,7 @@ async function armarVentaLista(props: ComponentProps<typeof Pos> = {}) {
  * partida de los tests de remount por punto de venta. */
 async function armarCarritoConUnaLinea() {
   const resultado = renderPos()
-  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await esperarAlConsumidorFinal()
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   await screen.findByText('Coca Cola 1L')
@@ -601,8 +627,8 @@ describe('Pos — carga inicial', () => {
   it('selecciona el Consumidor Final por defecto', async () => {
     renderPos()
 
-    expect(await screen.findByRole('option', { name: /Consumidor Final/ })).toBeInTheDocument()
-    expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id))
+    await esperarAlConsumidorFinal()
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(consumidorFinal))
     expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
   })
 })
@@ -610,7 +636,7 @@ describe('Pos — carga inicial', () => {
 describe('Pos — franja de caja en la app web (stage-pos-caja-en-cabecera)', () => {
   it('la franja (arriba del carrito) muestra el estado de caja; "Datos de la venta" ya no tiene la línea de punto de venta ni el bloque de turno', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja abierta')
 
     expect(screen.queryByText('Punto de venta:')).not.toBeInTheDocument()
@@ -628,7 +654,7 @@ describe('Pos — franja de caja en la app web (stage-pos-caja-en-cabecera)', ()
   it('con la caja cerrada, la franja muestra "Abrir caja" y el aviso del carrito sigue apareciendo', async () => {
     mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Abrir caja' })).toBeInTheDocument()
@@ -657,7 +683,7 @@ describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => 
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
 
     // La instancia nueva vuelve a cargar clientes y parámetros contra el punto de venta 8.
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await waitFor(() =>
       expect(apiGetMock).toHaveBeenCalledWith('/parametros/tolerancia_pago?idEmpresa=1&idPuntoVenta=8'),
     )
@@ -667,7 +693,7 @@ describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => 
     estadoDePuntoVenta.puntosVenta = []
     estadoDePuntoVenta.puntoVenta = null
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(screen.getByText('Sin puntos de venta disponibles')).toBeInTheDocument()
 
@@ -684,7 +710,7 @@ describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => 
 describe('Pos — escaneo', () => {
   it('escanear un código agrega una línea al carrito', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -695,7 +721,7 @@ describe('Pos — escaneo', () => {
 
   it('re-escanear el mismo código suma la cantidad en la misma línea, no duplica', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -731,7 +757,7 @@ describe('Pos — escaneo', () => {
       return Promise.resolve(resolucion(resultados))
     })
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -772,7 +798,7 @@ describe('Pos — escaneo', () => {
 
   it('el input de escaneo se limpia después de un escaneo exitoso', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     await userEvent.type(entrada, '7790001234567')
@@ -795,7 +821,7 @@ describe('Pos — escaneo', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -808,15 +834,171 @@ describe('Pos — escaneo', () => {
 describe('Pos — selector de cliente', () => {
   it('buscar y elegir otro cliente lo deja seleccionado', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await buscarYElegirCliente('perez', /Juan Pérez/)
 
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
+  })
 
-    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+  it('al elegir un cliente se trae su registro fresco, aunque la lista ya lo tuviera; elegir al que ya está elegido no pisa sus datos', async () => {
+    const enLista = clienteFixture({ id: 2, numero: 2, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false, saldo: 5000, limiteCredito: 80000, creditoIlimitado: false })
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes') return Promise.resolve<PaginaDe<ClienteListado>>({ items: [consumidorFinal, enLista], total: 2, pagina: 1, tamanio: 25 })
+      if (ruta === '/clientes/2') return Promise.resolve({ ...enLista, saldo: 7000 })
+      return undefined
+    })
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await elegirCliente(/Juan Pérez/)
+    await waitFor(() => expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 7.000,00 / $ 80.000,00'))
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')).toHaveLength(1)
+
+    await elegirCliente(/Juan Pérez/)
+
+    expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 7.000,00 / $ 80.000,00')
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')).toHaveLength(1)
+    await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
+  })
+
+  it('el selector vive en la cabecera del carrito, con "Ver detalle" al lado, y "Datos de la venta" ya no tiene el cliente ni su buscador', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    const carrito = within(screen.getByRole('region', { name: 'Carrito' }))
+    expect(carrito.getByLabelText('Cliente')).toBeInTheDocument()
+    expect(carrito.getByRole('button', { name: 'Ver detalle' })).toBeInTheDocument()
+
+    const datos = within(panelDatosDeLaVenta())
+    expect(datos.queryByLabelText('Cliente')).not.toBeInTheDocument()
+    expect(datos.queryByPlaceholderText('Buscar otro cliente…')).not.toBeInTheDocument()
+    expect(datos.queryByRole('button', { name: /Cuenta corriente|Ver detalle|Buscar/ })).not.toBeInTheDocument()
+  })
+
+  it('elegir un cliente devuelve el foco al input de código', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+
+    await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
+  })
+
+  it('Escape sin elegir deja el cliente como estaba y devuelve el foco al input de código', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.keyboard('perez')
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(consumidorFinal))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
+  })
+
+  it('perder el foco sin elegir deja el cliente como estaba y no le quita el foco al control al que fue el cajero', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await screen.findByLabelText('Medio de pago')
+
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.keyboard('perez')
+    await userEvent.click(screen.getByLabelText('Medio de pago'))
+
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(consumidorFinal))
+    expect(screen.getByLabelText('Medio de pago')).toHaveFocus()
+  })
+
+  it('mientras se tipea en el selector, los resultados no le quitan el foco al selector', async () => {
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.keyboard('perez')
+    await screen.findByRole('option', { name: /Juan Pérez/ })
+
+    expect(screen.getByLabelText('Cliente')).toHaveFocus()
+  })
+})
+
+describe('Pos — panel "Datos de la venta": total, pagos y Falta/Vuelto', () => {
+  async function conUnaLineaDe100() {
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(await screen.findByLabelText('Medio de pago'), medioEfectivo.nombre)
+    return screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+  }
+
+  const lineaDeResto = () => within(panelDatosDeLaVenta()).getByText(/^(Falta|Vuelto)$/).parentElement as HTMLElement
+
+  it('el total va primero, grande, y después los pagos y el botón Cobrar, en ese orden', async () => {
+    await conUnaLineaDe100()
+
+    const panel = panelDatosDeLaVenta()
+    const total = within(panel).getByText('$ 100,00', { selector: 'strong' })
+    const pagos = within(panel).getByRole('heading', { name: 'Pagos' })
+    const agregarMedio = within(panel).getByRole('button', { name: '+ Agregar medio de pago' })
+    const resto = lineaDeResto()
+    const cobrar = within(panel).getByRole('button', { name: /Cobrar/ })
+
+    const precede = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(precede(total, pagos)).toBe(true)
+    expect(precede(pagos, agregarMedio)).toBe(true)
+    expect(precede(agregarMedio, resto)).toBe(true)
+    expect(precede(resto, cobrar)).toBe(true)
+    expect(within(panel).getByText('Total previo')).toBeInTheDocument()
+    expect(total).toHaveClass('display-5')
+  })
+
+  it('el total sigue siendo lo primero del panel aunque haya un aviso de carga de clientes', async () => {
+    mockearApiGet((ruta) => (ruta === '/clientes' ? Promise.reject(new Error('boom')) : undefined))
+    renderPos()
+    const aviso = await screen.findByText('No se pudieron cargar los clientes.')
+
+    const total = within(panelDatosDeLaVenta()).getByText('Total previo')
+    expect(total.compareDocumentPosition(aviso) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('con el pago incompleto dice "Falta" con el importe en rojo, y no muestra "Vuelto"', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '50')
+
+    const linea = within(lineaDeResto())
+    await waitFor(() => expect(linea.getByText('$ 50,00')).toHaveClass('text-danger'))
+    expect(within(panelDatosDeLaVenta()).getByText('Falta')).toBeInTheDocument()
+    expect(within(panelDatosDeLaVenta()).queryByText('Vuelto')).not.toBeInTheDocument()
+  })
+
+  it('con el pago completo dice "Vuelto" con el importe en verde, y no muestra "Falta"', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '150')
+
+    await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Vuelto')).toBeInTheDocument())
+    expect(within(lineaDeResto()).getByText('$ 50,00')).toHaveClass('text-success')
+    expect(within(panelDatosDeLaVenta()).queryByText('Falta')).not.toBeInTheDocument()
+  })
+
+  it('un faltante dentro de la tolerancia de pago ($ 10) ya no es "Falta": es el mismo criterio con el que se habilita Cobrar', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '95')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    expect(within(panelDatosDeLaVenta()).getByText('Vuelto')).toBeInTheDocument()
+    expect(within(lineaDeResto()).getByText('$ 0,00')).toHaveClass('text-success')
+  })
+
+  it('un faltante justo por encima de la tolerancia sigue siendo "Falta" y Cobrar sigue deshabilitado', async () => {
+    const importe = await conUnaLineaDe100()
+    await userEvent.type(importe, '89')
+
+    await waitFor(() => expect(within(lineaDeResto()).getByText('$ 11,00')).toHaveClass('text-danger'))
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
   })
 })
 
@@ -840,13 +1022,9 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
 
     // `/clientes` (montaje) queda pendiente a propósito — se espera al turno (independiente)
     // en vez de la opción "Consumidor Final" para saber que el input ya está habilitado.
-    await waitFor(() => expect(screen.getByLabelText('Buscar cliente')).toBeEnabled())
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
-    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toBeEnabled())
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
 
     await act(async () => {
       resolverMontaje({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
@@ -854,7 +1032,7 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
       await Promise.resolve()
     })
 
-    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
   })
 })
 
@@ -878,7 +1056,7 @@ describe('Pos — vista previa de precios', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -909,7 +1087,7 @@ describe('Pos — vista previa de precios', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -942,7 +1120,7 @@ describe('Pos — vista previa de precios', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -984,7 +1162,7 @@ describe('Pos — vista previa de precios', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -1007,7 +1185,9 @@ describe('Pos — vista previa de precios', () => {
     const filaTotalPrevio = screen.getByText('Total previo').closest('div') as HTMLElement
     await waitFor(() => expect(within(filaTotalPrevio).getByText('—')).toBeInTheDocument())
     expect(screen.queryByText('$ 200,00', { selector: 'strong' })).not.toBeInTheDocument()
-    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(2)
+    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(1)
+    // Con la vista previa caída no se sabe si falta o sobra: ni rojo ni verde.
+    expect(screen.getByText('se confirma al cobrar')).toHaveClass('text-muted')
   })
 
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
@@ -1028,7 +1208,7 @@ describe('Pos — vista previa de precios', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -1059,7 +1239,7 @@ describe('Pos — vista previa de precios', () => {
 describe('Pos — panel de pagos: precondiciones', () => {
   it('Cobrar está deshabilitado con el carrito vacío', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
   })
@@ -1079,7 +1259,7 @@ describe('Pos — panel de pagos: precondiciones', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -1099,7 +1279,7 @@ describe('Pos — panel de pagos: precondiciones', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -1133,7 +1313,7 @@ describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () =>
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -1158,7 +1338,7 @@ describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () =>
 describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
   it('cuenta corriente no aparece como opción para el Consumidor Final', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
     expect(screen.queryByRole('option', { name: medioCuentaCorriente.nombre })).not.toBeInTheDocument()
@@ -1166,19 +1346,16 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
 
   it('cuenta corriente aparece como opción para un cliente que no es Consumidor Final', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    await buscarYElegirCliente('perez', /Juan Pérez/)
 
     expect(await screen.findByRole('option', { name: medioCuentaCorriente.nombre })).toBeInTheDocument()
   })
 
   it('no hay ningún input de vuelto en el panel de pagos (etapa 2: se saca el override manual)', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -1190,7 +1367,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
 describe('Pos — panel de pagos: referencia solo para el medio que la requiere', () => {
   it('la referencia queda oculta para un medio que no la requiere (Efectivo)', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
@@ -1240,7 +1417,7 @@ describe('Pos — venta en curso (bloquea la actualización del escritorio)', ()
   it('informa venta en curso con ítems en el carrito y deja de hacerlo al quitarlos', async () => {
     const alCambiarVentaEnCurso = vi.fn()
     renderPos('/pos', { alCambiarVentaEnCurso })
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     expect(alCambiarVentaEnCurso).toHaveBeenLastCalledWith(false)
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -1333,13 +1510,10 @@ describe('Pos — checkout', () => {
 
   it('un cobro exitoso en venta libre vuelve a dejar seleccionado a Consumidor Final, aunque el cajero haya elegido otro cliente', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
-    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1353,7 +1527,7 @@ describe('Pos — checkout', () => {
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     await screen.findByRole('dialog', { name: 'Venta finalizada' })
 
-    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id)))
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(consumidorFinal)))
   })
 
   /**
@@ -1533,13 +1707,11 @@ describe('Pos — checkout', () => {
   it('un texto de escaneo sin confirmar no sobrevive al cobro — el carrito se resetea de inmediato, sin esperar el cierre del modal', async () => {
     await armarVentaLista()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '111222333')
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'texto sin buscar')
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     await screen.findByRole('dialog', { name: 'Venta finalizada' })
 
     expect(screen.getByLabelText('Código escaneado')).toHaveValue('')
-    expect(screen.getByLabelText('Buscar cliente')).toHaveValue('')
   })
 
   it('un cobro exitoso limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
@@ -1558,7 +1730,7 @@ describe('Pos — checkout', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1676,7 +1848,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
 
   it('una línea agregada al carrito sigue ahí después de navegar a otra pantalla y volver', async () => {
     render(arbolDePosConBorrador())
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1692,7 +1864,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
 
   it('el ajuste manual de una línea sigue ahí, con su monto y en el total, después de navegar a otra pantalla y volver', async () => {
     render(arbolDePosConBorrador())
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -1710,7 +1882,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
 
   it('después de un cobro exitoso, navegar afuera y volver no resucita el carrito ya vendido', async () => {
     render(arbolDePosConBorrador())
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1728,7 +1900,7 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
     await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
     await screen.findByText('Acá no hay nada de Pos')
     await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
@@ -1745,25 +1917,23 @@ describe('Pos — borrador del ticket sobrevive a navegar afuera y volver (stage
       }
       if (ruta === '/clientes/2') {
         llamadasClienteId += 1
-        return Promise.resolve<ClienteListado>(clienteActualizado)
+        // La primera consulta es la de elegir al cliente (el servidor aún lo tiene como en el borrador).
+        return Promise.resolve<ClienteListado>(llamadasClienteId === 1 ? clienteEnBorrador : clienteActualizado)
       }
       return undefined
     })
 
     render(arbolDePosConBorrador())
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    await buscarYElegirCliente('perez', /Juan Pérez/)
 
     await userEvent.click(screen.getByRole('link', { name: 'Otra pantalla' }))
     await screen.findByText('Acá no hay nada de Pos')
     await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
 
-    await waitFor(() => expect(llamadasClienteId).toBe(1))
-    expect(await screen.findByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+    await waitFor(() => expect(llamadasClienteId).toBe(2))
+    expect(await screen.findByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1912,14 +2082,11 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
    * corriente — mismo camino de búsqueda que "Pos — selector de cliente". */
   async function abrirModalCuentaCorriente() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    await buscarYElegirCliente('perez', /Juan Pérez/)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Cuenta corriente' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
     await screen.findByRole('heading', { name: 'Cuenta corriente' })
   }
 
@@ -1999,6 +2166,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
   it('JD-1: pagar la cuenta corriente del cliente de la venta desde el modal refresca `clienteSeleccionado` — el chequeo local de crédito del ticket usa el saldo nuevo', async () => {
     const clienteAlLimite = { ...otroCliente, limiteCredito: 400, creditoIlimitado: false, saldo: 400 }
     let clienteRefrescado: ClienteListado | null = null
+    let pagoRegistrado = false
     let llamadasEstado = 0
     mockearApiGet((ruta) => {
       if (ruta.startsWith('/clientes?busqueda=')) {
@@ -2016,7 +2184,8 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         )
       }
       if (ruta === '/clientes/2') {
-        clienteRefrescado = { ...clienteAlLimite, saldo: 200 }
+        // Antes del pago el servidor lo tiene al límite; después, con el saldo nuevo.
+        clienteRefrescado = pagoRegistrado ? { ...clienteAlLimite, saldo: 200 } : clienteAlLimite
         return Promise.resolve<ClienteListado>(clienteRefrescado)
       }
       return undefined
@@ -2029,18 +2198,16 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
         return Promise.resolve(resolucion(resultados))
       }
       if (ruta === '/clientes/2/cuenta-corriente/pagos') {
+        pagoRegistrado = true
         return Promise.resolve<ComprobanteEmitido>(comprobanteEmitidoFixture({ id: 901, numeroVisible: '0007-00000901', idCliente: 2 }))
       }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    await buscarYElegirCliente('perez', /Juan Pérez/)
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -2055,7 +2222,7 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
     expect(await screen.findByText('El pago supera el límite de crédito del cliente.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Cuenta corriente' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
     await screen.findByRole('heading', { name: 'Cuenta corriente' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
@@ -2170,6 +2337,21 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
   })
 
+  it('un 409 articulo_no_vendible muestra el mensaje del servidor con qué hacer, sin activar el gate de turno', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'articulo_no_vendible', 'El artículo A0001 no está disponible a la venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('El artículo A0001 no está disponible a la venta. Sacalo para poder continuar.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
+  })
+
   it('el panel del gate se autocura si la apertura rechaza con turno_ya_abierto (otra pestaña/cajero ganó la carrera): el gate se cierra, el carrito queda intacto y "Cobrar" no se reintenta solo', async () => {
     await armarVentaLista()
     apiPostMock.mockImplementation((ruta: string) => {
@@ -2244,7 +2426,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
   it('turno confirmado abierto: badge "Caja abierta" y acción "Cerrar caja"', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
@@ -2253,7 +2435,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
   it('"Cerrar caja" navega a /caja/cierre con el idTurno real', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja abierta')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -2266,7 +2448,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
   it('turno confirmado cerrado: badge "Caja cerrada", aviso claro y solo la búsqueda de artículos queda operable', async () => {
     mockearTurnoCerrado()
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
     expect(screen.getByText('Caja cerrada: abrí la caja para vender.')).toBeInTheDocument()
@@ -2280,8 +2462,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     expect(screen.getByRole('button', { name: 'Buscar artículo' })).toBeEnabled()
     // Cliente: deshabilitado.
     expect(screen.getByLabelText('Cliente')).toBeDisabled()
-    expect(screen.getByLabelText('Buscar cliente')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Ver detalle' })).toBeDisabled()
     // Pagos: deshabilitados.
     expect(screen.getByLabelText('Medio de pago')).toBeDisabled()
     expect(screen.getByRole('button', { name: '+ Agregar medio de pago' })).toBeDisabled()
@@ -2309,7 +2490,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja cerrada')
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
@@ -2339,7 +2520,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
   it('con caja cerrada, cerrar el buscador no devuelve el foco a "Buscar artículo" (el foco de vuelta es de Pos)', async () => {
     mockearTurnoCerrado()
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja cerrada')
     const botonBuscar = screen.getByRole('button', { name: 'Buscar artículo' })
 
@@ -2354,7 +2535,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
   it('"Abrir caja" (reutiliza PanelGateTurno) abre el turno y habilita todo sin recargar la página, con el input de código enfocado', async () => {
     mockearTurnoCerrado()
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja cerrada')
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
 
@@ -2396,7 +2577,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? turnoPendiente : undefined))
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
     expect(screen.getByLabelText('Código escaneado')).not.toHaveFocus()
 
@@ -2420,7 +2601,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
   it('con el turno confirmado cerrado, el input de código queda deshabilitado (nunca solo por escaneando/cobrando)', async () => {
     mockearTurnoCerrado()
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja cerrada')
 
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
@@ -2443,7 +2624,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? turnoPendiente : undefined))
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const botonBuscar = screen.getByRole('button', { name: 'Buscar artículo' })
     botonBuscar.focus()
     expect(botonBuscar).toHaveFocus()
@@ -2475,7 +2656,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     })
 
     const { rerender } = renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await waitFor(() => expect(cantidadDeConsultas).toBe(1))
 
     // Un `recargar()` de punto de venta produce un objeto NUEVO con el mismo id — el efecto de
@@ -2504,7 +2685,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         ruta.startsWith('/caja/turnos/abierto') ? Promise.reject(new Error('network error')) : undefined,
       )
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
 
       expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
@@ -2524,7 +2705,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByRole('button', { name: 'Reintentar' })
 
       await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
@@ -2553,7 +2734,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         })
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       const boton = await screen.findByRole('button', { name: 'Reintentar' })
 
       // Dos `.click()` sincrónicos dentro de un mismo `act`: React todavía no re-renderizó entre
@@ -2588,7 +2769,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         return Promise.resolve<TurnoResumen>(cantidadDeConsultas === 1 ? turnoAbiertoFixture() : turnoAbiertoFixture({ id: 4242 }))
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -2609,7 +2790,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         })
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -2630,7 +2811,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         return cantidadDeConsultas === 1 ? Promise.resolve<TurnoResumen>(turnoAbiertoFixture()) : Promise.resolve(null)
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -2651,7 +2832,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
           : Promise.reject(new Error('network error'))
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -2670,7 +2851,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
       const boton = screen.getByRole('button', { name: 'Cerrar caja' })
 
@@ -2690,7 +2871,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       // "Cerrar caja" encuentra que ya no hay turno (cerrado por otra pestaña mientras tanto).
@@ -2720,7 +2901,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     it('"El turno ya fue cerrado." también desaparece con una consulta exitosa posterior del mount', async () => {
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(turnoAbiertoFixture()) : undefined))
       const { rerender } = renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
@@ -2757,7 +2938,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
           </Routes>
         </MemoryRouter>,
       )
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? consultaPendiente : undefined))
@@ -2779,7 +2960,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)', () => {
   it('la fila inicial de pago preselecciona Efectivo apenas cargan los medios', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await waitFor(() => expect(screen.getByLabelText('Medio de pago')).toHaveValue(String(medioEfectivo.id)))
   })
@@ -2795,7 +2976,7 @@ describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)',
   it('sin ningún medio Efectivo configurado, la fila queda sin preseleccionar (comportamiento sin cambios)', async () => {
     mockearApiGet((ruta) => (ruta === '/catalogos/medios-pago' ? Promise.resolve([medioTarjeta]) : undefined))
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByRole('option', { name: medioTarjeta.nombre })
 
     expect(screen.getByLabelText('Medio de pago')).toHaveValue('')
@@ -2805,7 +2986,7 @@ describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)',
 describe('Pos — checkout: split de pago con el mismo medio', () => {
   it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe, el vuelto auto-calculado se lo lleva la primera', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -2841,7 +3022,7 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
 describe('Pos — CampoImporte en el panel de pagos: separador de miles y decimales con coma', () => {
   it('tipear "10.000" (con separador de miles) en el importe se interpreta como 10000 — la vista se actualiza y el checkout envía el número correcto', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -2866,7 +3047,7 @@ describe('Pos — CampoImporte en el panel de pagos: separador de miles y decima
 
   it('tipear "10000" (sin puntos) y "10000,5" (con decimales) en el importe también se interpretan correctamente', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -2908,7 +3089,7 @@ describe('Pos — badge de ofertas apiladas', () => {
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -2922,7 +3103,7 @@ describe('Pos — badge de ofertas apiladas', () => {
 describe('Pos — edición de cantidad', () => {
   async function agregarLineaCocaCola() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -2983,7 +3164,7 @@ describe('Pos — cantidad según la unidad de venta', () => {
 
   async function escanearCocaCola() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   }
@@ -3077,7 +3258,7 @@ describe('Pos — cantidad según la unidad de venta', () => {
   it('un artículo por unidad que no acumula abre una línea por escaneo y cada una valida su propia cantidad', async () => {
     mockearEscaneo({ unidadVenta: 'Unidad', acumulaEnVenta: false })
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     for (let i = 0; i < 2; i++) {
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -3108,7 +3289,7 @@ describe('Pos — cantidad según la unidad de venta', () => {
 describe('Pos — debounce de la resolución de precios', () => {
   it('una edición debounce ~250ms y una segunda edición dentro de la ventana reemplaza a la primera; un escaneo resuelve sin demora', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     await userEvent.type(entrada, '7790001234567')
@@ -3137,7 +3318,7 @@ describe('Pos — debounce de la resolución de precios', () => {
 
   it('un cambio de cliente inmediatamente después de una edición de cantidad no hereda la demora de esa edición', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     await userEvent.type(entrada, '7790001234567')
@@ -3145,16 +3326,16 @@ describe('Pos — debounce de la resolución de precios', () => {
     await screen.findByText('Coca Cola 1L')
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-    await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.keyboard('perez')
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
 
     vi.useFakeTimers()
     try {
       const input = screen.getByLabelText('Cantidad de Coca Cola 1L')
       fireEvent.change(input, { target: { value: '2' } })
 
-      fireEvent.change(screen.getByLabelText('Cliente'), { target: { value: String(otroCliente.id) } })
+      fireEvent.click(opcionJuan)
       await vi.advanceTimersByTimeAsync(50)
 
       expect(apiPostMock).toHaveBeenCalledTimes(2)
@@ -3210,7 +3391,7 @@ describe('Pos — debounce de la resolución de precios', () => {
 describe('Pos — limpieza de ediciones en curso', () => {
   it('quitar una línea con una edición pendiente no deja un override fantasma para un artículo agregado de nuevo', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -3234,7 +3415,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
 
   it('vaciar el carrito con una edición pendiente no deja overrides fantasma para las líneas siguientes', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -3247,6 +3428,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
     expect(input.value).toBe('0.0001')
 
     await userEvent.click(screen.getByRole('button', { name: 'Vaciar carrito' }))
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).getByRole('button', { name: 'Sí' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
 
     await userEvent.type(entrada, '7790001234567')
@@ -3258,7 +3440,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
 
   it('un escaneo que suma sobre una línea existente descarta el override de edición pendiente de esa fila', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const entrada = screen.getByLabelText('Código escaneado')
     const boton = screen.getByRole('button', { name: 'Agregar' })
@@ -3436,8 +3618,9 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(screen.queryByRole('button', { name: 'Vaciar carrito' })).not.toBeInTheDocument()
 
     // El cliente lo trae el presupuesto por id, queda deshabilitado (solo lectura).
-    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id)))
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente)))
     expect(screen.getByLabelText('Cliente')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Ver detalle' })).not.toBeInTheDocument()
 
     // El total mostrado es el del presupuesto congelado, nunca uno recalculado por resolución.
     expect(screen.getByText('$ 200,00', { selector: 'strong' })).toBeInTheDocument()
@@ -3603,7 +3786,7 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
   }
 
   async function completarVentaLista() {
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -3660,14 +3843,14 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
 describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () => {
   it('el input de código tiene autofocus al entrar a la pantalla', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
   })
 
   it('el foco vuelve al input de código después de agregar por código', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const inputCodigo = screen.getByLabelText('Código escaneado')
 
     await userEvent.type(inputCodigo, '7790001234567')
@@ -3746,7 +3929,7 @@ describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () 
 describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-articulos)', () => {
   it('el botón "Buscar artículo" abre el modal', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
 
@@ -3755,7 +3938,7 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
 
   it('F2 abre el modal mientras la venta libre está activa', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     fireEvent.keyDown(document, { key: 'F2' })
 
@@ -3791,7 +3974,7 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
 
   it('Escape cierra el modal y devuelve el foco al input de código', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const inputCodigo = screen.getByLabelText('Código escaneado')
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
@@ -3805,7 +3988,7 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
 
   it('el botón "Cerrar" (X) cierra el modal y devuelve el foco al input de código', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const inputCodigo = screen.getByLabelText('Código escaneado')
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
@@ -3821,7 +4004,7 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
 describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-buscador-articulos)', () => {
   async function abrirBuscador() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
     return within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
   }
@@ -3981,7 +4164,7 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const inputCodigo = screen.getByLabelText('Código escaneado')
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
@@ -4006,7 +4189,7 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
 describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () => {
   it('"Cobrar" muestra (F9) como superíndice decorativo y expone el atajo con aria-keyshortcuts, sin tocar el nombre accesible', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const boton = screen.getByRole('button', { name: 'Cobrar' })
     expect(boton).toHaveAttribute('aria-keyshortcuts', 'F9')
@@ -4015,7 +4198,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('"Buscar artículo" muestra (F2) como superíndice decorativo y expone el atajo con aria-keyshortcuts, sin tocar el nombre accesible', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     const boton = screen.getByRole('button', { name: 'Buscar artículo' })
     expect(boton).toHaveAttribute('aria-keyshortcuts', 'F2')
@@ -4024,7 +4207,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('F9 sin ningún importe cargado enfoca el importe de la primera fila, sin abrir el diálogo', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -4046,7 +4229,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
    */
   it('F9 con importe insuficiente (por debajo de la tolerancia) enfoca el importe, sin abrir el diálogo', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -4201,7 +4384,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('F9 no hace nada con el carrito vacío (Cobrar deshabilitado por otro motivo)', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     fireEvent.keyDown(document, { key: 'F9' })
 
@@ -4214,7 +4397,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
       return undefined
     })
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja cerrada')
 
     fireEvent.keyDown(document, { key: 'F9' })
@@ -4249,7 +4432,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('F9 no abre nada mientras el buscador de artículos está abierto', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
     await screen.findByRole('dialog', { name: 'Buscar artículo' })
 
@@ -4268,7 +4451,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
    */
   it('K1: agregar una fila de pago vacía después de que el listener de F9 quedó registrado — F9 sigue enfocando la fila correcta', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -4291,7 +4474,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   it('K1: quitar una fila de pago no deja a F9 apuntando a una fila que ya no existe', async () => {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -4345,7 +4528,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     })
 
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -4393,7 +4576,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
 
   async function entrarConTurnoAbierto(cajaDeEscritorio: CajaDeEscritorio) {
     renderPosDeEscritorio(cajaDeEscritorio)
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByText('Caja abierta')
   }
 
@@ -4433,7 +4616,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
   describe('Retirar', () => {
     it('web (sin cajaDeEscritorio): "Retirar" no existe aunque el turno esté abierto', async () => {
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja abierta')
 
       expect(screen.queryByRole('button', { name: 'Retirar' })).not.toBeInTheDocument()
@@ -4442,7 +4625,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
     it('con el turno cerrado, "Retirar" tampoco aparece', async () => {
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
       renderPosDeEscritorio(cajaDeEscritorioFixture())
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Caja cerrada')
 
       expect(screen.queryByRole('button', { name: 'Retirar' })).not.toBeInTheDocument()
@@ -5438,7 +5621,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
  * descuento, positivo = recargo) que compromete al perder el foco o con Enter. */
 async function armarCarritoConCocaCola() {
   renderPos()
-  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await esperarAlConsumidorFinal()
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   await screen.findByText('Coca Cola 1L')
@@ -5897,7 +6080,7 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
 
   async function armarCarritoConPanchoYCoca() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await agregarPorCodigo('7790001234567', 'Coca Cola 1L')
     await agregarPorCodigo(CODIGO_PANCHO, 'Pancho')
   }
@@ -6167,7 +6350,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
   describe('badge "Sin sincronizar" (goal C: siempre visible)', () => {
     it('está visible desde el primer render, en 0, incluso antes de que la instantánea cargue', async () => {
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       expect(await screen.findByText('Sin sincronizar: 0')).toBeInTheDocument()
     })
   })
@@ -6177,7 +6360,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
    * la pantalla) — y el Consumidor Final ya quedó elegido. */
   async function montarConInstantanea() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
   }
 
@@ -6253,9 +6436,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     it('para otro cliente el escaneo también sale primero de la instantánea, sin tocar la red', async () => {
       await prepararAlmacenOffline()
       await montarConInstantanea()
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: /Juan Pérez/ }))
+      await buscarYElegirCliente('perez', /Juan Pérez/)
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -6303,9 +6484,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
           : undefined,
       )
       await montarConInstantanea()
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: /Juan Pérez/ }))
+      await buscarYElegirCliente('perez', /Juan Pérez/)
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -6367,7 +6546,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       })
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
     }
 
@@ -6381,8 +6560,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         }),
       )
 
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'GOMEZ')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.click(screen.getByLabelText('Cliente'))
+      await userEvent.keyboard('GOMEZ')
 
       expect(await screen.findByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
       expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
@@ -6407,8 +6586,8 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       })
       await montarConInstantanea()
 
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gómez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.click(screen.getByLabelText('Cliente'))
+      await userEvent.keyboard('gómez')
 
       // Antes de que conteste el servidor, la coincidencia local ya está.
       expect(await screen.findByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
@@ -6420,17 +6599,96 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
       expect(screen.getByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
 
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: '#30 — José Gómez' }))
+      // Con señal se pide el registro fresco de cualquiera que se elija, venga del servidor o de la copia local.
+      await userEvent.click(screen.getByRole('option', { name: /Juan Pérez/ }))
+      expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
+      await waitFor(() => expect(llamadasGet('/clientes/2')).toHaveLength(1))
+
+      // El de la copia local trae el saldo de la última sincronización: también se pide fresco.
+      await userEvent.click(screen.getByLabelText('Cliente'))
+      await userEvent.keyboard('gómez')
+      await userEvent.click(await screen.findByRole('option', { name: '#30 — José Gómez' }))
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), screen.getByRole('option', { name: /Juan Pérez/ }))
-      expect(llamadasGet('/clientes/2')).toHaveLength(0)
+    })
+
+    it('la copia local aporta clientes que la etiqueta no contiene (por documento), aunque no estén en la lista cargada', async () => {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({
+              idCliente: 31,
+              numero: 31,
+              nombre: 'Ana',
+              apellido: 'Soto',
+              numeroDocumento: '20-30405060-7',
+              esConsumidorFinal: false,
+            }),
+          ],
+        }),
+      })
+      await montarConInstantanea()
+
+      await userEvent.click(screen.getByLabelText('Cliente'))
+      await userEvent.keyboard('20304050607')
+
+      expect(await screen.findByRole('option', { name: '#31 — Ana Soto' })).toBeInTheDocument()
+    })
+
+    it('el chip de saldo muestra el del cliente de la copia local y pasa al del servidor cuando se refresca; con el Consumidor Final no hay chip', async () => {
+      await prepararAlmacenOffline({
+        instantanea: instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({
+              idCliente: 30,
+              numero: 30,
+              nombre: 'José',
+              apellido: 'Gómez',
+              esConsumidorFinal: false,
+              saldo: 10,
+              limiteCredito: 2000,
+              creditoIlimitado: false,
+            }),
+          ],
+        }),
+      })
+      mockearApiGet((ruta) =>
+        ruta === '/clientes/30'
+          ? Promise.resolve(
+              clienteFixture({ id: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false, saldo: 999, limiteCredito: 2000, creditoIlimitado: false }),
+            )
+          : undefined,
+      )
+      await montarConInstantanea()
+      expect(screen.queryByTestId('chip-de-saldo')).not.toBeInTheDocument()
+
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+
+      await waitFor(() => expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 999,00 / $ 2.000,00'))
+    })
+
+    it('sin conexión, elegir un cliente de la copia local no intenta traer su registro del servidor', async () => {
+      await llegarConEnLineaFalse(
+        instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false }),
+          ],
+        }),
+      )
+
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+
+      expect(screen.getByLabelText('Cliente')).toHaveValue('#30 — José Gómez')
+      expect(llamadasGet('/clientes/30')).toHaveLength(0)
     })
 
     it('sin coincidencias en la copia local y sin conexión, lo dice en vez de ir a la red', async () => {
       await llegarConEnLineaFalse()
 
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'zzz')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+      await userEvent.click(screen.getByLabelText('Cliente'))
+      await userEvent.keyboard('zzz')
 
       expect(await screen.findByText('Sin conexión: no se encontró ningún cliente en la copia local.')).toBeInTheDocument()
       expect(llamadasGet('/clientes?busqueda=')).toHaveLength(0)
@@ -6455,9 +6713,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
           ],
         }),
       )
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gomez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: '#30 — José Gómez' }))
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
 
       // La opción de cuenta corriente es la señal de que el cliente elegido ya llegó al filtro.
       await within(screen.getByLabelText('Medio de pago')).findByRole('option', { name: medioCuentaCorriente.nombre })
@@ -6508,7 +6764,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
       const alEmitir = vi.fn()
       renderPos('/pos', { alEmitir })
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -6587,7 +6843,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       mockearApiGet()
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
@@ -6595,10 +6851,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       // Cambia al cliente que no es Consumidor Final, MIENTRAS todavía hay red (mismo camino que
       // el test preexistente "buscar y elegir otro cliente lo deja seleccionado") — la red se
       // corta recién después, solo para `/ventas`.
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+      await buscarYElegirCliente('perez', /Juan Pérez/)
 
       await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
       await cobrarConEfectivo('100')
@@ -6686,9 +6939,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
       await montarConInstantanea()
 
-      await userEvent.type(screen.getByLabelText('Buscar cliente'), 'gomez')
-      await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-      await userEvent.selectOptions(screen.getByLabelText('Cliente'), await screen.findByRole('option', { name: '#30 — José Gómez' }))
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
       await waitFor(() => expect(llamadasGet('/clientes/30')).toHaveLength(1))
 
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -6781,7 +7032,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Sin sincronizar: 1')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -6808,7 +7059,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       mockearApiGet()
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       // judgment-day ronda 2 (SUGGESTION): concordancia singular/plural — "1 venta(s) necesitan
       // atención" era agramatical para cantidad 1; con una sola venta rechazada el texto real es
       // "1 venta necesita atención" (ver `fraseVentasNecesitanAtencion` en `Pos.tsx`).
@@ -6849,7 +7100,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
@@ -6861,7 +7112,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     it('"Descartar" exige confirmación explícita que nombra la venta — "Cancelar" no cambia nada', async () => {
       await prepararVentaRechazada()
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
@@ -6876,7 +7127,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     it('"Confirmar descarte" la saca de "necesita atención" para siempre y deja cerrar la caja', async () => {
       await prepararVentaRechazada()
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('1 venta necesita atención')
 
       await userEvent.click(screen.getByRole('button', { name: 'Descartar' }))
@@ -6922,7 +7173,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
       await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
       await screen.findByText('Coca Cola 1L')
@@ -7023,7 +7274,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       mockearEnvioColgado()
       const alEmitir = vi.fn()
       renderPos('/pos', { alEmitir })
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
       await cargarPanchoYCoca()
       await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
@@ -7073,7 +7324,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
     })
   })
 
-  describe('sincronización: arranque, "Sincronizar ahora" e intervalo', () => {
+  describe('sincronización: arranque y "Sincronizar ahora"', () => {
     it('POS de escritorio: "Cobrar" queda deshabilitado mientras corre la sincronización de arranque, y se habilita al terminar', () =>
       comoPosDeEscritorio(async () => {
         await prepararAlmacenOffline({ bloque: { desde: 500, hasta: 599, proximo: 500 } })
@@ -7124,7 +7375,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         return undefined
       })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await waitFor(() => expect(llamadasGet('/pos/instantanea')).toHaveLength(1))
       // El ciclo de arranque está en vuelo: el botón ya lo refleja.
       expect(await screen.findByRole('button', { name: 'Sincronizando…' })).toBeDisabled()
@@ -7147,28 +7398,19 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(llamadasGet('/pos/instantanea')).toHaveLength(2)
     })
 
-    it('el intervalo arranca en 5 minutos, se recorta al rango 1-60 y queda guardado en el dispositivo', async () => {
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+    it('no ofrece ningún campo para configurar el intervalo de sincronización', async () => {
       await prepararAlmacenOffline()
       await montarConInstantanea()
 
-      const campo = screen.getByLabelText('Minutos entre sincronizaciones')
-      expect(campo).toHaveValue(5)
-
-      await userEvent.clear(campo)
-      await userEvent.type(campo, '90')
-      await userEvent.tab()
-
-      expect(campo).toHaveValue(60)
-      expect(localStorage.getItem('ways.pos.intervaloDeSincronizacionMinutos')).toBe('60')
-      localStorage.removeItem('ways.pos.intervaloDeSincronizacionMinutos')
+      expect(await screen.findByRole('button', { name: 'Sincronizar ahora' })).toBeInTheDocument()
+      expect(screen.queryByLabelText('Minutos entre sincronizaciones')).not.toBeInTheDocument()
     })
   })
 
   describe('"Cerrar caja" intenta drenar el outbox antes de bloquear', () => {
     it('si el drenado previo al cierre falla, "Cerrar caja" vuelve a quedar operable y un segundo intento cierra', async () => {
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Sin sincronizar: 0')
 
       controlDeOutbox.fallarLectura = true
@@ -7191,7 +7433,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       )
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByRole('button', { name: 'Sincronizar ahora' })
       const rendicionesAntes = llamadasPost('/pos/rendicion-de-cola').length
 
@@ -7225,7 +7467,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       })
 
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByText('Sin sincronizar: 1')
       await waitFor(() => expect(enviosDeVentas).toBe(1))
 
@@ -7263,7 +7505,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
         renderPos()
 
-        await screen.findByRole('option', { name: /Consumidor Final/ })
+        await esperarAlConsumidorFinal()
         expect(await screen.findByText(/Sin conexión — datos de hace/)).toBeInTheDocument()
         expect(screen.getByText('Caja abierta')).toBeInTheDocument()
         expect(screen.queryByText(/No se pudieron cargar/)).not.toBeInTheDocument()
@@ -7372,6 +7614,38 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         expect(localStorage.getItem(CLAVE_TURNO_LOCAL)).toBeNull()
       }))
 
+    it('con el turno local vigente por una consulta lenta, el estado que ve el header coincide con el chip: se puede cerrar y retirar', () =>
+      comoPosDeEscritorio(async () => {
+        guardarTurnoConfirmadoLocal(7, turnoAbiertoFixture({ id: 900 }))
+        await prepararCopiaLocal()
+        mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? new Promise<TurnoResumen | null>(() => {}) : undefined))
+        function EstadoVisibleParaElHeader() {
+          const { estado } = useAccionesDePos()
+          return (
+            <p data-testid="header">
+              {String(estado?.listo)}|{String(estado?.turnoAbierto)}|{String(estado?.habilitadas.cerrarTurno)}|{String(estado?.habilitadas.retirar)}
+            </p>
+          )
+        }
+
+        render(
+          <MemoryRouter initialEntries={['/pos']}>
+            <ProveedorDeAccionesDePos>
+              <EstadoVisibleParaElHeader />
+              <Routes>
+                <Route
+                  path="/pos"
+                  element={<Pos cajaDeEscritorio={{ contexto: { empresa: 'E', puntoVenta: 'PV 1', cajero: 'c' }, encolarImpresion: vi.fn() }} />}
+                />
+              </Routes>
+            </ProveedorDeAccionesDePos>
+          </MemoryRouter>,
+        )
+
+        expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
+        await waitFor(() => expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true'))
+      }))
+
     it('la lista de clientes del servidor que llega tarde no pisa al cliente que el cajero eligió de la copia local', () =>
       comoPosDeEscritorio(async () => {
         await prepararAlmacenOffline({
@@ -7388,14 +7662,15 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
 
         renderPos()
         const selector = screen.getByLabelText('Cliente')
-        await userEvent.selectOptions(selector, await screen.findByRole('option', { name: '#30 — José Gómez' }))
-        expect(selector).toHaveValue('30')
+        await waitFor(() => expect(selector).toBeEnabled())
+        await elegirCliente('#30 — José Gómez')
+        expect(selector).toHaveValue('#30 — José Gómez')
 
         await act(async () => {
           resolverClientes({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
         })
 
-        expect(selector).toHaveValue('30')
+        expect(selector).toHaveValue('#30 — José Gómez')
       }))
 
     it('la recarga de clientes al volver la red no traba una búsqueda en vuelo ni pisa su resultado', () =>
@@ -7418,18 +7693,19 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         const sincronizar = await screen.findByRole('button', { name: 'Sincronizar ahora' })
         await waitFor(() => expect(cargasDeClientes).toBe(2))
 
-        await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
-        await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
-        await screen.findByRole('button', { name: 'Buscando…' })
+        await userEvent.click(screen.getByLabelText('Cliente'))
+        await userEvent.keyboard('perez')
+        await screen.findByText('Buscando…')
 
-        await userEvent.click(sincronizar)
+        // Sin foco de por medio: el selector sigue abierto, como cuando la red vuelve sola.
+        fireEvent.click(sincronizar)
         await waitFor(() => expect(cargasDeClientes).toBe(3))
+        await waitFor(() => expect(llamadasGet('/clientes?busqueda=')).toHaveLength(1))
 
         await act(async () => {
           resolverBusqueda({ items: [otroCliente], total: 1, pagina: 1, tamanio: 25 })
         })
         expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Buscar' })).toBeEnabled()
 
         await act(async () => {
           resolverRecarga({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
@@ -7508,6 +7784,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
         { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, disponible: true },
@@ -7584,7 +7861,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
 
   async function montar() {
     renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     return screen.getByLabelText('Código escaneado') as HTMLInputElement
   }
 
@@ -7631,9 +7908,9 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       await articuloEnElCarrito('Pancho')
       const filas = filasDelCarrito()
       expect(filas).toHaveLength(2)
-      expect(within(filas[0]).getByText('Coca Cola 1L')).toBeInTheDocument()
-      expect(within(filas[0]).getByDisplayValue('2')).toBeInTheDocument()
-      expect(within(filas[1]).getByText('Pancho')).toBeInTheDocument()
+      expect(within(filas[0]).getByText('Pancho')).toBeInTheDocument()
+      expect(within(filas[1]).getByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(within(filas[1]).getByDisplayValue('2')).toBeInTheDocument()
     })
 
     it('F4 abre el modal; F2 no abre el de artículos encima, y Escape lo cierra devolviendo el foco al código', async () => {
@@ -8256,9 +8533,9 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       const filas = filasDelCarrito()
       expect(filas).toHaveLength(3)
-      expect(within(filas[0]).getByText('Pancho')).toBeInTheDocument()
+      expect(within(filas[0]).getByText('Sprite 1L')).toBeInTheDocument()
       expect(within(filas[1]).getByText('Coca Cola 1L')).toBeInTheDocument()
-      expect(within(filas[2]).getByText('Sprite 1L')).toBeInTheDocument()
+      expect(within(filas[2]).getByText('Pancho')).toBeInTheDocument()
       expect(codigo).toHaveValue('')
       await waitFor(() => expect(codigo).toHaveFocus())
     })
@@ -8369,7 +8646,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
     async function montarConInstantanea(combos: InstantaneaDePos['combos'], articulos = articulosDeInstantanea()) {
       await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos, combos }) })
       renderPos()
-      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await esperarAlConsumidorFinal()
       await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
       return screen.getByLabelText('Código escaneado') as HTMLInputElement
     }
@@ -8540,7 +8817,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
             : undefined,
         )
         renderPos()
-        await screen.findByRole('option', { name: /Consumidor Final/ })
+        await esperarAlConsumidorFinal()
         await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
         return screen.getByLabelText('Código escaneado') as HTMLInputElement
       }
@@ -8598,6 +8875,325 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
 
       await articuloEnElCarrito('Pancho')
       expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('Pos — ergonomía del carrito', () => {
+  const filasDeLaTabla = () => within(screen.getByRole('table')).getAllByRole('row').slice(1)
+  const nombresEnPantalla = () => filasDeLaTabla().map((fila) => within(fila).getAllByRole('cell')[1].textContent)
+
+  async function escanearYEsperar(codigo: string, nombre: string, cantidadDeFilas: number) {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), codigo)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await waitFor(() => expect(screen.getAllByLabelText(/^Cantidad de /)).toHaveLength(cantidadDeFilas))
+    expect(screen.getAllByText(nombre, { selector: 'td' }).length).toBeGreaterThan(0)
+  }
+
+  function mockearDosArticulos() {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/articulos/escaneo?entrada=111')) return Promise.resolve(articuloEscaneadoFixture({ codigoBarra: '111' }))
+      if (ruta.startsWith('/articulos/escaneo?entrada=222')) {
+        return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 2, codigoInterno: 'A0002', nombre: 'Pancho', codigoBarra: '222' }))
+      }
+      return undefined
+    })
+  }
+
+  async function montarConDosLineas() {
+    mockearDosArticulos()
+    renderPos()
+    await esperarAlConsumidorFinal()
+    await escanearYEsperar('111', 'Coca Cola 1L', 1)
+    await escanearYEsperar('222', 'Pancho', 2)
+    return screen.getByLabelText('Código escaneado') as HTMLInputElement
+  }
+
+  const botonVaciar = () => screen.getByRole('button', { name: 'Vaciar carrito' })
+  const dialogoDeVaciado = () => screen.queryByRole('dialog', { name: 'Vaciar carrito' })
+
+  describe('orden de las líneas', () => {
+    it('la línea agregada más recientemente se muestra primera', async () => {
+      await montarConDosLineas()
+
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+    })
+
+    it('reescanear un artículo que ya tiene línea suma sobre ella sin moverla', async () => {
+      await montarConDosLineas()
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '111')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+      expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue(1)
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+    })
+
+    it('el pedido al servidor conserva el orden de agregado, no el de pantalla', async () => {
+      await montarConDosLineas()
+
+      await waitFor(() => {
+        const pedidos = apiPostMock.mock.calls.filter((llamada) => llamada[0] === RUTA_RESOLVER_DEL_CARRITO)
+        const ultimo = pedidos.at(-1)?.[1] as { lineas: { idArticulo: number }[] } | undefined
+        expect(ultimo?.lineas.map((l) => l.idArticulo)).toEqual([1, 2])
+      })
+    })
+
+    it('quitar la fila de arriba quita la última línea agregada y deja la anterior', async () => {
+      await montarConDosLineas()
+
+      await userEvent.click(within(filasDeLaTabla()[0]).getByRole('button', { name: 'Quitar' }))
+
+      await waitFor(() => expect(nombresEnPantalla()).toEqual(['Coca Cola 1L']))
+    })
+  })
+
+  describe('"Quitar"', () => {
+    it('es un botón de ícono con el nombre y el tooltip "Quitar", sin texto visible', async () => {
+      await montarConDosLineas()
+
+      const quitar = within(filasDeLaTabla()[0]).getByRole('button', { name: 'Quitar' })
+
+      expect(quitar).toHaveAttribute('title', 'Quitar')
+      expect(quitar).toHaveTextContent('')
+      expect(quitar.querySelector('svg')).not.toBeNull()
+    })
+
+    it('devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      await userEvent.click(within(filasDeLaTabla()[0]).getByRole('button', { name: 'Quitar' }))
+
+      await waitFor(() => expect(nombresEnPantalla()).toEqual(['Coca Cola 1L']))
+      expect(entrada).toHaveFocus()
+    })
+  })
+
+  describe('"Vaciar carrito"', () => {
+    it('muestra su atajo y comparte la variante de color de "Quitar"', async () => {
+      await montarConDosLineas()
+
+      const vaciar = botonVaciar()
+      const quitar = within(filasDeLaTabla()[0]).getByRole('button', { name: 'Quitar' })
+
+      expect(vaciar).toHaveTextContent('Vaciar carrito (F10)')
+      expect(vaciar).toHaveAttribute('aria-keyshortcuts', 'F10')
+      expect(vaciar.classList.contains('btn-outline-danger')).toBe(true)
+      expect(quitar.classList.contains('btn-outline-danger')).toBe(true)
+    })
+
+    it('el clic pide confirmación sin vaciar, con el foco en "No"', async () => {
+      await montarConDosLineas()
+
+      await userEvent.click(botonVaciar())
+
+      const dialogo = await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+      expect(within(dialogo).getByText('¿Está seguro que quiere vaciar el carrito?')).toBeInTheDocument()
+      expect(within(dialogo).getByRole('button', { name: 'No' })).toHaveFocus()
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+    })
+
+    it('"No" cierra sin vaciar y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      await userEvent.click(botonVaciar())
+
+      await userEvent.click(within(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).getByRole('button', { name: 'No' }))
+
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+      expect(entrada).toHaveFocus()
+    })
+
+    it('"Sí" vacía el carrito y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      await userEvent.click(botonVaciar())
+
+      await userEvent.click(within(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).getByRole('button', { name: 'Sí' }))
+
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+      expect(entrada).toHaveFocus()
+    })
+
+    it('Enter sobre "Sí" enfocado lo confirma y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      await userEvent.click(botonVaciar())
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      await userEvent.tab()
+      expect(screen.getByRole('button', { name: 'Sí' })).toHaveFocus()
+      await userEvent.keyboard('{Enter}')
+
+      expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(entrada).toHaveFocus()
+    })
+
+    it('F10 con líneas abre la confirmación y cancela el comportamiento por defecto del navegador', async () => {
+      await montarConDosLineas()
+
+      const noCancelado = fireEvent.keyDown(document, { key: 'F10' })
+
+      expect(noCancelado).toBe(false)
+      expect(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+    })
+
+    it('F10 con el carrito vacío cancela el comportamiento por defecto y no abre nada', async () => {
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
+
+      const noCancelado = fireEvent.keyDown(document, { key: 'F10' })
+
+      expect(noCancelado).toBe(false)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F10 cancela sin vaciar y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      fireEvent.keyDown(document, { key: 'F10' })
+
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+      expect(entrada).toHaveFocus()
+    })
+
+    it('con la confirmación abierta, un F10 repetido (tecla mantenida) no la cancela ni vacía el carrito', async () => {
+      await montarConDosLineas()
+      fireEvent.keyDown(document, { key: 'F10' })
+      const dialogo = await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      fireEvent.keyDown(document, { key: 'F10', repeat: true })
+
+      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBe(dialogo)
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+    })
+
+    it('con la confirmación abierta, Escape cancela sin vaciar y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      await userEvent.keyboard('{Escape}')
+
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
+      expect(entrada).toHaveFocus()
+    })
+
+    it('con la confirmación abierta, F9 no cobra ni abre el diálogo de cobro', async () => {
+      await armarVentaLista()
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      const noCancelado = fireEvent.keyDown(document, { key: 'F9' })
+
+      expect(noCancelado).toBe(false)
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+      expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(0)
+      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+    })
+
+    it('con la confirmación de cobro abierta, F10 solo la cancela: no abre la de vaciado', async () => {
+      await armarVentaLista()
+      fireEvent.keyDown(document, { key: 'F9' })
+      await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+      fireEvent.keyDown(document, { key: 'F10' })
+
+      expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F2 y F4 no abren un buscador encima', async () => {
+      await montarConDosLineas()
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      fireEvent.keyDown(document, { key: 'F2' })
+      fireEvent.keyDown(document, { key: 'F4' })
+
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+    })
+
+    describe('con un escaneo en vuelo', () => {
+      /** Deja una línea en el carrito y un segundo escaneo (`333`) colgado hasta que el test lo resuelva. */
+      async function montarConEscaneoColgado() {
+        let resolverEscaneo: (a: ArticuloEscaneado) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta.startsWith('/articulos/escaneo?entrada=111')) return Promise.resolve(articuloEscaneadoFixture({ codigoBarra: '111' }))
+          if (ruta.startsWith('/articulos/escaneo?entrada=333')) return new Promise<ArticuloEscaneado>((r) => (resolverEscaneo = r))
+          return undefined
+        })
+        renderPos()
+        await esperarAlConsumidorFinal()
+        await escanearYEsperar('111', 'Coca Cola 1L', 1)
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '333')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeDisabled())
+        return resolverEscaneo
+      }
+
+      it('el botón queda deshabilitado y F10 no abre la confirmación', async () => {
+        await montarConEscaneoColgado()
+
+        expect(botonVaciar()).toBeDisabled()
+        fireEvent.keyDown(document, { key: 'F10' })
+
+        expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      })
+
+      it('al terminar el escaneo se puede vaciar, con la línea nueva incluida', async () => {
+        const resolverEscaneo = await montarConEscaneoColgado()
+        await act(async () => {
+          resolverEscaneo(articuloEscaneadoFixture({ idArticulo: 3, codigoInterno: 'A0003', nombre: 'Sprite 1L', codigoBarra: '333' }))
+        })
+        await waitFor(() => expect(screen.getAllByLabelText(/^Cantidad de /)).toHaveLength(2))
+
+        await waitFor(() => expect(botonVaciar()).toBeEnabled())
+        fireEvent.keyDown(document, { key: 'F10' })
+
+        expect(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+      })
+    })
+
+    it('si arranca un escaneo con la confirmación abierta, la confirmación se cierra y el carrito queda como estaba', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo?entrada=111')) return Promise.resolve(articuloEscaneadoFixture({ codigoBarra: '111' }))
+        if (ruta.startsWith('/articulos/escaneo?entrada=333')) return new Promise<ArticuloEscaneado>(() => {})
+        return undefined
+      })
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await escanearYEsperar('111', 'Coca Cola 1L', 1)
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '333')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      await waitFor(() => expect(dialogoDeVaciado()).not.toBeInTheDocument())
+      expect(nombresEnPantalla()).toEqual(['Coca Cola 1L'])
+    })
+
+    it('con otro modal abierto (cuenta corriente), F10 no abre la confirmación de vaciado', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/clientes/2/cuenta-corriente') ? Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture()) : undefined))
+      renderPos()
+      await esperarAlConsumidorFinal()
+      await escanearYEsperar('7790001234567', 'Coca Cola 1L', 1)
+      await buscarYElegirCliente('perez', /Juan Pérez/)
+      await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+      await screen.findByRole('heading', { name: 'Cuenta corriente' })
+
+      fireEvent.keyDown(document, { key: 'F10' })
+
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
     })
   })
 })

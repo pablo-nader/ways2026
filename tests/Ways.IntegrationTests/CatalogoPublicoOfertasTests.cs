@@ -1,5 +1,8 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Ways.Application.Abstracciones;
 using Ways.Domain.Catalogos;
 
 namespace Ways.IntegrationTests;
@@ -36,7 +39,41 @@ public class CatalogoPublicoOfertasTests(WaysApiFixture fixture) : IClassFixture
             articulo.TryGetProperty("precioOriginal", out var original) ? original.GetDecimal() : null,
             articulo.TryGetProperty("oferta", out var oferta) ? oferta.GetString() : null);
 
-    private static DateOnly Hoy => DateOnly.FromDateTime(DateTime.Now);
+    private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    /// <summary>Un miércoles a la hora local pedida, el primero posterior a hoy: el servidor evalúa la ventana de las
+    /// ofertas con la zona local de la máquina (<c>TimeZoneInfo.Local</c>), así que el instante se arma con esa misma
+    /// zona y el resultado no depende de cuándo corre el test. Va hacia adelante para que los precios sembrados con el
+    /// reloj real ya estén vigentes.</summary>
+    private static DateTimeOffset MiercolesALas(int hora)
+    {
+        var dia = DateTime.Now.Date.AddDays(1);
+        while (dia.DayOfWeek != DayOfWeek.Wednesday)
+        {
+            dia = dia.AddDays(1);
+        }
+
+        var local = dia.AddHours(hora);
+
+        return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+    }
+
+    /// <summary>El catálogo de la tienda con el reloj del servidor clavado en <paramref name="instante"/>.</summary>
+    private async Task<JsonElement> CatalogoConRelojAsync(ApoyoDeCatalogoOnline.Tienda tienda, DateTimeOffset instante)
+    {
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddSingleton<IRelojDelSistema>(new RelojFijo(instante))));
+        using var cliente = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri($"http://{tienda.Host}"),
+            AllowAutoRedirect = false
+        });
+
+        return await ApoyoDeCatalogoOnline.CatalogoAsync(cliente);
+    }
 
     // ---- el contrato ------------------------------------------------------------------------------
 
@@ -217,19 +254,123 @@ public class CatalogoPublicoOfertasTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "04 sin categoría")));
     }
 
-    /// <summary>La ventana de fechas se evalúa con el reloj del servidor: ayer-ayer y mañana-mañana no aplican, hoy-hoy sí.</summary>
+    /// <summary>Cláusula: el alcance por grupo. Una oferta de grupo rebaja a los artículos de ese grupo y no a los de
+    /// otro grupo ni a los que no tienen. Mata la cláusula de grupo de la consulta de ofertas candidatas y el cableado
+    /// del grupo del artículo hacia el resolvedor.</summary>
+    [Fact]
+    public async Task UnaOfertaDeGrupoAlcanzaSoloALosArticulosDeEseGrupo()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("ofe-grupo");
+        var latas = await apoyo.SembrarGrupoAsync(tienda.IdTenant, "Latas");
+        var botellas = await apoyo.SembrarGrupoAsync(tienda.IdTenant, "Botellas");
+        await apoyo.SembrarVendibleAsync(tienda, "01 lata", 100m, idGrupo: latas);
+        await apoyo.SembrarVendibleAsync(tienda, "02 botella", 100m, idGrupo: botellas);
+        await apoyo.SembrarVendibleAsync(tienda, "03 sin grupo", 100m);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Todas las latas", idGrupo: latas, porcentaje: 20m);
+
+        var catalogo = await CatalogoAsync(tienda);
+
+        Assert.Equal((80m, 100m, "Todas las latas"), Precios(Articulo(catalogo, "01 lata")));
+        Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "02 botella")));
+        Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "03 sin grupo")));
+    }
+
+    /// <summary>Cláusula: el alcance por familia. Una oferta de familia rebaja a sus miembros y no a los de otra familia
+    /// ni a los que no tienen. Mata la cláusula de familia de la consulta y el cableado de la familia del artículo.</summary>
+    [Fact]
+    public async Task UnaOfertaDeFamiliaAlcanzaSoloALosMiembrosDeEsaFamilia()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("ofe-familia");
+        var remeras = await apoyo.SembrarFamiliaAsync(tienda.IdTenant, "Remeras");
+        var pantalones = await apoyo.SembrarFamiliaAsync(tienda.IdTenant, "Pantalones");
+        await apoyo.SembrarVendibleAsync(tienda, "01 remera roja", 100m, idFamilia: remeras);
+        await apoyo.SembrarVendibleAsync(tienda, "02 remera azul", 100m, idFamilia: remeras);
+        await apoyo.SembrarVendibleAsync(tienda, "03 pantalón", 100m, idFamilia: pantalones);
+        await apoyo.SembrarVendibleAsync(tienda, "04 sin familia", 100m);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Remeras de temporada", idFamilia: remeras, porcentaje: 30m);
+
+        var catalogo = await CatalogoAsync(tienda);
+
+        Assert.Equal((70m, 100m, "Remeras de temporada"), Precios(Articulo(catalogo, "01 remera roja")));
+        Assert.Equal((70m, 100m, "Remeras de temporada"), Precios(Articulo(catalogo, "02 remera azul")));
+        Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "03 pantalón")));
+        Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "04 sin familia")));
+    }
+
+    /// <summary>Cláusula: la ventana horaria, con la hora local del servidor y un reloj clavado en un miércoles a las 10 y
+    /// a las 15. Dos ofertas parten el día en mañana y tarde: aplica exactamente la que contiene la hora del reloj. Mata
+    /// una hora mal cableada al resolvedor (por ejemplo corrida 12 horas) o ignorada (aplicarían las dos).</summary>
+    [Fact]
+    public async Task LaVentanaHorariaDeLaOfertaSeEvaluaConLaHoraLocal()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("ofe-hora");
+        var deManana = await apoyo.SembrarVendibleAsync(tienda, "01 de la mañana", 100m);
+        var deTarde = await apoyo.SembrarVendibleAsync(tienda, "02 de la tarde", 100m);
+        await apoyo.SembrarOfertaAsync(
+            tienda.IdTenant, "Hasta el mediodía", idArticulo: deManana, porcentaje: 10m,
+            horaDesde: new TimeOnly(0, 0), horaHasta: new TimeOnly(11, 59, 59, 999));
+        await apoyo.SembrarOfertaAsync(
+            tienda.IdTenant, "Desde el mediodía", idArticulo: deTarde, porcentaje: 10m,
+            horaDesde: new TimeOnly(12, 0), horaHasta: new TimeOnly(23, 59, 59, 999));
+
+        var conOferta = (90m, 100m);
+        var sinOferta = (100m, (decimal?)null);
+
+        var porLaManana = await CatalogoConRelojAsync(tienda, MiercolesALas(10));
+        Assert.Equal(conOferta, PrecioYOriginal(Articulo(porLaManana, "01 de la mañana")));
+        Assert.Equal(sinOferta, PrecioYOriginal(Articulo(porLaManana, "02 de la tarde")));
+
+        var porLaTarde = await CatalogoConRelojAsync(tienda, MiercolesALas(15));
+        Assert.Equal(sinOferta, PrecioYOriginal(Articulo(porLaTarde, "01 de la mañana")));
+        Assert.Equal(conOferta, PrecioYOriginal(Articulo(porLaTarde, "02 de la tarde")));
+    }
+
+    private static (decimal Precio, decimal? Original) PrecioYOriginal(JsonElement articulo)
+    {
+        var (precio, original, _) = Precios(articulo);
+
+        return (precio, original);
+    }
+
+    /// <summary>Cláusula: los días de la semana (ISO, 1 = lunes … 7 = domingo), con un reloj clavado en un miércoles (3).
+    /// Aplica la oferta de hoy y la que incluye hoy entre otros; no la de otro día. Mata un día mal cableado (por ejemplo corrido uno) o ignorado.</summary>
+    [Fact]
+    public async Task LosDiasDeSemanaDeLaOfertaSeEvaluanConElDiaLocal()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("ofe-dias");
+        const short hoyIso = 3;
+        var otroDia = (short)(hoyIso % 7 + 1);
+        var otroMas = (short)(otroDia % 7 + 1);
+        var soloHoy = await apoyo.SembrarVendibleAsync(tienda, "01 solo hoy", 100m);
+        var otroDiaId = await apoyo.SembrarVendibleAsync(tienda, "02 otro día", 100m);
+        var variosDias = await apoyo.SembrarVendibleAsync(tienda, "03 varios días con hoy", 100m);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Solo hoy", idArticulo: soloHoy, porcentaje: 10m, diasSemana: [hoyIso]);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Otro día", idArticulo: otroDiaId, porcentaje: 10m, diasSemana: [otroDia]);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Varios", idArticulo: variosDias, porcentaje: 10m, diasSemana: [otroMas, hoyIso]);
+
+        var catalogo = await CatalogoConRelojAsync(tienda, MiercolesALas(10));
+
+        Assert.Equal((90m, 100m, "Solo hoy"), Precios(Articulo(catalogo, "01 solo hoy")));
+        Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "02 otro día")));
+        Assert.Equal((90m, 100m, "Varios"), Precios(Articulo(catalogo, "03 varios días con hoy")));
+    }
+
+    /// <summary>La ventana de fechas se evalúa con el reloj del servidor (clavado, así que "hoy" no cambia a mitad del
+    /// test): ayer-ayer y mañana-mañana no aplican, hoy-hoy sí.</summary>
     [Fact]
     public async Task LaVigenciaPorFechaSeRespeta()
     {
         var tienda = await apoyo.SembrarTiendaAsync("ofe-fechas");
+        var instante = MiercolesALas(10);
+        var hoy = DateOnly.FromDateTime(instante.DateTime);
         var vencida = await apoyo.SembrarVendibleAsync(tienda, "01 vencida", 100m);
         var futura = await apoyo.SembrarVendibleAsync(tienda, "02 futura", 100m);
         var deHoy = await apoyo.SembrarVendibleAsync(tienda, "03 de hoy", 100m);
-        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Vencida", idArticulo: vencida, fechaDesde: Hoy.AddDays(-5), fechaHasta: Hoy.AddDays(-1));
-        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Futura", idArticulo: futura, fechaDesde: Hoy.AddDays(1), fechaHasta: Hoy.AddDays(5));
-        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "De hoy", idArticulo: deHoy, fechaDesde: Hoy, fechaHasta: Hoy);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Vencida", idArticulo: vencida, fechaDesde: hoy.AddDays(-5), fechaHasta: hoy.AddDays(-1));
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Futura", idArticulo: futura, fechaDesde: hoy.AddDays(1), fechaHasta: hoy.AddDays(5));
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "De hoy", idArticulo: deHoy, fechaDesde: hoy, fechaHasta: hoy);
 
-        var catalogo = await CatalogoAsync(tienda);
+        var catalogo = await CatalogoConRelojAsync(tienda, instante);
 
         Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "01 vencida")));
         Assert.Equal((100m, null, null), Precios(Articulo(catalogo, "02 futura")));

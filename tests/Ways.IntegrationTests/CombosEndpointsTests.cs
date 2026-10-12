@@ -373,6 +373,39 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     }
 
     [Fact]
+    public async Task UnArticuloPorImporteComoComponenteDa400PorImporteYNoDejaCombo()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnArticuloPorImporteComoComponenteDa400PorImporteYNoDejaCombo));
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "fiambreria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false });
+        var unitario = await ArticuloAsync(e, "pan");
+
+        var respuesta = await PostAsync(e.Admin, Alta(null, [Art(porImporte), Art(unitario)]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(respuesta)).Codigo);
+        Assert.Empty(await ListarAsync(e.Admin));
+    }
+
+    [Fact]
+    public async Task UnaFamiliaConUnMiembroPorImporteDa400PorImportePeroNoSiEseMiembroEstaDadoDeBaja()
+    {
+        using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaConUnMiembroPorImporteDa400PorImportePeroNoSiEseMiembroEstaDadoDeBaja));
+        var familia = await apoyo.SembrarFamiliaAsync(e, "Rubros");
+        var porImporte = await apoyo.SembrarArticuloAsync(
+            e, "verduleria", ValoresBase(e) with { UnidadVenta = UnidadVenta.Importe, AcumulaEnVenta = false }, familia);
+        var unitario = await ArticuloAsync(e, "pan");
+
+        var rechazada = await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]));
+        Assert.Equal(HttpStatusCode.BadRequest, rechazada.StatusCode);
+        Assert.Equal("combo_componente_por_importe", (await ProblemaAsync(rechazada)).Codigo);
+
+        await apoyo.DarDeBajaAsync("articulos", "id_articulo", porImporte);
+
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(e.Admin, Alta(null, [Fam(familia), Art(unitario)]))).StatusCode);
+    }
+
+    [Fact]
     public async Task UnaFamiliaConUnMiembroPesableDa400NoUnitarioPeroNoSiEseMiembroEstaDadoDeBaja()
     {
         using var e = await apoyo.PrepararAsync(nameof(UnaFamiliaConUnMiembroPesableDa400NoUnitarioPeroNoSiEseMiembroEstaDadoDeBaja));

@@ -96,4 +96,9 @@ public class Articulo : EntidadTenant
     /// la misma transacción—, no el esquema (doc 10 §3, "Familias de artículos"). Salir de la familia es
     /// dejar este valor en <c>null</c>.</summary>
     public int? IdFamilia { get; set; }
+
+    /// <summary>Tecla de atajo del POS, o <c>null</c> si no tiene. Solo la admite un artículo vendido por
+    /// <see cref="UnidadVenta.Importe"/> y es única por tenant entre los artículos vivos. Es un campo propio del
+    /// artículo: no lo comparte la familia.</summary>
+    public TeclaAtajo? TeclaAtajo { get; set; }
 }

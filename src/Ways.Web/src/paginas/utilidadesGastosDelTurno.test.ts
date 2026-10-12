@@ -27,6 +27,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }
@@ -86,8 +87,8 @@ describe('formatearMoneda / formatearFechaHora', () => {
     expect(formatearMoneda(1234.5)).toBe('$ 1.234,50')
   })
 
-  it('formatea la fecha/hora en formato es-AR', () => {
-    expect(formatearFechaHora('2026-09-16T12:05:00Z')).toBe(new Date('2026-09-16T12:05:00Z').toLocaleString('es-AR'))
+  it('formatea la fecha/hora en formato es-AR de 24 horas', () => {
+    expect(formatearFechaHora(new Date(2026, 8, 16, 16, 5).toISOString())).toBe('16/9/2026, 16:05:00')
   })
 })
 

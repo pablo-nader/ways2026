@@ -68,7 +68,8 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 10,
     codigoInterno: 'ART-10',

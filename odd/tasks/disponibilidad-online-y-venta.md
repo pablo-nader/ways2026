@@ -59,6 +59,13 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   is the combo's fixed price. The storefront cart gets a `combo` line type; the checkout
   (later) re-detects combos server-side with `CombosEnVenta`.
 
+- The shared engines (`ServicioDeOfertas.ConstruirContextoAsync`, `ServicioDeCombos.CargarCandidatosParaVentaAsync`) do
+  not filter `disponible_online`. The future `pedidos-online` checkout MUST price with online-only offers and combos (a
+  parameter or a dedicated context), otherwise the charged price can differ from the storefront.
+- A return of an internal-use article (`disponible_venta = false`) is exempt from the sale rule in `EmitirAsync`, so the
+  back office can find the article with `incluirNoVendibles=true` on `/escaneo` and on the sale search. The POS snapshot
+  stays exclusive: an offline return of an internal-use article is not possible on the device and needs the back office.
+
 ## Tasks
 
 - [x] **T1 — Backend: flags, policies, POS and sale enforcement, public offers and combos.**
@@ -68,7 +75,8 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   - Domain/DTOs: `Articulo.DisponibleOnline`/`DisponibleVenta`, `Oferta.DisponibleOnline`,
     `Combo.DisponibleOnline`; listing/grid/detail DTOs rename `publicadoWeb` → `disponibleOnline`
     and add `disponibleVenta`; `OfertaListado`/`AltaOferta`/`EdicionOferta` and the combo
-    contracts carry `disponibleOnline` (default true when omitted on create; required on edit).
+    contracts carry `disponibleOnline` (default true when omitted on create; optional on edit,
+    omitted = unchanged, since judgment-day round 1).
   - Admin: `PUT /api/articulos/{id}/disponibilidad { disponibleVenta, disponibleOnline }` replaces
     `PUT .../web` (same discipline: 404-first, no-retry, lock, idempotent); offers and combos
     save the flag through their existing POST/PUT.
@@ -84,11 +92,16 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
     rls-migration-backfills; offer applied/not applied by flag, list targeting incl. derived
     list; combo listed/excluded by each rule; POS snapshot and `EmitirAsync` with a non-sellable
     article; admin round-trips), structural guards.
-- [ ] **T2 — Web admin.** Delegated. PR 12.
-  - Article form: section "Disponibilidad" with two switches (own write), grid badges ("No se
+- [x] **T2 — Web admin.** Delegated. PR 12. Commits `804e57a2` (articles and selling screens),
+  `fd368023` (offers and combos); the doc commit that records this closes the task.
+  - Article form: section "Venta y tienda online" (not "Disponibilidad": the form already has an
+    empresas section with that title) with two switches (own write), grid badges ("No se
     vende", "Online") and the existing image block; offers modal and grid: checkbox and column
     "Online"; combos modal and grid: the same.
+  - Selling pickers (POS search modal, presupuesto and remito line search) send `soloVendibles=true`;
+    409 `articulo_no_vendible` has its own copy in the POS charge, presupuesto and remito saves.
 - [x] **T3 — Web storefront and landing.** Delegated. PR 13. Commit `9ff3e9c5` (code and tests); the doc commit that records this closes the task.
+
   - Cards show the offer price with the original struck through and an "Oferta" tag; combos
     section in `/online` ("Combos") with cards listing components and "Agregar" creating a
     `combo` cart line (integer quantity, fixed price, components shown in the panel); cart
@@ -142,7 +155,7 @@ Mutation evidence (mutate, run the named class, revert; every row went red in th
 | presupuesto / remito without the rule | `ArticulosNoVendiblesTests.UnPresupuestoYUnRemito...` |
 | disponibilidad: no row lock / validation before 404 / writes when unchanged / ignores either flag / retrying strategy | `CatalogoOnlineAdminTests` (`...PierdeContraLaBaja...`, `...Da404AntesQueLaValidacion...`, `PedirLaMismaDisponibilidad...`, `CambiarLaDisponibilidad...`, `UnaFallaTransitoria...`) |
 | article DTOs with the two flags swapped in the detail, the list and the grid (three runs) | `CatalogoOnlineAdminTests.CambiarLaDisponibilidad...` |
-| ofertas / combos: create ignores the flag, edit does not persist it, list does not report it, edit accepts a missing flag, 400 before 404 | `OfertasYCombosDisponibleOnlineTests` |
+| ofertas / combos: create ignores the flag, edit does not persist it, list does not report it (the round-0 mutants "edit accepts a missing flag" and "400 before 404" no longer exist: see round 1, L1) | `OfertasYCombosDisponibleOnlineTests` |
 
 Survivor, explained: `ServicioDeArticulos.ListarAsync(soloVendibles = true)` as the DEFAULT of the parameter. The only HTTP caller
 passes the query value explicitly (`soloVendibles ?? false`), so the mutant is unobservable through the API; the other caller
@@ -151,6 +164,69 @@ passes the query value explicitly (`soloVendibles ?? false`), so the mutant is u
 Dead clauses removed instead of shipped: two guards in the public queries were redundant with a neighbour (the
 `PrecioFinal < PrecioOriginal` test next to "first applied offer that discounts" and the `IdFamilia == null` test next to
 "the component has an article that is in the dictionary"); the mutation run showed the survivors and they were deleted.
+
+### Judgment-day round 1 fixes (L1-L8)
+
+Route: delegated fix actor (one). Commits: `d5c526f4` (L1 to L3), and the second commit of this round (L4 to L8 plus docs).
+
+- L1: `PUT` of offers and combos with `disponibleOnline` omitted keeps the stored value, `disponible_online_requerido` removed from
+  both services. Tests `OfertasYCombosDisponibleOnlineTests` (stored `false` and stored `true` both kept, the rest of the body
+  applied, 404 for a missing or soft-deleted id; the raw-JSON combo PUT is 200 and keeps `true`).
+- L2: `incluirNoVendibles` on `/escaneo` (both branches, `activo` still required) and on the sale search. Tests in
+  `ArticulosNoVendiblesTests`.
+- L3: the rule at presupuesto conversion and remito emission (the remito invoicing part was reverted in round 2, see below).
+  Tests `ConvertirUnPresupuestoViejo...`, `EmitirUnRemitoViejo...`, each with the control that sells again once the article is sellable.
+- L4: `ConsultaDeCombosPublicos` excludes a combo that does not save; the shared price path is
+  `ConsultaDeCatalogoPublico.PreciosFinalesAsync`. Tests `UnComboSoloFiguraSiCobraMenosQue...` and
+  `ConUnaListaDerivadaElAhorroSeMideContraElPrecioDerivado`; the existing combo fixtures that did not save were repriced.
+- L5: `ComboPublico.Codigo` removed; the exact-shape assertion of the endpoint JSON no longer lists `codigo`.
+- L6: `CatalogoPublicoOfertasTests` for the `grupo` and `familia` scopes, the hour window and the weekday (the seed helper grew
+  `idGrupo`, `idFamilia`, `horaDesde`, `horaHasta`, `diasSemana`). The hour and weekday tests derive their expectation from the
+  local clock (the morning/afternoon pair always has exactly one winner); round 2 replaced that with a fixed server clock.
+- L7: `LectorDeCatalogoPublico` decides "no search" with `ConsultaDeCatalogoPublico.Normalizar` (now public); `?buscar=%01` and
+  `?buscar=%01%02%20` carry the combos like an unfiltered page.
+- L8: the constraint about the shared engines was added to Constraints.
+
+Mutation evidence (mutate, run the named class, revert; every row red in the named test, green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| offer PUT `?? stored` replaced by `?? true` / `?? false` | `OfertasYCombosDisponibleOnlineTests.EditarUnaOfertaSinDisponibleOnlineConserva...` (both runs) |
+| combo PUT `?? stored` replaced by `?? true` / `?? false` | `...EditarUnComboSinDisponibleOnlineConserva...` (and, for `false`, `SinElCampo...ElJsonCrudo...`) |
+| `/escaneo` without `incluirNoVendibles` in the internal-code branch / in the barcode branch / ignoring `activo` | `ArticulosNoVendiblesTests.ElEscaneoConIncluirNoVendibles...` (three runs) |
+| sale search without the `incluirNoVendibles` override / `/escaneo` endpoint ignoring the parameter | `...LaBusquedaConIncluirNoVendibles...` / `...ElEscaneoConIncluirNoVendiblesResuelve...` |
+| conversion exempt again from the rule | `...ConvertirUnPresupuestoViejo...` |
+| rule also applied to offline sales (`NumeroPreasignado`) | `...LaVentaOfflineYaCobradaSeAcepta...` (pre-existing test) |
+| remito emission without the rule | `...EmitirUnRemitoViejo...` (the invoicing half of this row was superseded in round 2) |
+| combo saving test `<=` / no peso rounding / no component quantity / filter removed / offers ignored / derived list ignored (six runs) | `CombosPublicosTests.UnComboSoloFiguraSiCobraMenos...`, `...ConUnaListaDerivadaElAhorro...`, `ElCatalogoYElEndpointDanLosMismosCombos` |
+| lector with `IsNullOrWhiteSpace` | `CombosPublicosTests.ElCatalogoLlevaLosCombosSoloEnLaPrimeraPaginaSinFiltros` |
+| offers: no `grupo` clause / group not wired / no `familia` clause / family not wired / hour shifted 12 h / weekday shifted one (six runs) | `CatalogoPublicoOfertasTests.UnaOfertaDeGrupo...`, `...UnaOfertaDeFamilia...`, `...LaVentanaHoraria...`, `...LosDiasDeSemana...` |
+
+L5 has no separate mutant: the field is removed from the record, and the exact-shape assertion over the endpoint JSON is the guard.
+
+### Judgment-day round 2 fixes (informational)
+
+- R2-1: `ServicioDeFacturacionDeRemitos.FacturarAsync` no longer applies `ReglaDeArticuloVendible` (and its now unused `using` and
+  article read are gone): the goods of an emitted remito already left, so settling it must not be blocked by a later flag change.
+  The rule stays on remito emission, presupuesto conversion and sales. The test `FacturarUnRemitoConUnArticuloQueYaNoSeVendeDa409`
+  became `FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible` (201, remito `facturado` and linked).
+  docs/10 updated.
+- R2-2: `ComboPublico.Precio` is now `RedondeoDePeso.APesoEntero(combo.Precio)`, the price the sale engine charges and the one the
+  savings test already used; documented in the record, the query and docs/10. `UnComboSoloFiguraSiCobraMenos...` asserts the listed
+  prices (`[150, 199, 199, 350, 140]`, the 199.4 combo lists 199).
+- R2-3: the clock-dependent offer tests (hour window, weekday, date window) no longer read `DateTime.Now` for the expectation. The
+  fixture supports a per-test clock (`WithWebHostBuilder` replacing `IRelojDelSistema`, the pattern of `ServicioDePresupuestosTests`),
+  so they run with a server clock fixed on the first Wednesday after today at 10:00 local (and 15:00 for the hour window), built
+  with `TimeZoneInfo.Local` because the offer resolver converts with it. The date is forward so prices seeded with the real clock
+  are already in force; only the weekday and hour matter to the assertions.
+
+Mutation evidence (round 2; mutate, run the named test, revert; each red, green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| rule re-added to the invoicing of remitos | `ArticulosNoVendiblesTests.FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible` |
+| combo projection returns the raw `Precio` | `CombosPublicosTests.UnComboSoloFiguraSiCobraMenosQueSusComponentesAlPrecioDeLaTienda` |
+| hour window shifted 12 h / weekday shifted one (fixed clock) | `CatalogoPublicoOfertasTests.LaVentanaHorariaDeLaOfertaSeEvaluaConLaHoraLocal` / `...LosDiasDeSemanaDeLaOfertaSeEvaluanConElDiaLocal` |
 
 ### Deviations from the brief
 
@@ -162,17 +238,22 @@ Dead clauses removed instead of shipped: two guards in the public queries were r
    articles (one published, two with the old default, one soft-deleted), migrates to HEAD and asserts every row has both flags
    `true`, the old column and index are gone, the four new policies exist, and `ways_app` in public mode now sees the three live
    rows (it saw one before). Mutation-proven above.
-2. **`EdicionOferta.DisponibleOnline` and `EdicionCombo.DisponibleOnline` are `bool?`** (the precedent of `EdicionCombo.Activo`) so
-   a missing JSON key is a `400 disponible_online_requerido` raised after the 404, instead of silently reading as `false` and
-   taking the offer or combo off the storefront. Consequence: every client that PUTs an offer or a combo must send the field;
-   the web (T2) has to, and an old web talking to this backend gets 400 on offer/combo edits until T2 lands. The other
-   existing PUT-body tests were adapted.
+2. **`EdicionOferta.DisponibleOnline` and `EdicionCombo.DisponibleOnline` are `bool?` and OPTIONAL on edit** (judgment-day L1).
+   The first version made them required (`400 disponible_online_requerido`), which broke every client that PUTs an offer or a
+   combo without the field (the deployed web until T2 lands). Now a missing JSON key keeps the stored value (the service reads
+   `datos.DisponibleOnline ?? stored`, under the row lock, from the single locked read) and a present one is applied; the
+   precedent is `EdicionCombo.Activo`'s nullability, minus the 400. The code `disponible_online_requerido` is gone from offers
+   and combos (it remains only on `PUT /api/articulos/{id}/disponibilidad`, a new endpoint where both flags are required).
+   T2 may still always send the field.
 3. **The sale rule is shared by three documents, not only `EmitirAsync`.** They do not share a line-validation helper, so
    `ReglaDeArticuloVendible.Exigir` (pure, `Ways.Domain.Articulos`) is called from `ServicioDeVentas.EmitirAsync`, from
    `ServicioDePresupuestos.ResolverYMaterializarAsync` and from `ServicioDeRemitos.ResolverYMaterializarAsync` (create/edit of
-   the draft). In `EmitirAsync` it sits under the same condition as the unit-of-sale quantity rule: not for a sale a device
-   already charged offline (`NumeroPreasignado`), not for a conversion from a presupuesto, not for returns (negative sign).
-   Remito emission and invoicing a remito do not re-check (the lines were validated when the draft was saved).
+   the draft). Judgment-day L3 closed the old-draft bypass: the rule is exercised again when the document is concretized,
+   in `EmitirAsync` when a presupuesto is converted (`IdPresupuestoOrigen`) and in `ServicioDeRemitos.EmitirAsync`
+   (round 2 removed the third site, `ServicioDeFacturacionDeRemitos.FacturarAsync`: invoicing an already-emitted remito
+   settles goods that already left, it is not a new sale). In `EmitirAsync` the rule is exempt only for a sale a device already charged
+   offline (`NumeroPreasignado`) and for returns (negative sign); the quantity-by-unit rule keeps its three exemptions. The 409
+   message names the article (name and internal code).
 4. **The sale search is `GET /api/articulos?soloVendibles=true`** (new optional parameter of the generic listing, the one
    `ModalDeBusquedaDeArticulos` uses for the POS). Until T2/T3 send it, the POS search still lists internal-use articles; the sale
    itself is rejected by the 409 either way, the snapshot and `/escaneo` already exclude them.
@@ -193,7 +274,7 @@ Dead clauses removed instead of shipped: two guards in the public queries were r
 Renamed or removed:
 - `PUT /api/articulos/{id}/web { publicado }` is GONE; use `PUT /api/articulos/{id}/disponibilidad { disponibleVenta, disponibleOnline }`
   (both required, response `{ idArticulo, disponibleVenta, disponibleOnline }`; `400 disponible_venta_requerido` /
-  `400 disponible_online_requerido`).
+  `400 disponible_online_requerido`; this is the only place the latter code survives).
 - Article DTOs (`ArticuloListado` in list, detail, create and edit responses; `ArticuloGrillaFila` in the grid): `publicadoWeb` is
   now `disponibleOnline` (default `true`) and there is a new `disponibleVenta` (default `true`). The create (`AltaArticulo`) and
   edit (`EdicionArticulo`) bodies do NOT carry them: they are written only by the `/disponibilidad` endpoint.
@@ -202,20 +283,103 @@ Renamed or removed:
 
 Added:
 - `OfertaListado.disponibleOnline`, `AltaOferta.disponibleOnline` (optional, default `true`), `EdicionOferta.disponibleOnline`
-  (REQUIRED, `400 disponible_online_requerido`).
+  (OPTIONAL: omitted = unchanged; T2 may always send it).
 - `ComboListado.disponibleOnline`, `AltaCombo.disponibleOnline` (optional, default `true`), `EdicionCombo.disponibleOnline`
-  (REQUIRED, `400 disponible_online_requerido`).
+  (OPTIONAL: omitted = unchanged; T2 may always send it).
 - `GET /api/articulos?soloVendibles=true` (the POS search should send it; purchases and the back-office must not).
-- `409 articulo_no_vendible` from `POST /api/ventas`, `POST/PUT /api/presupuestos` and `POST/PUT /api/remitos`.
+- `incluirNoVendibles=true` (optional) on `GET /api/articulos/escaneo` and on `GET /api/articulos?soloVendibles=true`: returns the
+  internal-use article anyway (returns/notas de crédito from the back office; still requires `activo`). The POS snapshot stays
+  exclusive: an offline return of an internal-use article is not possible on the device and needs the back office.
+- `409 articulo_no_vendible` from `POST /api/ventas` (also when converting a presupuesto), `POST/PUT /api/presupuestos`,
+  `POST/PUT /api/remitos`, `POST /api/remitos/{id}/emitir` and `POST /api/remitos/facturacion`.
 - `GET /api/publico/catalogo`: articles gain optional `precioOriginal` (decimal) and `oferta` (string), both ABSENT (not `null`)
   when no offer lowers the price; `precio` is the final price. The response gains `combos` (always present, `[]` unless the request is
   `pagina = 1` with no `buscar` and no `idCategoria`).
 - `GET /api/publico/combos` (anonymous, `Cache-Control: public, max-age=60`, `404 vitrina_no_publicada`):
-  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. The public combo has no
-  `codigo`: the backend fix branch (judgment-day amendment) removes it, and the web never reads it. A combo has no
-  image of its own: use `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components.
+  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. There is NO `codigo`
+  (it is the POS shortcut: T3 must not show "C<codigo>"). A combo has no image of its own: use
+  `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components. Only combos that save are listed: the
+  combo's price rounded to the peso must be strictly lower than the sum of its components' storefront prices (list price with the
+  available online offer, quantity 1) times their quantity, mirroring `ResolvedorDeCombos` (`cobro >= costo con ofertas` is never
+  applied). Small known divergence: the engine prices offers with the real cart quantity, the storefront at quantity 1.
 - The storefront never sees articles with `disponible_venta = false`, so a `combo` cart line must reference only listed combos;
   the checkout (later) re-detects combos server-side.
+
+### T2
+
+Route: delegated writer (one), no inline source edits by the parent.
+
+- `npx tsc -b`: red first (renamed DTO fields), then exit 0 on the final tree.
+- `npx oxlint`: exit 0, 17 warnings, all the baseline `only-export-components` / `exhaustive-deps` ones; none in a new file.
+- `npx vitest run`, whole suite: 210 files, 5930 tests passed on the final tree (runs 1 and 3 green; runs 2 and 4 each had one
+  load-induced timeout, 2nd run unidentified, 4th run `NuevaFamilia.test.tsx > con más de 100 artículos…` at its 5 s limit; that
+  test takes 2.1 s alone, passes alone, and its only change here is the two renamed fixture fields).
+
+Mutation evidence (mutate, run the named files, revert; every row went red in the named test and green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| venta switch sends `disponibleOnline: true` instead of the current value | `SeccionDeDisponibilidad.test.tsx` "el interruptor de la venta escribe con su propio PUT…" and "dos escrituras seguidas arrastran lo que dejó la anterior" |
+| online switch sends `disponibleVenta: true` instead of the current value | same file, "el interruptor online escribe con su propio PUT…" |
+| role gate reduced to `usuario === null` | `SeccionDeDisponibilidad.test.tsx` (vendedor, supervisor, root) and `Articulos.test.tsx` "quien no administra el catálogo no ve la sección" |
+| `formularioOfertaVacio` with `disponibleOnline: false` | `ofertas.test.ts` (defaults, `aAltaOferta`) and `Ofertas.test.tsx` (checked on create, POST body) |
+| `formularioComboVacio` with `disponibleOnline: false` | `combosAbm.test.ts` "formularioComboVacio" and `Combos.test.tsx` (checked on create, POST body, ambiguous-create reconciliation) |
+| POS search modal without `soloVendibles` | `ModalDeBusquedaDeArticulos.test.tsx` "la búsqueda pide soloVendibles=true" |
+| presupuesto / remito line search without `soloVendibles` (two runs) | `Presupuesto.test.tsx` / `Remito.test.tsx` "el buscador de la línea pide soloVendibles=true" |
+| grid "Online" badge without the `disponibleVenta` condition | `GrillaDeArticulos.test.tsx` "la columna Disponibilidad marca…" |
+
+Decisions and deviations:
+
+1. The section is titled "Venta y tienda online", not "Disponibilidad": `FormularioArticulo.tsx` already renders a "Disponibilidad"
+   heading for the empresas the article is available in. The grid column is still "Disponibilidad".
+2. `SeccionDeTiendaOnline` was renamed to `SeccionDeDisponibilidad` (git rename, test included); its two switches share one error
+   slot, one re-entrancy ref and one inert window with the image writes. The PUT always carries the changed value and the other
+   switch as shown on screen.
+3. The 409 `articulo_no_vendible` copy is the server message (it names the article by internal code, not by name) plus "Sacalo para
+   poder continuar."; wired into the POS charge, and the presupuesto and remito draft saves (`api/articuloNoVendible.ts`). Emitting
+   or invoicing a remito does not re-check on the server, so there is nothing to map there.
+4. `clienteDeArticulos.listar` gained an optional fourth parameter `{ soloVendibles }`; purchases, stock, transfers, families and the
+   offer and family pickers do not send it. The combo component picker first was left alone on purpose, but judgment-day found
+   that an internal-use article could then be added as a component; it now sends `soloVendibles=true` (see "Judgment-day
+   adjustments").
+5. `AltaOferta`/`EdicionOferta`/`AltaCombo`/`EdicionCombo` carry `disponibleOnline: boolean` as required on the web (the form always
+   sends it); `comboCoincideConAlta` now also compares it, so the ambiguous-create reconciliation cannot match a combo created with
+   the other value.
+6. Two commits instead of one: articles plus selling screens (`804e57a2`), offers plus combos (`fd368023`); the shared files
+   (`tipos.ts`, `Pos.test.tsx`) were split by hunk. Only the final tree was type-checked and tested; the first commit alone was not
+   built in isolation.
+
+#### Judgment-day adjustments (commit on `pnader/disponibilidad-web-admin-ajustes`)
+
+Informational findings of the judgment-day round, applied with no other change:
+
+1. Combo component picker (`SelectorDeArticuloDeCombo.tsx`) sends `soloVendibles=true`; offer and family pickers untouched.
+   Test: `Combos.test.tsx` "el buscador de componentes pide soloVendibles=true".
+2. `SeccionDeDisponibilidad.tsx`: the toggled switch is disabled during its write and loses focus in real browsers, so
+   after the write settles (success or failure) focus returns to that same switch (`react-async-state` rule 12). Tests for both
+   switches and both outcomes; jsdom has no focus fix-up, so they move focus away explicitly inside `act`.
+3. The "Online" badge (articles grid) and the "Online" column (offers, combos) require the row to be active as well. Tests with an
+   inactive row in the three screens.
+4. The failure alert of the switches has an id (`art-disponibilidad-error`) referenced by the `aria-describedby` of the switch
+   that failed, next to its help text id, like the image error. Tests for both switches and for the association being dropped on
+   the next action.
+5. Prose: the section is "Venta y tienda online" in `FormularioArticulo.tsx` and `api/catalogoWeb.ts` comments; the comments in
+   `api/tipos.ts`, `api/ofertas.ts` and `api/combosAbm.ts` no longer call `disponibleOnline` mandatory on edit (the server
+   treats an omitted field as "unchanged"; the web always sends it). The `disponible_online_requerido` copy entries stay,
+   with a comment saying they are defensive and currently unreachable.
+
+Mutation evidence (mutate, run the four affected files, revert; each went red in the named test):
+
+| Clause mutated | Killed by |
+|---|---|
+| combo picker `listar` without `soloVendibles` | `Combos.test.tsx` "el buscador de componentes pide soloVendibles=true" |
+| grid "Online" badge without `a.activo` | `GrillaDeArticulos.test.tsx` "la columna Disponibilidad marca…" (inactive row) |
+| combos "Online" column without `combo.activo` | `Combos.test.tsx` "la columna "Online" dice Sí solo si el combo está disponible online y activo" |
+| offers "Online" column without `o.activo` | `Ofertas.test.tsx` "la grilla muestra la columna "Online" con Sí solo si la oferta está disponible online y activa" |
+| switch focus restore removed (`destino?.focus()`) | `SeccionDeDisponibilidad.test.tsx` "el interruptor … recupera el foco…" (the four variants) |
+
+Verification on the adjusted tree: `npx tsc -b` exit 0; `npx oxlint` 0 errors, 17 warnings (baseline); `npx vitest run
+src/paginas src/api src/componentes` 153 files, 4562 tests passed; whole suite 210 files, 5939 tests passed.
 
 ### Full integration run
 
@@ -276,10 +440,25 @@ Decisions:
   → six `Combos.test` tests; generation gate removed → `Combos.test` stale response; announcement removed → three `Combos.test` tests;
   badge counting every line → two `Combos.test` tests; `max-width` removed → `estilosDeLaTienda.test`; spaces removed → `Ofertas.test` (2).
 
+### Merge with main (commit `72acfd46`)
+
+`origin/main` (e1e113f0) landed `tecla_atajo` and unidad de venta por importe on `articulos` while this
+feature replaced `publicado_web`. Five files conflicted (`Articulos/Contratos.cs`, `ServicioDeArticulos.cs`,
+`ValoresCompartidosDeFamiliaTests.cs`, the model snapshot and docs/10); each resolution keeps both sides:
+`DisponibleOnline`/`DisponibleVenta` replace `PublicadoWeb`, `TeclaAtajo` is added after them. The five
+boolean `Assert.Equal` in `OfertasYCombosDisponibleOnlineTests` became `Assert.True/False` (xUnit2004).
+Verification on the merged tree (one verifier, sequential): `dotnet build Ways.slnx` 0 errors (6 baseline
+warnings in IntegrationTests); `Ways.Api -warnaserror` clean; Domain 1429, Application 871; IntegrationTests
+filter (Articulos, Disponibilidad, TeclaAtajo, Importe, Familia, CatalogoPublico, CombosPublicos, Vitrina,
+Ofertas, Combos, Instantanea) 1196 passed in 10 m 35 s; web `tsc -b`, `oxlint` (22 baseline warnings),
+`vitest run` 216 files / 6097 tests, `vite build` ok. Parent spot check: Domain 1429 passed.
+
 ## Delivery slices
 
-- PR 11: T1 (stacked on #403). PR 12: T2. PR 13: T3.
+- PR 11: T1 + T2, against main (#403 already merged). PR 12: T3, stacked on PR 11.
 
 ## Next step
 
-T2 (web admin), stacked on T1; T3 is ready for its judgment-day round. T1 is merged after the judgment-day round the owner's protocol requires.
+T1 and T2 shipped together in PR #417 against main (the backend renames contracts the deployed web
+uses, so they cannot be split without a broken window); T3 (storefront and landing) is stacked on it and
+retargets to main when #417 merges. Both PRs merge after a clean judgment-day round.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import {
@@ -26,9 +27,10 @@ import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 import { useUnidadesDeVentaDeLineas } from './useUnidadesDeVentaDeLineas'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearFechaHora(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('es-AR') : '—'
+  return iso ? fechaHoraATexto(iso) : '—'
 }
 
 function formatearMoneda(valor: number): string {
@@ -67,7 +69,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
 
     const temporizador = setTimeout(() => {
       clienteDeArticulos
-        .listar(termino, false)
+        .listar(termino, false, undefined, { soloVendibles: true })
         .then((pagina) => {
           if (!vigente || generacionRef.current !== miGeneracion) return
           setResultados(pagina.items)
@@ -333,7 +335,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
     } catch (e) {
       guardandoRef.current = false
       setGuardando(false)
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.')
+      setError(copiaDeArticuloNoVendible(e) ?? (e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.'))
     }
   }
 

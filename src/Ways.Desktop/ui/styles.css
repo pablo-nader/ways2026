@@ -1,6 +1,6 @@
 :root {
-  color-scheme: light;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+  font-family: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
 }
 
 body {
@@ -9,16 +9,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f2f4f7;
-  color: #1f2933;
+  background: #121214;
+  color: #e8e8ea;
 }
 
 .tarjeta {
   width: 100%;
   max-width: 30rem;
-  background: #ffffff;
+  background: #1a1a1d;
+  border: 1px solid #2e2e33;
   border-radius: 0.75rem;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
   padding: 2rem 2.25rem;
   box-sizing: border-box;
 }
@@ -30,7 +31,7 @@ h1 {
 
 .subtitulo {
   margin: 0 0 1.5rem;
-  color: #52606d;
+  color: #a9a9af;
   font-size: 0.92rem;
 }
 
@@ -45,22 +46,25 @@ input,
 select {
   width: 100%;
   padding: 0.55rem 0.65rem;
-  border: 1px solid #cbd2d9;
-  border-radius: 0.4rem;
+  border: 1px solid #2e2e33;
+  border-radius: 0.5rem;
+  background: #222226;
+  color: #e8e8ea;
   font-size: 0.95rem;
   box-sizing: border-box;
 }
 
 input:focus,
 select:focus {
-  outline: 2px solid #2f6fed;
-  outline-offset: 1px;
+  outline: none;
+  border-color: #f7941d;
+  box-shadow: 0 0 0 0.25rem rgba(247, 148, 29, 0.25);
 }
 
 .ayuda {
   margin: 0.3rem 0 0;
   font-size: 0.78rem;
-  color: #7b8794;
+  color: #a9a9af;
 }
 
 .acciones {
@@ -72,28 +76,31 @@ select:focus {
 
 button {
   border: none;
-  border-radius: 0.4rem;
+  border-radius: 0.5rem;
   padding: 0.6rem 1.1rem;
+  font-family: inherit;
   font-size: 0.9rem;
   cursor: pointer;
 }
 
 button#boton-guardar {
-  background: #2f6fed;
-  color: #fff;
+  background: #f7941d;
+  color: #1d1d1f;
+  font-weight: 600;
 }
 
 button#boton-guardar:hover {
-  background: #2559c7;
+  background: #ffa83a;
 }
 
 button.secundario {
-  background: #eef1f5;
-  color: #1f2933;
+  background: #222226;
+  border: 1px solid #2e2e33;
+  color: #e8e8ea;
 }
 
 button.secundario:hover {
-  background: #e1e6ec;
+  background: #2e2e33;
 }
 
 button:disabled {
@@ -108,16 +115,30 @@ button:disabled {
 }
 
 .mensaje.error {
-  color: #c0392b;
+  color: #ff8a80;
 }
 
 .mensaje.ok {
-  color: #1e824c;
+  color: #6fcf97;
 }
 
 .pie {
   margin-top: 1.5rem;
   font-size: 0.72rem;
-  color: #9aa5b1;
+  color: #8b8b92;
   text-align: right;
+}
+
+button:focus-visible {
+  outline: 2px solid #f7941d;
+  outline-offset: 2px;
+}
+
+select option {
+  background: #222226;
+  color: #e8e8ea;
+}
+
+code {
+  color: #f9ab4a;
 }

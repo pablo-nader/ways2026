@@ -38,7 +38,8 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     // ---- el contrato ------------------------------------------------------------------------------
 
     /// <summary>Dos combos con valores distintos en cada campo y en cada componente (dos campos intercambiados no
-    /// pasan), ordenados por nombre aunque se hayan sembrado al revés; la cabecera de caché; que no viaja nada más.</summary>
+    /// pasan), ordenados por nombre aunque se hayan sembrado al revés; la cabecera de caché; que no viaja nada más (en
+    /// particular el código del combo, que es el atajo de la caja).</summary>
     [Fact]
     public async Task ElEndpointDevuelveCadaCampoConSuVerdadOrdenadoPorNombreYNadaMas()
     {
@@ -60,7 +61,7 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var combos = (await ApoyoDeDominios.LeerJsonAsync(respuesta)).EnumerateArray().ToList();
 
         Assert.Equal(2, combos.Count);
-        Assert.All(combos, c => Assert.Equal(["codigo", "componentes", "id", "nombre", "precio"], Propiedades(c)));
+        Assert.All(combos, c => Assert.Equal(["componentes", "id", "nombre", "precio"], Propiedades(c)));
 
         Assert.Equal(alfa, combos[0].GetProperty("id").GetInt32());
         Assert.Equal("Alfa: pancho y papas", combos[0].GetProperty("nombre").GetString());
@@ -78,7 +79,6 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal((gaseosa, "Gaseosa", 2m), (componentesZeta[1].GetProperty("idArticulo").GetInt32(), componentesZeta[1].GetProperty("nombre").GetString(), componentesZeta[1].GetProperty("cantidad").GetDecimal()));
         Assert.Equal(cargada.ToUnixTimeSeconds(), componentesZeta[1].GetProperty("imagenVersion").GetInt64());
 
-        Assert.NotEqual(combos[0].GetProperty("codigo").GetInt32(), combos[1].GetProperty("codigo").GetInt32());
     }
 
     // ---- qué combos aparecen ----------------------------------------------------------------------
@@ -100,7 +100,7 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await apoyo.SembrarComboAsync(tienda.IdTenant, "02 de esta empresa", 160m, par, idEmpresa: tienda.IdEmpresa);
         var restringido = await apoyo.SembrarArticuloAsync(tienda, "Restringido a esta empresa", idEmpresaDisponible: tienda.IdEmpresa);
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, restringido, tienda.IdListaDefault, 50m);
-        await apoyo.SembrarComboAsync(tienda.IdTenant, "03 con un artículo de esta empresa", 170m, [Art(sano1), Art(restringido)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "03 con un artículo de esta empresa", 120m, [Art(sano1), Art(restringido)]);
 
         // Los que no: cada uno rompe UNA regla.
         await apoyo.SembrarComboAsync(tienda.IdTenant, "10 fuera de la tienda", 150m, par, disponibleOnline: false);
@@ -144,6 +144,59 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var combos = await CombosAsync(tienda);
 
         Assert.Equal(["01 de todo el tenant", "02 de esta empresa", "03 con un artículo de esta empresa"], Nombres(combos));
+    }
+
+    /// <summary>
+    /// Un combo solo figura si cobra estrictamente menos (redondeado al peso) que sus componentes sueltos al precio de
+    /// la tienda, con la cantidad de cada uno y las ofertas online que el catálogo ya aplica: es la condición con la que
+    /// el motor de la venta lo aplica, así que uno que no ahorra nunca se aplicaría. Cada combo es el fixture de UN borde:
+    /// más barato, igual, más caro, un peso menos, igual tras redondear, con cantidades, y contra una oferta.
+    /// </summary>
+    [Fact]
+    public async Task UnComboSoloFiguraSiCobraMenosQueSusComponentesAlPrecioDeLaTienda()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("cmb-ahorro");
+        var a = await apoyo.SembrarVendibleAsync(tienda, "A", 100m);
+        var b = await apoyo.SembrarVendibleAsync(tienda, "B", 100m);
+        var conOferta = await apoyo.SembrarVendibleAsync(tienda, "C con oferta", 100m);
+        await apoyo.SembrarOfertaAsync(tienda.IdTenant, "Mitad de precio", idArticulo: conOferta, porcentaje: 50m);
+
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "01 más barato", 150m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "02 igual", 200m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "03 más caro", 250m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "04 un peso menos", 199m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "05 se redondea hacia abajo y ahorra", 199.4m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "06 se redondea hasta igualar", 199.6m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "07 ahorra por la cantidad", 350m, [Art(a, 3m), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "08 no gana contra la oferta", 160m, [Art(conOferta), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "09 gana a pesar de la oferta", 140m, [Art(conOferta), Art(b)]);
+
+        var combos = await CombosAsync(tienda);
+
+        Assert.Equal(
+            ["01 más barato", "04 un peso menos", "05 se redondea hacia abajo y ahorra", "07 ahorra por la cantidad", "09 gana a pesar de la oferta"],
+            Nombres(combos));
+        // El precio listado es el que cobra el motor: el combo de 199,4 se publica a 199.
+        Assert.Equal(
+            [150m, 199m, 199m, 350m, 140m],
+            [.. combos.EnumerateArray().Select(c => c.GetProperty("precio").GetDecimal())]);
+    }
+
+    /// <summary>Con una lista derivada el costo de los componentes es el derivado (100 + 10% = 110 cada uno): un combo
+    /// a 205 ahorra contra 220 aunque no contra los 200 de la lista base.</summary>
+    [Fact]
+    public async Task ConUnaListaDerivadaElAhorroSeMideContraElPrecioDerivado()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("cmb-ahorro-derivada");
+        var derivada = await apoyo.SembrarListaAsync(
+            tienda.IdTenant, "General +10%", modo: Ways.Domain.Catalogos.ModoLista.Derivada, idListaBase: tienda.IdListaDefault, porcentaje: 10m);
+        await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, derivada);
+        var a = await apoyo.SembrarVendibleAsync(tienda, "A", 100m);
+        var b = await apoyo.SembrarVendibleAsync(tienda, "B", 100m);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "01 ahorra contra el derivado", 205m, [Art(a), Art(b)]);
+        await apoyo.SembrarComboAsync(tienda.IdTenant, "02 no ahorra contra el derivado", 220m, [Art(a), Art(b)]);
+
+        Assert.Equal(["01 ahorra contra el derivado"], Nombres(await CombosAsync(tienda)));
     }
 
     /// <summary>Un combo de otro comercio no figura aunque comparta nombre y artículos con uno propio.</summary>
@@ -234,7 +287,8 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
     /// <summary>Los combos van en el catálogo solo en la primera página sin búsqueda ni categoría: con la página 2, con
     /// <c>buscar</c> o con <c>idCategoria</c> (aunque sea inexistente) la clave viaja vacía. Con la página 0, que se
-    /// acota a 1, sí viajan.</summary>
+    /// acota a 1, sí viajan; también con una búsqueda que son solo caracteres de control o espacios, que el catálogo
+    /// normaliza a "sin búsqueda" y por lo tanto no filtra.</summary>
     [Fact]
     public async Task ElCatalogoLlevaLosCombosSoloEnLaPrimeraPaginaSinFiltros()
     {
@@ -266,7 +320,7 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             Assert.Equal(0, filtrada.GetProperty("combos").GetArrayLength());
         }
 
-        foreach (var consulta in new[] { "?pagina=1", "?pagina=0", "?pagina=-3", "?buscar=" })
+        foreach (var consulta in new[] { "?pagina=1", "?pagina=0", "?pagina=-3", "?buscar=", "?buscar=%01", "?buscar=%01%02%20" })
         {
             var sinFiltro = await ApoyoDeCatalogoOnline.CatalogoAsync(cliente, consulta);
 

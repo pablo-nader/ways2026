@@ -1,3 +1,4 @@
+import { fechaHoraATexto } from '../formato/fechas'
 type Props = {
   /** Momento del último recálculo administrativo del arqueo; `null` si nunca hubo uno. */
   fechaRecalculo: string | null
@@ -8,7 +9,7 @@ type Props = {
 export function InsigniaDeRecalculo({ fechaRecalculo }: Props) {
   if (fechaRecalculo === null) return null
 
-  const cuando = new Date(fechaRecalculo).toLocaleString('es-AR')
+  const cuando = fechaHoraATexto(fechaRecalculo)
 
   return (
     <span className="badge text-bg-warning ms-2" title={`Arqueo recalculado el ${cuando}`}>

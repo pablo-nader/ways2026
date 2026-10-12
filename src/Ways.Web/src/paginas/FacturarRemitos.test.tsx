@@ -83,6 +83,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     orden: 1,
     idEmpresa: null,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }

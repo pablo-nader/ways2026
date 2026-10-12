@@ -201,8 +201,6 @@ public class ServicioDeCombos(
         var nombre = NormalizarNombre(datos.Nombre);
         var activo = datos.Activo
             ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
-        var disponibleOnline = datos.DisponibleOnline
-            ?? throw new ErrorDominio("disponible_online_requerido", "El campo disponibleOnline es obligatorio.", 400);
         var codigo = ValidarCodigoPedido(datos.Codigo);
         var componentes = ValidarConjunto(datos.Precio, datos.Componentes);
 
@@ -233,7 +231,7 @@ public class ServicioDeCombos(
             existente.Precio = datos.Precio;
             existente.IdEmpresa = datos.IdEmpresa;
             existente.Activo = activo;
-            existente.DisponibleOnline = disponibleOnline;
+            existente.DisponibleOnline = datos.DisponibleOnline ?? existente.DisponibleOnline;
             existente.UpdatedAt = reloj.Ahora;
 
             // Dos SaveChanges en la misma transacción: el DELETE del conjunto viejo se emite antes que el INSERT del
@@ -402,6 +400,25 @@ public class ServicioDeCombos(
             throw new ErrorDominio(
                 "combo_componente_no_unitario",
                 "Una familia con artículos que se venden por peso no puede ser componente de un combo.",
+                400);
+        }
+
+        if (idsArticulos.Count > 0
+            && await db.Articulos.AnyAsync(a => idsArticulos.Contains(a.Id) && a.UnidadVenta == UnidadVenta.Importe, ct))
+        {
+            throw new ErrorDominio(
+                "combo_componente_por_importe",
+                "Un artículo que se vende por importe no puede ser componente de un combo.",
+                400);
+        }
+
+        if (idsFamilias.Count > 0
+            && await db.Articulos.AnyAsync(
+                a => a.IdFamilia != null && idsFamilias.Contains(a.IdFamilia.Value) && a.UnidadVenta == UnidadVenta.Importe, ct))
+        {
+            throw new ErrorDominio(
+                "combo_componente_por_importe",
+                "Una familia con artículos que se venden por importe no puede ser componente de un combo.",
                 400);
         }
     }

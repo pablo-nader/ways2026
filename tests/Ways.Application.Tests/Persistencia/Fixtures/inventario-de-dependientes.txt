@@ -31,6 +31,7 @@ Empresa | ofertas | id_empresa,id_tenant | marcado
 Empresa | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | parametros | id_empresa,id_tenant | marcado
+Empresa | personal | id_empresa,id_tenant | marcado
 Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | proveedores | id_empresa,id_tenant | marcado
 Empresa | puntos_venta | id_empresa,id_tenant | marcado
@@ -58,6 +59,7 @@ MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
 MedioPago | gastos | id_medio_pago,id_tenant | marcado
 MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
 MedioPago | turnos_caja | id_medio_pago_efectivo,id_tenant | marcado
+Personal | movimientos_personal | id_personal,id_tenant | sinmarca
 Proveedor | articulos | id_proveedor_habitual,id_tenant | marcado
 Proveedor | codigos_proveedor | id_proveedor,id_tenant | marcado
 Proveedor | comprobantes_compra | id_proveedor,id_tenant | marcado
@@ -118,6 +120,7 @@ Tenant | medios_pago | id_tenant | marcado
 Tenant | movimientos_caja | id_tenant | sinmarca
 Tenant | movimientos_cuenta_corriente | id_tenant | sinmarca
 Tenant | movimientos_cuenta_corriente_proveedor | id_tenant | sinmarca
+Tenant | movimientos_personal | id_tenant | sinmarca
 Tenant | movimientos_stock | id_tenant | sinmarca
 Tenant | movimientos_tesoreria | id_tenant | sinmarca
 Tenant | numeraciones_articulos | id_tenant | sinmarca
@@ -130,6 +133,7 @@ Tenant | ordenes_compra | id_tenant | marcado
 Tenant | pagos_comprobante | id_tenant | marcado
 Tenant | parametros | id_tenant | marcado
 Tenant | percepciones_comprobante_compra | id_tenant | marcado
+Tenant | personal | id_tenant | marcado
 Tenant | precios | id_tenant | marcado
 Tenant | presupuestos | id_tenant | marcado
 Tenant | proveedores | id_tenant | marcado
@@ -149,10 +153,12 @@ Usuario | gastos | id_empleado | marcado
 Usuario | movimientos_caja | id_empleado | sinmarca
 Usuario | movimientos_cuenta_corriente | id_empleado | sinmarca
 Usuario | movimientos_cuenta_corriente_proveedor | id_empleado | sinmarca
+Usuario | movimientos_personal | id_empleado | sinmarca
 Usuario | movimientos_stock | id_empleado | sinmarca
 Usuario | movimientos_tesoreria | id_empleado | sinmarca
 Usuario | ordenes_compra | id_empleado | marcado
 Usuario | ordenes_compra | id_empleado_cierre | marcado
+Usuario | personal | id_usuario | marcado
 Usuario | presupuestos | id_empleado | marcado
 Usuario | remitos | id_empleado | marcado
 Usuario | turnos_caja | id_empleado_apertura | marcado

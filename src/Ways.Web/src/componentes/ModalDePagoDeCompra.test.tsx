@@ -37,6 +37,7 @@ function medio(sobrescribir: Partial<MedioPagoListado>): MedioPagoListado {
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }

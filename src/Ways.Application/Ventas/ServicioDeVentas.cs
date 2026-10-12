@@ -197,9 +197,13 @@ public class ServicioDeVentas(
         if (solicitud.NumeroPreasignado is null && presupuestoOrigen is null && tipo.Signo > 0)
         {
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
+        }
 
-            // Un artículo de uso interno no se vende: misma excepción que la regla de cantidades, porque lo ya
-            // cobrado offline, lo congelado en un presupuesto y la devolución de lo que se vendió no se reescriben.
+        // Un artículo de uso interno no se vende ni al convertir un presupuesto viejo (su precio queda congelado, pero
+        // la regla de venta es del artículo, no del precio). Quedan fuera lo ya cobrado offline y la devolución de lo
+        // que se vendió, que no se reescriben.
+        if (solicitud.NumeroPreasignado is null && tipo.Signo > 0)
+        {
             ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
         }
 
@@ -2352,6 +2356,14 @@ public class ServicioDeVentas(
             var articulo = articuloPorId[linea.IdArticulo];
             if (!ReglaDeCantidadDeVenta.EsCantidadAdmitida(articulo.UnidadVenta, linea.Cantidad))
             {
+                if (articulo.UnidadVenta == UnidadVenta.Importe)
+                {
+                    throw new ErrorDominio(
+                        "cantidad_importe_invalida",
+                        $"El artículo {articulo.CodigoInterno} se vende por importe: la cantidad es siempre 1.",
+                        400);
+                }
+
                 throw new ErrorDominio(
                     "cantidad_entera_requerida",
                     $"El artículo {articulo.CodigoInterno} se vende por unidad: la cantidad tiene que ser entera.",
