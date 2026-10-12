@@ -472,7 +472,7 @@ passed, 0 failed, in 6 m 16 s. `src/Ways.Web` is untouched by main in this merge
 
 ## Delivery slices
 
-- PR #417: T1 + T2 (the tasks' "PR 11" and "PR 12" labels), against main. Next PR ("PR 13"): T3, stacked on #417.
+- PR #417: T1 + T2 (the tasks' "PR 11" and "PR 12" labels), against main. PR #419 ("PR 13"): T3, stacked on #417; retargets to main when #417 merges.
 
 ## Next step
 
