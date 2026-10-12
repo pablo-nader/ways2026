@@ -67,7 +67,7 @@ function Pildoras({ horario, domicilio, whatsapp }: DatosDeLasPildoras) {
     <ul className="publico-pildoras">
       {horario && <Pildora etiqueta="Horario" dato={horario} glifo={<GlifoReloj />} />}
       {domicilio && <Pildora etiqueta="Dirección" dato={domicilio} glifo={<GlifoUbicacion />} />}
-      {whatsapp && <Pildora etiqueta="WhatsApp" dato={whatsapp} glifo={<GlifoWhatsapp />} />}
+      {whatsapp && <Pildora etiqueta="Contacto" dato={whatsapp} glifo={<GlifoWhatsapp />} />}
     </ul>
   )
 }

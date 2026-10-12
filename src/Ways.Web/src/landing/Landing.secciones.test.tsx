@@ -74,13 +74,13 @@ describe('secciones de la landing', () => {
     it('con una sola sucursal salen el horario, el domicilio y el WhatsApp, cada uno con su rótulo para lectores y sin nombre de sucursal', async () => {
       await verPublicada({ sucursales: [sucursalCompleta] })
 
-      expect(pildoras()).toEqual(['Horario: Lun a Vie 9 a 18', 'Dirección: Av. Siempreviva 742', 'WhatsApp: WhatsApp'])
+      expect(pildoras()).toEqual(['Horario: Lun a Vie 9 a 18', 'Dirección: Av. Siempreviva 742', 'Contacto: WhatsApp'])
     })
 
-    it('los rótulos "Horario:", "Dirección:" y "WhatsApp:" son solo para lectores de pantalla', async () => {
+    it('los rótulos "Horario:", "Dirección:" y "Contacto:" son solo para lectores de pantalla', async () => {
       await verPublicada({ sucursales: [sucursalCompleta] })
 
-      const rotulos = within(seccion('Todo para tu obra')).getAllByText(/^(Horario|Dirección|WhatsApp):$/)
+      const rotulos = within(seccion('Todo para tu obra')).getAllByText(/^(Horario|Dirección|Contacto):$/)
       expect(rotulos).toHaveLength(3)
       for (const rotulo of rotulos) {
         expect(rotulo).toHaveClass('publico-solo-lectores')
@@ -94,7 +94,7 @@ describe('secciones de la landing', () => {
       expect(pildoras()).toEqual([
         'Horario: Casa Central · Lun a Vie 9 a 18',
         'Dirección: Casa Central · Av. Siempreviva 742',
-        'WhatsApp: Casa Central · WhatsApp',
+        'Contacto: Casa Central · WhatsApp',
       ])
     })
 
@@ -102,7 +102,7 @@ describe('secciones de la landing', () => {
       const gascon = { ...sucursalCompleta, nombre: 'Gascón', domicilio: 'Gascón 100', horario: '24 hs', whatsapp: '+54 9 11 4444-0000' }
       await verPublicada({ sucursales: [gascon, sucursalCompleta] })
 
-      expect(pildoras()).toEqual(['Horario: Gascón · 24 hs', 'Dirección: Gascón · Gascón 100', 'WhatsApp: Gascón · WhatsApp'])
+      expect(pildoras()).toEqual(['Horario: Gascón · 24 hs', 'Dirección: Gascón · Gascón 100', 'Contacto: Gascón · WhatsApp'])
       expect(within(seccion('Todo para tu obra')).getByRole('link', { name: 'Escribinos por WhatsApp' })).toHaveAttribute(
         'href',
         'https://wa.me/5491144440000',
@@ -112,7 +112,7 @@ describe('secciones de la landing', () => {
     it('el horario y el domicilio son los de la primera sucursal, no los de otra; el WhatsApp cae a la primera que tiene número y lo dice', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto, sucursalCompleta] })
 
-      expect(pildoras()).toEqual(['WhatsApp: Casa Central · WhatsApp'])
+      expect(pildoras()).toEqual(['Contacto: Casa Central · WhatsApp'])
       expect(sello()).toBeNull()
     })
 

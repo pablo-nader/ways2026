@@ -282,7 +282,8 @@
   overflow-wrap: anywhere;
 }
 
-.publico-solo-lectores {
+.publico-solo-lectores,
+.publico-pildora .publico-solo-lectores {
   position: absolute;
   width: 1px;
   height: 1px;
