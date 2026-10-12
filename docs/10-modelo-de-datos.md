@@ -2532,8 +2532,8 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 
 > **Estado (cuentas de tesorería, esquema):** la tesorería de efectivo (`movimientos_tesoreria`,
 > una cadena por empresa) y las cuentas digitales (`movimientos_cuenta`, una cadena por cuenta) son
-> libros separados: cada uno con su propia cadena y su propio candado. Esta etapa solo agrega el
-> esquema; ningún servicio escribe estas tablas todavía.
+> libros separados: cada uno con su propia cadena y su propio candado. El único escritor hoy es el cierre de turno
+> (ver "Quién escribe el libro"); el ABM de cuentas solo lee.
 >
 > `cuentas_tesoreria`: clave alterna `ak_cuentas_tesoreria_id_cuenta_tesoreria_id_tenant` (destino de
 > las FK compuestas), FK compuesta `fk_cuentas_tesoreria_empresa` a `empresas` (RESTRICT), único
@@ -2565,6 +2565,43 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > `medios_pago` ni `movimientos_cuenta`, incluidas las filas dadas de baja (409 `cuenta_tesoreria_en_uso`); desactivar siempre 
 > se puede. El listado trae el saldo actual (`final` del último movimiento o `saldo_inicial`) y `saldoInicialEditable`.
 >
+> **Quién escribe el libro (cierre de turno).** `EscriturasDeCuentaDeTesoreria`, dentro de la transacción compartida por
+> los dos modos de cierre (`InsertarArqueosYTesoreriaAsync`), después de la fila de tesorería de efectivo. Por cada medio
+> con pagos distintos de cero en el turno y con cuenta, el bruto es el total de pagos del medio en el turno (el mismo número
+> del resumen de cierre) y `CalculadorDeMovimientosDeCuenta` (puro) lo descompone en filas, en este orden: `cobro` por el
+> bruto (`ingreso` si es positivo, `egreso` si es negativo), y `comision`, `retencion_iibb`, `retencion_iva` y
+> `retencion_ganancias` por `bruto × porcentaje / 100`, cada una redondeada por separado a 2 decimales con el punto medio
+> hacia afuera del cero, del lado contrario al cobro cuando el bruto es negativo. Cada componente se redondea por separado y
+> nada compensa el redondeo: la suma puede pasar del bruto por centavos (bruto 0,50 con cuatro porcentajes de 25 % da cuatro
+> egresos de 0,13 y un neto de −0,02), y se acepta. Un componente que redondea a cero se omite y un bruto cero no escribe nada. Cada fila congela `base_bruta` (el bruto con signo) y
+> `porcentaje_aplicado` (nulo en el cobro), lleva `id_turno_caja`, `id_medio_pago` (siempre, porque el índice único no
+> deduplica `NULL`), `id_empleado` (quien cierra) y la `fecha` del cierre, la misma de la fila de tesorería de efectivo. Los
+> medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
+> recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
+> una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
+> (`ck_pagos_comprobante_importe_no_negativo`) y los clientes web y POS no envían pagos en una nota de crédito (la API no los
+> rechaza), así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
+> ejerce.
+>
+> **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
+> descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
+> ajuste manual. (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
+> cuenta. (c) Riesgo abierto: la API admite una nota de crédito con pagos de importe positivo (`ValidadorDePagos` no relaciona
+> el signo del total con los pagos) y el lector del turno suma los importes sin el signo del documento. Una nota de crédito de
+> 100 enviada con un pago de 100 en un medio digital con 10 % de comisión acredita la cuenta +90 donde una devolución correcta
+> la dejaría −90 (180 de diferencia), Y sube en 100 el esperado de ese medio en el arqueo donde una devolución debería
+> bajarlo. La corrección de raíz está en la validación de ventas y es la próxima tarea (fijado por
+> `RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo`).
+>
+> **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
+> `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta
+> y porcentajes consistentes hasta el commit; una edición del medio en curso hace esperar al cierre) y cada cuenta se lee con
+> su lock (`saldo_inicial` y empresa) antes de leer la cola de la cadena. `FOR NO KEY UPDATE` choca con el `FOR UPDATE` del ABM y
+> con sí mismo, pero no con el `FOR KEY SHARE` de los chequeos de FK, que no se bloquean. La idempotencia la da primero el
+> UPDATE guardado por estado del turno (409 `turno_ya_cerrado`); si una fila de cierre repetida llegara a la base,
+> `ux_movimientos_cuenta_cierre` da 23505 y `ManejadorDeErrores` lo traduce al mismo 409 (supone que solo el cierre escribe filas cubiertas por ese índice). Recalcular el arqueo de un turno
+> cerrado (edición de gastos) no toca `movimientos_cuenta`.
+>
 > **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
 > debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
 > hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene
@@ -2572,14 +2609,17 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 >
 > **Lo que la base NO exige y debe exigir un servicio:**
 > - La continuidad de la cadena: la base solo valida cada fila (`final = inicio + ingreso - egreso`).
->   Que el `inicio` de un movimiento sea el `final` del anterior, que el primero parta de
->   `saldo_inicial` y que el libro sea solo de altas (sin UPDATE ni DELETE) lo garantiza el escritor,
->   que agrega bajo el lock de la cuenta.
+>   Que el `inicio` de un movimiento sea el `final` del anterior y que el primero parta de
+>   `saldo_inicial` lo garantiza el escritor del cierre, que agrega bajo el lock de la cuenta
+>   y lee `saldo_inicial` y la cola después de tomarlo; que el libro sea solo de altas (sin UPDATE ni
+>   DELETE) lo sostiene que ningún servicio los emite.
 > - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
 >   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa. Lo exige
 >   `ServicioDeMediosPago` al asignarla o al cambiar la empresa del medio. Si el tenant suma una empresa
 >   después, un medio de todo el tenant que ya tenía cuenta la conserva: la regla se revisa al escribir, no hay trigger.
-> - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta.
+> - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta:
+>   el escritor del cierre lo cumple (descarta una cuenta de otra empresa y lee la cuenta del medio bajo lock); un
+>   escritor futuro (ajustes, transferencias) deberá exigirlo por su cuenta.
 > - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
 >   esquiva RESTRICT.
 > - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es

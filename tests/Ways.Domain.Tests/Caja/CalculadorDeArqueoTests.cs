@@ -88,9 +88,9 @@ public class CalculadorDeArqueoTests
         Assert.Equal(500m, tarjeta.ImporteEsperado);
     }
 
-    /// <summary>Una NCX aporta un pago con importe negativo (stage-5 decisión 4: aritmética con
-    /// signo, sin rama especial) — el neteo ya viene resuelto en <see
-    /// cref="ActividadDeMedio.Pagos"/> (Application ya sumó todas las filas).</summary>
+    /// <summary>El calculador recibe el total de pagos ya resuelto en <see cref="ActividadDeMedio.Pagos"/> y no distingue
+    /// su origen. Hoy ese total no baja por una nota de crédito: los importes de pago nunca son negativos y el lector suma sin
+    /// el signo del comprobante; el caso es la aritmética del calculador, no un camino real.</summary>
     [Fact]
     public void UnaNcxAportaPagoNegativoYSeNeteaSinRamaEspecial()
     {

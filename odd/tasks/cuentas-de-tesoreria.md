@@ -68,8 +68,8 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
   references, web screen/descriptor.
 - [x] **C3 — Payment-method fields** (delegated): account + four percentages, validation,
   reject on non-electronic, clear on behaviour change, form; POS snapshot unchanged.
-- [ ] **C4 — Pure calculator** (delegated or inline): gross → components, rounding.
-- [ ] **C5 — Write at close** (delegated): per-account lock and writer, hook into both
+- [x] **C4 — Pure calculator** (delegated or inline): gross → components, rounding.
+- [x] **C5 — Write at close** (delegated): per-account lock and writer, hook into both
   close modes, 23505 backstop, recalculation leaves accounts untouched.
 - [ ] **C6 — Read side and screen** (delegated): balances per account, book per account,
   export, Tesorería block.
@@ -82,11 +82,12 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 |------|-------|--------|----|--------|
 | C1 | delegated (writer trigger: schema + tests, 35 files) | 8a145b66, 6dc997cb | #422 (merged) | build 0 errors; Domain.Tests 1514; Application.Tests 896; full integration suite 4017 passed on 8a145b66; after the fix: new classes + AislamientoDeTenant + Schema/Migracion classes 329 passed (full suite left to CI); has-pending-model-changes clean. judgment-day: round 1 no severe (implicit IX_ index, over-broad closing unique index, saldo_inicial semantics fixed in 6dc997cb), scoped re-judgment no severe |
 | C2 | delegated (writer trigger: server + web, 18 files) | c038890f, 3fadd761, efa43ffe, 52c09646 | #424 (merged) | build 0 errors; Domain.Tests 1533; Application.Tests 900; integration: CuentasTesoreria* + guards + BajasDeCatalogos 220 passed, then CuentasTesoreria* + binding guards 34 passed (full suite left to CI); tsc clean; oxlint clean on touched files; vitest 224 files / 6412. judgment-day: round 1 no severe (omitted body fields defaulted — fixed), scoped re-judgment no severe. Open follow-ups: stale delete-404 message if the user opens the form during the reload; save-404 leaves the modal open; "400 before 409" order not pinned by a test |
-| C3 | delegated (writer trigger: server + web, 17+ files) | c7d33085, 6c5da07f, aab4379a, 7e2d8c64 | this PR | build 0 errors; Domain.Tests 1566; Application.Tests 904; integration: filtered classes 185 passed after round 1, 94 after the polish (full suite left to CI); tsc clean; vitest 229 files / 6855. judgment-day: round 1 no severe (fields exposed to every role; form sent idEmpresa null — fixed), scoped re-judgment no severe, polish 7e2d8c64. Admin-only visibility of account/fee/withholdings. Out of scope, pre-existing: every other generic catalog descriptor sends idEmpresa null on edit (an empresa-scoped row edited from the UI becomes tenant-wide) |
+| C3 | delegated (writer trigger: server + web, 17+ files) | c7d33085, 6c5da07f, aab4379a, 7e2d8c64 | #425 (merged) | build 0 errors; Domain.Tests 1566; Application.Tests 904; integration: filtered classes 185 passed after round 1, 94 after the polish (full suite left to CI); tsc clean; vitest 229 files / 6855. judgment-day: round 1 no severe (fields exposed to every role; form sent idEmpresa null — fixed), scoped re-judgment no severe, polish 7e2d8c64. Admin-only visibility of account/fee/withholdings. Out of scope, pre-existing: every other generic catalog descriptor sends idEmpresa null on edit (an empresa-scoped row edited from the UI becomes tenant-wide) |
+| C4+C5 | delegated (writer trigger: domain + application + tests) | b0cc5312, 04ba3f7e, 5bc077d1, aa31a2bb | this PR | build 0 errors; Domain.Tests 1589; Application.Tests 904; FULL integration suite 4155 passed on 04ba3f7e; after the fixes: Caja/Tesoreria/Gastos/Cuentas classes 492 passed, then CuentasTesoreriaCierre* 22. judgment-day: round 1 no severe, fixes 5bc077d1; scoped re-judgment no severe; doc polish aa31a2bb. Lock: account row FOR NO KEY UPDATE (no second advisory namespace); methods FOR SHARE. OPEN RISK (documented + pinned test): the API accepts a credit note with positive payments; the close then credits the account (+90 instead of −90 for 100 at 10%) and raises the arqueo. Known limits: a credit-note refund and an expense paid with a digital method do not reduce the account |
 
 ## Next step
 
-C4 + C5 (pure calculator and write at close).
+C5b: reject payments on documents with a negative total in sale validation (root cause of the open risk; flip the pinned test RiesgoAbierto_...). Then C6 (read side and screen), C7 (manual adjustment).
 
 Rules carried to later tasks:
 - C3: the account must belong to the method's empresa (tenant-wide method: only in a
