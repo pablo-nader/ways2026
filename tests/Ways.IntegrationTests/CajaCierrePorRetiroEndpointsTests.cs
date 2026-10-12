@@ -376,7 +376,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         Assert.Equal(post.TotalVentas, get.TotalVentas);
         Assert.Equal(post.TotalDigitales, get.TotalDigitales);
         Assert.Equal(post.TotalEfectivo, get.TotalEfectivo);
-        Assert.Equal(post.TotalCuentaCorriente, get.TotalCuentaCorriente);
+        Assert.Equal(post.VentasACuentaCorriente, get.VentasACuentaCorriente);
         Assert.Equal(post.TotalRetiros, get.TotalRetiros);
         Assert.Equal(post.VentasEnEfectivoNetas, get.VentasEnEfectivoNetas);
         Assert.Equal(post.GastosEnEfectivo, get.GastosEnEfectivo);
@@ -415,9 +415,9 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
     }
 
     /// <summary>Con efectivo (con vuelto), tarjeta, cuenta corriente y un medio sin ventas, el
-    /// cierre por retiro y su reimpresión devuelven la clasificación de cada fila y los tres
-    /// subtotales, que suman <c>TotalVentas</c>; el efectivo coincide con
-    /// <c>VentasEnEfectivoNetas</c>.</summary>
+    /// cierre por retiro y su reimpresión devuelven la clasificación de cada fila y los dos
+    /// subtotales, que suman <c>TotalVentas</c>; la cuenta corriente se informa aparte, fuera del
+    /// total, y el efectivo coincide con <c>VentasEnEfectivoNetas</c>.</summary>
     [Fact]
     public async Task ElResumenDeCierreClasificaCadaMedioYSusSubtotalesSumanElTotalDeVentas()
     {
@@ -446,16 +446,14 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
             Assert.Equal(
                 ComportamientoMedioPago.Electronico,
                 resumen.VentasPorMedio.Single(v => v.IdMedioPago == ctx.IdMedioTarjeta).Comportamiento);
-            Assert.Equal(
-                ComportamientoMedioPago.CuentaCorriente,
-                resumen.VentasPorMedio.Single(v => v.IdMedioPago == idMedioCc).Comportamiento);
             Assert.DoesNotContain(resumen.VentasPorMedio, v => v.IdMedioPago == idMedioSinVentas);
+            Assert.DoesNotContain(resumen.VentasPorMedio, v => v.IdMedioPago == idMedioCc);
 
             Assert.Equal(950m, resumen.TotalEfectivo);
             Assert.Equal(300m, resumen.TotalDigitales);
-            Assert.Equal(200m, resumen.TotalCuentaCorriente);
-            Assert.Equal(1450m, resumen.TotalVentas);
-            Assert.Equal(resumen.TotalVentas, resumen.TotalDigitales + resumen.TotalEfectivo + resumen.TotalCuentaCorriente);
+            Assert.Equal(200m, resumen.VentasACuentaCorriente);
+            Assert.Equal(1250m, resumen.TotalVentas);
+            Assert.Equal(resumen.TotalVentas, resumen.TotalDigitales + resumen.TotalEfectivo);
             Assert.Equal(resumen.VentasEnEfectivoNetas, resumen.TotalEfectivo);
         }
     }

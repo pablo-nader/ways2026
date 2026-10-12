@@ -54,26 +54,27 @@ public class CalculadorDeCierrePorRetiroTests
         Assert.Equal(1450m, resultado.TotalVentas);
     }
 
-    /// <summary>La cuenta corriente no es arqueable, pero sus ventas entran en la lista y en
-    /// <c>TotalVentas</c>: es el total general del turno.</summary>
+    /// <summary>Una venta a cuenta corriente de 1000 cobrada con un recibo en efectivo en el mismo
+    /// turno deja 1000 cobrados: la línea de cuenta corriente no entra en la lista ni en el total
+    /// general, así no se cuenta dos veces.</summary>
     [Fact]
-    public void LasVentasDeCuentaCorrienteEntranEnLaListaYEnElTotalGeneral()
+    public void LaVentaACuentaCorrienteCobradaEnEfectivoEnElTurnoNoDuplicaElTotalGeneral()
     {
         const int idCuentaCorriente = 3;
         var insumos = new InsumosDeArqueo(
             FondoInicial: 0m, Refuerzos: 0m, Retiros: 0m,
             Actividad:
             [
-                Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 100m),
-                Actividad(idCuentaCorriente, ComportamientoMedioPago.CuentaCorriente, pagos: 40m),
-                Actividad(4, ComportamientoMedioPago.CuentaCorriente, pagos: 0m, tuvoFilas: false)
+                Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 1000m),
+                Actividad(idCuentaCorriente, ComportamientoMedioPago.CuentaCorriente, pagos: 1000m)
             ]);
 
         var arqueables = CalculadorDeArqueo.Calcular(insumos, IdEfectivo);
         var resultado = CalculadorDeCierrePorRetiro.Calcular(insumos, IdEfectivo, arqueables);
 
-        Assert.Equal([IdEfectivo, idCuentaCorriente], resultado.VentasPorMedio.Select(v => v.IdMedioPago));
-        Assert.Equal(140m, resultado.TotalVentas);
+        Assert.Equal([IdEfectivo], resultado.VentasPorMedio.Select(v => v.IdMedioPago));
+        Assert.Equal(1000m, resultado.TotalVentas);
+        Assert.Equal(1000m, resultado.VentasACuentaCorriente);
     }
 
     /// <summary>Sin retiro de cierre (<c>ImporteRetirado = 0</c>, prueba de la capa de aplicación),

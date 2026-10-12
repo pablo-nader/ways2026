@@ -141,7 +141,7 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
             resultado.TotalVentas,
             clasificadas.TotalDigitales,
             clasificadas.TotalEfectivo,
-            clasificadas.TotalCuentaCorriente,
+            resultado.VentasACuentaCorriente,
             retiros,
             resultado.TotalRetiros,
             resultado.VentasEnEfectivoNetas,

@@ -300,8 +300,10 @@ public sealed record RendicionPendiente(
 /// para que el consumidor no tenga que conocer esa equivalencia.</summary>
 public sealed record PuntoVentaDeCierre(int Id, int Numero, string Nombre);
 
-/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — ventas netas de
-/// vuelto por medio (nunca de gastos), con el nombre ya resuelto
+/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — lo COBRADO por
+/// medio (ventas y recibos de cuenta corriente del turno), neto de vuelto en el efectivo y nunca de
+/// gastos; la cuenta corriente no es una fila, ver <see
+/// cref="ResumenDeCierrePorRetiro.VentasACuentaCorriente"/>. Con el nombre ya resuelto
 /// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).
 /// <see cref="Comportamiento"/> es la clasificación con que la fila entra en los subtotales (ver
 /// <see cref="Ways.Domain.Caja.ClasificadorDeVentasPorMedio"/>).</summary>
@@ -330,10 +332,14 @@ public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, strin
 /// cajero declara lo que realmente contó). Cuando el ancla no tiene fila en <c>arqueos_turno</c>
 /// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.
 ///
-/// <see cref="TotalVentas"/> es el total general (efectivo + digital + cuenta corriente) y
-/// <see cref="TotalDigitales"/> + <see cref="TotalEfectivo"/> + <see cref="TotalCuentaCorriente"/>
-/// siempre lo suman; <see cref="TotalEfectivo"/> coincide con <see cref="VentasEnEfectivoNetas"/>.
-/// Los tres subtotales siguen la clasificación de <see cref="VentaPorMedio.Comportamiento"/>.</summary>
+/// <see cref="TotalVentas"/> es el total general de lo COBRADO por medio (ventas y recibos de cuenta
+/// corriente, neto de vuelto en el efectivo) y <see cref="TotalDigitales"/> + <see
+/// cref="TotalEfectivo"/> lo suman siempre. <see cref="TotalEfectivo"/> coincide con <see
+/// cref="VentasEnEfectivoNetas"/> cuando el medio efectivo del turno tiene fila; si no la tiene
+/// (hoy es de cuenta corriente o salió del catálogo) es 0. Las ventas a cuenta corriente van aparte
+/// en <see cref="VentasACuentaCorriente"/>: no son plata cobrada y NO forman parte del total. Los
+/// medios no efectivo se clasifican con el catálogo actual (ver <see
+/// cref="Ways.Domain.Caja.ClasificadorDeVentasPorMedio"/>).</summary>
 public sealed record ResumenDeCierrePorRetiro(
     int IdTurnoCaja,
     PuntoVentaDeCierre PuntoVenta,
@@ -346,7 +352,7 @@ public sealed record ResumenDeCierrePorRetiro(
     decimal TotalVentas,
     decimal TotalDigitales,
     decimal TotalEfectivo,
-    decimal TotalCuentaCorriente,
+    decimal VentasACuentaCorriente,
     IReadOnlyList<RetiroDeCierre> Retiros,
     decimal TotalRetiros,
     decimal VentasEnEfectivoNetas,
