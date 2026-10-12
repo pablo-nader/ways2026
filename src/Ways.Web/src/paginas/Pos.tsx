@@ -84,7 +84,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
-import { Modal } from '../componentes/Modal'
+import { BotonCerrarModal, Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
 import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
@@ -112,18 +112,12 @@ import {
   todasLasLineasTienenPrecioOffline,
 } from '../pos/instantaneaOffline'
 import { guardarTurnoConfirmadoLocal, leerTurnoConfirmadoLocal, LIMITE_DE_ESPERA_DEL_TURNO_MS } from '../pos/turnoConfirmadoLocal'
-import {
-  guardarIntervaloDeSincronizacion,
-  INTERVALO_MAXIMO_MINUTOS,
-  INTERVALO_MINIMO_MINUTOS,
-  leerIntervaloDeSincronizacion,
-  minutosAMilisegundos,
-  normalizarIntervaloEnMinutos,
-} from '../pos/intervaloDeSincronizacion'
 import { construirNumeroVisible, mensajeDeRechazoOffline, rechazoOfflineEsDefinitivo, type MotivoRechazoOffline } from '../pos/outboxOffline'
 import { clienteAdmitidoOffline, medioAdmitidoOffline } from '../pos/reglasOffline'
 import { BorradorDeTicketContext } from '../pos/BorradorDeTicketContext'
 import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
+import { useRegistroDeAccionesDePos } from '../pos/AccionesDePosContext'
+import type { EstadoDeAccionesDePos } from '../pos/AccionesDePosContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -804,7 +798,7 @@ function ModalCuentaCorrientePos({ clienteInicial, puntoVenta, medios, onCerrar,
           <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Cuenta corriente</h5>
-              <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
+              <BotonCerrarModal onClick={onCerrar} />
             </div>
             <div className="modal-body">
               {!clienteElegido ? (
@@ -1051,6 +1045,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // a una acción del propio cajero sobre ESTE input. El foco inicial / al desbloquear el turno usa
   // un mecanismo aparte (ver el efecto "foco neutral" más abajo) que si respeta un foco ajeno.
   const focoPendienteRef = useRef(false)
+  // F1 del shell: pide el foco por el mismo camino y despierta al efecto que lo consume.
+  const [pedidosDeFoco, setPedidosDeFoco] = useState(0)
 
   // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
   // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
@@ -1131,6 +1127,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   const [cargandoTurnoDelServidor, setCargandoTurno] = useState(false)
   const [errorTurnoDelServidor, setErrorTurno] = useState('')
   const [errorTurnoEsDeRed, setErrorTurnoEsDeRed] = useState(false)
+  // `false` hasta que la primera consulta termina: antes de eso `turno === null` solo significa
+  // "todavía no se sabe", y el header no debe tomarlo por una caja cerrada.
+  const [turnoConsultado, setTurnoConsultado] = useState(false)
   const [esperaDelTurnoVencida, setEsperaDelTurnoVencida] = useState(false)
   const generacionTurnoRef = useRef(0)
 
@@ -1279,24 +1278,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     ? (puntosVenta.find((p) => p.id === idPuntoVentaDelPresupuesto) ?? null)
     : puntoVentaDeSesion
 
-  // Intervalo del ciclo automático, configurable por el cajero y persistido por dispositivo.
-  const [minutosDeSincronizacion, setMinutosDeSincronizacion] = useState(leerIntervaloDeSincronizacion)
-  const [textoMinutosDeSincronizacion, setTextoMinutosDeSincronizacion] = useState(() => String(minutosDeSincronizacion))
-
-  function confirmarMinutosDeSincronizacion() {
-    const pedidos = normalizarIntervaloEnMinutos(textoMinutosDeSincronizacion) ?? minutosDeSincronizacion
-    const vigentes = guardarIntervaloDeSincronizacion(pedidos)
-    setMinutosDeSincronizacion(vigentes)
-    setTextoMinutosDeSincronizacion(String(vigentes))
-  }
-
   // stage-pos-venta-offline-web: instantánea local + outbox — nunca corre bajo `?idPresupuesto=`
   // (esa conversión ya necesita red para haber cargado el presupuesto en primer lugar, la venta
   // local no la cubre).
   const sincronizacionOffline = useSincronizacionOffline({
     idPuntoVenta: puntoVentaSeleccionada?.id ?? null,
     activo: !modoPresupuesto,
-    intervaloMs: minutosAMilisegundos(minutosDeSincronizacion),
     // La instantánea es solo del POS de escritorio: en la app web la venta nunca espera el ciclo
     // de arranque.
     sincronizarAntesDeVender: corriendoEnTauri(),
@@ -1656,6 +1643,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
         clearTimeout(idTopeDeEspera)
         if (generacionTurnoRef.current !== miGeneracion) return
         setCargandoTurno(false)
+        setTurnoConsultado(true)
       })
   }
 
@@ -1716,6 +1704,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setErrorTurno('')
     setErrorTurnoEsDeRed(false)
     setCargandoTurno(false)
+    setTurnoConsultado(true)
     aplicarTurnoConfirmado(nuevoTurno)
     // Re-judgment (WARNING, ambos jueces): mismo criterio que en `consultarTurno` — "Abrir turno"
     // (gate propio o safety-net del 409) confirma un turno abierto nuevo, así que cualquier aviso
@@ -2906,7 +2895,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
+  }, [pedidosDeFoco, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -3054,6 +3043,40 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // hay ningún modal abierto, así que `pantallaCobroInerte` por sí solo dejaría "Retirar" vivo.
   const controlesDeCajaInertes = verificandoCierre || pantallaCobroInerte
 
+  const enHeader = nodoRanuraHeader !== null
+
+  // Lo que el header del shell necesita para ofrecer las acciones de caja y de sincronización. El
+  // turno cuenta como resuelto cuando el servidor ya contestó o cuando rige el turno local, para
+  // coincidir con lo que muestra el chip "Caja abierta"/"Caja cerrada".
+  const turnoResuelto =
+    !modoPresupuesto && puntoVentaSeleccionada !== null && (turnoConsultado || usarTurnoLocal) && !cargandoTurno && !errorTurno
+  const puedeSincronizar = !modoPresupuesto && puntoVentaSeleccionada !== null && sincronizacionOffline.instantanea !== null
+  const estadoDeAcciones: EstadoDeAccionesDePos = {
+    listo: turnoResuelto,
+    turnoAbierto: turnoResuelto ? turno !== null : null,
+    imposible: modoPresupuesto || puntoVentaSeleccionada === null || errorTurno !== '',
+    verificandoCierre,
+    retiroOfrecido: cajaDeEscritorio !== undefined,
+    habilitadas: {
+      abrirTurno: turnoResuelto && turno === null,
+      cerrarTurno: turnoResuelto && turno !== null && !controlesDeCajaInertes,
+      retirar: turnoResuelto && turno !== null && cajaDeEscritorio !== undefined && !controlesDeCajaInertes,
+      sincronizar: puedeSincronizar && !sincronizacionOffline.sincronizando,
+    },
+    puedeSincronizar,
+    sincronizando: sincronizacionOffline.sincronizando,
+  }
+  useRegistroDeAccionesDePos(estadoDeAcciones, {
+    abrirTurno: () => setGateTurno(true),
+    cerrarTurno: () => void irACerrarCaja(),
+    retirar: abrirRetiro,
+    sincronizar: () => void sincronizacionOffline.sincronizarAhora(),
+    enfocarEscaneo: () => {
+      focoPendienteRef.current = true
+      setPedidosDeFoco((n) => n + 1)
+    },
+  })
+
   /**
    * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
    * antes en "Datos de la venta") — decisión del dueño: se mueve a una posición prominente,
@@ -3076,7 +3099,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               hay algo pendiente, así el cajero nunca tiene que preguntarse si el indicador
               existe. */}
           <span
-            className={`badge ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}`}
+            className={`badge text-nowrap ${sincronizacionOffline.outboxCount > 0 ? 'bg-warning text-dark' : 'bg-body-secondary text-body border'}`}
             title="Ventas registradas sin conexión que todavía no se sincronizaron con el servidor"
           >
             Sin sincronizar: {sincronizacionOffline.outboxCount}
@@ -3088,34 +3111,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               (el POS de escritorio) — la app web no tiene nada que sincronizar. */}
           {sincronizacionOffline.instantanea && (
             <span className="d-flex align-items-center gap-2 small">
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm"
-                disabled={sincronizacionOffline.sincronizando}
-                onClick={() => void sincronizacionOffline.sincronizarAhora()}
-              >
-                {sincronizacionOffline.sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
-              </button>
-              <span className="text-muted">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? sincronizacionOffline.instantanea.momento, new Date())}</span>
-              <label className="d-flex align-items-center gap-1 text-muted mb-0">
-                cada
-                <input
-                  type="number"
-                  className="form-control form-control-sm"
-                  style={{ width: '4.5rem' }}
-                  min={INTERVALO_MINIMO_MINUTOS}
-                  max={INTERVALO_MAXIMO_MINUTOS}
-                  step={1}
-                  aria-label="Minutos entre sincronizaciones"
-                  value={textoMinutosDeSincronizacion}
-                  onChange={(e) => setTextoMinutosDeSincronizacion(e.target.value)}
-                  onBlur={confirmarMinutosDeSincronizacion}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') confirmarMinutosDeSincronizacion()
-                  }}
-                />
-                min
-              </label>
+              {/* En el header del shell, "Sincronizar" vive en el menú Sistema. */}
+              {!enHeader && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
+                  disabled={sincronizacionOffline.sincronizando}
+                  onClick={() => void sincronizacionOffline.sincronizarAhora()}
+                >
+                  {sincronizacionOffline.sincronizando ? 'Sincronizando…' : 'Sincronizar ahora'}
+                </button>
+              )}
+              <span className="text-muted text-nowrap">Precios de {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? sincronizacionOffline.instantanea.momento, new Date())}</span>
             </span>
           )}
           {/* judgment-day ronda 1 (CRITICAL): reemplaza al viejo `errorDeDrenado` (un string único
@@ -3203,18 +3210,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
             <>
               {turno ? (
                 <>
-                  <span className="badge bg-success">Caja abierta</span>
-                  <button
-                    type="button"
-                    className="btn btn-danger btn-sm"
-                    disabled={controlesDeCajaInertes}
-                    onClick={() => void irACerrarCaja()}
-                  >
-                    {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
-                  </button>
+                  <span className="badge bg-success text-nowrap">Caja abierta</span>
+                  {!enHeader && (
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      disabled={controlesDeCajaInertes}
+                      onClick={() => void irACerrarCaja()}
+                    >
+                      {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
+                    </button>
+                  )}
                   {/* stage-pos-retiros-y-cierre-por-retiro (etapa 5): solo el POS de escritorio
                       (`cajaDeEscritorio` presente) — la app web no tiene cajón ni impresora. */}
-                  {cajaDeEscritorio && (
+                  {!enHeader && cajaDeEscritorio && (
                     <button
                       type="button"
                       className="btn btn-outline-warning btn-sm"
@@ -3227,10 +3236,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 </>
               ) : (
                 <>
-                  <span className="badge bg-secondary">Caja cerrada</span>
-                  <button type="button" className="btn btn-warning btn-sm" onClick={() => setGateTurno(true)}>
-                    Abrir caja
-                  </button>
+                  <span className="badge bg-secondary text-nowrap">Caja cerrada</span>
+                  {!enHeader && (
+                    <button type="button" className="btn btn-warning btn-sm" onClick={() => setGateTurno(true)}>
+                      Abrir caja
+                    </button>
+                  )}
                 </>
               )}
               {avisoCerrarCaja && <span className="alert alert-warning py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
