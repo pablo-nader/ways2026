@@ -299,6 +299,21 @@ describe('SelectorConBusqueda', () => {
       expect(onChange).not.toHaveBeenCalled()
     })
 
+    it('con el tope alcanzado, el anuncio de lectores de pantalla dice que la lista está acotada en vez de contar resultados', async () => {
+      render(<Montaje opciones={MUCHAS} />)
+      await userEvent.click(caja())
+      const anuncio = document.querySelector('[aria-live="polite"]')
+      expect(anuncio).toHaveTextContent(`Se muestran las primeras ${MAXIMO_DE_OPCIONES_VISIBLES} coincidencias`)
+      expect(anuncio).not.toHaveTextContent(`${MAXIMO_DE_OPCIONES_VISIBLES} resultados`)
+    })
+
+    it('por debajo del tope, el anuncio cuenta los resultados', async () => {
+      render(<Montaje opciones={MUCHAS} />)
+      await userEvent.click(caja())
+      await userEvent.keyboard('Cliente 6')
+      expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent(/^\d+ resultados?\.$/)
+    })
+
     it('al acotar por debajo del tope, el aviso desaparece', async () => {
       render(<Montaje opciones={MUCHAS} />)
       await userEvent.click(caja())
@@ -510,6 +525,24 @@ describe('SelectorConBusqueda', () => {
 
       await usuario.keyboard('{Escape}')
       await usuario.click(caja())
+      await usuario.keyboard('perez')
+      expect(etiquetasVisibles()).not.toContain('#9 — Perez Lejano')
+      expect(screen.getByText('Buscando…')).toBeInTheDocument()
+      await avanzar(ESPERA)
+      expect(pedidos).toHaveLength(2)
+    })
+
+    it('vaciar el texto olvida lo que trajo el servidor: al tipear lo mismo en la misma apertura no reaparece lo viejo antes de la nueva respuesta', async () => {
+      const usuario = preparar()
+      const { alBuscar, pedidos } = respuestaControlable()
+      render(<Montaje alBuscar={alBuscar} esperaMs={ESPERA} />)
+      await usuario.click(caja())
+      await usuario.keyboard('perez')
+      await avanzar(ESPERA)
+      await act(async () => pedidos[0].resolver([{ id: 9, etiqueta: '#9 — Perez Lejano' }]))
+      expect(etiquetasVisibles()).toContain('#9 — Perez Lejano')
+
+      await usuario.keyboard('{Backspace>5/}')
       await usuario.keyboard('perez')
       expect(etiquetasVisibles()).not.toContain('#9 — Perez Lejano')
       expect(screen.getByText('Buscando…')).toBeInTheDocument()

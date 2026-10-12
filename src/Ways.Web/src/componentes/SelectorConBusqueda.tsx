@@ -263,7 +263,11 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
 
   const mensajeSinResultados = typeof textoSinResultados === 'function' ? textoSinResultados(buscado) : textoSinResultados
   const mensajeVacio = lista.length === 0 && !buscando ? (remotoVigente?.error ?? mensajeSinResultados) : null
-  const anuncio = lista.length > 0 ? `${lista.length} ${lista.length === 1 ? 'resultado' : 'resultados'}.` : ''
+  const anuncio = hayMas
+    ? `Se muestran las primeras ${MAXIMO_DE_OPCIONES_VISIBLES} coincidencias; hay más resultados.`
+    : lista.length > 0
+      ? `${lista.length} ${lista.length === 1 ? 'resultado' : 'resultados'}.`
+      : ''
 
   return (
     <div className="position-relative">
@@ -287,6 +291,8 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
         onFocus={(evento) => evento.currentTarget.select()}
         onClick={abrir}
         onChange={(evento) => {
+          // Con el texto vacío lo remoto ya no corresponde a nada: tipear lo mismo de nuevo no debe mostrarlo.
+          if (evento.target.value.trim() === '') setRemoto(null)
           setTexto(evento.target.value)
           setAbierta(true)
           setIdActivo(null)
