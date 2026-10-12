@@ -10,7 +10,9 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
 using Ways.Application.CatalogoOnline;
+using Ways.Application.Catalogos;
 using Ways.Application.Organizacion;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -309,21 +311,48 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(jpeg, await nueva.Content.ReadAsByteArrayAsync());
         Assert.Equal("image/jpeg", nueva.Content.Headers.ContentType?.MediaType);
 
-        // Quitar: baja lógica de la fila, 404 imagen_no_encontrada, idempotente, y la del vecino sigue entera.
+        // Quitar: la fila se borra de verdad (nada que conservar de un derivado), 404 imagen_no_encontrada,
+        // idempotente, y la del vecino sigue entera.
         Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(RutaImagen(id))).StatusCode);
         var tras = await admin.GetAsync(RutaImagen(id));
         Assert.Equal(HttpStatusCode.NotFound, tras.StatusCode);
         Assert.Equal("imagen_no_encontrada", await ApoyoDeDominios.CodigoDeErrorAsync(tras));
-        Assert.NotNull(Assert.Single(await apoyo.LeerImagenesAsync(id)).DeletedAt);
+        Assert.Empty(await apoyo.LeerImagenesAsync(id));
         Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(RutaImagen(id))).StatusCode);
         Assert.Equal(vecina, Assert.Single(await apoyo.LeerImagenesAsync(otro)).Contenido);
 
-        // Volver a subir después de quitar crea una fila nueva: la baja no se revive y el índice es de las vivas.
+        using (var publico = apoyo.Dominios.ClienteEnHost(tienda.Host))
+        {
+            var publica = await publico.GetAsync(ApoyoDeCatalogoOnline.RutaImagenPublica(id));
+            Assert.Equal(HttpStatusCode.NotFound, publica.StatusCode);
+            Assert.Equal("imagen_no_encontrada", await ApoyoDeDominios.CodigoDeErrorAsync(publica));
+        }
+
+        // Volver a subir después de quitar inserta una fila nueva: no queda ninguna anterior.
         Assert.Equal(HttpStatusCode.OK, (await admin.SendAsync(PutImagen(id, png))).StatusCode);
-        var filas = await apoyo.LeerImagenesAsync(id);
-        Assert.Equal(2, filas.Count);
-        Assert.Single(filas, f => f.DeletedAt is null);
-        Assert.Equal(png, filas.Single(f => f.DeletedAt is null).Contenido);
+        var nuevaFila = Assert.Single(await apoyo.LeerImagenesAsync(id));
+        Assert.Null(nuevaFila.DeletedAt);
+        Assert.NotEqual(guardada.Id, nuevaFila.Id);
+        Assert.Equal(png, nuevaFila.Contenido);
+    }
+
+    /// <summary>Dar de baja el artículo borra su imagen en la misma transacción: no queda una fila con hasta 1 MB
+    /// colgando de un artículo que ya no se ve. La imagen de otro artículo no se toca.</summary>
+    [Fact]
+    public async Task DarDeBajaUnArticuloBorraSuImagenYNoLaDeOtro()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-baja-borra-imagen");
+        var id = await apoyo.SembrarArticuloAsync(tienda, "Con imagen y se da de baja");
+        var otro = await apoyo.SembrarArticuloAsync(tienda, "Vecino con imagen");
+        await apoyo.SembrarImagenAsync(tienda.IdTenant, id, ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoPng));
+        var deOtro = ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoWebp, largo: 90, relleno: 3);
+        await apoyo.SembrarImagenAsync(tienda.IdTenant, otro, deOtro, ValidadorDeImagen.TipoWebp);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/api/articulos/{id}")).StatusCode);
+
+        Assert.NotNull((await apoyo.LeerArticuloAsync(id)).DeletedAt);
+        Assert.Empty(await apoyo.LeerImagenesAsync(id));
+        Assert.Equal(deOtro, Assert.Single(await apoyo.LeerImagenesAsync(otro)).Contenido);
     }
 
     [Fact]
@@ -689,7 +718,7 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
         var tienda = await apoyo.SembrarTiendaAsync("adm-reintento-quitar");
         var id = await apoyo.SembrarArticuloAsync(tienda, "Reintento quitar");
         await apoyo.SembrarImagenAsync(tienda.IdTenant, id, ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoPng));
-        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("imagenes_articulo", "40001", ClaseDeSentencia.Update);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("imagenes_articulo", "40001", ClaseDeSentencia.Delete);
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
@@ -825,6 +854,36 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Null(await apoyo.Vitrinas.LeerVitrinaAsync(tienda.IdEmpresa));
     }
 
+    /// <summary>
+    /// Una vitrina cuya lista se desactivó después (acá por una escritura cruda, que no pasa por la guarda de
+    /// <c>ServicioDeListasPrecio</c>) sigue siendo editable mientras el <c>PUT</c> mande la MISMA lista: la lista
+    /// solo se valida cuando cambia. Mandar otra lista inactiva sigue siendo 400 <c>lista_invalida</c>.
+    /// </summary>
+    [Fact]
+    public async Task UnaVitrinaConLaListaDesactivadaSeSigueEditandoSiLaListaNoCambia()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-lista-sin-cambio", vitrinaPublicada: false);
+        var lista = await apoyo.SembrarListaAsync(tienda.IdTenant, "Se desactiva");
+        var otraInactiva = await apoyo.SembrarListaAsync(tienda.IdTenant, "Otra inactiva", activo: false);
+        var ruta = $"/api/empresas/{tienda.IdEmpresa}/vitrina";
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(ruta, Solicitud(lista))).StatusCode);
+
+        await apoyo.ModificarListaAsync(lista, l => l.Activo = false);
+
+        var editada = await admin.PutAsJsonAsync(ruta, Solicitud(lista, tagline: "slogan nuevo"));
+
+        Assert.Equal(HttpStatusCode.OK, editada.StatusCode);
+        var enBase = (await apoyo.Vitrinas.LeerVitrinaAsync(tienda.IdEmpresa))!;
+        Assert.Equal((lista, "slogan nuevo"), (enBase.IdListaPrecio, enBase.Tagline));
+
+        var otra = await admin.PutAsJsonAsync(ruta, Solicitud(otraInactiva, tagline: "no se guarda"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, otra.StatusCode);
+        Assert.Equal("lista_invalida", await ApoyoDeDominios.CodigoDeErrorAsync(otra));
+        enBase = (await apoyo.Vitrinas.LeerVitrinaAsync(tienda.IdEmpresa))!;
+        Assert.Equal((lista, "slogan nuevo"), (enBase.IdListaPrecio, enBase.Tagline));
+    }
+
     /// <summary>La plataforma ve las listas de todos los tenants, así que el tenant de la lista se compara a mano:
     /// una escritura de la plataforma con la lista de OTRO tenant es 400 <c>lista_invalida</c>. Un actor de tenant
     /// no puede llegar a esto (RLS y el filtro de EF le esconden la lista), por eso el caso va directo al servicio.</summary>
@@ -848,6 +907,109 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var guardada = await servicio.GuardarAsync(tienda.IdEmpresa, Pedido(propia));
         Assert.Equal(propia, guardada.IdListaPrecio);
+    }
+
+    // ---- una lista que usa una vitrina no se desactiva ni se mueve --------------------------------
+
+    private static ListaPrecioAlta AltaDeLista(string nombre, bool activo = true, int? idEmpresa = null) =>
+        new(nombre, idEmpresa, EsDefault: false, ModoLista.Fija, IdListaBase: null, Porcentaje: null, Activo: activo);
+
+    private static string RutaLista(int id) => $"/api/catalogos/listas-precio/{id}";
+
+    private async Task<(bool Activo, int? IdEmpresa)> LeerListaAsync(int idLista)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var lista = await db.ListasPrecio.AsNoTracking().SingleAsync(l => l.Id == idLista);
+        return (lista.Activo, lista.IdEmpresa);
+    }
+
+    /// <summary>
+    /// Desactivar la lista de una vitrina, o cambiarle el alcance (<c>id_empresa</c>), es 409
+    /// <c>lista_en_uso_por_vitrina</c> con el nombre de la empresa en el mensaje, y la lista queda como estaba.
+    /// Cada línea mata una cláusula: la desactivación, el cambio de alcance, que el predicado sea la lista de ESA
+    /// vitrina (una lista que no usa ninguna vitrina viva sí se desactiva y se mueve), que una edición que no la
+    /// quita (renombrar) no se bloquee, y que una vitrina dada de baja no cuente.
+    /// </summary>
+    [Fact]
+    public async Task UnaListaQueUsaUnaVitrinaNoSePuedeDesactivarNiMoverDeEmpresaPeroSiRenombrarlaNiSiLaUsaUnaVitrinaDadaDeBaja()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-lista-vitrina");
+        var otraEmpresa = await apoyo.Vitrinas.SembrarEmpresaAsync(tienda.IdTenant, "Otra empresa SA");
+        var enUso = await apoyo.SembrarListaAsync(tienda.IdTenant, "En uso por la tienda");
+        var libre = await apoyo.SembrarListaAsync(tienda.IdTenant, "Nadie la usa");
+        var deLaBaja = await apoyo.SembrarListaAsync(tienda.IdTenant, "Solo la usaba una vitrina dada de baja");
+        await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, enUso);
+        await apoyo.Vitrinas.SembrarVitrinaAsync(tienda.IdTenant, otraEmpresa, publicada: true, eliminada: true);
+        await apoyo.FijarListaDeLaVitrinaAsync(otraEmpresa, deLaBaja);
+
+        var desactivar = await admin.PutAsJsonAsync(RutaLista(enUso), AltaDeLista("En uso por la tienda", activo: false));
+        Assert.Equal(HttpStatusCode.Conflict, desactivar.StatusCode);
+        var errorDeDesactivar = await LeerAsync(desactivar);
+        Assert.Equal("lista_en_uso_por_vitrina", errorDeDesactivar.GetProperty("codigo").GetString());
+        Assert.Contains("Fantasía", errorDeDesactivar.GetProperty("title").GetString());
+
+        var mover = await admin.PutAsJsonAsync(RutaLista(enUso), AltaDeLista("En uso por la tienda", idEmpresa: otraEmpresa));
+        Assert.Equal(HttpStatusCode.Conflict, mover.StatusCode);
+        Assert.Equal("lista_en_uso_por_vitrina", await ApoyoDeDominios.CodigoDeErrorAsync(mover));
+
+        Assert.Equal((true, (int?)null), await LeerListaAsync(enUso));
+
+        // Lo que no le quita la lista a la tienda no se bloquea.
+        var renombrar = await admin.PutAsJsonAsync(RutaLista(enUso), AltaDeLista("Renombrada"));
+        Assert.Equal(HttpStatusCode.OK, renombrar.StatusCode);
+
+        // Una lista que ninguna vitrina viva usa se desactiva y se mueve, aunque otra lista sí esté en uso.
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaLista(libre), AltaDeLista("Nadie la usa", activo: false))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await admin.PutAsJsonAsync(RutaLista(libre), AltaDeLista("Nadie la usa", idEmpresa: tienda.IdEmpresa))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await admin.PutAsJsonAsync(RutaLista(deLaBaja), AltaDeLista("Solo la usaba una vitrina dada de baja", activo: false))).StatusCode);
+        Assert.False((await LeerListaAsync(deLaBaja)).Activo);
+
+        // Con la tienda en otra lista, la que usaba se puede desactivar.
+        await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, null);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaLista(enUso), AltaDeLista("Renombrada", activo: false))).StatusCode);
+        Assert.False((await LeerListaAsync(enUso)).Activo);
+    }
+
+    /// <summary>
+    /// La vitrina se asigna a la lista (<c>FOR KEY SHARE</c> sobre ella y <c>UPDATE</c> de la vitrina) y todavía no
+    /// comiteó cuando llega la desactivación: la edición toma <c>FOR UPDATE</c>, espera, y al despertar ve la
+    /// vitrina comiteada y contesta 409. Sin ese lock vería las vitrinas SIN la nueva, y su <c>UPDATE</c> de una
+    /// columna que no es clave no choca con un <c>KEY SHARE</c>: la lista quedaría inactiva bajo una vitrina que
+    /// la usa.
+    /// </summary>
+    [Fact]
+    public async Task DesactivarUnaListaMientrasUnaVitrinaSeAsignaEsperaYDa409()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-lista-carrera");
+        var lista = await apoyo.SembrarListaAsync(tienda.IdTenant, "Carrera");
+
+        await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await conexion.OpenAsync();
+        await using var transaccion = await conexion.BeginTransactionAsync();
+        await using (var comando = conexion.CreateCommand())
+        {
+            comando.Transaction = transaccion;
+            comando.CommandText =
+                $"SELECT 1 FROM listas_precio WHERE id_lista_precio = {lista} FOR KEY SHARE; " +
+                $"UPDATE vitrinas SET id_lista_precio = {lista} WHERE id_empresa = {tienda.IdEmpresa}";
+            await comando.ExecuteNonQueryAsync();
+        }
+
+        var desactivar = admin.PutAsJsonAsync(RutaLista(lista), AltaDeLista("Carrera", activo: false));
+        await EsperarBloqueadosAsync(esperados: 1);
+
+        await transaccion.CommitAsync();
+        var respuesta = await desactivar;
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        Assert.Equal("lista_en_uso_por_vitrina", await ApoyoDeDominios.CodigoDeErrorAsync(respuesta));
+        Assert.Equal((true, (int?)null), await LeerListaAsync(lista));
+        Assert.Equal(lista, (await apoyo.Vitrinas.LeerVitrinaAsync(tienda.IdEmpresa))!.IdListaPrecio);
     }
 
     private static object Solicitud(int? idListaPrecio, string? tagline = null) => new

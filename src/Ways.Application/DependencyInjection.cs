@@ -7,6 +7,7 @@ using Ways.Application.Caja;
 using Ways.Application.CatalogoOnline;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
+using Ways.Application.Combos;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Dispositivos;
@@ -77,6 +78,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeFamilias>();
         services.AddScoped<ServicioDeAgrupacionDeFamilias>();
         services.AddScoped<ServicioDeOfertas>();
+        services.AddScoped<ServicioDeCombos>();
 
         // stage-articulos-grilla-api: GET /api/articulos/grilla — compone ServicioDePrecios
         // (mismo criterio que ServicioDeEtiquetas más abajo), registrado junto al resto de

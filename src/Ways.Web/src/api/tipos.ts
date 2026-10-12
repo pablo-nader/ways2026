@@ -1098,7 +1098,20 @@ export type ResultadoDeResolucion = {
   precioFinal: number | null
   descuentoUnitario: number
   aplicadas: OfertaAplicada[]
+  /** Solo en `POST /api/ofertas/resolver-con-combos` y en la vista previa offline, y solo en la línea que
+   * un combo consumió (clave ausente en el resto). */
+  combo?: ComboDeLinea
 }
+
+/** Lo que un combo le hizo a una línea (espejo de `ComboEnLineaResuelta`): `ahorro` es un importe DE LÍNEA
+ * (no por unidad) que se suma al descuento por oferta de las unidades no consumidas. */
+export type ComboDeLinea = { unidadesConsumidas: number; ahorro: number; idCombo: number }
+
+/** Un combo aplicado a un documento, con las veces y el ahorro total (espejo de `ComboAplicadoResuelto`). */
+export type ComboAplicadoEnPrevia = { idCombo: number; codigo: number; nombre: string; veces: number; ahorro: number }
+
+/** Respuesta de `POST /api/ofertas/resolver-con-combos`: las líneas en el orden pedido y los combos aplicados. */
+export type ResolucionConCombos = { lineas: ResultadoDeResolucion[]; combos: ComboAplicadoEnPrevia[] }
 
 // --- POS: instantánea offline (stage-pos-venta-offline-web) ---
 // Espejo de `Ways.Application.Pos.Contratos` — catálogo con precio ya resuelto y congelado en cada
@@ -1195,6 +1208,19 @@ export type ClienteDeInstantanea = {
   creditoIlimitado: boolean
 }
 
+/** Componente de un combo de la instantánea: exactamente uno entre `idArticulo` e `idFamilia`. */
+export type ComponenteDeComboDeInstantanea = { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }
+
+/** Combo de la instantánea (espejo de `ComboDeInstantanea`): `precio` es el del conjunto completo. El servidor
+ * lo manda entero o no lo manda, y ordenado por id ascendente. */
+export type ComboDeInstantanea = {
+  idCombo: number
+  codigo: number
+  nombre: string
+  precio: number
+  componentes: ComponenteDeComboDeInstantanea[]
+}
+
 /** Recorte de `MedioPagoListado` para el checkout offline — espejo de `MedioPagoDeInstantanea`. */
 export type MedioPagoDeInstantanea = {
   idMedioPago: number
@@ -1214,6 +1240,8 @@ export type InstantaneaDePos = {
   clientes: ClienteDeInstantanea[]
   mediosDePago: MedioPagoDeInstantanea[]
   toleranciaPago: number
+  /** Ausente cuando no hay combos y en una instantánea guardada antes de que existieran: se cotiza como siempre. */
+  combos?: ComboDeInstantanea[]
 }
 
 // --- Caja: turnos, movimientos y resumen (stage-6-turnos-caja, Slice 6) ---
@@ -1774,6 +1802,11 @@ export type LineaDeVenta = {
    * (ausente = sin ajuste, el payload queda idéntico al de antes): el servidor recalcula el monto
    * sobre el neto posterior a las ofertas y es la única autoridad del importe. */
   ajusteManualPorcentaje?: number | null
+  /** Combos de una venta offline (espejo de `LineaDeVenta`): las TRES viajan juntas o ninguna, solo con
+   * `precioUnitario`, en la línea que un combo consumió. `ahorroDeCombo` es un importe de línea. */
+  unidadesConsumidasPorCombo?: number
+  ahorroDeCombo?: number
+  idCombo?: number
 }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
@@ -1840,6 +1873,8 @@ export type ItemEmitido = {
   idArea: number
   idListaPrecio: number
   idOferta: number | null
+  /** Combo que consumió unidades de la línea (el de menor id si fueron varios); `null`/ausente sin combo. */
+  idCombo?: number | null
   idAlicuotaIva: number
   porcentajeIva: number
   cantidad: number

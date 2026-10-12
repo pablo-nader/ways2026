@@ -24,6 +24,11 @@ namespace Ways.Application.Tests.Catalogos;
 /// validaciones de este archivo corren ANTES de esa transacción (o nunca la abren, porque
 /// rechazan antes de llegar a la rama de intercambio), así que sí son alcanzables acá.
 ///
+/// Tampoco se cubre acá la edición que desactiva la lista o le cambia el alcance: toma
+/// <c>FOR UPDATE</c> sobre la fila y mira las vitrinas dentro de una transacción. Sus casos —desactivar o mover
+/// una lista de una vitrina, y la desactivación sin dependientes— están en <c>ListasPrecioEndpointsTests</c>
+/// (Ways.IntegrationTests); lo que rechaza antes de esa transacción (dependiente activo como base) sí corre acá.
+///
 /// <see cref="ServicioDeListasPrecio.EliminarAsync"/> (heredado de
 /// <c>ServicioDeCatalogo{T,TListado,TAlta}</c>) TAMBIÉN dejó de cubrirse acá desde
 /// fix/bajas-catalogos-guarda-de-uso, mismo caveat: ahora abre su propia transacción y
@@ -332,18 +337,9 @@ public class ServicioDeListasPrecioTests
         Assert.Equal(409, error.EstadoHttp);
     }
 
-    [Fact]
-    public async Task ActualizarDesactivacionSinDependienteActivoEsPermitida()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idBase = await SembrarListaFijaAsync(nombreDeBase, idTenant: 1);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var datos = AltaFijaValida("General") with { Activo = false };
-        var actualizada = await servicio.ActualizarAsync(idBase, datos);
-
-        Assert.False(actualizada.Activo);
-    }
+    // ActualizarDesactivacionSinDependienteActivoEsPermitida se movió a ListasPrecioEndpointsTests
+    // (Ways.IntegrationTests): desactivar toma el lock de la fila y mira las vitrinas dentro de una
+    // transacción, que InMemory no admite. Ver el doc-comment de la clase.
 
     // ---- es_default: consistencia e intercambio (rama que NO abre transacción) --------------
 

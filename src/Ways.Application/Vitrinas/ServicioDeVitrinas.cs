@@ -74,9 +74,22 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj, Guard
         {
             // FOR KEY SHARE sobre la lista, después del lock del tenant: la baja de una lista toma FOR UPDATE
             // sobre ella y cuenta sus referencias, así que o ve esta vitrina o la espera.
+            //
+            // Solo se valida la lista si cambia: una vitrina cuya lista se desactivó después (por una escritura que
+            // no pasó por la guarda de ServicioDeListasPrecio) tiene que poder seguir editándose, aunque sea para
+            // despublicarla. Una vitrina nueva siempre valida. La lectura es un escalar: no mete la entidad en el
+            // identity map, así que la única lectura de la entidad sigue siendo la de LeerOCrearAsync.
             if (datos.IdListaPrecio is { } idListaPrecio)
             {
-                await ExigirListaValidaAsync(idListaPrecio, idEmpresa, idTenant, ct);
+                var guardada = await db.Vitrinas
+                    .Where(v => v.IdEmpresa == idEmpresa)
+                    .Select(v => new { v.IdListaPrecio })
+                    .FirstOrDefaultAsync(ct);
+
+                if (guardada is null || guardada.IdListaPrecio != idListaPrecio)
+                {
+                    await ExigirListaValidaAsync(idListaPrecio, idEmpresa, idTenant, ct);
+                }
             }
 
             var vitrina = await LeerOCrearAsync(idEmpresa, idTenant, ct);

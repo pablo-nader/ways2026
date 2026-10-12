@@ -19,7 +19,8 @@ namespace Ways.Application.CatalogoOnline;
 /// el endpoint no las distinguiría de la policy, y las prueba la conexión cruda.</item>
 /// <item>Esta clase decide lo que la policy no puede: que el artículo esté disponible para la empresa de la
 /// vitrina, que tenga un precio vigente en la lista de la tienda, la búsqueda, la categoría, y que las listas y
-/// las categorías estén activas y sean visibles para esa empresa.</item>
+/// las categorías estén activas y sean visibles para esa empresa. La búsqueda mira solo el nombre: el código
+/// interno no se publica en el DTO, y buscar por él sería un oráculo sobre un dato que la tienda no muestra.</item>
 /// </list>
 ///
 /// <para><b>Precio.</b> No se reusa el motor del POS (<c>ServicioDeInstantaneaDePos</c>/<c>ServicioDeOfertas</c>):
@@ -43,6 +44,11 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
     public const int TamanoMaximo = 60;
     public const int LargoMaximoDeLaBusqueda = 100;
 
+    /// <summary>Tope de la página pedida. Con el tamaño máximo el desplazamiento llega a unos 600.000 registros
+    /// y cabe en un <c>int</c>; sin tope, un número de página enorme desborda el producto y Postgres rechaza el
+    /// <c>OFFSET</c> negativo. Una página más allá del final del catálogo sale vacía, con el <c>total</c> real.</summary>
+    public const int PaginaMaxima = 10_000;
+
     /// <summary>La lista donde están las filas de <c>precios</c> (la propia si es fija, la base si es derivada)
     /// y el porcentaje que se aplica a ese monto (<c>null</c> si es fija).</summary>
     private sealed record ListaDePrecios(int IdListaConPrecios, decimal? Porcentaje);
@@ -56,7 +62,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
     /// </summary>
     public async Task<CatalogoPublico?> ObtenerCatalogoAsync(ConsultaDeCatalogo consulta, CancellationToken ct = default)
     {
-        var pagina = Math.Max(consulta.Pagina, 1);
+        var pagina = Math.Clamp(consulta.Pagina, 1, PaginaMaxima);
         var tamano = Math.Clamp(consulta.Tamano, 1, TamanoMaximo);
 
         var vitrina = await db.Vitrinas
@@ -89,7 +95,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
         if (buscar is not null)
         {
             var patron = PatronDeContiene(buscar);
-            publicados = publicados.Where(a => Coincide(a.Nombre, patron) || Coincide(a.CodigoInterno, patron));
+            publicados = publicados.Where(a => Coincide(a.Nombre, patron));
         }
 
         var categoriasVisibles = await db.Categorias
@@ -264,13 +270,19 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
             .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.VigenteDesde).First().Monto);
     }
 
-    /// <summary>Recorta los espacios; vacío es "sin búsqueda". El largo se acota para que un término enorme no
+    /// <summary>Quita los caracteres de control (un <c> </c> que llegara a Postgres lo rechaza con un error) y
+    /// recorta los espacios; lo que queda vacío es "sin búsqueda". El largo se acota para que un término enorme no
     /// llegue al <c>LIKE</c>.</summary>
     private static string? Normalizar(string? buscar)
     {
-        var texto = buscar?.Trim();
+        if (buscar is null)
+        {
+            return null;
+        }
 
-        if (string.IsNullOrEmpty(texto))
+        var texto = string.Concat(buscar.Where(c => !char.IsControl(c))).Trim();
+
+        if (texto.Length == 0)
         {
             return null;
         }

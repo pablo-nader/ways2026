@@ -128,7 +128,7 @@ describe('indexarResolucionPorLinea', () => {
 
 describe('previaDeLinea', () => {
   it('sin resultado (todavía no resolvió) devuelve todo null/0', () => {
-    expect(previaDeLinea(lineaFixture(), undefined)).toEqual({ precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0 })
+    expect(previaDeLinea(lineaFixture(), undefined)).toEqual({ precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0, ahorroDeCombo: 0 })
   })
 
   it('con precioFinal null (sin precio vigente) devuelve todo null/0, aunque la línea tenga ajuste', () => {
@@ -139,6 +139,7 @@ describe('previaDeLinea', () => {
       descuentoUnitario: 0,
       total: null,
       ajusteManual: 0,
+      ahorroDeCombo: 0,
     })
   })
 
@@ -146,7 +147,7 @@ describe('previaDeLinea', () => {
     const linea = lineaFixture({ cantidad: 3 })
     const resultado = resultadoFixture({ precioFinal: 90, descuentoUnitario: 10 })
 
-    expect(previaDeLinea(linea, resultado)).toEqual({ precioUnitario: 90, descuentoUnitario: 10, total: 270, ajusteManual: 0 })
+    expect(previaDeLinea(linea, resultado)).toEqual({ precioUnitario: 90, descuentoUnitario: 10, total: 270, ajusteManual: 0, ahorroDeCombo: 0 })
   })
 
   it('un descuento manual es negativo y se resta del neto', () => {

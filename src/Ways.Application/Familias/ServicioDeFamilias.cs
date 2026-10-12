@@ -34,6 +34,11 @@ public class ServicioDeFamilias(
     private static readonly IReadOnlySet<string> TablasQueSeResuelvenAlDisolver =
         new HashSet<string>(StringComparer.Ordinal) { "articulos" };
 
+    /// <summary>Cómo nombra el 409 de la disolución a los componentes de combo, que la etiqueta genérica de las
+    /// tablas llamaría "datos cargados".</summary>
+    private static readonly IReadOnlyDictionary<string, string> EtiquetasDeLaDisolucion =
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["combos_componentes"] = "combos" };
+
     /// <summary>Las familias vivas del tenant, ordenadas por nombre. Cada una con la cantidad de miembros vivos:
     /// el filtro de baja lógica de <c>articulos</c> deja afuera a los dados de baja.</summary>
     public async Task<IReadOnlyList<FamiliaListado>> ListarAsync(CancellationToken ct = default) =>
@@ -251,7 +256,8 @@ public class ServicioDeFamilias(
     /// valores) y la familia se da de baja, en una sola transacción y con un solo "ahora". Los artículos dados de baja
     /// no cuentan como miembros y conservan su <c>id_familia</c>, igual que antes. <c>404</c> si la familia no existe o
     /// ya está dada de baja (también la de otro tenant); <c>409 familia_en_uso</c> si alguna oferta la referencia, viva
-    /// o dada de baja (OD4, la misma política que la baja de un grupo): el guard de referencias corre bajo los dos
+    /// o dada de baja (OD4, la misma política que la baja de un grupo), o si es componente de un combo vivo (los
+    /// componentes de un combo dado de baja se borran con él y no bloquean): el guard de referencias corre bajo los dos
     /// locks, después de leer la familia, y no cuenta a los artículos, que se sueltan acá mismo. El nombre de una
     /// familia disuelta se puede reutilizar.
     ///
@@ -290,7 +296,7 @@ public class ServicioDeFamilias(
                     ?? throw ErrorDominio.NoEncontrado($"No existe la familia {id}.");
 
                 await guarda.ExigirSinReferenciasAsync(
-                    familia, "familia_en_uso", "la familia", etiquetasPropias: null, ct,
+                    familia, "familia_en_uso", "la familia", EtiquetasDeLaDisolucion, ct,
                     tablasQueNoBloquean: TablasQueSeResuelvenAlDisolver);
 
                 var miembros = await MembresiaDeFamilias.BloquearMiembrosAsync(conexion, transaccionCruda, id, idTenant, ct);

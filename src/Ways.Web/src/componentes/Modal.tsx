@@ -38,7 +38,7 @@ const CLASE_POR_TAMANO: Record<TamanoDeModal, string> = {
   xl: 'modal-xl',
 }
 
-export type PropsModal = {
+type PropsModalBase = {
   titulo: string
   children: React.ReactNode
   pie?: React.ReactNode
@@ -71,8 +71,15 @@ export type PropsModal = {
   /** Nombre accesible del botón de cerrar del header — distinto de "Cerrar" cuando el pie ya tiene
    * un botón con ese nombre. */
   etiquetaCerrar?: string
-  onCerrar: () => void
 }
+
+/** Un modal descartable exige `onCerrar`; uno `noDescartable` no tiene × y ignora Escape y el
+ * fondo, así que no admite `onCerrar`: el cierre es siempre decisión del llamador al desmontarlo. */
+export type PropsModal = PropsModalBase &
+  (
+    | { noDescartable?: false; onCerrar: () => void }
+    | { noDescartable: true; onCerrar?: never }
+  )
 
 /**
  * Modal genérico reusable (Bootstrap markup, sin su JS — el proyecto no lo carga). Pensado para
@@ -92,6 +99,7 @@ export function Modal({
   focoDeReserva = null,
   restaurarFoco = true,
   etiquetaCerrar = 'Cerrar',
+  noDescartable = false,
   onCerrar,
 }: PropsModal) {
   const idTitulo = useId()
@@ -167,14 +175,18 @@ export function Modal({
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'Escape') return
       if (evento.defaultPrevented) return
-      if (ocupado) return
       if (pilaDeModales[pilaDeModales.length - 1] !== idPropio) return
+      if (noDescartable) {
+        evento.preventDefault()
+        return
+      }
+      if (ocupado) return
       evento.preventDefault()
-      onCerrar()
+      onCerrar?.()
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [idPropio, ocupado, onCerrar])
+  }, [idPropio, ocupado, noDescartable, onCerrar])
 
   function atraparTab(evento: React.KeyboardEvent<HTMLDivElement>) {
     if (evento.key !== 'Tab') return
@@ -204,8 +216,8 @@ export function Modal({
 
   function alHacerClickEnElFondo(evento: React.MouseEvent<HTMLDivElement>) {
     if (evento.target !== evento.currentTarget) return
-    if (ocupado) return
-    onCerrar()
+    if (noDescartable || ocupado) return
+    onCerrar?.()
   }
 
   const claseTamano = tamano ? CLASE_POR_TAMANO[tamano] : ''
@@ -231,7 +243,9 @@ export function Modal({
               <h5 className="modal-title" id={idTitulo}>
                 {titulo}
               </h5>
-              <button type="button" className="btn-close" aria-label={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
+              {!noDescartable && (
+                <button type="button" className="btn-close" aria-label={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
+              )}
             </div>
             <div className="modal-body">{children}</div>
             {pie && <div className="modal-footer">{pie}</div>}
