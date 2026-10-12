@@ -52,6 +52,14 @@ public static class OfertasEndpoints
             servicio.ResolverSolicitudAsync(solicitud, ct))
         .WithSummary("POST, no muta nada: resuelve precio final y ofertas aplicadas para un lote de líneas.");
 
+        // Feature combos: misma entrada que /resolver, pero la respuesta es un objeto { lineas, combos } y no un
+        // arreglo, así que vive en su propia ruta (cambiar la forma de /resolver rompería a los POS ya instalados).
+        grupo.MapPost("/resolver-con-combos", (ServicioDeOfertas servicio, SolicitudDeResolucion solicitud, CancellationToken ct) =>
+            servicio.ResolverConCombosAsync(solicitud, ct))
+        .WithSummary(
+            "POST, no muta nada: lo mismo que /resolver más los combos que la venta online aplicaría al documento " +
+            "(por línea: unidades consumidas, ahorro e id del combo; en el documento: combos aplicados).");
+
         return app;
     }
 }
