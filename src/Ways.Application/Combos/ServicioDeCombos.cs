@@ -407,7 +407,8 @@ public class ServicioDeCombos(
         await comando.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>Los combos que pueden aplicarse a una venta de la empresa <paramref name="idEmpresa"/>: vivos
+    /// <summary>Los combos que pueden aplicarse a una venta de la empresa <paramref name="idEmpresa"/> (<c>null</c> ⇒
+    /// solo los de todo el tenant): vivos
     /// (el filtro global excluye los dados de baja), activos y de esa empresa o de todo el tenant, con sus
     /// componentes. Solo figuran los combos con al menos un componente que el carrito pueda satisfacer (un artículo
     /// de <paramref name="idsDeArticulos"/> o una familia de <paramref name="idsDeFamilias"/>), pero de esos se
@@ -416,7 +417,7 @@ public class ServicioDeCombos(
     /// componentes no figura. Estático y sin estado para que el checkout no sume una dependencia al constructor de
     /// <c>ServicioDeVentas</c>.</summary>
     public static async Task<IReadOnlyList<ComboCandidato>> CargarCandidatosParaVentaAsync(
-        IWaysDbContext db, int idEmpresa, IReadOnlyCollection<int> idsDeArticulos,
+        IWaysDbContext db, int? idEmpresa, IReadOnlyCollection<int> idsDeArticulos,
         IReadOnlyCollection<int> idsDeFamilias, CancellationToken ct = default)
     {
         var filas = await (
@@ -431,6 +432,7 @@ public class ServicioDeCombos(
                 select new
                 {
                     combo.Id,
+                    combo.Codigo,
                     combo.Nombre,
                     combo.Precio,
                     componente.IdArticulo,
@@ -439,15 +441,47 @@ public class ServicioDeCombos(
                 })
             .ToListAsync(ct);
 
-        return filas
+        return AgruparCandidatos(filas.Select(f => (f.Id, f.Codigo, f.Nombre, f.Precio, f.IdArticulo, f.IdFamilia, f.Cantidad)));
+    }
+
+    /// <summary>Los combos vivos, activos y de la empresa <paramref name="idEmpresa"/> o de todo el tenant, con TODOS
+    /// sus componentes, para la instantánea del punto de venta de escritorio. Una sola consulta. Ordenados por id de
+    /// combo y, dentro de cada uno, por contenido (artículos primero, por id; después familias, por id), así que dos
+    /// lecturas del mismo estado dan la misma lista aunque cambien los ids de las filas de componentes.</summary>
+    public static async Task<IReadOnlyList<ComboCandidato>> CargarParaInstantaneaAsync(
+        IWaysDbContext db, int idEmpresa, CancellationToken ct = default)
+    {
+        var filas = await (
+                from combo in db.Combos
+                where combo.Activo && (combo.IdEmpresa == null || combo.IdEmpresa == idEmpresa)
+                join componente in db.CombosComponentes on combo.Id equals componente.IdCombo
+                orderby combo.Id, componente.IdArticulo == null, componente.IdArticulo, componente.IdFamilia
+                select new
+                {
+                    combo.Id,
+                    combo.Codigo,
+                    combo.Nombre,
+                    combo.Precio,
+                    componente.IdArticulo,
+                    componente.IdFamilia,
+                    componente.Cantidad
+                })
+            .ToListAsync(ct);
+
+        return AgruparCandidatos(filas.Select(f => (f.Id, f.Codigo, f.Nombre, f.Precio, f.IdArticulo, f.IdFamilia, f.Cantidad)));
+    }
+
+    private static IReadOnlyList<ComboCandidato> AgruparCandidatos(
+        IEnumerable<(int Id, int Codigo, string Nombre, decimal Precio, int? IdArticulo, int? IdFamilia, decimal Cantidad)> filas) =>
+        filas
             .GroupBy(f => f.Id)
             .Select(g => new ComboCandidato(
                 g.Key,
                 g.First().Nombre,
                 g.First().Precio,
-                g.Select(f => new ComponenteDeCombo(f.IdArticulo, f.IdFamilia, f.Cantidad)).ToList()))
+                g.Select(f => new ComponenteDeCombo(f.IdArticulo, f.IdFamilia, f.Cantidad)).ToList(),
+                g.First().Codigo))
             .ToList();
-    }
 
     private async Task<Combo> BuscarAsync(int id, CancellationToken ct) =>
         await db.Combos.FirstOrDefaultAsync(c => c.Id == id, ct)

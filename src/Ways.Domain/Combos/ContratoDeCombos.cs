@@ -5,9 +5,10 @@ namespace Ways.Domain.Combos;
 public readonly record struct ComponenteDeCombo(int? IdArticulo, int? IdFamilia, decimal Cantidad);
 
 /// <summary>Combo candidato para el resolvedor. <see cref="Precio"/> es el del conjunto
-/// completo (una aplicación).</summary>
+/// completo (una aplicación). <see cref="Codigo"/> es el número que se tipea tras la <c>C</c>: el motor no lo usa,
+/// viaja para quien presenta los combos aplicados (<c>0</c> si quien arma el candidato no lo conoce).</summary>
 public readonly record struct ComboCandidato(
-    int Id, string Nombre, decimal Precio, IReadOnlyList<ComponenteDeCombo> Componentes);
+    int Id, string Nombre, decimal Precio, IReadOnlyList<ComponenteDeCombo> Componentes, int Codigo = 0);
 
 /// <summary>
 /// Línea del documento para detectar combos. El orden de entrada es el orden del documento;

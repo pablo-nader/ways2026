@@ -39,6 +39,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // policy de rol: son los dos únicos puntos de entrada SIN sesión previa del sistema).
         ("POST", "/api/auth/login-dispositivo"),
         ("POST", "/api/ofertas/resolver"),
+        // feature combos (T3b): la vista previa del carrito con combos — read-only POST, mismo grupo
+        // y mismo criterio exacto que "/api/ofertas/resolver" de arriba (el cajero Vendedor la
+        // llama en cada cambio del carrito). El positivo por rol real es
+        // CombosPrevisualizacionTests.UnVendedorPrevisualizaElCarritoConCombos.
+        ("POST", "/api/ofertas/resolver-con-combos"),
         // Slice 4 (task 4.6): MapGroup("/api/ventas").MapPost("/", ...) — el RoutePattern.RawText
         // real lleva la barra final (mismo shape que "/api/plataforma/tenants/"/"/api/usuarios/"
         // más abajo), a diferencia del literal sin barra que este allowlist traía adelantado
@@ -159,6 +164,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Organización (empresas/puntos de venta) — GestionDeOrganizacion (Root + Admin, sin
         // Vendedor).
         ("PUT", "/api/empresas/{id:int}"),
+        // Vitrina de la empresa (landing del comercio): mismo grupo de policy que la edición de la empresa.
+        // La prueba positiva por rol es VitrinaAdminTests.SinSesionDa401YSoloElAdminYLaPlataformaPuedenAdministrarLaVitrina,
+        // que hace las cuatro operaciones como admin y rebota a Supervisor y Vendedor con 403.
+        ("PUT", "/api/empresas/{id:int}/vitrina"),
+        ("PUT", "/api/empresas/{id:int}/vitrina/logo"),
+        ("DELETE", "/api/empresas/{id:int}/vitrina"),
+        ("DELETE", "/api/empresas/{id:int}/vitrina/logo"),
         ("PUT", "/api/puntos-venta/{id:int}"),
         // Alta de un punto de venta sobre una empresa existente: la declara la ruta y no el grupo,
         // igual que el PUT. Ver RutasSinPolicyDeGrupo más abajo.

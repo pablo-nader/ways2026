@@ -39,6 +39,7 @@ Empresa | reservas_numeracion via puntos_venta | id_punto_venta,id_tenant | sinm
 Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | vitrinas | id_empresa,id_tenant | marcado
 Familia | articulos | id_familia,id_tenant | marcado
 Familia | combos_componentes | id_familia,id_tenant | sinmarca
 Familia | ofertas | id_familia,id_tenant | marcado
@@ -137,6 +138,7 @@ Tenant | stock | id_tenant | sinmarca
 Tenant | stock_lotes | id_tenant | sinmarca
 Tenant | turnos_caja | id_tenant | marcado
 Tenant | usuarios | id_tenant | marcado
+Tenant | vitrinas | id_tenant | marcado
 Usuario | auditoria | id_actor | excluido
 Usuario | comprobantes_compra | id_empleado | marcado
 Usuario | comprobantes_venta | id_empleado | marcado

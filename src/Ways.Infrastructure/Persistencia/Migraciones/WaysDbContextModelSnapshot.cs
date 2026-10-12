@@ -3427,6 +3427,105 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("tenants", (string)null);
                 });
 
+            modelBuilder.Entity("Ways.Domain.Organizacion.Vitrina", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_vitrina");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ColorAcento")
+                        .HasColumnType("text")
+                        .HasColumnName("color_acento");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Descripcion")
+                        .HasColumnType("text")
+                        .HasColumnName("descripcion");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<byte[]>("Logo")
+                        .HasColumnType("bytea")
+                        .HasColumnName("logo");
+
+                    b.Property<DateTimeOffset?>("LogoActualizadoEn")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("logo_actualizado_en");
+
+                    b.Property<string>("LogoContentType")
+                        .HasColumnType("text")
+                        .HasColumnName("logo_content_type");
+
+                    b.Property<bool>("Publicada")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("publicada");
+
+                    b.Property<string>("Tagline")
+                        .HasColumnType("text")
+                        .HasColumnName("tagline");
+
+                    b.Property<string>("Tema")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("oscuro")
+                        .HasColumnName("tema");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_vitrinas");
+
+                    b.HasIndex("IdEmpresa")
+                        .IsUnique()
+                        .HasDatabaseName("ux_vitrinas_empresa")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_vitrinas_empresa");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ix_vitrinas_tenant")
+                        .HasDatabaseName("ix_vitrinas_tenant");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ux_vitrinas_publicada_por_tenant")
+                        .IsUnique()
+                        .HasDatabaseName("ux_vitrinas_publicada_por_tenant")
+                        .HasFilter("publicada AND deleted_at IS NULL");
+
+                    b.ToTable("vitrinas", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_vitrinas_color_acento", "color_acento IS NULL OR color_acento ~ '^#[0-9a-f]{6}$'");
+
+                            t.HasCheckConstraint("ck_vitrinas_descripcion_largo", "descripcion IS NULL OR char_length(descripcion) <= 2000");
+
+                            t.HasCheckConstraint("ck_vitrinas_logo", "(logo IS NULL AND logo_content_type IS NULL AND logo_actualizado_en IS NULL) OR (logo IS NOT NULL AND octet_length(logo) BETWEEN 1 AND 1048576 AND logo_content_type IS NOT NULL AND logo_content_type IN ('image/png', 'image/jpeg', 'image/webp') AND logo_actualizado_en IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_vitrinas_tagline_largo", "tagline IS NULL OR char_length(tagline) <= 120");
+
+                            t.HasCheckConstraint("ck_vitrinas_tema", "tema IN ('claro', 'oscuro')");
+                        });
+                });
+
             modelBuilder.Entity("Ways.Domain.Precios.Precio", b =>
                 {
                     b.Property<int>("Id")
@@ -6087,6 +6186,24 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_puntos_venta_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Organizacion.Vitrina", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_vitrinas_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_vitrinas_empresa");
                 });
 
             modelBuilder.Entity("Ways.Domain.Precios.Precio", b =>

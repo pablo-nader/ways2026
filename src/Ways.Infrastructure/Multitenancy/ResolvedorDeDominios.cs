@@ -71,15 +71,16 @@ public sealed class ResolvedorDeDominios(IServiceScopeFactory alcances) : IResol
             return null;
         }
 
-        var nombre = await alcance.ServiceProvider
+        // La fila entera, para decidir con Tenant.PuedeOperar y no repetir su regla acá. Un tenant suspendido
+        // SÍ resuelve (el login ya lo rechaza); lo que cambia es que su vitrina no se sirve.
+        var tenant = await alcance.ServiceProvider
             .GetRequiredKeyedService<IWaysDbContext>(ClavesDeContexto.Plataforma)
             .Tenants
             .AsNoTracking()
             .Where(t => t.Id == idTenant)
-            .Select(t => t.Nombre)
             .FirstOrDefaultAsync(ct);
 
-        // Sin nombre el tenant no existe o está dado de baja: el dominio no resuelve.
-        return nombre is null ? null : new DominioResuelto(idTenant.Value, nombre);
+        // Sin tenant, o dado de baja (el filtro de baja lógica lo oculta): el dominio no resuelve.
+        return tenant is null ? null : new DominioResuelto(idTenant.Value, tenant.Nombre, tenant.PuedeOperar);
     }
 }

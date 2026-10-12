@@ -106,6 +106,17 @@ public class ServicioDeVentas(
         var momento = reloj.Ahora;
 
         var tipo = await ResolverTipoComprobanteAsync(solicitud.CodigoTipoComprobante, ct);
+
+        // Los combos del dispositivo solo existen en una venta (signo positivo): una devolución nunca detecta ni
+        // lleva combos, y unidades consumidas con el signo de una venta no encajan con una cantidad negativa.
+        if (tipo.Signo <= 0 && lineas.Any(TraeComboOffline))
+        {
+            throw new ErrorDominio(
+                "combo_offline_no_admitido",
+                "Los datos de combo de una línea solo se admiten en una venta, no en una nota de crédito.",
+                400);
+        }
+
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         // design decisión 11 (Slice 5): turno SIEMPRE resuelto server-side, inmediatamente
@@ -199,13 +210,20 @@ public class ServicioDeVentas(
         // es un materializador PRIVADO SEPARADO, MaterializarItems (:1007 y siguientes) queda
         // literalmente intacto — el de la venta común corre CalculadorDeTotales.Calcular y el del
         // presupuesto suma los importes ya guardados (TotalesGuardados).
-        // Combos (D1-D8 del feature combos): solo en la venta online, que es la que el servidor precia.
-        // Quedan fuera la conversión de un presupuesto (precios congelados), la venta offline con
-        // NumeroPreasignado (precios del dispositivo) y la devolución (signo negativo). Todo lo que se
-        // decide acá viaja en el plan: la lambda reintentable no vuelve a detectar combos.
-        var combosPorLinea = presupuestoOrigen is null && solicitud.NumeroPreasignado is null && tipo.Signo > 0
+        // Combos (D1-D8 del feature combos): se detectan en toda venta de signo positivo que el servidor precia o
+        // audita. Quedan fuera la conversión de un presupuesto (precios congelados) y la devolución (signo
+        // negativo). En la venta online la detección se APLICA; en la venta offline con NumeroPreasignado se graba
+        // lo que el dispositivo calculó y la detección del servidor solo sirve para comparar (auditoría de
+        // discrepancias). Todo lo que se decide acá viaja en el plan: la lambda reintentable no vuelve a detectar.
+        var combosDetectados = presupuestoOrigen is null && tipo.Signo > 0
             ? await DetectarCombosAsync(puntoVenta.IdEmpresa, lineas, resolucion!, articuloPorId, ct)
             : SinCombos;
+
+        // Un id de combo que trae el dispositivo y que el tenant nunca tuvo no se puede grabar (la FK lo rechazaría
+        // y la venta, que ya ocurrió, quedaría varada): se conservan los importes, id_combo queda en null y se
+        // audita. Un combo dado de baja después de que el dispositivo lo sincronizó SÍ existe (baja lógica): la
+        // venta conserva su id.
+        var combosOfflineExistentes = await ResolverCombosOfflineExistentesAsync(lineas, ct);
 
         // Devolución de una venta con combo: la nota de crédito asociada a una venta cuyos items consumieron un
         // combo devuelve lo que se cobró por esas unidades, no lo que cuestan hoy (feature combos, decisión del
@@ -218,8 +236,8 @@ public class ServicioDeVentas(
 
         var (items, totales, lineaDeItem) = presupuestoOrigen is null
             ? MaterializarItems(
-                tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio, combosPorLinea,
-                devolucionesDeCombo)
+                tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio,
+                combosDetectados, combosOfflineExistentes, devolucionesDeCombo)
             : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
@@ -557,10 +575,9 @@ public class ServicioDeVentas(
         ConLineaDeOrigenIdentidad((IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales) materializado) =>
         (materializado.Items, materializado.Totales, [.. Enumerable.Range(0, materializado.Items.Count)]);
 
-    /// <summary>Detecta los combos de una venta online ya resuelta por ofertas. Cuesta UNA consulta
-    /// (<see cref="ServicioDeCombos.CargarCandidatosParaVentaAsync"/>), y ninguna si la venta suma menos
-    /// unidades que el mínimo de un combo: con menos no puede completarse ninguno. Es solo una
-    /// optimización; qué líneas entran a la detección lo decide <see cref="CombosEnVenta.Resolver"/>.</summary>
+    /// <summary>Detecta los combos de una venta ya resuelta por ofertas, con el mismo camino que la vista previa del
+    /// carrito (<see cref="CombosEnVenta.DetectarAsync"/>): UNA consulta, y ninguna si la venta suma menos unidades que
+    /// el mínimo de un combo.</summary>
     private async Task<IReadOnlyDictionary<int, ComboEnLinea>> DetectarCombosAsync(
         int idEmpresa,
         IReadOnlyList<LineaDeVenta> lineas,
@@ -568,11 +585,6 @@ public class ServicioDeVentas(
         IReadOnlyDictionary<int, Articulo> articuloPorId,
         CancellationToken ct)
     {
-        if (lineas.Sum(l => l.Cantidad) < ReglaDeCombos.UnidadesMinimas)
-        {
-            return SinCombos;
-        }
-
         var lineasParaCombos = lineas
             .Select((linea, i) =>
             {
@@ -584,15 +596,42 @@ public class ServicioDeVentas(
             })
             .ToList();
 
-        var detectables = lineasParaCombos.Where(l => l.UnidadVenta == UnidadVenta.Unidad).ToList();
-        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(
-            db,
-            idEmpresa,
-            [.. detectables.Select(l => l.IdArticulo).Distinct()],
-            [.. detectables.Where(l => l.IdFamilia.HasValue).Select(l => l.IdFamilia!.Value).Distinct()],
-            ct);
+        return (await CombosEnVenta.DetectarAsync(db, idEmpresa, lineasParaCombos, ct)).Lineas;
+    }
 
-        return CombosEnVenta.Resolver(lineasParaCombos, candidatos);
+    private static IReadOnlyDictionary<string, object?>? ProyectarComboAuditado(ComboDeAuditoria? combo) =>
+        combo is null
+            ? null
+            : new Dictionary<string, object?>
+            {
+                ["unidades"] = combo.Unidades,
+                ["ahorro"] = combo.Ahorro,
+                ["id_combo"] = combo.IdCombo,
+                ["inexistente"] = combo.Inexistente
+            };
+
+    private static bool TraeComboOffline(LineaDeVenta linea) =>
+        linea.UnidadesConsumidasPorCombo is not null || linea.AhorroDeCombo is not null || linea.IdCombo is not null;
+
+    /// <summary>Los ids de combo que traen las líneas de una venta offline y que existen en el tenant (incluidos los
+    /// dados de baja: la baja es lógica y la fila sigue ahí). Cuesta UNA consulta solo si alguna línea trae un
+    /// <c>idCombo</c>; si no, devuelve el conjunto vacío sin tocar la base.</summary>
+    private async Task<IReadOnlySet<int>> ResolverCombosOfflineExistentesAsync(
+        IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    {
+        var ids = lineas.Where(l => l.IdCombo is not null).Select(l => l.IdCombo!.Value).Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new HashSet<int>();
+        }
+
+        var existentes = await db.Combos
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(c => ids.Contains(c.Id))
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+
+        return existentes.ToHashSet();
     }
 
     /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
@@ -1489,7 +1528,9 @@ public class ServicioDeVentas(
         // nunca bloqueo" es exactamente el criterio que ya tiene ItemComprobanteVenta.LoteVencido.
         // UNA fila por comprobante (nunca una por línea): valor_nuevo.items lleva la lista
         // completa de líneas afectadas.
-        var lineasDiscrepantes = plan.Items.Where(i => i.PrecioDiscrepante).ToList();
+        var lineasDiscrepantes = plan.Items
+            .Where(i => i.PrecioDiscrepante || i.ComboDelDispositivo is { Inexistente: true })
+            .ToList();
         if (lineasDiscrepantes.Count > 0)
         {
             var payload = new Dictionary<string, object?>
@@ -1507,7 +1548,9 @@ public class ServicioDeVentas(
                         ["ajuste_manual"] = i.AjusteManual,
                         ["total_cobrado"] = i.Total,
                         ["precio_esperado"] = i.PrecioEsperado,
-                        ["descuento_esperado"] = i.DescuentoEsperado
+                        ["descuento_esperado"] = i.DescuentoEsperado,
+                        ["combo_cobrado"] = ProyectarComboAuditado(i.ComboDelDispositivo),
+                        ["combo_esperado"] = ProyectarComboAuditado(i.ComboEsperado)
                     })
                     .ToList()
             };
@@ -1950,7 +1993,8 @@ public class ServicioDeVentas(
             IReadOnlyDictionary<int, Articulo> articuloPorId,
             IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
             int idListaPrecio,
-            IReadOnlyDictionary<int, ComboEnLinea> combosPorLinea,
+            IReadOnlyDictionary<int, ComboEnLinea> combosDetectados,
+            IReadOnlySet<int> combosOfflineExistentes,
             IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
@@ -1973,7 +2017,8 @@ public class ServicioDeVentas(
             if (linea.PrecioUnitario is { } precioOffline)
             {
                 lineasParaCalcular.Add(new LineaParaCalcular(
-                    cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje));
+                    cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje,
+                    linea.UnidadesConsumidasPorCombo ?? 0m, linea.AhorroDeCombo ?? 0m));
                 origenes.Add((i, null));
                 continue;
             }
@@ -2014,7 +2059,7 @@ public class ServicioDeVentas(
 
             // El combo es un descuento de línea sobre las unidades que consumió; las demás conservan su
             // oferta unitaria (CalculadorDeTotales). Sin combo en la línea, el cálculo es el de siempre.
-            combosPorLinea.TryGetValue(i, out var comboDeLaLinea);
+            combosDetectados.TryGetValue(i, out var comboDeLaLinea);
 
             lineasParaCalcular.Add(new LineaParaCalcular(
                 cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
@@ -2063,9 +2108,28 @@ public class ServicioDeVentas(
             // Combos: una línea cuyas unidades se consumieron TODAS por combos no recibió ninguna oferta
             // (se vendió a lista menos su parte del combo), así que no lleva id_oferta; si le quedan
             // unidades fuera del combo, esas unidades sí tuvieron su oferta y la conserva. id_combo es el
-            // combo de menor id entre los que consumieron unidades de la línea.
-            var tieneCombo = combosPorLinea.TryGetValue(i, out var combo);
-            if (tieneCombo && combo.UnidadesConsumidas == linea.Cantidad)
+            // combo de menor id entre los que consumieron unidades de la línea. En una línea offline el combo es
+            // el que calculó el dispositivo (grabado tal cual); si ese id no existe en el tenant, los importes se
+            // conservan, id_combo queda en null y la línea se audita.
+            var esLineaOffline = linea.PrecioUnitario is not null;
+            var tieneComboDetectado = combosDetectados.TryGetValue(i, out var detectado);
+
+            int unidadesDeComboGrabadas;
+            int? idComboGrabado;
+            var comboInexistente = false;
+            if (esLineaOffline)
+            {
+                unidadesDeComboGrabadas = linea.UnidadesConsumidasPorCombo ?? 0;
+                comboInexistente = linea.IdCombo is { } idDelDispositivo && !combosOfflineExistentes.Contains(idDelDispositivo);
+                idComboGrabado = comboInexistente ? null : linea.IdCombo;
+            }
+            else
+            {
+                unidadesDeComboGrabadas = tieneComboDetectado ? detectado.UnidadesConsumidas : 0;
+                idComboGrabado = tieneComboDetectado ? detectado.IdCombo : null;
+            }
+
+            if (unidadesDeComboGrabadas == linea.Cantidad)
             {
                 idOferta = null;
             }
@@ -2076,17 +2140,19 @@ public class ServicioDeVentas(
             // auditoria, ver EjecutarTransaccionAsync/ServicioDeAuditoria). Sin precio vigente HOY
             // (el artículo pudo perder su precio entre el cobro offline y este sync) no hay
             // expectativa que comparar: PrecioDiscrepante queda false, nunca un falso positivo
-            // contra un "esperado" inventado. Se usa CalculadorDeTotales.NetoDeLinea, la MISMA fórmula
-            // del cálculo — nunca una segunda autoridad de dinero, esta cuenta no
-            // alimenta totales/ValidadorDePagos/persistencia. Se compara el neto ANTERIOR al ajuste
+            // contra un "esperado" inventado. NetoDeLinea reusa CalculadorDeTotales — nunca una segunda
+            // autoridad de dinero, esta cuenta no alimenta totales/ValidadorDePagos/persistencia — e incluye los
+            // combos que el servidor detecta sobre el carrito offline: un combo bien calculado por el dispositivo
+            // no es una discrepancia y uno mal calculado (o ausente) sí. Se compara el neto ANTERIOR al ajuste
             // manual de las dos partes (bruto − descuento): el porcentaje es el mismo dato del
             // request de los dos lados, así que no es una diferencia de precio y no participa de
             // la comparación. Comparar totales ya ajustados la enmascaraba: con −100 % los dos
             // lados dan 0 y con −50 % un centavo de diferencia puede redondear a lo mismo.
-            var esLineaOffline = linea.PrecioUnitario is not null;
             var discrepante = esLineaOffline
                 && resultado.PrecioOriginal is not null
-                && CalculadorDeTotales.NetoDeLinea(calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario)
+                && NetoDeLinea(
+                        calculado.Cantidad, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
+                        detectado.UnidadesConsumidas, detectado.Ahorro)
                     != calculado.Total - calculado.AjusteManual;
 
             items.Add(new LineaDelPlan(
@@ -2099,11 +2165,30 @@ public class ServicioDeVentas(
                 DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null,
                 AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
                 AjusteManual: calculado.AjusteManual,
-                IdCombo: tieneCombo ? combo.IdCombo : null));
+                IdCombo: idComboGrabado,
+                ComboDelDispositivo: esLineaOffline && TraeComboOffline(linea)
+                    ? new ComboDeAuditoria(
+                        linea.UnidadesConsumidasPorCombo, linea.AhorroDeCombo, linea.IdCombo, comboInexistente)
+                    : null,
+                ComboEsperado: (discrepante || comboInexistente) && tieneComboDetectado
+                    ? new ComboDeAuditoria(detectado.UnidadesConsumidas, detectado.Ahorro, detectado.IdCombo, false)
+                    : null));
         }
 
         return (items, totales, [.. origenes.Select(o => o.Linea)]);
     }
+
+    /// <summary>Neto de línea ESPERADO (bruto − descuento de oferta de las unidades fuera de combo − parte del combo),
+    /// anterior a cualquier ajuste manual, calculado con <see cref="CalculadorDeTotales.Calcular"/> sobre la línea sola
+    /// (design: Checkout Contract): a propósito NUNCA una segunda autoridad de dinero. Solo alimenta el diagnóstico de
+    /// discrepancia de precio offline de <see cref="MaterializarItems"/>, nunca
+    /// <c>totales</c>/<see cref="ValidadorDePagos"/>/lo que se persiste.</summary>
+    private static decimal NetoDeLinea(
+        decimal cantidadConSigno, decimal precioUnitario, decimal descuentoUnitario, decimal unidadesConsumidas,
+        decimal ahorroDeCombo) =>
+        CalculadorDeTotales.Calcular(
+            [new LineaParaCalcular(
+                cantidadConSigno, precioUnitario, descuentoUnitario, null, unidadesConsumidas, ahorroDeCombo)]).Total;
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que
     // AsignadorDeNumeroComprobante) --------------------------------------------------------------
@@ -2321,6 +2406,14 @@ public class ServicioDeVentas(
                 400);
         }
 
+        if (lineas.Any(l => l.PrecioUnitario is null && TraeComboOffline(l)))
+        {
+            throw new ErrorDominio(
+                "combo_offline_no_admitido",
+                "Los datos de combo de una línea (unidades, ahorro, idCombo) solo se admiten junto con su precio offline.",
+                400);
+        }
+
         if (lineas.All(l => l.PrecioUnitario is null))
         {
             return;
@@ -2349,6 +2442,46 @@ public class ServicioDeVentas(
                 "precio_offline_invalido",
                 "El precio y el descuento offline de cada línea tienen que ser mayores o iguales a cero, " +
                 "y el descuento no puede superar al precio (un total de línea negativo no es válido).",
+                400);
+        }
+
+        foreach (var linea in lineas.Where(TraeComboOffline))
+        {
+            ExigirComboOfflineValido(linea);
+        }
+    }
+
+    /// <summary>Combo que trae una línea offline (feature combos): los tres datos o ninguno
+    /// (<c>combo_offline_incompleto</c>), con unidades entre 1 y la cantidad de la línea, una parte del combo (importe
+    /// de línea) de a lo sumo dos decimales, no negativa y que no supere el bruto de las unidades consumidas, y un id
+    /// positivo (<c>combo_offline_invalido</c>). Que el id exista en el tenant NO se exige acá: una venta que el
+    /// dispositivo ya cobró no se rechaza por eso (ver <see cref="ResolverCombosOfflineExistentesAsync"/>). Las unidades
+    /// son un entero por tipo: una fracción no llega a este método (el binding la rechaza).</summary>
+    private static void ExigirComboOfflineValido(LineaDeVenta linea)
+    {
+        if (linea.UnidadesConsumidasPorCombo is not { } unidades
+            || linea.AhorroDeCombo is not { } ahorro
+            || linea.IdCombo is not { } idCombo)
+        {
+            throw new ErrorDominio(
+                "combo_offline_incompleto",
+                "Los datos de combo de una línea van completos (unidades, ahorro, idCombo) o no van.",
+                400);
+        }
+
+        // El bruto de las unidades consumidas se calcula al final del cortocircuito: unidades fuera de 1..Cantidad no
+        // llegan a la multiplicación por el precio.
+        if (unidades < 1
+            || unidades > linea.Cantidad
+            || ahorro < 0m
+            || decimal.Round(ahorro, 2) != ahorro
+            || idCombo <= 0
+            || ahorro > Math.Round(unidades * linea.PrecioUnitario!.Value, 2, MidpointRounding.AwayFromZero))
+        {
+            throw new ErrorDominio(
+                "combo_offline_invalido",
+                "Las unidades de combo tienen que estar entre 1 y la cantidad de la línea, el ahorro entre 0 y el bruto " +
+                "de esas unidades (a lo sumo dos decimales) y el id de combo ser positivo.",
                 400);
         }
     }
@@ -2439,7 +2572,14 @@ public class ServicioDeVentas(
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
-        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null);
+        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null,
+        ComboDeAuditoria? ComboDelDispositivo = null, ComboDeAuditoria? ComboEsperado = null);
+
+    /// <summary>Datos de combo de una línea offline para el rastro de auditoría: lo que trajo el dispositivo
+    /// (<see cref="LineaDelPlan.ComboDelDispositivo"/>) y lo que el servidor detectó
+    /// (<see cref="LineaDelPlan.ComboEsperado"/>). <see cref="Inexistente"/>: el id del dispositivo no existe en el
+    /// tenant.</summary>
+    private sealed record ComboDeAuditoria(int? Unidades, decimal? Ahorro, int? IdCombo, bool Inexistente);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
