@@ -66,7 +66,7 @@ transaction that adds it, and the CHECKs reference it.
   by-amount components, contracts (article list/create/edit, scan, POS snapshot) expose
   `teclaAtajo`, 23505 backstop for the unique index, docs/10. Tests first.
   Route: delegated writer (2+ non-trivial files).
-- [ ] T2 — Server, sale: `importe` on the sale line and on the preview line (D1, D2), scan
+- [x] T2 — Server, sale: `importe` on the sale line and on the preview line (D1, D2), scan
   resolution turns `N*code` into quantity 1 + amount N for a by-amount article, snapshot emits
   unpriced by-amount articles, offline sale accepts them. Tests first.
   Route: delegated writer.
@@ -102,8 +102,10 @@ authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
 
-- T2 — implemented in `c5c78fe0` on `pnader/importe-venta` (delegated writer). Not checked off
-  yet: judgment-day in progress.
+- T2 — implemented in `c5c78fe0` on `pnader/importe-venta` (delegated writer). Corrections C1–C4
+  in `0a824d59`; judgment-day round 2 (scoped re-judgment by both judges): all four FIXED, no new
+  defect → APPROVED. After the corrections: Application.Tests 862/862 (parent), Domain.Tests
+  1400/1400 and IntegrationTests unfiltered 3835/3835 (writer).
   - Observed after the last source change: Domain.Tests 1400/1400 and Application.Tests 861/861
     (both re-run by the parent), IntegrationTests unfiltered 3831/3831 (writer, 41 min).
   - RED observed for the amount rule, the parser prefix, the repricing flag and the sale tests;
