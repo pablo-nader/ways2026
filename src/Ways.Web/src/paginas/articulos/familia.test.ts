@@ -228,6 +228,20 @@ describe('camposCompartidosModificados', () => {
     expect(camposCompartidosModificados(formulario({ idFamilia: 7 }), formulario({ idFamilia: '' }))).toEqual([])
   })
 
+  it('la tecla de atajo es un campo propio: cambiarla no obliga a preguntar el alcance', () => {
+    expect(CAMPOS_COMPARTIDOS.map((c) => c.clave)).not.toContain('teclaAtajo')
+    expect(
+      camposCompartidosModificados(formulario({ unidadVenta: 'Importe', teclaAtajo: '' }), formulario({ unidadVenta: 'Importe', teclaAtajo: 'F5' })),
+    ).toEqual([])
+  })
+
+  it('pasar a por importe cambia la unidad y el flag de acumular, los dos compartidos', () => {
+    const original = formulario({ unidadVenta: 'Unidad', acumulaEnVenta: true })
+    const editado = formulario({ unidadVenta: 'Importe', acumulaEnVenta: false })
+
+    expect(camposCompartidosModificados(original, editado).map((c) => c.clave)).toEqual(['unidadVenta', 'acumulaEnVenta'])
+  })
+
   it('un id vacío y un id vacío son el mismo valor; vaciar un id que tenía valor es un cambio', () => {
     expect(camposCompartidosModificados(formulario({ idCategoria: '' }), formulario({ idCategoria: '' }))).toEqual([])
     expect(camposCompartidosModificados(formulario(), formulario({ idCategoria: '' })).map((c) => c.clave)).toEqual(['idCategoria'])

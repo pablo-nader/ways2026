@@ -50,4 +50,30 @@ public class EscriturasDeCuentaCorrienteTests
 
         Assert.Contains("ActualizacionPrecios", excepcion.Message);
     }
+
+    [Fact]
+    public async Task UnDescuentoDePersonalSoloSeEscribePorSuPropioMetodo()
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
+                null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
+                TipoMovimientoCc.DescuentoPersonal, idComprobanteVenta: null, idPagoComprobante: null, importe: -50m,
+                saldoResultante: 50m, detalle: null, CancellationToken.None));
+
+        Assert.Contains("DescuentoPersonal", excepcion.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(10)]
+    public async Task UnDescuentoDePersonalNoNegativoViolaLaFormaYLanza(double importe)
+    {
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            EscriturasDeCuentaCorriente.InsertarDescuentoDePersonalAsync(
+                null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
+                idMovimientoPersonal: 7, importe: (decimal)importe, saldoResultante: 50m, detalle: null,
+                CancellationToken.None));
+
+        Assert.Contains("DescuentoPersonal", excepcion.Message);
+    }
 }

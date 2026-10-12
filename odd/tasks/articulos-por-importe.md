@@ -61,16 +61,16 @@ transaction that adds it, and the CHECKs reference it.
 
 ## Tasks
 
-- [ ] T1 — Server, catalog: enum value + migrations, `tecla_atajo`, the three invariants in the
+- [x] T1 — Server, catalog: enum value + migrations, `tecla_atajo`, the three invariants in the
   article and family writers (D5), `ReglaDeCantidadDeVenta` (`Importe` → exactly 1), combos reject
   by-amount components, contracts (article list/create/edit, scan, POS snapshot) expose
   `teclaAtajo`, 23505 backstop for the unique index, docs/10. Tests first.
   Route: delegated writer (2+ non-trivial files).
-- [ ] T2 — Server, sale: `importe` on the sale line and on the preview line (D1, D2), scan
+- [x] T2 — Server, sale: `importe` on the sale line and on the preview line (D1, D2), scan
   resolution turns `N*code` into quantity 1 + amount N for a by-amount article, snapshot emits
   unpriced by-amount articles, offline sale accepts them. Tests first.
   Route: delegated writer.
-- [ ] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
+- [x] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
   shortcut selector, descriptor tests; the two-unit assumptions in `cantidadPorUnidad`, stock and
   the online cart. Route: delegated writer.
 - [ ] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
@@ -101,6 +101,52 @@ Strategy: `auto-chain`, `stacked-to-main` (owner's standing preference). Forecas
 authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
+
+- T3 — implemented in `d7ae939a` on `pnader/importe-backoffice` (delegated writer; the combo
+  error mapping in `api/combosAbm.ts` was added inline by the parent). Judgment-day round 1, both
+  judges read the whole diff: no severe finding → APPROVED.
+  - Observed: full Vitest suite 5934/5934, build and lint clean (writer); `tsc -b` and the
+    articles/combos tests 813/813 (parent).
+  - UI choices: leaving `Importe` clears the shortcut and restores the previous accumulate
+    choice (true for an article loaded as `Importe`); the shortcut selector stays editable for a
+    member of a by-amount family; no price field needed changing; the grid has no unit column.
+  - Follow-ups (single-judge or suggestions, not fixed): the unsaved-changes check compares the
+    hidden `acumulaAntesDeImporte` field, so switching unit away and back on an `Importe` article
+    asks to confirm with nothing visibly changed; the "key already used" message reappears when
+    the rejected key is picked again without saving; a fractional quantity on an `Importe`
+    article in purchases/stock gets the generic message; quotes, delivery notes and the online
+    catalog admin show the server's text for the by-amount rejections.
+
+- T2 — implemented in `c5c78fe0` on `pnader/importe-venta` (delegated writer). Corrections C1–C4
+  in `0a824d59`; judgment-day round 2 (scoped re-judgment by both judges): all four FIXED, no new
+  defect → APPROVED. After the corrections: Application.Tests 862/862 (parent), Domain.Tests
+  1400/1400 and IntegrationTests unfiltered 3835/3835 (writer).
+  - Observed after the last source change: Domain.Tests 1400/1400 and Application.Tests 861/861
+    (both re-run by the parent), IntegrationTests unfiltered 3831/3831 (writer, 41 min).
+  - RED observed for the amount rule, the parser prefix, the repricing flag and the sale tests;
+    the remaining tests were written after the code and are covered by mutation evidence.
+  - No schema change. Contracts for T4: sale and preview lines take `importe`; the scan response
+    adds `importe` (omitted when null) and answers 400 `importe_invalido` for a bad prefix (the
+    client must turn `150,50` into `150.50`); the snapshot emits a by-amount article with
+    `preciosPorLista: []`.
+  - Beyond the brief: quotes and delivery notes reject by-amount articles
+    (`articulo_por_importe_no_admitido`); publishing one online is rejected; cuenta corriente
+    repricing skips by-amount lines; a credit note with an associated sale must match a sold
+    line of the same article and amount.
+  - Judgment-day round 1 (both judges read the whole diff, tests included): no severe finding.
+    Accepted corrections, in progress: C1 repricing must read how the LINE was sold, not the
+    article's current unit → new column `items_comprobante_venta.por_importe boolean NOT NULL
+    DEFAULT false` (both judges); C2 the pre-assigned-number replay identity must include the
+    amount (one judge); C3 a credit note must not refund more than the adjusted net of the sold
+    line (one judge as warning, the other as suggestion); C4 by-amount lines must not count
+    toward a family's aggregated offer quantity, as the comment claims (both judges).
+  - Follow-ups: whether typed amounts must be whole pesos (150.50 charges 151 today); an offline
+    by-amount line synced after the article changed unit answers 400; credit notes do not count
+    what was already returned; a label for a by-amount article that still has a list price
+    prints that price.
+- T1 — PR #408 (auto-merge on). CI green including the full integration suite. A flaky-by-timing
+  POS test inherited from main (`Pos.test.tsx`, header state read before it arrived) was fixed
+  on the PR branch in `b309a17e`.
 
 - T1 — implemented in `0318a9f9` (delegated writer; trigger: 2+ non-trivial files). Not checked
   off yet: judgment-day in progress, and the unfiltered integration run of record predates the

@@ -142,6 +142,8 @@ export function etiquetaDeMovimiento(m: Pick<MovimientoDeCuentaCorriente, 'tipo'
       return 'Pago'
     case 'ActualizacionPrecios':
       return 'Actualización de precios'
+    case 'DescuentoPersonal':
+      return 'Descuento de personal'
     case 'Ajuste':
       return m.etiqueta === 'AnulacionContramovimiento' ? 'Contramov. de anulación' : 'Ajuste manual'
   }

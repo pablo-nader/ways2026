@@ -36,6 +36,10 @@ public class MovimientoPersonalConfiguration : IEntityTypeConfiguration<Movimien
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_personal");
 
+        // Destino de las FKs compuestas de gastos y movimientos_cuenta_corriente: el pago es la cabecera.
+        builder.HasAlternateKey(m => new { m.Id, m.IdTenant })
+            .HasName("ak_movimientos_personal_id_movimiento_id_tenant");
+
         builder.Property(m => m.Id).HasColumnName("id_movimiento").UseIdentityByDefaultColumn();
         builder.Property(m => m.IdTenant).HasColumnName("id_tenant").IsRequired();
         builder.Property(m => m.IdPersonal).HasColumnName("id_personal").IsRequired();
