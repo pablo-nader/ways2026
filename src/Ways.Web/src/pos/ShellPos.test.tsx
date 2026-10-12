@@ -950,6 +950,22 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
     })
   }
 
+  it('un gasto en efectivo desde la caja, registrado en "Gastos", imprime el pulso del cajón por la cola del shell', async () => {
+    mockearGastosDelTurno()
+    apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === '/gastos' ? { id: 1 } : undefined))
+    renderShell()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.click(screen.getByRole('link', { name: 'Gastos' }))
+    await screen.findByText('Este turno todavía no tiene gastos.')
+
+    await userEvent.type(screen.getByLabelText('Importe'), '100')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(pulsoDeCajon())
+  })
+
   it('salir de "Vender" con ítems en el carrito mantiene bloqueada la instalación: el borrador sigue vivo', async () => {
     mockearGastosDelTurno()
     renderShell()

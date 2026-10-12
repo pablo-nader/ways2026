@@ -327,7 +327,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             <Routes>
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} alCambiarVentaEnCurso={setVentaEnCurso} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
-              <Route path="/gastos-del-turno" element={<GastosDelTurno />} />
+              <Route path="/gastos-del-turno" element={<GastosDelTurno cajaDeEscritorio={cajaDeEscritorio} />} />
               <Route path="/cierres-de-caja" element={<CierresDeCaja alReimprimir={alReimprimirCierre} />} />
               <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
               <Route path="*" element={<Navigate to="/vender" replace />} />
