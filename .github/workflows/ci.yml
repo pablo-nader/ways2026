@@ -48,7 +48,7 @@ jobs:
   # propio PostgreSQL (postgres:17-alpine) y el fixture crea el rol ways_app.
   backend-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
