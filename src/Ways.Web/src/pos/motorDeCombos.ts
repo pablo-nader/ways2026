@@ -1,8 +1,8 @@
 /**
  * Motor de combos del POS: puerto a TypeScript, sin React ni I/O, de
  * `Ways.Domain.Combos.ResolvedorDeCombos` más las exclusiones del puente
- * `Ways.Application.Combos.CombosEnVenta` (que las aplica `resolverCombosDelDocumento`, no este
- * módulo). Duplicado a propósito, como `ParserDeEscaneo`: un cambio en la regla del servidor tiene
+ * `Ways.Application.Combos.CombosEnVenta` (que las aplica `CombosEnVenta.Detectar`; en TypeScript las
+ * aplica `resolverDocumentoOffline`, no este módulo). Duplicado a propósito, como `ParserDeEscaneo`: un cambio en la regla del servidor tiene
  * que replicarse acá a mano, y `motorDeCombos.test.ts` espeja caso por caso `ResolvedorDeCombosTests`.
  *
  * Es voraz: en cada vuelta elige, entre los combos que caben con las unidades restantes, el de
@@ -93,6 +93,11 @@ function minimo(a: bigint, b: bigint): bigint {
   return a < b ? a : b
 }
 
+/** `true` si el importe, tal como lo escribe `String`, tiene más de dos decimales (comparación exacta, sin flotantes). */
+export function tieneMasDeDosDecimales(valor: number): boolean {
+  return escalaDe(valor) > DECIMALES_DE_IMPORTE
+}
+
 function unidadesDetectables(cantidad: number): number {
   return cantidad > 0 && cantidad <= ENTERO_MAXIMO && Number.isInteger(cantidad) ? cantidad : 0
 }
@@ -154,8 +159,8 @@ function intentar(combo: ComboCandidato, precioDelCombo: bigint, lineas: readonl
 
   // Compuerta D1: el combo se aplica solo si es estrictamente más barato que esas unidades con su oferta.
   if (precioDelCombo >= costoConOfertas) return null
-  // Sin importe de lista no hay sobre qué repartir; con descuentos de oferta no negativos no puede pasar.
-  if (totalDeLista <= 0n) return null
+  // Sin guarda de `totalDeLista <= 0n`: con descuentos de oferta no negativos (los que deja pasar quien llama,
+  // igual que `CombosEnVenta.Detectar`) la compuerta de arriba ya garantiza `totalDeLista >= costoConOfertas > 0`.
 
   const ahorro = totalDeLista - precioDelCombo
   const unidadDeCentavo = 10n ** BigInt(Math.max(0, e.escala - DECIMALES_DE_IMPORTE))

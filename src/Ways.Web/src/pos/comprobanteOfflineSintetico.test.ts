@@ -552,6 +552,46 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     expect(comprobante).toMatchObject({ descuentoManualTotal: 272.73, total: 4727.27 })
   })
 
+  describe('idOferta de un artículo con oferta cuando un combo consume sus unidades (el servidor la persiste igual)', () => {
+    const OFERTA = 91
+    const conOferta = (): InstantaneaDePos => ({
+      ...instantaneaConCombo(),
+      articulos: [
+        articuloFixture({ idArticulo: COCA, precioOriginal: 2500, precioFinal: 2500, unidadVenta: 'Unidad' }),
+        articuloFixture({
+          idArticulo: PANCHO,
+          nombre: 'Pancho',
+          codigosBarra: ['2'],
+          precioOriginal: 3000,
+          precioFinal: 2500,
+          descuentoUnitario: 500,
+          aplicadas: [{ idOferta: OFERTA, nombre: 'Oferta pancho', descuentoUnitario: 500 }],
+          unidadVenta: 'Unidad',
+        }),
+      ],
+      combos: [{ ...combo, precio: 4800 }],
+    })
+
+    it('si el combo consumió todas las unidades de la línea, el item no lleva idOferta', () => {
+      const comprobante = construir({ ...base, lineas, instantanea: conOferta() })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: 7, idOferta: null })
+    })
+
+    it('si le quedan unidades fuera del combo, esas unidades tuvieron su oferta y el item la conserva', () => {
+      const dosPanchos = [lineas[0], { ...lineas[1], cantidad: 2 }]
+      const comprobante = construir({ ...base, lineas: dosPanchos, instantanea: conOferta() })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: 7, idOferta: OFERTA })
+    })
+
+    it('sin combo la oferta viaja como siempre', () => {
+      const comprobante = construir({ ...base, lineas, instantanea: { ...conOferta(), combos: undefined } })
+
+      expect(comprobante?.items[1]).toMatchObject({ idCombo: null, idOferta: OFERTA })
+    })
+  })
+
   it('un artículo pesable en el carrito deja el combo sin aplicar en el ticket', () => {
     const instantanea: InstantaneaDePos = {
       ...instantaneaConCombo(),

@@ -2,8 +2,10 @@
  * Instantánea offline del POS (stage-pos-venta-offline-web, Parte A/B): persistencia local de
  * `GET /api/pos/instantanea?version=2` + la resolución pura de escaneo/precio/cliente contra esa
  * instantánea cuando no hay red. Espeja la semántica del servidor (decisión del backend: "el
- * dispositivo nunca vuelve a evaluar ofertas offline") — nunca reimplementa el motor de reglas,
- * solo lee el precio ya congelado que trajo la instantánea para la lista del cliente.
+ * dispositivo nunca vuelve a evaluar ofertas offline"): el precio es el ya congelado que trajo la
+ * instantánea para la lista del cliente y las ofertas nunca se reevalúan. La única regla que el
+ * dispositivo SÍ evalúa offline son los combos (`motorDeCombos.ts`): dependen de la composición del
+ * carrito, que solo existe en el dispositivo, así que no se pueden congelar de antemano en un precio.
  */
 import type { AlmacenClaveValor, AlmacenDeClavesMultiples } from './almacenPos'
 import type {
@@ -27,7 +29,7 @@ import type { PreciosPorLinea } from '../api/ventas'
 import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
 import { redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
-import { resolverCombos, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
+import { resolverCombos, tieneMasDeDosDecimales, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
  * `'instantanea'` con otra forma y nunca se lee — se vuelve a descargar entera. */
@@ -59,7 +61,7 @@ export async function leerInstantaneaLocal(almacen: AlmacenClaveValor): Promise<
   if (typeof guardada.verificadaEn !== 'string') return null
   return {
     version: 2,
-    instantanea: guardada.instantanea,
+    instantanea: sanearCombosDeInstantanea(guardada.instantanea),
     etag: typeof guardada.etag === 'string' ? guardada.etag : null,
     verificadaEn: guardada.verificadaEn,
   }
@@ -101,11 +103,11 @@ function esNumeroOAusente(valor: unknown): boolean {
   return valor == null || typeof valor === 'number'
 }
 
-function esCombo(valor: unknown): boolean {
+/** Solo lo que el motor y la vista previa leen: `codigo` es un rótulo y se tolera ausente. */
+function esCombo(valor: unknown): valor is ComboDeInstantanea {
   return (
     esObjeto(valor) &&
     typeof valor.idCombo === 'number' &&
-    typeof valor.codigo === 'number' &&
     typeof valor.nombre === 'string' &&
     typeof valor.precio === 'number' &&
     Array.isArray(valor.componentes) &&
@@ -137,11 +139,22 @@ export function esInstantaneaValida(valor: unknown): valor is InstantaneaDePos {
     Array.isArray(valor.articulos) &&
     valor.articulos.every(esArticulo) &&
     Array.isArray(valor.clientes) &&
-    valor.clientes.every(esCliente) &&
-    // Una instantánea guardada antes de los combos no trae la clave y se cotiza como siempre; una `combos`
-    // malformada la invalida entera, así se vuelve a descargar en vez de cotizar con combos a medias.
-    (valor.combos == null || (Array.isArray(valor.combos) && valor.combos.every(esCombo)))
+    valor.clientes.every(esCliente)
+    // `combos` NO se valida acá: una malformada no invalida la instantánea (un dispositivo sin copia no
+    // podría vender offline y uno con copia se quedaría con una vieja para siempre); se sanea al adoptarla
+    // o leerla (`sanearCombosDeInstantanea`).
   )
+}
+
+/**
+ * Deja en la instantánea solo los combos bien formados: cada combo malformado se descarta y un `combos`
+ * que no es una lista se trata como ausente. El resto de la instantánea no se toca. Se aplica donde la
+ * instantánea se adopta (respuesta de la red) o se lee del almacén, antes de que nada la cotice.
+ */
+export function sanearCombosDeInstantanea(instantanea: InstantaneaDePos): InstantaneaDePos {
+  const { combos, ...resto } = instantanea
+  if (combos === undefined) return instantanea
+  return Array.isArray(combos) ? { ...resto, combos: combos.filter(esCombo) } : resto
 }
 
 // --- Parseo de escaneo, espejo EXACTO de `Ways.Domain.Ventas.ParserDeEscaneo` -------------------
@@ -367,6 +380,10 @@ export function resolverDocumentoOffline(
   })
 
   const resolucion = resolverCombos(entrada, candidatos)
+  // El servidor rechaza una parte de combo con más de dos decimales (`combo_offline_invalido`) y la venta
+  // encolada quedaría varada. Con precios de dos decimales no ocurre; con un precio de fracción de centavo, el
+  // documento se cotiza, se encola y se imprime como si no hubiera combos: una sola regla para los tres.
+  if (resolucion.lineas.some((l) => tieneMasDeDosDecimales(l.ahorroDeCombo))) return { lineas: vigentes, combos: [] }
   const conCombo: (PreciosDeLineaConCombo | null)[] = [...vigentes]
   for (const consumo of resolucion.lineas) {
     const precios = vigentes[consumo.indice]

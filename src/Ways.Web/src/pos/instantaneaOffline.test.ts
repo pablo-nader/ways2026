@@ -17,7 +17,9 @@ import {
   preciosVigentesDeLasLineas,
   preciosVigentesOffline,
   resolverPreciosOffline,
+  resolverDocumentoOffline,
   resolverPreviaOffline,
+  sanearCombosDeInstantanea,
   TOPE_DE_RESULTADOS_DE_CLIENTES,
   todasLasLineasTienenPrecioOffline,
 } from './instantaneaOffline'
@@ -848,27 +850,84 @@ describe('esInstantaneaValida — combos', () => {
     expect(esInstantaneaValida(instantaneaConCombos([comboPanchoCoca, conFamilia]))).toBe(true)
   })
 
-  it.each([
-    ['combos que no es una lista', 'x'],
-    ['un combo que no es un objeto', [3]],
-    ['un combo sin precio numérico', [{ ...comboPanchoCoca, precio: '5000' }]],
-    ['un combo sin nombre', [{ ...comboPanchoCoca, nombre: undefined }]],
-    ['un combo con componentes que no es una lista', [{ ...comboPanchoCoca, componentes: 'x' }]],
-    ['un componente sin cantidad numérica', [{ ...comboPanchoCoca, componentes: [{ idArticulo: PANCHO }] }]],
-    ['un componente con idArticulo que no es número', [{ ...comboPanchoCoca, componentes: [{ idArticulo: 'a', cantidad: 1 }] }]],
-    ['un componente con idFamilia que no es número', [{ ...comboPanchoCoca, componentes: [{ idFamilia: 'a', cantidad: 1 }] }]],
-  ])('rechaza %s', (_descripcion, combos) => {
-    expect(esInstantaneaValida({ ...instantaneaConCombos(undefined), combos })).toBe(false)
+  const combosMalformados: [string, unknown][] = [
+    ['un combo que no es un objeto', 3],
+    ['un combo sin idCombo numérico', { ...comboPanchoCoca, idCombo: '7' }],
+    ['un combo sin precio numérico', { ...comboPanchoCoca, precio: '5000' }],
+    ['un combo sin nombre', { ...comboPanchoCoca, nombre: undefined }],
+    ['un combo con componentes que no es una lista', { ...comboPanchoCoca, componentes: 'x' }],
+    ['un componente sin cantidad numérica', { ...comboPanchoCoca, componentes: [{ idArticulo: PANCHO }] }],
+    ['un componente con idArticulo que no es número', { ...comboPanchoCoca, componentes: [{ idArticulo: 'a', cantidad: 1 }] }],
+    ['un componente con idFamilia que no es número', { ...comboPanchoCoca, componentes: [{ idFamilia: 'a', cantidad: 1 }] }],
+  ]
+  const otroCombo: ComboDeInstantanea = { ...comboPanchoCoca, idCombo: 9, codigo: 9, nombre: 'Otro', precio: 5100 }
+
+  it.each(combosMalformados)('%s NO invalida la instantánea: el combo se descarta al sanear y los buenos se conservan', (_descripcion, malo) => {
+    const instantanea = { ...instantaneaConCombos(undefined), combos: [comboPanchoCoca, malo, otroCombo] }
+
+    expect(esInstantaneaValida(instantanea)).toBe(true)
+    expect(sanearCombosDeInstantanea(instantanea as InstantaneaDePos).combos).toEqual([comboPanchoCoca, otroCombo])
   })
 
-  it('leerInstantaneaLocal devuelve la instantánea vieja sin combos y descarta la de combos malformados', async () => {
+  it('un combos que no es una lista no invalida la instantánea y se trata como ausente', () => {
+    const rota = { ...instantaneaConCombos(undefined), combos: 'x' }
+
+    expect(esInstantaneaValida(rota)).toBe(true)
+    const saneada = sanearCombosDeInstantanea(rota as unknown as InstantaneaDePos)
+    expect(saneada).not.toHaveProperty('combos')
+    expect(saneada.articulos).toEqual(rota.articulos)
+  })
+
+  it('un combo sin codigo (es un rótulo que el motor no lee) se conserva y se cotiza', () => {
+    const { codigo: _codigo, ...sinCodigo } = comboPanchoCoca
+    const instantanea = sanearCombosDeInstantanea(instantaneaConCombos([sinCodigo as ComboDeInstantanea]))
+
+    expect(instantanea.combos).toHaveLength(1)
+    const { combos } = resolverPreviaOffline(lineasDe([PANCHO, 1], [COCA, 1]), instantanea, LISTA)
+    expect(combos).toEqual([{ idCombo: 7, codigo: 0, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }])
+  })
+
+  it('sanear una instantánea sin combos o con todos bien formados devuelve la misma instantánea', () => {
+    const sinCombos = instantaneaConCombos(undefined)
+    const bien = instantaneaConCombos([comboPanchoCoca])
+    expect(sanearCombosDeInstantanea(sinCombos)).toBe(sinCombos)
+    expect(sanearCombosDeInstantanea(bien)).toEqual(bien)
+  })
+
+  it('leerInstantaneaLocal devuelve la instantánea vieja sin combos', async () => {
     const almacen = almacenFake()
     await guardarInstantaneaLocal(almacen, { instantanea: instantaneaConCombos(undefined), etag: null, verificadaEn: '2026-09-20T10:00:00.000Z' })
     expect((await leerInstantaneaLocal(almacen))?.instantanea.combos).toBeUndefined()
+  })
 
+  it('leerInstantaneaLocal con un combo malformado entre buenos devuelve la instantánea con los buenos', async () => {
+    const almacen = almacenFake()
+    const guardada = { ...instantaneaConCombos(undefined), combos: [comboPanchoCoca, 3, otroCombo] } as unknown as InstantaneaDePos
+    await guardarInstantaneaLocal(almacen, { instantanea: guardada, etag: 'e', verificadaEn: '2026-09-20T10:00:00.000Z' })
+
+    const leida = await leerInstantaneaLocal(almacen)
+    expect(leida?.instantanea.combos).toEqual([comboPanchoCoca, otroCombo])
+    expect(leida?.etag).toBe('e')
+  })
+
+  it('leerInstantaneaLocal con un combos que no es una lista devuelve la instantánea sin combos, no null', async () => {
+    const almacen = almacenFake()
     const rota = { ...instantaneaConCombos(undefined), combos: 'x' } as unknown as InstantaneaDePos
     await guardarInstantaneaLocal(almacen, { instantanea: rota, etag: null, verificadaEn: '2026-09-20T10:00:00.000Z' })
-    expect(await leerInstantaneaLocal(almacen)).toBeNull()
+
+    const leida = await leerInstantaneaLocal(almacen)
+    expect(leida).not.toBeNull()
+    expect(leida?.instantanea).not.toHaveProperty('combos')
+  })
+
+  it('una instantánea con un combo malformado igual cotiza: los buenos se aplican y el total baja', () => {
+    const lineas = lineasDe([PANCHO, 1], [COCA, 1])
+    const instantanea = sanearCombosDeInstantanea({ ...instantaneaConCombos(undefined), combos: [3, comboPanchoCoca] } as unknown as InstantaneaDePos)
+
+    const { precios, combos } = resolverPreviaOffline(lineas, instantanea, LISTA)
+
+    expect(combos.map((c) => c.idCombo)).toEqual([7])
+    expect(calcularSubtotalPrevia(lineas, precios)).toBe(5000)
   })
 })
 
@@ -982,6 +1041,48 @@ describe('resolverPreviaOffline — combos', () => {
 
     expect(combos.map((c) => c.idCombo)).toEqual([3, 5])
     expect(precios['l-11'].combo?.idCombo).toBe(3)
+  })
+
+  it('una línea con descuento de oferta NEGATIVO (un recargo) queda fuera de la detección, como en el servidor', () => {
+    const articulos = [
+      articuloDeCombosFixture(PANCHO, 3000, { preciosPorLista: [precioFixture({ precioOriginal: 3000, precioFinal: 3500, descuentoUnitario: -500 })] }),
+      articuloDeCombosFixture(COCA, 2500),
+    ]
+    const lineas = lineasDe([PANCHO, 1], [COCA, 1])
+
+    const { lineas: resueltas, combos } = resolverDocumentoOffline(lineas, instantaneaConCombos([comboPanchoCoca], articulos), LISTA)
+
+    // Sin la exclusión el combo (5000) le ganaría a las unidades con su recargo (3500 + 2500) y se aplicaría.
+    expect(combos).toEqual([])
+    expect(resueltas.map((r) => r?.combo)).toEqual([undefined, undefined])
+  })
+
+  describe('una parte de combo con más de dos decimales (el servidor la rechazaría y la venta encolada quedaría varada)', () => {
+    // Pancho a 0,005 y coca a 2 con el combo a 1: el reparto cae 0,00 / 1,005 (la última línea absorbe el resto).
+    const articulosSubcentavo = [articuloDeCombosFixture(PANCHO, 0.005), articuloDeCombosFixture(COCA, 2)]
+    const comboSubcentavo: ComboDeInstantanea = { ...comboPanchoCoca, precio: 1 }
+    const lineas = lineasDe([PANCHO, 1], [COCA, 1])
+
+    it('el documento se cotiza como si no hubiera combos: sin combo en ninguna línea ni combos aplicados', () => {
+      const { lineas: resueltas, combos } = resolverDocumentoOffline(lineas, instantaneaConCombos([comboSubcentavo], articulosSubcentavo), LISTA)
+
+      expect(combos).toEqual([])
+      expect(resueltas).toEqual(resolverDocumentoOffline(lineas, instantaneaConCombos(undefined, articulosSubcentavo), LISTA).lineas)
+      for (const r of resueltas) expect(r).not.toHaveProperty('combo')
+    })
+
+    it('la vista previa sigue la misma regla que el payload (una sola función): precios sin combo y lista vacía', () => {
+      const { precios, combos } = resolverPreviaOffline(lineas, instantaneaConCombos([comboSubcentavo], articulosSubcentavo), LISTA)
+
+      expect(combos).toEqual([])
+      expect(precios['l-11']).not.toHaveProperty('combo')
+      expect(precios['l-12']).not.toHaveProperty('combo')
+    })
+
+    it('con precios de dos decimales el combo se aplica (la regla solo corta la fracción de centavo)', () => {
+      const { combos } = resolverPreviaOffline(lineas, instantaneaConCombos([comboPanchoCoca]), LISTA)
+      expect(combos).toHaveLength(1)
+    })
   })
 
   it('resolverPreciosOffline devuelve los mismos precios que resolverPreviaOffline', () => {

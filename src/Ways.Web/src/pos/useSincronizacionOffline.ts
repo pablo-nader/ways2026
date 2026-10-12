@@ -19,6 +19,7 @@ import {
   guardarInstantaneaLocal,
   leerInstantaneaLocal,
   resolverDocumentoOffline,
+  sanearCombosDeInstantanea,
   todasLasLineasTienenPrecioOffline,
   type InstantaneaLocal,
 } from './instantaneaOffline'
@@ -425,7 +426,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
       // Un servidor anterior a los precios por lista ignora `?version=2` y responde la forma vieja:
       // se conserva la copia local en vez de cotizar con algo que no se puede leer.
       if (!esInstantaneaValida(respuesta.cuerpo)) return true
-      await adoptarInstantaneaLocal({ instantanea: respuesta.cuerpo, etag: respuesta.etag, verificadaEn: ahora }, epocaAlPedir)
+      await adoptarInstantaneaLocal({ instantanea: sanearCombosDeInstantanea(respuesta.cuerpo), etag: respuesta.etag, verificadaEn: ahora }, epocaAlPedir)
       return true
     } catch (e) {
       // Sin conexión, o el servidor rechazó — la instantánea local (potencialmente vieja) se

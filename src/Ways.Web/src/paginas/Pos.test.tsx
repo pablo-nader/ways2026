@@ -5995,6 +5995,158 @@ describe('Pos — combos en el carrito (vista previa online)', () => {
     await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
     expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
   })
+
+  describe('rótulo de combo en la línea cuando la consume más de un combo', () => {
+    // Pancho lo consumen dos combos (3 y 5): la línea solo conoce el de menor id pero su ahorro suma los dos.
+    const dosCombos = (): ResolucionConCombos => ({
+      lineas: [
+        coca({ combo: { unidadesConsumidas: 1, ahorro: 200, idCombo: 5 } }),
+        pancho({ combo: { unidadesConsumidas: 1, ahorro: 600, idCombo: 3 } }),
+      ],
+      combos: [
+        { idCombo: 3, codigo: 3, nombre: 'Pancho solo', veces: 1, ahorro: 400 },
+        { idCombo: 5, codigo: 5, nombre: 'Pancho + Coca', veces: 1, ahorro: 400 },
+      ],
+    })
+
+    it('con más de un combo aplicado la línea muestra el rótulo genérico con su ahorro, nunca el nombre de uno solo', async () => {
+      mockearEscaneoDeDosArticulos()
+      mockearResolverConCombos(() => Promise.resolve(dosCombos()))
+
+      await armarCarritoConPanchoYCoca()
+
+      const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+      expect(await within(filaPancho).findByText('Combos -$ 600,00')).toBeInTheDocument()
+      expect(within(filaPancho).queryByText(/Pancho solo/)).not.toBeInTheDocument()
+      const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+      expect(within(filaCoca).getByText('Combos -$ 200,00')).toBeInTheDocument()
+      const panel = within(panelDatosDeLaVenta())
+      expect(panel.getByText('Combo Pancho solo')).toBeInTheDocument()
+      expect(panel.getByText('Combo Pancho + Coca')).toBeInTheDocument()
+    })
+
+    it('con UN combo aplicado, la línea que lo trae por id muestra su nombre; si el id no coincide, el genérico', async () => {
+      mockearEscaneoDeDosArticulos()
+      mockearResolverConCombos(() =>
+        Promise.resolve({
+          lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 1, ahorro: 272.73, idCombo: 99 } })],
+          combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }],
+        }),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      const filaCoca = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+      expect(await within(filaCoca).findByText('Pancho + Coca -$ 227,27')).toBeInTheDocument()
+      const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+      expect(within(filaPancho).getByText('Combos -$ 272,73')).toBeInTheDocument()
+    })
+  })
+
+  it('una respuesta sin `combos` no rompe el render: el carrito se ve con los precios de las líneas', async () => {
+    mockearEscaneoDeDosArticulos()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === RUTA_RESOLVER_DEL_CARRITO ? Promise.resolve({ lineas: [coca(), pancho()] }) : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+
+    await armarCarritoConPanchoYCoca()
+
+    await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+    expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+  })
+
+  describe('un servidor que todavía no tiene la ruta con combos', () => {
+    function mockearRutas(combos: () => Promise<ResolucionConCombos>, resolver: () => Promise<ResultadoDeResolucion[]>) {
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) return combos()
+        if (ruta === '/ofertas/resolver') return resolver()
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+    }
+    const llamadasAlResolverDeSiempre = () => apiPostMock.mock.calls.filter((c) => c[0] === '/ofertas/resolver')
+
+    it.each([404, 405])('con un %s la vista previa sigue con el resolver de siempre, como documento y sin combos', async (estado) => {
+      mockearEscaneoDeDosArticulos()
+      mockearRutas(
+        () => Promise.reject(new ErrorApi(estado, 'no_encontrado', 'x')),
+        () => Promise.resolve([coca(), pancho()]),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(screen.queryByText(/No se pudo calcular la vista previa/)).not.toBeInTheDocument()
+      expect(within(panelDatosDeLaVenta()).queryByText(/^Combo /)).not.toBeInTheDocument()
+      expect(llamadasAlResolverDeSiempre().at(-1)?.[1]).toMatchObject({ agregacion: 'Documento' })
+    })
+
+    it.each([400, 500])('con un %s NO cae al resolver de siempre: avisa que no se pudo calcular la vista previa', async (estado) => {
+      mockearEscaneoDeDosArticulos()
+      mockearRutas(
+        () => Promise.reject(new ErrorApi(estado, 'error', 'x')),
+        () => Promise.resolve([coca(), pancho()]),
+      )
+
+      await armarCarritoConPanchoYCoca()
+
+      expect(await screen.findByText(/No se pudo calcular la vista previa/)).toBeInTheDocument()
+      expect(llamadasAlResolverDeSiempre()).toHaveLength(0)
+    })
+
+    it('la respuesta tardía del respaldo de una corrida anterior no pisa la más reciente (guarda de generación)', async () => {
+      mockearEscaneoDeDosArticulos()
+      let resolverRespaldoViejo: (r: ResultadoDeResolucion[]) => void = () => {}
+      const respaldoViejo = new Promise<ResultadoDeResolucion[]>((resolve) => {
+        resolverRespaldoViejo = resolve
+      })
+      mockearRutas(
+        () =>
+          apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).length === 1
+            ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'x'))
+            : Promise.resolve(resolucion([coca(), pancho()])),
+        () => respaldoViejo,
+      )
+
+      await armarCarritoConPanchoYCoca()
+      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
+
+      await act(async () => {
+        resolverRespaldoViejo([coca({ precioOriginal: 1, precioFinal: 1 })])
+      })
+
+      expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument()
+    })
+  })
+
+  it('con la cantidad reducida y la resolución sin refrescar, la línea se totaliza sin el combo viejo (nunca con unidades negativas)', async () => {
+    mockearEscaneoDeDosArticulos()
+    let resoluciones = 0
+    mockearResolverConCombos(() => {
+      resoluciones += 1
+      // La primera resolución trae el combo; las siguientes quedan colgadas para observar el estado intermedio.
+      return resoluciones <= 2
+        ? Promise.resolve({
+            lineas: [coca({ combo: { unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 } }), pancho({ combo: { unidadesConsumidas: 2, ahorro: 600, idCombo: 7 } })],
+            combos: [{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 827.27 }],
+          })
+        : new Promise<ResolucionConCombos>(() => {})
+    })
+    await armarCarritoConPanchoYCoca()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), CODIGO_PANCHO)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Pancho')).toHaveValue(2))
+    const filaPancho = screen.getByText('Pancho').closest('tr') as HTMLElement
+    await waitFor(() => expect(within(filaPancho).getByText('$ 5.400,00', { selector: 'td' })).toBeInTheDocument())
+
+    const cantidad = screen.getByLabelText('Cantidad de Pancho')
+    await userEvent.clear(cantidad)
+    await userEvent.type(cantidad, '1')
+    await userEvent.tab()
+
+    // El combo viejo consumía 2 unidades y ahora hay 1: con la fórmula a ciegas daría 3000 − 600 = 2400.
+    await waitFor(() => expect(within(filaPancho).getByText('$ 3.000,00', { selector: 'td' })).toBeInTheDocument())
+    expect(within(filaPancho).queryByText(/-\$ 600,00/)).not.toBeInTheDocument()
+  })
 })
 
 describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {

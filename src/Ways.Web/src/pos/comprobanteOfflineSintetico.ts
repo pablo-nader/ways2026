@@ -88,7 +88,8 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       codigoBarra: linea.codigoBarra,
       idArea: 0,
       idListaPrecio: 0,
-      idOferta: precios.aplicadas[0]?.idOferta ?? null,
+      // Como el servidor: una línea que los combos consumieron entera no lleva oferta.
+      idOferta: precios.combo?.unidadesConsumidas === linea.cantidad ? null : (precios.aplicadas[0]?.idOferta ?? null),
       idCombo: precios.combo?.idCombo ?? null,
       idAlicuotaIva: articulo.idAlicuotaIva,
       porcentajeIva: articulo.porcentajeIva,

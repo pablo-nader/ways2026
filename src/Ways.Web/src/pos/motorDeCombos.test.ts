@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { redondearImporte } from '../formato/importes'
 import {
   resolverCombos,
+  tieneMasDeDosDecimales,
   type ComboCandidato,
   type ComponenteDeCombo,
   type ConsumoDeLinea,
@@ -306,8 +307,10 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
       expect(consumo.ahorroDeCombo).toBeGreaterThanOrEqual(0)
       expect(consumo.ahorroDeCombo).toBeLessThanOrEqual(lineas[consumo.indice].precioLista)
     }
-    expect(suma(lineas.map((l) => l.precioLista)) - ahorroTotal(r)).toBeCloseTo(0.06, 10)
-    expect(redondearImporte(suma(lineas.map((l) => l.precioLista)) - ahorroTotal(r), 2)).toBe(0.06)
+    // Igualdad exacta como la de C# (decimal): en centavos enteros, sin tolerancia de punto flotante.
+    const centavos = (importe: number) => Math.round(importe * 100)
+    expect(lineas.reduce((a, l) => a + centavos(l.precioLista), 0) - r.lineas.reduce((a, l) => a + centavos(l.ahorroDeCombo), 0)).toBe(6)
+    for (const consumo of r.lineas) expect(consumo.ahorroDeCombo).toBe(centavos(consumo.ahorroDeCombo) / 100)
   })
 
   it('un combo con un componente sobre el tope de cantidad no se aplica y no desborda', () => {
@@ -366,6 +369,21 @@ describe('motorDeCombos — espejo de ResolvedorDeCombosTests', () => {
   })
 })
 
+describe('tieneMasDeDosDecimales — comparación exacta sobre la representación decimal', () => {
+  it.each([
+    [2, false],
+    [0.01, false],
+    [1234.5, false],
+    [1e21, false],
+    [1.005, true],
+    [0.001, true],
+    [1e-7, true],
+    [1.5e-7, true],
+  ])('%s → %s', (valor, esperado) => {
+    expect(tieneMasDeDosDecimales(valor)).toBe(esperado)
+  })
+})
+
 describe('motorDeCombos — más allá de los casos de C#', () => {
   it('el índice de salida es el de la línea de entrada, no la posición en la lista', () => {
     const r = resolverCombos([linea(5, PANCHO, 3000), linea(9, COCA, 2500)], [combo(7, 5000, art(PANCHO), art(COCA))])
@@ -405,6 +423,55 @@ describe('motorDeCombos — más allá de los casos de C#', () => {
     expect(deLinea(r, 0).ahorroDeCombo).toBeLessThanOrEqual(0.0151)
     expect(deLinea(r, 1).ahorroDeCombo).toBeLessThanOrEqual(100)
     expect(redondearImporte(deLinea(r, 0).ahorroDeCombo + deLinea(r, 1).ahorroDeCombo, 4)).toBe(100.0051)
+  })
+
+  it('el empate exacto del reparto redondea mitad lejos de cero, no mitad al par (0,025 → 0,03)', () => {
+    // ahorro 0,05 repartido 50/50 → 0,025 cada una: mitad lejos de cero da 0,03 a la primera y el resto
+    // (−0,01) deja 0,02 en la última; mitad al par daría 0,02 y 0,03.
+    const r = resolverCombos([linea(0, PANCHO, 1), linea(1, COCA, 1)], [combo(1, 1.95, art(PANCHO), art(COCA))])
+
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0.03)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(0.02)
+  })
+
+  it('un importe en notación exponencial (muy chico) se opera exacto: 1e-7 y 3e-7 con el combo a 2e-7', () => {
+    const r = resolverCombos([linea(0, PANCHO, 1e-7), linea(1, COCA, 3e-7)], [combo(1, 2e-7, art(PANCHO), art(COCA))])
+
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(2e-7)
+    expect(r.combos[0].ahorro).toBe(2e-7)
+  })
+
+  it('un importe en notación exponencial (muy grande) se opera exacto: 1e21 y 1e21 con el combo a 1,5e21', () => {
+    const r = resolverCombos([linea(0, PANCHO, 1e21), linea(1, COCA, 1e21)], [combo(1, 1.5e21, art(PANCHO), art(COCA))])
+
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(2.5e20)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(2.5e20)
+    expect(r.combos[0].ahorro).toBe(5e20)
+  })
+
+  it('con importes de cuatro decimales el reparto va a centavos y el resto de fracción cae en la última línea', () => {
+    // lista 10,1234 + 20,5678 = 30,6912; combo 25,5 → ahorro 5,1912. Proporcional: 1,7123… → 1,71 y 3,4789… → 3,48;
+    // faltan 0,0012 para sumar el ahorro exacto y los absorbe la última (tope 20,5678).
+    const r = resolverCombos([linea(0, PANCHO, 10.1234), linea(1, COCA, 20.5678)], [combo(1, 25.5, art(PANCHO), art(COCA))])
+
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(1.71)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(3.4812)
+    expect(r.combos[0].ahorro).toBe(5.1912)
+  })
+
+  it('una cantidad de línea sobre 2^31−1 queda fuera de la detección y 2^31−1 exacto entra (el límite de int de C#)', () => {
+    const combos = [combo(1, 5000, art(PANCHO), art(COCA))]
+
+    expect(resolverCombos([linea(0, PANCHO, 3000, { cantidad: 2_147_483_648 }), linea(1, COCA, 2500)], combos)).toEqual({ lineas: [], combos: [] })
+    expect(deLinea(resolverCombos([linea(0, PANCHO, 3000, { cantidad: 2_147_483_647 }), linea(1, COCA, 2500)], combos), 0).unidadesConsumidas).toBe(1)
+  })
+
+  it('el motor no corta una parte de fracción de centavo: esa guarda vive en quien llama (resolverDocumentoOffline)', () => {
+    const r = resolverCombos([linea(0, PANCHO, 0.005), linea(1, COCA, 2)], [combo(1, 1, art(PANCHO), art(COCA))])
+
+    expect(deLinea(r, 0).ahorroDeCombo).toBe(0)
+    expect(deLinea(r, 1).ahorroDeCombo).toBe(1.005)
   })
 
   it('una cantidad de millones de conjuntos se resuelve en un solo paso, no uno por conjunto', () => {

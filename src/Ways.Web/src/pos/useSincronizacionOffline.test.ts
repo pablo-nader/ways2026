@@ -2460,4 +2460,47 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
     expect(emitirMock).toHaveBeenCalledTimes(1)
     expect((emitirMock.mock.calls[0][0] as SolicitudDeVenta).lineas).toEqual(encoladas)
   })
+
+  it('una instantánea de la red con un combo malformado se adopta igual: se guarda con los buenos y la copia local no queda vieja', async () => {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaConCombo({ momento: '2026-09-20T09:00:00.000Z', combos: [] }))
+    const conBasura = { ...instantaneaConCombo({ momento: '2026-09-20T11:00:00.000Z' }), combos: [7, comboPanchoCoca] }
+    obtenerInstantaneaMock.mockResolvedValue({ modificada: true, cuerpo: conBasura, etag: 'e2' })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.instantanea?.momento).toBe('2026-09-20T11:00:00.000Z'))
+    expect(result.current.instantanea?.combos).toEqual([comboPanchoCoca])
+    expect((await leerInstantaneaLocal(almacen))?.instantanea.combos).toEqual([comboPanchoCoca])
+  })
+
+  it('una copia guardada con un combo malformado entre buenos vende igual: el bueno se aplica al payload', async () => {
+    const guardada = { ...instantaneaConCombo(), combos: [null, comboPanchoCoca] } as unknown as InstantaneaDePos
+
+    const { lineas } = await encolar(guardada)
+
+    expect(lineas).toEqual([
+      expect.objectContaining({ idArticulo: COCA, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227.27, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 272.73, idCombo: 7 }),
+    ])
+  })
+
+  it('con una parte de combo de fracción de centavo, el documento se encola sin campos de combo (el servidor la rechazaría)', async () => {
+    const subcentavo = instantaneaConCombo({
+      articulos: [
+        articuloFixture({ idArticulo: COCA, precioOriginal: 2, precioFinal: 2, unidadVenta: 'Unidad' }),
+        articuloFixture({ idArticulo: PANCHO, codigosBarra: ['7790002222222'], nombre: 'Pancho', precioOriginal: 0.005, precioFinal: 0.005, unidadVenta: 'Unidad' }),
+      ],
+      combos: [{ ...comboPanchoCoca, precio: 1 }],
+    })
+
+    const { lineas } = await encolar(subcentavo)
+
+    expect(lineas).toHaveLength(2)
+    for (const l of lineas) {
+      expect(l).not.toHaveProperty('idCombo')
+      expect(l).not.toHaveProperty('ahorroDeCombo')
+      expect(l).not.toHaveProperty('unidadesConsumidasPorCombo')
+    }
+  })
 })

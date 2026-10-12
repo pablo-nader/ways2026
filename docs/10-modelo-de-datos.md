@@ -1091,7 +1091,10 @@ nunca los admite: sin precio offline son siempre un rechazo.
   instantánea vieja cuenta como pesable) con cantidad entera, y sin las líneas sin precio. La vista previa, el payload
   encolado y el ticket sintético salen de una única función (`resolverDocumentoOffline`); el payload se arma al encolar y se
   reenvía literal, nunca se recalcula al drenar. Una instantánea guardada sin `combos` sigue siendo válida; una con `combos`
-  malformado se descarta entera y se vuelve a descargar.
+  malformado también lo es: la instantánea no se descarta, se sanea al adoptarla o leerla (cada combo malformado se descarta,
+  un `combos` que no es una lista cuenta como ausente, y `codigo`, un rótulo que el motor no lee, puede faltar). Si la parte de
+  combo de alguna línea tuviera más de dos decimales (solo con precios de fracción de centavo), el servidor la rechazaría con
+  `combo_offline_invalido`: el dispositivo cotiza, encola e imprime ese documento sin combos.
 - **Reenvío idempotente.** Los tres campos NO forman parte del "mismo contenido" de `ExigirMismoContenido`, igual que el precio y
   el descuento de la línea: son dinero que calculó el dispositivo, no la identidad de lo vendido. Un reenvío con otra parte de
   combo bajo el mismo número devuelve el comprobante ya emitido sin pisarlo, y no duplica la auditoría. Todo se decide antes de

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { calcularTotalesDeLinea } from './ajusteManual'
-import { calcularTotalesDeLineaConCombo, rotuloDeComboAplicado } from './combos'
+import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea, rotuloDeComboAplicado } from './combos'
 import { previaDeLinea } from './ventas'
 import type { LineaCarrito } from './carrito'
 import type { ResultadoDeResolucion } from './tipos'
@@ -47,6 +47,49 @@ describe('calcularTotalesDeLineaConCombo', () => {
     })
 
     expect(totales).toMatchObject({ neto: 2727.27, ajuste: -272.73, total: 2454.54 })
+  })
+})
+
+describe('combo viejo sobre una cantidad ya reducida (borrador restaurado o edición antes de re-resolver)', () => {
+  const base = { precioOriginal: 3000, descuentoUnitario: 500, porcentaje: null }
+
+  it('comboVigenteDeLinea: vale con unidades hasta la cantidad (incluida) y se ignora con más', () => {
+    const combo = { unidadesConsumidas: 2, ahorro: 545.46 }
+    expect(comboVigenteDeLinea(2, combo)).toBe(combo)
+    expect(comboVigenteDeLinea(3, combo)).toBe(combo)
+    expect(comboVigenteDeLinea(1, combo)).toBeNull()
+    expect(comboVigenteDeLinea(2, null)).toBeNull()
+    expect(comboVigenteDeLinea(2, undefined)).toBeNull()
+  })
+
+  it('con unidades consumidas mayores a la cantidad la línea se totaliza SIN combo, nunca con unidades negativas', () => {
+    // Un combo de 2 unidades sobre una línea que quedó en 1: acotar a cero seguiría descontando el ahorro de
+    // 545,46 pensado para 6000 de bruto; ignorarlo deja el total honesto (lista menos oferta) hasta re-resolver.
+    const totales = calcularTotalesDeLineaConCombo({ ...base, cantidad: 1, combo: { unidadesConsumidas: 2, ahorro: 545.46 } })
+
+    expect(totales).toEqual(calcularTotalesDeLinea({ ...base, cantidad: 1 }))
+    expect(totales).toMatchObject({ bruto: 3000, descuento: 500, total: 2500 })
+  })
+
+  it('con unidades iguales a la cantidad el combo sigue valiendo (el borde)', () => {
+    const totales = calcularTotalesDeLineaConCombo({ ...base, cantidad: 2, combo: { unidadesConsumidas: 2, ahorro: 545.46 } })
+
+    expect(totales).toMatchObject({ descuento: 545.46, total: 5454.54 })
+  })
+
+  it('previaDeLinea totaliza una línea con combo viejo sin él', () => {
+    const linea: LineaCarrito = { idLinea: 'l', idArticulo: 2, codigoInterno: 'A', nombre: 'Pancho', codigoBarra: null, acumulaEnVenta: true, cantidad: 1 }
+    const resultado: ResultadoDeResolucion = {
+      idArticulo: 2,
+      idListaPrecio: 1,
+      precioOriginal: 3000,
+      precioFinal: 2500,
+      descuentoUnitario: 500,
+      aplicadas: [],
+      combo: { unidadesConsumidas: 2, ahorro: 545.46, idCombo: 7 },
+    }
+
+    expect(previaDeLinea(linea, resultado).total).toBe(2500)
   })
 })
 

@@ -6,7 +6,7 @@
  */
 import { api } from './cliente'
 import { totalesDeAjusteManual } from './ajusteManual'
-import { calcularTotalesDeLineaConCombo } from './combos'
+import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
 import { redondearImporte } from '../formato/importes'
 import type {
@@ -123,7 +123,7 @@ export function previaDeLinea(
     descuentoUnitario: resultado.descuentoUnitario,
     total: totales.total,
     ajusteManual: totales.ajuste,
-    ahorroDeCombo: resultado.combo?.ahorro ?? 0,
+    ahorroDeCombo: comboVigenteDeLinea(linea.cantidad, resultado.combo)?.ahorro ?? 0,
   }
 }
 

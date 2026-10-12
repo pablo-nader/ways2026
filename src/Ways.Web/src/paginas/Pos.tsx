@@ -68,7 +68,7 @@ import type {
   SolicitudDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
-import { rotuloDeComboAplicado } from '../api/combos'
+import { comboVigenteDeLinea, rotuloDeComboAplicado } from '../api/combos'
 import {
   aLineaDeCarritoDesdeEscaneo,
   aLineasDeResolucion,
@@ -3644,6 +3644,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                         const resultado = precios[l.idLinea]
                         const previa = previaDeLinea(l, resultado)
                         const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
+                        const comboDeLinea = comboVigenteDeLinea(l.cantidad, resultado?.combo)
+                        // La línea solo conoce el combo de menor id entre los que la consumieron, pero su ahorro suma
+                        // todos: el nombre solo se muestra cuando el carrito aplicó UN combo (no puede ser otro).
+                        const nombreDelCombo =
+                          comboDeLinea && combosAplicados.length === 1 && combosAplicados[0].idCombo === comboDeLinea.idCombo
+                            ? combosAplicados[0].nombre
+                            : 'Combos'
                         const ajusteDeLinea = l.ajusteManualPorcentaje ?? null
                         const mensajeDeAjuste = mensajeDeAjusteInvalido(l.idLinea)
                         const lineaInerte = pantallaCobroInerte || bloqueadoPorTurno
@@ -3661,13 +3668,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                             <td>{l.codigoBarra ?? l.codigoInterno}</td>
                             <td>
                               {l.nombre}
-                              {resultado?.combo && (
+                              {comboDeLinea && (
                                 <div>
                                   <span className="badge text-bg-success" title="Combo aplicado a esta línea">
-                                    {[
-                                      combosAplicados.find((c) => c.idCombo === resultado.combo?.idCombo)?.nombre ?? 'Combo',
-                                      formatearImporteConSigno(-resultado.combo.ahorro, { simbolo: true }),
-                                    ].join(' ')}
+                                    {[nombreDelCombo, formatearImporteConSigno(-comboDeLinea.ahorro, { simbolo: true })].join(' ')}
                                   </span>
                                 </div>
                               )}
