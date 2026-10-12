@@ -30,6 +30,7 @@ public static class RutasDeLaSpa
         "catalogos",
         "catalogos-fiscales",
         "clientes",
+        "combos",
         "compras",
         "consulta-precios",
         "descargar",

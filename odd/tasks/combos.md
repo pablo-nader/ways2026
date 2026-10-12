@@ -91,7 +91,7 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
   tests against the C# cases; "Buscar combo" button; `C` + digits; member picker when a
   component is a family; ticket shows the combo name (the sale response carries only
   `idCombo`); Desktop bump + `pos-v*` tag. Route: delegated (writer).
-- [ ] T4 — Back office, LAST on purpose. "Combos" screen (list, create, edit, baja) with
+- [x] T4 — Back office, LAST on purpose. "Combos" screen (list, create, edit, baja) with
   component editor (article or family + quantity), menu entry, Vitest tests. Until it ships no
   combo can exist without calling the API by hand, which keeps the server-side detection
   dormant while the POS cannot yet preview it (an online client unaware of combos would show
@@ -322,6 +322,50 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
 - Skills loop: no new skill; the round-1 regression (a fix that put the network in front of a
   local answer) is the existing local-first rule, restated in doc 10.
 
+- T5b delivered and merged: PR pablo-nader/ways2026#400.
+- T4 implemented on `pnader/combos-pantalla` — commits `231d4671`, `f2e2d3d5` (judgment round
+  1) and `eabc8f51` (round 2). Route: delegated writer, web only. Route `/combos` (Admin, same
+  guard as `/ofertas`) and a "Combos" menu entry after "Ofertas". List: code `C<n>`, name,
+  price, components summary, state; a component the server reports unavailable is flagged.
+  Form (modal): name, price, optional code, empresa, active, and a component editor (type
+  Artículo | Familia, picker, quantity; add/remove; live summary line). Client validation
+  mirrors `ReglaDeCombos`; every server error code has fixed Spanish copy placed on its field,
+  on the components section or on the form. The article picker is a combobox + listbox
+  (arrows move, Enter or click chooses) that offers only active per-unit articles and says
+  when the server has more results than the 25 shown. Baja with `ConfirmacionDeBaja`. An
+  uncertain create (5xx or no response) re-reads the list and closes the form only when a new
+  combo matches the whole request (`comboCoincideConAlta`); otherwise the form stays open.
+  Pure helpers in `api/combosAbm.ts`. Observed (fix actor, round 2, from `src/Ways.Web`):
+  `tsc -b` clean; lint 0 errors; `src/api` + `Combos.test.tsx` 1351/1351; whole suite
+  5343/5343. No RED (implementation first); mutation evidence per validation clause, body
+  mapping, guards and each field of the match.
+- Judgment-day, T4: round 1 — 0 CRITICAL; fixed V1 search pagination honesty, V2 keyboard
+  listbox, V3 error association, V4 exact decimals, V5 uncertain create, V6 labels, V7 copy,
+  V8 async tests. Round-1 re-judgment: all resolved, two WARNINGs caused by the fix (scrollbar
+  closed the list; name-only confirmation could report a failed create as done). Round 2 fixed
+  them (X1, X2) plus X3, X4. Final re-judgment: both judges, all resolved, nothing blocking →
+  APPROVED. An unkillable generation check in the uncertain-create re-read was removed.
+- Known gap: `GET /api/articulos` has no unit-of-sale filter, so the picker filters the first
+  25 results client-side and tells the user to refine the search.
+
+- T4 delivered: PR pablo-nader/ways2026#401 (auto-merge + Auto-fix).
+- T5c NOT done here, on purpose (2026-10-12): another session of the owner already has the
+  0.9.0 bump open as PR pablo-nader/ways2026#391, stacked on #387 ("importes de venta a peso
+  entero"), and states that `pos-v0.9.0` is tagged on main after it merges. A second bump would
+  collide with it. That release will carry the POS combo slices (#396, #400) once it is
+  rebuilt on current main.
+- CROSS-SESSION RISK, for whoever lands #387: it changes sale amounts to whole pesos and its
+  branch already adapts the C# combo engine and the combo credit note ("repartir el precio del
+  combo en pesos enteros", "la devolución de un combo acredita pesos enteros"). The TypeScript
+  port `src/Ways.Web/src/pos/motorDeCombos.ts` (#396) allocates in CENTS and its parity suite
+  mirrors the C# tests as they were. When #387 merges, the offline engine must allocate in
+  whole pesos too and the parity cases must be re-mirrored, or an offline combo sale will
+  differ from the server's detection by cents and be audited as discrepant on every sale. The
+  server validation of the offline line (`combo_offline_invalido` for a share with more than
+  2 decimals) and `comboCoincideConAlta`/the ABM are not affected.
+
 ## Next step
 
-PR for T5b (slice 7); then T4 (back-office screen) and T5c (Desktop bump + `pos-v*` tag).
+Feature complete from this session's side: T1, T2, T3, TNC, T3b, T5a, T5b delivered and
+merged; T4 in PR #401. Remaining outside this session: the POS release (#391 + tag) and the
+whole-peso alignment of the offline engine noted above. Open owner decisions: items 2–6.

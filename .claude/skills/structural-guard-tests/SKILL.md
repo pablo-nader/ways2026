@@ -21,6 +21,10 @@ happened three times in three slices:
   have failed in CI. The writer's filtered integration run did not include it and reported
   green; a judge caught it by reading.
 
+- T4 added the `/combos` screen in a web-only slice: `RutasDeLaSpaTests` failed in CI because
+  the server keeps its own list of the SPA's routes. The web suite and the filtered backend
+  runs were all green.
+
 Each guard walks the whole codebase or the real endpoint table, so it fails for code that
 its own author never ran it against.
 
@@ -34,13 +38,15 @@ its own author never ran it against.
    | New table with `id_tenant` | `tests/Ways.IntegrationTests/AislamientoDeTenantTests.cs` | Nothing: it fails if the migration forgot `HabilitarRlsDeTenant` |
    | `RemoveRange`, `Remove`, `ExecuteDelete` or `DELETE FROM` in `src/` | `tests/Ways.Application.Tests/Organizacion/BajasEstructuralesTests.cs` | `RemoveRangePermitidos`, only for a replace-set of detail rows |
    | New non-GET endpoint that is not catalog management | `tests/Ways.IntegrationTests/SuperficieDeAutorizacionTests.cs` | Its `Allowlist`, plus a positive test driving the route with the role that needs it |
+   | New top-level route in `src/Ways.Web/src/App.tsx` (a new back-office screen) | `tests/Ways.IntegrationTests/RutasDeLaSpaTests.cs` | `RutasHeredadasDelBackOffice` in `src/Ways.Api/Spa/RutasDeLaSpa.cs`, in sorted position — a web-only change still needs this backend line |
    | New `CreateExecutionStrategy` / write transaction | `tests/Ways.Application.Tests/Abstracciones/EscriturasSinReintentoEstructuralesTests.cs` | See `ef-retry-safe-writes` |
    | New writer of family-shared fields or prices | `tests/Ways.Application.Tests/Familias/EscritoresDeFamiliasEstructuralesTests.cs` | The writer follows the lock protocol |
 
 2. **A filtered run is not the verification of record for these shapes.** After the change,
    run the whole `tests/Ways.Application.Tests` project and, for a new endpoint, the
    integration filter `FullyQualifiedName~SuperficieDeAutorizacion`. For a new table also
-   run `FullyQualifiedName~AislamientoDeTenant`.
+   run `FullyQualifiedName~AislamientoDeTenant`. For a new route in `App.tsx` run
+   `FullyQualifiedName~RutasDeLaSpa`, even when the change is web only.
 
 3. **When delegating, the brief carries the guard.** Put the guard's file (and its golden or
    allow-list) in the writer's allowed edit surfaces and its command in `## Verification`.
