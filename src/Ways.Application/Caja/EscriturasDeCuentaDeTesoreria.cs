@@ -66,13 +66,7 @@ public static class EscriturasDeCuentaDeTesoreria
         var saldos = new Dictionary<int, decimal>();
         foreach (var (idCuenta, cuenta) in cuentas.OrderBy(c => c.Key))
         {
-            var ultimoFinal = await db.MovimientosCuenta
-                .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
-                .OrderByDescending(m => m.Id)
-                .Select(m => (decimal?)m.Final)
-                .FirstOrDefaultAsync(ct);
-
-            saldos[idCuenta] = ultimoFinal ?? cuenta.SaldoInicial;
+            saldos[idCuenta] = await LeerSaldoActualAsync(db, idTenant, idCuenta, cuenta.SaldoInicial, ct);
         }
 
         foreach (var medio in medios.Where(m => saldos.ContainsKey(m.IdCuenta)))
@@ -104,6 +98,33 @@ public static class EscriturasDeCuentaDeTesoreria
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Bloquea una sola cuenta viva del tenant con el mismo <c>FOR NO KEY UPDATE</c> que el cierre y devuelve su saldo
+    /// vigente: el <c>final</c> del último movimiento, leído después del lock, o <c>saldo_inicial</c> si no tiene. <c>null</c>
+    /// si la cuenta no existe, está dada de baja o es de otro tenant. La empresa no se filtra: un ajuste manual no pertenece a
+    /// un turno. Exige una transacción abierta, porque el lock se libera al terminar el statement.</summary>
+    public static async Task<decimal?> BloquearYLeerSaldoAsync(
+        IWaysDbContext db, DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCuenta,
+        CancellationToken ct)
+    {
+        var cuentas = await LeerYBloquearCuentasAsync(conexion, transaccion, idTenant, idEmpresa: null, [idCuenta], ct);
+
+        return cuentas.TryGetValue(idCuenta, out var cuenta)
+            ? await LeerSaldoActualAsync(db, idTenant, idCuenta, cuenta.SaldoInicial, ct)
+            : null;
+    }
+
+    private static async Task<decimal> LeerSaldoActualAsync(
+        IWaysDbContext db, int idTenant, int idCuenta, decimal saldoInicial, CancellationToken ct)
+    {
+        var ultimoFinal = await db.MovimientosCuenta
+            .Where(m => m.IdCuentaTesoreria == idCuenta && m.IdTenant == idTenant)
+            .OrderByDescending(m => m.Id)
+            .Select(m => (decimal?)m.Final)
+            .FirstOrDefaultAsync(ct);
+
+        return ultimoFinal ?? saldoInicial;
     }
 
     private static string Concepto(ComponenteDeMovimientoDeCuenta componente, string medio, int idTurnoCaja)
@@ -153,18 +174,23 @@ public static class EscriturasDeCuentaDeTesoreria
     }
 
     private static async Task<Dictionary<int, CuentaBloqueada>> LeerYBloquearCuentasAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idEmpresa, List<int> idsDeCuenta,
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int? idEmpresa, List<int> idsDeCuenta,
         CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "SELECT id_cuenta_tesoreria, saldo_inicial FROM cuentas_tesoreria " +
-            "WHERE id_tenant = $1 AND id_empresa = $2 AND id_cuenta_tesoreria = ANY($3) AND deleted_at IS NULL " +
+            (idEmpresa is null
+                ? "WHERE id_tenant = $1 AND id_cuenta_tesoreria = ANY($2) AND deleted_at IS NULL "
+                : "WHERE id_tenant = $1 AND id_cuenta_tesoreria = ANY($2) AND deleted_at IS NULL AND id_empresa = $3 ") +
             "ORDER BY id_cuenta_tesoreria FOR NO KEY UPDATE";
         ParametrosDeComando.Agregar(comando, idTenant);
-        ParametrosDeComando.Agregar(comando, idEmpresa);
         ParametrosDeComando.Agregar(comando, idsDeCuenta.ToArray());
+        if (idEmpresa is { } empresa)
+        {
+            ParametrosDeComando.Agregar(comando, empresa);
+        }
 
         var cuentas = new Dictionary<int, CuentaBloqueada>();
         await using var lector = await comando.ExecuteReaderAsync(ct);
