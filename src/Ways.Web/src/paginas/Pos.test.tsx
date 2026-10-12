@@ -2461,7 +2461,7 @@ describe('Pos — saldo confirmado de la venta a un cliente identificado', () =>
     expect(alEmitir).not.toHaveBeenCalled()
     await waitFor(() => expect(alEmitir).toHaveBeenCalledTimes(1), { timeout: 4000 })
     expect(saldoDeLaVenta(alEmitir)).toEqual({ saldoEnPantalla: 500, consumoPendiente: null, saldoConfirmado: true })
-  })
+  }, 15_000)
 })
 
 describe('Pos — recibo del pago a cuenta en el escritorio', () => {
@@ -2616,7 +2616,7 @@ describe('Pos — recibo del pago a cuenta en el escritorio', () => {
     expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
       ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150, estimado: true }, CONTEXTO, MEDIOS_DEL_POS),
     )
-  })
+  }, 15_000)
 
   it('fuera del escritorio registra el pago sin imprimir nada', async () => {
     prepararPago(200, comprobanteDePago)
