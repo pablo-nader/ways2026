@@ -2853,7 +2853,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito) return
       // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
       // caja" por retiro abierto.
       if (cajaDeEscritorioOcupada) return
@@ -2862,7 +2862,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
   // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
@@ -2873,12 +2873,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
       if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
-      if (gateTurno || ventaFinalizada || confirmandoCobro || cajaDeEscritorioOcupada) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || vaciandoCarrito || cajaDeEscritorioOcupada) return
       setBuscadorDeCombosAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, vaciandoCarrito, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -3579,7 +3579,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     pedirFocoEnElCodigo()
   }
 
-  const puedeVaciar = !modoPresupuesto && lineas.length > 0 && !pantallaCobroInerte && !bloqueadoPorTurno
+  const puedeVaciar = !modoPresupuesto && lineas.length > 0 && !escaneando && !pantallaCobroInerte && !bloqueadoPorTurno
 
   function pedirConfirmacionDeVaciado() {
     setVaciandoCarrito(true)
@@ -3589,6 +3589,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     setVaciandoCarrito(false)
     pedirFocoEnElCodigo()
   }
+
+  // Si el carrito deja de poder vaciarse con la confirmación abierta (turno cerrado, cobro en curso),
+  // el diálogo no puede seguir prometiendo que lo vacía.
+  useEffect(() => {
+    if (vaciandoCarrito && !puedeVaciar) {
+      setVaciandoCarrito(false)
+      focoPendienteRef.current = true
+      setPedidosDeFoco((n) => n + 1)
+    }
+  }, [vaciandoCarrito, puedeVaciar])
 
   function confirmarVaciado() {
     setVaciandoCarrito(false)
@@ -3729,7 +3739,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       if (evento.key === 'F10') {
         if (evento.repeat) return
-        if (!m.puedeVaciar || m.buscadorAbierto || m.gateTurno || m.cajaDeEscritorioOcupada) return
+        if (!m.puedeVaciar || m.buscadorAbierto || m.gateTurno) return
         if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
         m.pedirConfirmacionDeVaciado()
         return
@@ -4076,7 +4086,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               <button
                 type="button"
                 className="btn btn-outline-danger btn-sm"
-                disabled={pantallaCobroInerte || bloqueadoPorTurno}
+                disabled={!puedeVaciar}
                 aria-keyshortcuts="F10"
                 onClick={pedirConfirmacionDeVaciado}
               >

@@ -7394,7 +7394,7 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         )
 
         expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
-        expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true')
+        await waitFor(() => expect(screen.getByTestId('header')).toHaveTextContent('true|true|true|true'))
       }))
 
     it('la lista de clientes del servidor que llega tarde no pisa al cliente que el cajero eligió de la copia local', () =>
@@ -8763,8 +8763,8 @@ describe('Pos — ergonomía del carrito', () => {
       expect(entrada).toHaveFocus()
     })
 
-    it('Enter sobre "Sí" enfocado lo confirma', async () => {
-      await montarConDosLineas()
+    it('Enter sobre "Sí" enfocado lo confirma y devuelve el foco al input de código', async () => {
+      const entrada = await montarConDosLineas()
       await userEvent.click(botonVaciar())
       await screen.findByRole('dialog', { name: 'Vaciar carrito' })
 
@@ -8773,6 +8773,8 @@ describe('Pos — ergonomía del carrito', () => {
       await userEvent.keyboard('{Enter}')
 
       expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+      expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      expect(entrada).toHaveFocus()
     })
 
     it('F10 con líneas abre la confirmación y cancela el comportamiento por defecto del navegador', async () => {
@@ -8788,6 +8790,7 @@ describe('Pos — ergonomía del carrito', () => {
     it('F10 con el carrito vacío cancela el comportamiento por defecto y no abre nada', async () => {
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
+      await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
 
       const noCancelado = fireEvent.keyDown(document, { key: 'F10' })
 
@@ -8807,14 +8810,15 @@ describe('Pos — ergonomía del carrito', () => {
       expect(entrada).toHaveFocus()
     })
 
-    it('con la confirmación abierta, un F10 repetido (tecla mantenida) no la cancela', async () => {
+    it('con la confirmación abierta, un F10 repetido (tecla mantenida) no la cancela ni vacía el carrito', async () => {
       await montarConDosLineas()
       fireEvent.keyDown(document, { key: 'F10' })
-      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+      const dialogo = await screen.findByRole('dialog', { name: 'Vaciar carrito' })
 
       fireEvent.keyDown(document, { key: 'F10', repeat: true })
 
-      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBe(dialogo)
+      expect(nombresEnPantalla()).toEqual(['Pancho', 'Coca Cola 1L'])
     })
 
     it('con la confirmación abierta, Escape cancela sin vaciar y devuelve el foco al input de código', async () => {
@@ -8851,6 +8855,78 @@ describe('Pos — ergonomía del carrito', () => {
 
       expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
       expect(dialogoDeVaciado()).not.toBeInTheDocument()
+    })
+
+    it('con la confirmación abierta, F2 y F4 no abren un buscador encima', async () => {
+      await montarConDosLineas()
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      fireEvent.keyDown(document, { key: 'F2' })
+      fireEvent.keyDown(document, { key: 'F4' })
+
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(screen.getByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+    })
+
+    describe('con un escaneo en vuelo', () => {
+      /** Deja una línea en el carrito y un segundo escaneo (`333`) colgado hasta que el test lo resuelva. */
+      async function montarConEscaneoColgado() {
+        let resolverEscaneo: (a: ArticuloEscaneado) => void = () => {}
+        mockearApiGet((ruta) => {
+          if (ruta.startsWith('/articulos/escaneo?entrada=111')) return Promise.resolve(articuloEscaneadoFixture({ codigoBarra: '111' }))
+          if (ruta.startsWith('/articulos/escaneo?entrada=333')) return new Promise<ArticuloEscaneado>((r) => (resolverEscaneo = r))
+          return undefined
+        })
+        renderPos()
+        await screen.findByRole('option', { name: /Consumidor Final/ })
+        await escanearYEsperar('111', 'Coca Cola 1L', 1)
+        await userEvent.type(screen.getByLabelText('Código escaneado'), '333')
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+        await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeDisabled())
+        return resolverEscaneo
+      }
+
+      it('el botón queda deshabilitado y F10 no abre la confirmación', async () => {
+        await montarConEscaneoColgado()
+
+        expect(botonVaciar()).toBeDisabled()
+        fireEvent.keyDown(document, { key: 'F10' })
+
+        expect(dialogoDeVaciado()).not.toBeInTheDocument()
+      })
+
+      it('al terminar el escaneo se puede vaciar, con la línea nueva incluida', async () => {
+        const resolverEscaneo = await montarConEscaneoColgado()
+        await act(async () => {
+          resolverEscaneo(articuloEscaneadoFixture({ idArticulo: 3, codigoInterno: 'A0003', nombre: 'Sprite 1L', codigoBarra: '333' }))
+        })
+        await waitFor(() => expect(screen.getAllByLabelText(/^Cantidad de /)).toHaveLength(2))
+
+        await waitFor(() => expect(botonVaciar()).toBeEnabled())
+        fireEvent.keyDown(document, { key: 'F10' })
+
+        expect(await screen.findByRole('dialog', { name: 'Vaciar carrito' })).toBeInTheDocument()
+      })
+    })
+
+    it('si arranca un escaneo con la confirmación abierta, la confirmación se cierra y el carrito queda como estaba', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/articulos/escaneo?entrada=111')) return Promise.resolve(articuloEscaneadoFixture({ codigoBarra: '111' }))
+        if (ruta.startsWith('/articulos/escaneo?entrada=333')) return new Promise<ArticuloEscaneado>(() => {})
+        return undefined
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await escanearYEsperar('111', 'Coca Cola 1L', 1)
+      fireEvent.keyDown(document, { key: 'F10' })
+      await screen.findByRole('dialog', { name: 'Vaciar carrito' })
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), '333')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      await waitFor(() => expect(dialogoDeVaciado()).not.toBeInTheDocument())
+      expect(nombresEnPantalla()).toEqual(['Coca Cola 1L'])
     })
 
     it('con otro modal abierto (cuenta corriente), F10 no abre la confirmación de vaciado', async () => {
