@@ -37,13 +37,12 @@ describe('parsearCodigoDeCombo', () => {
     ['c7', 7],
     ['C1', 1],
     ['C999999', 999999],
-    ['C000012', 12],
-    ['c000001', 1],
+    ['C100000', 100000],
   ])('%s es el combo %i', (entrada, esperado) => {
     expect(parsearCodigoDeCombo(entrada)).toBe(esperado)
   })
 
-  it.each(['C0', 'C000000', 'C1000000', 'C12X', 'C', 'C-1', 'C1.5', 'CC12', '12', 'X12', '3*C12', 'C 12', ' C12', 'C12 ', 'C１２', 'C12\n', ''])(
+  it.each(['C012', 'C001', 'c000001', 'C000012', 'C0', 'C000000', 'C1000000', 'C12X', 'C', 'C-1', 'C1.5', 'CC12', '12', 'X12', '3*C12', 'C 12', ' C12', 'C12 ', 'C１２', 'C12\n', ''])(
     '%j no es un código de combo',
     (entrada) => {
       expect(parsearCodigoDeCombo(entrada)).toBeNull()
@@ -177,5 +176,22 @@ describe('motivoDeComboNoCargable y componentesAElegir', () => {
   it('totalElegido suma lo repartido en el componente y es cero sin elección', () => {
     expect(totalElegido({ 1: { 2: 1, 3: 2 } }, 1)).toBe(3)
     expect(totalElegido({}, 1)).toBe(0)
+  })
+})
+
+describe('el mismo artículo como componente y como miembro de una familia', () => {
+  it('entrega una línea por componente, en orden, sin fusionarlas: acumular es cosa del carrito', () => {
+    const c = combo([deArticulo(PANCHO, 1), deFamilia(9, 'Panchos y gaseosas', 2, [PANCHO, COCA])])
+
+    const resultado = resolverLineasDeCombo(c, { 1: { [PANCHO.idArticulo]: 1, [COCA.idArticulo]: 1 } })
+
+    expect(resultado).toEqual({
+      ok: true,
+      lineas: [
+        { ...PANCHO, cantidad: 1 },
+        { ...PANCHO, cantidad: 1 },
+        { ...COCA, cantidad: 1 },
+      ],
+    })
   })
 })

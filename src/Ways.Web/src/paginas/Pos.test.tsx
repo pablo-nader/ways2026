@@ -7633,14 +7633,14 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(within(filas[1]).getByText('Pancho')).toBeInTheDocument()
     })
 
-    it('F3 abre el modal; F2 no abre el de artículos encima, y Escape lo cierra devolviendo el foco al código', async () => {
+    it('F4 abre el modal; F2 no abre el de artículos encima, y Escape lo cierra devolviendo el foco al código', async () => {
       mockearCombos()
       const codigo = await montar()
 
-      fireEvent.keyDown(document, { key: 'F3' })
+      fireEvent.keyDown(document, { key: 'F4' })
       const dialogo = await screen.findByRole('dialog', { name: 'Buscar combo' })
       fireEvent.keyDown(document, { key: 'F2' })
-      fireEvent.keyDown(document, { key: 'F3' })
+      fireEvent.keyDown(document, { key: 'F4' })
       expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
       expect(screen.getAllByRole('dialog')).toHaveLength(1)
 
@@ -7650,7 +7650,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(codigo).toHaveFocus()
     })
 
-    it('F3 no abre nada con el checkout en vuelo', async () => {
+    it('F4 no abre nada con el checkout en vuelo', async () => {
       mockearCombos()
       apiPostMock.mockImplementation((ruta: string) => {
         if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
@@ -7663,9 +7663,38 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
 
-      fireEvent.keyDown(document, { key: 'F3' })
+      fireEvent.keyDown(document, { key: 'F4' })
 
       expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+    })
+
+    it('el botón anuncia F4 y el atajo evita el comportamiento del navegador; F3 (dirección de entrega del legacy) no se toca', async () => {
+      mockearCombos()
+      await montar()
+
+      const boton = screen.getByRole('button', { name: 'Buscar combo' })
+      expect(boton).toHaveAttribute('aria-keyshortcuts', 'F4')
+      expect(boton).toHaveTextContent('Buscar combo (F4)')
+      // `fireEvent` devuelve `false` cuando algún listener llamó a `preventDefault`.
+      expect(fireEvent.keyDown(document, { key: 'F3' })).toBe(true)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(fireEvent.keyDown(document, { key: 'F4' })).toBe(false)
+      expect(await screen.findByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
+    })
+
+    it('F4 no abre el buscador mientras una lectura por código sigue en vuelo', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      await montar()
+      await tipearYAgregar('C7')
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+
+      fireEvent.keyDown(document, { key: 'F4' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+
+      await act(async () => resolverDetalle(cargable()))
+      await articuloEnElCarrito('Pancho')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
     it('un combo con un componente dado de baja se muestra deshabilitado con el motivo y no agrega nada', async () => {
@@ -7783,7 +7812,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(llamadasGet('/articulos/escaneo').map((c) => c[0])).toEqual(['/articulos/escaneo?entrada=c12'])
     })
 
-    it('si la lectura de combos falla igual sigue la búsqueda de artículos', async () => {
+    it('si la búsqueda del combo por código falla igual sigue la búsqueda de artículos, sin avisar nada si lo encuentra', async () => {
       mockearApiGet((ruta) => {
         if (ruta === '/combos') return Promise.reject(new ErrorApi(500, 'error', 'Falló.'))
         if (ruta === '/articulos/escaneo?entrada=C7') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C7' }))
@@ -7794,6 +7823,75 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       await tipearYAgregar('C7')
 
       expect(await screen.findByText('Cable C7')).toBeInTheDocument()
+      expect(screen.queryByText(/No se pudieron leer los combos/)).not.toBeInTheDocument()
+    })
+
+    it('si la búsqueda del combo falla y el artículo tampoco existe, el aviso dice también que no se pudieron leer los combos', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.reject(new ErrorApi(500, 'error', 'Falló.'))
+        if (ruta === '/articulos/escaneo?entrada=C7') return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe un artículo con ese código.'))
+        return undefined
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No existe un artículo con ese código. No se pudieron leer los combos.')).toBeInTheDocument()
+      expect(codigo).toHaveValue('C7')
+    })
+
+    it('un artículo que no existe, con los combos bien leídos, NO dice que no se pudieron leer', async () => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta === '/articulos/escaneo?entrada=C12' ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe un artículo con ese código.')) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar('C12')
+
+      expect(await screen.findByText('No existe un artículo con ese código.')).toBeInTheDocument()
+    })
+
+    it.each(['C012', 'C001', 'c0'])('%s no es un código de combo: va directo al artículo (puede estar codificado con ceros) y no lee combos', async (tipeado) => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta === `/articulos/escaneo?entrada=${tipeado}` ? Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: `Cable ${tipeado}` })) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar(tipeado)
+
+      expect(await screen.findByText(`Cable ${tipeado}`)).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    it('un combo encontrado cuyo detalle falla avisa el error del combo y NO cae a la búsqueda de artículos', async () => {
+      mockearCombos({
+        detalle: () => Promise.reject(new ErrorApi(500, 'error', 'No se pudo leer el detalle del combo.')),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo leer el detalle del combo.')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(screen.queryByText('Cable C7')).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(codigo).toHaveValue('C7')
+    })
+
+    it('un error que no es de la API al leer el detalle también avisa «No se pudo leer el combo C7.» y no escanea artículos', async () => {
+      mockearCombos({
+        detalle: () => Promise.reject(new TypeError('boom')),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo leer el combo C7.')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
     })
 
     it.each(['C0', 'C1000000', 'C12X', '3*C7', 'C'])('%s no es un código de combo: no lee combos y va directo a artículos', async (tipeado) => {
@@ -7854,7 +7952,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
     })
 
-    it('un doble Enter con la lectura en vuelo carga el combo una sola vez', async () => {
+    it('dos Enter en el mismo tick (antes de que el re-render deshabilite el input) cargan el combo una sola vez', async () => {
       let resolverLista: (l: ComboListado[]) => void = () => {}
       mockearCombos()
       mockearApiGet((ruta) => {
@@ -7863,8 +7961,13 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
         return undefined
       })
       const codigo = await montar()
+      await userEvent.type(codigo, 'C7')
 
-      await userEvent.type(codigo, 'C7{Enter}{Enter}')
+      // Dentro de un solo `act` React no re-renderiza entre los dos eventos: la segunda llamada ve el `escaneando` viejo.
+      act(() => {
+        fireEvent.keyDown(codigo, { key: 'Enter' })
+        fireEvent.keyDown(codigo, { key: 'Enter' })
+      })
       await waitFor(() => expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1))
       await act(async () => resolverLista([listado()]))
 
@@ -7872,6 +7975,166 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
       expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
       expect(filasDelCarrito()).toHaveLength(2)
+    })
+
+    it('si el cobro empieza mientras se lee el combo, el combo no se agrega y se avisa', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        if (ruta === '/ventas') return new Promise(() => {})
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+      await act(async () => resolverDetalle(cargable()))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('un componente con cantidad inválida deja el carrito intacto, aunque el primero sí se podía cargar', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1.5, candidatos: [candidato(COCA)] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('La cantidad de «Coca Cola 1L» no es válida.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('lista de combos de la API en memoria', () => {
+    it('dos escaneos del mismo código leen la lista una sola vez; un código que no está la refresca una vez; un escaneo común no la pide', async () => {
+      mockearCombos({
+        lista: [listado(), listado({ id: 71, codigo: 8, nombre: 'Otro' })],
+        escaneo: (ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe.')) : undefined),
+      })
+      const codigo = await montar()
+      const listas = () => llamadasGet('/combos').filter((c) => c[0] === '/combos')
+
+      await tipearYAgregar('C7')
+      await waitFor(() => expect(codigo).toHaveValue(''))
+      await tipearYAgregar('C7')
+      const filaPancho = (await articuloEnElCarrito('Pancho')).closest('tr') as HTMLElement
+      await waitFor(() => expect(within(filaPancho).getByDisplayValue('2')).toBeInTheDocument())
+      expect(listas()).toHaveLength(1)
+
+      await tipearYAgregar('C99')
+      await screen.findByText('No existe.')
+      expect(listas()).toHaveLength(2)
+
+      await userEvent.clear(codigo)
+      await tipearYAgregar('7790001234567')
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(listas()).toHaveLength(2)
+    })
+
+    it('abrir el buscador de combos refresca la lista guardada', async () => {
+      mockearCombos()
+      await montar()
+      await tipearYAgregar('C7')
+      await articuloEnElCarrito('Pancho')
+      const listas = () => llamadasGet('/combos').filter((c) => c[0] === '/combos')
+      expect(listas()).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await screen.findByRole('option', { name: /C7/ })
+
+      expect(listas()).toHaveLength(2)
+    })
+
+    it('un combo creado después de abrir la pantalla se encuentra: el código que no estaba en lo guardado refresca y lo halla', async () => {
+      let combos = [listado()]
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(combos)
+        if (ruta.startsWith('/combos/') && ruta.includes('/cargable')) return Promise.resolve(cargable())
+        return undefined
+      })
+      await montar()
+      await tipearYAgregar('C7')
+      await articuloEnElCarrito('Pancho')
+
+      combos = [listado(), listado({ id: 72, codigo: 9, nombre: 'Nuevo' })]
+      apiGetMock.mockClear()
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(combos)
+        if (ruta === '/combos/72/cargable') return Promise.resolve(cargable({ id: 72, codigo: 9, nombre: 'Nuevo' }))
+        return undefined
+      })
+      await tipearYAgregar('C9')
+
+      await waitFor(() => expect(llamadasGet('/combos/72/cargable')).toHaveLength(1))
+    })
+  })
+
+  describe('el mismo artículo y la cantidad al cargar', () => {
+    it('un componente con cantidad 2 de un artículo que no acumula entra como UNA línea de 2 y el combo se detecta igual', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 2, candidatos: [{ ...candidato(COCA), acumulaEnVenta: false }] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      const filaCoca = (await articuloEnElCarrito('Coca Cola 1L')).closest('tr') as HTMLElement
+      expect(within(filaCoca).getByDisplayValue('2')).toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(2)
+      await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument())
+      const ultimaResolucion = apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).at(-1)?.[1] as {
+        lineas: { idArticulo: number; cantidad: number }[]
+      }
+      expect(ultimaResolucion.lineas.map((l) => [l.idArticulo, l.cantidad])).toEqual([
+        [PANCHO, 1],
+        [COCA, 2],
+      ])
+    })
+
+    it('el mismo artículo como componente y como miembro de una familia: el carrito acumula las dos unidades y detecta el combo', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: null, idFamilia: 9, nombre: 'Panchos y gaseosas', cantidad: 2, candidatos: [candidato(PANCHO), candidato(COCA)] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      await userEvent.clear(within(dialogo).getByLabelText('Pancho'))
+      await userEvent.type(within(dialogo).getByLabelText('Pancho'), '1')
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '1')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar combo' }))
+
+      await waitFor(() => expect(filasDelCarrito()).toHaveLength(2))
+      const filaPancho = (await articuloEnElCarrito('Pancho')).closest('tr') as HTMLElement
+      expect(within(filaPancho).getByDisplayValue('2')).toBeInTheDocument()
+      await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument())
     })
   })
 
@@ -7948,6 +8211,53 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(apiPostMock).not.toHaveBeenCalled()
     })
 
+    function mockearVentaColgada() {
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        if (ruta === '/ventas') return new Promise(() => {})
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+    }
+
+    it('si el cobro empieza mientras se lee un combo con familias, el selector no se abre y se avisa', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      mockearVentaColgada()
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+      await act(async () => resolverDetalle(cargableConFamilia()))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('si el cobro empieza con el selector abierto, confirmar no agrega nada y se avisa', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      mockearVentaColgada()
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      fireEvent.click(screen.getByRole('button', { name: /Cobrar/, hidden: true }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/, hidden: true })).toBeInTheDocument())
+
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '2')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar combo' }))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
     it('Escape en el selector también descarta el combo entero', async () => {
       mockearCombos({ detalle: cargableConFamilia() })
       await montar()
@@ -8013,15 +8323,82 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       expect(codigo).toHaveValue('')
     })
 
-    it('un combo que la instantánea no tiene cae al artículo cuyo código interno es C12, también de la instantánea', async () => {
+    it('con conexión, un código que ni la instantánea ni la API tienen cae al artículo C12 de la instantánea, tras probar la API una vez', async () => {
       mockearCombos()
       await montarConInstantanea([comboLocal()])
 
       await tipearYAgregar('C12')
 
       expect(await screen.findByText('Cable C12')).toBeInTheDocument()
-      expect(llamadasGet('/combos')).toEqual([])
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
       expect(llamadasGet('/articulos/escaneo')).toEqual([])
+    })
+
+    it('con conexión, un combo creado después de la última sincronización (la instantánea no lo tiene) se carga desde la API', async () => {
+      mockearCombos({ lista: [listado({ id: 90, codigo: 9, nombre: 'Nuevo' })], detalle: cargable({ id: 90, codigo: 9, nombre: 'Nuevo' }) })
+      const codigo = await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C9')
+
+      await articuloEnElCarrito('Pancho')
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/combos/90/cargable')).toHaveLength(1)
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(codigo).toHaveValue('')
+    })
+
+    it('con conexión y una instantánea sin combos, el buscador lista los de la API', async () => {
+      mockearCombos()
+      await montarConInstantanea(undefined)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+      expect(await screen.findByRole('option', { name: /C7/ })).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+    })
+
+    it('con conexión y una instantánea CON combos, el buscador lista los de la instantánea y no pide los de la API', async () => {
+      mockearCombos()
+      await montarConInstantanea([comboLocal({ idCombo: 80, codigo: 8, nombre: 'Solo local' })])
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+      expect(await screen.findByRole('option', { name: /C8/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /C7/ })).not.toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    describe('sin conexión', () => {
+      async function montarSinConexion(combos: InstantaneaDePos['combos']) {
+        await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: articulosDeInstantanea(), combos }) })
+        mockearApiGet((ruta) =>
+          ruta === '/pos/instantanea' || ruta.startsWith('/combos') || ruta.startsWith('/articulos/escaneo')
+            ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+            : undefined,
+        )
+        renderPos()
+        await screen.findByRole('option', { name: /Consumidor Final/ })
+        await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+        return screen.getByLabelText('Código escaneado') as HTMLInputElement
+      }
+
+      it('un código que la instantánea no tiene NO prueba la API: cero pedidos de combos', async () => {
+        await montarSinConexion([comboLocal()])
+
+        await tipearYAgregar('C9')
+
+        expect(await screen.findByText('Sin conexión: no se encontró ese código en la última instantánea local.')).toBeInTheDocument()
+        expect(llamadasGet('/combos')).toEqual([])
+      })
+
+      it('el buscador de una instantánea sin combos queda vacío y no pide nada', async () => {
+        await montarSinConexion(undefined)
+
+        await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+        expect(await screen.findByText('No hay combos activos')).toBeInTheDocument()
+        expect(llamadasGet('/combos')).toEqual([])
+      })
     })
 
     it('los miembros de la familia salen de la instantánea y solo los de unidad: el pesable no entra, así que queda uno y se agrega directo', async () => {

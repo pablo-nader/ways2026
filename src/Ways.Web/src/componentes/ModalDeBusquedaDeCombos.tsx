@@ -21,7 +21,7 @@ function coincide(combo: ComboDeLista, termino: string): boolean {
 }
 
 /**
- * Modal de búsqueda de combos del POS, modelado sobre `ModalDeBusquedaDeArticulos`: F3 o "Buscar combo" lo abren. Lista los
+ * Modal de búsqueda de combos del POS, modelado sobre `ModalDeBusquedaDeArticulos`: F4 o "Buscar combo" lo abren. Lista los
  * combos activos (código `C12`, nombre, precio y un resumen de sus componentes), se filtra por nombre o código y se
  * recorre con las flechas; Enter o un clic elige. Un combo con un componente sin artículos vendibles se muestra
  * deshabilitado con el motivo. Con la API el motivo recién se conoce al elegirlo (el detalle se pide en ese momento) y

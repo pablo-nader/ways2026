@@ -1210,14 +1210,23 @@ Un combo nunca es una línea de la venta: cargarlo en el carrito agrega las MISM
 escaneándolas por separado, por el camino del escaneo (`acumulaEnVenta`, reglas de cantidad y resolución de precios
 idénticas), y es el carrito el que después detecta el combo por sí mismo. Hay dos entradas:
 
-- El botón "Buscar combo" (atajo F3, junto a "Buscar artículo" F2): un modal con los combos activos del punto de venta
+- El botón "Buscar combo" (atajo F4, junto a "Buscar artículo" F2): un modal con los combos activos del punto de venta
   (`C<codigo>`, nombre, precio, resumen de componentes), filtro por nombre o código, flechas y Enter. Un combo con un
-  componente sin artículos vendibles se muestra deshabilitado con el motivo.
-- Escribir `C` + dígitos en el input de código. Solo una entrada que cumple `^[cC]\d{1,6}$` con un valor entre 1 y 999999
-  toma este camino; cualquier otra (`C0`, `C1000000`, `C12X`, `3*C7`) va directo a la búsqueda de artículos y no hace
-  ninguna lectura de combos. Se busca primero un combo activo con ese número (D7); si no hay (o la lectura falla), la
-  búsqueda de artículos sigue con el texto ORIGINAL tal como se tipeó, porque el `codigo_interno` de un artículo es libre
-  y puede ser `C12`. Un combo que existe pero no se puede cargar avisa el motivo y NO cae a artículos.
+  componente sin artículos vendibles se muestra deshabilitado con el motivo. El atajo respeta las mismas compuertas que el
+  botón (no abre con un escaneo o una lectura de combo en vuelo, con un cobro en curso ni sobre otro modal) y es la única
+  tecla cuyo comportamiento por defecto del navegador se evita. Por qué F4 y no F3: el legacy usa F1 (buscar cliente), F2
+  (insertar código), F3 (dirección de entrega), F9, F10 y F12 (abrir caja), y `docs/05` obliga a conservarlos; F4-F8 y F11
+  eran un `alert` sin implementar. F3 queda para la dirección de entrega y F4 es la primera tecla libre tanto en el legacy
+  como en esta pantalla.
+- Escribir `C` + dígitos en el input de código. Solo el texto canónico `^[cC]([1-9]\d{0,5})$` (de 1 a 999999, sin ceros a la
+  izquierda) toma este camino; cualquier otra (`C0`, `C012`, `C001`, `C1000000`, `C12X`, `3*C7`) va directo a la búsqueda de
+  artículos y no hace ninguna lectura de combos: un artículo codificado con relleno de ceros no queda tapado por un combo.
+  Se busca primero un combo activo con ese número (D7); si no hay, la búsqueda de artículos sigue con el texto ORIGINAL tal
+  como se tipeó, porque el `codigo_interno` de un artículo es libre y puede ser `C12`. Solo la búsqueda por código está
+  protegida así: si falla (red, 500) la búsqueda de artículos también sigue, pero si el artículo tampoco aparece el aviso
+  agrega «No se pudieron leer los combos.». Un combo que existe y no se puede leer o cargar (motivo propio, detalle que
+  falla, cobro que empezó mientras tanto) avisa el motivo y NO cae a artículos; cada camino en que el combo se descarta deja
+  un aviso, nunca un descarte silencioso.
 
 Todo o nada: el combo entra entero o no entra. Una familia con un solo candidato se agrega directo; con varios, un único
 selector reparte la cantidad de cada componente de familia entre sus miembros y "Agregar combo" queda deshabilitado hasta
@@ -1228,6 +1237,20 @@ Fuente de datos: con una instantánea utilizable del punto de venta (POS de escr
 los candidatos salen de la instantánea, también sin conexión: un candidato es un artículo `Unidad` (una unidad ausente es
 `Peso`) con precio en la lista del cliente, y los miembros de una familia se buscan por el `idFamilia` de cada artículo.
 Sin instantánea (web) salen de la API: `GET /api/combos` para la lista y el endpoint de abajo para los candidatos.
+
+La instantánea no es la última palabra cuando hay conexión. Un combo creado después de la última sincronización no está en
+ella, así que con conexión una búsqueda por código `C<n>` que la instantánea no resuelve (o una instantánea sin la clave
+`combos`) prueba la API para ese código antes de caer a la búsqueda de artículos. Sin conexión el comportamiento no cambia:
+solo la instantánea, cero pedidos. El modal no mezcla fuentes: lista los combos de la instantánea cuando esta trae la
+clave `combos` (aunque sea vacía) y los de la API cuando con conexión la instantánea no la trae. La fuente de la API
+guarda su lista en memoria mientras la pantalla esté montada: abrir el buscador siempre la vuelve a pedir y una búsqueda
+por código que no la encuentra en lo guardado la refresca una sola vez antes de decidir; un escaneo común (que no tiene
+forma de código de combo) no pide nada.
+
+Las dos fuentes pueden rotular distinto una misma familia: sin API (instantánea) la etiqueta del componente se arma con los
+nombres de sus primeros miembros, y con la API es el nombre de la familia. Tampoco coincide el filtro de precio: con la
+instantánea un candidato necesita precio en la lista del cliente (la misma regla con que el carrito offline cotiza), y con
+la API el servidor no mira el precio y lo resuelve el carrito, igual que al escanear el artículo suelto.
 
 `GET /api/combos/{id}/cargable?idEmpresa=` (`OperacionDePos`, como las demás lecturas; es un GET, no entra en la lista de
 excepciones de `SuperficieDeAutorizacionTests`): devuelve `{ id, codigo, nombre, precio, componentes[] }` con cada

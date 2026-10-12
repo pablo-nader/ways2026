@@ -29,19 +29,18 @@ export type EleccionDeMiembros = Readonly<Record<number, Readonly<Record<number,
 
 export type ResolucionDeCombo = { ok: true; lineas: ArticuloEscaneado[] } | { ok: false; motivo: string }
 
-const PATRON_DE_CODIGO_DE_COMBO = /^[cC](\d{1,6})$/
-const CODIGO_MAXIMO_DE_COMBO = 999_999
+const PATRON_DE_CODIGO_DE_COMBO = /^[cC]([1-9]\d{0,5})$/
 
 /**
  * El número de combo que tipeó el cajero (`C12`, `c7`), o `null` si la entrada no es un código de combo: `C` y de uno a
- * seis dígitos, con un valor entre 1 y 999999 (el mismo rango que valida el servidor). No recorta: recibe la entrada ya
- * recortada. Cualquier otra cosa (`C0`, `C1000000`, `C12X`, `3*C12`) no es un combo y sigue por la búsqueda de artículos.
+ * seis dígitos sin ceros a la izquierda, o sea un valor entre 1 y 999999 (el mismo rango que valida el servidor). Solo el
+ * texto canónico es un código de combo: `C012` o `C001` pueden ser el código de un artículo con relleno de ceros. No
+ * recorta: recibe la entrada ya recortada. Cualquier otra cosa (`C0`, `C012`, `C1000000`, `C12X`, `3*C12`) no es un combo
+ * y sigue por la búsqueda de artículos.
  */
 export function parsearCodigoDeCombo(entrada: string): number | null {
   const coincidencia = PATRON_DE_CODIGO_DE_COMBO.exec(entrada)
-  if (!coincidencia) return null
-  const codigo = Number(coincidencia[1])
-  return codigo >= 1 && codigo <= CODIGO_MAXIMO_DE_COMBO ? codigo : null
+  return coincidencia ? Number(coincidencia[1]) : null
 }
 
 /** Rótulo del código de un combo: `C12`. */

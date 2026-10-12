@@ -228,3 +228,119 @@ describe('elegirFuenteDeCombos', () => {
     expect(elegirFuenteDeCombos({ instantanea: null, idListaPrecio: LISTA, idEmpresa: 1 }).origen).toBe('api')
   })
 })
+
+describe('fuenteDesdeApi: lista en memoria', () => {
+  const cliente = () => ({ listar: vi.fn().mockResolvedValue(LISTADO), cargable: vi.fn() })
+
+  it('varias búsquedas por un código que está en lo guardado piden la lista una sola vez', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+
+    await fuente.buscarPorCodigo(1)
+    await fuente.buscarPorCodigo(1)
+    await fuente.buscarPorCodigo(5)
+
+    expect(c.listar).toHaveBeenCalledTimes(1)
+  })
+
+  it('un código que no está en lo guardado la refresca una vez y recién entonces decide', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+    await fuente.buscarPorCodigo(1)
+
+    expect(await fuente.buscarPorCodigo(77)).toBeNull()
+    expect(c.listar).toHaveBeenCalledTimes(2)
+
+    c.listar.mockResolvedValue([...LISTADO, { ...LISTADO[3], id: 9, codigo: 77, nombre: 'Nuevo' }])
+    expect((await fuente.buscarPorCodigo(77))?.idCombo).toBe(9)
+    expect(c.listar).toHaveBeenCalledTimes(3)
+  })
+
+  it('listar (el buscador al abrirse) siempre vuelve a pedirla', async () => {
+    const c = cliente()
+    const fuente = fuenteDesdeApi(4, c)
+
+    await fuente.listar()
+    await fuente.listar()
+
+    expect(c.listar).toHaveBeenCalledTimes(2)
+  })
+
+  it('una lectura que falla no deja nada guardado', async () => {
+    const c = cliente()
+    c.listar.mockRejectedValueOnce(new ErrorApi(500, 'error', 'Falló.'))
+    const fuente = fuenteDesdeApi(4, c)
+
+    await expect(fuente.buscarPorCodigo(1)).rejects.toBeInstanceOf(ErrorApi)
+
+    expect((await fuente.buscarPorCodigo(1))?.idCombo).toBe(1)
+    expect(c.listar).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('elegirFuenteDeCombos: instantánea y API', () => {
+  const COMBO_LOCAL = { idCombo: 20, codigo: 8, nombre: 'Local', precio: 900, componentes: [{ idArticulo: 1, cantidad: 2 }] }
+  const armar = (combos: InstantaneaDePos['combos'], enLinea: boolean) => {
+    const cliente = {
+      listar: vi.fn().mockResolvedValue(LISTADO),
+      cargable: vi.fn().mockResolvedValue({ id: 1, codigo: 1, nombre: 'Bueno', precio: 5000, componentes: [] } satisfies ComboCargableDeApi),
+    }
+    const fuente = elegirFuenteDeCombos({
+      instantanea: instantanea(ARTICULOS, combos),
+      idListaPrecio: LISTA,
+      idEmpresa: 4,
+      enLinea,
+      api: fuenteDesdeApi(4, cliente),
+    })
+    return { fuente, cliente }
+  }
+
+  it('con conexión y un código que la instantánea no tiene, prueba la API y lo encuentra', async () => {
+    const { fuente, cliente } = armar([COMBO_LOCAL], true)
+
+    expect((await fuente.buscarPorCodigo(1))?.idCombo).toBe(1)
+    expect(cliente.listar).toHaveBeenCalledTimes(1)
+  })
+
+  it('con conexión y un código que está en la instantánea no toca la API', async () => {
+    const { fuente, cliente } = armar([COMBO_LOCAL], true)
+
+    expect((await fuente.buscarPorCodigo(8))?.idCombo).toBe(20)
+    expect(cliente.listar).not.toHaveBeenCalled()
+  })
+
+  it('sin conexión responde solo con la instantánea: ni una llamada', async () => {
+    const { fuente, cliente } = armar([COMBO_LOCAL], false)
+
+    expect(await fuente.buscarPorCodigo(1)).toBeNull()
+    expect((await fuente.listar()).map((c) => c.codigo)).toEqual([8])
+    await fuente.cargar(20)
+    expect(cliente.listar).not.toHaveBeenCalled()
+    expect(cliente.cargable).not.toHaveBeenCalled()
+  })
+
+  it('una instantánea sin la clave combos lista los de la API con conexión, y nada sin conexión', async () => {
+    const conRed = armar(undefined, true)
+    const sinRed = armar(undefined, false)
+
+    expect((await conRed.fuente.listar()).map((c) => c.codigo)).toEqual([1, 5])
+    expect(await sinRed.fuente.listar()).toEqual([])
+    expect(sinRed.cliente.listar).not.toHaveBeenCalled()
+  })
+
+  it('una instantánea con la clave combos (aunque vacía) lista los suyos y no mezcla los de la API', async () => {
+    const { fuente, cliente } = armar([], true)
+
+    expect(await fuente.listar()).toEqual([])
+    expect(cliente.listar).not.toHaveBeenCalled()
+  })
+
+  it('cargar usa la instantánea para sus combos y la API para los demás', async () => {
+    const { fuente, cliente } = armar([COMBO_LOCAL], true)
+
+    await fuente.cargar(20)
+    expect(cliente.cargable).not.toHaveBeenCalled()
+    await fuente.cargar(1)
+    expect(cliente.cargable).toHaveBeenCalledWith(1, 4)
+  })
+})

@@ -97,10 +97,11 @@ import {
   motivoDeComboNoCargable,
   parsearCodigoDeCombo,
   resolverLineasDeCombo,
+  rotuloDeCodigoDeCombo,
   type ComboParaCargar,
 } from '../pos/cargaDeCombos'
 import { construirComprobanteOfflineSintetico } from '../pos/comprobanteOfflineSintetico'
-import { elegirFuenteDeCombos } from '../pos/fuenteDeCombos'
+import { elegirFuenteDeCombos, fuenteDesdeApi } from '../pos/fuenteDeCombos'
 import {
   aClienteListado,
   aMedioPagoListado,
@@ -128,6 +129,11 @@ import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+/** Un combo que llegó al carrito cuando el cobro ya había empezado no se agrega: se avisa en vez de descartarlo en silencio. */
+const MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO = 'No se agregó el combo: hay un cobro en curso.'
+/** Se agrega al aviso de un artículo que no apareció cuando tampoco se pudieron leer los combos con ese código. */
+const MENSAJE_DE_COMBOS_SIN_LEER = 'No se pudieron leer los combos.'
 
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
@@ -1054,6 +1060,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // que se vacía recién al agregarlo (cancelar deja el texto tipeado).
   const [comboPorElegir, setComboPorElegir] = useState<{ combo: ComboParaCargar; desdeCodigo: boolean } | null>(null)
   const modalDeCombosAbierto = buscadorDeCombosAbierto || comboPorElegir !== null
+  // Guarda de reentrancia de primera línea de la carga por código `C12`: un segundo Enter o el atajo en el mismo tick le
+  // ganan al re-render que refleja `escaneando`.
+  const cargaDeComboEnCursoRef = useRef(false)
 
   // Lo que respondió el servidor. En el POS de escritorio, mientras no hay respuesta o si falló por
   // falta de red, la pantalla usa los de la instantánea local (`medios`/`errorMedios`, derivados
@@ -1306,9 +1315,19 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // Los combos salen de la instantánea cuando hay una utilizable (también sin red) y, si no, de la API.
   const idListaDeLaVenta = clienteSeleccionado?.idListaPrecio ?? null
   const idEmpresaDeLaVenta = puntoVentaSeleccionada?.idEmpresa ?? null
+  // La fuente de la API vive aparte para conservar su lista de combos mientras la pantalla esté montada.
+  const fuenteDeCombosDeLaApi = useMemo(() => fuenteDesdeApi(idEmpresaDeLaVenta), [idEmpresaDeLaVenta])
+  const enLineaParaCombos = sincronizacionOffline.enLinea
   const fuenteDeCombos = useMemo(
-    () => elegirFuenteDeCombos({ instantanea: instantaneaDelPuntoVenta, idListaPrecio: idListaDeLaVenta, idEmpresa: idEmpresaDeLaVenta }),
-    [instantaneaDelPuntoVenta, idListaDeLaVenta, idEmpresaDeLaVenta],
+    () =>
+      elegirFuenteDeCombos({
+        instantanea: instantaneaDelPuntoVenta,
+        idListaPrecio: idListaDeLaVenta,
+        idEmpresa: idEmpresaDeLaVenta,
+        enLinea: enLineaParaCombos,
+        api: fuenteDeCombosDeLaApi,
+      }),
+    [instantaneaDelPuntoVenta, idListaDeLaVenta, idEmpresaDeLaVenta, enLineaParaCombos, fuenteDeCombosDeLaApi],
   )
 
   // Datos locales para el POS de escritorio (decisiones 6 y 7 del dueño): medios de pago y
@@ -2442,7 +2461,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * en el orden de los componentes.
    */
   function agregarLineasDeCombo(lineas: ArticuloEscaneado[]): boolean {
-    if (cobrandoRef.current) return false
+    if (cobrandoRef.current) {
+      setErrorEscaneo(MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO)
+      return false
+    }
     if (lineas.some((l) => fraccionaUnaUnidad(l.unidadVenta, l.cantidad))) {
       setErrorEscaneo(MENSAJE_DE_CANTIDAD_ENTERA)
       return false
@@ -2460,6 +2482,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       return false
     }
     if (componentesAElegir(combo).length > 0) {
+      // El selector no se abre con un cobro en curso ni encima del buscador de combos.
+      if (cobrandoRef.current) {
+        setErrorEscaneo(MENSAJE_DE_COMBO_CON_COBRO_EN_CURSO)
+        return false
+      }
+      setBuscadorDeCombosAbierto(false)
       setComboPorElegir({ combo, desdeCodigo })
       return true
     }
@@ -2499,25 +2527,39 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   /**
    * `C12` en el input de código: busca un combo activo con ese número en la misma fuente que el buscador. `'sin_combo'` ⇒ no
-   * hay (o la lectura falló): el llamador sigue con la búsqueda de artículos con el texto original, porque el código interno
-   * de un artículo puede ser perfectamente `C12`. Un combo encontrado que no se puede cargar NO cae a artículos: avisa el
-   * motivo y termina. Solo se llama para entradas con forma de código de combo, así que el escaneo común no paga nada.
+   * hay un combo con ese número y `'lectura_fallida'` ⇒ no se pudo averiguar: en los dos casos el llamador sigue con la
+   * búsqueda de artículos con el texto original, porque el código interno de un artículo puede ser perfectamente `C12`.
+   * Solo la búsqueda por código está en el `try`: un combo ENCONTRADO que no se puede leer ni cargar avisa el motivo y NO cae
+   * a artículos, y `cargarCombo` corre fuera para que una excepción al agregar nunca desemboque en un escaneo de artículo.
+   * Solo se llama para entradas con forma de código de combo, así que el escaneo común no paga nada.
    */
-  async function intentarCargarComboPorCodigo(codigo: number, token: number): Promise<'cargado' | 'rechazado' | 'sin_combo' | 'obsoleto'> {
+  async function intentarCargarComboPorCodigo(
+    codigo: number,
+    token: number,
+  ): Promise<'cargado' | 'rechazado' | 'sin_combo' | 'lectura_fallida' | 'obsoleto'> {
+    let encontrado: Awaited<ReturnType<typeof fuenteDeCombos.buscarPorCodigo>>
     try {
-      const encontrado = await fuenteDeCombos.buscarPorCodigo(codigo)
-      if (tokenEscaneoRef.current !== token) return 'obsoleto'
-      if (encontrado === null) return 'sin_combo'
-      if (encontrado.motivoNoCargable !== null) {
-        setErrorEscaneo(encontrado.motivoNoCargable)
-        return 'rechazado'
-      }
-      const completo = await fuenteDeCombos.cargar(encontrado.idCombo)
-      if (tokenEscaneoRef.current !== token) return 'obsoleto'
-      return cargarCombo(completo, true) ? 'cargado' : 'rechazado'
+      encontrado = await fuenteDeCombos.buscarPorCodigo(codigo)
     } catch {
-      return tokenEscaneoRef.current === token ? 'sin_combo' : 'obsoleto'
+      return tokenEscaneoRef.current === token ? 'lectura_fallida' : 'obsoleto'
     }
+    if (tokenEscaneoRef.current !== token) return 'obsoleto'
+    if (encontrado === null) return 'sin_combo'
+    if (encontrado.motivoNoCargable !== null) {
+      setErrorEscaneo(encontrado.motivoNoCargable)
+      return 'rechazado'
+    }
+
+    let completo: ComboParaCargar
+    try {
+      completo = await fuenteDeCombos.cargar(encontrado.idCombo)
+    } catch (e) {
+      if (tokenEscaneoRef.current !== token) return 'obsoleto'
+      setErrorEscaneo(e instanceof ErrorApi ? e.message : `No se pudo leer el combo ${rotuloDeCodigoDeCombo(codigo)}.`)
+      return 'rechazado'
+    }
+    if (tokenEscaneoRef.current !== token) return 'obsoleto'
+    return cargarCombo(completo, true) ? 'cargado' : 'rechazado'
   }
 
   function confirmarCantidad(idLinea: string) {
@@ -2599,24 +2641,42 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
    * `entradaEscaneo`, el camino del input de código + Enter/"Agregar"). */
   async function escanear(codigoForzado?: string) {
-    if (escaneando || cobrandoRef.current || cajaDeEscritorioOcupada) return
+    if (escaneando || cargaDeComboEnCursoRef.current || cobrandoRef.current || cajaDeEscritorioOcupada) return
     const entrada = (codigoForzado ?? entradaEscaneo).trim()
     if (!entrada) return
 
     // `C` + dígitos se prueba primero como combo; si no hay un combo con ese número sigue la búsqueda de artículos con el
     // texto original (D7). Solo las entradas con esa forma pasan por acá: el resto no paga ninguna lectura de más.
     const codigoDeCombo = modoPresupuesto ? null : parsearCodigoDeCombo(entrada)
+    // Si la lectura de combos falló y el artículo tampoco aparece, el aviso tiene que decir también que no se pudo mirar combos.
+    let combosSinLeer = false
+    const conAvisoDeCombos = (mensaje: string) => (combosSinLeer ? `${mensaje} ${MENSAJE_DE_COMBOS_SIN_LEER}` : mensaje)
     if (codigoDeCombo !== null) {
       const tokenDeCombo = (tokenEscaneoRef.current += 1)
+      cargaDeComboEnCursoRef.current = true
       setEscaneando(true)
       setErrorEscaneo('')
-      const desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo)
+      let desenlace: Awaited<ReturnType<typeof intentarCargarComboPorCodigo>>
+      try {
+        desenlace = await intentarCargarComboPorCodigo(codigoDeCombo, tokenDeCombo)
+      } catch {
+        // Una excepción al cargar un combo encontrado termina acá: nunca sigue con el escaneo de artículos.
+        if (tokenEscaneoRef.current === tokenDeCombo) {
+          setEscaneando(false)
+          setErrorEscaneo(`No se pudo cargar el combo ${rotuloDeCodigoDeCombo(codigoDeCombo)}.`)
+          focoPendienteRef.current = true
+        }
+        return
+      } finally {
+        cargaDeComboEnCursoRef.current = false
+      }
       if (desenlace === 'obsoleto') return
       setEscaneando(false)
-      if (desenlace !== 'sin_combo') {
+      if (desenlace !== 'sin_combo' && desenlace !== 'lectura_fallida') {
         focoPendienteRef.current = true
         return
       }
+      combosSinLeer = desenlace === 'lectura_fallida'
     }
 
     // Venta local primero: un código que está en la instantánea se agrega sin tocar la red. Solo
@@ -2656,11 +2716,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           focoPendienteRef.current = true
           return
         }
-        setErrorEscaneo('Sin conexión: no se encontró ese código en la última instantánea local.')
+        setErrorEscaneo(conAvisoDeCombos('Sin conexión: no se encontró ese código en la última instantánea local.'))
         return
       }
 
-      setErrorEscaneo(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.')
+      setErrorEscaneo(conAvisoDeCombos(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.'))
     } finally {
       if (tokenEscaneoRef.current === token) setEscaneando(false)
     }
@@ -2792,19 +2852,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     return () => document.removeEventListener('keydown', alTeclado)
   }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
 
-  // F3 abre el buscador de combos, con las mismas compuertas que F2 (y sin otro buscador abierto encima).
+  // F4 abre el buscador de combos, con las mismas compuertas que el botón (que se deshabilita con un escaneo en vuelo) y que
+  // F2, y sin otro buscador abierto encima. F3 sigue siendo la "Dirección de entrega" del legacy (docs/10).
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
-      if (evento.key !== 'F3') return
-      // Siempre se evita la búsqueda en la página del navegador: dentro de la caja F3 es del POS.
+      if (evento.key !== 'F4') return
+      // Siempre se evita el comportamiento del navegador para esta tecla: dentro de la caja F4 es del POS.
       evento.preventDefault()
-      if (modoPresupuesto || cobrando || buscadorAbierto || modalDeCombosAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
-      if (cajaDeEscritorioOcupada) return
+      if (modoPresupuesto || escaneando || cargaDeComboEnCursoRef.current || cobrando || buscadorAbierto || modalDeCombosAbierto) return
+      if (gateTurno || ventaFinalizada || confirmandoCobro || cajaDeEscritorioOcupada) return
       setBuscadorDeCombosAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
+  }, [modoPresupuesto, escaneando, cobrando, buscadorAbierto, modalDeCombosAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -3744,15 +3805,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   Buscar artículo <sup aria-hidden="true">(F2)</sup>
                 </button>
-                {/* F3 no choca con F2 (artículos) ni con F9/F10 (cobro): ninguna otra tecla de función se usa en el POS. */}
+                {/* F4: F1, F2, F3 (dirección de entrega), F9, F10 y F12 son atajos del legacy a preservar (docs/05); F4 es la
+                    primera tecla de función que no usa el legacy ni esta pantalla. */}
                 <button
                   type="button"
                   className="btn btn-outline-primary"
                   disabled={escaneando || pantallaCobroInerte}
-                  aria-keyshortcuts="F3"
+                  aria-keyshortcuts="F4"
                   onClick={() => setBuscadorDeCombosAbierto(true)}
                 >
-                  Buscar combo <sup aria-hidden="true">(F3)</sup>
+                  Buscar combo <sup aria-hidden="true">(F4)</sup>
                 </button>
               </div>
             )}

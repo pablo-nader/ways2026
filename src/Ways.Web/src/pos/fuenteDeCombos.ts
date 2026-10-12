@@ -93,16 +93,27 @@ function aComboParaCargarDesdeApi(combo: ComboCargableDeApi): ComboParaCargar {
  * `GET /api/combos/{id}/cargable`. El servidor no filtra el precio: igual que el escaneo, un artículo sin precio se
  * agrega y el carrito lo muestra sin precio. */
 export function fuenteDesdeApi(idEmpresa: number | null, cliente: ClienteDeCombos = clienteDeCombos): FuenteDeCombos {
-  const listar = async () =>
-    (await cliente.listar())
+  // La lista se guarda en memoria mientras viva la fuente (la vida de la pantalla): `listar` (el buscador al abrirse) siempre
+  // la vuelve a pedir y `buscarPorCodigo` solo cuando el código no está en lo guardado, una vez, y recién entonces decide.
+  let guardada: ComboDeLista[] | null = null
+
+  const leer = async () => {
+    const lista = (await cliente.listar())
       .filter((c) => c.activo && (c.idEmpresa === null || c.idEmpresa === idEmpresa))
       .sort((a, b) => a.codigo - b.codigo)
       .map(aListaDesdeApi)
+    guardada = lista
+    return lista
+  }
 
   return {
     origen: 'api',
-    listar,
-    buscarPorCodigo: async (codigo) => (await listar()).find((c) => c.codigo === codigo) ?? null,
+    listar: leer,
+    buscarPorCodigo: async (codigo) => {
+      const enGuardada = guardada?.find((c) => c.codigo === codigo)
+      if (enGuardada) return enGuardada
+      return (await leer()).find((c) => c.codigo === codigo) ?? null
+    },
     cargar: async (idCombo) => aComboParaCargarDesdeApi(await cliente.cargable(idCombo, idEmpresa)),
   }
 }
@@ -209,11 +220,32 @@ export function fuenteDesdeInstantanea(instantanea: InstantaneaDePos, idListaPre
   }
 }
 
-/** La instantánea utilizable manda, también con conexión (la caja vende contra ella); sin instantánea, la API. */
+/**
+ * La instantánea utilizable manda, también con conexión (la caja vende contra ella); sin instantánea, la API. Con conexión
+ * la instantánea no es la última palabra: un combo creado después de la última sincronización no está en ella, así que una
+ * búsqueda por código que la instantánea no resuelve prueba la API antes de rendirse, y una instantánea sin la clave
+ * `combos` (anterior a los combos) lista los de la API. Sin conexión: solo la instantánea, ninguna llamada. La lista del
+ * buscador no mezcla fuentes: es la de la instantánea cuando trae `combos` y, si no, la de la API.
+ */
 export function elegirFuenteDeCombos(params: {
   instantanea: InstantaneaDePos | null
   idListaPrecio: number | null
   idEmpresa: number | null
+  enLinea?: boolean
+  /** La fuente de la API de la pantalla, para que conserve su lista entre una lectura y otra. */
+  api?: FuenteDeCombos
 }): FuenteDeCombos {
-  return params.instantanea ? fuenteDesdeInstantanea(params.instantanea, params.idListaPrecio) : fuenteDesdeApi(params.idEmpresa)
+  const api = params.api ?? fuenteDesdeApi(params.idEmpresa)
+  if (!params.instantanea) return api
+
+  const local = fuenteDesdeInstantanea(params.instantanea, params.idListaPrecio)
+  if (params.enLinea === false) return local
+
+  const idsLocales = new Set((params.instantanea.combos ?? []).map((c) => c.idCombo))
+  return {
+    origen: local.origen,
+    listar: params.instantanea.combos === undefined ? api.listar : local.listar,
+    buscarPorCodigo: async (codigo) => (await local.buscarPorCodigo(codigo)) ?? (await api.buscarPorCodigo(codigo)),
+    cargar: (idCombo) => (idsLocales.has(idCombo) ? local.cargar(idCombo) : api.cargar(idCombo)),
+  }
 }
