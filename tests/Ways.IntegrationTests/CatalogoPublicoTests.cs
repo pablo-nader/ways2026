@@ -350,7 +350,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     // ---- búsqueda y categorías --------------------------------------------------------------------
 
     [Fact]
-    public async Task LaBusquedaEncuentraPorNombreOCodigoSinMayusculasNiAcentosYTrataElPorcentajeComoLiteral()
+    public async Task LaBusquedaEncuentraPorNombreSinMayusculasNiAcentosNoPorCodigoInternoYTrataElPorcentajeComoLiteral()
     {
         var tienda = await apoyo.SembrarTiendaAsync("pub-buscar");
         await apoyo.SembrarVendibleAsync(tienda, "Ñandú de peluche", 10m, codigoInterno: "PEL-001");
@@ -369,8 +369,12 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(["Ñandú de peluche"], await BuscarAsync("nandu"));
         Assert.Equal(["Ñandú de peluche"], await BuscarAsync("ÑANDÚ"));
         Assert.Equal(["Café molido"], await BuscarAsync("CAFE"));
-        Assert.Equal(["Café molido"], await BuscarAsync("caf-777"));
-        Assert.Equal(["Zapallo"], await BuscarAsync("zap-050"));
+
+        // El código interno no se publica, así que tampoco se busca: encontrarlo sería un oráculo sobre un dato
+        // que la tienda no muestra.
+        Assert.Empty(await BuscarAsync("caf-777"));
+        Assert.Empty(await BuscarAsync("zap-050"));
+        Assert.Empty(await BuscarAsync("PEL-001"));
         Assert.Equal(["Café molido"], await BuscarAsync("  cafe  "));
         Assert.Equal(["Descuento 50% especial"], await BuscarAsync("50%"));
         Assert.Empty(await BuscarAsync("_"));
@@ -384,6 +388,28 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // enorme que no coincide no rompe nada.
         Assert.Equal([new string('a', 120)], await BuscarAsync(new string('a', 150)));
         Assert.Empty(await BuscarAsync(new string('x', 5_000)));
+    }
+
+    /// <summary>
+    /// Un carácter de control en <c>buscar</c> (un <c>%00</c> es un NUL que Postgres rechaza con un error) se quita
+    /// antes de armar el patrón: lo que queda es la búsqueda, y si no queda nada es "sin búsqueda".
+    /// </summary>
+    [Fact]
+    public async Task LosCaracteresDeControlDeLaBusquedaSeQuitanYNuncaDan500()
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("pub-buscar-control");
+        await apoyo.SembrarVendibleAsync(tienda, "Abcdario", 10m);
+        await apoyo.SembrarVendibleAsync(tienda, "Otro artículo", 20m);
+
+        using var cliente = ClienteEn(tienda);
+
+        async Task<string[]> BuscarCrudoAsync(string buscarCodificado) =>
+            ApoyoDeCatalogoOnline.Nombres(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente, $"?buscar={buscarCodificado}"));
+
+        Assert.Equal(["Abcdario"], await BuscarCrudoAsync("%00abc"));
+        Assert.Equal(["Abcdario"], await BuscarCrudoAsync("a%00b%01c%09"));
+        Assert.Equal(["Abcdario", "Otro artículo"], await BuscarCrudoAsync("%00"));
+        Assert.Equal(["Abcdario", "Otro artículo"], await BuscarCrudoAsync("%00%20%07%0A"));
     }
 
     /// <summary>
@@ -511,6 +537,31 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var mas = await PedirAsync("?pagina=4");
         Assert.Empty(ApoyoDeCatalogoOnline.Nombres(mas));
         Assert.Equal(65, mas.GetProperty("total").GetInt32());
+    }
+
+    /// <summary>
+    /// Una página enorme se acota a <see cref="ConsultaDeCatalogoPublico.PaginaMaxima"/>: sin tope, el
+    /// desplazamiento (<c>(pagina - 1) * tamano</c>) desbordaba el <c>int</c>, daba negativo y Postgres rechazaba
+    /// el <c>OFFSET</c> con un 500. Una página más allá del final es vacía, con el <c>total</c> real.
+    /// </summary>
+    [Theory]
+    [InlineData("2147483647")]
+    [InlineData("10001")]
+    [InlineData("10000")]
+    public async Task UnaPaginaDescomunalSeAcotaYDaUnaPaginaVaciaConElTotalReal(string pagina)
+    {
+        var tienda = await apoyo.SembrarTiendaAsync("pub-pagina-enorme");
+        await apoyo.SembrarVendibleAsync(tienda, "Uno", 1m);
+        await apoyo.SembrarVendibleAsync(tienda, "Dos", 2m);
+        await apoyo.SembrarVendibleAsync(tienda, "Tres", 3m);
+
+        using var cliente = ClienteEn(tienda);
+
+        var catalogo = await ApoyoDeCatalogoOnline.CatalogoAsync(cliente, $"?pagina={pagina}");
+
+        Assert.Empty(ApoyoDeCatalogoOnline.Nombres(catalogo));
+        Assert.Equal(3, catalogo.GetProperty("total").GetInt32());
+        Assert.Equal(ConsultaDeCatalogoPublico.PaginaMaxima, catalogo.GetProperty("pagina").GetInt32());
     }
 
     /// <summary>Un parámetro que no es un número es un 400 del binding, no un 500.</summary>

@@ -254,12 +254,13 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         return imagen.Id;
     }
 
-    /// <summary>Fija la lista de precios de la tienda de la vitrina de la empresa (<c>null</c> = la default).</summary>
+    /// <summary>Fija la lista de precios de la tienda de la vitrina de la empresa (<c>null</c> = la default), aun
+    /// si la vitrina está dada de baja.</summary>
     public async Task FijarListaDeLaVitrinaAsync(int idEmpresa, int? idLista)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
-        var vitrina = await db.Vitrinas.SingleAsync(v => v.IdEmpresa == idEmpresa);
+        var vitrina = await db.Vitrinas.IgnoreQueryFilters(["BajaLogica"]).SingleAsync(v => v.IdEmpresa == idEmpresa);
         vitrina.IdListaPrecio = idLista;
         await db.SaveChangesAsync();
     }

@@ -108,18 +108,49 @@ Mutation evidence (clause removed or inverted, test run, reverted; every row wen
 | price existence: removed, other list, future (`vigente_desde`), expired and open-ended (`vigente_hasta`) | `SoloAparecenLosPublicados…`, price tests |
 | amount: other list mixed in; oldest overlapping window wins | `ElPrecioSaleDeLaLista…`, `SoloAparecen…` |
 | list resolution: inactive, other empresa, empresa default, derived-of-derived, derived treated as fixed | `UnaListaDeLaTiendaQueNoSePuedeUsar…`, `LaDefaultEsLaCompartida…`, price test |
-| search: name half, code half, `%` escape, trim, 100-char cap | `LaBusquedaEncuentraPorNombreOCodigo…` |
+| search: name match, `%` escape, trim, 100-char cap (the code half was removed, see fix 3) | `LaBusquedaEncuentraPorNombreSinMayusculas…` |
 | categories: inactive, other empresa, filter on invisible, chips honour the filter, invisible id reported, chip order | `LasCategoriasCuentan…`, contract test |
 | paging: size cap, size floor, page floor, order by id | `LaPaginaYElTamano…`, contract test |
 | image (public): availability, published-article join, article id | `LaImagenDeUnArticuloQueElCatalogoNoMuestra…` |
 | 304 branch removed | admin, public and logo ETag tests |
 | public: cache header, suspended tenant serves | `ElCatalogoDevuelve…`, `SinVitrinaPublicada…` |
-| admin: `FOR UPDATE` on publish / on image, post-lock liveness check, 404 after body, writes always, always insert, no soft delete, no `actualizado_en` bump | the lock-holder race tests, 404 matrix, round trip |
+| admin: `FOR UPDATE` on publish / on image, post-lock liveness check, 404 after body, writes always, always insert, no `actualizado_en` bump | the lock-holder race tests, 404 matrix, round trip |
 | admin: non-retrying strategy → retrying (publish, upload, delete) | `UnaFallaTransitoria…` x3 + `EscriturasSinReintentoEstructurales` |
 | admin: `GestionDeCatalogo` removed from each of the 3 writes | role test + `SuperficieDeAutorizacionTests` |
 | 1 MB limit `>` → `>=` | domain + admin 1 MB test |
 | DTO: `tieneImagen` / `publicadoWeb` hard-coded in grid, list, detail, projection, edit response | admin round-trip |
 | vitrina list: inactive, other tenant (platform actor), other empresa, not persisted, not validated, `FOR KEY SHARE` removed, read-back | `UnaListaInvalida…`, `…Plataforma…`, `UnaListaQueSeDaDeBaja…` |
+
+Judgment-day informational fixes (same branch, second commit), all with tests:
+
+1. `pagina` is clamped to `ConsultaDeCatalogoPublico.PaginaMaxima` (10.000): `pagina=2147483647` overflowed `(pagina - 1) * tamano` and Postgres rejected the negative `OFFSET` (500). Now 200, empty page, real `total`, `pagina` echoed as 10.000.
+2. `buscar` loses its control characters (NUL included) before the `LIKE` pattern is built; an empty remainder means "no search". `?buscar=%00abc` searches "abc", `?buscar=%00` is the full catalog.
+3. The public search matches the name only (documented in the class, doc 10 and the deviations above). The old code-matching assertions now assert an empty result.
+4. Removing an image, and giving the article de baja, purge the row (see deviations). Tests: raw row count is zero, the neighbour's image survives, the public image answers 404 `imagen_no_encontrada`, re-upload inserts a fresh row; the retry test now breaks the `DELETE` (new `ClaseDeSentencia.Delete`).
+5. `PUT /api/catalogos/listas-precio/{id}` that deactivates a list or changes its `id_empresa` while a non-deleted vitrina uses it answers 409 `lista_en_uso_por_vitrina` (empresa name in the message). The edit takes `FOR UPDATE` on the list under the non-retrying strategy and reads the vitrinas under that lock (it conflicts with the `FOR KEY SHARE` of the vitrina save). Published or not does not matter; a soft-deleted vitrina does not count; renaming is never blocked. The unit test for the in-memory deactivation moved to integration (transactions are not available in InMemory). Any scope change counts, even to the vitrina's own empresa: the rule is deliberately the simple one.
+6. `ServicioDeVitrinas.GuardarAsync` validates `idListaPrecio` only when it differs from the stored one (a new vitrina always validates): a vitrina whose list was deactivated afterwards could not be edited at all (every PUT was 400 `lista_invalida`). Test: list deactivated by raw write, PUT with the same list and a new tagline is 200, a different inactive list is 400 and changes nothing.
+
+Contract fact (rollout note for T2): `PUT /api/empresas/{id}/vitrina` REPLACES `idListaPrecio` like every other field. A client that omits it resets the store to the default shared list, so the vitrina screen must always send the value read from the `GET`.
+
+Fix round checks, observed: `dotnet build -warnaserror` 0 warnings; `Ways.Application.Tests` 818 passed; filtered integration run
+(`Catalogo|Vitrina|ListasPrecio|Articulos|Publico|Inventario|Dependientes`) 720 passed; `dotnet format` over the changed `.cs`: baseline noise only.
+
+Mutation evidence for the fixes (clause changed, test run, reverted):
+
+| Clause | Killed by |
+|---|---|
+| page clamp `Math.Clamp(…, 1, PaginaMaxima)` → `Math.Max(…, 1)` | `UnaPaginaDescomunalSeAcotaYDaUnaPaginaVaciaConElTotalReal` (2 of 3 cases) |
+| `buscar`: control-character strip removed | `LosCaracteresDeControlDeLaBusquedaSeQuitanYNuncaDan500` |
+| search: `CodigoInterno` half re-added | `LaBusquedaEncuentraPorNombreSinMayusculasNiAcentosNoPorCodigoInterno…` |
+| image removal: `RemoveRange` → soft delete (`DeletedAt`) | the round trip (`…SeQuitaYSeVuelveASubir`) and the transient-failure test (no `DELETE` to break) |
+| article baja: image `RemoveRange` removed | `DarDeBajaUnArticuloBorraSuImagenYNoLaDeOtro` |
+| list edit: deactivation clause removed | the vitrina-list matrix and the lock-holder race test |
+| list edit: scope-change clause removed | the vitrina-list matrix |
+| list edit: check always on (`true`) | the matrix (renaming an in-use list is blocked) |
+| vitrina predicate `IdListaPrecio == id` → any vitrina | the matrix (a free list is blocked) |
+| soft-deleted vitrinas counted (`IgnoreQueryFilters("BajaLogica")`) | the matrix |
+| `FOR UPDATE` on the list removed | `DesactivarUnaListaMientrasUnaVitrinaSeAsignaEsperaYDa409` (the edit never waits) |
+| vitrina save: "list unchanged" condition removed (always validate) | `UnaVitrinaConLaListaDesactivadaSeSigueEditandoSiLaListaNoCambia` |
 
 Not observable, so not tested: the `idsArticulo.Contains(...)` conjunct of the page price query (it only
 narrows rows already keyed by article id).
@@ -135,10 +166,10 @@ Deviations and decisions (to confirm):
 - Admin `GET /api/articulos/{id}/imagen` follows the article group (`OperacionDePos`: a Vendedor can
   read); the three writes need `GestionDeCatalogo` (Admin only), the same as editing an article.
 - No audit rows: the article ABM does not audit.
-- Removing an image is a soft delete that keeps its bytes; a later upload creates a new row.
+- Removing an image (`DELETE /api/articulos/{id}/imagen`) and giving the article de baja (`ServicioDeArticulos.EliminarAsync`, same transaction and lock) physically delete the `imagenes_articulo` row; a later upload inserts a new one. `deleted_at` stays in the table but nothing writes it (no migration); the dependents golden keeps `marcado`. `ImagenesArticulo` joined the `RemoveRange` allowlist of `BajasEstructuralesTests`.
 - `ArticuloListado` and `ArticuloGrillaFila` gained `publicadoWeb`/`tieneImagen` (additive, defaulted);
   `ServicioDeVitrinas` now takes `GuardaDeReferencias`.
-- Search covers name and internal code, not barcodes; categories are a flat list, no hierarchy roll-up.
+- Search covers the article name only (the internal code is not in the public DTO, so matching it was an oracle; barcodes are not searched either); categories are a flat list, no hierarchy roll-up.
 - `ValidadorDeImagen` extracted from `Vitrina`; its public API (`ValidarLogo`, `DetectarTipoDeLogo`, …) is
   unchanged.
 

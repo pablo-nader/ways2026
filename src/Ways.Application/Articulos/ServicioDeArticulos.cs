@@ -888,7 +888,8 @@ public class ServicioDeArticulos(
     /// (sin guard de fila protegida a diferencia de clientes: artículos no tiene un equivalente
     /// al Consumidor Final). La única excepción son los <see cref="CodigoProveedor"/> vivos del
     /// artículo: se dan de baja en la misma transacción para liberar el par (proveedor, código)
-    /// del índice único parcial.
+    /// del índice único parcial. La imagen de la tienda, en cambio, se borra de verdad en esa misma
+    /// transacción (ver <see cref="CatalogoOnline.ServicioDeCatalogoWeb.QuitarImagenAsync"/>).
     ///
     /// La paridad con esa baja de proveedores era declarativa y ahora es real: allá el lock de fila
     /// se toma ANTES de cargar la entidad y acá no se tomaba ninguno, así que dos bajas concurrentes
@@ -920,6 +921,10 @@ public class ServicioDeArticulos(
                 codigoProveedor.DeletedAt = ahora;
                 codigoProveedor.UpdatedAt = ahora;
             }
+
+            // La imagen de la tienda es un derivado sin historia: se borra la fila, no se deja dada de baja con
+            // sus bytes. Va bajo el mismo lock del artículo que toma ServicioDeCatalogoWeb al subir o quitarla.
+            db.ImagenesArticulo.RemoveRange(await db.ImagenesArticulo.Where(i => i.IdArticulo == id).ToListAsync(ct));
 
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);

@@ -157,7 +157,18 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
   la empresa y bajo el lock del tenant (la lista se toma `FOR KEY SHARE`, así que su baja o llega antes y la vitrina
   no la referencia, o espera y el guard de uso la ve). La FK entra al inventario de dependientes: una lista que
   usa una vitrina no se puede dar de baja (`409 *_en_uso`). `fk_vitrinas_lista_precio` → `400 lista_invalida` es el
-  backstop de una escritura cruda.
+  backstop de una escritura cruda. La lista se valida **solo cuando cambia** respecto de la guardada (una vitrina nueva
+  siempre valida): una vitrina cuya lista se desactivó después por una escritura que no pasó por la guarda de abajo
+  se sigue pudiendo editar o despublicar mandando la misma lista; mandar otra lista inactiva sigue siendo `400`.
+- **La lista en uso no se desactiva ni se mueve**: `PUT /api/catalogos/listas-precio/{id}` que la desactiva o le cambia
+  `id_empresa` mientras la usa una vitrina no dada de baja (publicada o no) es `409 lista_en_uso_por_vitrina`, con el
+  nombre de la empresa en el mensaje; hay que cambiarle la lista a la tienda primero. Esa edición toma `FOR UPDATE`
+  sobre la lista (sin reintento) y recién bajo el lock mira las vitrinas: choca con el `FOR KEY SHARE` de
+  `PUT .../vitrina`, así que o ve la vitrina comiteada, o espera y la vitrina ve la lista ya inactiva (`400
+  lista_invalida`). Una vitrina dada de baja no cuenta; renombrar o cambiar otros campos no pide el lock.
+- **Contrato del `PUT` de la vitrina**: reemplaza `idListaPrecio` como el resto de los campos. Un cliente que no manda
+  el campo lo deja en `NULL` y la tienda vuelve a la lista default compartida. Por eso la pantalla de la vitrina (T2)
+  tiene que enviarlo siempre, con el valor leído del `GET`.
 
 ### Clasificación de artículos
 
@@ -466,7 +477,7 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
     contenido          bytea NOT NULL,        -- PNG, JPEG o WebP, hasta 1 MB; nunca SVG
     content_type       text NOT NULL,         -- lo decide el contenido, no el encabezado
     actualizado_en     timestamptz NOT NULL,  -- origen del ETag y de imagenVersion
-    created_at, updated_at, deleted_at        -- baja siempre lógica
+    created_at, updated_at, deleted_at        -- deleted_at ya no se escribe: la imagen se borra (ver abajo)
     FOREIGN KEY (id_articulo, id_tenant) REFERENCES articulos (id_articulo, id_tenant)
 );
 -- UNIQUE (id_articulo) WHERE deleted_at IS NULL     -- ux_imagenes_articulo_articulo: una imagen viva por artículo
@@ -480,9 +491,12 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   `articulos_empresas`, `listas_precio`, `precios`, `categorias` e `imagenes_articulo` (estas tres y la anterior
   con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant = app_tenant_publico()`; qué deja ver cada una y
   qué decide la consulta en lugar de la policy, en doc 09 "Modo de acceso público".
-- **Imagen**: una por artículo vivo. Subir reemplaza la fila viva (mismo `id`, nuevo `actualizado_en`); quitar es
-  la baja lógica y una subida posterior crea una fila nueva, así que las bajas conservan los bytes de la imagen
-  anterior. Las valida `ValidadorDeImagen`, la misma regla que el logo de la vitrina: `413 imagen_demasiado_grande`
+- **Imagen**: una por artículo vivo. Subir reemplaza la fila viva (mismo `id`, nuevo `actualizado_en`); quitar **borra
+  la fila** (`DELETE`, no baja lógica: es un derivado sin historia que valga la pena conservar y guardarla dejaría hasta
+  1 MB por artículo sin uso) y una subida posterior inserta una fila nueva. Dar de baja el artículo
+  (`ServicioDeArticulos.EliminarAsync`) borra su imagen en la misma transacción, bajo el mismo `FOR UPDATE` del artículo.
+  La columna `deleted_at` queda en la tabla (es de `EntidadBase`, sin migración) pero ningún camino la escribe; el
+  inventario de dependientes la sigue marcando `marcado`. Las valida `ValidadorDeImagen`, la misma regla que el logo de la vitrina: `413 imagen_demasiado_grande`
   por encima de 1 MB y `415 imagen_no_admitida` para cualquier otra cosa o un tipo declarado que no coincide.
 - **Escritura** (`ServicioDeCatalogoWeb`, `GestionDeCatalogo` como editar el artículo, sin reintento): `PUT
   /api/articulos/{id}/web` con `{ publicado }` (obligatorio: `400 publicado_requerido`; idempotente, pedir el estado
@@ -507,8 +521,12 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   (`ServicioDeInstantaneaDePos`/ofertas): resuelve clientes, escalones y ofertas y lee tablas que el modo público no
   ve, y la tienda muestra el precio de lista; la existencia del precio se decide en SQL antes de paginar y el monto
   se resuelve solo para la página. Las ofertas no se aplican todavía y el stock no se mira (es de los pedidos).
-  `buscar` coincide con el nombre o el código interno, sin mayúsculas ni acentos (`BusquedaSinAcentos`), acotado a
-  100 caracteres; `tamano` se acota a 1..60; el orden es por nombre. `categorias` son las categorías visibles
+  `buscar` coincide solo con el nombre (el código interno no se publica en la respuesta, así que buscarlo sería un
+  oráculo sobre un dato que la tienda no muestra), sin mayúsculas ni acentos (`BusquedaSinAcentos`); se le quitan los
+  caracteres de control (un NUL llegaría a Postgres como error), se recorta y se acota a 100 caracteres, y un término que
+  queda vacío es "sin búsqueda". `pagina` se acota a 1..10.000 (`PaginaMaxima`): sin tope el desplazamiento
+  desbordaba y Postgres rechazaba el `OFFSET` negativo; una página más allá del final sale vacía con el `total` real.
+  `tamano` se acota a 1..60; el orden es por nombre. `categorias` son las categorías visibles
   (activas, vivas, compartidas o de la empresa de la vitrina) de los artículos que coinciden con la búsqueda, con su
   cuenta, **ignorando** `idCategoria` para que los chips conserven sus cuentas con uno seleccionado; el `total` y la
   página sí lo aplican. Un artículo cuya categoría no es visible sale con `idCategoria` nulo y filtrar por una categoría
