@@ -9,8 +9,10 @@ import { api } from './cliente'
 import type {
   ArticuloDeReporte,
   Comisiones,
+  CuentasDeLaEmpresa,
   Existencias,
   Granularidad,
+  LibroDeCuenta,
   LibroIva,
   PaginaDe,
   PaginaDeHistoricoDeCajas,
@@ -125,6 +127,10 @@ export const clienteDeReportes = {
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros)}`),
   tesoreria: (filtros: FiltrosDeTesoreria) =>
     api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros)}`),
+  cuentasDeTesoreria: (idEmpresa: number) =>
+    api.get<CuentasDeLaEmpresa>(`/reportes/tesoreria/cuentas?idEmpresa=${idEmpresa}`),
+  libroDeCuenta: (idCuenta: number, filtros: FiltrosDeLibroDeCuenta) =>
+    api.get<LibroDeCuenta>(`/reportes/tesoreria/cuentas/${idCuenta}/libro${construirQueryDeLibroDeCuenta(filtros)}`),
   existencias: (idPuntoVenta: number) =>
     api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
   /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
@@ -239,6 +245,23 @@ function construirQueryDeAlcanceDeTesoreria(
 
 export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria): string {
   const parametros = new URLSearchParams(construirQueryDeAlcanceDeTesoreria(filtros).slice(1))
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
+
+/** Filtro del libro de una cuenta de tesorería: mismos límites inclusivos y mismo offset local que el libro de efectivo. */
+export type FiltrosDeLibroDeCuenta = {
+  desde: string
+  hasta: string
+  pagina: number
+  tamanio: number
+}
+
+export function construirQueryDeLibroDeCuenta(filtros: FiltrosDeLibroDeCuenta): string {
+  const parametros = new URLSearchParams()
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`
