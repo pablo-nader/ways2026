@@ -70,7 +70,7 @@ transaction that adds it, and the CHECKs reference it.
   resolution turns `N*code` into quantity 1 + amount N for a by-amount article, snapshot emits
   unpriced by-amount articles, offline sale accepts them. Tests first.
   Route: delegated writer.
-- [ ] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
+- [x] T3 — Web, back office: "Por importe" option, disabled/unchecked accumulate checkbox,
   shortcut selector, descriptor tests; the two-unit assumptions in `cantidadPorUnidad`, stock and
   the online cart. Route: delegated writer.
 - [ ] T4 — Web, POS: cart line with amount, scan and offline mirror, F5–F8 handlers, preview,
@@ -101,6 +101,21 @@ Strategy: `auto-chain`, `stacked-to-main` (owner's standing preference). Forecas
 authored lines; one PR per task T1–T4, T5 as the release PR.
 
 ## Progress
+
+- T3 — implemented in `d7ae939a` on `pnader/importe-backoffice` (delegated writer; the combo
+  error mapping in `api/combosAbm.ts` was added inline by the parent). Judgment-day round 1, both
+  judges read the whole diff: no severe finding → APPROVED.
+  - Observed: full Vitest suite 5934/5934, build and lint clean (writer); `tsc -b` and the
+    articles/combos tests 813/813 (parent).
+  - UI choices: leaving `Importe` clears the shortcut and restores the previous accumulate
+    choice (true for an article loaded as `Importe`); the shortcut selector stays editable for a
+    member of a by-amount family; no price field needed changing; the grid has no unit column.
+  - Follow-ups (single-judge or suggestions, not fixed): the unsaved-changes check compares the
+    hidden `acumulaAntesDeImporte` field, so switching unit away and back on an `Importe` article
+    asks to confirm with nothing visibly changed; the "key already used" message reappears when
+    the rejected key is picked again without saving; a fractional quantity on an `Importe`
+    article in purchases/stock gets the generic message; quotes, delivery notes and the online
+    catalog admin show the server's text for the by-amount rejections.
 
 - T2 — implemented in `c5c78fe0` on `pnader/importe-venta` (delegated writer). Corrections C1–C4
   in `0a824d59`; judgment-day round 2 (scoped re-judgment by both judges): all four FIXED, no new

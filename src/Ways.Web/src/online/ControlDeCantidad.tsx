@@ -18,15 +18,15 @@ type PropsDeControl = {
 }
 
 function etiquetas(unidadVenta: UnidadVenta, nombre: string) {
-  return unidadVenta === 'Unidad'
-    ? { menos: `Quitar uno de ${nombre}`, mas: `Agregar uno más de ${nombre}` }
-    : { menos: `Quitar medio kilo de ${nombre}`, mas: `Agregar medio kilo más de ${nombre}` }
+  return unidadVenta === 'Peso'
+    ? { menos: `Quitar medio kilo de ${nombre}`, mas: `Agregar medio kilo más de ${nombre}` }
+    : { menos: `Quitar uno de ${nombre}`, mas: `Agregar uno más de ${nombre}` }
 }
 
 function avisoDeCantidadRechazada(unidadVenta: UnidadVenta, maximo: number): string {
-  return unidadVenta === 'Unidad'
-    ? `No se cambió la cantidad. Ingresá una cantidad entera, hasta ${maximo}.`
-    : `No se cambió la cantidad. Ingresá una cantidad mayor que 0, hasta ${maximo} y con hasta 3 decimales.`
+  return unidadVenta === 'Peso'
+    ? `No se cambió la cantidad. Ingresá una cantidad mayor que 0, hasta ${maximo} y con hasta 3 decimales.`
+    : `No se cambió la cantidad. Ingresá una cantidad entera, hasta ${maximo}.`
 }
 
 /**
@@ -91,7 +91,7 @@ export function ControlDeCantidad({
       <input
         className="publico-cantidad-campo"
         type="text"
-        inputMode={unidadVenta === 'Unidad' ? 'numeric' : 'decimal'}
+        inputMode={unidadVenta === 'Peso' ? 'decimal' : 'numeric'}
         autoComplete="off"
         aria-label={`Cantidad de ${nombre}`}
         value={borrador ?? formatearCantidad(cantidad)}

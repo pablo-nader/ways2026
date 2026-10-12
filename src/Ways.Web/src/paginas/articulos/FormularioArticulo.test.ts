@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CAMPOS_COMPARTIDOS } from './familia'
-import { aAlta, aEdicion, aFormulario, formularioVacio } from './FormularioArticulo'
+import { aAlta, aEdicion, aFormulario, cambiarUnidadDeVenta, formularioVacio } from './FormularioArticulo'
 import type { ArticuloListado } from '../../api/tipos'
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
@@ -322,5 +322,83 @@ describe('FormularioArticulo — disponibilidad (solo lectura)', () => {
       expect('disponibleVenta' in cuerpo).toBe(false)
       expect('disponibleOnline' in cuerpo).toBe(false)
     }
+  })
+})
+
+describe('FormularioArticulo — por importe', () => {
+  const porImporte = (sobrescribir: Partial<ArticuloListado> = {}) =>
+    articuloFixture({ unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F6', ...sobrescribir })
+
+  it('un formulario vacío arranca sin tecla de atajo', () => {
+    expect(formularioVacio().teclaAtajo).toBe('')
+  })
+
+  it('aFormulario copia la tecla de atajo; un artículo sin ella (o sin el campo) queda con ""', () => {
+    expect(aFormulario(porImporte()).teclaAtajo).toBe('F6')
+    expect(aFormulario(articuloFixture({ teclaAtajo: null })).teclaAtajo).toBe('')
+    expect(aFormulario(articuloFixture()).teclaAtajo).toBe('')
+  })
+
+  it('aEdicion manda SIEMPRE teclaAtajo: la guardada si no se tocó, null si el artículo no tiene', () => {
+    expect(aEdicion(aFormulario(porImporte())).teclaAtajo).toBe('F6')
+    expect(aEdicion(aFormulario(articuloFixture())).teclaAtajo).toBeNull()
+    expect('teclaAtajo' in aEdicion(aFormulario(articuloFixture()))).toBe(true)
+  })
+
+  it('aAlta manda la tecla elegida de un artículo por importe', () => {
+    expect(aAlta({ ...formularioVacio(), unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F8' }).teclaAtajo).toBe('F8')
+  })
+
+  it('aAlta y aEdicion no mandan tecla si la unidad no es por importe y quedó una colgada', () => {
+    const colgada = { ...formularioVacio(), unidadVenta: 'Unidad' as const, teclaAtajo: 'F5' as const }
+
+    expect(aAlta(colgada).teclaAtajo).toBeNull()
+    expect(aEdicion(colgada).teclaAtajo).toBeNull()
+  })
+
+  it.each([
+    ['aAlta', (f: ReturnType<typeof formularioVacio>) => aAlta(f)],
+    ['aEdicion', (f: ReturnType<typeof formularioVacio>) => aEdicion(f)],
+  ])('%s manda acumulaEnVenta false en un artículo por importe aunque el formulario traiga true', (_nombre, armar) => {
+    expect(armar({ ...formularioVacio(), unidadVenta: 'Importe', acumulaEnVenta: true }).acumulaEnVenta).toBe(false)
+  })
+
+  describe('cambiarUnidadDeVenta', () => {
+    it('pasar a importe destilda acumular, recuerda la elección y no toca la tecla', () => {
+      const cambiado = cambiarUnidadDeVenta({ ...formularioVacio(), acumulaEnVenta: true }, 'Importe')
+
+      expect(cambiado.unidadVenta).toBe('Importe')
+      expect(cambiado.acumulaEnVenta).toBe(false)
+      expect(cambiado.acumulaAntesDeImporte).toBe(true)
+    })
+
+    it.each([true, false])('volver de importe restaura la elección previa (%s) y borra la tecla', (previa) => {
+      const enImporte = cambiarUnidadDeVenta({ ...formularioVacio(), acumulaEnVenta: previa }, 'Importe')
+      const vuelto = cambiarUnidadDeVenta({ ...enImporte, teclaAtajo: 'F7' }, 'Peso')
+
+      expect(vuelto.unidadVenta).toBe('Peso')
+      expect(vuelto.acumulaEnVenta).toBe(previa)
+      expect(vuelto.teclaAtajo).toBe('')
+      expect(vuelto.acumulaAntesDeImporte).toBeNull()
+    })
+
+    it('un artículo guardado por importe vuelve a acumular (el valor por defecto) al dejar de serlo', () => {
+      const vuelto = cambiarUnidadDeVenta(aFormulario(porImporte()), 'Unidad')
+
+      expect(vuelto.acumulaEnVenta).toBe(true)
+      expect(vuelto.teclaAtajo).toBe('')
+    })
+
+    it('entre unidades que no son por importe no toca acumular ni la elección recordada', () => {
+      const f = { ...formularioVacio(), acumulaEnVenta: false }
+
+      expect(cambiarUnidadDeVenta(f, 'Peso')).toEqual({ ...f, unidadVenta: 'Peso' })
+    })
+
+    it('elegir otra vez importe estando en importe no pisa la elección recordada', () => {
+      const enImporte = cambiarUnidadDeVenta({ ...formularioVacio(), acumulaEnVenta: false }, 'Importe')
+
+      expect(cambiarUnidadDeVenta(enImporte, 'Importe')).toEqual(enImporte)
+    })
   })
 })

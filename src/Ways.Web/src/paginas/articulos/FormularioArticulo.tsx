@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { COSTOS_LISTA_POR, UNIDADES_VENTA } from '../../api/tipos'
+import { COSTOS_LISTA_POR, TECLAS_ATAJO, UNIDADES_VENTA } from '../../api/tipos'
 import type {
   AlcanceDeFamilia,
   AlicuotaIvaListado,
@@ -14,6 +14,7 @@ import type {
   ListaPrecioListado,
   MarcaListado,
   ProveedorListado,
+  TeclaAtajo,
   UnidadVenta,
 } from '../../api/tipos'
 import { CampoImporte } from '../../componentes/CampoImporte'
@@ -43,6 +44,9 @@ import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
 import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 import { SeccionDeFamilia } from './SeccionDeFamilia'
 import { SeccionDeDisponibilidad } from './SeccionDeDisponibilidad'
+
+/** Una tecla de atajo que el servidor rechazó por estar ya tomada por otro artículo, con el texto para mostrar. */
+export type ErrorDeTecla = { tecla: TeclaAtajo; mensaje: string }
 
 export type Formulario = {
   id: number | null
@@ -76,7 +80,12 @@ export type Formulario = {
   idsEmpresas: number[]
   activo: boolean
   controlaLote: boolean
+  /** Siempre el valor efectivo: en un artículo por importe es `false` (nunca acumula). */
   acumulaEnVenta: boolean
+  /** Lo que `acumulaEnVenta` valía al pasar a `Importe`, para devolverlo si se vuelve a otra unidad; `null` si no se pasó por ahí. */
+  acumulaAntesDeImporte: boolean | null
+  /** Tecla de función del POS, solo con unidad `Importe`; `''` = sin atajo. Campo propio del artículo (no se comparte con su familia). */
+  teclaAtajo: TeclaAtajo | ''
   /** En un alta, la familia elegida (`''` = sin familia); al editar, la familia a la que pertenece el
    * artículo. No se cambia editando: sale con `sacar` o con el alcance de un cambio. */
   idFamilia: number | ''
@@ -126,6 +135,8 @@ export function formularioVacio(): Formulario {
     activo: true,
     controlaLote: false,
     acumulaEnVenta: true,
+    acumulaAntesDeImporte: null,
+    teclaAtajo: '',
     idFamilia: '',
     nombreFamiliaNueva: '',
     disponibleVenta: true,
@@ -170,6 +181,8 @@ export function aFormulario(a: ArticuloListado): Formulario {
     activo: a.activo,
     controlaLote: a.controlaLote,
     acumulaEnVenta: a.acumulaEnVenta,
+    acumulaAntesDeImporte: null,
+    teclaAtajo: a.teclaAtajo ?? '',
     idFamilia: a.idFamilia ?? '',
     nombreFamiliaNueva: '',
     disponibleVenta: a.disponibleVenta,
@@ -207,8 +220,26 @@ function camposComunes(f: Formulario) {
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
     controlaLote: f.controlaLote,
-    acumulaEnVenta: f.acumulaEnVenta,
+    // Un artículo por importe nunca acumula ni lleva atajo de otra unidad: el servidor rechaza ambos, no los corrige.
+    acumulaEnVenta: f.unidadVenta === 'Importe' ? false : f.acumulaEnVenta,
+    // Siempre viaja: en una edición el servidor lee null como "quitar el atajo".
+    teclaAtajo: f.unidadVenta === 'Importe' && f.teclaAtajo !== '' ? f.teclaAtajo : null,
   }
+}
+
+/**
+ * Cambia la unidad de venta con sus consecuencias: pasar a `Importe` destilda "Acumula" (recordando la elección) y
+ * salir de `Importe` la devuelve y borra el atajo, que solo existe en esa unidad.
+ */
+export function cambiarUnidadDeVenta(f: Formulario, unidadVenta: UnidadVenta): Formulario {
+  if (unidadVenta === f.unidadVenta) return f
+  if (unidadVenta === 'Importe') {
+    return { ...f, unidadVenta, acumulaEnVenta: false, acumulaAntesDeImporte: f.acumulaEnVenta }
+  }
+  if (f.unidadVenta === 'Importe') {
+    return { ...f, unidadVenta, acumulaEnVenta: f.acumulaAntesDeImporte ?? true, acumulaAntesDeImporte: null, teclaAtajo: '' }
+  }
+  return { ...f, unidadVenta }
 }
 
 export function aAlta(f: Formulario): AltaArticulo {
@@ -259,6 +290,7 @@ export function FormularioArticulo({
   accionesDeFamilia,
   union,
   errorDeFamiliaNueva,
+  errorDeTecla = null,
   sinGuardar,
   preguntaDeAlcanceAbierta,
   codigoProveedor,
@@ -292,6 +324,8 @@ export function FormularioArticulo({
   union: EstadoDeUnionAFamilia
   /** El rechazo del servidor a la familia nueva de un alta: se muestra junto a la sección de la familia. */
   errorDeFamiliaNueva: string
+  /** El rechazo del servidor a una tecla de atajo ya tomada: se muestra junto al selector mientras siga elegida esa tecla. */
+  errorDeTecla?: ErrorDeTecla | null
   /** El formulario tiene cambios sin guardar: el servidor lee los valores guardados, así que con ellos no se elige ni se crea una familia de un artículo existente. */
   sinGuardar: boolean
   /** La pregunta de alcance (un modal hermano de este, no hijo) está abierta: al cerrarse, si el foco se perdió, vuelve acá. */
@@ -315,6 +349,8 @@ export function FormularioArticulo({
   onProveedorCreado: (proveedor: ProveedorListado) => void
 }) {
   const esNuevo = valor.id === null
+  const porImporte = valor.unidadVenta === 'Importe'
+  const teclaRechazada = errorDeTecla !== null && errorDeTecla.tecla === valor.teclaAtajo
   // Los campos compartidos de un alta dentro de una familia se toman de ella: quedan bloqueados desde que se la
   // elige, aunque sus valores todavía se estén cargando. Al editar un miembro no se bloquean: el alcance se
   // pregunta al guardar.
@@ -509,7 +545,7 @@ export function FormularioArticulo({
               className="form-select"
               value={valor.unidadVenta}
               disabled={bloqueoDeFamilia}
-              onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
+              onChange={(e) => onCambio(cambiarUnidadDeVenta(valor, e.target.value as UnidadVenta))}
             >
               {UNIDADES_VENTA.map((u) => (
                 <option key={u.valor} value={u.valor}>
@@ -956,7 +992,7 @@ export function FormularioArticulo({
                 className="form-check-input"
                 aria-describedby="art-acumula-en-venta-ayuda"
                 checked={valor.acumulaEnVenta}
-                disabled={bloqueoDeFamilia}
+                disabled={bloqueoDeFamilia || porImporte}
                 onChange={(e) => onCambio({ ...valor, acumulaEnVenta: e.target.checked })}
               />
               <Etiqueta htmlFor="art-acumula-en-venta" deFamilia={bloqueoDeFamilia} className="form-check-label">
@@ -964,11 +1000,45 @@ export function FormularioArticulo({
               </Etiqueta>
               <IconoDeAyuda
                 id="art-acumula-en-venta-ayuda"
-                texto="Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket."
+                texto={
+                  porImporte
+                    ? 'Un artículo por importe nunca acumula: cada monto tipeado en el POS es una línea nueva.'
+                    : 'Desmarcado, cada vez que se agrega en el POS suma una línea nueva al ticket.'
+                }
                 etiqueta="Ayuda sobre acumular en una sola línea"
               />
             </div>
           </div>
+
+          {porImporte && (
+            <div className="col-md-3">
+              <label className="form-label" htmlFor="art-tecla-atajo">
+                Tecla de atajo del POS
+              </label>
+              <select
+                id="art-tecla-atajo"
+                className={`form-select${teclaRechazada ? ' is-invalid' : ''}`}
+                value={valor.teclaAtajo}
+                aria-describedby={teclaRechazada ? 'art-tecla-atajo-ayuda art-tecla-atajo-error' : 'art-tecla-atajo-ayuda'}
+                onChange={(e) => onCambio({ ...valor, teclaAtajo: e.target.value as TeclaAtajo | '' })}
+              >
+                <option value="">Sin atajo</option>
+                {TECLAS_ATAJO.map((tecla) => (
+                  <option key={tecla} value={tecla}>
+                    {tecla}
+                  </option>
+                ))}
+              </select>
+              <div id="art-tecla-atajo-ayuda" className="form-text">
+                Con la tecla, el POS agrega este artículo por el monto escrito en la caja de escaneo.
+              </div>
+              {teclaRechazada && (
+                <div id="art-tecla-atajo-error" className="invalid-feedback d-block" role="alert">
+                  {errorDeTecla.mensaje}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="col-12 d-flex gap-2">
             <button

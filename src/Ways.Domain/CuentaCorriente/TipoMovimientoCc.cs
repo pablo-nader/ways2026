@@ -7,11 +7,15 @@ namespace Ways.Domain.CuentaCorriente;
 /// contramovimiento de anulación (spec: consumo-cuenta-corriente / Movimiento Schema At Rest).
 /// Stage 7 abre <see cref="Pago"/> (pago a cuenta, comprobante RC) y
 /// <see cref="ActualizacionPrecios"/> (reliquidación a precio del día).
+/// <see cref="DescuentoPersonal"/> es la parte de un pago de personal que se cancela contra la deuda del
+/// cliente vinculado al empleado: no mueve dinero, no lleva comprobante ni turno y siempre apunta al
+/// movimiento <c>pago</c> del libro de personal que lo originó.
 /// </summary>
 public enum TipoMovimientoCc
 {
     Consumo,
     Pago,
     Ajuste,
-    ActualizacionPrecios
+    ActualizacionPrecios,
+    DescuentoPersonal
 }

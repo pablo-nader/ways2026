@@ -20,7 +20,7 @@ import {
   type FilaPagoACuenta,
   type PagoACuentaParaCalculo,
 } from './cuentaCorriente'
-import type { MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion } from './tipos'
+import type { MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion, TipoMovimientoCc } from './tipos'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
   return {
@@ -151,6 +151,7 @@ describe('etiquetaDeMovimiento', () => {
     { movimiento: { tipo: 'Consumo', etiqueta: null }, esperado: 'Consumo' },
     { movimiento: { tipo: 'Pago', etiqueta: null }, esperado: 'Pago' },
     { movimiento: { tipo: 'ActualizacionPrecios', etiqueta: null }, esperado: 'Actualización de precios' },
+    { movimiento: { tipo: 'DescuentoPersonal', etiqueta: null }, esperado: 'Descuento de personal' },
     { movimiento: { tipo: 'Ajuste', etiqueta: 'Manual' }, esperado: 'Ajuste manual' },
     { movimiento: { tipo: 'Ajuste', etiqueta: 'AnulacionContramovimiento' }, esperado: 'Contramov. de anulación' },
   ]
@@ -158,6 +159,22 @@ describe('etiquetaDeMovimiento', () => {
   for (const { movimiento, esperado } of casos) {
     it(`${movimiento.tipo}${movimiento.etiqueta ? ` (${movimiento.etiqueta})` : ''} → "${esperado}"`, () => {
       expect(etiquetaDeMovimiento(movimiento)).toBe(esperado)
+    })
+  }
+
+  // El Record obliga, al compilar, a listar TODOS los miembros de la unión: un tipo nuevo sin entrada acá
+  // rompe `tsc -b`, y uno sin etiqueta en el switch devolvería undefined y rompería este test.
+  const ETIQUETA_POR_TIPO: Record<TipoMovimientoCc, string> = {
+    Consumo: 'Consumo',
+    Pago: 'Pago',
+    Ajuste: 'Ajuste manual',
+    ActualizacionPrecios: 'Actualización de precios',
+    DescuentoPersonal: 'Descuento de personal',
+  }
+
+  for (const [tipo, esperado] of Object.entries(ETIQUETA_POR_TIPO) as [TipoMovimientoCc, string][]) {
+    it(`todo miembro de TipoMovimientoCc tiene etiqueta: ${tipo}`, () => {
+      expect(etiquetaDeMovimiento({ tipo, etiqueta: null })).toBe(esperado)
     })
   }
 })

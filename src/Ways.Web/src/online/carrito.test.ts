@@ -89,6 +89,12 @@ describe('cantidades por unidad de venta', () => {
     expect(pasoDelBoton('Peso')).toBe(0.5)
   })
 
+  it('un artículo por importe no se vende en la tienda, pero si llegara sumaría de a uno y no fraccionaría', () => {
+    expect(pasoDelBoton('Importe')).toBe(1)
+    expect(parsearCantidad('Importe', '1,5')).toBeNull()
+    expect(parsearCantidad('Importe', '2')).toBe(2)
+  })
+
   it('normalizar quita el ruido binario de la suma y topa en el máximo', () => {
     expect(normalizarCantidad(0.1 + 0.2)).toBe(0.3)
     expect(normalizarCantidad(998 + 5)).toBe(CANTIDAD_MAXIMA)
@@ -317,6 +323,7 @@ describe('persistencia del carrito', () => {
       JSON.stringify([
         item(martillo, 2),
         { ...item(clavos, 1.5), unidadVenta: 'Docena' },
+        { ...item(clavos, 1), unidadVenta: 'Importe' },
         item(clavos, 0),
         { ...item(martillo, 1.5), idArticulo: 7 },
         item(martillo, 5),

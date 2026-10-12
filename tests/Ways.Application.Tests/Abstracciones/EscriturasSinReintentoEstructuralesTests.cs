@@ -88,6 +88,11 @@ public class EscriturasSinReintentoEstructuralesTests
         // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
         { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },
 
+        // Pago de personal: mueve el saldo del personal y el del cliente, y escribe el asiento del libro, el
+        // descuento de cuenta corriente, los gastos de sueldos y el egreso de tesorería sin clave de idempotencia;
+        // un reintento tras un commit ambiguo pagaría dos veces.
+        { "Ways.Application/Plantel/ServicioDePagoDePersonal.cs", "PagarAsync" },
+
         // stage-gasto-a-compra (PR4): vincular un gasto a una compra muta saldo de proveedor y
         // ledger de CC sin ninguna clave de idempotencia — un reintento sobre un commit ambiguo
         // podría re-imputar o re-descontar, mismo criterio que ServicioDeGastos.RegistrarAsync/

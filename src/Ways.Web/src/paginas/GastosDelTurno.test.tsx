@@ -127,6 +127,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     detalle: null,
     numeroFactura: null,
     idComprobanteCompra: null,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }
@@ -854,6 +855,22 @@ describe('GastosDelTurno — edición', () => {
     // Se espera a la fila (el DATO del detalle) antes de afirmar que no hay acción.
     await screen.findByRole('cell', { name: '$ 300,00' })
     expect(screen.queryByRole('button', { name: /Editar gasto/ })).not.toBeInTheDocument()
+  })
+
+  it('no ofrece editar un gasto de un pago de personal aunque su turno siga abierto, y sí el de un gasto común', async () => {
+    mockearRutas({
+      detalle: detalleFixture([
+        gastoFixture({ id: 1, concepto: 'Pago de personal: Ana', importe: 300, idMovimientoPersonal: 9 }),
+        gastoFixture({ id: 2, concepto: 'Flete', importe: 450 }),
+      ]),
+    })
+    render(<GastosDelTurno />)
+
+    // Se espera a las dos filas (el DATO del detalle) antes de afirmar que falta una acción.
+    await screen.findByRole('cell', { name: '$ 300,00' })
+    await screen.findByRole('cell', { name: '$ 450,00' })
+    expect(screen.queryByRole('button', { name: 'Editar gasto Pago de personal: Ana' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Editar gasto Flete' })).toBeEnabled()
   })
 
   it('precarga el formulario con los valores del gasto', async () => {

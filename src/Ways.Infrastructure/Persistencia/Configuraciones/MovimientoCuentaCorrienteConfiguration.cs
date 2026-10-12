@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
@@ -15,7 +16,20 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
 {
     public void Configure(EntityTypeBuilder<MovimientoCuentaCorriente> builder)
     {
-        builder.ToTable("movimientos_cuenta_corriente");
+        // Los dos CHECK nombran el valor descuento_personal, que se agregó al enum en la migración
+        // PagoDePersonal: Postgres no deja usar un valor de enum en la transacción que lo agregó, así que
+        // los crea la migración siguiente.
+        builder.ToTable("movimientos_cuenta_corriente", t =>
+        {
+            t.HasCheckConstraint(
+                "ck_movimientos_cuenta_corriente_descuento_personal",
+                "tipo <> 'descuento_personal' OR (id_movimiento_personal IS NOT NULL "
+                + "AND id_comprobante_venta IS NULL AND id_pago_comprobante IS NULL AND importe < 0)");
+
+            t.HasCheckConstraint(
+                "ck_movimientos_cuenta_corriente_vinculo_personal",
+                "id_movimiento_personal IS NULL OR tipo = 'descuento_personal'");
+        });
 
         builder.HasKey(m => m.Id).HasName("pk_movimientos_cuenta_corriente");
 
@@ -44,6 +58,7 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
         builder.Property(m => m.SaldoResultante).HasColumnName("saldo_resultante").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.Detalle).HasColumnName("detalle").HasColumnType("text");
         builder.Property(m => m.IdMovimientoActualizacion).HasColumnName("id_movimiento_actualizacion");
+        builder.Property(m => m.IdMovimientoPersonal).HasColumnName("id_movimiento_personal");
 
         builder.HasAlternateKey(m => new { m.Id, m.IdTenant })
             .HasName("ak_movimientos_cuenta_corriente_id_movimiento_id_tenant");
@@ -68,6 +83,14 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
         builder.HasIndex(m => new { m.IdPuntoVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_corriente_punto_venta");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_cuenta_corriente_empleado");
         builder.HasIndex(m => new { m.IdPagoComprobante, m.IdTenant }).HasDatabaseName("ix_movimientos_cuenta_corriente_pago_comprobante");
+
+        // A lo sumo un descuento por pago de personal; también es el índice de soporte de la FK compuesta.
+        // Sin traducción de 23505 en ManejadorDeErrores: solo lo escribe ServicioDePagoDePersonal, con el id de un
+        // asiento que él mismo acaba de insertar, así que ninguna solicitud de un cliente puede repetirlo.
+        builder.HasIndex(m => new { m.IdMovimientoPersonal, m.IdTenant })
+            .IsUnique()
+            .HasFilter("id_movimiento_personal IS NOT NULL")
+            .HasDatabaseName("ux_movimientos_cuenta_corriente_movimiento_personal");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -102,6 +125,13 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
             .HasForeignKey(m => new { m.IdComprobanteVenta, m.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_movimientos_cuenta_corriente_comprobante_venta")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<MovimientoPersonal>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdMovimientoPersonal, m.IdTenant })
+            .HasPrincipalKey(p => new { p.Id, p.IdTenant })
+            .HasConstraintName("fk_movimientos_cuenta_corriente_movimiento_personal")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<PagoComprobante>()
