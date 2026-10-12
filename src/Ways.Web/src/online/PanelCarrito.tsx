@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { formatearPrecio, formatearPrecioUnitario, totalDeLinea } from './carrito'
+import {
+  CANTIDAD_MAXIMA_DE_COMBO,
+  claveDeLinea,
+  descripcionDelComponente,
+  formatearPrecio,
+  formatearPrecioUnitario,
+  totalDeLinea,
+  type ItemDelCarrito,
+} from './carrito'
 import { useCarrito } from './CarritoContext'
 import { ControlDeCantidad } from './ControlDeCantidad'
+import { EtiquetaDeOferta, PrecioAnterior } from './PrecioConOferta'
 
 export const ID_DEL_PANEL_DEL_CARRITO = 'panel-carrito'
 
@@ -21,26 +30,27 @@ const SELECTOR_DE_FOCUSABLES = 'a[href], button:not([disabled]), input:not([disa
  * `aria-modal`. Devolver el foco al botón del carrito es tarea de quien lo abre (`alCerrar`).
  */
 export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
-  const { items, cantidad, total, quitar, vaciar } = useCarrito()
+  const { items, cantidad, total, quitar, quitarCombo, cambiarCantidad, cambiarCantidadCombo, vaciar } = useCarrito()
   const [confirmandoVaciado, setConfirmandoVaciado] = useState(false)
   const cerrar = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLElement>(null)
   const cancelarVaciado = useRef<HTMLButtonElement>(null)
   const pedirVaciado = useRef<HTMLButtonElement>(null)
   const focoTrasElCambio = useRef<'cancelar' | 'pedir' | null>(null)
-  const botonesQuitar = useRef(new Map<number, HTMLButtonElement>())
+  const botonesQuitar = useRef(new Map<string, HTMLButtonElement>())
 
   /**
    * Quita la línea llevando antes el foco a donde sigue la tarea: el "Quitar" de la línea que
    * queda después, o el de la anterior si era la última, o "Cerrar" si no queda ninguna. Se mueve
    * antes de quitar porque el botón que tenía el foco se va con la línea.
    */
-  const quitarLinea = (idArticulo: number) => {
-    const posicion = items.findIndex((i) => i.idArticulo === idArticulo)
+  const quitarLinea = (linea: ItemDelCarrito) => {
+    const posicion = items.findIndex((i) => claveDeLinea(i) === claveDeLinea(linea))
     const vecina = items[posicion + 1] ?? items[posicion - 1]
-    const destino = (vecina === undefined ? undefined : botonesQuitar.current.get(vecina.idArticulo)) ?? cerrar.current
+    const destino = (vecina === undefined ? undefined : botonesQuitar.current.get(claveDeLinea(vecina))) ?? cerrar.current
     destino?.focus()
-    quitar(idArticulo)
+    if (linea.tipo === 'combo') quitarCombo(linea.idCombo)
+    else quitar(linea.idArticulo)
   }
 
   useEffect(() => {
@@ -121,26 +131,57 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
           <>
             <ul className="publico-carrito-lineas">
               {items.map((item) => (
-                <li key={item.idArticulo} className="publico-carrito-linea">
+                <li key={claveDeLinea(item)} className="publico-carrito-linea">
                   <p className="publico-carrito-nombre">{item.nombre}</p>
-                  <p className="publico-carrito-unitario">{formatearPrecioUnitario(item.precio, item.unidadVenta)}</p>
-                  <ControlDeCantidad
-                    idArticulo={item.idArticulo}
-                    nombre={item.nombre}
-                    unidadVenta={item.unidadVenta}
-                    cantidad={item.cantidad}
-                    alQuitar={() => quitarLinea(item.idArticulo)}
-                  />
-                  <p className="publico-carrito-subtotal">{formatearPrecio(totalDeLinea(item))}</p>
+                  {item.tipo === 'combo' ? (
+                    <>
+                      <p className="publico-carrito-unitario">Combo · {formatearPrecio(item.precio)}</p>
+                      <p className="publico-carrito-componentes">{item.componentes.map(descripcionDelComponente).join(' · ')}</p>
+                      {item.noDisponible === true ? (
+                        <p className="publico-carrito-aviso">Ya no está disponible. No se suma al total.</p>
+                      ) : (
+                        <>
+                          <ControlDeCantidad
+                            nombre={item.nombre}
+                            unidadVenta="Unidad"
+                            cantidad={item.cantidad}
+                            maximo={CANTIDAD_MAXIMA_DE_COMBO}
+                            alCambiar={(nueva) => cambiarCantidadCombo(item.idCombo, nueva)}
+                            alQuitar={() => quitarLinea(item)}
+                          />
+                          <p className="publico-carrito-subtotal">{formatearPrecio(totalDeLinea(item))}</p>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <p className="publico-carrito-unitario">
+                        {item.precioOriginal !== undefined && (
+                          <>
+                            <EtiquetaDeOferta oferta={item.oferta} /> <PrecioAnterior precioOriginal={item.precioOriginal} />{' '}
+                          </>
+                        )}
+                        {formatearPrecioUnitario(item.precio, item.unidadVenta)}
+                      </p>
+                      <ControlDeCantidad
+                        nombre={item.nombre}
+                        unidadVenta={item.unidadVenta}
+                        cantidad={item.cantidad}
+                        alCambiar={(nueva) => cambiarCantidad(item.idArticulo, nueva)}
+                        alQuitar={() => quitarLinea(item)}
+                      />
+                      <p className="publico-carrito-subtotal">{formatearPrecio(totalDeLinea(item))}</p>
+                    </>
+                  )}
                   <button
                     ref={(boton) => {
-                      if (boton === null) botonesQuitar.current.delete(item.idArticulo)
-                      else botonesQuitar.current.set(item.idArticulo, boton)
+                      if (boton === null) botonesQuitar.current.delete(claveDeLinea(item))
+                      else botonesQuitar.current.set(claveDeLinea(item), boton)
                     }}
                     type="button"
                     className="publico-boton publico-boton-contorno publico-boton-chico"
                     aria-label={`Quitar ${item.nombre} del carrito`}
-                    onClick={() => quitarLinea(item.idArticulo)}
+                    onClick={() => quitarLinea(item)}
                   >
                     Quitar
                   </button>

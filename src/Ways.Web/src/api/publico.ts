@@ -17,6 +17,25 @@ export type ArticuloPublico = {
   unidadVenta: UnidadVenta
   tieneImagen: boolean
   imagenVersion: number | null
+  /** Precio de lista; solo viaja cuando una oferta disponible online lo baja (entonces `precio` es el final). */
+  precioOriginal?: number
+  /** Nombre de la oferta que rebaja el precio; viaja junto con `precioOriginal`. */
+  oferta?: string
+}
+
+export type ComponenteDeComboPublico = {
+  idArticulo: number
+  nombre: string
+  cantidad: number
+  imagenVersion: number | null
+}
+
+/** Un combo de la tienda: precio fijo del conjunto y sin imagen propia (las tarjetas usan las de sus componentes). */
+export type ComboPublico = {
+  id: number
+  nombre: string
+  precio: number
+  componentes: ComponenteDeComboPublico[]
 }
 
 export type CatalogoPublico = {
@@ -25,6 +44,8 @@ export type CatalogoPublico = {
   total: number
   pagina: number
   tamano: number
+  /** Siempre presente; solo trae combos en la primera página sin búsqueda ni categoría. */
+  combos: ComboPublico[]
 }
 
 export type ConsultaDeCatalogo = {
@@ -49,6 +70,7 @@ export const clienteDePublico = {
   obtenerSitio: () => api.get<SitioPublico>('/publico/sitio'),
   obtenerVitrina: () => api.get<VitrinaPublica>('/publico/vitrina'),
   obtenerCatalogo: (consulta: ConsultaDeCatalogo) => api.get<CatalogoPublico>(rutaDelCatalogo(consulta)),
+  obtenerCombos: () => api.get<ComboPublico[]>('/publico/combos'),
 }
 
 /** Logo del comercio para un `<img src>`; `version` (`logoVersion`) cambia la URL al subir otro. */

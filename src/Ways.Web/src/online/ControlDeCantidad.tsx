@@ -2,13 +2,15 @@ import { useState, type KeyboardEvent, type Ref } from 'react'
 
 import type { UnidadVenta } from '../api/tipos'
 import { CANTIDAD_MAXIMA, formatearCantidad, normalizarCantidad, parsearCantidad, pasoDelBoton } from './carrito'
-import { useAccionesDelCarrito } from './CarritoContext'
 
 type PropsDeControl = {
-  idArticulo: number
   nombre: string
   unidadVenta: UnidadVenta
   cantidad: number
+  /** Tope de la cantidad de la línea; por defecto el de un artículo. */
+  maximo?: number
+  /** Recibe la cantidad nueva ya validada. */
+  alCambiar: (cantidad: number) => void
   /** Quien lo usa decide qué pasa con el foco cuando "−" quita la línea, porque el botón se va con ella. */
   alQuitar: () => void
   /** Referencia al botón "+", para que quien lo usa pueda llevarle el foco. */
@@ -21,10 +23,10 @@ function etiquetas(unidadVenta: UnidadVenta, nombre: string) {
     : { menos: `Quitar medio kilo de ${nombre}`, mas: `Agregar medio kilo más de ${nombre}` }
 }
 
-function avisoDeCantidadRechazada(unidadVenta: UnidadVenta): string {
+function avisoDeCantidadRechazada(unidadVenta: UnidadVenta, maximo: number): string {
   return unidadVenta === 'Unidad'
-    ? `No se cambió la cantidad. Ingresá una cantidad entera, hasta ${CANTIDAD_MAXIMA}.`
-    : `No se cambió la cantidad. Ingresá una cantidad mayor que 0, hasta ${CANTIDAD_MAXIMA} y con hasta 3 decimales.`
+    ? `No se cambió la cantidad. Ingresá una cantidad entera, hasta ${maximo}.`
+    : `No se cambió la cantidad. Ingresá una cantidad mayor que 0, hasta ${maximo} y con hasta 3 decimales.`
 }
 
 /**
@@ -36,8 +38,15 @@ function avisoDeCantidadRechazada(unidadVenta: UnidadVenta): string {
  * se va con la próxima acción sobre el campo o los botones. Bajar del mínimo con − quita la línea
  * (`alQuitar`).
  */
-export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad, alQuitar, refMas }: PropsDeControl) {
-  const { cambiarCantidad } = useAccionesDelCarrito()
+export function ControlDeCantidad({
+  nombre,
+  unidadVenta,
+  cantidad,
+  maximo = CANTIDAD_MAXIMA,
+  alCambiar,
+  alQuitar,
+  refMas,
+}: PropsDeControl) {
   const [borrador, setBorrador] = useState<string | null>(null)
   const [rechazada, setRechazada] = useState(false)
   const paso = pasoDelBoton(unidadVenta)
@@ -47,12 +56,12 @@ export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad, a
     setRechazada(false)
     const nueva = normalizarCantidad(cantidad - paso)
     if (nueva <= 0) alQuitar()
-    else cambiarCantidad(idArticulo, nueva)
+    else alCambiar(nueva)
   }
 
   const sumar = () => {
     setRechazada(false)
-    cambiarCantidad(idArticulo, normalizarCantidad(cantidad + paso))
+    alCambiar(normalizarCantidad(cantidad + paso, maximo))
   }
 
   const escribir = (texto: string) => {
@@ -62,10 +71,10 @@ export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad, a
 
   const confirmar = () => {
     if (borrador === null) return
-    const escrita = parsearCantidad(unidadVenta, borrador)
+    const escrita = parsearCantidad(unidadVenta, borrador, maximo)
     setBorrador(null)
     setRechazada(escrita === null)
-    if (escrita !== null) cambiarCantidad(idArticulo, escrita)
+    if (escrita !== null) alCambiar(escrita)
   }
 
   const alPresionarTecla = (evento: KeyboardEvent<HTMLInputElement>) => {
@@ -95,13 +104,13 @@ export function ControlDeCantidad({ idArticulo, nombre, unidadVenta, cantidad, a
         type="button"
         className="publico-cantidad-boton"
         aria-label={mas}
-        disabled={cantidad >= CANTIDAD_MAXIMA}
+        disabled={cantidad >= maximo}
         onClick={sumar}
       >
         <span aria-hidden="true">+</span>
       </button>
       <p className="publico-cantidad-ayuda" aria-live="polite">
-        {rechazada ? avisoDeCantidadRechazada(unidadVenta) : ''}
+        {rechazada ? avisoDeCantidadRechazada(unidadVenta, maximo) : ''}
       </p>
     </div>
   )

@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-import type { ArticuloParaElCarrito, ItemDelCarrito } from './carrito'
+import type { ArticuloParaElCarrito, ComboParaElCarrito, ItemDelCarrito } from './carrito'
 
 /** Las operaciones del carrito. Su identidad no cambia entre renders: se pueden pasar a hijos memoizados. */
 export type AccionesDelCarrito = {
@@ -9,19 +9,28 @@ export type AccionesDelCarrito = {
   cambiarCantidad: (idArticulo: number, cantidad: number) => void
   /** Pone al día nombre, precio, unidad e imagen de las líneas cuyo artículo figura en `articulos`. */
   sincronizar: (articulos: readonly ArticuloParaElCarrito[]) => void
+  agregarCombo: (combo: ComboParaElCarrito, cantidad?: number) => void
+  quitarCombo: (idCombo: number) => void
+  cambiarCantidadCombo: (idCombo: number, cantidad: number) => void
+  /**
+   * Pone al día las líneas de combo con la lista de combos de la tienda; las que ya no figuran quedan
+   * marcadas como no disponibles. Se llama solo con una lista leída bien: un error de lectura no dice nada.
+   */
+  sincronizarCombos: (combos: readonly ComboParaElCarrito[]) => void
   vaciar: () => void
 }
 
 /**
- * El carrito de la tienda. `cantidad` cuenta las líneas (artículos distintos), no las unidades:
- * es lo que muestra el botón de la cabecera. `cantidades` da la cantidad de cada artículo que está
- * en el carrito (los que no están, no figuran).
+ * El carrito de la tienda. `cantidad` cuenta las líneas (artículos y combos distintos), no las
+ * unidades: es lo que muestra el botón de la cabecera. `cantidades` y `cantidadesDeCombos` dan la
+ * cantidad de cada artículo o combo que está en el carrito (los que no están, no figuran).
  */
 export type EstadoDelCarrito = AccionesDelCarrito & {
   items: readonly ItemDelCarrito[]
   cantidad: number
   total: number
   cantidades: ReadonlyMap<number, number>
+  cantidadesDeCombos: ReadonlyMap<number, number>
 }
 
 export const CarritoContext = createContext<EstadoDelCarrito | null>(null)

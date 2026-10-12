@@ -6,6 +6,7 @@ import { useVitrinaPublica } from '../publico/useVitrinaPublica'
 import { Categorias } from './Categorias'
 import { Cierre } from './Cierre'
 import { ComoComprar } from './ComoComprar'
+import { CombosDeLaLanding } from './CombosDeLaLanding'
 import { Destacados } from './Destacados'
 import { Nosotros } from './Nosotros'
 import { Portada } from './Portada'
@@ -34,6 +35,7 @@ export function Landing() {
               <div className="publico-pagina">
                 <Portada vitrina={vitrina} />
                 <Destacados articulos={catalogo?.articulos ?? []} />
+                <CombosDeLaLanding combos={catalogo?.combos ?? []} />
                 <Categorias categorias={catalogo?.categorias ?? []} />
                 <Nosotros texto={vitrina.descripcion} />
                 <ComoComprar conWhatsapp={whatsapp !== null} />

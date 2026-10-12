@@ -2,9 +2,10 @@ import { memo, useEffect, useRef } from 'react'
 
 import type { ArticuloPublico } from '../api/publico'
 import { ImagenDelArticulo } from '../publico/ImagenDelArticulo'
-import { articuloParaElCarrito, formatearPrecio } from './carrito'
+import { articuloParaElCarrito } from './carrito'
 import { useAccionesDelCarrito } from './CarritoContext'
 import { ControlDeCantidad } from './ControlDeCantidad'
+import { PrecioConOferta } from './PrecioConOferta'
 
 /**
  * Tarjeta de un artículo. Recibe su cantidad en el carrito por prop (0 = no está) y opera con las
@@ -24,7 +25,7 @@ export const TarjetaDeArticulo = memo(function TarjetaDeArticulo({
   articulo: ArticuloPublico
   cantidad: number
 }) {
-  const { agregar, quitar } = useAccionesDelCarrito()
+  const { agregar, quitar, cambiarCantidad } = useAccionesDelCarrito()
   const destinoDelFoco = useRef<'agregar' | 'mas' | null>(null)
   const botonAgregar = useRef<HTMLButtonElement>(null)
   const botonMas = useRef<HTMLButtonElement>(null)
@@ -42,8 +43,12 @@ export const TarjetaDeArticulo = memo(function TarjetaDeArticulo({
       <h2 className="publico-articulo-nombre">{articulo.nombre}</h2>
       {articulo.descripcion && <p className="publico-articulo-descripcion">{articulo.descripcion}</p>}
       <p className="publico-articulo-precio">
-        <span className="publico-precio">{formatearPrecio(articulo.precio)}</span>
-        {articulo.unidadVenta === 'Peso' && <span className="publico-articulo-unidad"> por kg</span>}
+        <PrecioConOferta
+          precio={articulo.precio}
+          precioOriginal={articulo.precioOriginal}
+          oferta={articulo.oferta}
+          unidadVenta={articulo.unidadVenta}
+        />
       </p>
       {cantidad === 0 ? (
         <button
@@ -60,11 +65,11 @@ export const TarjetaDeArticulo = memo(function TarjetaDeArticulo({
         </button>
       ) : (
         <ControlDeCantidad
-          idArticulo={articulo.id}
           nombre={articulo.nombre}
           unidadVenta={articulo.unidadVenta}
           cantidad={cantidad}
           refMas={botonMas}
+          alCambiar={(nueva) => cambiarCantidad(articulo.id, nueva)}
           alQuitar={() => {
             destinoDelFoco.current = 'agregar'
             quitar(articulo.id)
