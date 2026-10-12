@@ -521,6 +521,11 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_empresas_alicuotas_percepcion_rango" } =>
                 (StatusCodes.Status400BadRequest, "Las alícuotas de percepción tienen que estar entre 0 y 100.", "alicuota_percepcion_invalida"),
 
+            // Backstop del porcentaje de facturación del medio de pago: ServicioDeMediosPago rechaza antes
+            // (porcentaje_facturacion_invalido) lo que se sale de 0..100; esto atrapa una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentaje_facturacion" } =>
+                (StatusCodes.Status400BadRequest, "El porcentaje a facturar tiene que estar entre 0 y 100.", "porcentaje_facturacion_invalido"),
+
             // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
             // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.
             { SqlState: "23514", ConstraintName: "ck_articulos_costo_lista_por" } =>

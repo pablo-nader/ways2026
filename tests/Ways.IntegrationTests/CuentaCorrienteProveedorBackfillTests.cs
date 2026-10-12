@@ -175,17 +175,18 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             idTipoComprobanteCompra = (int)(await comandoTipo.ExecuteScalarAsync())!;
         }
 
-        var medioPago = new MedioPago
-        {
-            IdTenant = tenant.Id, Nombre = "Efectivo", Orden = 1, Comportamiento = ComportamientoMedioPago.Efectivo,
-            CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.MediosPago.Add(medioPago);
-        await db.SaveChangesAsync();
+        // INSERT crudo: el modelo HEAD de EF incluiría medios_pago.porcentaje_facturacion, que no
+        // existe todavía en el esquema pre-migración (42703).
+        var idMedioPago = (await db.Database.SqlQueryRaw<int>(
+            "INSERT INTO medios_pago (id_tenant, nombre, orden, comportamiento, admite_vuelto, requiere_referencia, " +
+            "activo, created_at, updated_at) " +
+            "VALUES ({0}, 'Efectivo', 1, 'efectivo'::comportamiento_medio_pago, false, false, true, {1}, {1}) " +
+            "RETURNING id_medio_pago AS \"Value\"",
+            tenant.Id, ahora).ToListAsync()).Single();
 
         var idTurnoCaja = await SembrarTurnoPreMigracionAsync(conexionCruda, tenant.Id, puntoVenta.Id, usuario.Id, ahora);
 
-        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, idTipoComprobanteCompra, medioPago.Id, idTurnoCaja);
+        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, idTipoComprobanteCompra, idMedioPago, idTurnoCaja);
     }
 
     /// <summary>Misma trampa ya documentada en <see cref="SembrarProveedorPreMigracionAsync"/> y

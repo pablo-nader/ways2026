@@ -42,6 +42,7 @@ function medio(id: number, nombre: string): MedioPagoListado {
     admiteVuelto: id === 1,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
   }
 }
 

@@ -1488,6 +1488,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("orden");
 
+                    b.Property<decimal>("PorcentajeFacturacion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(5,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("porcentaje_facturacion");
+
                     b.Property<decimal?>("RecargoPorcentaje")
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("recargo_porcentaje");
@@ -1521,7 +1527,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_medios_pago_nombre_empresa")
                         .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
 
-                    b.ToTable("medios_pago", (string)null);
+                    b.ToTable("medios_pago", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_medios_pago_porcentaje_facturacion", "porcentaje_facturacion >= 0 AND porcentaje_facturacion <= 100");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Catalogos.Parametro", b =>

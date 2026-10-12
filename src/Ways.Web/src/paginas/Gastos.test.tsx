@@ -88,6 +88,7 @@ const medioEfectivo: MedioPagoListado = {
   admiteVuelto: true,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 const medioCuentaCorriente: MedioPagoListado = {
@@ -100,6 +101,7 @@ const medioCuentaCorriente: MedioPagoListado = {
   admiteVuelto: false,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
