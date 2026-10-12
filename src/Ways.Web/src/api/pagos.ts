@@ -291,6 +291,10 @@ export function validarPagosLocal(params: {
     }
   }
 
+  if (total < 0 && pagos.some((pago) => pago.importe > 0 || pago.vuelto > 0)) {
+    return { codigo: 'pago_en_comprobante_negativo', mensaje: 'Una nota de crédito no lleva pagos: la devolución no cobra.' }
+  }
+
   const sumaImportes = sumarImportes(pagos)
   const sumaVueltos = sumarVueltos(pagos)
 

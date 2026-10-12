@@ -2579,19 +2579,17 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
 > recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
 > una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
-> (`ck_pagos_comprobante_importe_no_negativo`) y los clientes web y POS no envían pagos en una nota de crédito (la API no los
-> rechaza), así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
+> (`ck_pagos_comprobante_importe_no_negativo`) y `ValidadorDePagos` rechaza los pagos en una nota de crédito, así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
 > ejerce.
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
 > ajuste manual. (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
-> cuenta. (c) Riesgo abierto: la API admite una nota de crédito con pagos de importe positivo (`ValidadorDePagos` no relaciona
-> el signo del total con los pagos) y el lector del turno suma los importes sin el signo del documento. Una nota de crédito de
-> 100 enviada con un pago de 100 en un medio digital con 10 % de comisión acredita la cuenta +90 donde una devolución correcta
-> la dejaría −90 (180 de diferencia), Y sube en 100 el esperado de ese medio en el arqueo donde una devolución debería
-> bajarlo. La corrección de raíz está en la validación de ventas y es la próxima tarea (fijado por
-> `RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo`).
+> cuenta. Hoy una devolución no mueve dinero por ningún medio: `ValidadorDePagos` (regla 0c) rechaza con 400
+> `pago_en_comprobante_negativo` un comprobante de total negativo con algún pago de importe o vuelto positivo, así que el lector del
+> turno, que suma los importes sin el signo del documento, nunca cuenta como cobrado el dinero de una nota de crédito (fijado por
+> `UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo`). La regla vive en el servicio: ninguna CHECK puede
+> ligar `pagos_comprobante` con el total de `comprobantes_venta`, así que una fila anterior a la regla no está protegida por la base.
 >
 > **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
 > `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta

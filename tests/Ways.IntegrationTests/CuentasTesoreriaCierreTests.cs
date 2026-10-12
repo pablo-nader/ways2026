@@ -417,14 +417,12 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.StartsWith("Devolución de comisión", libro[1].Concepto);
     }
 
-    /// <summary>Riesgo abierto, fijado como está hoy: la API acepta una nota de crédito (total negativo) con un pago de importe
-    /// positivo (<c>ValidadorDePagos</c> no relaciona el signo del total con los pagos), y el cierre suma ese pago como si
-    /// fuera un cobro. Una devolución de 100 pagada "con" un medio digital del 10 % de comisión acredita 100 − 10 = 90 en la
-    /// cuenta en vez de descontarlos, y sube en 100 el esperado del medio en el arqueo en vez de bajarlo. Si algún día se rechaza ese pago o el cierre aplica el signo, este test debe cambiar.</summary>
+    /// <summary>Una nota de crédito (total negativo) no lleva pagos: la API la rechaza con <c>pago_en_comprobante_negativo</c>, así
+    /// que su dinero nunca llega al cierre. Sin pagos se acepta y el cierre no la cuenta ni en el arqueo ni en la cuenta.</summary>
     [Fact]
-    public async Task RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo()
+    public async Task UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo()
     {
-        var ctx = await PrepararAsync(nameof(RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo));
+        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoConPagosSeRechazaYSinPagosNoTocaLaCuentaNiElArqueo));
         using var _ = ctx.Admin;
         var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
         var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 10m);
@@ -454,26 +452,36 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         }
 
         var turno = await AbrirTurnoAsync(ctx);
-        var devolucion = await ctx.Admin.PostAsJsonAsync(
+        await SembrarPagoAsync(ctx, turno, medio, 200m);
+
+        var conPagos = await ctx.Admin.PostAsJsonAsync(
             "/api/ventas",
             new SolicitudDeVenta(
                 ctx.IdPuntoVenta, ctx.IdCliente, "NCX", null, [new LineaDeVenta(idArticulo, 1m, null)],
                 [new PagoDeVenta(medio, 100m, null, 0m)], null, null));
-        var cuerpo = await devolucion.Content.ReadAsStringAsync();
-        Assert.True(devolucion.StatusCode == HttpStatusCode.Created, cuerpo);
-        Assert.Equal(-100m, JsonDocument.Parse(cuerpo).RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(HttpStatusCode.BadRequest, conPagos.StatusCode);
+        Assert.Equal("pago_en_comprobante_negativo", await CodigoAsync(conPagos));
+
+        var sinPagos = await ctx.Admin.PostAsJsonAsync(
+            "/api/ventas",
+            new SolicitudDeVenta(
+                ctx.IdPuntoVenta, ctx.IdCliente, "NCX", null, [new LineaDeVenta(idArticulo, 1m, null)], [], null, null));
+        Assert.Equal(HttpStatusCode.Created, sinPagos.StatusCode);
 
         await CerrarOkAsync(ctx, turno);
 
         var libro = await LibroAsync(ctx, cuenta);
         Assert.Equal(2, libro.Count);
-        AfirmarFila(libro[0], TipoMovimientoCuenta.Cobro, 0m, 100m, 0m, 100m, 100m, null);
-        AfirmarFila(libro[1], TipoMovimientoCuenta.Comision, 100m, 0m, 10m, 90m, 100m, 10m);
+        AfirmarFila(libro[0], TipoMovimientoCuenta.Cobro, 0m, 200m, 0m, 200m, 200m, null);
+        AfirmarFila(libro[1], TipoMovimientoCuenta.Comision, 200m, 0m, 20m, 180m, 200m, 10m);
 
         await using var dbArqueo = Db(ctx);
-        Assert.Equal(100m, await dbArqueo.ArqueosTurno
+        Assert.Equal(200m, await dbArqueo.ArqueosTurno
             .Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == medio).Select(a => a.ImporteEsperado).SingleAsync());
     }
+
+    private static async Task<string?> CodigoAsync(HttpResponseMessage respuesta) =>
+        (await respuesta.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("codigo").GetString();
 
     [Fact]
     public async Task UnTurnoSinPagosDigitalesOConUnPagoDeCeroNoEscribeFilas()
