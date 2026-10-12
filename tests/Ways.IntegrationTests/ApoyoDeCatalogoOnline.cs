@@ -145,7 +145,9 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         string? descripcion = null,
         string? codigoInterno = null,
         int? idTenant = null,
-        int? idArea = null)
+        int? idArea = null,
+        int? idGrupo = null,
+        int? idFamilia = null)
     {
         var ahora = DateTimeOffset.UtcNow;
         var tenant = idTenant ?? tienda.IdTenant;
@@ -159,6 +161,8 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
             Descripcion = descripcion,
             IdArea = idArea ?? tienda.IdArea,
             IdCategoria = idCategoria,
+            IdGrupo = idGrupo,
+            IdFamilia = idFamilia,
             IdAlicuotaIva = tienda.IdAlicuotaIva,
             UnidadVenta = unidadVenta,
             EsProducto = true,
@@ -220,6 +224,11 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         string nombre,
         int? idArticulo = null,
         int? idCategoria = null,
+        int? idGrupo = null,
+        int? idFamilia = null,
+        TimeOnly? horaDesde = null,
+        TimeOnly? horaHasta = null,
+        short[]? diasSemana = null,
         decimal? porcentaje = 10m,
         decimal? precioUnitario = null,
         decimal? importeFijo = null,
@@ -243,6 +252,11 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
             IdEmpresa = idEmpresa,
             IdArticulo = idArticulo,
             IdCategoria = idCategoria,
+            IdGrupo = idGrupo,
+            IdFamilia = idFamilia,
+            HoraDesde = horaDesde,
+            HoraHasta = horaHasta,
+            DiasSemana = diasSemana,
             Porcentaje = precioUnitario is null && importeFijo is null ? porcentaje : null,
             PrecioUnitario = precioUnitario,
             ImporteFijo = importeFijo,
@@ -261,6 +275,30 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         await db.SaveChangesAsync();
 
         return oferta.Id;
+    }
+
+    public async Task<int> SembrarGrupoAsync(int idTenant, string nombre)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var grupo = new Grupo { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Grupos.Add(grupo);
+        await db.SaveChangesAsync();
+
+        return grupo.Id;
+    }
+
+    public async Task<int> SembrarFamiliaAsync(int idTenant, string nombre)
+    {
+        var ahora = DateTimeOffset.UtcNow;
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var familia = new Familia { IdTenant = idTenant, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Familias.Add(familia);
+        await db.SaveChangesAsync();
+
+        return familia.Id;
     }
 
     /// <summary>Restringe la oferta a esa lista de precios (una fila de <c>ofertas_listas</c>).</summary>
@@ -330,11 +368,13 @@ internal sealed class ApoyoDeCatalogoOnline(WaysApiFixture fixture)
         string? descripcion = null,
         string? codigoInterno = null,
         bool disponibleOnline = true,
-        bool disponibleVenta = true)
+        bool disponibleVenta = true,
+        int? idGrupo = null,
+        int? idFamilia = null)
     {
         var id = await SembrarArticuloAsync(
             tienda, nombre, disponibleOnline: disponibleOnline, disponibleVenta: disponibleVenta, idCategoria: idCategoria, unidadVenta: unidadVenta,
-            descripcion: descripcion, codigoInterno: codigoInterno);
+            descripcion: descripcion, codigoInterno: codigoInterno, idGrupo: idGrupo, idFamilia: idFamilia);
         await SembrarPrecioAsync(tienda.IdTenant, id, tienda.IdListaDefault, precio);
 
         return id;

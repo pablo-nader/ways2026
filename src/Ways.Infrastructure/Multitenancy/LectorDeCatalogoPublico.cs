@@ -25,8 +25,10 @@ public sealed class LectorDeCatalogoPublico(IServiceScopeFactory alcances) : ILe
             .ObtenerCatalogoAsync(consulta, ct);
 
         // Los combos viajan solo en la primera página sin búsqueda ni categoría: el visitante que filtra o pagina
-        // no los ve repetidos. Pagina es la ya acotada por la consulta.
-        if (catalogo is null || catalogo.Pagina != 1 || !string.IsNullOrWhiteSpace(consulta.Buscar) || consulta.IdCategoria is not null)
+        // no los ve repetidos. Pagina es la ya acotada por la consulta, y "sin búsqueda" lo decide la misma
+        // normalización que aplica el catálogo (una búsqueda que son solo caracteres de control no filtra nada).
+        if (catalogo is null || catalogo.Pagina != 1 || ConsultaDeCatalogoPublico.Normalizar(consulta.Buscar) is not null
+            || consulta.IdCategoria is not null)
         {
             return catalogo;
         }

@@ -515,7 +515,8 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté en la tienda.
   El listado, el detalle, el alta, la edición y la grilla del artículo informan `disponibleOnline`, `disponibleVenta` y
   `tieneImagen`. Las ofertas y los combos guardan su `disponibleOnline` por su POST y su PUT de siempre: el alta lo toma
-  como `true` si falta y la edición lo exige (`400 disponible_online_requerido`, después del 404).
+  como `true` si falta y la edición lo deja como estaba si falta (opcional en el PUT, omitido = sin cambios; solo lo
+  cambia si viene), de modo que un cliente anterior al campo sigue editando sin sacar nada de la tienda.
 - **Backstops** (`ManejadorDeErrores`): `ux_imagenes_articulo_articulo` → `409 imagen_duplicada` (inalcanzable por
   la API: la subida lee la imagen bajo el lock del artículo); `ck_imagenes_articulo_contenido` → `400
   imagen_no_admitida`.
@@ -540,12 +541,17 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   escalonadas y de familia a nivel carrito son del checkout. **Combos**: el catálogo suma `combos` solo en la primera
   página sin `buscar` ni `idCategoria` (`pagina = 1` ya acotada), vacío en cualquier otra consulta;
   `GET /api/publico/combos` (anónimo, mismo `Cache-Control` y mismo `404 vitrina_no_publicada`) los devuelve siempre:
-  `[{ id, codigo, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` ordenados por
-  nombre, con el precio fijo del combo y sin imagen propia. Un combo aparece si está disponible online, activo y vivo
+  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` ordenados por
+  nombre, con el precio fijo del combo y sin imagen propia (sin el `codigo` del combo: es el atajo de la caja y la tienda
+  no lo muestra). Un combo aparece si está disponible online, activo y vivo
   (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
   disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
   de `UnidadVenta.Unidad` (la única que el motor de combos de la venta online acepta; los componentes pesables dependen de
-  que aterrice el programa de combos pesables).
+  que aterrice el programa de combos pesables), y además ahorra: su precio redondeado al peso es estrictamente menor que
+  la suma de los precios de tienda de sus componentes por su cantidad (lista de la vitrina con la oferta online aplicada,
+  a cantidad 1), que es la condición con la que `ResolvedorDeCombos` lo aplica; uno que no ahorra no se ofrece. Divergencia
+  conocida: el motor de la venta calcula las ofertas con la cantidad real del carrito, así que un combo que gana contra el
+  precio a cantidad 1 puede no ganar contra una oferta escalonada, y al revés.
   `buscar` coincide solo con el nombre (el código interno no se publica en la respuesta, así que buscarlo sería un
   oráculo sobre un dato que la tienda no muestra), sin mayúsculas ni acentos (`BusquedaSinAcentos`); se le quitan los
   caracteres de control (un NUL llegaría a Postgres como error), se recorta y se acota a 100 caracteres, y un término que
@@ -562,14 +568,20 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   figura en los reportes, pero no se vende. Queda afuera de la instantánea del POS (web y escritorio la comparten), así
   que un combo que lo lleva como componente tampoco viaja (la regla de "todos los componentes vendibles" ya miraba los
   artículos de la instantánea; un componente familia sigue viajando mientras algún miembro se venda); de `GET
-  /api/articulos/escaneo`; de los candidatos de `GET /api/combos/{id}/cargable`; de la búsqueda de la caja
+  /api/articulos/escaneo` (salvo con `incluirNoVendibles=true`, la salida de una devolución: ver abajo); de los candidatos de `GET /api/combos/{id}/cargable`; de la búsqueda de la caja
   (`GET /api/articulos?soloVendibles=true`: el parámetro es opcional y su ausencia deja el listado de siempre, que
   usan las compras y el back-office); y de la tienda (la policy de `articulos`). `ReglaDeArticuloVendible` rechaza con `409
-  articulo_no_vendible` una línea de venta (`ServicioDeVentas.EmitirAsync`), de presupuesto o de remito (cada uno resuelve
-  su propio documento de venta y llama a la misma regla). Quedan fuera de la regla, como ya lo hace la de cantidades
-  por unidad de venta, la venta que un dispositivo ya cobró offline (`NumeroPreasignado`), la que sale de un
-  presupuesto ya emitido y la devolución (signo negativo): cambiar la bandera no reescribe lo ya vendido. Compras,
-  stock y reportes no la miran.
+  articulo_no_vendible` (con el nombre del artículo) una línea de venta (`ServicioDeVentas.EmitirAsync`), de presupuesto
+  o de remito al guardar el borrador, y otra vez cuando el documento se concreta, para que un borrador viejo no la
+  esquive: al convertir un presupuesto en venta, al emitir un remito y al facturar remitos (un remito emitido cuyo
+  artículo pasó a uso interno no se factura mientras siga así; se puede anular). Quedan fuera de la regla en la venta,
+  como ya lo hace la de cantidades por unidad de venta, la que un dispositivo ya cobró offline (`NumeroPreasignado`) y la
+  devolución (signo negativo): cambiar la bandera no reescribe lo ya vendido. Como una devolución puede ser de un
+  artículo que después pasó a uso interno, `GET /api/articulos/escaneo` y la búsqueda de la caja
+  (`soloVendibles=true`) aceptan `incluirNoVendibles=true`, que devuelve el artículo igual (el back-office lo usa para
+  una nota de crédito; no abre artículos inactivos). La instantánea del POS sigue excluyéndolo siempre: una devolución
+  offline de un artículo de uso interno no se puede hacer en el dispositivo y se resuelve desde el back-office.
+  Compras, stock y reportes no la miran.
 - **Baja de tenant**: `imagenes_articulo` entra al inventario de dependientes como `marcado` (un tenant con una
   imagen cargada no se puede dar de baja, igual que con vitrinas).
 

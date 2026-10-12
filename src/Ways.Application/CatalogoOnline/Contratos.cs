@@ -50,9 +50,10 @@ public record ArticuloPublico(
 public record ComponenteDeComboPublico(int IdArticulo, string Nombre, decimal Cantidad, long? ImagenVersion);
 
 /// <summary>Un combo de la tienda: <paramref name="Precio"/> es el precio fijo del conjunto. No tiene imagen propia;
-/// la tarjeta muestra las de sus componentes.</summary>
+/// la tarjeta muestra las de sus componentes. No lleva el código del combo: es el atajo de la caja y la tienda no lo
+/// muestra.</summary>
 public record ComboPublico(
-    int Id, int Codigo, string Nombre, decimal Precio, IReadOnlyList<ComponenteDeComboPublico> Componentes);
+    int Id, string Nombre, decimal Precio, IReadOnlyList<ComponenteDeComboPublico> Componentes);
 
 /// <summary><paramref name="Combos"/> solo se llena en la primera página sin búsqueda ni categoría (<c>pagina = 1</c>,
 /// sin <c>buscar</c> y sin <c>idCategoria</c>); en cualquier otra consulta es una lista vacía, para que el visitante

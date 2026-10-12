@@ -59,6 +59,13 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   is the combo's fixed price. The storefront cart gets a `combo` line type; the checkout
   (later) re-detects combos server-side with `CombosEnVenta`.
 
+- The shared engines (`ServicioDeOfertas.ConstruirContextoAsync`, `ServicioDeCombos.CargarCandidatosParaVentaAsync`) do
+  not filter `disponible_online`. The future `pedidos-online` checkout MUST price with online-only offers and combos (a
+  parameter or a dedicated context), otherwise the charged price can differ from the storefront.
+- A return of an internal-use article (`disponible_venta = false`) is exempt from the sale rule in `EmitirAsync`, so the
+  back office can find the article with `incluirNoVendibles=true` on `/escaneo` and on the sale search. The POS snapshot
+  stays exclusive: an offline return of an internal-use article is not possible on the device and needs the back office.
+
 ## Tasks
 
 - [x] **T1 — Backend: flags, policies, POS and sale enforcement, public offers and combos.**
@@ -68,14 +75,15 @@ in the storefront (member choice needs its own UI), online checkout (`pedidos-on
   - Domain/DTOs: `Articulo.DisponibleOnline`/`DisponibleVenta`, `Oferta.DisponibleOnline`,
     `Combo.DisponibleOnline`; listing/grid/detail DTOs rename `publicadoWeb` → `disponibleOnline`
     and add `disponibleVenta`; `OfertaListado`/`AltaOferta`/`EdicionOferta` and the combo
-    contracts carry `disponibleOnline` (default true when omitted on create; required on edit).
+    contracts carry `disponibleOnline` (default true when omitted on create; optional on edit,
+    omitted = unchanged, since judgment-day round 1).
   - Admin: `PUT /api/articulos/{id}/disponibilidad { disponibleVenta, disponibleOnline }` replaces
     `PUT .../web` (same discipline: 404-first, no-retry, lock, idempotent); offers and combos
     save the flag through their existing POST/PUT.
   - Sale enforcement: POS snapshot, `/escaneo`, sale search, `EmitirAsync` 409
     `articulo_no_vendible`, presupuestos reuse the same guard if they share the line validation.
   - Public: `GET /api/publico/catalogo` returns `precio` (final) and `precioOriginal` (when an
-    available offer applies) plus `oferta` (name) per article; `combos: [{ id, codigo, nombre,
+    available offer applies) plus `oferta` (name) per article; `combos: [{ id, nombre,
     precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` on the first
     unfiltered page (and `GET /api/publico/combos` for the storefront). Public image of a combo:
     none (cards show component images).
@@ -142,7 +150,7 @@ Mutation evidence (mutate, run the named class, revert; every row went red in th
 | presupuesto / remito without the rule | `ArticulosNoVendiblesTests.UnPresupuestoYUnRemito...` |
 | disponibilidad: no row lock / validation before 404 / writes when unchanged / ignores either flag / retrying strategy | `CatalogoOnlineAdminTests` (`...PierdeContraLaBaja...`, `...Da404AntesQueLaValidacion...`, `PedirLaMismaDisponibilidad...`, `CambiarLaDisponibilidad...`, `UnaFallaTransitoria...`) |
 | article DTOs with the two flags swapped in the detail, the list and the grid (three runs) | `CatalogoOnlineAdminTests.CambiarLaDisponibilidad...` |
-| ofertas / combos: create ignores the flag, edit does not persist it, list does not report it, edit accepts a missing flag, 400 before 404 | `OfertasYCombosDisponibleOnlineTests` |
+| ofertas / combos: create ignores the flag, edit does not persist it, list does not report it (the round-0 mutants "edit accepts a missing flag" and "400 before 404" no longer exist: see round 1, L1) | `OfertasYCombosDisponibleOnlineTests` |
 
 Survivor, explained: `ServicioDeArticulos.ListarAsync(soloVendibles = true)` as the DEFAULT of the parameter. The only HTTP caller
 passes the query value explicitly (`soloVendibles ?? false`), so the mutant is unobservable through the API; the other caller
@@ -151,6 +159,45 @@ passes the query value explicitly (`soloVendibles ?? false`), so the mutant is u
 Dead clauses removed instead of shipped: two guards in the public queries were redundant with a neighbour (the
 `PrecioFinal < PrecioOriginal` test next to "first applied offer that discounts" and the `IdFamilia == null` test next to
 "the component has an article that is in the dictionary"); the mutation run showed the survivors and they were deleted.
+
+### Judgment-day round 1 fixes (L1-L8)
+
+Route: delegated fix actor (one). Commits: `d5c526f4` (L1 to L3), and the second commit of this round (L4 to L8 plus docs).
+
+- L1: `PUT` of offers and combos with `disponibleOnline` omitted keeps the stored value, `disponible_online_requerido` removed from
+  both services. Tests `OfertasYCombosDisponibleOnlineTests` (stored `false` and stored `true` both kept, the rest of the body
+  applied, 404 for a missing or soft-deleted id; the raw-JSON combo PUT is 200 and keeps `true`).
+- L2: `incluirNoVendibles` on `/escaneo` (both branches, `activo` still required) and on the sale search. Tests in
+  `ArticulosNoVendiblesTests`.
+- L3: the rule at presupuesto conversion, remito emission and remito invoicing. Tests `ConvertirUnPresupuestoViejo...`,
+  `EmitirUnRemitoViejo...`, `FacturarUnRemito...`, each with the control that sells again once the article is sellable.
+- L4: `ConsultaDeCombosPublicos` excludes a combo that does not save; the shared price path is
+  `ConsultaDeCatalogoPublico.PreciosFinalesAsync`. Tests `UnComboSoloFiguraSiCobraMenosQue...` and
+  `ConUnaListaDerivadaElAhorroSeMideContraElPrecioDerivado`; the existing combo fixtures that did not save were repriced.
+- L5: `ComboPublico.Codigo` removed; the exact-shape assertion of the endpoint JSON no longer lists `codigo`.
+- L6: `CatalogoPublicoOfertasTests` for the `grupo` and `familia` scopes, the hour window and the weekday (the seed helper grew
+  `idGrupo`, `idFamilia`, `horaDesde`, `horaHasta`, `diasSemana`). The hour and weekday tests derive their expectation from the
+  local clock (the morning/afternoon pair always has exactly one winner), so they are not time dependent.
+- L7: `LectorDeCatalogoPublico` decides "no search" with `ConsultaDeCatalogoPublico.Normalizar` (now public); `?buscar=%01` and
+  `?buscar=%01%02%20` carry the combos like an unfiltered page.
+- L8: the constraint about the shared engines was added to Constraints.
+
+Mutation evidence (mutate, run the named class, revert; every row red in the named test, green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| offer PUT `?? stored` replaced by `?? true` / `?? false` | `OfertasYCombosDisponibleOnlineTests.EditarUnaOfertaSinDisponibleOnlineConserva...` (both runs) |
+| combo PUT `?? stored` replaced by `?? true` / `?? false` | `...EditarUnComboSinDisponibleOnlineConserva...` (and, for `false`, `SinElCampo...ElJsonCrudo...`) |
+| `/escaneo` without `incluirNoVendibles` in the internal-code branch / in the barcode branch / ignoring `activo` | `ArticulosNoVendiblesTests.ElEscaneoConIncluirNoVendibles...` (three runs) |
+| sale search without the `incluirNoVendibles` override / `/escaneo` endpoint ignoring the parameter | `...LaBusquedaConIncluirNoVendibles...` / `...ElEscaneoConIncluirNoVendiblesResuelve...` |
+| conversion exempt again from the rule | `...ConvertirUnPresupuestoViejo...` |
+| rule also applied to offline sales (`NumeroPreasignado`) | `...LaVentaOfflineYaCobradaSeAcepta...` (pre-existing test) |
+| remito emission without the rule / remito invoicing without the rule | `...EmitirUnRemitoViejo...` / `...FacturarUnRemito...` |
+| combo saving test `<=` / no peso rounding / no component quantity / filter removed / offers ignored / derived list ignored (six runs) | `CombosPublicosTests.UnComboSoloFiguraSiCobraMenos...`, `...ConUnaListaDerivadaElAhorro...`, `ElCatalogoYElEndpointDanLosMismosCombos` |
+| lector with `IsNullOrWhiteSpace` | `CombosPublicosTests.ElCatalogoLlevaLosCombosSoloEnLaPrimeraPaginaSinFiltros` |
+| offers: no `grupo` clause / group not wired / no `familia` clause / family not wired / hour shifted 12 h / weekday shifted one (six runs) | `CatalogoPublicoOfertasTests.UnaOfertaDeGrupo...`, `...UnaOfertaDeFamilia...`, `...LaVentanaHoraria...`, `...LosDiasDeSemana...` |
+
+L5 has no separate mutant: the field is removed from the record, and the exact-shape assertion over the endpoint JSON is the guard.
 
 ### Deviations from the brief
 
@@ -162,17 +209,22 @@ Dead clauses removed instead of shipped: two guards in the public queries were r
    articles (one published, two with the old default, one soft-deleted), migrates to HEAD and asserts every row has both flags
    `true`, the old column and index are gone, the four new policies exist, and `ways_app` in public mode now sees the three live
    rows (it saw one before). Mutation-proven above.
-2. **`EdicionOferta.DisponibleOnline` and `EdicionCombo.DisponibleOnline` are `bool?`** (the precedent of `EdicionCombo.Activo`) so
-   a missing JSON key is a `400 disponible_online_requerido` raised after the 404, instead of silently reading as `false` and
-   taking the offer or combo off the storefront. Consequence: every client that PUTs an offer or a combo must send the field;
-   the web (T2) has to, and an old web talking to this backend gets 400 on offer/combo edits until T2 lands. The other
-   existing PUT-body tests were adapted.
+2. **`EdicionOferta.DisponibleOnline` and `EdicionCombo.DisponibleOnline` are `bool?` and OPTIONAL on edit** (judgment-day L1).
+   The first version made them required (`400 disponible_online_requerido`), which broke every client that PUTs an offer or a
+   combo without the field (the deployed web until T2 lands). Now a missing JSON key keeps the stored value (the service reads
+   `datos.DisponibleOnline ?? stored`, under the row lock, from the single locked read) and a present one is applied; the
+   precedent is `EdicionCombo.Activo`'s nullability, minus the 400. The code `disponible_online_requerido` is gone from offers
+   and combos (it remains only on `PUT /api/articulos/{id}/disponibilidad`, a new endpoint where both flags are required).
+   T2 may still always send the field.
 3. **The sale rule is shared by three documents, not only `EmitirAsync`.** They do not share a line-validation helper, so
    `ReglaDeArticuloVendible.Exigir` (pure, `Ways.Domain.Articulos`) is called from `ServicioDeVentas.EmitirAsync`, from
    `ServicioDePresupuestos.ResolverYMaterializarAsync` and from `ServicioDeRemitos.ResolverYMaterializarAsync` (create/edit of
-   the draft). In `EmitirAsync` it sits under the same condition as the unit-of-sale quantity rule: not for a sale a device
-   already charged offline (`NumeroPreasignado`), not for a conversion from a presupuesto, not for returns (negative sign).
-   Remito emission and invoicing a remito do not re-check (the lines were validated when the draft was saved).
+   the draft). Judgment-day L3 closed the old-draft bypass: the rule is exercised again when the document is concretized,
+   in `EmitirAsync` when a presupuesto is converted (`IdPresupuestoOrigen`), in `ServicioDeRemitos.EmitirAsync` and in
+   `ServicioDeFacturacionDeRemitos.FacturarAsync` (a remito already emitted whose article became internal-use is not invoiced
+   while it stays so; it can still be annulled). In `EmitirAsync` the rule is exempt only for a sale a device already charged
+   offline (`NumeroPreasignado`) and for returns (negative sign); the quantity-by-unit rule keeps its three exemptions. The 409
+   message names the article (name and internal code).
 4. **The sale search is `GET /api/articulos?soloVendibles=true`** (new optional parameter of the generic listing, the one
    `ModalDeBusquedaDeArticulos` uses for the POS). Until T2/T3 send it, the POS search still lists internal-use articles; the sale
    itself is rejected by the 409 either way, the snapshot and `/escaneo` already exclude them.
@@ -193,7 +245,7 @@ Dead clauses removed instead of shipped: two guards in the public queries were r
 Renamed or removed:
 - `PUT /api/articulos/{id}/web { publicado }` is GONE; use `PUT /api/articulos/{id}/disponibilidad { disponibleVenta, disponibleOnline }`
   (both required, response `{ idArticulo, disponibleVenta, disponibleOnline }`; `400 disponible_venta_requerido` /
-  `400 disponible_online_requerido`).
+  `400 disponible_online_requerido`; this is the only place the latter code survives).
 - Article DTOs (`ArticuloListado` in list, detail, create and edit responses; `ArticuloGrillaFila` in the grid): `publicadoWeb` is
   now `disponibleOnline` (default `true`) and there is a new `disponibleVenta` (default `true`). The create (`AltaArticulo`) and
   edit (`EdicionArticulo`) bodies do NOT carry them: they are written only by the `/disponibilidad` endpoint.
@@ -202,17 +254,25 @@ Renamed or removed:
 
 Added:
 - `OfertaListado.disponibleOnline`, `AltaOferta.disponibleOnline` (optional, default `true`), `EdicionOferta.disponibleOnline`
-  (REQUIRED, `400 disponible_online_requerido`).
+  (OPTIONAL: omitted = unchanged; T2 may always send it).
 - `ComboListado.disponibleOnline`, `AltaCombo.disponibleOnline` (optional, default `true`), `EdicionCombo.disponibleOnline`
-  (REQUIRED, `400 disponible_online_requerido`).
+  (OPTIONAL: omitted = unchanged; T2 may always send it).
 - `GET /api/articulos?soloVendibles=true` (the POS search should send it; purchases and the back-office must not).
-- `409 articulo_no_vendible` from `POST /api/ventas`, `POST/PUT /api/presupuestos` and `POST/PUT /api/remitos`.
+- `incluirNoVendibles=true` (optional) on `GET /api/articulos/escaneo` and on `GET /api/articulos?soloVendibles=true`: returns the
+  internal-use article anyway (returns/notas de crédito from the back office; still requires `activo`). The POS snapshot stays
+  exclusive: an offline return of an internal-use article is not possible on the device and needs the back office.
+- `409 articulo_no_vendible` from `POST /api/ventas` (also when converting a presupuesto), `POST/PUT /api/presupuestos`,
+  `POST/PUT /api/remitos`, `POST /api/remitos/{id}/emitir` and `POST /api/remitos/facturacion`.
 - `GET /api/publico/catalogo`: articles gain optional `precioOriginal` (decimal) and `oferta` (string), both ABSENT (not `null`)
   when no offer lowers the price; `precio` is the final price. The response gains `combos` (always present, `[]` unless the request is
   `pagina = 1` with no `buscar` and no `idCategoria`).
 - `GET /api/publico/combos` (anonymous, `Cache-Control: public, max-age=60`, `404 vitrina_no_publicada`):
-  `[{ id, codigo, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. A combo has no
-  image of its own: use `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components.
+  `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]`, sorted by name. There is NO `codigo`
+  (it is the POS shortcut: T3 must not show "C<codigo>"). A combo has no image of its own: use
+  `GET /api/publico/articulos/{idArticulo}/imagen?v=<imagenVersion>` of its components. Only combos that save are listed: the
+  combo's price rounded to the peso must be strictly lower than the sum of its components' storefront prices (list price with the
+  available online offer, quantity 1) times their quantity, mirroring `ResolvedorDeCombos` (`cobro >= costo con ofertas` is never
+  applied). Small known divergence: the engine prices offers with the real cart quantity, the storefront at quantity 1.
 - The storefront never sees articles with `disponible_venta = false`, so a `combo` cart line must reference only listed combos;
   the checkout (later) re-detects combos server-side.
 
@@ -226,4 +286,4 @@ Added:
 
 ## Next step
 
-T2 (web admin), stacked on T1. T1 is merged after the judgment-day round the owner's protocol requires.
+Scoped re-judgment of the L1-L8 fixes, then T2 (web admin), stacked on T1. T1 is merged after a clean judgment-day round.

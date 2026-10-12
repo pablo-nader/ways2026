@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
+using Ways.Domain.Dinero;
 
 namespace Ways.Application.CatalogoOnline;
 
@@ -17,6 +18,13 @@ namespace Ways.Application.CatalogoOnline;
 /// venden por <see cref="UnidadVenta.Unidad"/>: es la única unidad que el motor de combos de la venta online acepta,
 /// así que un combo con un componente pesable no se ofrece. El precio es el fijo del combo, sin pasar por la lista ni
 /// por las ofertas. Un combo sin componentes tampoco figura. Ordenados por nombre.</para>
+///
+/// <para>Un combo solo se ofrece si ahorra: su precio redondeado al peso tiene que ser estrictamente menor que la suma
+/// de los precios de tienda de sus componentes por su cantidad, como exige <see cref="Domain.Combos.ResolvedorDeCombos"/>
+/// para aplicarlo (<c>cobro &gt;= costo con ofertas</c> lo descarta). El precio de tienda de un componente es el que
+/// muestra el catálogo (lista de la vitrina con la oferta online aplicada, a cantidad 1). Divergencia chica y
+/// conocida: el motor de la venta calcula las ofertas con la cantidad real del carrito, así que un combo que gana
+/// contra el precio a cantidad 1 puede no ganar contra una oferta escalonada, y al revés.</para>
 /// </summary>
 public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj, ConsultaDeCatalogoPublico catalogo)
 {
@@ -29,8 +37,8 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
             return null;
         }
 
-        var idLista = await ListaDeLaTiendaAsync(idEmpresa, ct);
-        if (idLista is null)
+        var lista = await ListaDeLaTiendaAsync(idEmpresa, ct);
+        if (lista is null)
         {
             return [];
         }
@@ -38,7 +46,7 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
         var combos = await db.Combos
             .AsNoTracking()
             .Where(c => c.IdEmpresa == null || c.IdEmpresa == idEmpresa)
-            .Select(c => new { c.Id, c.Codigo, c.Nombre, c.Precio })
+            .Select(c => new { c.Id, c.Nombre, c.Precio })
             .ToListAsync(ct);
 
         if (combos.Count == 0)
@@ -56,7 +64,7 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
 
         var idsArticulo = componentes.Where(m => m.IdArticulo != null).Select(m => m.IdArticulo!.Value).Distinct().ToList();
         var ahora = reloj.Ahora;
-        var idsLista = idLista.Value;
+        var idsLista = lista.IdListaConPrecios;
 
         var articulos = (await db.Articulos
                 .AsNoTracking()
@@ -69,6 +77,9 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
                 {
                     a.Id,
                     a.Nombre,
+                    a.IdCategoria,
+                    a.IdGrupo,
+                    a.IdFamilia,
                     ImagenActualizadaEn = db.ImagenesArticulo
                         .Where(i => i.IdArticulo == a.Id)
                         .Select(i => (DateTimeOffset?)i.ActualizadoEn)
@@ -76,6 +87,10 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
                 })
                 .ToListAsync(ct))
             .ToDictionary(a => a.Id);
+
+        var precios = await catalogo.PreciosFinalesAsync(
+            [.. articulos.Values.Select(a => new ConsultaDeCatalogoPublico.DimensionesDeArticulo(a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia))],
+            lista, idEmpresa, ahora, ct);
 
         var componentesPorCombo = componentes.ToLookup(m => m.IdCombo);
 
@@ -85,12 +100,12 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
                 .Select(c => (Combo: c, Componentes: componentesPorCombo[c.Id].ToList()))
                 // Un componente familia tiene IdArticulo nulo (CHECK de exclusividad), así que no figura en el diccionario.
                 .Where(x => x.Componentes.Count > 0
-                    && x.Componentes.All(m => m.IdArticulo is { } id && articulos.ContainsKey(id)))
+                    && x.Componentes.All(m => m.IdArticulo is { } id && articulos.ContainsKey(id))
+                    && Ahorra(x.Combo.Precio, x.Componentes.Select(m => (m.IdArticulo!.Value, m.Cantidad)), precios))
                 .OrderBy(x => x.Combo.Nombre, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.Combo.Id)
                 .Select(x => new ComboPublico(
                     x.Combo.Id,
-                    x.Combo.Codigo,
                     x.Combo.Nombre,
                     x.Combo.Precio,
                     [
@@ -108,7 +123,27 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
         ];
     }
 
-    private async Task<int?> ListaDeLaTiendaAsync(int idEmpresa, CancellationToken ct)
+    /// <summary>La condición de <see cref="Domain.Combos.ResolvedorDeCombos"/>: lo que cobra el combo (redondeado al peso)
+    /// es menor que lo que costarían sus componentes sueltos. Un componente sin precio de tienda descarta al combo.</summary>
+    private static bool Ahorra(
+        decimal precioDelCombo, IEnumerable<(int IdArticulo, decimal Cantidad)> componentes,
+        IReadOnlyDictionary<int, decimal> precios)
+    {
+        var costo = 0m;
+        foreach (var (idArticulo, cantidad) in componentes)
+        {
+            if (!precios.TryGetValue(idArticulo, out var precio))
+            {
+                return false;
+            }
+
+            costo += precio * cantidad;
+        }
+
+        return RedondeoDePeso.APesoEntero(precioDelCombo) < costo;
+    }
+
+    private async Task<ConsultaDeCatalogoPublico.ListaDePrecios?> ListaDeLaTiendaAsync(int idEmpresa, CancellationToken ct)
     {
         var vitrina = await db.Vitrinas.AsNoTracking().Select(v => new { v.IdListaPrecio }).FirstOrDefaultAsync(ct);
         if (vitrina is null)
@@ -116,6 +151,6 @@ public class ConsultaDeCombosPublicos(IWaysDbContext db, IRelojDelSistema reloj,
             return null;
         }
 
-        return (await catalogo.ResolverListaAsync(idEmpresa, vitrina.IdListaPrecio, ct))?.IdListaConPrecios;
+        return await catalogo.ResolverListaAsync(idEmpresa, vitrina.IdListaPrecio, ct);
     }
 }
