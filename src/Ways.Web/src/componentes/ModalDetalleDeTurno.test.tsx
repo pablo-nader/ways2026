@@ -157,11 +157,11 @@ describe('ModalDetalleDeTurno', () => {
     expect(within(dialogo).getByText('Fondo inicial').nextElementSibling).toHaveTextContent('$ 500,00')
 
     const efectivo = within(dialogo).getByText('Efectivo').closest('tr') as HTMLElement
-    expect(within(efectivo).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Efectivo', '$ 1.000,00', '$ 900,00', '-$ 100,00'])
+    expect(within(efectivo).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Efectivo', '$ 1.000,00', '$ 900,00', '$ 100,00'])
     const tarjeta = within(dialogo).getByText('Tarjeta').closest('tr') as HTMLElement
-    expect(within(tarjeta).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Tarjeta', '$ 500,00', '$ 550,00', '+$ 50,00'])
+    expect(within(tarjeta).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Tarjeta', '$ 500,00', '$ 550,00', '-$ 50,00'])
     const totales = dialogo.querySelector('tfoot tr') as HTMLElement
-    expect(within(totales).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Total', '$ 1.500,00', '$ 1.450,00', '-$ 50,00'])
+    expect(within(totales).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Total', '$ 1.500,00', '$ 1.450,00', '$ 50,00'])
 
     expect(within(dialogo).getByText('0007-00000001')).toBeInTheDocument()
     expect(within(dialogo).getByText('Sueldos')).toBeInTheDocument()
@@ -203,6 +203,24 @@ describe('ModalDetalleDeTurno', () => {
     await within(dialogo).findByText('jperez')
     expect(within(dialogo).getByText('Medio #1')).toBeInTheDocument()
     expect(within(dialogo).getByText('Medio #2')).toBeInTheDocument()
+  })
+
+  /** Misma convención que el cierre en `CierreDeCaja.tsx`: `diferencia` del servidor tal cual (esperado - declarado, positivo = faltante), sin negar ni colorear. */
+  it('la diferencia es la del servidor sin cambiar de signo, y el esperado original de un recálculo se muestra bajo el esperado', async () => {
+    mockearRutas(
+      rutasDe(501, {
+        turno: turnoFixture({
+          arqueos: [{ idMedioPago: 1, importeEsperado: 1000, importeDeclarado: 1030, diferencia: -30, importeEsperadoOriginal: 1200 }],
+        }),
+      }),
+    )
+    render(<ModalDetalleDeTurno idTurno={501} onCerrar={vi.fn()} />)
+
+    const dialogo = await screen.findByRole('dialog')
+    const fila = (await within(dialogo).findByText('Efectivo')).closest('tr') as HTMLElement
+    const celdas = within(fila).getAllByRole('cell')
+    expect(celdas[3]).toHaveTextContent(/^-\$ 30,00$/)
+    expect(celdas[1]).toHaveTextContent('Esperado original: $ 1.200,00')
   })
 
   it('un turno sin medios arqueados lo dice en lugar de mostrar una tabla vacía', async () => {

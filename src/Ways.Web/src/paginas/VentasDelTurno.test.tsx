@@ -644,7 +644,7 @@ describe('VentasDelTurno — anulación', () => {
 })
 
 describe('VentasDelTurno — acciones con ícono y confirmación en modal', () => {
-  it('las acciones de la fila son botones con ícono cuyo nombre accesible es su tooltip, y no queda ningún botón con el texto anterior', async () => {
+  it('las acciones de la fila son botones con ícono cuyo nombre accesible es su tooltip', async () => {
     mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 50, numeroVisible: '0007-00000050' })] })
     usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
     render(<VentasDelTurno alReimprimir={vi.fn()} />)
@@ -652,9 +652,6 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
     await screen.findByText('0007-00000050')
     for (const nombre of ['Actualizar', 'Detalle', 'Anular', 'Imprimir', 'Limpiar filtros']) {
       expect(screen.getByRole('button', { name: nombre })).toHaveAttribute('title', nombre)
-    }
-    for (const viejo of ['Refrescar', 'Reimprimir']) {
-      expect(screen.queryByRole('button', { name: viejo })).not.toBeInTheDocument()
     }
   })
 
@@ -760,11 +757,10 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
   })
 
   /**
-   * Cláusula bajo prueba: la compuerta de generación de `confirmarAnular`. Un cambio de punto de
-   * venta con la anulación en vuelo arranca una carga nueva; la respuesta tardía no debe cerrar el
-   * modal ni releer el listado del turno anterior, pero la ventana inerte sí debe terminar.
+   * Cláusulas bajo prueba: el cierre de la confirmación al cambiar el contexto (`cargarTurnoYVentas`
+   * limpia `filaAAnular`) y la compuerta de generación de `confirmarAnular`.
    */
-  it('una respuesta de anulación tardía, de un turno que ya cambió, no cierra el modal ni relee el listado, y libera los botones', async () => {
+  it('si el punto de venta cambia con la anulación en vuelo, el modal se cierra y la respuesta tardía no relee el listado viejo', async () => {
     const venta = ventaFixture({ id: 57 })
     mockearRutas({ turno: turnoFixture(), ventas: [venta] })
     const { rerender } = render(<VentasDelTurno />)
@@ -778,20 +774,64 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
         }),
     )
     await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
-    const listadosAntes = apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+    const listados = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+    const listadosAntes = listados()
 
     estadoDePuntoVenta = { ...estadoDePuntoVenta, puntoVenta: puntoVentaFixture({ id: 8 }) }
     rerender(<VentasDelTurno />)
-    await waitFor(() =>
-      expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length).toBeGreaterThan(listadosAntes),
-    )
-    const listadosConLaCargaNueva = apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(listados()).toBeGreaterThan(listadosAntes))
+    const listadosConLaCargaNueva = listados()
 
     resolverAnulacion({ ...venta, estado: 'Anulado' })
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled())
-    expect(screen.getByRole('dialog', { name: 'Confirmar anulación' })).toBeInTheDocument()
-    expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length).toBe(listadosConLaCargaNueva)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actualizar' })).toBeEnabled())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(listados()).toBe(listadosConLaCargaNueva)
+  })
+
+  it('el error de una anulación fallida se anuncia con role="alert" y el foco queda dentro del modal, en "Cancelar"', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 58 })] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Confirmar anulación' })
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent('El turno ya está cerrado.')
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toHaveFocus())
+  })
+})
+
+describe('VentasDelTurno — "Imprimir" en el modal de detalle', () => {
+  it('es un botón con ícono y texto visible "Imprimir"; mientras busca el comprobante queda deshabilitado, ocupado y con el mismo nombre', async () => {
+    const venta = ventaFixture({ id: 59, numeroVisible: '0007-00000059' })
+    let ciclo = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoFixture())
+      if (ruta.startsWith('/ventas/por-turno/')) return Promise.resolve([venta])
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo])
+      if (ruta === '/ventas/59') return ciclo === 0 ? Promise.resolve(comprobanteFixture({ id: 59, numeroVisible: '0007-00000059' })) : new Promise(() => undefined)
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    render(<VentasDelTurno alReimprimir={vi.fn()} />)
+    await screen.findByText('0007-00000059')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+    const dialogo = await screen.findByRole('dialog')
+    await within(dialogo).findByText('Coca Cola 1L')
+    const imprimir = within(dialogo).getByRole('button', { name: 'Imprimir' })
+    expect(imprimir).toHaveTextContent('Imprimir')
+    expect(imprimir.querySelector('svg')).toBeInTheDocument()
+
+    ciclo = 1
+    await userEvent.click(imprimir)
+
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Imprimir' })).toHaveAttribute('aria-busy', 'true'))
+    expect(within(dialogo).getByRole('button', { name: 'Imprimir' })).toBeDisabled()
   })
 })
 
@@ -1093,7 +1133,6 @@ describe('VentasDelTurno — reimprimir', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
     await screen.findByRole('dialog')
     expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
   it('con alReimprimir provisto, una venta Anulada nunca ofrece imprimir (fila ni modal)', async () => {
@@ -1109,7 +1148,6 @@ describe('VentasDelTurno — reimprimir', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
     await screen.findByRole('dialog')
     expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
   it('"Imprimir" de la fila busca el comprobante y llama a la prop con el comprobante y los medios', async () => {
@@ -1125,7 +1163,7 @@ describe('VentasDelTurno — reimprimir', () => {
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
   })
 
-  it('"Reimprimir" desde el modal de detalle SIEMPRE vuelve a pedir el comprobante (nunca reusa comprobanteDetalle) — JD-E1-2', async () => {
+  it('"Imprimir" desde el modal de detalle SIEMPRE vuelve a pedir el comprobante (nunca reusa comprobanteDetalle) — JD-E1-2', async () => {
     const venta = ventaFixture({ id: 43, numeroVisible: '0007-00000043' })
     const comprobante = comprobanteFixture({ id: 43, numeroVisible: '0007-00000043' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 43: comprobante } })
@@ -1138,9 +1176,9 @@ describe('VentasDelTurno — reimprimir', () => {
 
     const cantidadDeGetsAntes = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/ventas/43').length
 
-    // Dos botones "Reimprimir" en pantalla (fila + modal, la fila queda deshabilitada mientras el
+    // Dos botones "Imprimir" en pantalla (fila + modal, la fila queda deshabilitada mientras el
     // modal está abierto) — se scopea al del modal.
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Imprimir' }))
 
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
     // La venta pudo anularse DESPUÉS de abrir el detalle — reusar `comprobanteDetalle` imprimiría
@@ -1162,18 +1200,18 @@ describe('VentasDelTurno — reimprimir', () => {
     render(<VentasDelTurno alReimprimir={alReimprimir} />)
 
     await screen.findByText('0007-00000046')
-    // Emitida en el listado — el botón "Reimprimir" está visible antes de la búsqueda fresca.
+    // Emitida en el listado — el botón "Imprimir" está visible antes de la búsqueda fresca.
     expect(screen.getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
 
     await screen.findByText('La venta fue anulada, no se puede reimprimir.')
     expect(alReimprimir).not.toHaveBeenCalled()
-    // La fila se refresca con el estado real: el badge pasa a Anulada y "Reimprimir" desaparece.
+    // La fila se refresca con el estado real: el badge pasa a Anulada y "Imprimir" desaparece.
     expect(await screen.findByText('Anulada', { selector: 'span' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
   })
 
-  it('modal: si el detalle ya cargado dice Emitida pero el GET fresco de "Reimprimir" dice Anulada, no imprime — el modal se refresca (badge y botón) — JD-E1-2', async () => {
+  it('modal: si el detalle ya cargado dice Emitida pero el GET fresco de "Imprimir" dice Anulada, no imprime — el modal se refresca (badge y botón) — JD-E1-2', async () => {
     const venta = ventaFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Emitido' })
     const comprobanteEmitidoInicial = comprobanteFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Emitido' })
     mockearRutas({
@@ -1190,7 +1228,7 @@ describe('VentasDelTurno — reimprimir', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
 
-    // La venta se anula DESPUÉS de que el detalle ya cargó — el próximo GET (el de "Reimprimir")
+    // La venta se anula DESPUÉS de que el detalle ya cargó — el próximo GET (el de "Imprimir")
     // trae el estado real.
     const comprobanteAnuladoFresco = comprobanteFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Anulado' })
     mockearRutas({
@@ -1200,14 +1238,14 @@ describe('VentasDelTurno — reimprimir', () => {
       comprobantes: { 47: comprobanteAnuladoFresco },
     })
 
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Imprimir' }))
 
     await within(dialog).findByText('La venta fue anulada, no se puede reimprimir.')
     expect(alReimprimir).not.toHaveBeenCalled()
-    // El modal se refresca con el comprobante real: el badge pasa a Anulada y "Reimprimir" ya no
+    // El modal se refresca con el comprobante real: el badge pasa a Anulada y "Imprimir" ya no
     // se ofrece (no tiene sentido reimprimir algo que se acaba de confirmar anulado).
     expect(within(dialog).getByText('Anulada', { selector: 'span' })).toBeInTheDocument()
-    expect(within(dialog).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
   })
 
   it('mientras busca el comprobante el botón "Imprimir" queda deshabilitado y ocupado con el mismo nombre, y un error visible si falla', async () => {

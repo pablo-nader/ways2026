@@ -97,7 +97,8 @@ const TRAZADOS: Record<IconoDeAccion, ReactNode> = {
   ),
 }
 
-function Icono({ icono }: { icono: IconoDeAccion }) {
+/** El mismo trazado de los botones de ícono, para los botones que además llevan texto visible. */
+export function Icono({ icono }: { icono: IconoDeAccion }) {
   return (
     <svg
       width="16"
@@ -129,8 +130,8 @@ type PropsBase = {
 
 export type PropsBotonIcono = PropsBase &
   Omit<ComponentProps<'button'>, 'children' | 'aria-label'> & {
-    /** Hay una operación en curso: marca `aria-busy` y hace girar el ícono. El nombre y el tooltip no
-     * cambian, así que quien usa lector de pantalla no ve un botón que se renombra a mitad de camino. */
+    /** Hay una operación en curso: marca `aria-busy`, y solo el ícono de actualizar gira. El nombre y el
+     * tooltip no cambian, así que quien usa lector de pantalla no ve un botón que se renombra a mitad de camino. */
     ocupado?: boolean
   }
 
@@ -142,7 +143,7 @@ export function BotonIcono({ icono, etiqueta, className, title, type = 'button',
     <button
       {...resto}
       type={type}
-      className={clases(icono, ocupado ? [className, 'btn-icono-ocupado'].filter(Boolean).join(' ') : className)}
+      className={clases(icono, ocupado && icono === 'actualizar' ? [className, 'btn-icono-ocupado'].filter(Boolean).join(' ') : className)}
       aria-label={nombre}
       aria-busy={ocupado || undefined}
       title={title ?? ETIQUETA_POR_DEFECTO[icono]}

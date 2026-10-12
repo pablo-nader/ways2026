@@ -8,7 +8,7 @@ import { ROL } from '../api/tipos'
 import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, TurnoResumen, VentaDeTurnoListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
-import { BotonIcono } from '../componentes/BotonIcono'
+import { BotonIcono, Icono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
@@ -123,11 +123,13 @@ function ModalDetalleDeVenta({
           {puedeReimprimirAca && (
             <button
               type="button"
-              className="btn btn-outline-secondary"
+              className="btn btn-outline-secondary d-inline-flex align-items-center gap-2"
+              aria-busy={reimprimiendo || undefined}
               disabled={cargando || reimprimiendo}
               onClick={onReimprimir}
             >
-              {reimprimiendo ? 'Reimprimiendo…' : 'Reimprimir'}
+              <Icono icono="imprimir" />
+              Imprimir
             </button>
           )}
           <button type="button" className="btn btn-secondary" onClick={onCerrar}>
@@ -232,7 +234,7 @@ function ModalDetalleDeVenta({
 
 type Props = {
   /** Reimpresión de escritorio (stage-desktop-pos): definido ⇒ el shell sabe imprimir — sin él,
-   * ni la fila ni el modal de detalle ofrecen "Reimprimir" (spec: la acción solo existe si hay
+   * ni la fila ni el modal de detalle ofrecen "Imprimir" (spec: la acción solo existe si hay
    * quién la sirva, nunca un botón que no hace nada). `medios` va junto al comprobante porque
    * `ticketDeVenta`/`algunPagoEnEfectivo` los necesitan para resolver nombre y comportamiento de
    * cada pago — la propia pantalla ya los tiene cargados para el modal de detalle. */
@@ -276,6 +278,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   const [filaAAnular, setFilaAAnular] = useState<VentaDeTurnoListado | null>(null)
   const disparadorRef = useRef<HTMLElement | null>(null)
   const refrescarRef = useRef<HTMLButtonElement>(null)
+  const cancelarAnularRef = useRef<HTMLButtonElement>(null)
   /** Se levanta al cerrar el modal de anulación: el foco vuelve recién cuando la pantalla deja de
    * estar bloqueada, porque hasta entonces el botón de la fila (y "Actualizar") siguen deshabilitados. */
   const focoPendienteRef = useRef(false)
@@ -326,6 +329,9 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   async function cargarTurnoYVentas() {
     if (!puntoVenta) return
     const miGeneracion = (generacionRef.current += 1)
+    // La confirmación pertenece al listado que se está reemplazando: no sobrevive al cambio de contexto.
+    setFilaAAnular(null)
+    setErrorAnular('')
     setBuscandoTurno(true)
     setErrorTurno('')
 
@@ -408,6 +414,12 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
     }
   }
 
+  /** Tras un error el botón enfocado quedó deshabilitado durante la escritura y el foco cayó al
+   * documento: vuelve a "Cancelar", dentro del modal. */
+  useEffect(() => {
+    if (errorAnular && !anulando) cancelarAnularRef.current?.focus()
+  }, [errorAnular, anulando])
+
   /** Devuelve el foco al botón de la fila que abrió la confirmación; si esa fila ya no tiene botón
    * (la venta quedó anulada), a "Actualizar", que es estable. */
   useEffect(() => {
@@ -461,7 +473,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
    * La venta pudo anularse DESPUÉS de que el listado o el detalle se cargaron; reimprimir contra
    * ese estado viejo imprimiría un ticket de una venta que ya no es válida. Si la respuesta fresca
    * dice `Anulado`, no se imprime nada: se refresca lo que la pantalla venía mostrando (la fila
-   * del listado y, si está abierto, el detalle) para que el botón de "Reimprimir" desaparezca, y
+   * del listado y, si está abierto, el detalle) para que el botón "Imprimir" desaparezca, y
    * se muestra un error explícito en vez de fallar en silencio. */
   async function reimprimirVenta(id: number) {
     if (!alReimprimir) return
@@ -711,7 +723,14 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                 onCerrar={cancelarAnular}
                 pie={
                   <>
-                    <button type="button" className="btn btn-outline-secondary" autoFocus disabled={anulando} onClick={cancelarAnular}>
+                    <button
+                      ref={cancelarAnularRef}
+                      type="button"
+                      className="btn btn-outline-secondary"
+                      autoFocus
+                      disabled={anulando}
+                      onClick={cancelarAnular}
+                    >
                       Cancelar
                     </button>
                     <button type="button" className="btn btn-danger" disabled={anulando} onClick={() => void confirmarAnular()}>
@@ -726,7 +745,11 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                   </strong>
                 </p>
                 <p className="mb-0">Se revierte el stock y la cuenta corriente en la misma operación. No existe restaurar.</p>
-                {errorAnular && <div className="alert alert-danger mt-3 mb-0">{errorAnular}</div>}
+                {errorAnular && (
+                  <div className="alert alert-danger mt-3 mb-0" role="alert">
+                    {errorAnular}
+                  </div>
+                )}
               </Modal>
             )}
 

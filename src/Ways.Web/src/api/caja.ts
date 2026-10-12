@@ -54,8 +54,8 @@ export const clienteDeCaja = {
    * sigue abierto. */
   obtenerResumenDeCierre: (idTurnoCaja: number) =>
     api.get<ResumenDeCierrePorRetiro>(`/caja/turnos/${idTurnoCaja}/resumen-de-cierre`),
-  /** `GET /api/caja/turnos/{id}` — el turno con su estado; el detalle del Z no lo trae. */
-  obtenerTurno: (idTurnoCaja: number) => api.get<TurnoResumen>(`/caja/turnos/${idTurnoCaja}`),
+  /** `GET /api/caja/turnos/{id}` — el turno con su estado y sus arqueos persistidos; el detalle del Z no los trae. */
+  obtenerTurno: (idTurnoCaja: number) => api.get<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}`),
   /** `GET /api/caja/turnos?idPuntoVenta=&estado=Cerrado` — turnos cerrados de UN punto de venta,
    * el más reciente primero; ambos filtros los aplica el servidor. */
   listarCerrados: (idPuntoVenta: number, pagina: number, tamanio: number) =>

@@ -70,6 +70,14 @@ describe('BotonIcono', () => {
     expect(boton).toHaveClass('btn-icono-ocupado')
   })
 
+  it('solo el ícono de actualizar gira al estar ocupado: el resto declara aria-busy sin la clase que gira', () => {
+    render(<BotonIcono icono="imprimir" ocupado disabled />)
+
+    const boton = screen.getByRole('button', { name: 'Imprimir' })
+    expect(boton).toHaveAttribute('aria-busy', 'true')
+    expect(boton).not.toHaveClass('btn-icono-ocupado')
+  })
+
   it('sin ocupado no declara aria-busy ni la clase que gira', () => {
     render(<BotonIcono icono="actualizar" />)
 
