@@ -4,22 +4,22 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
-using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Caja;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
-using Ways.Domain.Precios;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -420,11 +420,11 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
     /// <summary>Riesgo abierto, fijado como está hoy: la API acepta una nota de crédito (total negativo) con un pago de importe
     /// positivo (<c>ValidadorDePagos</c> no relaciona el signo del total con los pagos), y el cierre suma ese pago como si
     /// fuera un cobro. Una devolución de 100 pagada "con" un medio digital del 10 % de comisión acredita 100 − 10 = 90 en la
-    /// cuenta en vez de descontarlos. Si algún día se rechaza ese pago o el cierre aplica el signo, este test debe cambiar.</summary>
+    /// cuenta en vez de descontarlos, y sube en 100 el esperado del medio en el arqueo en vez de bajarlo. Si algún día se rechaza ese pago o el cierre aplica el signo, este test debe cambiar.</summary>
     [Fact]
-    public async Task UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro()
+    public async Task RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo()
     {
-        var ctx = await PrepararAsync(nameof(UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro));
+        var ctx = await PrepararAsync(nameof(RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo));
         using var _ = ctx.Admin;
         var cuenta = await CrearCuentaAsync(ctx, "Mercado Pago");
         var medio = await CrearMedioAsync(ctx, "QR MP", cuenta, comision: 10m);
@@ -469,6 +469,10 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(2, libro.Count);
         AfirmarFila(libro[0], TipoMovimientoCuenta.Cobro, 0m, 100m, 0m, 100m, 100m, null);
         AfirmarFila(libro[1], TipoMovimientoCuenta.Comision, 100m, 0m, 10m, 90m, 100m, 10m);
+
+        await using var dbArqueo = Db(ctx);
+        Assert.Equal(100m, await dbArqueo.ArqueosTurno
+            .Where(a => a.IdTurnoCaja == turno && a.IdMedioPago == medio).Select(a => a.ImporteEsperado).SingleAsync());
     }
 
     [Fact]
@@ -533,12 +537,12 @@ public class CuentasTesoreriaCierreTests(WaysApiFixture fixture) : IClassFixture
             Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<System.Data.Common.DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
-            if (command.CommandText.Contains("INSERT INTO movimientos_tesoreria", StringComparison.Ordinal))
+            if (command.CommandText.Contains("INSERT INTO movimientos_tesoreria (", StringComparison.Ordinal))
             {
                 InsertoEnTesoreriaDeEfectivoAntes = true;
             }
 
-            if (command.CommandText.Contains("INSERT INTO movimientos_cuenta", StringComparison.Ordinal))
+            if (command.CommandText.Contains("INSERT INTO movimientos_cuenta (", StringComparison.Ordinal))
             {
                 Inducida = true;
                 throw new InvalidOperationException("Falla inducida por la prueba al insertar en movimientos_cuenta.");

@@ -2579,15 +2579,19 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > medios se procesan por id ascendente, así que dos medios de la misma cuenta encadenan en ese orden. Una cuenta inactiva
 > recibe movimientos (desactivar solo impide asignarla a medios nuevos); un medio sin cuenta, con la cuenta dada de baja o con
 > una cuenta de otra empresa que la del turno no escribe nada y nunca frena el cierre. Un pago de un medio nunca es negativo
-> (`ck_pagos_comprobante_importe_no_negativo`) y una nota de crédito no lleva pagos, así que hoy el bruto del cierre no es
-> negativo; el escritor lo soporta como una capacidad que ningún camino actual ejerce.
+> (`ck_pagos_comprobante_importe_no_negativo`) y los clientes web y POS no envían pagos en una nota de crédito (la API no los
+> rechaza), así que hoy el bruto del cierre no es negativo; el escritor lo soporta como una capacidad que ningún camino actual
+> ejerce.
 >
 > **Lo que el libro todavía NO refleja.** (a) Una devolución por nota de crédito de una venta cobrada con un medio digital no
 > descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta un
 > ajuste manual. (b) Un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
 > cuenta. (c) Riesgo abierto: la API admite una nota de crédito con pagos de importe positivo (`ValidadorDePagos` no relaciona
-> el signo del total con los pagos) y el cierre los suma como un cobro: una devolución de 100 "pagada" con un medio del 10 %
-> de comisión acredita 90 en vez de descontarlos (fijado por `UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaComoSiFueraUnCobro`).
+> el signo del total con los pagos) y el lector del turno suma los importes sin el signo del documento. Una nota de crédito de
+> 100 enviada con un pago de 100 en un medio digital con 10 % de comisión acredita la cuenta +90 donde una devolución correcta
+> la dejaría −90 (180 de diferencia), Y sube en 100 el esperado de ese medio en el arqueo donde una devolución debería
+> bajarlo. La corrección de raíz está en la validación de ventas y es la próxima tarea (fijado por
+> `RiesgoAbierto_UnaNotaDeCreditoConUnPagoPositivoAcreditaLaCuentaYSubeElArqueo`).
 >
 > **Locks del escritor.** Orden: fila del turno (exclusivo) → advisory de la empresa (tesorería de efectivo) → medios
 > `FOR SHARE` por id ascendente → cuentas de la empresa del turno `FOR NO KEY UPDATE` por id ascendente (las de otra empresa no se bloquean porque no se acreditan). El medio se lee una sola vez bajo su lock (cuenta

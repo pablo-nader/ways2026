@@ -28,8 +28,8 @@ namespace Ways.Application.Caja;
 /// no descuenta de la cuenta, que queda por encima de lo real en el importe devuelto (neto de comisión y retenciones) hasta
 /// un ajuste manual; (b) un gasto pagado con un medio digital reduce el esperado de ese medio en el arqueo pero no debita la
 /// cuenta; (c) una nota de crédito creada con pagos positivos (la API lo admite) se acredita como un cobro. El soporte de un
-/// bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún camino actual ejerce: un
-/// pago nunca es negativo y una nota de crédito sin pagos no aporta bruto.
+/// bruto negativo (cobro por egreso, comisión y retenciones por ingreso) es una capacidad que ningún camino actual ejerce: los
+/// importes de pago nunca son negativos y los clientes web y POS no envían pagos en una nota de crédito.
 /// </summary>
 public static class EscriturasDeCuentaDeTesoreria
 {
