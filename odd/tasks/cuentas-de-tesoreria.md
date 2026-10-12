@@ -64,7 +64,7 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 
 - [x] **C1 — Schema** (delegated): entities, configurations, enum, migration, RLS,
   CHECKs, docs/10. Tests: migration and RLS under `ways_app`, structural guards, CHECKs.
-- [ ] **C2 — Accounts ABM** (delegated): service, endpoints, delete only without
+- [x] **C2 — Accounts ABM** (delegated): service, endpoints, delete only without
   references, web screen/descriptor.
 - [ ] **C3 — Payment-method fields** (delegated): account + four percentages, validation,
   reject on non-electronic, clear on behaviour change, form; POS snapshot unchanged.
@@ -80,8 +80,26 @@ Strategy `auto-chain`, chain `stacked-to-main`, one PR per task.
 
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
-| C1 | delegated (writer trigger: schema + tests, 35 files) | 8a145b66, 6dc997cb | this PR | build 0 errors; Domain.Tests 1514; Application.Tests 896; full integration suite 4017 passed on 8a145b66; after the fix: new classes + AislamientoDeTenant + Schema/Migracion classes 329 passed (full suite left to CI); has-pending-model-changes clean. judgment-day: round 1 no severe (implicit IX_ index, over-broad closing unique index, saldo_inicial semantics fixed in 6dc997cb), scoped re-judgment no severe |
+| C1 | delegated (writer trigger: schema + tests, 35 files) | 8a145b66, 6dc997cb | #422 (merged) | build 0 errors; Domain.Tests 1514; Application.Tests 896; full integration suite 4017 passed on 8a145b66; after the fix: new classes + AislamientoDeTenant + Schema/Migracion classes 329 passed (full suite left to CI); has-pending-model-changes clean. judgment-day: round 1 no severe (implicit IX_ index, over-broad closing unique index, saldo_inicial semantics fixed in 6dc997cb), scoped re-judgment no severe |
+| C2 | delegated (writer trigger: server + web, 18 files) | c038890f, 3fadd761, efa43ffe, 52c09646 | this PR | build 0 errors; Domain.Tests 1533; Application.Tests 900; integration: CuentasTesoreria* + guards + BajasDeCatalogos 220 passed, then CuentasTesoreria* + binding guards 34 passed (full suite left to CI); tsc clean; oxlint clean on touched files; vitest 224 files / 6412. judgment-day: round 1 no severe (omitted body fields defaulted — fixed), scoped re-judgment no severe. Open follow-ups: stale delete-404 message if the user opens the form during the reload; save-404 leaves the modal open; "400 before 409" order not pinned by a test |
 
 ## Next step
 
-C2 (accounts ABM). Rules for C2: saldo_inicial immutable once the account has movements; baja only without references; 23505 on ux_cuentas_tesoreria_nombre_empresa → 409.
+C3 (payment-method fields).
+
+Rules carried to later tasks:
+- C3: the account must belong to the method's empresa (tenant-wide method: only in a
+  single-empresa tenant); clear account and percentages before changing `comportamiento`
+  away from `electronico` (otherwise 23514); translate 23514 on the three `ck_medios_pago_*`
+  CHECKs and 23503 on the account; the account select needs a read of accounts (today the
+  accounts endpoints are Admin-only, same policy as the payment-method catalog); an inactive
+  account is not offered for new assignments but existing assignments keep working; the new
+  fields stay out of the POS snapshot.
+- C5: the writer reads `saldo_inicial` inside its transaction AFTER locking the account row
+  with a lock that conflicts with the ABM's FOR UPDATE; lock order turn row → empresa
+  advisory lock → account locks in ascending id; always send `id_medio_pago` (the unique
+  closing index does not dedupe NULL); a negative gross is `cobro` on the egreso side;
+  translate 23505 on `ux_movimientos_cuenta_cierre`; decide whether an inactive account
+  still receives movements (default: yes, deactivation only stops new assignments).
+- C6: Supervisor reads treasury today; the accounts read for the treasury screen must be
+  under the reports policy, not the catalog one.
