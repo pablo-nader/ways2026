@@ -79,7 +79,7 @@ describe('SelectorConBusqueda', () => {
   it('un clic abre la lista completa con la opción elegida como activa', async () => {
     render(<Montaje inicial={3} />)
     await userEvent.click(caja())
-    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getByRole('listbox', { name: 'Opciones de Cliente' })).toBeInTheDocument()
     expect(caja()).toHaveAttribute('aria-expanded', 'true')
     expect(etiquetasVisibles()).toEqual(OPCIONES.map((o) => o.etiqueta))
     const activa = screen.getByRole('option', { name: '#3 — Ana Gómez' })

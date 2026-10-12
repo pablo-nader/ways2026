@@ -277,7 +277,7 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
           style={posicion?.estilo ?? { visibility: 'hidden', position: 'fixed' }}
           onMouseDown={(evento) => evento.preventDefault()}
         >
-          <ul id={idLista} role="listbox" aria-label={nombreAccesible} className="list-unstyled mb-0">
+          <ul id={idLista} role="listbox" aria-label={`Opciones de ${nombreAccesible}`} className="list-unstyled mb-0">
             {lista.map((o) => (
               <li
                 key={o.id}

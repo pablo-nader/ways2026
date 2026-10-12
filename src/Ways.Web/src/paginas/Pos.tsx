@@ -85,10 +85,12 @@ import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { ChipDeSaldo } from '../componentes/ChipDeSaldo'
 import { BotonCerrarModal, Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { ModalDeBusquedaDeCombos } from '../componentes/ModalDeBusquedaDeCombos'
 import { ModalPagoACuenta } from '../componentes/ModalPagoACuenta'
+import { SelectorConBusqueda, type OpcionDeSelector } from '../componentes/SelectorConBusqueda'
 import { SelectorDeMiembrosDeCombo } from '../componentes/SelectorDeMiembrosDeCombo'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
@@ -139,6 +141,13 @@ function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: Clien
 function etiquetaDeCliente(c: ClienteListado): string {
   const nombreCompleto = c.razonSocial ?? [c.nombre, c.apellido].filter(Boolean).join(' ')
   return `#${c.numero} — ${nombreCompleto}`
+}
+
+/** `local`: el cliente salió de la copia local (su saldo es el de la última sincronización) y no del servidor. */
+type OpcionDeCliente = OpcionDeSelector & { cliente: ClienteListado; local: boolean }
+
+function aOpcionDeCliente(cliente: ClienteListado, local: boolean): OpcionDeCliente {
+  return { id: cliente.id, etiqueta: etiquetaDeCliente(cliente), cliente, local }
 }
 
 function formatearMoneda(valor: number): string {
@@ -959,24 +968,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // El mount effect de más abajo (Consumidor Final por defecto) no debe pisar un cliente
   // restaurado del borrador — se decide UNA sola vez, con el mismo `borradorInicial` congelado.
   const clienteRestauradoDelBorradorRef = useRef(borradorInicial?.clienteSeleccionado != null)
-  const [terminoCliente, setTerminoCliente] = useState('')
-  const [buscandoClientes, setBuscandoClientes] = useState(false)
-  // Error de la búsqueda de clientes; la carga inicial tiene su propio slot (`errorCargaClientes`),
-  // que la copia local del escritorio puede volver innecesario sin tocar el de la búsqueda.
+  // Error del cliente del presupuesto; la carga inicial tiene su propio slot (`errorCargaClientes`),
+  // que la copia local del escritorio puede volver innecesario sin tocar este.
   const [errorClientes, setErrorClientes] = useState('')
   const [errorCargaClientes, setErrorCargaClientes] = useState('')
   const [errorCargaClientesEsDeRed, setErrorCargaClientesEsDeRed] = useState(false)
-  // Generación de las búsquedas de clientes; la carga inicial tiene la suya, así una recarga al
-  // volver la red nunca deja colgado el "Buscando…" de una búsqueda en vuelo.
-  const generacionClientesRef = useRef(0)
+  // Generación de la carga inicial de clientes: una respuesta tardía de una carga anterior (la del
+  // arranque, cuando ya se reintentó al volver la red) nunca pisa a la más nueva.
   const generacionCargaClientesRef = useRef(0)
-  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — `opcionesClientes`
-  // se pisa con los resultados de `buscarClientes` (búsqueda-mientras-tipea), así que el reset
+  // stage-pos-adjustments: Consumidor Final cargado en el mount effect (más abajo) — el reset
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
-  // Ids de `opcionesClientes` que salieron de la instantánea local (búsqueda local o arranque sin
-  // respuesta del servidor) y no de `GET /clientes`: al elegir uno con red se trae el registro fresco.
+  // Ids de `opcionesClientes` que salieron de la instantánea local (arranque sin respuesta del
+  // servidor) y no de `GET /clientes`: al elegir uno con red se trae el registro fresco.
   const idsDeOpcionesLocalesRef = useRef<ReadonlySet<number>>(new Set())
 
   // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
@@ -1439,11 +1444,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .listar('', false)
       .then((pagina) => {
         if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
-        // La primera página es la lista de antes de buscar: si el cajero ya buscó, su resultado manda.
-        if (generacionClientesRef.current === 0) {
-          idsDeOpcionesLocalesRef.current = new Set()
-          setOpcionesClientes(pagina.items)
-        }
+        idsDeOpcionesLocalesRef.current = new Set()
+        setOpcionesClientes(pagina.items)
         setErrorCargaClientes('')
         setErrorCargaClientesEsDeRed(false)
         // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
@@ -2739,39 +2741,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Muestra al instante lo que encuentra la instantánea local (también sin red). Con señal además
-   * consulta al servidor y suma lo que la copia local no tiene (un cliente dado de alta después de
-   * la última sincronización); para un mismo cliente gana el registro del servidor. */
-  async function buscarClientes() {
-    if (buscandoClientes || cobrandoRef.current) return
-    const generacion = (generacionClientesRef.current += 1)
-    setErrorClientes('')
+  /** Coincidencias de la instantánea local (nombre, apellido, razón social, número o documento): se ofrecen
+   * al instante, también sin red. */
+  function buscarClientesLocales(termino: string): OpcionDeCliente[] {
+    return instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, termino).map((c) => aOpcionDeCliente(aClienteListado(c), true)) : []
+  }
 
-    const locales = instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, terminoCliente).map(aClienteListado) : null
-    if (locales !== null) {
-      idsDeOpcionesLocalesRef.current = new Set(locales.map((c) => c.id))
-      setOpcionesClientes(locales)
-      if (!sincronizacionOffline.enLinea) {
-        if (locales.length === 0) setErrorClientes('Sin conexión: no se encontró ningún cliente en la copia local.')
-        return
-      }
-    }
-
-    setBuscandoClientes(true)
+  /** Con señal consulta además al servidor y suma lo que la copia local no tiene (un cliente dado de alta
+   * después de la última sincronización); para un mismo cliente gana el registro del servidor. */
+  async function buscarClientesEnElServidor(termino: string): Promise<OpcionDeCliente[]> {
     try {
-      const pagina = await clienteDeClientes.listar(terminoCliente, false)
-      if (generacionClientesRef.current !== generacion) return
-      const idsDelServidor = new Set(pagina.items.map((c) => c.id))
-      const soloLocales = (locales ?? []).filter((c) => !idsDelServidor.has(c.id))
-      idsDeOpcionesLocalesRef.current = new Set(soloLocales.map((c) => c.id))
-      setOpcionesClientes([...pagina.items, ...soloLocales])
+      const pagina = await clienteDeClientes.listar(termino, false)
+      return pagina.items.map((c) => aOpcionDeCliente(c, false))
     } catch (e) {
-      // Con resultados locales en pantalla, una consulta al servidor que falla no los tapa.
-      if (generacionClientesRef.current === generacion && (locales === null || locales.length === 0)) {
-        setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudieron buscar clientes.')
-      }
-    } finally {
-      if (generacionClientesRef.current === generacion) setBuscandoClientes(false)
+      throw e instanceof ErrorApi ? e : new Error('No se pudieron buscar clientes.')
     }
   }
 
@@ -2789,15 +2772,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     focoPendienteRef.current = true
   }
 
-  function cambiarCliente(id: number) {
+  function cambiarCliente(elegido: OpcionDeCliente) {
     if (cobrandoRef.current) return
-    const encontrado = fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).find((c) => c.id === id)
-    setClienteSeleccionado(encontrado ?? null)
+    setClienteSeleccionado(elegido.cliente)
     // Un cliente de la copia local trae el saldo de la última sincronización: con señal se trae
     // el registro del servidor en segundo plano (la vista previa ya arrancó con el local).
-    if (encontrado && idsDeOpcionesLocalesRef.current.has(encontrado.id) && sincronizacionOffline.enLinea) {
-      refrescarClienteSeleccionado(encontrado.id)
-    }
+    if (elegido.local && sincronizacionOffline.enLinea) refrescarClienteSeleccionado(elegido.cliente.id)
+    pedirFocoEnElCodigo()
   }
 
   function agregarFilaPago() {
@@ -3454,7 +3435,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       setAjustesEnEdicion({})
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
-      setTerminoCliente('')
       // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
       // venta anterior — el reset es parte del propio éxito de `cobrar()`.
       setErrorEscaneo('')
@@ -3844,7 +3824,47 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       <div className="row g-3">
         <div className="col-lg-8">
-          <Box titulo="Carrito">
+          <Box
+            etiqueta="Carrito"
+            encabezado={
+              <>
+                <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                  <SelectorConBusqueda<OpcionDeCliente>
+                    id="pos-cliente"
+                    nombreAccesible="Cliente"
+                    className="form-select-sm"
+                    // Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
+                    // y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`).
+                    opciones={fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) =>
+                      aOpcionDeCliente(c, idsDeOpcionesLocalesRef.current.has(c.id)),
+                    )}
+                    valor={clienteSeleccionado?.id ?? null}
+                    disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
+                    buscarLocal={buscarClientesLocales}
+                    alBuscar={sincronizacionOffline.enLinea ? buscarClientesEnElServidor : undefined}
+                    textoSinResultados={
+                      !sincronizacionOffline.enLinea && instantaneaDelPuntoVenta
+                        ? 'Sin conexión: no se encontró ningún cliente en la copia local.'
+                        : 'Sin resultados.'
+                    }
+                    onChange={cambiarCliente}
+                    alCancelar={pedirFocoEnElCodigo}
+                  />
+                </div>
+                {!modoPresupuesto && (
+                  <BotonIcono
+                    icono="detalle"
+                    etiqueta="Ver detalle"
+                    title="Ver detalle"
+                    className="flex-shrink-0"
+                    disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
+                    onClick={() => setModalCuentaCorrienteAbierto(true)}
+                  />
+                )}
+                {clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal && <ChipDeSaldo cliente={clienteSeleccionado} />}
+              </>
+            }
+          >
             {/* stage-pos-turno-y-foco: aviso claro de por qué escaneo/carrito/cliente/pagos están
                 deshabilitados — solo cuando el turno está CONFIRMADO cerrado (nunca mientras
                 todavía se está consultando, ni si la consulta falló: `errorTurno` tiene su propio
@@ -3862,6 +3882,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 {formatearVejezDeInstantanea(sincronizacionOffline.verificadaEn ?? instantaneaDelPuntoVenta.momento, new Date())}. Se vende con la
                 copia local de este dispositivo.
               </div>
+            )}
+            {!sincronizacionOffline.enLinea && !modoPresupuesto && (
+              <div className="form-text mb-2">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
             )}
             {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger py-1 px-2 small">{errorEscaneo}</div>}
             {avisoPrecios && !modoPresupuesto && (
@@ -4103,66 +4126,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
               <div className="alert alert-danger py-1 px-2 small">{errorCargaClientes}</div>
             )}
             {errorClientes && <div className="alert alert-danger py-1 px-2 small">{errorClientes}</div>}
-
-            <div className="mb-2">
-              <label className="form-label" htmlFor="pos-cliente">
-                Cliente
-              </label>
-              <select
-                id="pos-cliente"
-                className="form-select"
-                value={clienteSeleccionado?.id ?? ''}
-                disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
-                onChange={(e) => cambiarCliente(Number(e.target.value))}
-              >
-                {/* Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
-                    y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`). */}
-                {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {etiquetaDeCliente(c)}
-                    </option>
-                  ))}
-              </select>
-              {!sincronizacionOffline.enLinea && !modoPresupuesto && (
-                <div className="form-text">Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.</div>
-              )}
-            </div>
-
-            {!modoPresupuesto && (sincronizacionOffline.enLinea || instantaneaDelPuntoVenta !== null) && (
-              <div className="input-group input-group-sm mb-3">
-                <input
-                  type="search"
-                  className="form-control"
-                  placeholder="Buscar otro cliente…"
-                  aria-label="Buscar cliente"
-                  value={terminoCliente}
-                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
-                  onChange={(e) => setTerminoCliente(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
-                />
-                <button
-                  type="button"
-                  className="btn btn-outline-primary"
-                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
-                  onClick={buscarClientes}
-                >
-                  {buscandoClientes ? 'Buscando…' : 'Buscar'}
-                </button>
-              </div>
-            )}
-
-            {!modoPresupuesto && (
-              <button
-                type="button"
-                className="btn btn-outline-secondary btn-sm mb-3"
-                disabled={pantallaCobroInerte || bloqueadoPorTurno || !puntoVentaSeleccionada || medios === null}
-                onClick={() => setModalCuentaCorrienteAbierto(true)}
-              >
-                Cuenta corriente
-              </button>
-            )}
-
-            <hr />
 
             {combosAplicados.map((c) => (
               <div key={c.idCombo} className="d-flex justify-content-between mb-1 text-success-emphasis">
