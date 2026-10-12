@@ -60,7 +60,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 - [x] **T1 — Porcentaje en el medio de pago.** Migración, `MedioPago`, contratos, servicio,
   descriptor web e instantánea del POS. Checks: integración del ABM (0..100, rechazo fuera de
   rango), Vitest del descriptor. Ruta: delegada (2+ archivos no triviales).
-- [ ] **T2 — `PoliticaDeFacturacionPorMedio`.** Dominio puro. Checks: unitarios sin base
+- [x] **T2 — `PoliticaDeFacturacionPorMedio`.** Dominio puro. Checks: unitarios sin base
   (0 %, 100 %, mixto, forzado, convergencia sobre N tickets, reversión). Ruta: delegada.
 - [ ] **T3 — Esquema y no doble conteo.** Enlace, `factura_forzada`, las dos tablas, RLS,
   predicado compartido en reportes y listado. Checks: integración con espejo sembrado,
@@ -110,7 +110,15 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
   Re-juicio del arreglo (`35bda509`): resuelto, sin hallazgos en ninguno de los dos jueces.
   JUDGMENT: APPROVED. Sin prueba de mutación de la cláusula de rango. RDD apagado en el clon: sin revisión nativa.
   Decisiones: sin subir la versión de la instantánea (una guardada sin el campo lee 0).
+  PR: pablo-nader/ways2026#411, con auto-merge y Auto-fix.
+- 2026-10-12 — T2 hecha. Ruta: delegada (un escritor). `PoliticaDeFacturacionPorMedio` en
+  `Ways.Domain/Fiscal`, pura. RED por compilación y GREEN (28 casos); `Ways.Domain.Tests`
+  1414/1414; `dotnet build` sin errores. Mutaciones observadas en rojo: regla del 100 %
+  (4 tests), `>` por `>=` y mitad por tercio (1 cada una), débito de los medios al 0 % (1).
+  Decisiones: sin tope de saldo por ahora; un medio con dos porcentajes en un ticket se
+  rechaza; el cupo se mide contra el importe del medio en el ticket, no contra el total; los
+  aportes son decimales exactos, así que la columna de saldo (T3) necesita escala suficiente.
 
 ## Próximo paso
 
-T2.
+T3.
