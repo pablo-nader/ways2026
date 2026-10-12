@@ -54,6 +54,28 @@ public class CalculadorDeCierrePorRetiroTests
         Assert.Equal(1450m, resultado.TotalVentas);
     }
 
+    /// <summary>La cuenta corriente no es arqueable, pero sus ventas entran en la lista y en
+    /// <c>TotalVentas</c>: es el total general del turno.</summary>
+    [Fact]
+    public void LasVentasDeCuentaCorrienteEntranEnLaListaYEnElTotalGeneral()
+    {
+        const int idCuentaCorriente = 3;
+        var insumos = new InsumosDeArqueo(
+            FondoInicial: 0m, Refuerzos: 0m, Retiros: 0m,
+            Actividad:
+            [
+                Actividad(IdEfectivo, ComportamientoMedioPago.Efectivo, pagos: 100m),
+                Actividad(idCuentaCorriente, ComportamientoMedioPago.CuentaCorriente, pagos: 40m),
+                Actividad(4, ComportamientoMedioPago.CuentaCorriente, pagos: 0m, tuvoFilas: false)
+            ]);
+
+        var arqueables = CalculadorDeArqueo.Calcular(insumos, IdEfectivo);
+        var resultado = CalculadorDeCierrePorRetiro.Calcular(insumos, IdEfectivo, arqueables);
+
+        Assert.Equal([IdEfectivo, idCuentaCorriente], resultado.VentasPorMedio.Select(v => v.IdMedioPago));
+        Assert.Equal(140m, resultado.TotalVentas);
+    }
+
     /// <summary>Sin retiro de cierre (<c>ImporteRetirado = 0</c>, prueba de la capa de aplicación),
     /// acá se aísla el caso puro: <c>Retiros</c> del turno viene en 0 — <c>TotalRetiros</c> tiene
     /// que reflejarlo tal cual, nunca asumir un mínimo.</summary>

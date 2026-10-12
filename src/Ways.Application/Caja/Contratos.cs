@@ -1,4 +1,5 @@
 using Ways.Domain.Caja;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ventas;
 
@@ -301,8 +302,11 @@ public sealed record PuntoVentaDeCierre(int Id, int Numero, string Nombre);
 
 /// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — ventas netas de
 /// vuelto por medio (nunca de gastos), con el nombre ya resuelto
-/// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).</summary>
-public sealed record VentaPorMedio(int IdMedioPago, string Nombre, decimal Importe);
+/// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).
+/// <see cref="Comportamiento"/> es la clasificación con que la fila entra en los subtotales (ver
+/// <see cref="Ways.Domain.Caja.ClasificadorDeVentasPorMedio"/>).</summary>
+public sealed record VentaPorMedio(
+    int IdMedioPago, string Nombre, ComportamientoMedioPago Comportamiento, decimal Importe);
 
 /// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.Retiros"/> — TODOS los retiros del
 /// turno, incluido el de cierre (si <see cref="SolicitudDeCierrePorRetiro.ImporteRetirado"/> fue
@@ -324,7 +328,12 @@ public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, strin
 /// cref="GastosEnEfectivo"/>/<see cref="Refuerzos"/>: esa fórmula solo vale cuando el ancla se
 /// declaró con <see cref="FondoInicial"/> (cierto en el modo retiro, NUNCA en el clásico, donde el
 /// cajero declara lo que realmente contó). Cuando el ancla no tiene fila en <c>arqueos_turno</c>
-/// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.</summary>
+/// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.
+///
+/// <see cref="TotalVentas"/> es el total general (efectivo + digital + cuenta corriente) y
+/// <see cref="TotalDigitales"/> + <see cref="TotalEfectivo"/> + <see cref="TotalCuentaCorriente"/>
+/// siempre lo suman; <see cref="TotalEfectivo"/> coincide con <see cref="VentasEnEfectivoNetas"/>.
+/// Los tres subtotales siguen la clasificación de <see cref="VentaPorMedio.Comportamiento"/>.</summary>
 public sealed record ResumenDeCierrePorRetiro(
     int IdTurnoCaja,
     PuntoVentaDeCierre PuntoVenta,
@@ -335,6 +344,9 @@ public sealed record ResumenDeCierrePorRetiro(
     decimal FondoInicial,
     IReadOnlyList<VentaPorMedio> VentasPorMedio,
     decimal TotalVentas,
+    decimal TotalDigitales,
+    decimal TotalEfectivo,
+    decimal TotalCuentaCorriente,
     IReadOnlyList<RetiroDeCierre> Retiros,
     decimal TotalRetiros,
     decimal VentasEnEfectivoNetas,

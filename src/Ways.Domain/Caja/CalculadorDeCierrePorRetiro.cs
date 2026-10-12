@@ -1,8 +1,12 @@
+using Ways.Domain.Catalogos;
+
 namespace Ways.Domain.Caja;
 
 /// <summary>
 /// Una línea de <see cref="ResultadoDeCierrePorRetiro.VentasPorMedio"/> — ventas NETAS de vuelto
 /// (nunca de gastos: eso es un renglón aparte, <see cref="ResultadoDeCierrePorRetiro.GastosEnEfectivo"/>).
+/// Incluye los medios de cuenta corriente con ventas, así que <see cref="ResultadoDeCierrePorRetiro.TotalVentas"/>
+/// es el total general de ventas del turno.
 /// </summary>
 public sealed record LineaDeVentaPorMedio(int IdMedioPago, decimal Importe);
 
@@ -59,11 +63,20 @@ public static class CalculadorDeCierrePorRetiro
     {
         var vueltosTotales = insumos.Actividad.Sum(a => a.Vueltos);
 
+        // El arqueo deja afuera la cuenta corriente (no es dinero físico), pero sus ventas son ventas:
+        // entran acá con el mismo criterio de actividad para que TotalVentas sea el total general.
+        var idsDeCuentaCorriente = insumos.Actividad
+            .Where(a => a.Comportamiento == ComportamientoMedioPago.CuentaCorriente && a.TuvoFilas)
+            .Select(a => a.IdMedioPago);
+
         var ventasPorMedio = arqueables
-            .OrderBy(l => l.IdMedioPago)
-            .Select(l => new LineaDeVentaPorMedio(
-                l.IdMedioPago,
-                PagosDe(insumos, l.IdMedioPago) - (l.IdMedioPago == idMedioAncla ? vueltosTotales : 0m)))
+            .Select(l => l.IdMedioPago)
+            .Concat(idsDeCuentaCorriente)
+            .Distinct()
+            .Order()
+            .Select(id => new LineaDeVentaPorMedio(
+                id,
+                PagosDe(insumos, id) - (id == idMedioAncla ? vueltosTotales : 0m)))
             .ToList();
 
         var totalVentas = ventasPorMedio.Sum(v => v.Importe);
