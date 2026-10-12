@@ -11,10 +11,13 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  nombreCompletoDeCliente,
   parsearDetalleDeActualizacionPrecios,
   rangoUltimoMes,
   reliquidacionEsNoOp,
   saldoResultanteDeAjuste,
+  saldosDeUnaVenta,
+  saldosDeUnPagoACuenta,
   validarAjusteLocal,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
@@ -662,5 +665,74 @@ describe('derivarSaldoParaChip', () => {
       proporcionUsada: null,
       excedido: false,
     })
+  })
+})
+
+describe('saldosDeUnPagoACuenta', () => {
+  const pagos = [
+    { idMedioPago: 1, importe: 500, referencia: null, vuelto: 50 },
+    { idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 },
+  ]
+
+  it('con el saldo posterior del servidor, ese es el nuevo y el anterior se reconstruye sumándole lo aplicado (importes menos vueltos)', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 9999, saldoPosterior: 300 })).toEqual({ anterior: 950, nuevo: 300 })
+  })
+
+  it('sin saldo posterior, el anterior es el de pantalla y el nuevo le resta lo aplicado', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 1000, saldoPosterior: null })).toEqual({ anterior: 1000, nuevo: 350 })
+  })
+
+  it('con saldo posterior 0 (no confundido con ausente) usa ese 0', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 1000, saldoPosterior: 0 })).toEqual({ anterior: 650, nuevo: 0 })
+  })
+
+  it('los decimales se redondean y siempre cumplen anterior - aplicado = nuevo', () => {
+    const decimales = [{ idMedioPago: 1, importe: 0.1, referencia: null, vuelto: 0 }, { idMedioPago: 2, importe: 0.2, referencia: null, vuelto: 0 }]
+    const conPosterior = saldosDeUnPagoACuenta({ pagos: decimales, saldoEnPantalla: 0, saldoPosterior: 10.15 })
+    const sinPosterior = saldosDeUnPagoACuenta({ pagos: decimales, saldoEnPantalla: 10.45, saldoPosterior: null })
+    expect(conPosterior).toEqual({ anterior: 10.45, nuevo: 10.15 })
+    expect(sinPosterior).toEqual({ anterior: 10.45, nuevo: 10.15 })
+  })
+})
+
+describe('saldosDeUnaVenta', () => {
+  const medios = [
+    medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),
+    medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' }),
+    medioFixture({ id: 3, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', admiteVuelto: false }),
+  ]
+
+  it('una venta toda en efectivo deja el saldo igual', () => {
+    const pagos = [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 500 })
+  })
+
+  it('suma al saldo solo la parte cobrada a cuenta corriente', () => {
+    const pagos = [
+      { idMedioPago: 1, importe: 300, referencia: null, vuelto: 0 },
+      { idMedioPago: 3, importe: 700, referencia: null, vuelto: 0 },
+    ]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 1200 })
+  })
+
+  it('un medio que no está en la lista no se cuenta como cuenta corriente', () => {
+    const pagos = [{ idMedioPago: 99, importe: 700, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 500 })
+  })
+
+  it('redondea la suma', () => {
+    const pagos = [{ idMedioPago: 3, importe: 0.2, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 0.1, pagos, medios })).toEqual({ antes: 0.1, despues: 0.3 })
+  })
+})
+
+describe('nombreCompletoDeCliente', () => {
+  it('prefiere la razón social', () => {
+    expect(nombreCompletoDeCliente({ razonSocial: 'Perez Hermanos S.A.', nombre: 'Juan', apellido: 'Perez' })).toBe('Perez Hermanos S.A.')
+  })
+
+  it('sin razón social junta nombre y apellido, omitiendo el apellido ausente', () => {
+    expect(nombreCompletoDeCliente({ razonSocial: null, nombre: 'Juan', apellido: 'Perez' })).toBe('Juan Perez')
+    expect(nombreCompletoDeCliente({ razonSocial: null, nombre: 'Juan', apellido: null })).toBe('Juan')
   })
 })

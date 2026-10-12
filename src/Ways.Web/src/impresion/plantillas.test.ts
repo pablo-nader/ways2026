@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
+import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDePagoACuenta, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { COLUMNAS_FUENTE_A, dosColumnas } from './escpos'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -166,6 +166,137 @@ describe('ticketDeVenta', () => {
   it('la línea de REIMPRESION aparece ANTES del aviso de "no válido como factura"', () => {
     const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
     expect(reimpreso.indexOf('REIMPRESION')).toBeLessThan(reimpreso.indexOf('COMPROBANTE NO VALIDO COMO FACTURA'))
+  })
+})
+
+/** Decodifica las líneas imprimibles saltando los comandos ESC/GS completos (con sus parámetros), a
+ * diferencia de `textoPlano`, que deja sus parámetros imprimibles pegados al texto. Solo ASCII. */
+function lineasDe(bytes: Uint8Array): string[] {
+  const largoDelComando = (b: number, siguiente: number): number => {
+    if (b === 0x1b) return siguiente === 0x40 ? 2 : siguiente === 0x70 ? 5 : 3
+    return siguiente === 0x56 ? 4 : 3
+  }
+  const lineas: string[] = []
+  let actual = ''
+  for (let i = 0; i < bytes.length; ) {
+    const b = bytes[i]
+    if (b === 0x1b || b === 0x1d) {
+      i += largoDelComando(b, bytes[i + 1])
+    } else if (b === 0x0a) {
+      lineas.push(actual)
+      actual = ''
+      i += 1
+    } else {
+      if (b >= 0x20 && b < 0x7f) actual += String.fromCharCode(b)
+      i += 1
+    }
+  }
+  return lineas
+}
+
+describe('ticketDeVenta — cliente identificado con su saldo', () => {
+  const CLIENTE = { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 1200 }
+  const MEDIOS = [medioFixture({ id: 1, comportamiento: 'Efectivo' })]
+
+  it('imprime el cliente y el saldo anterior y actual de la cuenta', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE }))
+    expect(lineas).toContain('Cliente: #2 - Juan Perez')
+    expect(lineas).toContain(dosColumnas('Saldo anterior', '$ 500,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual', '$ 1.200,00'))
+  })
+
+  it('el cliente va debajo del cajero y los saldos debajo de los pagos', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE }))
+    expect(lineas.indexOf('Cliente: #2 - Juan Perez')).toBe(lineas.indexOf('Cajero: jperez') + 1)
+    expect(lineas.indexOf(dosColumnas('Saldo anterior', '$ 500,00'))).toBeGreaterThan(lineas.indexOf('Pagos:'))
+  })
+
+  it('sin cliente (Consumidor Final) no imprime ni cliente ni saldos', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS))
+    expect(texto).not.toContain('Cliente:')
+    expect(texto).not.toContain('Saldo')
+  })
+
+  it('una reimpresión nunca imprime saldos aunque se le pase el cliente: los históricos no se conocen', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { reimpresion: true, cliente: CLIENTE }))
+    expect(texto).not.toContain('Saldo')
+    expect(texto).not.toContain('Cliente:')
+  })
+
+  it('conserva el pulso del cajón y el corte al final', () => {
+    const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: CLIENTE })
+    expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+})
+
+describe('ticketDePagoACuenta', () => {
+  const MEDIOS = [
+    medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),
+    medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false }),
+  ]
+  const RECIBO = comprobanteFixture({
+    numeroVisible: '0007-00000900',
+    fecha: '2026-09-16T15:30:00-03:00',
+    items: [],
+    total: 0,
+    subtotal: 0,
+    pagos: [
+      { idMedioPago: 1, importe: 500, referencia: null, vuelto: 50 },
+      { idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 },
+    ],
+  })
+  const DATOS = { comprobante: RECIBO, cliente: { numero: 2, nombre: 'Juan Perez' }, saldoAnterior: 1000, saldoNuevo: 350 }
+
+  it('arma el encabezado, el tipo y número del comprobante, la fecha, el cajero y el cliente', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    expect(lineas.some((l) => l.includes('Demo'))).toBe(true)
+    expect(lineas).toContain('Local Centro')
+    expect(lineas).toContain('RECIBO DE PAGO A CUENTA')
+    expect(lineas).toContain('Comprobante: RC 0007-00000900')
+    expect(lineas).toContain(`Fecha: ${fechaHoraATexto('2026-09-16T15:30:00-03:00')}`)
+    expect(lineas).toContain('Cajero: jperez')
+    expect(lineas).toContain('Cliente: #2 - Juan Perez')
+  })
+
+  it('lista cada medio con su importe, el vuelto entregado y el total pagado (importes menos vueltos)', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    const desde = lineas.indexOf('Pagos:')
+    expect(lineas.slice(desde, desde + 5)).toEqual([
+      'Pagos:',
+      dosColumnas('Efectivo', '$ 500,00'),
+      dosColumnas('  Vuelto', '$ 50,00'),
+      dosColumnas('Tarjeta', '$ 200,00'),
+      dosColumnas('Total pagado', '$ 650,00'),
+    ])
+  })
+
+  it('termina con saldo anterior, total pagado y saldo nuevo, en ese orden', () => {
+    const lineas = lineasDe(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS))
+    const anterior = lineas.indexOf(dosColumnas('Saldo anterior', '$ 1.000,00'))
+    const nuevo = lineas.indexOf(dosColumnas('Saldo nuevo', '$ 350,00'))
+    expect(anterior).toBeGreaterThan(-1)
+    expect(nuevo).toBeGreaterThan(anterior)
+  })
+
+  it('un medio que no está en la lista se rotula por su número', () => {
+    const datos = { ...DATOS, comprobante: { ...RECIBO, pagos: [{ idMedioPago: 99, importe: 100, referencia: null, vuelto: 0 }] } }
+    expect(lineasDe(ticketDePagoACuenta(datos, CONTEXTO, MEDIOS))).toContain(dosColumnas('Medio #99', '$ 100,00'))
+  })
+
+  it('con algún pago en efectivo pulsa el cajón en el mismo trabajo, antes del corte', () => {
+    const bytes = ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS)
+    expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('sin pagos en efectivo nunca pulsa el cajón', () => {
+    const datos = { ...DATOS, comprobante: { ...RECIBO, pagos: [{ idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 }] } }
+    const bytes = ticketDePagoACuenta(datos, CONTEXTO, MEDIOS)
+    expect(contieneComandoDeCajon(bytes)).toBe(false)
+    expect(Array.from(bytes.slice(-6))).toEqual([0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('empieza con ESC @ y la página CP858, como el resto de los tickets', () => {
+    expect(Array.from(ticketDePagoACuenta(DATOS, CONTEXTO, MEDIOS).slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, 19])
   })
 })
 

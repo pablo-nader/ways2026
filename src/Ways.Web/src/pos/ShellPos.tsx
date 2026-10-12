@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
+import { nombreCompletoDeCliente, saldosDeUnaVenta } from '../api/cuentaCorriente'
 import { establecerTokenDeSesionBearer } from '../api/entornoTauri'
 import { terminarSesionLocalDelPos } from './finDeSesionLocal'
 import type {
@@ -325,11 +326,16 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     }
   }
 
-  function alEmitirVenta(comprobante: ComprobanteEmitido, _cliente: ClienteListado, medios: MedioPagoListado[]) {
+  function alEmitirVenta(comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) {
+    // El saldo anterior es el que tenía la pantalla al cobrar; el consumidor final no tiene cuenta.
+    const saldos = cliente.esConsumidorFinal ? null : saldosDeUnaVenta({ saldoAntes: cliente.saldo, pagos: comprobante.pagos, medios })
+    const opciones = saldos
+      ? { cliente: { numero: cliente.numero, nombre: nombreCompletoDeCliente(cliente), saldoAntes: saldos.antes, saldoDespues: saldos.despues } }
+      : {}
     // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
     // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
     // ni descartada por otro trabajo de impresión que esté (o quede) en vuelo.
-    encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios))
+    encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios, opciones))
   }
 
   /** "Imprimir" de "Ventas del turno" (stage-desktop-pos): mismo dueño único de la impresión de

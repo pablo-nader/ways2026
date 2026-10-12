@@ -5,6 +5,7 @@
 import { COLUMNAS_FUENTE_A, ConstructorDeTicket } from './escpos'
 import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
+import { calcularImporteAplicado } from '../api/cuentaCorriente'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
 import { fechaHoraATexto } from '../formato/fechas'
@@ -42,8 +43,17 @@ function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion):
     .lineaDeGuiones()
 }
 
-/** Opciones de `ticketDeVenta` — hoy solo `reimpresion` (stage-desktop-pos, "Ventas del turno"). */
-export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
+/** Cliente identificado de un ticket, con su saldo antes y después de la operación. */
+export type ClienteConSaldoEnTicket = { numero: number; nombre: string; saldoAntes: number; saldoDespues: number }
+
+/** `cliente` solo se pasa para un cliente identificado (nunca el Consumidor Final): agrega su nombre
+ * y su saldo antes y después de la venta. Una reimpresión los ignora, porque no conoce los saldos de
+ * aquel momento. */
+export type OpcionesDeTicketDeVenta = { reimpresion?: boolean; cliente?: ClienteConSaldoEnTicket }
+
+function lineaDeCliente(cliente: { numero: number; nombre: string }): string {
+  return `Cliente: #${cliente.numero} - ${cliente.nombre}`
+}
 
 /**
  * Ticket de venta (`POST /api/ventas`) — NO es un comprobante fiscal: el flujo actual solo emite
@@ -84,6 +94,7 @@ export function ticketDeVenta(
 
   const descuentoManual = comprobante.descuentoManualTotal ?? 0
   const recargoManual = comprobante.recargoManualTotal ?? 0
+  const clienteConSaldo = opciones.reimpresion ? undefined : opciones.cliente
 
   ticket.alinear('centro').negrita(true).linea('COMPROBANTE NO VALIDO COMO FACTURA')
   if (descuentoManual !== 0) ticket.linea('*** CON DESCUENTO MANUAL ***')
@@ -95,7 +106,8 @@ export function ticketDeVenta(
     .linea(`Comprobante: ${comprobante.numeroVisible}`)
     .linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
     .linea(`Cajero: ${contexto.cajero}`)
-    .lineaDeGuiones()
+  if (clienteConSaldo) ticket.linea(lineaDeCliente(clienteConSaldo))
+  ticket.lineaDeGuiones()
 
   for (const item of comprobante.items) {
     ticket.lineaDeColumnas(`${item.cantidad} x ${item.descripcion}`, formatearMoneda(item.total))
@@ -135,6 +147,12 @@ export function ticketDeVenta(
     }
   }
 
+  if (clienteConSaldo) {
+    ticket.lineaDeGuiones()
+    ticket.lineaDeColumnas('Saldo anterior', formatearMoneda(clienteConSaldo.saldoAntes))
+    ticket.lineaDeColumnas('Saldo actual', formatearMoneda(clienteConSaldo.saldoDespues))
+  }
+
   ticket.alinear('centro').avanzar(1).linea('¡Gracias por su compra!')
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
@@ -144,6 +162,64 @@ export function ticketDeVenta(
   // ticket original no vuelve a mover dinero, así que no vuelve a pulsar el cajón aunque el pago
   // original haya sido en efectivo.
   if (!opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
+    ticket.abrirCajon()
+  }
+
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}
+
+/** Datos del recibo de un pago a cuenta. `saldoAnterior - total pagado = saldoNuevo`: quien lo arma
+ * los deriva juntos (`saldosDeUnPagoACuenta`) para que los tres números nunca se contradigan. */
+export type DatosDeReciboDePago = {
+  comprobante: ComprobanteEmitido
+  cliente: { numero: number; nombre: string }
+  saldoAnterior: number
+  saldoNuevo: number
+}
+
+/**
+ * Recibo de un pago a cuenta (comprobante RC, `POST /api/clientes/{id}/cuenta-corriente/pagos`): cada
+ * medio con su importe y vuelto, el total pagado (importes menos vueltos) y el saldo del cliente antes
+ * y después. Con algún pago en efectivo pulsa el cajón en el mismo trabajo de impresión, antes del
+ * corte, igual que `ticketDeVenta`.
+ */
+export function ticketDePagoACuenta(datos: DatosDeReciboDePago, contexto: ContextoDeImpresion, medios: MedioPagoListado[]): Uint8Array {
+  const { comprobante } = datos
+  const medioPorId = new Map(medios.map((m) => [m.id, m]))
+  const ticket = new ConstructorDeTicket()
+
+  encabezado(ticket, contexto)
+
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea('RECIBO DE PAGO A CUENTA')
+    .negrita(false)
+    .alinear('izquierda')
+    .linea(`Comprobante: RC ${comprobante.numeroVisible}`)
+    .linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
+    .linea(`Cajero: ${contexto.cajero}`)
+    .linea(lineaDeCliente(datos.cliente))
+    .lineaDeGuiones()
+
+  ticket.linea('Pagos:')
+  for (const pago of comprobante.pagos) {
+    ticket.lineaDeColumnas(medioPorId.get(pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`, formatearMoneda(pago.importe))
+    if (pago.vuelto > 0) {
+      ticket.lineaDeColumnas('  Vuelto', formatearMoneda(pago.vuelto))
+    }
+  }
+  ticket.negrita(true).lineaDeColumnas('Total pagado', formatearMoneda(calcularImporteAplicado(comprobante.pagos))).negrita(false)
+
+  ticket.lineaDeGuiones()
+  ticket.lineaDeColumnas('Saldo anterior', formatearMoneda(datos.saldoAnterior))
+  ticket.tamanioDoble(true).negrita(true)
+  ticket.lineaDeColumnas('Saldo nuevo', formatearMoneda(datos.saldoNuevo))
+  ticket.tamanioDoble(false).negrita(false)
+
+  if (algunPagoEnEfectivo(comprobante, medios)) {
     ticket.abrirCajon()
   }
 

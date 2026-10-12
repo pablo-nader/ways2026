@@ -12,6 +12,7 @@ import { esVueltoJustificado } from './pagos'
 import { redondearImporte } from '../formato/importes'
 import type {
   ComportamientoMedioPago,
+  ClienteListado,
   ComprobanteEmitido,
   DetalleDeConsumo,
   DetalleDeLinea,
@@ -136,6 +137,38 @@ export function etiquetaDeMovimiento(m: Pick<MovimientoDeCuentaCorriente, 'tipo'
  * tras un pago a cuenta antes de enviarlo (mismo criterio no-autoritativo que `arqueo.ts`). */
 export function disponibilidadPrevia(saldo: number, limiteCredito: number, creditoIlimitado: boolean): number | null {
   return creditoIlimitado ? null : limiteCredito - saldo
+}
+
+/** Nombre para mostrar de un cliente: la razón social si tiene, o nombre y apellido. */
+export function nombreCompletoDeCliente(cliente: Pick<ClienteListado, 'razonSocial' | 'nombre' | 'apellido'>): string {
+  return cliente.razonSocial ?? [cliente.nombre, cliente.apellido].filter(Boolean).join(' ')
+}
+
+/** Saldos que imprime el recibo de un pago a cuenta. `anterior - aplicado = nuevo` siempre. Con el saldo
+ * posterior que devolvió el servidor tras el pago, ese es el nuevo y el anterior se reconstruye; si no
+ * se pudo leer, el anterior es el que había en pantalla y el nuevo se estima restando lo aplicado. */
+export function saldosDeUnPagoACuenta(params: {
+  pagos: { importe: number; vuelto: number }[]
+  saldoEnPantalla: number
+  saldoPosterior: number | null
+}): { anterior: number; nuevo: number } {
+  const aplicado = calcularImporteAplicado(params.pagos)
+  if (params.saldoPosterior !== null) {
+    return { anterior: redondear(params.saldoPosterior + aplicado), nuevo: redondear(params.saldoPosterior) }
+  }
+  return { anterior: redondear(params.saldoEnPantalla), nuevo: redondear(params.saldoEnPantalla - aplicado) }
+}
+
+/** Saldo del cliente antes y después de una venta: solo lo cobrado con un medio `CuentaCorriente`
+ * se suma a la deuda; cualquier otro medio (o uno que no está en la lista) la deja igual. */
+export function saldosDeUnaVenta(params: {
+  saldoAntes: number
+  pagos: { idMedioPago: number; importe: number; vuelto: number }[]
+  medios: MedioPagoListado[]
+}): { antes: number; despues: number } {
+  const comportamientoPorId = new Map(params.medios.map((m) => [m.id, m.comportamiento]))
+  const aCuenta = params.pagos.filter((p) => comportamientoPorId.get(p.idMedioPago) === 'CuentaCorriente')
+  return { antes: params.saldoAntes, despues: redondear(params.saldoAntes + calcularImporteAplicado(aCuenta)) }
 }
 
 /** Lo que muestra el chip de saldo del cliente. `limite`, `disponible` y `proporcionUsada` son `null`

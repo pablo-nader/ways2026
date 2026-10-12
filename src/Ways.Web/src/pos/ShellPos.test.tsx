@@ -581,6 +581,100 @@ describe('ShellPos — los controles de caja viven en el header, portaleados des
   })
 })
 
+describe('ShellPos — ticket de venta de un cliente identificado', () => {
+  const medioCuentaCorriente: MedioPagoListado = {
+    ...medioEfectivo,
+    id: 3,
+    nombre: 'Cuenta corriente',
+    orden: 3,
+    comportamiento: 'CuentaCorriente',
+    admiteVuelto: false,
+  }
+  const clienteIdentificado: ClienteListado = {
+    ...consumidorFinal,
+    id: 2,
+    numero: 2,
+    nombre: 'Juan',
+    apellido: 'Perez',
+    limiteCredito: 5000,
+    creditoIlimitado: false,
+    saldo: 500,
+    esConsumidorFinal: false,
+  }
+
+  /** Elige el cliente identificado en la cabecera del carrito y cobra $100 con el medio dado. */
+  async function venderAlClienteIdentificado(medio: MedioPagoListado) {
+    await esperarAlConsumidorFinal()
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.click(await screen.findByRole('option', { name: /Juan Perez/ }))
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medio.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText(/Venta 0007-00000001/)
+  }
+
+  function mockearClientesYMedios() {
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal, clienteIdentificado], total: 2, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioCuentaCorriente])
+      return undefined
+    })
+  }
+
+  it('una venta cobrada a cuenta corriente imprime el cliente con el saldo anterior de la pantalla y el nuevo con lo cobrado a cuenta', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    const comprobante = { ...comprobanteEmitidoFixture(), pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] }
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioCuentaCorriente)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600 },
+      }),
+    )
+  })
+
+  it('una venta cobrada en efectivo imprime el mismo saldo antes y después', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    const comprobante = comprobanteEmitidoFixture()
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioEfectivo)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 500 },
+      }),
+    )
+  })
+
+  it('el Consumidor Final imprime el ticket de siempre, sin cliente ni saldos', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    mockearVentaExitosa()
+    renderShell()
+
+    await completarVenta()
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(ticketDeVenta(comprobanteEmitidoFixture(), CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente]))
+  })
+})
+
 describe('ShellPos — aviso persistente de impresión (Fix judgment-day W1/W2: el shell es el único dueño de la impresión)', () => {
   it('si falla la impresión del ticket de venta, muestra el aviso con "Reimprimir" — reimprimir reenvía los mismos bytes y el aviso se limpia solo al tener éxito', async () => {
     mockearRutasDePos()
