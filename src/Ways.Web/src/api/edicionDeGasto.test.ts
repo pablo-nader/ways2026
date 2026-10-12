@@ -4,6 +4,7 @@ import {
   ADVERTENCIA_TURNO_CERRADO,
   COPIA_GASTO_TURNO_CERRADO,
   advertenciasDeGastoDeAdministracion,
+  esGastoDeUnPagoDePersonal,
   aFormularioDeEdicion,
   aSolicitudDeEdicionDeGasto,
   copiaDeFalloDeEdicion,
@@ -29,6 +30,22 @@ function gastoFixture(sobrescribir: Partial<GastoEditable> = {}): GastoEditable 
 function formularioFixture(sobrescribir: Partial<FormularioDeEdicionDeGasto> = {}): FormularioDeEdicionDeGasto {
   return { ...aFormularioDeEdicion(gastoFixture()), ...sobrescribir }
 }
+
+describe('esGastoDeUnPagoDePersonal', () => {
+  it('un gasto con idMovimientoPersonal nació de un pago y no se modifica por separado', () => {
+    expect(esGastoDeUnPagoDePersonal({ idMovimientoPersonal: 12 })).toBe(true)
+  })
+
+  it('un gasto sin idMovimientoPersonal es común', () => {
+    expect(esGastoDeUnPagoDePersonal({ idMovimientoPersonal: null })).toBe(false)
+  })
+
+  it('una respuesta que no trae el campo se trata como gasto común', () => {
+    const respuestaSinElCampo = {} as { idMovimientoPersonal: number | null }
+
+    expect(esGastoDeUnPagoDePersonal(respuestaSinElCampo)).toBe(false)
+  })
+})
 
 describe('aFormularioDeEdicion', () => {
   it('precarga cada campo y convierte los null opcionales en cadena o vacío', () => {

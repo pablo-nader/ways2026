@@ -71,13 +71,31 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   alta y la revisión independiente es judgment-day. Namespace `Plantel`, clase `Personal`.
   Pendiente heredado por T2: la baja de personal no tiene guarda de referencias porque aún
   ninguna tabla lo referencia; se agrega junto con `movimientos_personal`.
-- [ ] T2 — Libro de personal y carga de horas (backend). Ruta: delegada.
+- [x] T2 — Libro de personal y carga de horas (backend). Ruta: delegada.
   Tabla `movimientos_personal`, saldo cacheado en `personal`, carga de horas con valor hora
   congelado, ajuste con detalle obligatorio, estado de cuenta paginado.
   Aceptación: horas × valor hora da el importe y sube el saldo; el ajuste lo corrige con
   signo; dos cargas concurrentes dejan el saldo exacto.
   Checks: tests de dominio del cálculo, integración del libro y de concurrencia.
-- [ ] T3 — Pago de personal (backend). Ruta: delegada.
+  Evidencia: commit `7c04fe94`. Domain.Tests 1368/1368, Application.Tests completo 867/867,
+  integración filtrada 301/301; verificación del padre: Application.Tests 867/867 e
+  integración del libro 49/49. RED observado solo en la regla de dominio; servicio, endpoints
+  y esquema se probaron por mutación. Una mutación sobrevive: el desempate por id en el
+  `ORDER BY` del estado de cuenta no es matable de forma determinista.
+  Modelo: `personal.saldo`; `movimientos_personal` (fecha `date`, enum
+  `tipo_movimiento_personal` = horas|pago|ajuste, un CHECK de forma por tipo, FK compuesta a
+  personal, RLS). Desvío deliberado del libro de proveedores: sin `id_punto_venta`.
+  Sin resolver: no se rechaza una carga con fecha futura (la zona horaria es por empresa).
+  Judgment-day: ronda 1 con un crítico reproducido (el enum nuevo faltaba en los fixtures
+  que arman su lista de enums: 4 tests rotos) y advertencias de calidad de tests. Corregido
+  en `85251b0a`, `75f3a8c1` y `3adcaf3c` (lección en el skill structural-guard-tests). La
+  re-evaluación encontró dos fixtures más con el mismo defecto (2 tests rotos), corregidos
+  en el commit siguiente. Verificación final: el CI del PR #407 corrió la suite completa en
+  verde. La corrida local reportó 2522 tests y la suite tiene unos 3830: ese conteo no cierra.
+  Cambios aceptados en la revisión: la fecha del ajuste es obligatoria (el servidor no
+  adivina el día); la ventana por defecto del estado de cuenta no tiene tope superior; se
+  quitó del CHECK de horas la cláusula `importe >= 0`, implicada por las otras.
+- [x] T3 — Pago de personal (backend). Ruta: delegada.
   Operación única con líneas de descuento de cuenta corriente y de medios de pago, origen de
   fondos por pago (tesorería o cajón del turno), gasto `sueldos` por línea de medio, valor
   nuevo del enum `tipo_movimiento_cc`.
@@ -85,9 +103,53 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
   cliente vinculado y se rechaza sin cliente vinculado; el origen cajón exige turno abierto y
   aparece en el arqueo; todo ocurre en una transacción.
   Checks: integración por cada combinación de líneas y origen; atomicidad ante falla.
-- [ ] T4 — Pantalla de personal (web). Ruta: delegada.
+  Evidencia: commits `cf9591a9` y `8de4c5ba`. Domain.Tests 1405/1405, Application.Tests
+  875/875, integración completa 3871/3871 (42 min); verificación del padre: integración de
+  pago, esquema fiscal y gastos 218/218. RED observado en las reglas de dominio y en las
+  guardas del escritor de cuenta corriente; la integración se escribió después y se probó
+  por mutación, sin mutaciones sobrevivientes. Sin prueba propia: la serialización por la
+  fila de personal (sale del UPDATE, no de un lock explícito).
+  Modelo: valor `descuento_personal` en `tipo_movimiento_cc`; `id_movimiento_personal`
+  nullable en `gastos` y en `movimientos_cuenta_corriente` (el asiento de pago es la
+  cabecera); CHECKs que nombran el valor nuevo en una segunda migración.
+  Orden de locks: turno, fila de personal, fila de cliente, inserts, lock de tesorería.
+  Los gastos vinculados a un pago no se editan ni eliminan sueltos (409).
+  Decisiones del escritor aceptadas: el descuento exige punto de venta (el libro de cuenta
+  corriente lo requiere); con origen cajón el gasto lleva el instante real y `fecha` solo
+  fecha el asiento; la referencia de la línea se guarda en el detalle del gasto; tope de 20
+  líneas. No se valida que la empresa del empleado coincida con la que paga.
+  Judgment-day: ronda 1 sin críticos; los dos jueces sin ciclos de locks ni caminos que
+  dejen los libros inconsistentes. Corregido en `42c0d4ff`, `cf880c5b` y `f63b2ff6`: línea
+  nula y origen numérico inválido respondían 500; etiqueta web del tipo nuevo; el descuento
+  alcanzaba a un cliente dado de baja en carrera (ahora el UPDATE exige cliente vivo); los
+  listados de gastos exponen `idMovimientoPersonal` y las pantallas deshabilitan editar,
+  eliminar y vincular. La re-evaluación confirmó todo y encontró un defecto del arreglo
+  (campo ausente tratado como vinculado), corregido en el commit siguiente.
+  Cambio de alcance aceptado en la revisión: pagar desde tesorería exige Admin (403 al
+  Supervisor), igual que el gasto de administración; cajón y descuento siguen para ambos.
+  Verificación tras las correcciones: Domain 1408/1408, Application 875/875, integración
+  filtrada 431/431, web 5912/5912 (una falla intermitente sin identificar en la primera
+  corrida); verificación del padre: integración de pago 52/52, web de gastos 110/110.
+  Seguimientos: anular un pago; `CompraEditor` con `?desdeGasto=` de un gasto vinculado no
+  se frena en pantalla (termina en 409); la etiqueta nueva del POS requiere release.
+- [x] T4 — Pantalla de personal (web). Ruta: delegada.
   ABM con selector de usuario y de cliente, ruta, entrada de menú.
   Checks: tests de helpers de mapeo y de componente.
+  Evidencia: commits `a618af83` y `3c5db178`. Web completa 6119/6119, lint y build sin
+  errores, `RutasDeLaSpa` 106/106; verificación del padre: tests de la pantalla y del menú
+  93/93. RED observado en los helpers; los tests de pantalla se escribieron después y se
+  probaron por mutación.
+  Ruta `/personal` para Admin y Supervisor (solo lectura), en Administración > Terceros. El
+  Supervisor gana un grupo Administración en el menú. Usuario y cliente se eligen con
+  `SelectorConBusqueda` (el desplegable existente solo trae 25 clientes).
+  Judgment-day: ronda 1 sin críticos. Corregido en `ad503152` y `1b8827fc`: tests del
+  esqueleto asíncrono, listado que quedaba en "Cargando" tras un guardado rechazado,
+  enlace "Cuenta" inerte con la pantalla bloqueada, accesibilidad de los selectores, saldo
+  con signo legible. La re-evaluación dio todo por resuelto, sin defectos del arreglo; web
+  completa 6150/6150.
+  Seguimientos: el mismo defecto de "Cargando" existe en Proveedores (tarea sugerida aparte);
+  el término de búsqueda vigente se anota al iniciar la lectura y no al aplicarla.
+  El enlace "Cuenta" apunta a una ruta que se registra en T5.
 - [ ] T5 — Cuenta de personal (web). Ruta: delegada.
   Estado de cuenta, carga de horas, ajuste y pago con líneas.
   Checks: tests de componente y del cálculo de totales del pago.
@@ -95,4 +157,7 @@ una rebanada por tarea. Cada rebanada pasa judgment-day y sale como PR con auto-
 ## Progreso
 
 T1 cerrada (1.551 líneas de autoría sin contar el código generado de la migración).
-Próximo paso: judgment-day y PR de T1, luego T2.
+T1 mergeada en main (PR #402). T2 cerrada (1.712 líneas de autoría).
+T2 mergeada en main (PR #407). T3 cerrada (2.492 líneas de autoría).
+T3 mergeada en main (PR #415). T4 cerrada (unas 2.500 líneas, más de la mitad tests).
+Próximo paso: PR de T4, luego T5.

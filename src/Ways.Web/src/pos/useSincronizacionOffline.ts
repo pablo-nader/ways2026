@@ -193,6 +193,8 @@ export type ResultadoDeSincronizacionOffline = {
      * previa propia que congelar (p. ej. los tests de este mismo hook). */
     instantaneaCongelada?: InstantaneaDePos | null
   }) => Promise<EncoladoOffline>
+  /** Cuenta corriente de las ventas de este cliente que siguen en el outbox: el saldo del servidor todavía no la incluye. */
+  consumoPendienteDeCuentaCorriente: (idCliente: number) => Promise<number>
   /** judgment-day ronda 2 (WARNING): la salida real que `ventasConError` prometía y no tenía —
    * re-encola la venta rechazada AL FINAL del outbox para que el próximo drenado la reintente. Es
    * seguro incluso si el rechazo original fue real y persiste (el servidor la va a rechazar otra
@@ -921,6 +923,7 @@ export function useSincronizacionOffline(params: ParametrosDeSincronizacionOffli
     sincronizarAhora,
     drenarAhora,
     encolarVentaOffline,
+    consumoPendienteDeCuentaCorriente,
     reintentarVentaConError,
     descartarVentaConError,
   }

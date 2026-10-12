@@ -27,6 +27,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     admiteVuelto: true,
     requiereReferencia: false,
     recargoPorcentaje: null,
+    porcentajeFacturacion: 0,
     ...sobrescribir,
   }
 }
@@ -48,6 +49,7 @@ function gastoFixture(sobrescribir: Partial<GastoDeTurno> = {}): GastoDeTurno {
     detalle: null,
     numeroFactura: null,
     idComprobanteCompra: null,
+    idMovimientoPersonal: null,
     ...sobrescribir,
   }
 }

@@ -258,6 +258,15 @@ export function copiaDeFalloDeEdicion(error: unknown, accion = 'guardar'): strin
 export const ADVERTENCIA_TURNO_CERRADO =
   'Este gasto pertenece a un turno cerrado: se recalculará el arqueo del turno y quedará marcado como recalculado.'
 
+/** Un gasto que nació de un pago de personal no se edita, no se da de baja ni se liga a una compra por
+ * separado: el servidor lo rechaza con 409 `gasto_de_pago_de_personal`, así que las pantallas ofrecen esas
+ * acciones deshabilitadas. */
+export function esGastoDeUnPagoDePersonal(gasto: Pick<GastoDeAdministracionListado, 'idMovimientoPersonal'>): boolean {
+  return typeof gasto.idMovimientoPersonal === 'number'
+}
+
+export const MOTIVO_GASTO_DE_PAGO_DE_PERSONAL = 'Pertenece a un pago de personal y no se modifica por separado.'
+
 type GastoConEfectos = Pick<GastoDeAdministracionListado, 'turnoAbierto' | 'idTurnoCaja' | 'origenFondos' | 'categoria' | 'idProveedor'>
 
 /** Avisos que el admin tiene que ver antes de editar o eliminar un gasto: reflejan los efectos

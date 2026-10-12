@@ -5,7 +5,7 @@ import {
   ACEPTAR_IMAGEN,
   copiaDeFalloDeTienda,
   debeReleerTrasFalloDeTienda,
-  publicarEnLaWeb,
+  cambiarDisponibilidad,
   quitarImagenDeArticulo,
   subirImagenDeArticulo,
   urlDeImagenDeArticuloAdmin,
@@ -17,30 +17,31 @@ import { ConfirmacionDeBaja } from '../../componentes/ConfirmacionDeBaja'
 
 type Props = {
   idArticulo: number
-  /** Estado de la tienda con el que se cargó el artículo; después la sección lleva el suyo. */
-  inicial: { publicadoWeb: boolean; tieneImagen: boolean }
+  /** Disponibilidad con la que se cargó el artículo; después la sección lleva la suya. */
+  inicial: { disponibleVenta: boolean; disponibleOnline: boolean; tieneImagen: boolean }
   bloqueadoPorPadre: boolean
   alDeEscribir: (enCurso: boolean) => void
-  /** La tienda del artículo cambió, o una escritura falló sin decir qué quedó escrito: la grilla muestra su estado y tiene que refrescarse. */
+  /** La disponibilidad o la imagen del artículo cambió, o una escritura falló sin decir qué quedó escrito: la grilla muestra su estado y tiene que refrescarse. */
   alCambiar: () => void
 }
 
 /**
- * Tienda online del artículo: si se publica y su imagen. Solo la ve quien puede administrar el catálogo (el servidor
- * exige la misma policy en las tres escrituras; esto solo evita ofrecer controles que van a dar 403), y solo con el
- * artículo ya guardado. Cada control escribe por su cuenta, nunca con el "Guardar" del formulario.
+ * Disponibilidad del artículo (a la venta y en la tienda online) y su imagen, bajo el título "Venta y tienda online" porque
+ * el formulario ya tiene una sección "Disponibilidad" que es la de las empresas. Solo la ve quien puede administrar el
+ * catálogo (el servidor exige la misma policy en las tres escrituras; esto solo evita ofrecer controles que van a dar
+ * 403), y solo con el artículo ya guardado. Cada control escribe por su cuenta, nunca con el "Guardar" del formulario.
  */
-export function SeccionDeTiendaOnline(props: Props) {
+export function SeccionDeDisponibilidad(props: Props) {
   const sesion = useContext(AuthContext)
   const usuario = sesion?.usuario ?? null
 
   if (usuario === null || !puedeGestionarCatalogos(usuario.rolId)) return null
 
-  return <ContenidoDeLaTienda {...props} />
+  return <ContenidoDeLaDisponibilidad {...props} />
 }
 
 /**
- * Las tres escrituras (publicar, subir y quitar la imagen) comparten una única guarda de reentrancia
+ * Las tres escrituras (disponibilidad, subir y quitar la imagen) comparten una única guarda de reentrancia
  * (`ocupadoRef`) y, mientras dura una, `alDeEscribir` deja inerte todo el modal. Por eso la respuesta de una
  * escritura no lleva token propio (`react-async-state` regla 2): la superficie no puede reemplazarse ni cerrarse
  * mientras está en vuelo, lo que escribe es estado de esta instancia (que muere con el artículo que la montó) y no
@@ -51,16 +52,17 @@ export function SeccionDeTiendaOnline(props: Props) {
  * formulario queda deshabilitado y no se puede abrir ningún modal apilado (alta rápida) sobre ella. Su Escape en
  * captura es el correcto porque la puerta es la capa de arriba.
  */
-function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscribir, alCambiar }: Props) {
-  const [publicado, setPublicado] = useState(inicial.publicadoWeb)
+function ContenidoDeLaDisponibilidad({ idArticulo, inicial, bloqueadoPorPadre, alDeEscribir, alCambiar }: Props) {
+  const [disponibleVenta, setDisponibleVenta] = useState(inicial.disponibleVenta)
+  const [disponibleOnline, setDisponibleOnline] = useState(inicial.disponibleOnline)
   const [tieneImagen, setTieneImagen] = useState(inicial.tieneImagen)
   const [version, setVersion] = useState<number | null>(null)
   // Cada fuente tiene su propio slot (regla 14); `limpiarMensajes` los borra al empezar cualquier acción (regla 16).
-  const [errorDePublicacion, setErrorDePublicacion] = useState('')
+  const [errorDeDisponibilidad, setErrorDeDisponibilidad] = useState<{ texto: string; interruptor: 'venta' | 'online' } | null>(null)
   const [errorDeImagen, setErrorDeImagen] = useState('')
   const [aviso, setAviso] = useState('')
   const [ocupado, setOcupado] = useState(false)
-  const [escribiendo, setEscribiendo] = useState<'publicar' | 'imagen' | null>(null)
+  const [escribiendo, setEscribiendo] = useState<'venta' | 'online' | 'imagen' | null>(null)
   const [puertaAbierta, setPuertaAbierta] = useState(false)
   const [disparador, setDisparador] = useState<HTMLElement | null>(null)
   /** URL que el navegador no pudo mostrar. Va por URL y no por booleano: subir otra imagen cambia la versión y con
@@ -71,6 +73,11 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   /** Adónde vuelve el foco si "Quitar imagen" desaparece con la confirmación: la sección vive en el portal del
    * `Modal`, donde la puerta no encuentra una `Box` a la que subir. */
   const tituloRef = useRef<HTMLElement>(null)
+  const interruptorDeVentaRef = useRef<HTMLInputElement>(null)
+  const interruptorOnlineRef = useRef<HTMLInputElement>(null)
+  /** Interruptor al que le toca recuperar el foco cuando termine de habilitarse: deshabilitado durante su escritura, el
+   * navegador lo pasa a `<body>` (regla 12 de `react-async-state`). Lo asigna `escribir` al empezar, nunca un efecto. */
+  const focoPendienteRef = useRef<'venta' | 'online' | null>(null)
 
   // El contador del padre se mantiene balanceado por construcción: el cleanup corre al cerrar la puerta y al desmontar.
   useEffect(() => {
@@ -84,8 +91,17 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   const bloqueado = ocupado || bloqueadoPorPadre || puertaAbierta
   const urlDeLaImagen = urlDeImagenDeArticuloAdmin(idArticulo, version)
 
+  // Habilitado de nuevo el interruptor que escribió, el foco vuelve a él (un `disabled` en vuelo lo había perdido).
+  useEffect(() => {
+    if (bloqueado || focoPendienteRef.current === null) return
+
+    const destino = focoPendienteRef.current === 'venta' ? interruptorDeVentaRef.current : interruptorOnlineRef.current
+    focoPendienteRef.current = null
+    destino?.focus()
+  }, [bloqueado])
+
   function limpiarMensajes() {
-    setErrorDePublicacion('')
+    setErrorDeDisponibilidad(null)
     setErrorDeImagen('')
     setAviso('')
   }
@@ -99,7 +115,8 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   async function releer() {
     try {
       const leido = await clienteDeArticulos.obtener(idArticulo)
-      setPublicado(leido.publicadoWeb)
+      setDisponibleVenta(leido.disponibleVenta)
+      setDisponibleOnline(leido.disponibleOnline)
       setTieneImagen(leido.tieneImagen)
       setVersion(leido.tieneImagen ? Date.now() : null)
     } catch {
@@ -108,7 +125,7 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   }
 
   async function escribir<T>(
-    cual: 'publicar' | 'imagen',
+    cual: 'venta' | 'online' | 'imagen',
     escritura: () => Promise<T>,
     alTenerExito: (resultado: T) => void,
     encabezadoDelFallo: string,
@@ -116,6 +133,7 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   ) {
     if (ocupadoRef.current) return
     ocupadoRef.current = true
+    if (cual !== 'imagen') focoPendienteRef.current = cual
     setOcupado(true)
     setEscribiendo(cual)
     limpiarMensajes()
@@ -145,16 +163,38 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
     }
   }
 
-  async function cambiarPublicacion(quiere: boolean) {
+  /** Un único PUT lleva los dos valores: el que se cambió y el otro tal como está en pantalla. */
+  async function cambiarLaVenta(quiere: boolean) {
     await escribir(
-      'publicar',
-      () => publicarEnLaWeb(idArticulo, quiere),
+      'venta',
+      () => cambiarDisponibilidad(idArticulo, { disponibleVenta: quiere, disponibleOnline }),
       (guardada) => {
-        setPublicado(guardada.publicado)
-        setAviso(guardada.publicado ? 'El artículo quedó publicado en la tienda.' : 'El artículo quedó fuera de la tienda.')
+        setDisponibleVenta(guardada.disponibleVenta)
+        setDisponibleOnline(guardada.disponibleOnline)
+        setAviso(
+          guardada.disponibleVenta ? 'El artículo quedó disponible a la venta.' : 'El artículo quedó fuera de la venta.',
+        )
       },
-      quiere ? 'No se pudo publicar el artículo.' : 'No se pudo despublicar el artículo.',
-      setErrorDePublicacion,
+      quiere ? 'No se pudo habilitar la venta del artículo.' : 'No se pudo sacar el artículo de la venta.',
+      (texto) => setErrorDeDisponibilidad({ texto, interruptor: 'venta' }),
+    )
+  }
+
+  async function cambiarLoOnline(quiere: boolean) {
+    await escribir(
+      'online',
+      () => cambiarDisponibilidad(idArticulo, { disponibleVenta, disponibleOnline: quiere }),
+      (guardada) => {
+        setDisponibleVenta(guardada.disponibleVenta)
+        setDisponibleOnline(guardada.disponibleOnline)
+        setAviso(
+          guardada.disponibleOnline
+            ? 'El artículo quedó disponible en la tienda online.'
+            : 'El artículo quedó fuera de la tienda online.',
+        )
+      },
+      quiere ? 'No se pudo mostrar el artículo en la tienda online.' : 'No se pudo sacar el artículo de la tienda online.',
+      (texto) => setErrorDeDisponibilidad({ texto, interruptor: 'online' }),
     )
   }
 
@@ -215,34 +255,65 @@ function ContenidoDeLaTienda({ idArticulo, inicial, bloqueadoPorPadre, alDeEscri
   }
 
   return (
-    <section aria-labelledby="art-tienda-titulo">
-      <strong id="art-tienda-titulo" ref={tituloRef} tabIndex={-1} className="text-muted small text-uppercase">
-        Tienda online
+    <section aria-labelledby="art-disponibilidad-titulo">
+      <strong id="art-disponibilidad-titulo" ref={tituloRef} tabIndex={-1} className="text-muted small text-uppercase">
+        Venta y tienda online
       </strong>
 
       <div className="form-check form-switch mt-2">
         <input
-          id="art-publicado-web"
+          ref={interruptorDeVentaRef}
+          id="art-disponible-venta"
           type="checkbox"
           role="switch"
           className="form-check-input"
-          checked={publicado}
-          onChange={(e) => void cambiarPublicacion(e.target.checked)}
+          checked={disponibleVenta}
+          onChange={(e) => void cambiarLaVenta(e.target.checked)}
           disabled={bloqueado}
-          aria-describedby="art-publicado-web-ayuda"
+          aria-describedby={
+            errorDeDisponibilidad?.interruptor === 'venta'
+              ? 'art-disponible-venta-ayuda art-disponibilidad-error'
+              : 'art-disponible-venta-ayuda'
+          }
         />
-        <label className="form-check-label" htmlFor="art-publicado-web">
-          Publicado en la tienda
+        <label className="form-check-label" htmlFor="art-disponible-venta">
+          Disponible a la venta
         </label>
       </div>
-      <div id="art-publicado-web-ayuda" className="form-text">
-        Se guarda al instante, sin pasar por "Guardar". Para verse en la tienda también tiene que estar activo y tener
-        precio en la lista de la vitrina.
-        {escribiendo === 'publicar' && ' Guardando…'}
+      <div id="art-disponible-venta-ayuda" className="form-text">
+        Se guarda al instante, sin pasar por "Guardar". Desmarcalo para un artículo de uso interno: se compra y se
+        stockea, pero no se vende.
+        {escribiendo === 'venta' && ' Guardando…'}
       </div>
-      {errorDePublicacion && (
-        <div className="text-danger small mt-1" role="alert">
-          {errorDePublicacion}
+
+      <div className="form-check form-switch mt-2">
+        <input
+          ref={interruptorOnlineRef}
+          id="art-disponible-online"
+          type="checkbox"
+          role="switch"
+          className="form-check-input"
+          checked={disponibleOnline}
+          onChange={(e) => void cambiarLoOnline(e.target.checked)}
+          disabled={bloqueado}
+          aria-describedby={
+            errorDeDisponibilidad?.interruptor === 'online'
+              ? 'art-disponible-online-ayuda art-disponibilidad-error'
+              : 'art-disponible-online-ayuda'
+          }
+        />
+        <label className="form-check-label" htmlFor="art-disponible-online">
+          Disponible online
+        </label>
+      </div>
+      <div id="art-disponible-online-ayuda" className="form-text">
+        Desmarcalo para que no aparezca en la tienda online. Para verse en la tienda también tiene que estar disponible a la
+        venta, activo y tener precio en la lista de la vitrina.
+        {escribiendo === 'online' && ' Guardando…'}
+      </div>
+      {errorDeDisponibilidad && (
+        <div id="art-disponibilidad-error" className="text-danger small mt-1" role="alert">
+          {errorDeDisponibilidad.texto}
         </div>
       )}
 

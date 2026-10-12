@@ -154,6 +154,7 @@ const medioEfectivo: MedioPagoListado = {
   admiteVuelto: true,
   requiereReferencia: false,
   recargoPorcentaje: null,
+  porcentajeFacturacion: 0,
 }
 
 function ventasPorPuntoVentaFixture(sobrescribir: Partial<VentasPorPuntoVenta> = {}): VentasPorPuntoVenta {

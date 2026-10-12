@@ -112,7 +112,7 @@ export function ModalDeBusquedaDeArticulos({
     setError('')
 
     try {
-      const pagina = await clienteDeArticulos.listar(propio, false)
+      const pagina = await clienteDeArticulos.listar(propio, false, undefined, { soloVendibles: true })
       if (generacionRef.current !== generacion) return
       setResultados(pagina.items)
 

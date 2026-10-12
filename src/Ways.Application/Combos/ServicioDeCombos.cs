@@ -76,8 +76,8 @@ public class ServicioDeCombos(
     /// Tres consultas sin importar cuántos componentes o miembros haya: el combo, sus componentes con el nombre del
     /// artículo o de la familia (LEFT JOIN: una fila dada de baja deja el componente con <c>Nombre</c> nulo en vez de
     /// desaparecer, dangling-fk-read-models) y los artículos candidatos de todos los componentes juntos. Un candidato es
-    /// lo que el escaneo resuelve (<see cref="ServicioDeEscaneo"/>: artículo vivo y activo, sin mirar precio, que se
-    /// resuelve aparte) y además de unidad de venta <c>Unidad</c>, la única que un combo admite. Un miembro de una familia
+    /// lo que el escaneo resuelve (<see cref="ServicioDeEscaneo"/>: artículo vivo, activo y disponible a la venta, sin
+    /// mirar precio, que se resuelve aparte) y además de unidad de venta <c>Unidad</c>, la única que un combo admite. Un miembro de una familia
     /// dada de baja no cuenta.
     /// </summary>
     public static async Task<ComboCargable> CargarParaPosAsync(
@@ -111,6 +111,7 @@ public class ServicioDeCombos(
         var candidatos = await (
             from a in db.Articulos
             where a.Activo
+                && a.DisponibleVenta
                 && a.UnidadVenta == UnidadVenta.Unidad
                 && (idsArticulos.Contains(a.Id)
                     || (a.IdFamilia != null
@@ -168,6 +169,7 @@ public class ServicioDeCombos(
                 Precio = datos.Precio,
                 IdEmpresa = datos.IdEmpresa,
                 Activo = datos.Activo,
+                DisponibleOnline = datos.DisponibleOnline,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };
@@ -229,6 +231,7 @@ public class ServicioDeCombos(
             existente.Precio = datos.Precio;
             existente.IdEmpresa = datos.IdEmpresa;
             existente.Activo = activo;
+            existente.DisponibleOnline = datos.DisponibleOnline ?? existente.DisponibleOnline;
             existente.UpdatedAt = reloj.Ahora;
 
             // Dos SaveChanges en la misma transacción: el DELETE del conjunto viejo se emite antes que el INSERT del
@@ -324,7 +327,8 @@ public class ServicioDeCombos(
         [
             .. combos.Select(c => new ComboListado(
                 c.Id, c.Codigo, c.Nombre, c.Precio, c.IdEmpresa, c.Activo,
-                porCombo.TryGetValue(c.Id, out var componentes) ? componentes : []))
+                porCombo.TryGetValue(c.Id, out var componentes) ? componentes : [],
+                c.DisponibleOnline))
         ];
     }
 

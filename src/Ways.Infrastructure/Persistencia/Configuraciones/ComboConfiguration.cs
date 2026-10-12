@@ -56,6 +56,11 @@ public class ComboConfiguration : IEntityTypeConfiguration<Combo>
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(c => c.DisponibleOnline)
+            .HasColumnName("disponible_online")
+            .HasDefaultValue(true)
+            .IsRequired();
+
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(c => c.DeletedAt).HasColumnName("deleted_at");

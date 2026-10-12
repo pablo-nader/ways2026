@@ -18,6 +18,7 @@ using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 
 namespace Ways.Application.Gastos;
@@ -272,6 +273,7 @@ public class ServicioDeGastos(
         // lock (single-read-under-lock).
         await TomarLockDeGastoAsync(idGasto, idTenant, ct);
         var gasto = await db.Gastos.FirstAsync(g => g.Id == idGasto, ct);
+        ExigirGastoSinPagoDePersonal(gasto.IdMovimientoPersonal);
 
         if (gasto.IdComprobanteCompra is not null)
         {
@@ -426,6 +428,7 @@ public class ServicioDeGastos(
         ExigirConceptoValido(solicitud.Concepto);
 
         var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         if (inmutables.IdTurnoCaja is null)
         {
             throw GastoTurnoCerrado();
@@ -452,6 +455,7 @@ public class ServicioDeGastos(
         ExigirConceptoValido(solicitud.Concepto);
 
         var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
             await EjecutarEscrituraAsync(
@@ -470,6 +474,7 @@ public class ServicioDeGastos(
         var momento = reloj.Ahora;
 
         var inmutables = await LeerDatosInmutablesAsync(idGasto, ct);
+        ExigirGastoSinPagoDePersonal(inmutables.IdMovimientoPersonal);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         await estrategia.ExecuteAsync(async () =>
@@ -485,13 +490,15 @@ public class ServicioDeGastos(
 
     /// <summary>Columnas que ninguna escritura cambia después del alta, así que se pueden leer
     /// antes de los locks (single-read-under-lock regla 6): el turno es la clave del primer lock.
-    /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.</summary>
-    private sealed record DatosInmutablesDeGasto(int? IdTurnoCaja, int IdEmpresa, OrigenFondosGasto OrigenFondos);
+    /// <c>id_comprobante_compra</c> NO está acá: la vinculación posterior lo cambia.
+    /// <c>id_movimiento_personal</c> sí: se escribe al insertar el gasto y no hay escritor que lo cambie.</summary>
+    private sealed record DatosInmutablesDeGasto(
+        int? IdTurnoCaja, int IdEmpresa, OrigenFondosGasto OrigenFondos, int? IdMovimientoPersonal);
 
     private async Task<DatosInmutablesDeGasto> LeerDatosInmutablesAsync(int idGasto, CancellationToken ct) =>
         await db.Gastos
             .Where(g => g.Id == idGasto)
-            .Select(g => new DatosInmutablesDeGasto(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos))
+            .Select(g => new DatosInmutablesDeGasto(g.IdTurnoCaja, g.IdEmpresa, g.OrigenFondos, g.IdMovimientoPersonal))
             .FirstOrDefaultAsync(ct)
         // ADR-8: mismo 404 para "no existe", "es de otro tenant" y "está dado de baja".
         ?? throw ErrorDominio.NoEncontrado($"No existe el gasto {idGasto}.");
@@ -512,6 +519,19 @@ public class ServicioDeGastos(
         if (solicitud.IdProveedor is { } idProveedor && idProveedor != gasto.IdProveedor)
         {
             await ResolverProveedorAsync(idProveedor, ct);
+        }
+    }
+
+    /// <summary>Un gasto que nació de un pago de personal se mueve junto con los libros de ese pago (saldo del
+    /// personal, cuenta corriente del cliente, tesorería o cajón): tocarlo por separado los desalinearía. Anular
+    /// o revertir un pago es una operación aparte que todavía no existe.</summary>
+    private static void ExigirGastoSinPagoDePersonal(int? idMovimientoPersonal)
+    {
+        if (idMovimientoPersonal is not null)
+        {
+            throw new ErrorDominio(
+                "gasto_de_pago_de_personal",
+                "El gasto pertenece a un pago de personal y no se puede modificar por separado.", 409);
         }
     }
 
@@ -928,7 +948,8 @@ public class ServicioDeGastos(
             g.Importe,
             g.OrigenFondos,
             g.IdComprobanteCompra,
-            g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto));
+            g.IdTurnoCaja != null && db.TurnosCaja.Any(t => t.Id == g.IdTurnoCaja && t.Estado == EstadoTurno.Abierto),
+            g.IdMovimientoPersonal);
 
     // ---- validación de dominio -------------------------------------------------------------
 
@@ -1038,7 +1059,7 @@ public class ServicioDeGastos(
     /// ese filtro de UI garantizado (un admin puede llamar la API a mano), así que acá el guard es
     /// de servidor: cuenta corriente es el crédito del CLIENTE en una venta, nunca una salida real
     /// de dinero de una caja/tesorería.</summary>
-    private async Task ExigirMedioPagoValidoAsync(int idMedioPago, CancellationToken ct)
+    private async Task<MedioPago> ExigirMedioPagoValidoAsync(int idMedioPago, CancellationToken ct)
     {
         var medioPago = await db.MediosPago.FirstOrDefaultAsync(m => m.Id == idMedioPago, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el medio de pago {idMedioPago}.");
@@ -1049,6 +1070,8 @@ public class ServicioDeGastos(
                 "gasto_medio_pago_cuenta_corriente_invalido",
                 "Un gasto no puede pagarse con un medio de cuenta corriente.", 400);
         }
+
+        return medioPago;
     }
 
     private async Task<Empresa> ResolverEmpresaAsync(int idEmpresa, CancellationToken ct) =>
@@ -1364,6 +1387,102 @@ public class ServicioDeGastos(
         }
 
         return conexion;
+    }
+
+    // ---- gastos de sueldo de un pago de personal -------------------------------------------
+
+    /// <summary>Validaciones previas a la transacción de un pago de personal, con las mismas reglas y los
+    /// mismos códigos que los gastos que el pago reemplaza: con origen tesorería, las del alta administrativa
+    /// (empresa 404, punto de venta opcional de esa empresa, medio de pago visible y que no sea cuenta
+    /// corriente, fecha no futura en la zona de la empresa); con origen cajón, las del alta del POS (punto de
+    /// venta 404 y turno abierto 409). El pago solo de descuento no tiene origen y solo resuelve el punto de
+    /// venta y la fecha. Este método no escribe nada.</summary>
+    public async Task<EntornoDeGastoDeSueldo> PrepararGastosDeSueldoAsync(
+        OrigenFondosGasto? origenFondos, int? idEmpresa, int? idPuntoVenta, DateOnly fecha,
+        IReadOnlyCollection<int> idsMedioPago, CancellationToken ct = default)
+    {
+        var momento = reloj.Ahora;
+        int idEmpresaResuelta;
+        int? idPuntoVentaResuelto = null;
+
+        if (origenFondos == OrigenFondosGasto.Tesoreria)
+        {
+            idEmpresaResuelta = (await ResolverEmpresaAsync(idEmpresa!.Value, ct)).Id;
+            if (idPuntoVenta is { } idPuntoVentaPedido)
+            {
+                await ExigirPuntoVentaDeLaEmpresaAsync(idPuntoVentaPedido, idEmpresaResuelta, ct);
+                idPuntoVentaResuelto = idPuntoVentaPedido;
+            }
+        }
+        else
+        {
+            var puntoVenta = await ResolverPuntoVentaAsync(idPuntoVenta!.Value, ct);
+            idEmpresaResuelta = puntoVenta.IdEmpresa;
+            idPuntoVentaResuelto = puntoVenta.Id;
+        }
+
+        int? idTurnoCaja = null;
+        if (origenFondos == OrigenFondosGasto.CajaTurno)
+        {
+            idTurnoCaja = (await servicioDeTurnos.ResolverTurnoAbiertoAsync(idPuntoVentaResuelto!.Value, ct)).Id;
+        }
+
+        var nombresDeMedios = new Dictionary<int, string>();
+        foreach (var idMedioPago in idsMedioPago.Distinct())
+        {
+            nombresDeMedios[idMedioPago] = (await ExigirMedioPagoValidoAsync(idMedioPago, ct)).Nombre;
+        }
+
+        var zona = await ResolverZonaAsync(idEmpresaResuelta, idPuntoVentaResuelto, ct);
+        ExigirFechaNoFutura(fecha, momento, zona);
+
+        return new EntornoDeGastoDeSueldo(
+            idEmpresaResuelta, idPuntoVentaResuelto, idTurnoCaja, FechaDeNegocioAInstante(fecha, zona), nombresDeMedios);
+    }
+
+    /// <summary>Un gasto de categoría sueldos por línea de dinero, dentro de la transacción del llamador, que ya
+    /// tomó el lock del turno (origen cajón) y es quien comitea. Es el mismo camino de escritura que el alta del
+    /// POS y el alta administrativa: el gasto del cajón entra al arqueo del turno por su origen
+    /// (<see cref="LectorDeMovimientosDelTurno"/>) y el de tesorería escribe su egreso encadenado con
+    /// <see cref="EscribirMovimientoDeTesoreriaAsync"/>, cuyo advisory de la empresa es el ÚLTIMO lock de la
+    /// transacción. El gasto de cajón lleva el instante real como fecha, igual que el del POS; el de tesorería,
+    /// la fecha de negocio elegida. Cada gasto apunta al movimiento <c>pago</c> del libro de personal.</summary>
+    public async Task<IReadOnlyList<Gasto>> PersistirGastosDeSueldoAsync(
+        int idTenant, EntornoDeGastoDeSueldo entorno, OrigenFondosGasto origenFondos, string nombreDelPersonal,
+        int idMovimientoPersonal, IReadOnlyList<LineaDePagoDePersonal> lineas, int idEmpleado, DateTimeOffset momento,
+        CancellationToken ct = default)
+    {
+        var gastos = lineas.Select(linea => new Gasto
+        {
+            IdTenant = idTenant,
+            IdEmpresa = entorno.IdEmpresa,
+            Fecha = origenFondos == OrigenFondosGasto.Tesoreria ? entorno.FechaDeNegocio : momento,
+            IdPuntoVenta = entorno.IdPuntoVenta,
+            IdTurnoCaja = entorno.IdTurnoCaja,
+            IdEmpleado = idEmpleado,
+            Categoria = CategoriaGasto.Sueldos,
+            OrigenFondos = origenFondos,
+            Concepto = $"Pago de personal: {nombreDelPersonal}",
+            Detalle = linea.Referencia,
+            IdMedioPago = linea.IdMedioPago,
+            Importe = linea.Importe,
+            IdMovimientoPersonal = idMovimientoPersonal,
+            CreatedAt = momento,
+            UpdatedAt = momento
+        }).ToList();
+
+        db.Gastos.AddRange(gastos);
+        await db.SaveChangesAsync(ct);
+
+        if (origenFondos == OrigenFondosGasto.Tesoreria)
+        {
+            foreach (var gasto in gastos)
+            {
+                await EscribirMovimientoDeTesoreriaAsync(idTenant, entorno.IdEmpresa, gasto, idEmpleado, momento, ct);
+            }
+        }
+
+        return gastos;
     }
 
     // ---- resolución interna ---------------------------------------------------------------

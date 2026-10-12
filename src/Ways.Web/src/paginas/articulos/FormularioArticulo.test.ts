@@ -5,7 +5,8 @@ import type { ArticuloListado } from '../../api/tipos'
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -296,6 +297,31 @@ describe('FormularioArticulo — familia nueva en el alta', () => {
 
   it('aEdicion nunca manda nombreFamiliaNueva', () => {
     expect('nombreFamiliaNueva' in aEdicion({ ...formularioVacio(), id: 1, nombreFamiliaNueva: 'Talles' })).toBe(false)
+  })
+})
+
+describe('FormularioArticulo — disponibilidad (solo lectura)', () => {
+  it('un formulario vacío arranca disponible a la venta y online', () => {
+    const f = formularioVacio()
+
+    expect(f.disponibleVenta).toBe(true)
+    expect(f.disponibleOnline).toBe(true)
+  })
+
+  it('aFormulario copia la disponibilidad guardada, también cuando está apagada', () => {
+    const f = aFormulario(articuloFixture({ disponibleVenta: false, disponibleOnline: false }))
+
+    expect(f.disponibleVenta).toBe(false)
+    expect(f.disponibleOnline).toBe(false)
+  })
+
+  it('aAlta y aEdicion no la mandan: la escribe solo PUT /articulos/{id}/disponibilidad', () => {
+    const f = aFormulario(articuloFixture({ disponibleVenta: false, disponibleOnline: false }))
+
+    for (const cuerpo of [aAlta(f), aEdicion(f)]) {
+      expect('disponibleVenta' in cuerpo).toBe(false)
+      expect('disponibleOnline' in cuerpo).toBe(false)
+    }
   })
 })
 

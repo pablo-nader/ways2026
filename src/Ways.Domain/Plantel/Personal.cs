@@ -27,4 +27,8 @@ public class Personal : EntidadTenant
 
     /// <summary>Cliente que representa al empleado como comprador. A lo sumo un personal vivo por cliente.</summary>
     public int? IdCliente { get; set; }
+
+    /// <summary>Caché del libro <c>movimientos_personal</c>. Positivo: la empresa le debe al empleado.
+    /// Solo la escritura atómica <c>UPDATE ... RETURNING</c> junto con el asiento la mueve.</summary>
+    public decimal Saldo { get; set; }
 }

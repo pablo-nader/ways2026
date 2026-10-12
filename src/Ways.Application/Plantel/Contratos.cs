@@ -10,6 +10,7 @@ public record PersonalListado(
     string? Telefono,
     string? Observaciones,
     decimal ValorHora,
+    decimal Saldo,
     int? IdEmpresa,
     int? IdUsuario,
     string? NombreUsuario,

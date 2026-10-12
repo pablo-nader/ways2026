@@ -2305,6 +2305,25 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     expect(resultado).toMatchObject({ ok: true, limiteDeCreditoNoValidado: false })
   })
 
+  it('consumoPendienteDeCuentaCorriente suma solo lo de ese cliente (100 + 40 de él, 900 de otro) y da 0 si no tiene nada en la cola', async () => {
+    const { almacen, result } = await montar()
+    const venta = (idLocal: string, numeroPreasignado: number, idCliente: number, consumoCuentaCorriente: number) =>
+      agregarAOutbox(almacen, {
+        idLocal,
+        numeroPreasignado,
+        idPuntoVenta: 7,
+        creadoEn: '2026-09-20T09:00:00.000Z',
+        solicitud: solicitudFixture({ idCliente }),
+        consumoCuentaCorriente,
+      })
+    await venta('a', 120, 5, 100)
+    await venta('b', 121, 5, 40)
+    await venta('c', 122, 99, 900)
+
+    expect(await result.current.consumoPendienteDeCuentaCorriente(5)).toBe(140)
+    expect(await result.current.consumoPendienteDeCuentaCorriente(6)).toBe(0)
+  })
+
   it('una venta rechazada que se reintenta vuelve a la cola con su cuenta corriente, y vuelve a contar', async () => {
     const { result } = await montar()
     obtenerClienteMock.mockResolvedValue({ saldo: 0, limiteCredito: 1000, creditoIlimitado: false })

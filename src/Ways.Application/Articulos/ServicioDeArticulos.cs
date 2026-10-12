@@ -84,6 +84,9 @@ public class ServicioDeArticulos(
     /// artículos que tengan, para ese proveedor, un código vivo igual (sin distinguir mayúsculas) al
     /// término buscado, los lista primero y expone ese código en
     /// <see cref="ArticuloListado.CodigoProveedor"/>. Un proveedor dado de baja no coincide por código.</param>
+    /// <param name="soloVendibles"><c>true</c> deja afuera los artículos que no están disponibles a la venta
+    /// (<see cref="Articulo.DisponibleVenta"/>): es el filtro de la búsqueda que usa la caja. Los listados de compras y
+    /// del back-office no lo mandan y los ven a todos.</param>
     public async Task<PaginaDe<ArticuloListado>> ListarAsync(
         string? busqueda = null,
         int? idEmpresa = null,
@@ -94,12 +97,18 @@ public class ServicioDeArticulos(
         int? idCategoria = null,
         int? idMarca = null,
         int? idProveedor = null,
+        bool soloVendibles = false,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, TamanioMaximoDePagina);
 
         var query = db.Articulos.AsQueryable();
+
+        if (soloVendibles)
+        {
+            query = query.Where(a => a.DisponibleVenta);
+        }
 
         if (incluirEliminados)
         {
@@ -190,7 +199,7 @@ public class ServicioDeArticulos(
                 x.Articulo.CostoListaPor, x.Articulo.CostoListaIncluyeIva, x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
                 x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor,
-                x.Articulo.PublicadoWeb, x.TieneImagen, x.Articulo.TeclaAtajo))
+                x.Articulo.DisponibleOnline, x.Articulo.DisponibleVenta, x.TieneImagen, x.Articulo.TeclaAtajo))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -1574,6 +1583,6 @@ public class ServicioDeArticulos(
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
         a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.CostoNominal,
         a.DisponibleParaTodas, idsEmpresas, a.Activo,
-        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.PublicadoWeb,
+        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.DisponibleOnline, a.DisponibleVenta,
         TeclaAtajo: a.TeclaAtajo);
 }

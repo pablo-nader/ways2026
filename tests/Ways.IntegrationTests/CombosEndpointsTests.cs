@@ -33,7 +33,7 @@ public class CombosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     private static EdicionCombo Edicion(
         int? codigo, IReadOnlyList<ComponenteDeSolicitudDeCombo>? componentes, string nombre = "Combo editado",
         decimal precio = 4000m, int? idEmpresa = null, bool activo = true) =>
-        new(codigo, nombre, precio, idEmpresa, componentes, activo);
+        new(codigo, nombre, precio, idEmpresa, componentes, activo, true);
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient cliente, AltaCombo alta) =>
         cliente.PostAsJsonAsync("/api/combos", alta, OpcionesJson);

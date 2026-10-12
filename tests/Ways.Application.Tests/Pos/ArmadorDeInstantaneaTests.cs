@@ -260,7 +260,7 @@ public class ArmadorDeInstantaneaTests
             7,
             articulos,
             clientes,
-            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false)],
+            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false, 0m)],
             10m);
 
 

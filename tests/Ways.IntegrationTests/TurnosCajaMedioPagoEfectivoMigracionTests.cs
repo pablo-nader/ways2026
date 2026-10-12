@@ -13,6 +13,7 @@ using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
@@ -119,6 +120,7 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
@@ -198,17 +200,27 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
         return new Tenant1(tenant.Id, idPuntoVenta, usuario.Id);
     }
 
+    /// <summary>INSERT crudo con las columnas de <c>medios_pago</c> de ANTES de las migraciones
+    /// posteriores (sin <c>porcentaje_facturacion</c>): el modelo HEAD de EF la incluiría y rompería
+    /// con <c>42703</c> contra el esquema viejo.</summary>
     private static async Task<int> SembrarMedioPagoAsync(WaysDbContext db, int idTenant, string nombre, ComportamientoMedioPago comportamiento)
     {
         var ahora = DateTimeOffset.UtcNow;
-        var medio = new MedioPago
+        var etiqueta = comportamiento switch
         {
-            IdTenant = idTenant, Nombre = nombre, Orden = 1, Comportamiento = comportamiento,
-            AdmiteVuelto = false, RequiereReferencia = false, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            ComportamientoMedioPago.Efectivo => "efectivo",
+            ComportamientoMedioPago.Electronico => "electronico",
+            _ => "cuenta_corriente"
         };
-        db.MediosPago.Add(medio);
-        await db.SaveChangesAsync();
-        return medio.Id;
+
+        // La etiqueta sale del switch de arriba (no de entrada externa): un parámetro de texto no
+        // castea a un enum de Postgres, así que va como literal.
+        return (await db.Database.SqlQueryRaw<int>(
+            "INSERT INTO medios_pago (id_tenant, nombre, orden, comportamiento, admite_vuelto, requiere_referencia, " +
+            "activo, created_at, updated_at) " +
+            $"VALUES ({{0}}, {{1}}, 1, '{etiqueta}'::comportamiento_medio_pago, false, false, true, {{2}}, {{2}}) " +
+            "RETURNING id_medio_pago AS \"Value\"",
+            idTenant, nombre, ahora).ToListAsync()).Single();
     }
 
     /// <summary><c>turnos_caja</c> SÍ cambió en esta migración — INSERT crudo con la lista de

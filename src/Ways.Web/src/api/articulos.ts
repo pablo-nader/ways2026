@@ -57,12 +57,15 @@ export function construirQueryDeGrillaDeArticulos(filtros: FiltrosDeGrillaDeArti
 
 export const clienteDeArticulos = {
   /** `idProveedor` solo viaja cuando está definido: con él, el servidor prioriza los artículos
-   * cuyo código de ese proveedor coincide con `busqueda` y completa `codigoProveedor`. */
-  listar: (busqueda: string, incluirEliminados: boolean, idProveedor?: number) => {
+   * cuyo código de ese proveedor coincide con `busqueda` y completa `codigoProveedor`. `soloVendibles` lo piden
+   * los buscadores que arman un documento de venta (POS, presupuestos, remitos): deja afuera los artículos de uso
+   * interno. Compras, stock y el resto de las pantallas no lo mandan. */
+  listar: (busqueda: string, incluirEliminados: boolean, idProveedor?: number, opciones?: { soloVendibles?: boolean }) => {
     const parametros = new URLSearchParams()
     if (busqueda) parametros.set('busqueda', busqueda)
     if (incluirEliminados) parametros.set('incluirEliminados', 'true')
     if (idProveedor !== undefined) parametros.set('idProveedor', String(idProveedor))
+    if (opciones?.soloVendibles) parametros.set('soloVendibles', 'true')
     const cadena = parametros.toString()
     return api.get<PaginaDe<ArticuloListado>>(`/articulos${cadena ? `?${cadena}` : ''}`)
   },

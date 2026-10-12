@@ -75,6 +75,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Cliente> Clientes => Set<Cliente>();
     public DbSet<Proveedor> Proveedores => Set<Proveedor>();
     public DbSet<Personal> Personal => Set<Personal>();
+    public DbSet<MovimientoPersonal> MovimientosPersonal => Set<MovimientoPersonal>();
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
@@ -312,6 +313,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoPersonal(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
@@ -854,6 +856,22 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoCuentaCorrienteProveedor), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuentaCorrienteProveedor.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="MovimientoPersonal"/> es un libro append-only que no hereda <see cref="EntidadTenant"/>:
+    /// necesita la variante escrita a mano, con <c>IdTenant</c> escrito explícito por
+    /// <c>EscriturasDePersonal</c>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoPersonal(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoPersonal))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoPersonal), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoPersonal.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

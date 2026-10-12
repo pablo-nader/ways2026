@@ -21,6 +21,17 @@ import type {
   TurnoResumen,
 } from './tipos'
 
+/**
+ * ¿Trae el resumen de cierre los tres importes del desglose y todos son números? Un payload anterior
+ * al desglose, o parcial, no los trae: el ticket y el detalle omiten el bloque en lugar de mostrar
+ * `undefined` o `NaN`.
+ */
+export function tieneDesgloseDeCierre(resumen: ResumenDeCierrePorRetiro): boolean {
+  return [resumen.totalDigitales, resumen.totalEfectivo, resumen.ventasACuentaCorriente].every(
+    (valor) => typeof valor === 'number' && Number.isFinite(valor),
+  )
+}
+
 export const clienteDeCaja = {
   /** `POST /api/caja/turnos` (design: API Surface): 201 + turno, o `409 turno_ya_abierto` si el
    * punto de venta ya tiene uno abierto. */
@@ -54,8 +65,8 @@ export const clienteDeCaja = {
    * sigue abierto. */
   obtenerResumenDeCierre: (idTurnoCaja: number) =>
     api.get<ResumenDeCierrePorRetiro>(`/caja/turnos/${idTurnoCaja}/resumen-de-cierre`),
-  /** `GET /api/caja/turnos/{id}` — el turno con su estado; el detalle del Z no lo trae. */
-  obtenerTurno: (idTurnoCaja: number) => api.get<TurnoResumen>(`/caja/turnos/${idTurnoCaja}`),
+  /** `GET /api/caja/turnos/{id}` — el turno con su estado y sus arqueos persistidos; el detalle del Z no los trae. */
+  obtenerTurno: (idTurnoCaja: number) => api.get<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}`),
   /** `GET /api/caja/turnos?idPuntoVenta=&estado=Cerrado` — turnos cerrados de UN punto de venta,
    * el más reciente primero; ambos filtros los aplica el servidor. */
   listarCerrados: (idPuntoVenta: number, pagina: number, tamanio: number) =>
