@@ -59,6 +59,11 @@ well above 400 authored lines → one PR per slice below.
   - Contains-filter select replacing the "Carrito" title; removed from
     "Datos de la venta"; "Ver detalle" icon for current account; balance chip
     (used / limit, progress style).
+  - Right panel ("Datos de la venta") reworked with the freed space (owner, 2026-10-12):
+    sale total first and large (at least twice the height of a current row), then the
+    payment methods, then ONE line that reads "Falta" (amount in red) while the payment
+    is incomplete and "Vuelto" (amount in green) otherwise, and the Cobrar button last
+    as it is today.
 - [ ] **T5 — Current-account modal and tickets** (delegated)
   - Max viewport height with scroll; no "Cerrar" button; "Registrar pago" on top;
     date range (default today − 7 days).
@@ -75,7 +80,7 @@ well above 400 authored lines → one PR per slice below.
 
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
-| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3 | pending | tsc clean; oxlint exit 0; vitest 208 files / 5778 passed; assess: high (unassessable) → judgment-day |
+| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3 | this PR | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
 
 ## Next step
 
