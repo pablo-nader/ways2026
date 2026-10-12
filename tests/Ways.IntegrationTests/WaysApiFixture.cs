@@ -18,6 +18,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Plantel;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
@@ -295,6 +296,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
@@ -365,6 +367,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
@@ -408,6 +411,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<OrigenFondosGasto>("origen_fondos_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<TipoMovimientoPersonal>("tipo_movimiento_personal");
                 npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");

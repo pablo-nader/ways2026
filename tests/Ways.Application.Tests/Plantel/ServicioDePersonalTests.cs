@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
+using Ways.Application.Organizacion;
 using Ways.Application.Plantel;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -31,7 +33,7 @@ public class ServicioDePersonalTests
     private static ServicioDePersonal CrearServicio(string baseDeDatos, int idTenant = Tenant)
     {
         var contexto = CrearContexto(baseDeDatos, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
-        return new ServicioDePersonal(contexto, new RelojFijo(Ahora));
+        return new ServicioDePersonal(contexto, new RelojFijo(Ahora), new GuardaDeReferencias(contexto, new InspectorDeUso(contexto)));
     }
 
     private static DatosDePersonal Datos(

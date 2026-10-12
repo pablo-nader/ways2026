@@ -63,6 +63,7 @@ public static class EtiquetasDeTablas
             ["movimientos_caja"] = "movimientos de caja",
             ["movimientos_cuenta_corriente"] = "movimientos de cuenta corriente",
             ["movimientos_cuenta_corriente_proveedor"] = "movimientos de cuenta corriente de proveedores",
+            ["movimientos_personal"] = "movimientos de cuenta del personal",
             ["movimientos_stock"] = "movimientos de stock",
             ["movimientos_tesoreria"] = "movimientos de tesorería",
             ["ofertas"] = "ofertas",
