@@ -2545,12 +2545,16 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 > filas que escribe el cierre de turno; un ajuste o una transferencia con turno queda fuera. Como
 > `id_medio_pago` admite `NULL`, no cubre una fila de turno sin medio. RLS estándar.
 >
-> **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento es
-> igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no hay
-> movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene movimientos:
-> lo exige el servicio de cuentas (sin trigger en la base).
+> **Saldo.** La cadena de una cuenta parte de `saldo_inicial`: el `inicio` del primer movimiento
+> debe ser igual a él. El saldo actual es el `final` del último movimiento, o `saldo_inicial` si no
+> hay movimientos; nunca se suman. `saldo_inicial` no se modifica una vez que la cuenta tiene
+> movimientos: lo deberá exigir el servicio de cuentas (sin trigger en la base).
 >
 > **Lo que la base NO exige y debe exigir un servicio:**
+> - La continuidad de la cadena: la base solo valida cada fila (`final = inicio + ingreso - egreso`).
+>   Que el `inicio` de un movimiento sea el `final` del anterior, que el primero parta de
+>   `saldo_inicial` y que el libro sea solo de altas (sin UPDATE ni DELETE) lo garantiza el escritor,
+>   que agrega bajo el lock de la cuenta.
 > - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
 >   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa.
 > - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta.
