@@ -16,13 +16,14 @@ import { cierreDeTurno, lineasDeCierreDeTurno } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
 import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /**
@@ -207,7 +208,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
             El turno ya está en el título de `Box`, que se imprime igual. */}
         <div className="d-none d-print-block mb-3">
           <div className="small">
-            Generado: {new Date().toLocaleString('es-AR')} — {usuario?.usuario ?? '—'}
+            Generado: {fechaHoraATexto(new Date())} — {usuario?.usuario ?? '—'}
           </div>
         </div>
 

@@ -7,6 +7,7 @@ import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
+import { fechaHoraATexto } from '../formato/fechas'
 
 /** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
  * vuelven a pedir acá. */
@@ -20,7 +21,7 @@ function formatearMoneda(valor: number): string {
 /** Mismo formato que el resto de las pantallas — sin forzar timezone, la máquina del escritorio
  * ya corre en la zona horaria del comercio. */
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Solo hora:minuto — usado en el detalle de retiros del ticket de cierre, donde la fecha ya

@@ -76,3 +76,11 @@ export function dentroDeRango(iso: string, min?: string, max?: string): boolean 
   if (max && iso > max) return false
   return true
 }
+
+/**
+ * Fecha y hora `DD/MM/AAAA, HH:mm:ss` en 24 horas. Sin `hourCycle` el locale `es-AR` muestra las
+ * 16:05 como `04:05` sin marca AM/PM, y la medianoche con `h24` saldría como `24:30`.
+ */
+export function fechaHoraATexto(valor: string | Date): string {
+  return new Date(valor).toLocaleString('es-AR', { hourCycle: 'h23' })
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { algunPagoEnEfectivo, cierreDeTurno, lineasDeCierreDeTurno, pulsoDeCajon, reporteZ, ticketDeVenta, ticketRetiroDeEfectivo } from './plantillas'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
+import { fechaHoraATexto } from '../formato/fechas'
 
 /** Decodificador mínimo para los tests: ASCII pasa directo, LF se vuelve '\n', cualquier otro
  * byte de control (o no-ASCII) se descarta — alcanza para buscar substrings en el ticket, no
@@ -411,7 +412,7 @@ describe('reporteZ', () => {
     it('imprime la línea cuando el detalle trae fechaRecalculo', () => {
       const iso = '2026-09-20T15:30:00Z'
       const texto = textoPlano(reporteZ(detalleConRecalculo(iso), CONTEXTO))
-      expect(texto).toContain(`Arqueo recalculado el ${new Date(iso).toLocaleString('es-AR')}`)
+      expect(texto).toContain(`Arqueo recalculado el ${fechaHoraATexto(iso)}`)
     })
 
     it('no imprime la línea cuando fechaRecalculo es null', () => {

@@ -74,13 +74,14 @@ import {
   mensajeDeLoQueImpideGuardar,
 } from './compras/validacionDeCompra'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearMoneda(valor: number | null): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString('es-AR') : '—'
+  return iso ? fechaHoraATexto(iso) : '—'
 }
 
 /** `gasto.fecha` es un `timestamptz` (instante) — el `<input type="date">` de
