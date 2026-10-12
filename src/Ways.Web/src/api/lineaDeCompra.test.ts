@@ -70,7 +70,8 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 20,
     codigoInterno: 'ART-20',

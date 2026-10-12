@@ -142,13 +142,13 @@ public class ServicioDeInstantaneaDePos(
             idsLista = ArmadorDeInstantanea.SoloListaDelConsumidorFinal(idsLista, clientes);
         }
 
-        // Mismo scope que ServicioDeEscaneo (solo Activo, sin filtro de disponibilidad por
+        // Mismo scope que ServicioDeEscaneo (solo Activo y disponible a la venta, sin filtro de disponibilidad por
         // empresa): un artículo que el dispositivo puede escanear y vender ONLINE tiene que poder
         // vender OFFLINE también — la disponibilidad por empresa es un filtro de vidriera/grilla,
         // nunca una restricción de venta. Ordenado por id: la etiqueta de contenido depende del
         // orden.
         var articulos = await db.Articulos.AsNoTracking()
-            .Where(a => a.Activo)
+            .Where(a => a.Activo && a.DisponibleVenta)
             .OrderBy(a => a.Id)
             .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva, a.AcumulaEnVenta, a.UnidadVenta, a.IdFamilia, a.TeclaAtajo))
             .ToListAsync(ct);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { esFraccionDeArticuloPorUnidad, MENSAJE_DE_CANTIDAD_ENTERA, restriccionDeCantidad } from '../api/cantidadPorUnidad'
+import { copiaDeArticuloNoVendible } from '../api/articuloNoVendible'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import {
@@ -65,7 +66,7 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
 
     const temporizador = setTimeout(() => {
       clienteDeArticulos
-        .listar(termino, false)
+        .listar(termino, false, undefined, { soloVendibles: true })
         .then((pagina) => {
           if (!vigente || generacionRef.current !== miGeneracion) return
           setResultados(pagina.items)
@@ -382,7 +383,7 @@ function PantallaRemito({ idRemito }: PropsPantalla) {
     } catch (e) {
       guardandoRef.current = false
       setGuardando(false)
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.')
+      setError(copiaDeArticuloNoVendible(e) ?? (e instanceof ErrorApi ? e.message : 'No se pudo guardar el borrador.'))
     }
   }
 

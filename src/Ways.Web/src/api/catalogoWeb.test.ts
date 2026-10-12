@@ -22,7 +22,7 @@ const {
   TAMANO_MAXIMO_DE_LA_IMAGEN,
   copiaDeFalloDeTienda,
   debeReleerTrasFalloDeTienda,
-  publicarEnLaWeb,
+  cambiarDisponibilidad,
   quitarImagenDeArticulo,
   subirImagenDeArticulo,
   urlDeImagenDeArticuloAdmin,
@@ -34,15 +34,19 @@ beforeEach(() => {
 })
 
 describe('llamadas a la API', () => {
-  it('publicarEnLaWeb manda solo { publicado } por PUT a la ruta del artículo', async () => {
-    apiMock.put.mockResolvedValue({ idArticulo: 7, publicado: true })
+  it('cambiarDisponibilidad manda los dos valores, y solo esos, por PUT a la ruta de disponibilidad del artículo', async () => {
+    apiMock.put.mockResolvedValue({ idArticulo: 7, disponibleVenta: false, disponibleOnline: true })
 
-    await expect(publicarEnLaWeb(7, true)).resolves.toEqual({ idArticulo: 7, publicado: true })
-    await publicarEnLaWeb(7, false)
+    await expect(cambiarDisponibilidad(7, { disponibleVenta: false, disponibleOnline: true })).resolves.toEqual({
+      idArticulo: 7,
+      disponibleVenta: false,
+      disponibleOnline: true,
+    })
+    await cambiarDisponibilidad(7, { disponibleVenta: true, disponibleOnline: false })
 
     expect(apiMock.put.mock.calls).toEqual([
-      ['/articulos/7/web', { publicado: true }],
-      ['/articulos/7/web', { publicado: false }],
+      ['/articulos/7/disponibilidad', { disponibleVenta: false, disponibleOnline: true }],
+      ['/articulos/7/disponibilidad', { disponibleVenta: true, disponibleOnline: false }],
     ])
   })
 

@@ -153,7 +153,7 @@ internal sealed class CombosApoyo(WaysApiFixture fixture)
 
     public async Task<int> ArticuloAsync(
         Escenario ctx, string nombre, decimal precio, UnidadVenta unidad = UnidadVenta.Unidad, int? idFamilia = null,
-        bool activo = true, bool conPrecio = true)
+        bool activo = true, bool conPrecio = true, bool disponibleVenta = true)
     {
         await using var db = Db(ctx.IdTenant);
         var ahora = DateTimeOffset.UtcNow;
@@ -162,7 +162,7 @@ internal sealed class CombosApoyo(WaysApiFixture fixture)
         {
             IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
             IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = unidad, IdFamilia = idFamilia,
-            EsProducto = true, Activo = activo, CreatedAt = ahora, UpdatedAt = ahora
+            EsProducto = true, Activo = activo, DisponibleVenta = disponibleVenta, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();

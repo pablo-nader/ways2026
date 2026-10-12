@@ -181,7 +181,8 @@ public class ServicioDeOfertasTests
         Prioridad: 1,
         Acumulable: true,
         IdsListas: idsListas,
-        Activo: true);
+        Activo: true,
+        DisponibleOnline: true);
 
     // ---- required-field validation ----------------------------------------------------------
 

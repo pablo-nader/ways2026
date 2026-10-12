@@ -55,7 +55,8 @@ public class ValoresCompartidosDeFamiliaTests
         "id_marca",
         "activo",
         "disponible_para_todas",
-        "publicado_web",
+        "disponible_online",
+        "disponible_venta",
         "tecla_atajo"
     ];
 
@@ -103,7 +104,8 @@ public class ValoresCompartidosDeFamiliaTests
             ["id_marca"] = a => a.IdMarca = 93,
             ["activo"] = a => a.Activo = false,
             ["disponible_para_todas"] = a => a.DisponibleParaTodas = false,
-            ["publicado_web"] = a => a.PublicadoWeb = true,
+            ["disponible_online"] = a => a.DisponibleOnline = false,
+            ["disponible_venta"] = a => a.DisponibleVenta = false,
             ["tecla_atajo"] = a => a.TeclaAtajo = TeclaAtajo.F6
         };
 
@@ -292,7 +294,8 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Equal(antes.IdMarca, destino.IdMarca);
         Assert.Equal(antes.Activo, destino.Activo);
         Assert.Equal(antes.DisponibleParaTodas, destino.DisponibleParaTodas);
-        Assert.Equal(antes.PublicadoWeb, destino.PublicadoWeb);
+        Assert.Equal(antes.DisponibleOnline, destino.DisponibleOnline);
+        Assert.Equal(antes.DisponibleVenta, destino.DisponibleVenta);
 
         Assert.Equal(antes.IdFamilia, destino.IdFamilia);
         Assert.Equal(antes.Id, destino.Id);
@@ -336,7 +339,8 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.IdMarca),
             nameof(Articulo.Activo),
             nameof(Articulo.DisponibleParaTodas),
-            nameof(Articulo.PublicadoWeb),
+            nameof(Articulo.DisponibleOnline),
+            nameof(Articulo.DisponibleVenta),
             nameof(Articulo.TeclaAtajo)
         ];
 

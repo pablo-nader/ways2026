@@ -7,8 +7,8 @@ using Ways.Domain.Common;
 namespace Ways.Application.CatalogoOnline;
 
 /// <summary>
-/// Lo que el admin del catálogo decide sobre la tienda online de cada artículo: si se publica y qué imagen
-/// lleva. Se autoriza con <c>GestionDeCatalogo</c> (la misma policy que editar el artículo) en la capa de API.
+/// Lo que el admin del catálogo decide sobre la tienda online y la venta de cada artículo: si está disponible
+/// online, si está disponible a la venta y qué imagen lleva. Se autoriza con <c>GestionDeCatalogo</c> (la misma policy que editar el artículo) en la capa de API.
 ///
 /// Orden de cada escritura: primero 404 (el artículo no existe, está dado de baja o es de otro tenant), después
 /// la validación del cuerpo, después la escritura. Las tres escrituras corren bajo
@@ -17,20 +17,23 @@ namespace Ways.Application.CatalogoOnline;
 /// <c>single-read-under-lock</c>): dos subidas de imagen del mismo artículo se serializan, de modo que la
 /// segunda ve la fila de la primera y la reemplaza en vez de chocar con <c>ux_imagenes_articulo_articulo</c>, y
 /// una baja del artículo que gana la carrera se ve como 404 y no deja una imagen sobre un artículo borrado. Ese
-/// lock es el único que toman: la publicación solo cambia <c>publicado_web</c>, que no es un campo compartido
-/// de la familia, así que no entra al protocolo de locks de familias; con un solo lock y ninguna espera
+/// lock es el único que toman: la disponibilidad solo cambia <c>disponible_online</c> y <c>disponible_venta</c>, que
+/// no son campos compartidos de la familia, así que no entra al protocolo de locks de familias; con un solo lock y ninguna espera
 /// después de tomarlo no puede cerrar un ciclo con <c>ServicioDeArticulos.ActualizarAsync</c>.
 /// </summary>
 public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
 {
-    /// <summary>Publica o despublica un artículo. Idempotente: pedir el estado que ya tiene no escribe.</summary>
-    public async Task<PublicacionWeb> PublicarAsync(
-        int idArticulo, SolicitudDePublicacionWeb datos, CancellationToken ct = default)
+    /// <summary>Fija si un artículo está disponible online y a la venta. Idempotente: pedir el estado que ya tiene no
+    /// escribe.</summary>
+    public async Task<DisponibilidadDeArticulo> CambiarDisponibilidadAsync(
+        int idArticulo, SolicitudDeDisponibilidad datos, CancellationToken ct = default)
     {
         await ObtenerTenantDelArticuloAsync(idArticulo, ct);
 
-        var publicado = datos.Publicado
-            ?? throw new ErrorDominio("publicado_requerido", "El campo publicado es obligatorio.", 400);
+        var disponibleVenta = datos.DisponibleVenta
+            ?? throw new ErrorDominio("disponible_venta_requerido", "El campo disponibleVenta es obligatorio.", 400);
+        var disponibleOnline = datos.DisponibleOnline
+            ?? throw new ErrorDominio("disponible_online_requerido", "El campo disponibleOnline es obligatorio.", 400);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
@@ -44,18 +47,20 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
             var articulo = await db.Articulos.FirstOrDefaultAsync(a => a.Id == idArticulo, ct)
                 ?? throw SinArticulo(idArticulo);
 
-            // La tienda online no vende por importe: el cliente no tiene dónde tipear el monto.
-            if (publicado && articulo.UnidadVenta == UnidadVenta.Importe)
+            // La tienda online no vende por importe: el cliente no tiene dónde tipear el monto. Solo se rechaza
+            // encender la bandera; lo que ya estaba encendido por defecto el catálogo público ya lo filtra.
+            if (disponibleOnline && !articulo.DisponibleOnline && articulo.UnidadVenta == UnidadVenta.Importe)
             {
                 throw new ErrorDominio(
                     "articulo_por_importe_no_publicable",
-                    $"El artículo {articulo.CodigoInterno} se vende por importe: no se puede publicar en la tienda online.",
+                    $"El artículo {articulo.CodigoInterno} se vende por importe: no se puede ofrecer en la tienda online.",
                     400);
             }
 
-            if (articulo.PublicadoWeb != publicado)
+            if (articulo.DisponibleVenta != disponibleVenta || articulo.DisponibleOnline != disponibleOnline)
             {
-                articulo.PublicadoWeb = publicado;
+                articulo.DisponibleVenta = disponibleVenta;
+                articulo.DisponibleOnline = disponibleOnline;
                 articulo.UpdatedAt = reloj.Ahora;
 
                 await db.SaveChangesAsync(ct);
@@ -63,7 +68,7 @@ public class ServicioDeCatalogoWeb(IWaysDbContext db, IRelojDelSistema reloj, Gu
 
             await transaccion.CommitAsync(ct);
 
-            return new PublicacionWeb(idArticulo, articulo.PublicadoWeb);
+            return new DisponibilidadDeArticulo(idArticulo, articulo.DisponibleVenta, articulo.DisponibleOnline);
         });
     }
 

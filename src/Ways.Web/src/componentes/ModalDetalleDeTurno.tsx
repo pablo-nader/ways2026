@@ -15,6 +15,7 @@ import { fechaHoraATexto } from '../formato/fechas'
 import { DetalleDeTurnoListas } from './DetalleDeTurnoListas'
 import { InsigniaDeRecalculo } from './InsigniaDeRecalculo'
 import { Modal } from './Modal'
+import { VentasPorMedioDeCierre } from './VentasPorMedioDeCierre'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -173,6 +174,8 @@ function ContenidoDelCierre({ detalle, turno, cierre, medios }: DatosDelCierre) 
           )}
         </table>
       </div>
+
+      <VentasPorMedioDeCierre cierre={cierre} />
 
       <DetalleDeTurnoListas tickets={detalle.tickets} gastos={detalle.gastos} />
     </>

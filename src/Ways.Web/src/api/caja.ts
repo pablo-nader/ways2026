@@ -21,6 +21,17 @@ import type {
   TurnoResumen,
 } from './tipos'
 
+/**
+ * ¿Trae el resumen de cierre los tres importes del desglose y todos son números? Un payload anterior
+ * al desglose, o parcial, no los trae: el ticket y el detalle omiten el bloque en lugar de mostrar
+ * `undefined` o `NaN`.
+ */
+export function tieneDesgloseDeCierre(resumen: ResumenDeCierrePorRetiro): boolean {
+  return [resumen.totalDigitales, resumen.totalEfectivo, resumen.ventasACuentaCorriente].every(
+    (valor) => typeof valor === 'number' && Number.isFinite(valor),
+  )
+}
+
 export const clienteDeCaja = {
   /** `POST /api/caja/turnos` (design: API Surface): 201 + turno, o `409 turno_ya_abierto` si el
    * punto de venta ya tiene uno abierto. */

@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Ofertas } from './Ofertas'
+import { ErrorApi } from '../api/cliente'
 import type { ArticuloListado, FamiliaListado, GrupoListado, ListaPrecioListado, OfertaListado, PaginaDe } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -43,7 +44,8 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -94,6 +96,7 @@ function ofertaFixture(sobrescribir: Partial<OfertaListado> = {}): OfertaListado
     prioridad: 0,
     acumulable: false,
     activo: true,
+    disponibleOnline: true,
     idsListas: [],
     ...sobrescribir,
   }
@@ -710,5 +713,125 @@ describe('Ofertas — error y foco del modal', () => {
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
 
     expect(abrir).toHaveFocus()
+  })
+})
+
+describe('Ofertas — disponible online', () => {
+  async function completarOfertaDeGrupo() {
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.click(screen.getByRole('radio', { name: 'Grupo' }))
+    await screen.findByRole('option', { name: 'Bebidas' })
+    await userEvent.selectOptions(screen.getByLabelText('Grupo objetivo'), 'Bebidas')
+  }
+
+  /**
+   * Cláusula bajo prueba: una oferta nueva nace disponible online y el alta lo manda. Mutación: arrancar el formulario
+   * con `disponibleOnline: false` hace fallar las dos aserciones.
+   */
+  it('una oferta nueva arranca con "Disponible online" marcado y el alta manda disponibleOnline: true', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idGrupo: 1 }))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    expect(screen.getByRole('checkbox', { name: 'Disponible online' })).toBeChecked()
+    await completarOfertaDeGrupo()
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith('/ofertas', expect.objectContaining({ disponibleOnline: true, activo: true }))
+  })
+
+  it('desmarcarlo en el alta manda disponibleOnline: false sin tocar "Activa"', async () => {
+    apiPostMock.mockResolvedValue(ofertaFixture({ id: 5, idArticulo: null, idGrupo: 1 }))
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Disponible online' }))
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+    expect(apiPostMock).toHaveBeenCalledExactlyOnceWith('/ofertas', expect.objectContaining({ disponibleOnline: false, activo: true }))
+  })
+
+  it('editar una oferta no disponible online la abre desmarcada y el PUT reenvía el valor', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1, disponibleOnline: false })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editar oferta' })
+    expect(within(dialogo).getByRole('checkbox', { name: 'Disponible online' })).not.toBeChecked()
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ disponibleOnline: false }))
+  })
+
+  it('en la edición, marcarlo manda disponibleOnline: true', async () => {
+    const oferta = ofertaFixture({ id: 2, nombre: 'Oferta existente', idArticulo: null, idGrupo: 1, disponibleOnline: false })
+    mockearApiGet({ ofertas: [oferta], detalles: { 2: oferta } })
+    apiPutMock.mockResolvedValue(oferta)
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editar oferta' })
+    await userEvent.click(within(dialogo).getByRole('checkbox', { name: 'Disponible online' }))
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await screen.findByText('Oferta "Oferta existente" actualizada.')
+    expect(apiPutMock).toHaveBeenCalledExactlyOnceWith('/ofertas/2', expect.objectContaining({ disponibleOnline: true }))
+  })
+
+  /**
+   * Cláusula bajo prueba: la columna "Online" dice Sí solo si la oferta está disponible online Y activa. Mutación: quitar
+   * `&& o.activo` hace fallar la aserción de la oferta inactiva.
+   */
+  it('la grilla muestra la columna "Online" con Sí solo si la oferta está disponible online y activa', async () => {
+    mockearApiGet({
+      ofertas: [
+        ofertaFixture({ id: 1, nombre: 'En la tienda', disponibleOnline: true }),
+        ofertaFixture({ id: 2, nombre: 'Solo en el local', disponibleOnline: false }),
+        ofertaFixture({ id: 3, nombre: 'Dada de baja', disponibleOnline: true, activo: false }),
+      ],
+    })
+    render(<Ofertas />)
+    await screen.findByText('En la tienda')
+    const columnas = screen.getAllByRole('columnheader').map((c) => c.textContent)
+    const posicion = columnas.indexOf('Online')
+    expect(posicion).toBeGreaterThan(-1)
+
+    const celdaDe = (nombre: string) => {
+      const fila = screen.getByText(nombre).closest('tr')
+      if (!fila) throw new Error('No se encontró la fila')
+
+      return within(fila).getAllByRole('cell')[posicion]
+    }
+
+    expect(celdaDe('En la tienda')).toHaveTextContent('Sí')
+    expect(celdaDe('Solo en el local')).toHaveTextContent('No')
+    expect(celdaDe('Dada de baja')).toHaveTextContent('No')
+  })
+
+  it('un 400 disponible_online_requerido se explica dentro del modal, que sigue abierto', async () => {
+    const rechazo = Object.assign(new (ErrorApi as unknown as new (mensaje: string) => Error)('texto del servidor'), {
+      estado: 400,
+      codigo: 'disponible_online_requerido',
+    })
+    apiPostMock.mockRejectedValue(rechazo)
+    render(<Ofertas />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Agregar' }))
+    await completarOfertaDeGrupo()
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Guardar' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Nueva oferta' })
+    expect(
+      await within(dialogo).findByText('Falta indicar si la oferta está disponible online. Recargá la pantalla e intentá de nuevo.'),
+    ).toBeInTheDocument()
   })
 })

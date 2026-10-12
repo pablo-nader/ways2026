@@ -7,6 +7,7 @@ import {
   aAltaOferta,
   aValoresOferta,
   clienteDeOfertas,
+  copiaDeFalloAlGuardarOferta,
   formularioOfertaVacio,
   opcionesDeFamiliaDeOferta,
   opcionesDeLista,
@@ -262,7 +263,7 @@ export function Ofertas() {
       }
     } catch (e) {
       if (tokenEdicionRef.current === token) {
-        setErrorFormulario(e instanceof ErrorApi ? e.message : 'No se pudo guardar la oferta.')
+        setErrorFormulario(copiaDeFalloAlGuardarOferta(e))
       }
     } finally {
       if (tokenEdicionRef.current === token) setGuardando(false)
@@ -321,6 +322,7 @@ export function Ofertas() {
                   <th>Prioridad</th>
                   <th>Acumulable</th>
                   <th>Estado</th>
+                  <th>Online</th>
                   <th className="text-end">Acciones</th>
                 </tr>
               </thead>
@@ -337,6 +339,7 @@ export function Ofertas() {
                         {o.activo ? 'Activa' : 'Inactiva'}
                       </span>
                     </td>
+                    <td>{o.disponibleOnline && o.activo ? 'Sí' : 'No'}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"
@@ -354,7 +357,7 @@ export function Ofertas() {
                 ))}
                 {ofertas !== null && ofertas.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-center text-muted py-4">
+                    <td colSpan={8} className="text-center text-muted py-4">
                       No hay ofertas cargadas.
                     </td>
                   </tr>
@@ -835,6 +838,25 @@ function ModalDeOferta({
               <label className="form-check-label" htmlFor="of-activo">
                 Activa
               </label>
+            </div>
+          </div>
+
+          <div className="col-md-3 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="of-disponible-online"
+                type="checkbox"
+                className="form-check-input"
+                checked={valor.disponibleOnline}
+                onChange={(e) => onCambio({ ...valor, disponibleOnline: e.target.checked })}
+                aria-describedby="of-disponible-online-ayuda"
+              />
+              <label className="form-check-label" htmlFor="of-disponible-online">
+                Disponible online
+              </label>
+              <div id="of-disponible-online-ayuda" className="form-text">
+                Desmarcalo para que la tienda online no la aplique a los precios.
+              </div>
             </div>
           </div>
         </fieldset>

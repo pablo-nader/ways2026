@@ -112,9 +112,14 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDefaultValue(true)
             .IsRequired();
 
-        builder.Property(a => a.PublicadoWeb)
-            .HasColumnName("publicado_web")
-            .HasDefaultValue(false)
+        builder.Property(a => a.DisponibleOnline)
+            .HasColumnName("disponible_online")
+            .HasDefaultValue(true)
+            .IsRequired();
+
+        builder.Property(a => a.DisponibleVenta)
+            .HasColumnName("disponible_venta")
+            .HasDefaultValue(true)
             .IsRequired();
 
         // Etapa 12 (proposal decisión 1, gate §E).
@@ -167,11 +172,11 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
             .HasDatabaseName("ix_articulos_controla_lote")
             .HasFilter("controla_lote AND deleted_at IS NULL");
 
-        // El catálogo público lee solo los publicados (y activos y vivos): parcial, porque casi ningún
-        // artículo se publica y la lectura siempre es de un tenant.
-        builder.HasIndex(a => a.IdTenant, "ix_articulos_publicado_web")
-            .HasDatabaseName("ix_articulos_publicado_web")
-            .HasFilter("publicado_web AND activo AND deleted_at IS NULL");
+        // El catálogo público lee solo lo disponible online y a la venta (y activo y vivo): parcial, con el mismo
+        // predicado que la policy articulos_publico_lectura, y la lectura siempre es de un tenant.
+        builder.HasIndex(a => a.IdTenant, "ix_articulos_disponible_online")
+            .HasDatabaseName("ix_articulos_disponible_online")
+            .HasFilter("disponible_online AND disponible_venta AND activo AND deleted_at IS NULL");
 
         // Nombres explícitos en snake_case (doc 10): sin esto EF nombra los índices de
         // soporte de cada FK con su convención propia (IX_articulos_id_area, PascalCase),
