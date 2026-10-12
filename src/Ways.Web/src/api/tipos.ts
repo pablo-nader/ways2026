@@ -410,16 +410,20 @@ export type VitrinaAdmin = {
   tema: string
   tieneLogo: boolean
   logoVersion: number | null
+  /** Lista de precios del catálogo de la tienda; `null` es la lista por defecto del comercio. */
+  idListaPrecio: number | null
 }
 
-/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los cinco campos
- * se guardan, ninguno se descarta. El logo viaja aparte. */
+/** Cuerpo de `PUT /api/empresas/{id}/vitrina` (espejo de `SolicitudDeVitrina`): los seis campos
+ * se guardan, ninguno se descarta. El logo viaja aparte. `idListaPrecio: null` vuelve a la lista
+ * por defecto. */
 export type VitrinaEdicion = {
   publicada: boolean
   tagline: string | null
   descripcion: string | null
   colorAcento: string | null
   tema: TemaDeVitrina
+  idListaPrecio: number | null
 }
 
 /** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la

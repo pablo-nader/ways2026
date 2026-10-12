@@ -7,7 +7,7 @@
 import { api, ErrorApi } from './cliente'
 import { CODIGO_RESULTADO_INCIERTO } from './bajas'
 import { urlBaseApi } from './entornoTauri'
-import type { EmpresaListado, TemaDeVitrina, VitrinaAdmin, VitrinaEdicion } from './tipos'
+import type { EmpresaListado, ListaPrecioListado, TemaDeVitrina, VitrinaAdmin, VitrinaEdicion } from './tipos'
 
 export const LARGO_MAXIMO_DEL_TAGLINE = 120
 export const LARGO_MAXIMO_DE_LA_DESCRIPCION = 2000
@@ -85,6 +85,8 @@ export type BorradorDeVitrina = {
   descripcion: string
   colorAcento: string
   tema: TemaDeVitrina
+  /** Id de la lista de precios de la tienda como texto (así lo entrega el `<select>`); `''` es la lista por defecto. */
+  idListaPrecio: string
 }
 
 export function aBorrador(vitrina: VitrinaAdmin): BorradorDeVitrina {
@@ -94,6 +96,7 @@ export function aBorrador(vitrina: VitrinaAdmin): BorradorDeVitrina {
     descripcion: vitrina.descripcion ?? '',
     colorAcento: vitrina.colorAcento ?? '',
     tema: vitrina.tema === 'claro' ? 'claro' : 'oscuro',
+    idListaPrecio: vitrina.idListaPrecio === null ? '' : String(vitrina.idListaPrecio),
   }
 }
 
@@ -112,6 +115,7 @@ export function aEdicion(borrador: BorradorDeVitrina): VitrinaEdicion {
     descripcion: aNulo(borrador.descripcion),
     colorAcento: aNulo(borrador.colorAcento),
     tema: borrador.tema,
+    idListaPrecio: borrador.idListaPrecio === '' ? null : Number(borrador.idListaPrecio),
   }
 }
 
@@ -126,8 +130,24 @@ export function borradorTieneCambios(borrador: BorradorDeVitrina, guardada: Vitr
     escrito.tagline !== original.tagline ||
     escrito.descripcion !== original.descripcion ||
     escrito.colorAcento !== original.colorAcento ||
-    escrito.tema !== original.tema
+    escrito.tema !== original.tema ||
+    escrito.idListaPrecio !== original.idListaPrecio
   )
+}
+
+/** Una opción del selector de lista de precios de la tienda. */
+export type OpcionDeLista = { valor: string; etiqueta: string }
+
+/**
+ * Listas que el servidor acepta para la tienda de una empresa: activas y compartidas o de esa empresa (el mismo
+ * criterio con el que responde `lista_invalida`). Ordenadas por nombre; la lista por defecto del comercio se rotula
+ * porque es la que la tienda usa cuando no se elige ninguna.
+ */
+export function opcionesDeListaDeLaTienda(listas: readonly ListaPrecioListado[], idEmpresa: number): OpcionDeLista[] {
+  return listas
+    .filter((l) => l.activo && (l.idEmpresa === null || l.idEmpresa === idEmpresa))
+    .map((l) => ({ valor: String(l.id), etiqueta: l.esDefault ? `${l.nombre} (por defecto)` : l.nombre }))
+    .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta, 'es'))
 }
 
 /** Una opción del selector de empresa. */
@@ -171,6 +191,10 @@ const COPIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   [
     'vitrina_ya_publicada',
     'Otra empresa de este comercio ya tiene su vitrina publicada. Despublicala antes de publicar esta.',
+  ],
+  [
+    'lista_invalida',
+    'La lista de precios no existe, está inactiva o no corresponde a esta empresa. Elegí otra o dejá la lista por defecto.',
   ],
   ['logo_demasiado_grande', COPIA_LOGO_DEMASIADO_GRANDE],
   ['logo_no_admitido', COPIA_LOGO_NO_ADMITIDO],

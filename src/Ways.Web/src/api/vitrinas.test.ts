@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ErrorApi, ErrorDeRed } from './cliente'
-import type { EmpresaListado, VitrinaAdmin } from './tipos'
+import type { EmpresaListado, ListaPrecioListado, VitrinaAdmin } from './tipos'
 
 const apiMock = vi.hoisted(() => ({
   get: vi.fn(),
@@ -33,6 +33,7 @@ const {
   guardarVitrina,
   obtenerVitrina,
   opcionesDeEmpresaParaVitrina,
+  opcionesDeListaDeLaTienda,
   quitarLogo,
   subirLogo,
   tiposDeLogoAdmitidos,
@@ -51,6 +52,7 @@ function vitrina(sobrescribir: Partial<VitrinaAdmin> = {}): VitrinaAdmin {
     tema: 'claro',
     tieneLogo: true,
     logoVersion: 1760000000,
+    idListaPrecio: null,
     ...sobrescribir,
   }
 }
@@ -81,9 +83,9 @@ describe('llamadas a la API', () => {
     expect(apiMock.get).toHaveBeenCalledWith('/empresas/4/vitrina')
   })
 
-  it('guardarVitrina manda los cinco campos por PUT', async () => {
+  it('guardarVitrina manda los seis campos por PUT', async () => {
     apiMock.put.mockResolvedValue(vitrina())
-    const datos = { publicada: true, tagline: 'a', descripcion: 'b', colorAcento: '#336699', tema: 'claro' as const }
+    const datos = { publicada: true, tagline: 'a', descripcion: 'b', colorAcento: '#336699', tema: 'claro' as const, idListaPrecio: 7 }
 
     await guardarVitrina(4, datos)
 
@@ -183,7 +185,13 @@ describe('aBorrador', () => {
       descripcion: '',
       colorAcento: '',
       tema: 'claro',
+      idListaPrecio: '',
     })
+  })
+
+  it('la lista de precios de la tienda pasa a texto y ninguna es la cadena vacía', () => {
+    expect(aBorrador(vitrina({ idListaPrecio: 7 })).idListaPrecio).toBe('7')
+    expect(aBorrador(vitrina({ idListaPrecio: null })).idListaPrecio).toBe('')
   })
 
   it('un tema que no es "claro" cae en oscuro', () => {
@@ -195,14 +203,79 @@ describe('aBorrador', () => {
 describe('aEdicion', () => {
   it('recorta los textos y manda vacío como null', () => {
     expect(
-      aEdicion({ publicada: false, tagline: '  Siempre cerca  ', descripcion: '   ', colorAcento: '', tema: 'oscuro' }),
-    ).toEqual({ publicada: false, tagline: 'Siempre cerca', descripcion: null, colorAcento: null, tema: 'oscuro' })
+      aEdicion({
+        publicada: false,
+        tagline: '  Siempre cerca  ',
+        descripcion: '   ',
+        colorAcento: '',
+        tema: 'oscuro',
+        idListaPrecio: '',
+      }),
+    ).toEqual({
+      publicada: false,
+      tagline: 'Siempre cerca',
+      descripcion: null,
+      colorAcento: null,
+      tema: 'oscuro',
+      idListaPrecio: null,
+    })
   })
 
   it('manda el color y la marca de publicada tal como están', () => {
     expect(
-      aEdicion({ publicada: true, tagline: '', descripcion: 'hola', colorAcento: ' #336699 ', tema: 'claro' }),
-    ).toEqual({ publicada: true, tagline: null, descripcion: 'hola', colorAcento: '#336699', tema: 'claro' })
+      aEdicion({ publicada: true, tagline: '', descripcion: 'hola', colorAcento: ' #336699 ', tema: 'claro', idListaPrecio: '' }),
+    ).toEqual({ publicada: true, tagline: null, descripcion: 'hola', colorAcento: '#336699', tema: 'claro', idListaPrecio: null })
+  })
+
+  it('la lista elegida viaja como número y la lista por defecto como null', () => {
+    const base = aBorrador(vitrina())
+
+    expect(aEdicion({ ...base, idListaPrecio: '12' }).idListaPrecio).toBe(12)
+    expect(aEdicion({ ...base, idListaPrecio: '' }).idListaPrecio).toBeNull()
+  })
+})
+
+describe('opcionesDeListaDeLaTienda', () => {
+  function lista(id: number, sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
+    return {
+      id,
+      nombre: `Lista ${id}`,
+      activo: true,
+      idEmpresa: null,
+      esDefault: false,
+      modo: 'Fija',
+      idListaBase: null,
+      porcentaje: null,
+      ...sobrescribir,
+    }
+  }
+
+  it('ofrece las listas compartidas y las de la empresa, con la forma { valor, etiqueta }', () => {
+    expect(opcionesDeListaDeLaTienda([lista(1), lista(2, { idEmpresa: 4 })], 4)).toEqual([
+      { valor: '1', etiqueta: 'Lista 1' },
+      { valor: '2', etiqueta: 'Lista 2' },
+    ])
+  })
+
+  it('descarta las listas inactivas', () => {
+    expect(opcionesDeListaDeLaTienda([lista(1, { activo: false }), lista(2)], 4).map((o) => o.valor)).toEqual(['2'])
+  })
+
+  it('descarta las listas de otra empresa', () => {
+    expect(opcionesDeListaDeLaTienda([lista(1, { idEmpresa: 9 }), lista(2)], 4).map((o) => o.valor)).toEqual(['2'])
+  })
+
+  it('rotula la lista por defecto y ordena por etiqueta', () => {
+    const opciones = opcionesDeListaDeLaTienda([lista(1, { nombre: 'Mayorista' }), lista(2, { nombre: 'General', esDefault: true })], 4)
+
+    expect(opciones).toEqual([
+      { valor: '2', etiqueta: 'General (por defecto)' },
+      { valor: '1', etiqueta: 'Mayorista' },
+    ])
+  })
+
+  it('sin listas no hay opciones', () => {
+    expect(opcionesDeListaDeLaTienda([], 4)).toEqual([])
   })
 })
 
@@ -257,6 +330,11 @@ describe('copiaDeFalloDeVitrina', () => {
       'vitrina_ya_publicada',
       409,
       'Otra empresa de este comercio ya tiene su vitrina publicada. Despublicala antes de publicar esta.',
+    ],
+    [
+      'lista_invalida',
+      400,
+      'La lista de precios no existe, está inactiva o no corresponde a esta empresa. Elegí otra o dejá la lista por defecto.',
     ],
     ['logo_demasiado_grande', 413, 'El logo no puede pesar más de 1 MB.'],
     ['logo_no_admitido', 415, 'El logo tiene que ser una imagen PNG, JPG o WebP.'],
@@ -358,8 +436,16 @@ describe('borradorTieneCambios', () => {
     ['descripción', { descripcion: 'Algo' }],
     ['color', { colorAcento: '#000000' }],
     ['tema', { tema: 'oscuro' as const }],
+    ['lista de precios', { idListaPrecio: '7' }],
   ])('cambiar %s es un cambio', (_campo, cambio) => {
     expect(borradorTieneCambios({ ...igual, ...cambio }, guardada)).toBe(true)
+  })
+
+  it('volver a la lista por defecto cuando había una elegida es un cambio, y repetir la elegida no', () => {
+    const conLista = vitrina({ idListaPrecio: 7 })
+
+    expect(borradorTieneCambios({ ...aBorrador(conLista), idListaPrecio: '' }, conLista)).toBe(true)
+    expect(borradorTieneCambios(aBorrador(conLista), conLista)).toBe(false)
   })
 
   it('vaciar un texto guardado es un cambio', () => {
