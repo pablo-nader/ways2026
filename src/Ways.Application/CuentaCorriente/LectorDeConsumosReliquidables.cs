@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Articulos;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Ventas;
 
@@ -49,9 +50,16 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
         }
 
         var idsComprobante = elegibles.Select(e => e.IdComprobanteVenta).Distinct().ToList();
+
+        // Una línea vendida por importe cobró el monto que se tipeó y no se re-precifica: lo dice la propia línea
+        // (por_importe), no la unidad que tenga hoy el artículo, que pudo cambiar después de la venta.
         var items = await db.ItemsComprobanteVenta
             .Where(i => idsComprobante.Contains(i.IdComprobanteVenta))
-            .Select(i => new { i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total, i.AjusteManualPorcentaje })
+            .Select(i => new
+            {
+                i.IdComprobanteVenta, i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
+                i.AjusteManualPorcentaje, i.PorImporte
+            })
             .ToListAsync(ct);
 
         var itemsPorComprobante = items.ToLookup(i => i.IdComprobanteVenta);
@@ -61,7 +69,7 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
                 e.Id, e.IdComprobanteVenta, e.Importe, e.Total,
                 itemsPorComprobante[e.IdComprobanteVenta]
                     .Select(i => new LineaAReliquidar(
-                        i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total, i.AjusteManualPorcentaje))
+                        i.IdArticulo, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total, i.AjusteManualPorcentaje, i.PorImporte))
                     .ToList()))
             .ToList();
     }

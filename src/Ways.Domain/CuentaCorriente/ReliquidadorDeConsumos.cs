@@ -14,11 +14,13 @@ namespace Ways.Domain.CuentaCorriente;
 /// (<see cref="ReliquidadorDeConsumos.Calcular"/> recalcula el total del día desde cero, sin
 /// descuento, sin importar de dónde vino el descuento histórico). El único ajuste que sobrevive
 /// es el manual: <see cref="AjusteManualPorcentaje"/> es una decisión del cajero sobre esta
-/// línea, no una promoción, y se reaplica sobre el neto nuevo.
+/// línea, no una promoción, y se reaplica sobre el neto nuevo. <see cref="PorImporte"/> marca la línea de un artículo
+/// por importe: su precio es el monto que se tipeó en la caja, no uno de lista, así que no se re-precifica (queda como
+/// línea omitida, delta cero).
 /// </summary>
 public readonly record struct LineaAReliquidar(
     int? IdArticulo, decimal Cantidad, decimal PrecioUnitario, decimal Descuento, decimal TotalHistorico,
-    decimal? AjusteManualPorcentaje = null);
+    decimal? AjusteManualPorcentaje = null, bool PorImporte = false);
 
 /// <summary>Un <c>Consumo</c> elegible con sus líneas ya resueltas (design: Interfaces/Contracts).
 /// <see cref="ImporteFinanciado"/> es <c>movimientos_cuenta_corriente.importe</c> del propio
@@ -122,6 +124,14 @@ public static class ReliquidadorDeConsumos
                 detallesDeLinea.Add(new DetalleDeLinea(
                     null, linea.Cantidad, linea.PrecioUnitario, null, linea.TotalHistorico, null, 0m,
                     "Línea de concepto libre (sin artículo) — no re-precificable."));
+                continue;
+            }
+
+            if (linea.PorImporte)
+            {
+                detallesDeLinea.Add(new DetalleDeLinea(
+                    idArticulo, linea.Cantidad, linea.PrecioUnitario, null, linea.TotalHistorico, null, 0m,
+                    "Artículo por importe — conserva el importe que se tipeó en la caja; no se re-precifica."));
                 continue;
             }
 

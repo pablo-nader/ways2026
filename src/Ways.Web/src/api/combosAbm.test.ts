@@ -409,6 +409,7 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
     [400, 'combo_unidades_insuficientes', 'componentes'],
     [400, 'combo_componentes_excedidos', 'componentes'],
     [400, 'combo_componente_no_unitario', 'componentes'],
+    [400, 'combo_componente_por_importe', 'componentes'],
     [400, 'combo_codigo_invalido', 'codigo'],
     [409, 'combo_codigo_duplicado', 'codigo'],
     [409, 'combo_codigo_agotado', 'codigo'],
@@ -425,6 +426,7 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
 
   it('el mensaje de cada código dice lo suyo', () => {
     expect(errorDeServidorDeCombo(rechazo(400, 'combo_componente_no_unitario')).mensaje).toContain('por peso')
+    expect(errorDeServidorDeCombo(rechazo(400, 'combo_componente_por_importe')).mensaje).toContain('por importe')
     expect(errorDeServidorDeCombo(rechazo(409, 'combo_codigo_duplicado')).mensaje).toBe('Ya hay un combo con ese código. Elegí otro.')
     expect(errorDeServidorDeCombo(rechazo(400, 'combo_componentes_excedidos')).mensaje).toContain('50')
   })

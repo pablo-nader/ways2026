@@ -8,6 +8,7 @@ using Ways.Application.Precios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Ofertas;
 
@@ -418,6 +419,12 @@ public class ServicioDeOfertas(
 
         foreach (var linea in lineasPedidas)
         {
+            if (linea.Importe is { } importe)
+            {
+                resultado.Add(ResolverPorImporte(contexto, linea, importe));
+                continue;
+            }
+
             if (Preparar(contexto, linea, cantidadPorFamilia) is not { } preparada)
             {
                 resultado.Add(SinPrecio(linea));
@@ -556,6 +563,12 @@ public class ServicioDeOfertas(
         if (lineasPedidas.Count == 0)
         {
             return [];
+        }
+
+        if (lineasPedidas.Any(l => l.Importe is not null))
+        {
+            throw new ErrorDominio(
+                "importe_no_admitido", "La curva de precio por cantidad no admite líneas con importe.", 400);
         }
 
         var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
@@ -772,7 +785,7 @@ public class ServicioDeOfertas(
         return (lineaAResolver, candidatas);
     }
 
-    /// <summary>Suma de cantidades por familia sobre TODAS las líneas del lote (las líneas sin
+    /// <summary>Suma de cantidades por familia sobre las líneas del lote que no son por importe (las líneas sin
     /// familia no se suman entre sí). Es el dato que las ofertas de alcance familia comparan contra
     /// <c>cantidad_minima</c>. <c>ResolverConEscalonesAsync</c> no lo usa: su lote es el catálogo
     /// entero a cantidad 1, no un documento.</summary>
@@ -783,13 +796,38 @@ public class ServicioDeOfertas(
 
         foreach (var linea in lineas)
         {
-            if (contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
+            if (linea.Importe is null && contexto.AlcancePorArticulo[linea.IdArticulo].IdFamilia is { } idFamilia)
             {
                 cantidadPorFamilia[idFamilia] = cantidadPorFamilia.GetValueOrDefault(idFamilia) + linea.Cantidad;
             }
         }
 
         return cantidadPorFamilia;
+    }
+
+    /// <summary>La línea de un artículo por importe: su precio es el monto que tipeó el cajero, igual en el precio
+    /// original y en el final, sin descuento ni ofertas. No mira la lista de precios ni las ofertas candidatas, y
+    /// tampoco suma a la cantidad de una familia. Solo un artículo por importe admite un importe, y su cantidad es 1.</summary>
+    private static ResultadoDeResolucion ResolverPorImporte(
+        ContextoDeResolucion contexto, LineaDeResolucion linea, decimal importe)
+    {
+        if (contexto.AlcancePorArticulo[linea.IdArticulo].UnidadVenta != UnidadVenta.Importe)
+        {
+            throw new ErrorDominio(
+                "importe_no_admitido", $"El artículo {linea.IdArticulo} no se vende por importe.", 400);
+        }
+
+        ReglaDeImporteDeVenta.Validar(importe);
+
+        if (!ReglaDeCantidadDeVenta.EsCantidadAdmitida(UnidadVenta.Importe, linea.Cantidad))
+        {
+            throw new ErrorDominio(
+                "cantidad_importe_invalida",
+                $"El artículo {linea.IdArticulo} se vende por importe: la cantidad es siempre 1.",
+                400);
+        }
+
+        return new ResultadoDeResolucion(linea.IdArticulo, linea.IdListaPrecio, importe, importe, 0m, []);
     }
 
     /// <summary>Par (artículo, lista) sin precio vigente: caso fuera de alcance de la spec de

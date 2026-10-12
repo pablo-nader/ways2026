@@ -1170,4 +1170,88 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         // reliquidación (5000 + 10).
         Assert.Equal(primera.Delta + segunda.Delta, saldoFinal);
     }
+    // ---- artículo por importe: el importe tipeado no se reprecia -------------------------------
+
+    /// <summary>La línea por importe conserva el monto que se tipeó aunque el artículo tenga hoy un precio de lista
+    /// distinto: la reliquidación solo mueve la línea de lista, y el detalle dice por qué dejó la otra.</summary>
+    [Fact]
+    public async Task LaReliquidacionNoReprecificaUnaLineaPorImporteYSiLaDeLista()
+    {
+        var ctx = await PrepararAsync(nameof(LaReliquidacionNoReprecificaUnaLineaPorImporteYSiLaDeLista));
+        var idComun = await SembrarArticuloConPrecioAsync(ctx, "articulo-comun", 100m);
+        var idPorImporte = await SembrarArticuloConPrecioAsync(ctx, "articulo-importe", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente importe");
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var articulo = await db.Articulos.SingleAsync(a => a.Id == idPorImporte);
+            articulo.UnidadVenta = Ways.Domain.Articulos.UnidadVenta.Importe;
+            articulo.AcumulaEnVenta = false;
+            await db.SaveChangesAsync();
+        }
+
+        var venta = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idComun, 1m, null), new LineaDeVenta(idPorImporte, 1m, null, Importe: 150m)],
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, 250m, null, 0m)], null, null);
+        var emitida = await ctx.Admin.PostAsJsonAsync("/api/ventas", venta);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
+
+        await SubirPrecioAsync(ctx, idComun, 130m);
+        await SubirPrecioAsync(ctx, idPorImporte, 999m);
+
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+
+        Assert.Equal(30m, resultado.Delta);
+        var lineas = Assert.Single(resultado.Detalle).Lineas;
+        var deLista = Assert.Single(lineas, l => l.IdArticulo == idComun);
+        Assert.Equal((130m, 30m), (deLista.TotalDelDia, deLista.Delta));
+        var porImporte = Assert.Single(lineas, l => l.IdArticulo == idPorImporte);
+        Assert.Equal((0m, (decimal?)null, 150m), (porImporte.Delta, porImporte.TotalDelDia, porImporte.TotalHistorico));
+        Assert.Contains("importe", porImporte.Motivo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Lo que decide si una línea se reprecia es cómo se VENDIÓ, no la unidad que tiene hoy el artículo: una línea
+    /// por importe de un artículo que después pasó a Unidad conserva su monto, y una línea de lista de un artículo que
+    /// después pasó a Importe sigue reprecificándose.</summary>
+    [Fact]
+    public async Task LaReliquidacionSigueComoSeVendioLaLineaAunqueElArticuloCambieDeUnidad()
+    {
+        var ctx = await PrepararAsync(nameof(LaReliquidacionSigueComoSeVendioLaLineaAunqueElArticuloCambieDeUnidad));
+        var idVendidoPorImporte = await SembrarArticuloConPrecioAsync(ctx, "vendido-por-importe", 100m);
+        var idVendidoDeLista = await SembrarArticuloConPrecioAsync(ctx, "vendido-de-lista", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente cambio de unidad");
+
+        await CambiarUnidadAsync(ctx, idVendidoPorImporte, Ways.Domain.Articulos.UnidadVenta.Importe);
+
+        var venta = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idVendidoPorImporte, 1m, null, Importe: 150m), new LineaDeVenta(idVendidoDeLista, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, 250m, null, 0m)], null, null);
+        var emitida = await ctx.Admin.PostAsJsonAsync("/api/ventas", venta);
+        Assert.Equal(HttpStatusCode.Created, emitida.StatusCode);
+
+        await CambiarUnidadAsync(ctx, idVendidoPorImporte, Ways.Domain.Articulos.UnidadVenta.Unidad);
+        await CambiarUnidadAsync(ctx, idVendidoDeLista, Ways.Domain.Articulos.UnidadVenta.Importe);
+        await SubirPrecioAsync(ctx, idVendidoPorImporte, 999m);
+        await SubirPrecioAsync(ctx, idVendidoDeLista, 130m);
+
+        var resultado = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+
+        Assert.Equal(30m, resultado.Delta);
+        var lineas = Assert.Single(resultado.Detalle).Lineas;
+        var porImporte = Assert.Single(lineas, l => l.IdArticulo == idVendidoPorImporte);
+        Assert.Equal((0m, (decimal?)null, 150m), (porImporte.Delta, porImporte.TotalDelDia, porImporte.TotalHistorico));
+        var deLista = Assert.Single(lineas, l => l.IdArticulo == idVendidoDeLista);
+        Assert.Equal((130m, 30m), (deLista.TotalDelDia, deLista.Delta));
+    }
+
+    private async Task CambiarUnidadAsync(Contexto ctx, int idArticulo, Ways.Domain.Articulos.UnidadVenta unidad)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var articulo = await db.Articulos.SingleAsync(a => a.Id == idArticulo);
+        articulo.UnidadVenta = unidad;
+        articulo.AcumulaEnVenta = unidad != Ways.Domain.Articulos.UnidadVenta.Importe && articulo.AcumulaEnVenta;
+        await db.SaveChangesAsync();
+    }
 }

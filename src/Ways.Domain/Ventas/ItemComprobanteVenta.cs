@@ -100,4 +100,10 @@ public class ItemComprobanteVenta : EntidadTenant
     /// ambigüedad. <c>NULL</c> para un artículo que no es lot-effective. Columna creada en esta
     /// slice, escrita recién en slice 8 (<c>ServicioDeVentas</c>).</summary>
     public int? IdLote { get; set; }
+
+    /// <summary><c>true</c> si la línea se vendió por importe (el cajero tipeó el monto y <see cref="PrecioUnitario"/> es
+    /// ese monto, sin lista, oferta ni combo). Es un snapshot de cómo se vendió la línea: el artículo puede cambiar de
+    /// unidad después, y la reliquidación y la devolución asociada deciden por esto y no por la unidad de hoy. <c>false</c>
+    /// en toda fila anterior a la columna, sin backfill (ninguna se vendió por importe).</summary>
+    public bool PorImporte { get; set; }
 }

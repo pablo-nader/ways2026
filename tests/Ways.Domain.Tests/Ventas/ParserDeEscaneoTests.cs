@@ -171,4 +171,27 @@ public class ParserDeEscaneoTests
     {
         Assert.Throws<ErrorDominio>(() => ParserDeEscaneo.Parsear("3*"));
     }
+    // ---- prefijo crudo (lo usa un artículo por importe) ---------------------------------------
+
+    [Theory]
+    [InlineData("150*500", "150", "500")]
+    [InlineData(" 150.50 * 500 ", "150.50", "500")]
+    [InlineData("*500", "", "500")]
+    [InlineData("abc*123", "abc", "123")]
+    [InlineData("0*7790001234567", "0", "7790001234567")]
+    public void ElPrefijoCrudoSeConservaTalCualAunqueLaCantidadCaigaAUno(string entrada, string prefijo, string codigo)
+    {
+        var resultado = ParserDeEscaneo.Parsear(entrada);
+
+        Assert.Equal(prefijo, resultado.Prefijo);
+        Assert.Equal(codigo, resultado.Codigo);
+    }
+
+    [Theory]
+    [InlineData("500")]
+    [InlineData("7790001234567")]
+    public void SinAsteriscoNoHayPrefijo(string entrada)
+    {
+        Assert.Null(ParserDeEscaneo.Parsear(entrada).Prefijo);
+    }
 }

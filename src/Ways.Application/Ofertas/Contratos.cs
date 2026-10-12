@@ -95,8 +95,14 @@ public sealed record EdicionOferta(
 /// descomposición de fecha/hora local (ambas las arma <c>ServicioDeOfertas</c>), y sí lleva
 /// <see cref="IdEmpresa"/> — el dato que <c>LineaAResolver</c> deliberadamente no lleva (spec:
 /// resolucion-de-ofertas / Candidate Matching, "Empresa-scoped oferta excludes other
-/// empresas"; ver <c>Ways.Domain.Ofertas.ReglaDeOfertas.CoincideEmpresa</c>).</summary>
-public sealed record LineaDeResolucion(int IdArticulo, int? IdEmpresa, int IdListaPrecio, decimal Cantidad);
+/// empresas"; ver <c>Ways.Domain.Ofertas.ReglaDeOfertas.CoincideEmpresa</c>).
+///
+/// <para><see cref="Importe"/> es el monto de un artículo que se vende por importe (<c>UnidadVenta.Importe</c>): la línea se
+/// resuelve a ese precio, sin lista, ofertas ni combos, y su cantidad es 1. Solo lo admite un artículo por importe (400
+/// <c>importe_no_admitido</c>); inválido es 400 <c>importe_invalido</c>. La curva por cantidad de la instantánea no lo
+/// admite.</para></summary>
+public sealed record LineaDeResolucion(
+    int IdArticulo, int? IdEmpresa, int IdListaPrecio, decimal Cantidad, decimal? Importe = null);
 
 /// <summary>Cuerpo de <c>POST /api/ofertas/resolver</c> — un único <paramref name="Momento"/>
 /// (design: Open Questions, "server-configured local time") para todo el lote entero, no uno

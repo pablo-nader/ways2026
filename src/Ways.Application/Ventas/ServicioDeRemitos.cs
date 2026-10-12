@@ -838,6 +838,8 @@ public class ServicioDeRemitos(
             .Where(a => idsArticulo.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, ct);
 
+        ArticulosPorImporte.RechazarEn(articuloPorId.Values, "un remito");
+
         var idsAlicuota = articuloPorId.Values.Select(a => a.IdAlicuotaIva).Distinct().ToList();
         var porcentajePorAlicuota = await db.AlicuotasIva
             .Where(a => idsAlicuota.Contains(a.Id))

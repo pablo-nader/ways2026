@@ -11,7 +11,7 @@ import type {
 import { Cargando } from '../../componentes/Cargando'
 import { Modal } from '../../componentes/Modal'
 import type { AccionesDeFamiliaDelFormulario, EstadoDeFamiliaDelFormulario, EstadoDeUnionAFamilia } from './familia'
-import { FormularioArticulo, type CodigoDeProveedorDelFormulario, type Formulario } from './FormularioArticulo'
+import { FormularioArticulo, type CodigoDeProveedorDelFormulario, type ErrorDeTecla, type Formulario } from './FormularioArticulo'
 
 export type PropsDeModalDeArticulo = {
   clave: number | 'nuevo'
@@ -48,6 +48,7 @@ export type PropsDeModalDeArticulo = {
   accionesDeFamilia: AccionesDeFamiliaDelFormulario
   union: EstadoDeUnionAFamilia
   errorDeFamiliaNueva: string
+  errorDeTecla: ErrorDeTecla | null
   sinGuardar: boolean
   preguntaDeAlcanceAbierta: boolean
   /** Solo en un alta abierta desde una compra: el código con el que el proveedor habitual conoce al artículo. */
@@ -102,6 +103,7 @@ export function ModalDeArticulo({
   accionesDeFamilia,
   union,
   errorDeFamiliaNueva,
+  errorDeTecla,
   sinGuardar,
   preguntaDeAlcanceAbierta,
   codigoProveedor,
@@ -166,6 +168,7 @@ export function ModalDeArticulo({
             accionesDeFamilia={accionesDeFamilia}
             union={union}
             errorDeFamiliaNueva={errorDeFamiliaNueva}
+            errorDeTecla={errorDeTecla}
             sinGuardar={sinGuardar}
             preguntaDeAlcanceAbierta={preguntaDeAlcanceAbierta}
             codigoProveedor={codigoProveedor}
