@@ -25,14 +25,16 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
 
     protected override void AplicarPropios(MedioPago entidad, MedioPagoAlta datos)
     {
-        ExigirPorcentajeDeFacturacionValido(datos.PorcentajeFacturacion);
+        // Ausente conserva lo guardado: un cliente que no conoce el campo no puede pisarlo con 0.
+        var porcentaje = datos.PorcentajeFacturacion ?? entidad.PorcentajeFacturacion;
+        ExigirPorcentajeDeFacturacionValido(porcentaje);
 
         entidad.Orden = datos.Orden;
         entidad.Comportamiento = datos.Comportamiento;
         entidad.AdmiteVuelto = datos.AdmiteVuelto;
         entidad.RequiereReferencia = datos.RequiereReferencia;
         entidad.RecargoPorcentaje = datos.RecargoPorcentaje;
-        entidad.PorcentajeFacturacion = datos.PorcentajeFacturacion;
+        entidad.PorcentajeFacturacion = porcentaje;
     }
 
     /// <summary>Entre 0 y 100 con hasta 2 decimales, que es lo que guarda <c>numeric(5,2)</c>: más

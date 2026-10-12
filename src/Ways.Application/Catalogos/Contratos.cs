@@ -35,7 +35,7 @@ public sealed record MedioPagoAlta(
     bool AdmiteVuelto,
     bool RequiereReferencia,
     decimal? RecargoPorcentaje,
-    decimal PorcentajeFacturacion = 0m,
+    decimal? PorcentajeFacturacion = null,
     bool Activo = true) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
 
 public sealed record MedioPagoListado(

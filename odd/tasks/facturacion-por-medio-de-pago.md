@@ -57,7 +57,7 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 
 ## Tareas
 
-- [ ] **T1 — Porcentaje en el medio de pago.** Migración, `MedioPago`, contratos, servicio,
+- [x] **T1 — Porcentaje en el medio de pago.** Migración, `MedioPago`, contratos, servicio,
   descriptor web e instantánea del POS. Checks: integración del ABM (0..100, rechazo fuera de
   rango), Vitest del descriptor. Ruta: delegada (2+ archivos no triviales).
 - [ ] **T2 — `PoliticaDeFacturacionPorMedio`.** Dominio puro. Checks: unitarios sin base
@@ -95,7 +95,17 @@ Estrategia `ask-on-risk` con cadena `stacked-to-main` (ya elegida por el dueño)
 
 ## Progreso y evidencia
 
-- 2026-10-12: exploración y diseño completos. Sin escrituras de código todavía.
+- 2026-10-12: exploración y diseño completos.
+- 2026-10-12 — T1 hecha. Ruta: delegada (un escritor; más de dos archivos no triviales).
+  Commits `1b6c657d` y el de corrección que le sigue. RED observado (compilación y 9 tests
+  de Vitest) y GREEN. Checks: `dotnet build` sin errores; `Ways.Application.Tests` 858/858;
+  `Ways.IntegrationTests` completa 3781/3781 sobre `1b6c657d`; Vitest 5896/5896; `tsc` limpio.
+  Judgment-day ronda 1: ningún hallazgo severo; una advertencia confirmada por los dos jueces
+  (un PUT sin el campo pisaba el porcentaje con 0), corregida con su test (RED y GREEN): el
+  campo ausente conserva lo guardado. Tras la corrección se re-corrieron solo las pruebas de
+  medios de pago e instantánea (29/29) y las de aplicación; la suite completa queda al CI.
+  Sin prueba de mutación de la cláusula de rango. RDD apagado en el clon: sin revisión nativa.
+  Decisiones: sin subir la versión de la instantánea (una guardada sin el campo lee 0).
 
 ## Próximo paso
 

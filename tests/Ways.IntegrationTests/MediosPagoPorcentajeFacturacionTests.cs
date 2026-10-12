@@ -122,6 +122,33 @@ public class MediosPagoPorcentajeFacturacionTests(WaysApiFixture fixture) : ICla
         Assert.Equal(0m, (await creado.Content.ReadFromJsonAsync<MedioPagoListado>(OpcionesJson))!.PorcentajeFacturacion);
     }
 
+    [Fact]
+    public async Task ActualizarSinElCampoConservaElPorcentajeGuardado()
+    {
+        var (admin, _) = await AprovisionarAsync(nameof(ActualizarSinElCampoConservaElPorcentajeGuardado));
+        using var _admin = admin;
+
+        var medio = (await (await admin.PostAsJsonAsync("/api/catalogos/medios-pago", Alta("QR", 37.5m)))
+            .Content.ReadFromJsonAsync<MedioPagoListado>(OpcionesJson))!;
+
+        var cuerpoSinPorcentaje = new
+        {
+            nombre = "QR renombrado",
+            idEmpresa = (int?)null,
+            orden = 9,
+            comportamiento = "Electronico",
+            admiteVuelto = false,
+            requiereReferencia = false,
+            recargoPorcentaje = (decimal?)null
+        };
+        var put = await admin.PutAsJsonAsync($"/api/catalogos/medios-pago/{medio.Id}", cuerpoSinPorcentaje);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        var actualizado = (await put.Content.ReadFromJsonAsync<MedioPagoListado>(OpcionesJson))!;
+        Assert.Equal("QR renombrado", actualizado.Nombre);
+        Assert.Equal(37.5m, actualizado.PorcentajeFacturacion);
+    }
+
     [Theory]
     [InlineData("-0.01")]
     [InlineData("100.01")]
