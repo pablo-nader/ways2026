@@ -22,8 +22,6 @@ public static class EsquemaDeCampoOpcional
             {
                 esquema.Type = JsonSchemaType.Integer | JsonSchemaType.Null;
                 esquema.Format = "int32";
-                esquema.Properties?.Clear();
-                esquema.Required?.Clear();
                 esquema.AdditionalPropertiesAllowed = true;
             }
 
