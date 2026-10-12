@@ -32,20 +32,26 @@ public static class ArticulosEndpoints
             int? idProveedor,
             // Búsqueda de la caja: deja afuera los artículos que no están disponibles a la venta.
             bool? soloVendibles,
+            // Anula soloVendibles: la búsqueda de una devolución también ve el artículo de uso interno.
+            bool? incluirNoVendibles,
             CancellationToken ct) =>
             servicio.ListarAsync(
                 busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25,
-                idArea, idCategoria, idMarca, idProveedor, soloVendibles ?? false, ct))
+                idArea, idCategoria, idMarca, idProveedor,
+                (soloVendibles ?? false) && !(incluirNoVendibles ?? false), ct))
         .WithSummary(
             "Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado. Con soloVendibles "
-            + "deja afuera los artículos no disponibles a la venta (la búsqueda de la caja).");
+            + "deja afuera los artículos no disponibles a la venta (la búsqueda de la caja), salvo que se pida "
+            + "incluirNoVendibles=true (devoluciones).");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
         // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda
         // Politicas.OperacionDePos del grupo (Vendedor + Admin, design decisión 6).
-        grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, CancellationToken ct) =>
-            servicio.ResolverAsync(entrada, ct))
-        .WithSummary("Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo.");
+        grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, bool? incluirNoVendibles, CancellationToken ct) =>
+            servicio.ResolverAsync(entrada, incluirNoVendibles ?? false, ct))
+        .WithSummary(
+            "Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo vendible. Con "
+            + "incluirNoVendibles=true también resuelve uno de uso interno (devoluciones).");
 
         // stage-articulos-grilla-api: grilla del back-office con filtros por columna (Código,
         // Nombre, Precio, Proveedor, Estado) — segmento literal, no colisiona con "/{id:int}" de

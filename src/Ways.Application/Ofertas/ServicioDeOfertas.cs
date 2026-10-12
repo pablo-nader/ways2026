@@ -199,8 +199,6 @@ public class ServicioDeOfertas(
             throw ErrorDominio.NoEncontrado($"No existe la oferta {id}.");
         }
 
-        var disponibleOnline = datos.DisponibleOnline
-            ?? throw new ErrorDominio("disponible_online_requerido", "El campo disponibleOnline es obligatorio.", 400);
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
         var diasSemana = ConvertirDiasSemana(datos.DiasSemana);
         var idsListas = datos.IdsListas?.Distinct().ToList();
@@ -231,8 +229,7 @@ public class ServicioDeOfertas(
             ImporteFijo = datos.ImporteFijo,
             Prioridad = datos.Prioridad,
             Acumulable = datos.Acumulable,
-            Activo = datos.Activo,
-            DisponibleOnline = disponibleOnline
+            Activo = datos.Activo
         };
 
         var alcance = ValidarInvariantes(candidato);
@@ -297,7 +294,9 @@ public class ServicioDeOfertas(
             oferta.Prioridad = candidato.Prioridad;
             oferta.Acumulable = candidato.Acumulable;
             oferta.Activo = candidato.Activo;
-            oferta.DisponibleOnline = candidato.DisponibleOnline;
+
+            // Omitido ⇒ conserva el valor guardado (un cliente anterior al campo no la saca de la tienda).
+            oferta.DisponibleOnline = datos.DisponibleOnline ?? oferta.DisponibleOnline;
             oferta.UpdatedAt = reloj.Ahora;
 
             // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar

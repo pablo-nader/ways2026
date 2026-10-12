@@ -7,6 +7,7 @@ using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Organizacion;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -81,6 +82,14 @@ public class ServicioDeFacturacionDeRemitos(
         var items = await db.ItemsRemito.AsNoTracking()
             .Where(i => idsRemitoDistintos.Contains(i.IdRemito))
             .ToListAsync(ct);
+
+        // Un artículo que pasó a uso interno después de emitir el remito frena su facturación (409, el remito sigue
+        // emitido y se puede anular): la regla se exige cuando el documento se concreta, no solo al guardar el borrador.
+        var idsArticulo = items.Select(i => i.IdArticulo).Distinct().ToList();
+        var articulos = await db.Articulos.AsNoTracking()
+            .Where(a => idsArticulo.Contains(a.Id))
+            .ToListAsync(ct);
+        ReglaDeArticuloVendible.Exigir(articulos);
 
         // totales := Σ headers, aserción contra Σ importes guardados de los items congelados
         // (design: Transactions — "FACTURAR REMITOS"). Defensa en profundidad, nunca un caso de

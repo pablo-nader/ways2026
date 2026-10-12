@@ -201,8 +201,6 @@ public class ServicioDeCombos(
         var nombre = NormalizarNombre(datos.Nombre);
         var activo = datos.Activo
             ?? throw new ErrorDominio("activo_requerido", "El campo activo es obligatorio.", 400);
-        var disponibleOnline = datos.DisponibleOnline
-            ?? throw new ErrorDominio("disponible_online_requerido", "El campo disponibleOnline es obligatorio.", 400);
         var codigo = ValidarCodigoPedido(datos.Codigo);
         var componentes = ValidarConjunto(datos.Precio, datos.Componentes);
 
@@ -233,7 +231,7 @@ public class ServicioDeCombos(
             existente.Precio = datos.Precio;
             existente.IdEmpresa = datos.IdEmpresa;
             existente.Activo = activo;
-            existente.DisponibleOnline = disponibleOnline;
+            existente.DisponibleOnline = datos.DisponibleOnline ?? existente.DisponibleOnline;
             existente.UpdatedAt = reloj.Ahora;
 
             // Dos SaveChanges en la misma transacción: el DELETE del conjunto viejo se emite antes que el INSERT del

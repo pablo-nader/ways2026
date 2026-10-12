@@ -43,9 +43,10 @@ public sealed record AltaCombo(
 /// <summary>
 /// Edición completa de un combo: reemplaza nombre, precio, empresa, estado y el conjunto de componentes.
 /// <see cref="Codigo"/> omitido ⇒ conserva el actual; informado, aplica las mismas reglas que en el alta.
-/// <see cref="Activo"/> y <see cref="DisponibleOnline"/> son obligatorios (<c>400 activo_requerido</c> / <c>400
-/// disponible_online_requerido</c>): son nullable para que su ausencia en el JSON se rechace en vez de leerse como un
-/// valor por defecto y reactivar, desactivar o sacar de la tienda el combo en silencio.
+/// <see cref="Activo"/> es obligatorio (<c>400 activo_requerido</c>): es nullable para que su ausencia en el JSON se
+/// rechace en vez de leerse como un valor por defecto y reactivar o desactivar el combo en silencio.
+/// <see cref="DisponibleOnline"/> es opcional y <c>null</c> significa "sin cambios": conserva el valor guardado, de modo
+/// que un cliente anterior al campo sigue editando sin sacar el combo de la tienda.
 /// </summary>
 public sealed record EdicionCombo(
     int? Codigo,

@@ -197,9 +197,13 @@ public class ServicioDeVentas(
         if (solicitud.NumeroPreasignado is null && presupuestoOrigen is null && tipo.Signo > 0)
         {
             ExigirCantidadesAdmitidasPorUnidadDeVenta(lineas, articuloPorId);
+        }
 
-            // Un artículo de uso interno no se vende: misma excepción que la regla de cantidades, porque lo ya
-            // cobrado offline, lo congelado en un presupuesto y la devolución de lo que se vendió no se reescriben.
+        // Un artículo de uso interno no se vende ni al convertir un presupuesto viejo (su precio queda congelado, pero
+        // la regla de venta es del artículo, no del precio). Quedan fuera lo ya cobrado offline y la devolución de lo
+        // que se vendió, que no se reescriben.
+        if (solicitud.NumeroPreasignado is null && tipo.Signo > 0)
+        {
             ReglaDeArticuloVendible.Exigir(articuloPorId.Values);
         }
 

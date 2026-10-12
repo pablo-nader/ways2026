@@ -65,9 +65,10 @@ public sealed record AltaOferta(
     int? IdFamilia = null,
     bool DisponibleOnline = true);
 
-/// <summary>Mismo shape que <see cref="AltaOferta"/> salvo <see cref="DisponibleOnline"/>, que acá es obligatorio
-/// (<c>400 disponible_online_requerido</c>): es nullable para que su ausencia en el JSON se rechace en vez de leerse
-/// como <c>false</c> y sacar la oferta de la tienda en silencio. A diferencia de
+/// <summary>Mismo shape que <see cref="AltaOferta"/> salvo <see cref="DisponibleOnline"/>, que acá es opcional y
+/// <c>null</c> significa "sin cambios": es nullable para que su ausencia en el JSON conserve el valor guardado en vez de
+/// leerse como <c>false</c> y sacar la oferta de la tienda en silencio (un cliente anterior al campo sigue editando).
+/// A diferencia de
 /// <c>EdicionArticulo</c>/<c>AltaArticulo</c>, acá no hay ninguna columna inmutable que excluir
 /// (<c>codigo_interno</c> no tiene equivalente en <c>ofertas</c>), así que los dos contratos
 /// llevan exactamente los mismos campos (task 2.3: contratos separados por nombre, sin
