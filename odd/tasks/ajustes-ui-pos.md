@@ -47,7 +47,7 @@ well above 400 authored lines → one PR per slice below.
   - Configuración window (`Ways.Desktop/ui`) restyled to the system's dark theme.
   - Checks: `ShellPos.test.tsx`, `Pos.test.tsx`, `intervaloDeSincronizacion.test.ts`,
     `Modal.test.tsx`, `tsc -b`, `oxlint`.
-- [ ] **T2 — Ventas del turno and Cierres** (delegated)
+- [x] **T2 — Ventas del turno and Cierres** (delegated)
   - Icon buttons with tooltips: Actualizar, Detalle, Anular (trash), Imprimir.
   - Void confirmation as a modal.
   - Cierres: detail icon (uses `GET /caja/turnos/{id}/detalle`) + printer icon.
@@ -80,8 +80,9 @@ well above 400 authored lines → one PR per slice below.
 
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
-| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3 | this PR | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
+| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3, 9cb176a8, ff59cebe | #405 (merged) | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
+| T2 | delegated (writer trigger: 17 files) | f9b7f3ab, b0c0c368, 02d91938, d9909ed3 | this PR | tsc clean; oxlint exit 0; vitest 209 files / 5830 passed; judgment-day: round 1 no severe (fixes in 02d91938), scoped re-judgment no severe (polish d9909ed3); not checked in a real Tauri window |
 
 ## Next step
 
-T1 judgment-day + PR, then T2.
+T3.

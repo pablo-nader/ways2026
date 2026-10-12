@@ -855,7 +855,7 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
   })
 })
 
-describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola FIFO que el ticket de venta', () => {
+describe('ShellPos — "Imprimir" de Ventas del turno pasa por la MISMA cola FIFO que el ticket de venta', () => {
   it('encola el ticket con la marca de reimpresión y la descripción "la reimpresión del ticket <numero>"', async () => {
     const comprobante = comprobanteEmitidoFixture()
     mockearRutasDePos((ruta) => {
@@ -868,7 +868,7 @@ describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola F
 
     await elegirDeMenu('Caja', 'Ventas del turno')
     await screen.findByText('0007-00000001')
-    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
 
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
     expect(imprimirMock).toHaveBeenCalledWith(
@@ -902,7 +902,7 @@ describe('ShellPos — "Cierres" reimprime el ticket de cierre por la MISMA cola
     renderShell()
 
     await elegirDeMenu('Caja', 'Historial de turnos')
-    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir ticket de cierre' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Imprimir' }))
 
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
     expect(imprimirMock).toHaveBeenCalledWith(cierreDeTurno(resumen, CONTEXTO_DE_IMPRESION_SHELL))
@@ -914,7 +914,7 @@ describe('ShellPos — "Cierres" reimprime el ticket de cierre por la MISMA cola
     renderShell()
 
     await elegirDeMenu('Caja', 'Historial de turnos')
-    await userEvent.click(await screen.findByRole('button', { name: 'Reimprimir ticket de cierre' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Imprimir' }))
 
     expect(await screen.findByText('No se pudo imprimir el ticket de cierre del turno #480: sin papel')).toBeInTheDocument()
   })

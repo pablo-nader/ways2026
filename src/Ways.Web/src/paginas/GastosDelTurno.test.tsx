@@ -199,6 +199,23 @@ describe('GastosDelTurno — sin turno abierto', () => {
   })
 })
 
+describe('GastosDelTurno — actualizar', () => {
+  it('"Actualizar" es un botón de ícono con tooltip y vuelve a pedir el turno abierto', async () => {
+    mockearRutas({})
+    render(<GastosDelTurno />)
+    const turnosPedidos = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/caja/turnos/abierto')).length
+    const boton = await screen.findByRole('button', { name: 'Actualizar' })
+    await waitFor(() => expect(boton).toBeEnabled())
+    expect(boton).toHaveAttribute('title', 'Actualizar')
+    expect(screen.queryByRole('button', { name: 'Refrescar' })).not.toBeInTheDocument()
+    const antes = turnosPedidos()
+
+    await userEvent.click(boton)
+
+    await waitFor(() => expect(turnosPedidos()).toBe(antes + 1))
+  })
+})
+
 describe('GastosDelTurno — medio de pago', () => {
   it('excluye del selector los medios de comportamiento CuentaCorriente', async () => {
     mockearRutas({ medios: [medioEfectivo, medioCuentaCorriente] })

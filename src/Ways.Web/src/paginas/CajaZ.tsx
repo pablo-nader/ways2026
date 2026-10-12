@@ -8,6 +8,7 @@ import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { DetalleDeTurnoListas } from '../componentes/DetalleDeTurnoListas'
 import { InsigniaDeRecalculo } from '../componentes/InsigniaDeRecalculo'
 import { VistaDeTicket } from '../componentes/VistaDeTicket'
 import type { LineaDeTicket } from '../impresion/escpos'
@@ -15,15 +16,10 @@ import { enEscritorio, imprimir } from '../impresion/impresora'
 import { cierreDeTurno, lineasDeCierreDeTurno } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { formatearImporte } from '../formato/importes'
-import { etiquetaDeOrigenFondos } from './utilidadesGastosDelTurno'
 import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
-}
-
-function formatearFechaHora(iso: string): string {
-  return fechaHoraATexto(iso)
 }
 
 /**
@@ -291,68 +287,7 @@ export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
               </table>
             </div>
 
-            <h6>Tickets</h6>
-            <div className="table-responsive mb-3">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Número</th>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th className="text-end">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalle.tickets.map((t) => (
-                    <tr key={t.id}>
-                      <td>{t.numeroVisible}</td>
-                      <td>{formatearFechaHora(t.fecha)}</td>
-                      <td>{t.estado}</td>
-                      <td className="text-end">{formatearMoneda(t.total)}</td>
-                    </tr>
-                  ))}
-                  {detalle.tickets.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="text-center text-muted py-3">
-                        Sin tickets.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <h6>Gastos</h6>
-            <div className="table-responsive">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Categoría</th>
-                    <th className="text-end">Importe</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalle.gastos.map((g) => (
-                    <tr key={g.id}>
-                      <td>{formatearFechaHora(g.fecha)}</td>
-                      <td>
-                        {g.categoria}
-                        {g.origenFondos === 'Tesoreria' && <span className="badge bg-secondary ms-2">{etiquetaDeOrigenFondos(g.origenFondos)}</span>}
-                      </td>
-                      <td className="text-end">{formatearMoneda(g.importe)}</td>
-                    </tr>
-                  ))}
-                  {detalle.gastos.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-center text-muted py-3">
-                        Sin gastos.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <DetalleDeTurnoListas tickets={detalle.tickets} gastos={detalle.gastos} />
           </>
         )}
       </Box>

@@ -368,6 +368,22 @@ body {
   flex: none;
 }
 
+@keyframes girar-icono {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-icono-ocupado svg {
+  animation: girar-icono 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-icono-ocupado svg {
+    animation: none;
+  }
+}
+
 /* Chips con forma de píldora. */
 .badge {
   --bs-badge-border-radius: var(--bs-border-radius-pill);
