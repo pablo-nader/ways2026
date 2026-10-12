@@ -193,7 +193,11 @@ Design decisions (to confirm):
 - Two open tabs of the same shop: a `storage` event for the cart key replaces the in-memory cart with the stored one
   (validated line by line) and nothing is written back when the stored value is already equal. There is no merge: the
   whole cart is saved, so if two tabs change something at once the last writer wins and what the other had unsaved is
-  lost. The change from the other tab is not announced.
+  lost. The change from the other tab is not announced. The adopted cart is re-synced with the list this tab already
+  holds (`sincronizar` with the last list), and that adopted+synced state is not written back (otherwise two tabs with
+  different lists would overwrite each other forever); the stored value stays the other tab's until a local change.
+- Escape in the cart panel first blurs whatever has focus inside it, so a typed quantity is applied (or rejected) before
+  the panel closes.
 - Typed quantities apply on blur or Enter, not keystroke by keystroke; a rejected value reverts to the last good one
   and a polite (`aria-live="polite"`) message says the quantity did not change. No `role="alert"` while typing.
 - Focus targets when a control disappears (jsdom does not implement the browser's focus fix-up, so the tests assert the

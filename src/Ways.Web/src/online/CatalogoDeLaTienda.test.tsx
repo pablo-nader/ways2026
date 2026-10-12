@@ -756,6 +756,26 @@ describe('catálogo de la tienda', () => {
       expect(screen.getByRole('button', { name: 'Agregar uno más de Clavos' })).toBeInTheDocument()
     })
 
+    it('un carrito adoptado de otra pestaña con un precio viejo se pone al día con la lista que esta pestaña ya tiene, sin escribirlo de vuelta', async () => {
+      await verCatalogo()
+      const clave = claveDelCarrito(window.location.host)
+      const viejo = [{ idArticulo: 1, nombre: 'Martillo', precio: 100, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: null }]
+      localStorage.setItem(clave, JSON.stringify(viejo))
+      const escritura = vi.spyOn(Storage.prototype, 'setItem')
+
+      act(() => {
+        window.dispatchEvent(new StorageEvent('storage', { key: clave, storageArea: localStorage }))
+      })
+      const linea = await lineaDelPanel('Martillo')
+
+      expect(linea).toHaveTextContent('$ 1.234,56')
+      expect(linea).toHaveTextContent('$ 2.469,12')
+      expect(linea).not.toHaveTextContent('$ 100,00')
+      expect(escritura).not.toHaveBeenCalled()
+      expect(localStorage.getItem(clave)).toBe(JSON.stringify(viejo))
+      escritura.mockRestore()
+    })
+
     it('"Ver más" pone al día las líneas de los artículos que trae y no toca las de los que no están', async () => {
       localStorage.setItem(
         claveDelCarrito(window.location.host),

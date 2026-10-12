@@ -12,7 +12,8 @@ const SELECTOR_DE_FOCUSABLES = 'a[href], button:not([disabled]), input:not([disa
  * Panel lateral modal del carrito (`role="dialog"` con `aria-modal`). Mientras está abierto:
  * - lleva el foco al botón de cerrar y el scroll de la página queda bloqueado (se restaura al cerrar);
  * - Tab y Shift+Tab circulan dentro del panel, aunque el foco esté fuera de él;
- * - Escape lo cierra desde cualquier punto del documento, y el clic en el velo también;
+ * - Escape lo cierra desde cualquier punto del documento (antes saca el foco de lo que lo tenga dentro
+ *   del panel, para que una cantidad tipeada se aplique), y el clic en el velo también;
  * - al quitar una línea (con "Quitar" o con "−" desde la cantidad mínima) el foco pasa al "Quitar" de
  *   la línea siguiente, o de la anterior si era la última, o a "Cerrar" si no queda ninguna.
  * "Vaciar carrito" pide confirmación en línea: no es una compuerta modal, el resto del panel sigue activo.
@@ -64,6 +65,10 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
   useEffect(() => {
     const alPresionarTecla = (evento: KeyboardEvent) => {
       if (evento.key === 'Escape') {
+        // Si el foco está en un campo de cantidad, salir de él aplica (o rechaza) lo tipeado; al
+        // quitar el panel el navegador no garantiza ese `blur`.
+        const activo = document.activeElement
+        if (activo instanceof HTMLElement && panel.current?.contains(activo)) activo.blur()
         alCerrar()
         return
       }

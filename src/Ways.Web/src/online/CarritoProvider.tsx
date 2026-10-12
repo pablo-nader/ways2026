@@ -44,8 +44,19 @@ export function CarritoProvider({
   const [almacenElegido] = useState(() => (almacen === undefined ? almacenDelNavegador() : almacen))
   const [items, despachar] = useReducer(reducirCarrito, undefined, () => leerCarrito(almacenElegido, host))
   const [anuncio, setAnuncio] = useState<Anuncio>({ texto: '', numero: 0 })
+  // Última lista de artículos con la que se sincronizó: sirve para volver a hacerlo tras adoptar un carrito de otra pestaña.
+  const ultimosArticulos = useRef<readonly ArticuloParaElCarrito[]>([])
+  // Marca que el próximo cambio del carrito viene de otra pestaña (adoptado y sincronizado en el mismo
+  // render): no se escribe de vuelta. Si dos pestañas tienen listas distintas, escribir lo sincronizado
+  // haría que cada una pisara a la otra sin fin.
+  const adoptadoDeOtraPestana = useRef(false)
 
   useEffect(() => {
+    if (adoptadoDeOtraPestana.current) {
+      adoptadoDeOtraPestana.current = false
+
+      return
+    }
     guardarCarrito(almacenElegido, host, items)
   }, [almacenElegido, host, items])
 
@@ -55,7 +66,10 @@ export function CarritoProvider({
     const alCambiarElAlmacen = (evento: StorageEvent) => {
       // `key` nulo es `localStorage.clear()` desde otra pestaña.
       if (evento.storageArea !== almacenElegido || (evento.key !== null && evento.key !== clave)) return
+      adoptadoDeOtraPestana.current = true
       despachar({ tipo: 'reemplazar', items: leerCarrito(almacenElegido, host) })
+      // El carrito adoptado puede traer precios más viejos que la lista que esta pestaña ya leyó.
+      despachar({ tipo: 'sincronizar', articulos: ultimosArticulos.current })
     }
     window.addEventListener('storage', alCambiarElAlmacen)
 
@@ -94,6 +108,7 @@ export function CarritoProvider({
   }, [])
 
   const sincronizar = useCallback((articulos: readonly ArticuloParaElCarrito[]) => {
+    ultimosArticulos.current = articulos
     despachar({ tipo: 'sincronizar', articulos })
   }, [])
 

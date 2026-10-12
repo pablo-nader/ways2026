@@ -10,6 +10,7 @@ import { claveDelCarrito } from './carrito'
 import { CarritoProvider } from './CarritoProvider'
 import { useCarrito } from './CarritoContext'
 import { articuloPublico, catalogoPublico } from './datosDePrueba'
+import { PanelCarrito } from './PanelCarrito'
 import { Tienda } from './Tienda'
 
 const obtenerVitrinaMock = vi.fn()
@@ -175,6 +176,37 @@ describe('panel del carrito con artículos', () => {
       expect(within(panel).getAllByRole('listitem')).toHaveLength(1)
       expect(within(panel).getByRole('button', { name: 'Quitar Martillo del carrito' })).toHaveFocus()
     })
+  })
+
+  /**
+   * Se prueba el panel solo, con un `alCerrar` que no mueve el foco: en la tienda, cerrar lleva el foco al
+   * botón del carrito, y eso ya saca el foco del campo por su cuenta y aplicaría la cantidad aunque el
+   * panel no lo hiciera.
+   */
+  it('Escape con una cantidad tipeada y sin aplicar la aplica y cierra', async () => {
+    const guardadaDelMartillo = () =>
+      (JSON.parse(localStorage.getItem(claveDelCarrito('sur.ways.app')) as string) as { idArticulo: number; cantidad: number }[]).find(
+        (l) => l.idArticulo === 1,
+      )?.cantidad
+    localStorage.setItem(
+      claveDelCarrito('sur.ways.app'),
+      JSON.stringify([{ idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', cantidad: 1, imagenVersion: null }]),
+    )
+    const alCerrar = vi.fn()
+    render(
+      <CarritoProvider host="sur.ways.app">
+        <PanelCarrito alCerrar={alCerrar} />
+      </CarritoProvider>,
+    )
+    const campo = screen.getByRole('textbox', { name: 'Cantidad de Martillo' })
+    await userEvent.clear(campo)
+    await userEvent.type(campo, '3')
+    expect(guardadaDelMartillo()).toBe(1)
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(alCerrar).toHaveBeenCalledTimes(1)
+    expect(guardadaDelMartillo()).toBe(3)
   })
 
   describe('vaciar el carrito', () => {
