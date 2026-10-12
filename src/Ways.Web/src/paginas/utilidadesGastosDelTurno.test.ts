@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import type { GastoDeTurno, MedioPagoListado } from '../api/tipos'
+import type { AreaListado, GastoDeTurno, MedioPagoListado, ResumenDeTurno } from '../api/tipos'
 import {
   aSolicitudDeGasto,
+  areaPorDefecto,
   categoriaAlElegirProveedor,
   etiquetaDeCategoriaGasto,
+  efectivoDisponibleEnCaja,
   etiquetaDeOrigenFondos,
+  faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
   mediosValidosParaGasto,
+  salidaDeEfectivoDeCaja,
   totalDeGastos,
 } from './utilidadesGastosDelTurno'
 import type { FormularioDeGasto } from './utilidadesGastosDelTurno'
@@ -55,6 +59,7 @@ function formularioFixture(sobrescribir: Partial<FormularioDeGasto> = {}): Formu
     idMedioPago: 1,
     categoria: 'Otros',
     idProveedor: null,
+    idArea: null,
     observaciones: '',
     origenFondos: 'CajaTurno',
     ...sobrescribir,
@@ -138,10 +143,9 @@ describe('aSolicitudDeGasto', () => {
     expect(aSolicitudDeGasto(formularioFixture({ observaciones: '   ' })).concepto).toBe('Gasto del turno')
   })
 
-  it('detalle/idArea/numeroFactura/idComprobanteCompra siempre viajan null — el formulario no los pide', () => {
+  it('detalle/numeroFactura/idComprobanteCompra siempre viajan null — el formulario no los pide', () => {
     const solicitud = aSolicitudDeGasto(formularioFixture())
     expect(solicitud.detalle).toBeNull()
-    expect(solicitud.idArea).toBeNull()
     expect(solicitud.numeroFactura).toBeNull()
     expect(solicitud.idComprobanteCompra).toBeNull()
   })
@@ -155,6 +159,11 @@ describe('aSolicitudDeGasto', () => {
     expect(solicitud.idMedioPago).toBe(3)
     expect(solicitud.categoria).toBe('Proveedor')
     expect(solicitud.idProveedor).toBe(42)
+  })
+
+  it('manda idArea tal cual lo trae el formulario, o null si no hay área', () => {
+    expect(aSolicitudDeGasto(formularioFixture({ idArea: 4 })).idArea).toBe(4)
+    expect(aSolicitudDeGasto(formularioFixture({ idArea: null })).idArea).toBeNull()
   })
 
   // dto-contract-honesty: origenFondos se manda tal cual lo eligió el cajero, nunca inferido ni
@@ -173,5 +182,108 @@ describe('totalDeGastos', () => {
 
   it('con la lista vacía el total es 0', () => {
     expect(totalDeGastos([])).toBe(0)
+  })
+})
+
+function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTurno {
+  return {
+    idTurnoCaja: 55,
+    idMedioAncla: 1,
+    medios: [],
+    cantidadTickets: 0,
+    primerTicket: null,
+    ultimoTicket: null,
+    ingresosPorArea: [],
+    egresos: { porCategoria: [], porArea: [], retiros: 0 },
+    ...sobrescribir,
+  }
+}
+
+// Cláusula bajo prueba: la línea del medio ANCLA (y no otra) es el efectivo disponible.
+describe('efectivoDisponibleEnCaja', () => {
+  it('toma el importe esperado de la línea del medio ancla, ignorando las demás líneas', () => {
+    const resumen = resumenFixture({
+      idMedioAncla: 2,
+      medios: [
+        { idMedioPago: 1, importeEsperado: 9999 },
+        { idMedioPago: 2, importeEsperado: 1250.5 },
+        { idMedioPago: 3, importeEsperado: 7 },
+      ],
+    })
+    expect(efectivoDisponibleEnCaja(resumen)).toBe(1250.5)
+  })
+
+  it('sin línea para el medio ancla, el disponible es 0', () => {
+    expect(efectivoDisponibleEnCaja(resumenFixture({ idMedioAncla: 2, medios: [{ idMedioPago: 1, importeEsperado: 300 }] }))).toBe(0)
+  })
+})
+
+// Cláusula bajo prueba: la conjunción de DOS condiciones (D3) — medio Efectivo Y origen CajaTurno.
+describe('salidaDeEfectivoDeCaja', () => {
+  const efectivo = medioFixture({ comportamiento: 'Efectivo' })
+  const electronico = medioFixture({ id: 3, comportamiento: 'Electronico' })
+
+  it('efectivo pagado desde la caja del turno sale del cajón', () => {
+    expect(salidaDeEfectivoDeCaja(efectivo, 'CajaTurno')).toBe(true)
+  })
+
+  it('efectivo pagado desde Tesorería no sale del cajón', () => {
+    expect(salidaDeEfectivoDeCaja(efectivo, 'Tesoreria')).toBe(false)
+  })
+
+  it('un medio no efectivo pagado desde la caja del turno no sale del cajón', () => {
+    expect(salidaDeEfectivoDeCaja(electronico, 'CajaTurno')).toBe(false)
+  })
+
+  it('sin medio elegido no sale del cajón', () => {
+    expect(salidaDeEfectivoDeCaja(undefined, 'CajaTurno')).toBe(false)
+  })
+})
+
+describe('faltanteDeEfectivo', () => {
+  it('es la diferencia cuando el importe supera lo disponible', () => {
+    expect(faltanteDeEfectivo(1000, 400)).toBe(600)
+  })
+
+  it('es 0 cuando el importe iguala o no supera lo disponible', () => {
+    expect(faltanteDeEfectivo(400, 400)).toBe(0)
+    expect(faltanteDeEfectivo(100, 400)).toBe(0)
+  })
+
+  it('es 0 sin importe cargado', () => {
+    expect(faltanteDeEfectivo(null, 400)).toBe(0)
+  })
+
+  it('es 0 con un importe cero o negativo, aunque el disponible sea negativo', () => {
+    expect(faltanteDeEfectivo(0, -50)).toBe(0)
+    expect(faltanteDeEfectivo(-10, -50)).toBe(0)
+  })
+
+  it('con efectivo disponible negativo y un importe positivo, falta el importe más el descubierto', () => {
+    expect(faltanteDeEfectivo(100, -50)).toBe(150)
+  })
+
+  it('resuelve los centavos sin arrastrar error de coma flotante', () => {
+    expect(faltanteDeEfectivo(0.3, 0.1)).toBe(0.2)
+  })
+})
+
+function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
+  return { id: 1, nombre: 'General', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
+}
+
+// Cláusula bajo prueba: el default es la primera área ACTIVA, no la primera del array.
+describe('areaPorDefecto', () => {
+  it('devuelve la primera área activa', () => {
+    expect(areaPorDefecto([areaFixture({ id: 3 }), areaFixture({ id: 5 })])).toBe(3)
+  })
+
+  it('saltea las inactivas aunque estén primero', () => {
+    expect(areaPorDefecto([areaFixture({ id: 2, activo: false }), areaFixture({ id: 5 })])).toBe(5)
+  })
+
+  it('sin áreas activas devuelve vacío', () => {
+    expect(areaPorDefecto([areaFixture({ id: 2, activo: false })])).toBe('')
+    expect(areaPorDefecto([])).toBe('')
   })
 })

@@ -1816,6 +1816,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.ToTable("combos", null, t =>
                         {
                             t.HasCheckConstraint("ck_combos_codigo_positivo", "codigo > 0");
+
                             t.HasCheckConstraint("ck_combos_precio_positivo", "precio > 0");
                         });
                 });
@@ -4378,6 +4379,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_articulo");
 
+                    b.Property<int?>("IdCombo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_combo");
+
                     b.Property<int>("IdComprobanteVenta")
                         .HasColumnType("integer")
                         .HasColumnName("id_comprobante_venta");
@@ -4432,6 +4437,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasIndex("IdArticulo", "IdTenant")
                         .HasDatabaseName("ix_items_comprobante_venta_articulo");
+
+                    b.HasIndex("IdCombo", "IdTenant")
+                        .HasDatabaseName("ix_items_comprobante_venta_combo");
 
                     b.HasIndex("IdComprobanteVenta", "IdTenant")
                         .HasDatabaseName("ix_items_comprobante_venta_comprobante");
@@ -6495,6 +6503,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_items_comprobante_venta_articulo");
+
+                    b.HasOne("Ways.Domain.Combos.Combo", null)
+                        .WithMany()
+                        .HasForeignKey("IdCombo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_items_comprobante_venta_combo");
 
                     b.HasOne("Ways.Domain.Ventas.ComprobanteVenta", null)
                         .WithMany()

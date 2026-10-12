@@ -4,8 +4,16 @@
  * `mutation-proof-tests`), mismo criterio que `utilidadesVentasDelTurno.ts`.
  */
 import { CATEGORIAS_GASTO, ORIGENES_DE_FONDOS_GASTO } from '../api/tipos'
-import type { CategoriaGasto, GastoDeTurno, MedioPagoListado, OrigenFondosGasto, SolicitudDeGasto } from '../api/tipos'
-import { formatearImporte } from '../formato/importes'
+import type {
+  AreaListado,
+  CategoriaGasto,
+  GastoDeTurno,
+  MedioPagoListado,
+  OrigenFondosGasto,
+  ResumenDeTurno,
+  SolicitudDeGasto,
+} from '../api/tipos'
+import { formatearImporte, redondearImporte } from '../formato/importes'
 
 export function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -53,6 +61,7 @@ export type FormularioDeGasto = {
   idMedioPago: number
   categoria: CategoriaGasto
   idProveedor: number | null
+  idArea: number | null
   observaciones: string
   origenFondos: OrigenFondosGasto
 }
@@ -61,7 +70,7 @@ export type FormularioDeGasto = {
  * Cuerpo de `POST /api/gastos` (decisión del pedido 2): `concepto` es la observación recortada
  * cuando no está vacía, o el texto fijo "Gasto del turno" en caso contrario — nunca viaja en
  * blanco (el servidor lo rechaza con 400 `gasto_concepto_requerido`,
- * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`idArea`/`numeroFactura`/
+ * `ServicioDeGastos.ExigirConceptoValido`). `detalle`/`numeroFactura`/
  * `idComprobanteCompra` no los pide este formulario: viajan `null`. `origenFondos` aterriza en
  * stage-gastos-origen-fondos-pos (PR2) — se manda tal cual lo eligió el cajero, nunca inferido.
  */
@@ -71,7 +80,7 @@ export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
     idPuntoVenta: form.idPuntoVenta,
     categoria: form.categoria,
     idProveedor: form.idProveedor,
-    idArea: null,
+    idArea: form.idArea,
     concepto: observaciones !== '' ? observaciones : 'Gasto del turno',
     detalle: null,
     idMedioPago: form.idMedioPago,
@@ -86,4 +95,28 @@ export function aSolicitudDeGasto(form: FormularioDeGasto): SolicitudDeGasto {
  * diferencia de `totalesDeVentas`: un gasto registrado no tiene estado de anulación). */
 export function totalDeGastos(gastos: GastoDeTurno[]): number {
   return gastos.reduce((acumulado, g) => acumulado + g.importe, 0)
+}
+
+/** Efectivo esperado en el cajón: la línea del medio ancla del resumen (ventas en efectivo + fondo
+ * + refuerzos − retiros − gastos en efectivo − vueltos). Sin línea para el ancla, 0. */
+export function efectivoDisponibleEnCaja(resumen: ResumenDeTurno): number {
+  return resumen.medios.find((m) => m.idMedioPago === resumen.idMedioAncla)?.importeEsperado ?? 0
+}
+
+/** Un gasto saca efectivo del cajón solo si el medio es Efectivo Y se paga desde la caja del
+ * turno: el efectivo pagado desde Tesorería no pasa por el cajón. */
+export function salidaDeEfectivoDeCaja(medio: MedioPagoListado | undefined, origenFondos: OrigenFondosGasto): boolean {
+  return medio?.comportamiento === 'Efectivo' && origenFondos === 'CajaTurno'
+}
+
+/** Cuánto efectivo falta en el cajón para cubrir el importe; 0 si alcanza o no hay importe. */
+export function faltanteDeEfectivo(importe: number | null, disponible: number): number {
+  if (importe === null || importe <= 0) return 0
+  return Math.max(0, redondearImporte(importe - disponible))
+}
+
+/** Área con la que arranca un gasto nuevo: la primera ACTIVA (el servidor ordena por nombre, no por
+ * estado), igual que el artículo nuevo. `''` si no hay ninguna. */
+export function areaPorDefecto(areas: AreaListado[]): number | '' {
+  return areas.find((a) => a.activo)?.id ?? ''
 }

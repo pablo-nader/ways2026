@@ -46,9 +46,16 @@ jobs:
   # Una sola suite de integración por daemon de Docker: dos en paralelo compiten
   # por el mismo contenedor y generan falsos rojos. Testcontainers levanta su
   # propio PostgreSQL (postgres:17-alpine) y el fixture crea el rol ways_app.
-  backend-integration:
+  # Por eso la suite se reparte en fragmentos que son jobs distintos (runners
+  # distintos, cada uno con su daemon): nunca debe haber dos `dotnet test` en un
+  # mismo job.
+  backend-integration-fragmento:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        fragmento: [1, 2]
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
@@ -63,8 +70,72 @@ jobs:
       - name: Compilar la solución
         run: dotnet build Ways.slnx -c Release
 
-      - name: Tests de integración
-        run: dotnet test tests/Ways.IntegrationTests -c Release --no-build
+      - name: Tests del script de fragmentación
+        run: python3 -m unittest discover -s .github/scripts -p "test_*.py" -v
+
+      - name: Calcular el filtro del fragmento
+        env:
+          FRAGMENTO: ${{ matrix.fragmento }}
+          TOTAL: ${{ strategy.job-total }}
+        run: |
+          mkdir -p resultados
+          dotnet vstest tests/Ways.IntegrationTests/bin/Release/net10.0/Ways.IntegrationTests.dll \
+            --ListFullyQualifiedTests --ListTestsTargetPath:resultados/lista.txt
+          python3 .github/scripts/fragmentar_integracion.py plan \
+            --lista resultados/lista.txt \
+            --fragmento "$FRAGMENTO" \
+            --total "$TOTAL" \
+            --salida resultados/filtro.txt
+
+      # --blame-hang corta un test que lleve más de 10 minutos colgado, en vez de
+      # consumir todo el tope del job.
+      - name: Tests de integración del fragmento
+        env:
+          FRAGMENTO: ${{ matrix.fragmento }}
+        run: |
+          dotnet test tests/Ways.IntegrationTests -c Release --no-build \
+            --filter "$(cat resultados/filtro.txt)" \
+            --logger "trx;LogFileName=fragmento-$FRAGMENTO.trx" \
+            --results-directory resultados \
+            --blame-hang --blame-hang-timeout 10m --blame-hang-dump-type none
+
+      - name: Subir los resultados del fragmento
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integracion-fragmento-${{ matrix.fragmento }}
+          path: resultados
+          overwrite: true
+          retention-days: 7
+
+  # Es el check que exige el ruleset de main: debe conservar este nombre y correr
+  # siempre (`if: always()`), porque un job salteado cuenta como aprobado.
+  backend-integration:
+    needs: backend-integration-fragmento
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exigir que todos los fragmentos hayan terminado bien
+        env:
+          RESULTADO: ${{ needs.backend-integration-fragmento.result }}
+        run: |
+          if [ "$RESULTADO" != "success" ]; then
+            echo "Los fragmentos de integración terminaron con: $RESULTADO"
+            exit 1
+          fi
+
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Descargar los resultados de los fragmentos
+        uses: actions/download-artifact@v4
+        with:
+          pattern: integracion-fragmento-*
+          path: fragmentos
+
+      - name: Verificar que los fragmentos cubran la suite completa
+        run: python3 .github/scripts/fragmentar_integracion.py verificar fragmentos/*
 
   web:
     runs-on: ubuntu-latest
