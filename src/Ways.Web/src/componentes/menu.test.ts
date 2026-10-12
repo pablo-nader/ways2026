@@ -113,6 +113,25 @@ const REPORTES: Resumen = {
     },
   ],
 }
+/** Lo mismo que `REPORTES` más la configuración de cuentas de tesorería, que es solo del Admin. */
+const REPORTES_DE_ADMIN: Resumen = {
+  grupo: 'Reportes',
+  secciones: [
+    {
+      enlaces: [
+        ['Tablero', '/tablero'],
+        ['Histórico de cajas', '/caja/historico'],
+        ['Tesorería', '/caja/tesoreria'],
+        ['Cuentas de tesorería', '/caja/cuentas-tesoreria'],
+        ['Existencias', '/reportes/existencias'],
+        ['Vencimientos', '/reportes/stock/vencimientos'],
+        ['Reposición', '/reportes/stock/reposicion'],
+        ['Artículos', '/reportes/articulos'],
+        ['Libro IVA', '/reportes/libro-iva'],
+      ],
+    },
+  ],
+}
 const ADMINISTRACION_DE_ADMIN: Resumen = {
   grupo: 'Administración',
   secciones: [
@@ -211,7 +230,7 @@ describe('construirMenu', () => {
       CAJA,
       VENTAS,
       COMPRAS_DE_ADMIN,
-      REPORTES,
+      REPORTES_DE_ADMIN,
       ADMINISTRACION_DE_ADMIN,
     ])
   })
@@ -267,6 +286,7 @@ describe('esRutaActiva', () => {
   const casos: [string, string[]][] = [
     ['/caja/historico', ['Reportes']],
     ['/caja/tesoreria', ['Reportes']],
+    ['/caja/cuentas-tesoreria', ['Reportes']],
     ['/caja', ['Caja']],
     ['/caja/cierre', ['Caja']],
     ['/caja/turnos/7/z', ['Caja']],

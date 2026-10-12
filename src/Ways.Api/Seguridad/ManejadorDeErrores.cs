@@ -176,6 +176,12 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: "ux_personal_usuario" } =>
                 (StatusCodes.Status409Conflict, "Ese usuario ya está vinculado a otro personal.", "usuario_ya_vinculado"),
 
+            // Backstop del pre-chequeo de nombre de `ServicioDeCuentasDeTesoreria`: dos altas o ediciones
+            // concurrentes pueden pasar el chequeo y chocar recién en el índice parcial. Por nombre exacto,
+            // antes de ClasificarUnicidad.
+            { SqlState: "23505", ConstraintName: "ux_cuentas_tesoreria_nombre_empresa" } =>
+                (StatusCodes.Status409Conflict, "Ya existe una cuenta de tesorería con ese nombre en esta empresa.", "cuenta_tesoreria_duplicada"),
+
             { SqlState: "23505", ConstraintName: "ux_personal_cliente" } =>
                 (StatusCodes.Status409Conflict, "Ese cliente ya está vinculado a otro personal.", "cliente_ya_vinculado"),
 

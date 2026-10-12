@@ -84,6 +84,12 @@ public class EscriturasSinReintentoEstructuralesTests
         // cuenta); un reintento tras un commit ambiguo respondería 404 a una baja que sí tuvo éxito.
         { "Ways.Application/Plantel/ServicioDePersonal.cs", "EliminarAsync" },
 
+        // Cuentas de tesorería: la edición lee la cuenta bajo su FOR UPDATE para decidir si el saldo inicial puede cambiar,
+        // y la baja la lee y consulta sus referencias; un reintento tras un commit ambiguo respondería 404 a una baja que
+        // sí tuvo éxito o releería la cuenta ya editada por el intento anterior.
+        { "Ways.Application/Caja/ServicioDeCuentasDeTesoreria.cs", "ActualizarAsync" },
+        { "Ways.Application/Caja/ServicioDeCuentasDeTesoreria.cs", "EliminarAsync" },
+
         // Cuenta del personal: carga de horas y ajuste mueven el saldo cacheado y escriben el asiento sin clave de
         // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
         { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },

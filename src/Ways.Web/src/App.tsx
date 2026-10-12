@@ -41,6 +41,7 @@ import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
 import { CuentaDePersonal } from './paginas/CuentaDePersonal'
 import { Personal } from './paginas/Personal'
+import { CuentasTesoreria } from './paginas/CuentasTesoreria'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
@@ -178,6 +179,16 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Tesoreria />
+                </RutaProtegida>
+              }
+            />
+            {/* ABM de cuentas de tesorería: admin-only de punta a punta (Politicas.GestionDeCatalogo, también
+                para leer). Cuelga de /caja para no sumar un primer segmento a la lista de rutas del servidor. */}
+            <Route
+              path="/caja/cuentas-tesoreria"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <CuentasTesoreria />
                 </RutaProtegida>
               }
             />
