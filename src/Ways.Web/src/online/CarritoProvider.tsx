@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 
-import { guardarCarrito, leerCarrito, reducirCarrito, totalDelCarrito, type ArticuloParaElCarrito } from './carrito'
+import {
+  claveDelCarrito,
+  guardarCarrito,
+  leerCarrito,
+  reducirCarrito,
+  totalDelCarrito,
+  type ArticuloParaElCarrito,
+} from './carrito'
 import { AccionesDelCarritoContext, CarritoContext } from './CarritoContext'
 
 type AlmacenDelCarrito = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -17,9 +24,13 @@ type Anuncio = { texto: string; numero: number }
 
 /**
  * Dueño del carrito: lo lee del navegador al montar y lo guarda en cada cambio, bajo una clave que
- * incluye el host (dos comercios en el mismo navegador no se mezclan). También es dueño de la
- * región `aria-live` que anuncia lo que se agregó o se quitó, porque ningún botón sobrevive a ese
- * cambio de estado (el de "Agregar" se convierte en el selector de cantidad).
+ * incluye el host (dos comercios en el mismo navegador no se mezclan). Si otra pestaña del mismo
+ * comercio lo cambia (evento `storage`), adopta ese carrito entero, ya validado. No hay fusión: se
+ * guarda el carrito completo, así que si dos pestañas cambian algo a la vez gana la última que
+ * escribe, y lo que la otra tenía sin guardar se pierde. También es dueño de la región
+ * `aria-live` que anuncia lo que se agregó o se quitó, porque ningún botón sobrevive a ese cambio
+ * de estado (el de "Agregar" se convierte en el selector de cantidad). El cambio que viene de otra
+ * pestaña no se anuncia.
  */
 export function CarritoProvider({
   children,
@@ -37,6 +48,19 @@ export function CarritoProvider({
   useEffect(() => {
     guardarCarrito(almacenElegido, host, items)
   }, [almacenElegido, host, items])
+
+  useEffect(() => {
+    if (almacenElegido === null) return
+    const clave = claveDelCarrito(host)
+    const alCambiarElAlmacen = (evento: StorageEvent) => {
+      // `key` nulo es `localStorage.clear()` desde otra pestaña.
+      if (evento.storageArea !== almacenElegido || (evento.key !== null && evento.key !== clave)) return
+      despachar({ tipo: 'reemplazar', items: leerCarrito(almacenElegido, host) })
+    }
+    window.addEventListener('storage', alCambiarElAlmacen)
+
+    return () => window.removeEventListener('storage', alCambiarElAlmacen)
+  }, [almacenElegido, host])
 
   const anunciar = useCallback((texto: string) => {
     setAnuncio((prev) => ({ texto, numero: prev.numero + 1 }))

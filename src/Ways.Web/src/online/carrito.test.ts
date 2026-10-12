@@ -275,6 +275,29 @@ describe('persistencia del carrito', () => {
     expect(almacen.datos.size).toBe(0)
   })
 
+  it('no vuelve a escribir ni a borrar lo que ya está almacenado igual', () => {
+    const almacen = new AlmacenEnMemoria()
+    const setItem = vi.spyOn(almacen, 'setItem')
+    const removeItem = vi.spyOn(almacen, 'removeItem')
+
+    guardarCarrito(almacen, 'sur.ways.app', [])
+    expect(removeItem).not.toHaveBeenCalled()
+    guardarCarrito(almacen, 'sur.ways.app', [item(martillo, 2)])
+    guardarCarrito(almacen, 'sur.ways.app', [item(martillo, 2)])
+    expect(setItem).toHaveBeenCalledTimes(1)
+    guardarCarrito(almacen, 'sur.ways.app', [item(martillo, 3)])
+    expect(setItem).toHaveBeenCalledTimes(2)
+    guardarCarrito(almacen, 'sur.ways.app', [])
+    guardarCarrito(almacen, 'sur.ways.app', [])
+    expect(removeItem).toHaveBeenCalledTimes(1)
+    expect(almacen.datos.size).toBe(0)
+  })
+
+  it('reemplazar adopta la lista que recibe, sea cual sea la que había', () => {
+    expect(reducirCarrito([item(martillo, 1)], { tipo: 'reemplazar', items: [item(clavos, 2)] })).toEqual([item(clavos, 2)])
+    expect(reducirCarrito([item(martillo, 1)], { tipo: 'reemplazar', items: [] })).toEqual([])
+  })
+
   it('un almacén corrupto o con otra forma se descarta sin romper', () => {
     const almacen = new AlmacenEnMemoria()
     const clave = claveDelCarrito('sur.ways.app')

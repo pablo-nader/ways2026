@@ -30,6 +30,7 @@ export type AccionDelCarrito =
   | { tipo: 'quitar'; idArticulo: number }
   | { tipo: 'cambiarCantidad'; idArticulo: number; cantidad: number }
   | { tipo: 'sincronizar'; articulos: readonly ArticuloParaElCarrito[] }
+  | { tipo: 'reemplazar'; items: readonly ItemDelCarrito[] }
   | { tipo: 'vaciar' }
 
 /** De un artículo del catálogo público a lo que el carrito guarda de él. */
@@ -152,6 +153,8 @@ export function reducirCarrito(items: readonly ItemDelCarrito[], accion: AccionD
     }
     case 'sincronizar':
       return sincronizarLineas(items, accion.articulos)
+    case 'reemplazar':
+      return accion.items
     case 'vaciar':
       return items.length === 0 ? items : []
   }
@@ -201,10 +204,20 @@ export function leerCarrito(almacen: AlmacenDeTexto | null, host: string): reado
   }
 }
 
+/**
+ * Guarda el carrito solo si lo almacenado difiere. Es lo que corta el eco entre pestañas: la que
+ * acaba de adoptar el carrito de otra lo encuentra igual y no lo vuelve a escribir.
+ */
 export function guardarCarrito(almacen: AlmacenDeTexto | null, host: string, items: readonly ItemDelCarrito[]): void {
   try {
-    if (items.length === 0) almacen?.removeItem(claveDelCarrito(host))
-    else almacen?.setItem(claveDelCarrito(host), JSON.stringify(items))
+    const clave = claveDelCarrito(host)
+    if (items.length === 0) {
+      if (almacen?.getItem(clave) !== null) almacen?.removeItem(clave)
+
+      return
+    }
+    const serializado = JSON.stringify(items)
+    if (almacen?.getItem(clave) !== serializado) almacen?.setItem(clave, serializado)
   } catch {
     // Sin espacio o almacenamiento bloqueado: el carrito sigue vivo en memoria.
   }

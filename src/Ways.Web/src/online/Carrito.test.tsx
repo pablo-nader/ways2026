@@ -181,6 +181,8 @@ describe('persistencia en el navegador', () => {
 })
 
 describe('CarritoProvider', () => {
+  beforeEach(() => localStorage.clear())
+
   function Sonda({ etiqueta }: { etiqueta: string }) {
     const { cantidad, agregar } = useCarrito()
     return (
@@ -241,5 +243,91 @@ describe('CarritoProvider', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Agregar en sur' }))
 
     expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('1')
+  })
+
+  describe('cambios desde otra pestaña (evento storage)', () => {
+    const clave = claveDelCarrito('sur.ways.app')
+    const martilloGuardado = { idArticulo: 1, nombre: 'Martillo', precio: 10, unidadVenta: 'Unidad', cantidad: 3, imagenVersion: null }
+    const clavosGuardados = { idArticulo: 2, nombre: 'Clavos', precio: 20, unidadVenta: 'Peso', cantidad: 1.5, imagenVersion: null }
+
+    function avisarDeOtraPestana(key: string | null, storageArea: Storage = localStorage) {
+      act(() => {
+        window.dispatchEvent(new StorageEvent('storage', { key, storageArea }))
+      })
+    }
+
+    function verCarrito() {
+      return render(<CarritoProvider host="sur.ways.app"><Sonda etiqueta="sur" /></CarritoProvider>)
+    }
+
+    it('adopta el carrito que la otra pestaña guardó', () => {
+      verCarrito()
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('0')
+
+      localStorage.setItem(clave, JSON.stringify([martilloGuardado, clavosGuardados]))
+      avisarDeOtraPestana(clave)
+
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('2')
+    })
+
+    it('lo que adopta está validado: se descartan las líneas inválidas', () => {
+      verCarrito()
+
+      localStorage.setItem(clave, JSON.stringify([martilloGuardado, { ...clavosGuardados, cantidad: -1 }]))
+      avisarDeOtraPestana(clave)
+
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('1')
+    })
+
+    it('si la otra pestaña vació el carrito o limpió el almacenamiento, este también queda vacío', async () => {
+      verCarrito()
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar en sur' }))
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('1')
+
+      localStorage.removeItem(clave)
+      avisarDeOtraPestana(clave)
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('0')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar en sur' }))
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('1')
+      localStorage.clear()
+      avisarDeOtraPestana(null)
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('0')
+    })
+
+    it('no escribe de vuelta lo que acaba de adoptar: sin eco entre pestañas', () => {
+      verCarrito()
+      localStorage.setItem(clave, JSON.stringify([martilloGuardado]))
+      const escritura = vi.spyOn(Storage.prototype, 'setItem')
+
+      avisarDeOtraPestana(clave)
+
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('1')
+      expect(escritura).not.toHaveBeenCalled()
+      escritura.mockRestore()
+    })
+
+    it.each([
+      ['la clave de otro comercio', claveDelCarrito('norte.ways.app'), undefined],
+      ['otra clave cualquiera', 'otra.cosa', undefined],
+      ['otro almacenamiento (sessionStorage)', clave, sessionStorage],
+    ])('ignora un aviso de %s', (_nombre, key, area) => {
+      verCarrito()
+      localStorage.setItem(clave, JSON.stringify([martilloGuardado]))
+
+      avisarDeOtraPestana(key, area)
+
+      expect(screen.getByTestId('cuenta-sur')).toHaveTextContent('0')
+    })
+
+    it('al desmontar deja de escuchar', () => {
+      const quitar = vi.spyOn(window, 'removeEventListener')
+      const vista = verCarrito()
+
+      vista.unmount()
+
+      expect(quitar).toHaveBeenCalledWith('storage', expect.any(Function))
+      quitar.mockRestore()
+    })
   })
 })
