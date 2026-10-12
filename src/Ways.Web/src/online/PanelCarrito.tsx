@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { formatearPrecio, formatearPrecioUnitario, totalDeLinea } from './carrito'
 import { useCarrito } from './CarritoContext'
+import { ControlDeCantidad } from './ControlDeCantidad'
 
 export const ID_DEL_PANEL_DEL_CARRITO = 'panel-carrito'
 
@@ -11,13 +13,24 @@ const SELECTOR_DE_FOCUSABLES = 'a[href], button:not([disabled]), input:not([disa
  * - lleva el foco al botón de cerrar y el scroll de la página queda bloqueado (se restaura al cerrar);
  * - Tab y Shift+Tab circulan dentro del panel, aunque el foco esté fuera de él;
  * - Escape lo cierra desde cualquier punto del documento, y el clic en el velo también.
+ * "Vaciar carrito" pide confirmación en línea: no es una compuerta modal, el resto del panel sigue activo.
  * No marca el resto de la página como inerte: el aislamiento para lectores de pantalla descansa en
  * `aria-modal`. Devolver el foco al botón del carrito es tarea de quien lo abre (`alCerrar`).
  */
 export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
-  const { cantidad } = useCarrito()
+  const { items, cantidad, total, quitar, vaciar } = useCarrito()
+  const [confirmandoVaciado, setConfirmandoVaciado] = useState(false)
   const cerrar = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLElement>(null)
+  const cancelarVaciado = useRef<HTMLButtonElement>(null)
+  const pedirVaciado = useRef<HTMLButtonElement>(null)
+  const focoTrasElCambio = useRef<'cancelar' | 'pedir' | null>(null)
+
+  useEffect(() => {
+    const destino = focoTrasElCambio.current === 'cancelar' ? cancelarVaciado : pedirVaciado
+    if (focoTrasElCambio.current !== null) destino.current?.focus()
+    focoTrasElCambio.current = null
+  }, [confirmandoVaciado])
 
   useEffect(() => {
     cerrar.current?.focus()
@@ -81,7 +94,85 @@ export function PanelCarrito({ alCerrar }: { alCerrar: () => void }) {
             Cerrar
           </button>
         </div>
-        {cantidad === 0 && <p className="publico-carrito-vacio">Tu carrito está vacío</p>}
+        {cantidad === 0 ? (
+          <p className="publico-carrito-vacio">Tu carrito está vacío</p>
+        ) : (
+          <>
+            <ul className="publico-carrito-lineas">
+              {items.map((item) => (
+                <li key={item.idArticulo} className="publico-carrito-linea">
+                  <p className="publico-carrito-nombre">{item.nombre}</p>
+                  <p className="publico-carrito-unitario">{formatearPrecioUnitario(item.precio, item.unidadVenta)}</p>
+                  <ControlDeCantidad
+                    idArticulo={item.idArticulo}
+                    nombre={item.nombre}
+                    unidadVenta={item.unidadVenta}
+                    cantidad={item.cantidad}
+                  />
+                  <p className="publico-carrito-subtotal">{formatearPrecio(totalDeLinea(item))}</p>
+                  <button
+                    type="button"
+                    className="publico-boton publico-boton-contorno publico-boton-chico"
+                    aria-label={`Quitar ${item.nombre} del carrito`}
+                    onClick={() => quitar(item.idArticulo)}
+                  >
+                    Quitar
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="publico-carrito-pie">
+              <p className="publico-carrito-total">
+                <span>Total</span>
+                <span className="publico-precio">{formatearPrecio(total)}</span>
+              </p>
+              <button type="button" className="publico-boton publico-boton-acento" disabled aria-describedby="carrito-ayuda-pedido">
+                Finalizar pedido
+              </button>
+              <p id="carrito-ayuda-pedido" className="publico-carrito-ayuda">
+                Muy pronto vas a poder enviar tu pedido desde acá.
+              </p>
+              {confirmandoVaciado ? (
+                <div className="publico-carrito-confirmacion" role="group" aria-label="Confirmar que se vacía el carrito">
+                  <p>¿Vaciar el carrito?</p>
+                  <button
+                    type="button"
+                    className="publico-boton publico-boton-contorno publico-boton-chico"
+                    onClick={() => {
+                      vaciar()
+                      cerrar.current?.focus()
+                    }}
+                  >
+                    Sí, vaciar
+                  </button>
+                  <button
+                    ref={cancelarVaciado}
+                    type="button"
+                    className="publico-boton publico-boton-contorno publico-boton-chico"
+                    onClick={() => {
+                      focoTrasElCambio.current = 'pedir'
+                      setConfirmandoVaciado(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  ref={pedirVaciado}
+                  type="button"
+                  className="publico-boton publico-boton-contorno publico-boton-chico"
+                  onClick={() => {
+                    focoTrasElCambio.current = 'cancelar'
+                    setConfirmandoVaciado(true)
+                  }}
+                >
+                  Vaciar carrito
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </aside>
     </div>
   )

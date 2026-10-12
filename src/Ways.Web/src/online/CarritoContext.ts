@@ -1,15 +1,21 @@
 import { createContext, useContext } from 'react'
 
+import type { ArticuloParaElCarrito, ItemDelCarrito } from './carrito'
+
 /**
- * Estado del carrito de la tienda. Todavía no tiene operaciones ni forma de ítem: el contenido llega
- * con el catálogo, así que hoy `items` es siempre vacío y `cantidad` 0.
+ * El carrito de la tienda. `cantidad` cuenta las líneas (artículos distintos), no las unidades:
+ * es lo que muestra el botón de la cabecera.
  */
 export type EstadoDelCarrito = {
-  items: readonly never[]
+  items: readonly ItemDelCarrito[]
   cantidad: number
+  total: number
+  cantidadDe: (idArticulo: number) => number
+  agregar: (articulo: ArticuloParaElCarrito, cantidad?: number) => void
+  quitar: (idArticulo: number) => void
+  cambiarCantidad: (idArticulo: number, cantidad: number) => void
+  vaciar: () => void
 }
-
-export const CARRITO_VACIO: EstadoDelCarrito = { items: [], cantidad: 0 }
 
 export const CarritoContext = createContext<EstadoDelCarrito | null>(null)
 
