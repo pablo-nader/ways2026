@@ -57,8 +57,10 @@ public sealed record MedioPagoAlta(
 
 /// <summary>Listado de medios de pago. Una cuenta dada de baja se lista como "sin cuenta" (<c>IdCuentaTesoreria</c>
 /// null); una cuenta desactivada se lista con su nombre y <c>CuentaTesoreriaInactiva</c> en true. La cuenta, la comisión
-/// y las retenciones solo las ven quienes administran el catálogo (Admin); para el resto vienen en null, igual que los
-/// costos para quien no los puede ver. El POS y las pantallas de operación leen este mismo listado.</summary>
+/// y las retenciones solo las ve quien administra el catálogo (Admin); para el resto vienen en null, el mismo mecanismo que
+/// los costos pero con otros roles (los costos también los ve el Supervisor). Para el Admin <c>CuentaTesoreriaInactiva</c>
+/// siempre es un booleano (false si el medio no tiene cuenta); null significa solo "oculto para este rol". El POS y las
+/// pantallas de operación leen este mismo listado.</summary>
 public sealed record MedioPagoListado(
     int Id,
     string Nombre,

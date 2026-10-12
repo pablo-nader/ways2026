@@ -495,6 +495,7 @@ function ModalDeCatalogo({
               ? campo.opcionesDesdeListado(items, valor.id)
               : (campo.opciones ?? [])
           const valorActual = String(valor.valores[campo.clave] ?? '')
+          const avisoRemoto = remota && lectura ? remota.aviso(lectura.fallo ? null : lectura.datos, opciones) : null
           // Solo tiene sentido buscar la opción faltante en `items` cuando las opciones vienen del
           // listado: para selects de opciones estáticas (p. ej. comportamiento de medio de pago),
           // buscar el valor por id en `items` podría matchear con un item no relacionado.
@@ -553,9 +554,8 @@ function ModalDeCatalogo({
                 />
               )}
               {campo.ayuda && <div className="form-text">{campo.ayuda}</div>}
-              {remota && lectura?.fallo && <div className="form-text text-danger">{remota.errorDeCarga}</div>}
-              {remota?.sinOpciones && lectura && !lectura.fallo && opciones.length === 0 && (
-                <div className="form-text">{remota.sinOpciones}</div>
+              {avisoRemoto && (
+                <div className={`form-text${avisoRemoto.error ? ' text-danger' : ''}`}>{avisoRemoto.texto}</div>
               )}
             </div>
           )

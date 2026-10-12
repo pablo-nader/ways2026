@@ -5,6 +5,7 @@ import {
   descriptorGrupos,
   descriptorListasPrecio,
   descriptorMarcas,
+  avisoDeLasCuentas,
   descriptorMediosPago,
 } from './catalogos'
 import type { ListaPrecioListado, MedioPagoAdministrado } from './tipos'
@@ -354,7 +355,56 @@ describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
 
     expect(remotas?.armar(null, valores)).toEqual([{ valor: '9', etiqueta: 'Banco viejo (inactiva)' }])
     expect(remotas?.armar([], { idCuentaTesoreria: '', nombreCuentaTesoreria: '', cuentaTesoreriaInactiva: false })).toEqual([])
-    expect(remotas?.errorDeCarga).toContain('No se pudieron cargar las cuentas')
+  })
+})
+
+describe('avisoDeLasCuentas', () => {
+  const cuentaDeEjemplo = {
+    id: 1,
+    idEmpresa: 7,
+    nombreEmpresa: 'Comercio',
+    nombre: 'MP',
+    saldoInicial: 0,
+    saldoActual: 0,
+    activo: true,
+    saldoInicialEditable: true,
+  }
+  const opcion = [{ valor: '1', etiqueta: 'MP' }]
+
+  it('si fallaron las cuentas lo dice, y si la lectura entera rechazó también', () => {
+    const sinCuentas = avisoDeLasCuentas({ cuentas: null, empresas: [{ id: 7 }] }, [])
+    const rechazada = avisoDeLasCuentas(null, [])
+
+    for (const aviso of [sinCuentas, rechazada]) {
+      expect(aviso?.error).toBe(true)
+      expect(aviso?.texto).toContain('las cuentas de tesorería')
+    }
+  })
+
+  it('si solo fallaron las empresas no dice que fallaron las cuentas', () => {
+    const aviso = avisoDeLasCuentas({ cuentas: [cuentaDeEjemplo], empresas: null }, opcion)
+
+    expect(aviso?.error).toBe(true)
+    expect(aviso?.texto).toContain('lista de empresas')
+    expect(aviso?.texto).not.toContain('cargar las cuentas')
+  })
+
+  it('sin cuentas creadas en el tenant dice que hay que crear una', () => {
+    const aviso = avisoDeLasCuentas({ cuentas: [], empresas: [{ id: 7 }] }, [])
+
+    expect(aviso?.error).toBe(false)
+    expect(aviso?.texto).toContain('creá una en Cuentas de tesorería')
+  })
+
+  it('con cuentas que el medio no puede tomar explica la regla de la empresa', () => {
+    const aviso = avisoDeLasCuentas({ cuentas: [cuentaDeEjemplo], empresas: [{ id: 7 }, { id: 8 }] }, [])
+
+    expect(aviso?.error).toBe(false)
+    expect(aviso?.texto).toContain('una sola empresa')
+  })
+
+  it('con opciones para elegir no avisa nada', () => {
+    expect(avisoDeLasCuentas({ cuentas: [cuentaDeEjemplo], empresas: [{ id: 7 }] }, opcion)).toBeNull()
   })
 })
 

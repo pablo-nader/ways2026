@@ -18,8 +18,9 @@ namespace Ways.Application.Catalogos;
 /// flujo genérico (<see cref="AntesDeGuardarAsync"/>). El listado trae el nombre de la cuenta en la misma consulta.
 ///
 /// La cuenta, la comisión y las retenciones son datos de tesorería que solo ve quien administra el catálogo (Admin);
-/// para los demás roles —el POS y las pantallas de operación leen este listado— salen en null, el mismo mecanismo que
-/// los costos para quien no los puede ver (<c>PuedeVerCostos</c>).
+/// para los demás roles —el POS y las pantallas de operación leen este listado— salen en null. El mecanismo es el de los
+/// costos (<c>PuedeVerCostos</c>: el servicio pone null según el rol), pero los roles no son los mismos: acá solo el Admin
+/// ve los campos, mientras que los costos también los ve el Supervisor.
 /// </summary>
 public class ServicioDeMediosPago(
     IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda, IContextoDeUsuario contexto)
@@ -91,6 +92,7 @@ public class ServicioDeMediosPago(
 
     private sealed record FilaDeMedio(MedioPago Medio, string? NombreCuenta, bool CuentaVisible, bool CuentaActiva);
 
+
     /// <summary>Una sola consulta: la cuenta va por LEFT JOIN, así que una cuenta dada de baja deja el medio listado
     /// "sin cuenta" (id en null) en vez de ocultarlo.</summary>
     private IQueryable<FilaDeMedio> ConCuenta(IQueryable<MedioPago> medios) =>
@@ -99,25 +101,27 @@ public class ServicioDeMediosPago(
         from c in cuentas.DefaultIfEmpty()
         select new FilaDeMedio(m, c == null ? null : c.Nombre, c != null, c != null && c.Activo);
 
+    /// <summary>Arma primero lo que ve el Admin y después, para el resto de los roles, lo oculta campo por campo.</summary>
     private MedioPagoListado Armar(FilaDeMedio fila)
     {
         var listado = Proyectar(fila.Medio);
 
-        if (!PuedeVerLaCuenta)
-        {
-            return listado with
+        var delAdmin = fila.CuentaVisible
+            ? listado with { NombreCuentaTesoreria = fila.NombreCuenta, CuentaTesoreriaInactiva = !fila.CuentaActiva }
+            : listado with { IdCuentaTesoreria = null, CuentaTesoreriaInactiva = false };
+
+        return PuedeVerLaCuenta
+            ? delAdmin
+            : delAdmin with
             {
                 IdCuentaTesoreria = null,
+                NombreCuentaTesoreria = null,
+                CuentaTesoreriaInactiva = null,
                 ComisionPorcentaje = null,
                 RetencionIibbPorcentaje = null,
                 RetencionIvaPorcentaje = null,
                 RetencionGananciasPorcentaje = null
             };
-        }
-
-        return fila.CuentaVisible
-            ? listado with { NombreCuentaTesoreria = fila.NombreCuenta, CuentaTesoreriaInactiva = !fila.CuentaActiva }
-            : listado with { IdCuentaTesoreria = null };
     }
 
     public override async Task<IReadOnlyList<MedioPagoListado>> ListarAsync(

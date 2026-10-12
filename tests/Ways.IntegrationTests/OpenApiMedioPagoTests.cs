@@ -46,5 +46,12 @@ public class OpenApiMedioPagoTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         Assert.Equal(["integer", "null"], tipos);
         Assert.False(propiedad.TryGetProperty("properties", out var propias) && propias.EnumerateObject().Any());
+        Assert.False(propiedad.TryGetProperty("required", out var requeridas) && requeridas.GetArrayLength() > 0);
+        Assert.False(propiedad.TryGetProperty("$ref", out _));
+
+        // Ningún esquema del documento conserva la forma del struct (presente/valor).
+        Assert.DoesNotContain(
+            esquemas.EnumerateObject(),
+            e => e.Value.TryGetProperty("properties", out var campos) && campos.TryGetProperty("presente", out _));
     }
 }

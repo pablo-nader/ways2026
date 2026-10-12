@@ -131,7 +131,7 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
     private async Task<HttpClient> ClienteConRolAsync(Contexto ctx, string nombre, RolConocido rol)
     {
         var sufijo = rol.ToString().ToLowerInvariant();
-        var mail = $"{nombre.ToLowerInvariant()}-{sufijo}@ways.test";
+        var mail = $"{nombre.ToLowerInvariant()}-{sufijo}-{Guid.NewGuid():N}@ways.test";
         var alta = await ctx.Admin.PostAsJsonAsync(
             "/api/usuarios", new CrearUsuario($"{sufijo}-{Guid.NewGuid():N}"[..16], mail, (int)rol, "otro-rol-password-larga"));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
@@ -508,6 +508,13 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(4.5m, delAdmin.ComisionPorcentaje);
         Assert.Equal(3m, delAdmin.RetencionGananciasPorcentaje);
         Assert.Equal(delAdmin, Assert.Single(await ListarComoAsync(ctx.Admin), m => m.Id == medio.Id));
+        Assert.Equal("Mercado Pago", delAdmin.NombreCuentaTesoreria);
+        Assert.False(delAdmin.CuentaTesoreriaInactiva);
+
+        var sinCuenta = await CrearMedioOkAsync(ctx, Cuerpo("Sin cuenta", ctx.IdEmpresa));
+        Assert.False(sinCuenta.CuentaTesoreriaInactiva);
+        Assert.False((await LeerAsync(ctx, sinCuenta.Id)).CuentaTesoreriaInactiva);
+        Assert.False(Assert.Single(await ListarComoAsync(ctx.Admin), m => m.Id == sinCuenta.Id).CuentaTesoreriaInactiva);
 
         foreach (var cliente in new[] { supervisor, vendedor })
         {
@@ -522,6 +529,8 @@ public class MediosPagoCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 Assert.Null(visto.RetencionIibbPorcentaje);
                 Assert.Null(visto.RetencionIvaPorcentaje);
                 Assert.Null(visto.RetencionGananciasPorcentaje);
+                Assert.Null(visto.NombreCuentaTesoreria);
+                Assert.Null(visto.CuentaTesoreriaInactiva);
             }
         }
     }

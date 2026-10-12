@@ -63,9 +63,12 @@ export type CampoDescriptor = {
   opcionesRemotas?: {
     cargar: () => Promise<unknown>
     armar: (leido: unknown, valores: Record<string, ValorDeCampo>) => { valor: string; etiqueta: string }[]
-    errorDeCarga: string
-    /** Aviso cuando la lectura llegó y no hay ninguna opción para elegir. */
-    sinOpciones?: string
+    /** Aviso debajo del select según lo leído (`null` si la lectura rechazó) y las opciones resultantes; `error` lo pinta
+     * como falla. Devuelve null cuando no hay nada que avisar. */
+    aviso: (
+      leido: unknown,
+      opciones: { valor: string; etiqueta: string }[],
+    ) => { texto: string; error: boolean } | null
   }
   /** Texto de la opción vacía de un select opcional: si está, la opción vacía se ofrece siempre. */
   opcionVacia?: string
@@ -167,6 +170,38 @@ export const descriptorGrupos: DescriptorDeCatalogo<GrupoListado, GrupoAlta> = {
 
 const esElectronico = (valores: Record<string, ValorDeCampo>) => valores.comportamiento === 'Electronico'
 
+type LecturaDeCuentas = { cuentas: CuentaTesoreriaListado[] | null; empresas: { id: number }[] | null }
+
+const GUARDAR_CON_LA_ACTUAL = 'Podés guardar el medio con la cuenta actual.'
+
+/** Qué falló o por qué no hay cuentas para elegir: cada causa tiene su texto, no una sola frase para todo. */
+export function avisoDeLasCuentas(
+  leido: unknown,
+  opciones: { valor: string; etiqueta: string }[],
+): { texto: string; error: boolean } | null {
+  const lectura = leido as LecturaDeCuentas | null
+  if (lectura === null || lectura.cuentas === null) {
+    return { texto: `No se pudieron cargar las cuentas de tesorería. ${GUARDAR_CON_LA_ACTUAL}`, error: true }
+  }
+  if (lectura.empresas === null) {
+    return {
+      texto: `No se pudo cargar la lista de empresas, así que no se ofrecen cuentas para elegir. ${GUARDAR_CON_LA_ACTUAL}`,
+      error: true,
+    }
+  }
+  if (opciones.length > 0) return null
+  if (lectura.cuentas.length === 0) {
+    return { texto: 'Todavía no hay cuentas de tesorería: creá una en Cuentas de tesorería.', error: false }
+  }
+
+  return {
+    texto:
+      'No hay cuentas para este medio: un medio de todo el tenant solo puede tener cuenta si el tenant tiene una sola ' +
+      'empresa, y uno de una empresa solo toma cuentas de esa empresa.',
+    error: false,
+  }
+}
+
 const AYUDA_DE_LA_CUENTA =
   'Lo cobrado con este medio entra a la cuenta neto de la comisión y las retenciones. Sin cuenta, no entra a ninguna. ' +
   'Un medio de todo el tenant solo puede tener cuenta si hay una sola empresa.'
@@ -234,14 +269,17 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
       ayuda: AYUDA_DE_LA_CUENTA,
       opcionesRemotas: {
         cargar: async () => {
-          const [cuentas, empresas] = await Promise.all([
+          const [cuentas, empresas] = await Promise.allSettled([
             clienteDeCuentasTesoreria.listar(),
             api.get<{ id: number }[]>('/empresas'),
           ])
-          return { cuentas, empresas }
+          return {
+            cuentas: cuentas.status === 'fulfilled' ? cuentas.value : null,
+            empresas: empresas.status === 'fulfilled' ? empresas.value : null,
+          }
         },
         armar: (leido, valores) => {
-          const lectura = leido as { cuentas: CuentaTesoreriaListado[]; empresas: { id: number }[] } | null
+          const lectura = leido as LecturaDeCuentas | null
           return opcionesDeCuentas(
             lectura?.cuentas ?? null,
             lectura?.empresas ?? null,
@@ -251,10 +289,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoAdministrado, M
             Boolean(valores.cuentaTesoreriaInactiva),
           )
         },
-        sinOpciones:
-          'No hay cuentas para este medio: un medio de todo el tenant solo puede tener cuenta si el tenant tiene una sola ' +
-          'empresa, y uno de una empresa solo toma cuentas de esa empresa.',
-        errorDeCarga: 'No se pudieron cargar las cuentas de tesorería. Podés guardar el medio con la cuenta actual.',
+        aviso: avisoDeLasCuentas,
       },
     },
     campoDeCuenta('comisionPorcentaje', 'Comisión (%)', AYUDA_DE_LA_COMISION),

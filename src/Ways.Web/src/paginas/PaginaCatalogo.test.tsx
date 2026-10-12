@@ -750,6 +750,30 @@ describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
     expect(within(cuenta).queryByRole('option', { name: 'Mercado Pago' })).not.toBeInTheDocument()
   })
 
+  it('si solo falla la lectura de empresas lo dice sin culpar a las cuentas', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/catalogos/medios-pago')) return Promise.resolve([medio()])
+      if (ruta === '/empresas') return Promise.reject(new ErrorApi(500, 'x', 'caída'))
+      return Promise.resolve([cuentaDeApi(3, 'Mercado Pago')])
+    })
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+
+    expect(await within(dialogo).findByText(/No se pudo cargar la lista de empresas/)).toBeInTheDocument()
+    expect(within(dialogo).queryByText(/No se pudieron cargar las cuentas/)).not.toBeInTheDocument()
+  })
+
+  it('un tenant de una sola empresa sin cuentas creadas manda a crear una', async () => {
+    responder([medio({ idCuentaTesoreria: null, nombreCuentaTesoreria: null })], () => Promise.resolve([]))
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+
+    expect(await within(dialogo).findByText(/creá una en Cuentas de tesorería/)).toBeInTheDocument()
+    expect(within(dialogo).queryByText(/No hay cuentas para este medio/)).not.toBeInTheDocument()
+  })
+
   it('un medio nuevo se crea de todo el tenant', async () => {
     const usuario = userEvent.setup()
     responder([medio()], () => Promise.resolve([]))
