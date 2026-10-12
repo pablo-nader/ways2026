@@ -171,22 +171,57 @@ Mutation evidence (clause changed, `vitest run src/online`, reverted; every row 
 
 Design decisions (to confirm):
 
-- The cart line is a snapshot `{ idArticulo, nombre, precio, unidadVenta, cantidad, imagenVersion }`; adding the
-  same article again sums quantities and refreshes name, price and image version from the latest catalog read.
-  Prices of lines never re-added stay as they were: repricing is the job of `pedidos-online`.
+- The cart line is a snapshot `{ idArticulo, nombre, precio, unidadVenta, cantidad, imagenVersion }`. Every list the
+  catalog receives (first read, another filter, "Ver más") syncs the lines whose article is in it (`sincronizar`:
+  name, price, unit and image version; a quantity that is no longer valid for a changed unit is rounded, min 1 for
+  `Unidad`). Lines whose article is not in any list read stay as they were: repricing is the job of `pedidos-online`.
+  Adding the same article again (only reachable by two "Agregar" in the same instant) sums quantities and takes the
+  newer read.
 - Quantity rule reuses `api/cantidadPorUnidad.ts` (`Unidad` integers, `Peso` up to 3 decimals) plus a 999 cap per
   line; the stepper buttons add one (`Unidad`) or half a kilo (`Peso`), the field accepts comma or point; going
   below the minimum with "−" removes the line; a typed invalid value shows a hint and the cart keeps the last good one.
 - Cart `cantidad` (header badge) counts lines, not units. Persistence key `ways.tienda.carrito:<host>`; invalid or
   repeated lines are discarded one by one, a corrupt blob or blocked storage gives an empty cart.
 - The "Todos" chip shows no count: the server's chip counts exclude uncategorised articles, so a total there would
-  not match the sum. A selected category that disappears from the chips after a search stays selected (nothing is
-  pressed) until the user picks "Todos"; the server answers with an empty page.
-- The catalog empty state ("El catálogo se está preparando.") only shows when there are no filters and the first
-  read returned no articles; with any filter the calm "No encontramos artículos para esa búsqueda." shows instead.
+  not match the sum. A selected category that disappears from the chips after a search stays selected and "Todos"
+  stays visible (not pressed) so the user can leave that filter; the server answers with an empty page.
+- The catalog empty state ("El catálogo se está preparando.") only shows when the FIRST good read, asked without
+  filters, returned no articles (`vacioAlEntrar`, decided from the response, never from the current filter). From then
+  on the search bar is never replaced; an unfiltered empty answer after that shows "Por ahora no hay artículos
+  publicados.", and with any filter "No encontramos artículos para esa búsqueda.".
 - The cart provider owns the `aria-live` region ("X agregado al carrito", "X quitado del carrito", "Carrito vaciado").
-- Not done: syncing the cart between two open tabs (`storage` event), restoring focus to the "Agregar" button after
-  the stepper's "−" removes a line.
+- Two open tabs of the same shop: a `storage` event for the cart key replaces the in-memory cart with the stored one
+  (validated line by line) and nothing is written back when the stored value is already equal. There is no merge: the
+  whole cart is saved, so if two tabs change something at once the last writer wins and what the other had unsaved is
+  lost. The change from the other tab is not announced.
+- Typed quantities apply on blur or Enter, not keystroke by keystroke; a rejected value reverts to the last good one
+  and a polite (`aria-live="polite"`) message says the quantity did not change. No `role="alert"` while typing.
+- Focus targets when a control disappears (jsdom does not implement the browser's focus fix-up, so the tests assert the
+  chosen target): "Agregar" → the stepper's "+"; "−" removing a line on a card → that card's "Agregar"; in the panel
+  "Quitar" or "−" removing a line → the next line's "Quitar", else the previous, else "Cerrar".
+
+T3 judgment-day round 1 fixes (branch `pnader/catalogo-web-online-ajustes`, on top of `763463ac`), all observed in `src/Ways.Web`:
+
+| Id | Commit | What | Killed by (mutation applied, test red, reverted) |
+|---|---|---|---|
+| L11 | `76a41bd4` | `TarjetaDeArticulo` in `memo`, quantity by prop from a `cantidades` map, actions in their own stable context | `memo` removed / actions object not memoized → "agregar un artículo no vuelve a dibujar la tarjeta de otro" |
+| L2 | `483ec60e` | `sincronizar` reducer action dispatched by the catalog on every list it receives | effect removed → 4 UI tests; `Math.max(1,…)` dropped, "same array" return dropped, `precio` comparison dropped → reducer tests |
+| L5 | `5a84da47` | `storage` listener + `reemplazar`; `guardarCarrito` skips an equal value | `storageArea` check / key check / `null` key / cleanup / equality guard each removed → the matching test |
+| L1, L8, L10, L12 | `c95adf40` | `vacioAlEntrar`/`respuestaSinFiltros` from the response; `<main>` without `role`; "Todos" with an active category; bar schedules nothing on mount | old predicate → 3 page tests (bar remounted); `vacioAlEntrar` without `prev` → 2 tests; `role="status"` on `<main>` → skeleton test; chip condition → 2 tests; mount guard / `buscar` dedupe → their tests; pause 300 → 50 ms → 2 debounce tests |
+| L7 | `07337c08` | typed quantity applied on blur/Enter, polite message | live commit, blur commit, Enter handler, and each of the three `setRechazada(false)` removed → the matching test |
+| L3 | `e4c58a5f` | explicit focus targets | focus call, next-only neighbour, `Cerrar` fallback, stepper `alQuitar`, card `mas`/`agregar` targets, ungated effect → the matching test |
+| L4, L6, L9 | `e9f4c5f9` | 6 px padding / −6 px margin on the scrollers, `--pub-borde-campo` token, `.publico-boton-chico` 44 px | each value reverted → computed-style or contrast test |
+
+- `npx tsc -b`: clean. `npx oxlint`: no finding in `src/online` or `src/publico` (only the baseline `only-export-components` warnings elsewhere).
+  `npx vite build`: built, `online` entry 18.2 kB.
+- `npx vitest run src/online src/publico src/landing`: 13 files, 272 passed. `npx vitest run` (whole suite): 194 files, 5039 passed. A
+  first whole-suite run had two timeouts in `Familia.test.tsx` and `NuevaFamilia.test.tsx` (unrelated, load-induced); both pass alone
+  (127 tests) and the second whole-suite run was green.
+- Found while testing: `CarritoProvider` saves in an effect, so a test that cleared `localStorage` before unmounting let the unmount flush
+  write the cart into the next test. `afterEach` in `CatalogoDeLaTienda.test.tsx` and `Carrito.test.tsx` now unmounts first.
+- Limits of the evidence: the focus tests and the "stays mounted" test assert targets and element identity in jsdom, not the browser's
+  focus fix-up; the contrast test reads the stylesheet text, it does not render; the render-count test measures a card's render through
+  the image URL call, not render cost.
 
 ## Delivery slices
 
