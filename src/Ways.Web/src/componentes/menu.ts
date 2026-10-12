@@ -107,6 +107,7 @@ const MODELO: EntradaDelModelo[] = [
           ),
           enlace(puedeGestionarCatalogos, 'Listas de precio', '/listas-precio'),
           enlace(puedeGestionarCatalogos, 'Ofertas', '/ofertas'),
+          enlace(puedeGestionarCatalogos, 'Combos', '/combos'),
           enlace(puedeGestionarCatalogos, 'Catálogos fiscales', '/catalogos-fiscales'),
         ],
       },

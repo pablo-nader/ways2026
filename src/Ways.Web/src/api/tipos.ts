@@ -1208,6 +1208,24 @@ export type ComboListado = {
   componentes: ComponenteDeComboListado[]
 }
 
+/** Componente de un pedido de alta o edición (espejo de `ComponenteDeSolicitudDeCombo`): exactamente uno entre
+ * `idArticulo` e `idFamilia`, el otro ausente. */
+export type ComponenteDeSolicitudDeCombo = { idArticulo?: number; idFamilia?: number; cantidad: number }
+
+/** Cuerpo de `POST /api/combos` (espejo de `AltaCombo`). `codigo` ausente ⇒ el servidor asigna el siguiente libre. */
+export type AltaCombo = {
+  codigo?: number
+  nombre: string
+  precio: number
+  idEmpresa: number | null
+  activo: boolean
+  componentes: ComponenteDeSolicitudDeCombo[]
+}
+
+/** Cuerpo de `PUT /api/combos/{id}` (espejo de `EdicionCombo`): reemplaza todo, `activo` es obligatorio y `codigo`
+ * ausente conserva el actual. */
+export type EdicionCombo = AltaCombo
+
 /** Componente de `GET /api/combos/{id}/cargable` (espejo de `ComponenteCargable`). `candidatos` son los artículos con
  * los que se completa, con la forma del escaneo (`cantidad = 1`): vacía cuando el componente no se puede vender. */
 export type ComponenteDeComboCargable = {

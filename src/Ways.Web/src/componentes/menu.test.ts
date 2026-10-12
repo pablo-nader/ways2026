@@ -128,6 +128,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
         ['Medios de pago', '/catalogos/medios-pago'],
         ['Listas de precio', '/listas-precio'],
         ['Ofertas', '/ofertas'],
+        ['Combos', '/combos'],
         ['Catálogos fiscales', '/catalogos-fiscales'],
       ],
     },

@@ -1204,6 +1204,16 @@ Lecturas con la policy de `/api/ofertas` (`OperacionDePos`); escrituras con `Ges
   artículo que es componente de un combo vivo responde `409 articulo_en_uso` ("tiene combos"); la de un combo dado de
   baja no bloquea.
 
+El back office tiene su pantalla en `/combos` (solo Admin, entrada "Combos" del grupo Catálogo): lista los combos vivos,
+también los inactivos, con el código como `C<n>` (lo que se tipea en la caja), el precio y los componentes, y marca el que
+tiene un componente con `disponible = false`. El formulario valida en el cliente, para que los errores comunes no viajen:
+nombre obligatorio (150), precio mayor a cero con hasta dos decimales, código entero entre 1 y 999.999 si se informa,
+cantidades enteras de 1 a 999.999, al menos dos unidades en total, hasta 50 componentes, ningún artículo ni familia repetidos
+y ningún componente `disponible = false` (hay que quitarlo o reemplazarlo antes de guardar). El buscador de artículos
+ofrece solo los activos con `UnidadVenta.Unidad`; una familia con un miembro pesable solo la rechaza el servidor
+(`combo_componente_no_unitario`), que sigue siendo la autoridad: cada código de error de arriba se traduce a un mensaje junto
+al campo o a la sección de componentes que corresponde.
+
 #### Cargar un combo en el POS
 
 Un combo nunca es una línea de la venta: cargarlo en el carrito agrega las MISMAS líneas de artículo que se agregarían

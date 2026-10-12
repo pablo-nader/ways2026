@@ -31,6 +31,7 @@ import { Login } from './paginas/Login'
 import { NuevaFamilia } from './paginas/NuevaFamilia'
 import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
+import { Combos } from './paginas/Combos'
 import { OrdenDeCompra } from './paginas/OrdenDeCompra'
 import { OrdenesDeCompra } from './paginas/OrdenesDeCompra'
 import { PaginaCatalogo } from './paginas/PaginaCatalogo'
@@ -515,6 +516,15 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Ofertas />
+                </RutaProtegida>
+              }
+            />
+
+            <Route
+              path="/combos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Combos />
                 </RutaProtegida>
               }
             />
