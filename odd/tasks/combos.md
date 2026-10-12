@@ -348,7 +348,24 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
 - Known gap: `GET /api/articulos` has no unit-of-sale filter, so the picker filters the first
   25 results client-side and tells the user to refine the search.
 
+- T4 delivered: PR pablo-nader/ways2026#401 (auto-merge + Auto-fix).
+- T5c NOT done here, on purpose (2026-10-12): another session of the owner already has the
+  0.9.0 bump open as PR pablo-nader/ways2026#391, stacked on #387 ("importes de venta a peso
+  entero"), and states that `pos-v0.9.0` is tagged on main after it merges. A second bump would
+  collide with it. That release will carry the POS combo slices (#396, #400) once it is
+  rebuilt on current main.
+- CROSS-SESSION RISK, for whoever lands #387: it changes sale amounts to whole pesos and its
+  branch already adapts the C# combo engine and the combo credit note ("repartir el precio del
+  combo en pesos enteros", "la devolución de un combo acredita pesos enteros"). The TypeScript
+  port `src/Ways.Web/src/pos/motorDeCombos.ts` (#396) allocates in CENTS and its parity suite
+  mirrors the C# tests as they were. When #387 merges, the offline engine must allocate in
+  whole pesos too and the parity cases must be re-mirrored, or an offline combo sale will
+  differ from the server's detection by cents and be audited as discrepant on every sale. The
+  server validation of the offline line (`combo_offline_invalido` for a share with more than
+  2 decimals) and `comboCoincideConAlta`/the ABM are not affected.
+
 ## Next step
 
-PR for T4 (slice 8); then T5c: bump `Ways.Desktop` and, with the owner's go-ahead, the
-`pos-v*` tag that publishes the POS to the installed cajas.
+Feature complete from this session's side: T1, T2, T3, TNC, T3b, T5a, T5b delivered and
+merged; T4 in PR #401. Remaining outside this session: the POS release (#391 + tag) and the
+whole-peso alignment of the offline engine noted above. Open owner decisions: items 2–6.
