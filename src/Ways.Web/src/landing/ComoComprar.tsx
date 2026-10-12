@@ -1,9 +1,13 @@
-/** Los tres pasos de una compra. El segundo depende de que haya un WhatsApp al que escribir. */
+/**
+ * Los tres pasos de una compra, tal como funciona hoy: la tienda online solo muestra el catálogo (el carrito no
+ * envía pedidos) y no hay entrega a domicilio, así que el pedido se coordina con el comercio. El segundo paso
+ * depende de que haya un WhatsApp al que escribir.
+ */
 function pasosDeCompra(conWhatsapp: boolean): readonly string[] {
   return [
-    'Elegí tus productos en la tienda online',
-    conWhatsapp ? 'Confirmá tu pedido por WhatsApp' : 'Confirmá tu pedido con el comercio',
-    'Retiralo en el local o coordiná la entrega',
+    'Mirá lo que hay en la tienda online',
+    conWhatsapp ? 'Escribinos por WhatsApp con lo que necesitás' : 'Consultá al comercio por lo que necesitás',
+    'Coordiná con el comercio el retiro en el local',
   ]
 }
 

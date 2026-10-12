@@ -3,11 +3,11 @@ import { PREFIJO_ONLINE } from '../config/rutasPublicas'
 import { formatearPrecio } from '../online/carrito'
 import { ImagenDelArticulo } from '../publico/ImagenDelArticulo'
 
-/** Un artículo de la muestra: enlace a la tienda, donde se agrega al carrito. Aquí no hay carrito. */
+/** Un artículo de la muestra: enlace a la tienda con el nombre como búsqueda (`?buscar=`), para encontrarlo ahí. Aquí no hay carrito. */
 function TarjetaDestacada({ articulo }: { articulo: ArticuloPublico }) {
   return (
     <li className="publico-articulo publico-destacado">
-      <a className="publico-destacado-enlace" href={PREFIJO_ONLINE}>
+      <a className="publico-destacado-enlace" href={`${PREFIJO_ONLINE}?buscar=${encodeURIComponent(articulo.nombre)}`}>
         <ImagenDelArticulo articulo={articulo} />
         <span className="publico-articulo-nombre">{articulo.nombre}</span>
         <span className="publico-articulo-precio">

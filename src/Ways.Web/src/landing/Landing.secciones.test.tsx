@@ -71,23 +71,55 @@ describe('secciones de la landing', () => {
       return document.body.querySelector('.publico-sello')
     }
 
-    it('bajo los botones salen el horario, el domicilio y el pedido por WhatsApp de la primera sucursal', async () => {
-      await verPublicada()
+    it('con una sola sucursal salen el horario, el domicilio y el WhatsApp, cada uno con su rótulo para lectores y sin nombre de sucursal', async () => {
+      await verPublicada({ sucursales: [sucursalCompleta] })
 
-      expect(pildoras()).toEqual(['Lun a Vie 9 a 18', 'Av. Siempreviva 742', 'Pedidos por WhatsApp'])
+      expect(pildoras()).toEqual(['Horario: Lun a Vie 9 a 18', 'Dirección: Av. Siempreviva 742', 'WhatsApp: WhatsApp'])
     })
 
-    it('el horario y el domicilio son los de la primera sucursal, no los de otra', async () => {
+    it('los rótulos "Horario:", "Dirección:" y "WhatsApp:" son solo para lectores de pantalla', async () => {
+      await verPublicada({ sucursales: [sucursalCompleta] })
+
+      const rotulos = within(seccion('Todo para tu obra')).getAllByText(/^(Horario|Dirección|WhatsApp):$/)
+      expect(rotulos).toHaveLength(3)
+      for (const rotulo of rotulos) {
+        expect(rotulo).toHaveClass('publico-solo-lectores')
+        expect(getComputedStyle(rotulo).position).toBe('absolute')
+      }
+    })
+
+    it('con varias sucursales cada píldora dice de cuál sale: horario, domicilio y WhatsApp de la primera', async () => {
+      await verPublicada()
+
+      expect(pildoras()).toEqual([
+        'Horario: Casa Central · Lun a Vie 9 a 18',
+        'Dirección: Casa Central · Av. Siempreviva 742',
+        'WhatsApp: Casa Central · WhatsApp',
+      ])
+    })
+
+    it('con varias sucursales con datos propios, ninguna píldora mezcla los de otra', async () => {
+      const gascon = { ...sucursalCompleta, nombre: 'Gascón', domicilio: 'Gascón 100', horario: '24 hs', whatsapp: '+54 9 11 4444-0000' }
+      await verPublicada({ sucursales: [gascon, sucursalCompleta] })
+
+      expect(pildoras()).toEqual(['Horario: Gascón · 24 hs', 'Dirección: Gascón · Gascón 100', 'WhatsApp: Gascón · WhatsApp'])
+      expect(within(seccion('Todo para tu obra')).getByRole('link', { name: 'Escribinos por WhatsApp' })).toHaveAttribute(
+        'href',
+        'https://wa.me/5491144440000',
+      )
+    })
+
+    it('el horario y el domicilio son los de la primera sucursal, no los de otra; el WhatsApp cae a la primera que tiene número y lo dice', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto, sucursalCompleta] })
 
-      expect(pildoras()).toEqual(['Pedidos por WhatsApp'])
+      expect(pildoras()).toEqual(['WhatsApp: Casa Central · WhatsApp'])
       expect(sello()).toBeNull()
     })
 
     it('sin ningún número no hay píldora de WhatsApp', async () => {
       await verPublicada({ sucursales: [{ ...sucursalCompleta, whatsapp: null }] })
 
-      expect(pildoras()).toEqual(['Lun a Vie 9 a 18', 'Av. Siempreviva 742'])
+      expect(pildoras()).toEqual(['Horario: Lun a Vie 9 a 18', 'Dirección: Av. Siempreviva 742'])
     })
 
     it('un dato en blanco no genera píldora', async () => {
@@ -116,13 +148,25 @@ describe('secciones de la landing', () => {
       await verPublicada({ sucursales: [{ ...sucursalCompleta, horario: 'Todos los días, 24 horas' }] })
 
       expect(sello()).toHaveTextContent(/^Abierto 24 hs$/)
-      expect(pildoras()[0]).toBe('Todos los días, 24 horas')
+      expect(pildoras()[0]).toBe('Horario: Todos los días, 24 horas')
     })
 
-    it('un horario que solo llega hasta las 24 no se anuncia como abierto 24 hs', async () => {
-      await verPublicada({ sucursales: [{ ...sucursalCompleta, horario: 'Lun a Sáb 8 a 24 hs' }] })
+    it.each(['Lun a Sáb 8 a 24 hs', '9 hs a 24 hs', 'Lun a Vie 8 a 18 hs. Guardia 24 hs', 'Lun a Sáb 24 hs, Dom cerrado'])(
+      'el horario %j no se anuncia como abierto 24 hs',
+      async (horario) => {
+        await verPublicada({ sucursales: [{ ...sucursalCompleta, horario }] })
 
-      expect(sello()).toHaveTextContent(/^Lun a Sáb 8 a 24 hs$/)
+        expect(sello()?.textContent).toBe(horario)
+      },
+    )
+
+    it('el texto del sello no recorta las mayúsculas acentuadas: interlineado de al menos 1 y aire arriba', async () => {
+      await verPublicada()
+
+      const texto = document.body.querySelector('.publico-sello-texto') as HTMLElement
+      const estilo = getComputedStyle(texto)
+      expect(parseFloat(estilo.lineHeight)).toBeGreaterThanOrEqual(1)
+      expect(parseFloat(estilo.paddingTop)).toBeGreaterThan(0)
     })
 
     it('sin horario no hay sello', async () => {
@@ -140,14 +184,23 @@ describe('secciones de la landing', () => {
       const destacados = seccion('Lo que vas a encontrar')
       expect(within(destacados).getByRole('heading', { level: 2 })).toBeInTheDocument()
       const enlaceDelMartillo = within(destacados).getByRole('link', { name: /Martillo/ })
-      expect(enlaceDelMartillo).toHaveAttribute('href', '/online')
+      expect(enlaceDelMartillo).toHaveAttribute('href', '/online?buscar=Martillo')
       expect(enlaceDelMartillo).toHaveTextContent('$ 1.234,56')
       expect(enlaceDelMartillo).not.toHaveTextContent('por kg')
       const enlaceDeLosClavos = within(destacados).getByRole('link', { name: /Clavos/ })
-      expect(enlaceDeLosClavos).toHaveAttribute('href', '/online')
+      expect(enlaceDeLosClavos).toHaveAttribute('href', '/online?buscar=Clavos')
       expect(enlaceDeLosClavos).toHaveTextContent('$ 2.000,00')
       expect(enlaceDeLosClavos).toHaveTextContent('por kg')
       expect(within(destacados).getAllByRole('listitem')).toHaveLength(2)
+    })
+
+    it('el nombre del artículo viaja codificado en la búsqueda a la tienda', async () => {
+      await verConCatalogo(catalogoPublico({ articulos: [articuloPublico(3, { nombre: 'Tornillo 1/4" & tuerca #5' })] }))
+
+      expect(within(seccion('Lo que vas a encontrar')).getByRole('link', { name: /Tornillo/ })).toHaveAttribute(
+        'href',
+        '/online?buscar=Tornillo%201%2F4%22%20%26%20tuerca%20%235',
+      )
     })
 
     it('pide una sola página de 8 artículos sin filtros', async () => {
@@ -262,23 +315,30 @@ describe('secciones de la landing', () => {
       await verPublicada()
 
       expect(pasos()).toHaveLength(3)
-      expect(pasos()[0]).toHaveTextContent(/^01Elegí tus productos en la tienda online$/)
+      expect(pasos()[0]).toHaveTextContent(/^01Mirá lo que hay en la tienda online$/)
       expect(pasos()[1]).toHaveTextContent(/^02/)
-      expect(pasos()[2]).toHaveTextContent(/^03Retiralo en el local o coordiná la entrega$/)
+      expect(pasos()[2]).toHaveTextContent(/^03Coordiná con el comercio el retiro en el local$/)
     })
 
-    it('con un número de WhatsApp el segundo paso manda a WhatsApp', async () => {
+    it('no promete un pedido en la tienda ni una entrega que hoy no existen', async () => {
       await verPublicada()
 
-      expect(pasos()[1]).toHaveTextContent('Confirmá tu pedido por WhatsApp')
-      expect(screen.queryByText('Confirmá tu pedido con el comercio')).not.toBeInTheDocument()
+      const textoDeLosPasos = within(seccion('Cómo comprar')).getByRole('list').textContent ?? ''
+      expect(textoDeLosPasos).not.toMatch(/confirm|entrega|envío|pedido/i)
     })
 
-    it('sin número de WhatsApp el segundo paso es con el comercio', async () => {
+    it('con un número de WhatsApp el segundo paso manda a escribir por WhatsApp', async () => {
+      await verPublicada()
+
+      expect(pasos()[1]).toHaveTextContent(/^02Escribinos por WhatsApp con lo que necesitás$/)
+      expect(screen.queryByText('Consultá al comercio por lo que necesitás')).not.toBeInTheDocument()
+    })
+
+    it('sin número de WhatsApp el segundo paso es consultar al comercio', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto] })
 
-      expect(pasos()[1]).toHaveTextContent('Confirmá tu pedido con el comercio')
-      expect(screen.queryByText('Confirmá tu pedido por WhatsApp')).not.toBeInTheDocument()
+      expect(pasos()[1]).toHaveTextContent(/^02Consultá al comercio por lo que necesitás$/)
+      expect(screen.queryByText('Escribinos por WhatsApp con lo que necesitás')).not.toBeInTheDocument()
     })
 
     it('se muestra aunque el comercio no tenga nada más cargado', async () => {
@@ -296,8 +356,41 @@ describe('secciones de la landing', () => {
       expect(mapa.tagName).toBe('IFRAME')
       expect(mapa).toHaveAttribute('src', 'https://www.google.com/maps?q=Av.%20Siempreviva%20742&output=embed')
       expect(mapa).toHaveAttribute('loading', 'lazy')
-      expect(mapa).toHaveAttribute('referrerpolicy', 'no-referrer-when-downgrade')
       expect(within(screen.getByText('Casa Central').closest('li') as HTMLElement).getByTitle('Mapa de Casa Central')).toBe(mapa)
+    })
+
+    it('el mapa corre en un sandbox que no deja navegar la página ni enviar formularios, y usa la política de referrer del navegador', async () => {
+      await verPublicada()
+
+      const mapa = screen.getByTitle('Mapa de Casa Central')
+      expect(mapa.getAttribute('sandbox')?.split(' ').sort()).toEqual([
+        'allow-popups',
+        'allow-popups-to-escape-sandbox',
+        'allow-same-origin',
+        'allow-scripts',
+      ])
+      expect(mapa).not.toHaveAttribute('referrerpolicy')
+    })
+
+    it('bajo cada mapa hay un enlace de respaldo a Google Maps con la dirección codificada, en pestaña nueva', async () => {
+      await verPublicada({ sucursales: [{ ...sucursalCompleta, domicilio: 'Calle 9 & 10 #5, La Plata' }] })
+
+      const enlace = within(screen.getByText('Casa Central').closest('li') as HTMLElement).getByRole('link', {
+        name: 'Abrir en Google Maps de Casa Central',
+      })
+      expect(enlace).toHaveAttribute(
+        'href',
+        'https://www.google.com/maps/search/?api=1&query=Calle%209%20%26%2010%20%235%2C%20La%20Plata',
+      )
+      expect(enlace).toHaveAttribute('target', '_blank')
+      expect(enlace).toHaveAttribute('rel', 'noopener')
+      expect(enlace).toHaveTextContent('Abrir en Google Maps')
+    })
+
+    it('una sucursal sin domicilio no tiene enlace a Google Maps', async () => {
+      await verPublicada({ sucursales: [sucursalSinContacto] })
+
+      expect(screen.queryByRole('link', { name: /Google Maps/ })).not.toBeInTheDocument()
     })
 
     it('una sucursal sin domicilio no tiene mapa', async () => {
@@ -339,9 +432,16 @@ describe('secciones de la landing', () => {
     it('sin número de WhatsApp queda solo "Comprar online"', async () => {
       await verPublicada({ sucursales: [sucursalSinContacto] })
 
-      const cierre = seccion('¿Listo para pedir?')
+      const cierre = seccion('¿Querés saber más?')
       expect(within(cierre).getAllByRole('link')).toHaveLength(1)
       expect(within(cierre).queryByText('Escribinos por WhatsApp')).not.toBeInTheDocument()
+    })
+
+    it('sin número de WhatsApp el título no invita a pedir, porque no hay por dónde', async () => {
+      await verPublicada({ sucursales: [sucursalSinContacto] })
+
+      expect(screen.queryByText('¿Listo para pedir?')).not.toBeInTheDocument()
+      expect(within(seccion('¿Querés saber más?')).getByRole('heading', { level: 2, name: '¿Querés saber más?' })).toBeInTheDocument()
     })
 
     it('es lo último de la página: no hay pie', async () => {
@@ -371,7 +471,7 @@ describe('secciones de la landing', () => {
 
     expect(screen.getAllByRole('heading', { level: 2 }).map((titulo) => titulo.textContent)).toEqual([
       'Cómo comprar',
-      '¿Listo para pedir?',
+      '¿Querés saber más?',
     ])
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
