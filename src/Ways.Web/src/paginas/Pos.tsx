@@ -127,6 +127,7 @@ import type { BorradorDeTicket } from '../pos/BorradorDeTicketContext'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { useSincronizacionOffline } from '../pos/useSincronizacionOffline'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { fechaHoraATexto } from '../formato/fechas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -673,7 +674,7 @@ export type CajaDeEscritorio = {
  */
 
 function formatearFechaHoraCortaDeMovimiento(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 type PropsModalCuentaCorrientePos = {

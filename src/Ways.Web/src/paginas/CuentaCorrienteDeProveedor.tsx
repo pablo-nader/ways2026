@@ -28,13 +28,14 @@ import { Cargando } from '../componentes/Cargando'
 import { ModalDePagoDeCompra } from '../componentes/ModalDePagoDeCompra'
 import { formatearImporte } from '../formato/importes'
 import { CampoFecha } from '../componentes/CampoFecha'
+import { fechaHoraATexto } from '../formato/fechas'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
+  return fechaHoraATexto(iso)
 }
 
 /** Saldo con la etiqueta "saldo a favor" cuando es negativo (design: Web Composition — columnas,
