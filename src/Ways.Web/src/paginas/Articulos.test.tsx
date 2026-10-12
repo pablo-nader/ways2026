@@ -47,7 +47,8 @@ vi.mock('../api/cliente', () => ({
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -84,7 +85,8 @@ const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Ar
  * de arriba (que sigue sirviendo el detalle por id, `/articulos/{id}`). */
 function filaGrillaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -2943,23 +2945,23 @@ describe('Articulos — sección Costos', () => {
   })
 })
 
-describe('Articulos — tienda online del artículo', () => {
+describe('Articulos — disponibilidad del artículo', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('al editar como admin muestra la sección, y publicar usa su propio PUT sin tocar el formulario', async () => {
+  it('al editar como admin muestra la sección, y cambiar la disponibilidad usa su propio PUT sin tocar el formulario', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    apiPutMock.mockResolvedValue({ idArticulo: 1, publicado: true })
+    apiPutMock.mockResolvedValue({ idArticulo: 1, disponibleVenta: true, disponibleOnline: false })
     renderArticulos('/articulos/edit/1', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
-    const interruptor = await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
+    const interruptor = await within(dialogo).findByRole('switch', { name: 'Disponible online' })
 
     await userEvent.click(interruptor)
 
-    expect(await within(dialogo).findByText('El artículo quedó publicado en la tienda.')).toBeInTheDocument()
+    expect(await within(dialogo).findByText('El artículo quedó fuera de la tienda online.')).toBeInTheDocument()
     expect(apiPutMock).toHaveBeenCalledTimes(1)
-    expect(apiPutMock).toHaveBeenCalledWith('/articulos/1/web', { publicado: true })
+    expect(apiPutMock).toHaveBeenCalledWith('/articulos/1/disponibilidad', { disponibleVenta: true, disponibleOnline: false })
 
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
 
@@ -2968,25 +2970,25 @@ describe('Articulos — tienda online del artículo', () => {
   })
 
   it('una escritura de la tienda refresca la grilla con el estado nuevo', async () => {
-    apiPutMock.mockResolvedValue({ idArticulo: 1, publicado: true })
+    apiPutMock.mockResolvedValue({ idArticulo: 1, disponibleVenta: false, disponibleOnline: true })
     renderArticulos('/articulos/edit/1', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
-    const interruptor = await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
-    expect(screen.queryByText('Publicado', { selector: '.badge' })).not.toBeInTheDocument()
+    const interruptor = await within(dialogo).findByRole('switch', { name: 'Disponible a la venta' })
+    expect(screen.queryByText('No se vende', { selector: '.badge' })).not.toBeInTheDocument()
     mockearApiGet({
-      grilla: paginaGrillaFixture([filaGrillaFixture({ id: 1, nombre: 'Articulo Uno', publicadoWeb: true }), filaGrillaDos]),
+      grilla: paginaGrillaFixture([filaGrillaFixture({ id: 1, nombre: 'Articulo Uno', disponibleVenta: false }), filaGrillaDos]),
     })
 
     await userEvent.click(interruptor)
 
-    expect(await screen.findByText('Publicado', { selector: '.badge' })).toBeInTheDocument()
+    expect(await screen.findByText('No se vende', { selector: '.badge' })).toBeInTheDocument()
   })
 
-  it('el PUT de la edición del artículo no lleva el estado de la tienda', async () => {
+  it('el PUT de la edición del artículo no lleva la disponibilidad', async () => {
     apiPutMock.mockResolvedValue(articuloFixture({ id: 1 }))
     renderArticulos('/articulos/edit/1', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
-    await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })
+    await within(dialogo).findByRole('switch', { name: 'Disponible online' })
 
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
@@ -2994,16 +2996,20 @@ describe('Articulos — tienda online del artículo', () => {
     await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
     expect(apiPutMock.mock.calls[0][0]).toBe('/articulos/1')
     const campos = Object.keys(apiPutMock.mock.calls[0][1] as object)
-    expect(campos).not.toContain('publicadoWeb')
+    expect(campos).not.toContain('disponibleOnline')
+    expect(campos).not.toContain('disponibleVenta')
     expect(campos).not.toContain('tieneImagen')
   })
 
   it('la sección arranca con lo que trajo el detalle del artículo', async () => {
-    mockearApiGet({ articulos: [articuloFixture({ id: 1, publicadoWeb: true, tieneImagen: true }), articuloDos] })
+    mockearApiGet({
+      articulos: [articuloFixture({ id: 1, disponibleVenta: false, disponibleOnline: true, tieneImagen: true }), articuloDos],
+    })
     renderArticulos('/articulos/edit/1', ROL.Admin)
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
 
-    expect(await within(dialogo).findByRole('switch', { name: 'Publicado en la tienda' })).toBeChecked()
+    expect(await within(dialogo).findByRole('switch', { name: 'Disponible online' })).toBeChecked()
+    expect(within(dialogo).getByRole('switch', { name: 'Disponible a la venta' })).not.toBeChecked()
     expect(within(dialogo).getByRole('img', { name: 'Imagen del artículo' })).toBeInTheDocument()
   })
 
@@ -3053,7 +3059,7 @@ describe('Articulos — tienda online del artículo', () => {
     const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
 
     expect(within(dialogo).getByText('Guardá el artículo para poder cargar códigos de barra y precios.')).toBeInTheDocument()
-    expect(within(dialogo).queryByText('Tienda online')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByText('Venta y tienda online')).not.toBeInTheDocument()
     expect(within(dialogo).queryByRole('switch')).not.toBeInTheDocument()
   })
 
@@ -3062,7 +3068,8 @@ describe('Articulos — tienda online del artículo', () => {
     const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
     await within(dialogo).findByText('Códigos de barra')
 
-    expect(within(dialogo).queryByText('Tienda online')).not.toBeInTheDocument()
-    expect(within(dialogo).queryByRole('switch', { name: 'Publicado en la tienda' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByText('Venta y tienda online')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByRole('switch', { name: 'Disponible online' })).not.toBeInTheDocument()
+    expect(within(dialogo).queryByRole('switch', { name: 'Disponible a la venta' })).not.toBeInTheDocument()
   })
 })

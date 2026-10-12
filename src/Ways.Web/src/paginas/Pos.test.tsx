@@ -194,7 +194,8 @@ function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {})
 
 function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 9,
     codigoInterno: 'A0009',
@@ -2167,6 +2168,21 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
     expect(await screen.findByText('No hay stock suficiente.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
+  })
+
+  it('un 409 articulo_no_vendible muestra el mensaje del servidor con qué hacer, sin activar el gate de turno', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'articulo_no_vendible', 'El artículo A0001 no está disponible a la venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('El artículo A0001 no está disponible a la venta. Sacalo para poder continuar.')).toBeInTheDocument()
     expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
   })
 
@@ -7508,6 +7524,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
         { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, disponible: true },
