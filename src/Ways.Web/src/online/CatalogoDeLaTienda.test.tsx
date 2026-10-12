@@ -91,6 +91,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   localStorage.clear()
+  window.history.replaceState(null, '', '/')
   document.documentElement.removeAttribute('data-bs-theme')
   document.documentElement.style.removeProperty('--vitrina-acento')
   document.title = ''
@@ -267,6 +268,50 @@ describe('catálogo de la tienda', () => {
       expect(await screen.findByText('No encontramos artículos para esa búsqueda.')).toBeInTheDocument()
       expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toHaveValue('zzz')
       expect(screen.queryByText('El catálogo se está preparando.')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('filtros que vienen en la URL', () => {
+    function abrirCon(consulta: string) {
+      window.history.replaceState(null, '', `/online${consulta}`)
+    }
+
+    it('?categoria=3 arranca filtrado por esa categoría, con una sola lectura', async () => {
+      abrirCon('?categoria=3')
+      await verCatalogo(catalogoPublico({ articulos: [martillo], categorias: [...categorias, categoriaPublica(3, 'Pinturas', 4)] }))
+
+      expect(llamadas()).toEqual([{ buscar: '', idCategoria: 3, pagina: 1, tamano: 24 }])
+      expect(screen.getByRole('button', { name: /Pinturas/ })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Todos' })).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('?buscar=yerba arranca con esa búsqueda en la caja, con una sola lectura', async () => {
+      abrirCon('?buscar=yerba')
+      await verCatalogo()
+
+      expect(llamadas()).toEqual([{ buscar: 'yerba', idCategoria: null, pagina: 1, tamano: 24 }])
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toHaveValue('yerba')
+    })
+
+    it('los dos parámetros juntos se piden en la misma lectura', async () => {
+      abrirCon('?categoria=3&buscar=yerba')
+      await verCatalogo()
+
+      expect(llamadas()).toEqual([{ buscar: 'yerba', idCategoria: 3, pagina: 1, tamano: 24 }])
+    })
+
+    it('una categoría que no es un id se ignora y se pide el catálogo completo', async () => {
+      abrirCon('?categoria=abc')
+      await verCatalogo()
+
+      expect(llamadas()).toEqual([{ buscar: '', idCategoria: null, pagina: 1, tamano: 24 }])
+    })
+
+    it('sin parámetros el catálogo arranca sin filtros', async () => {
+      await verCatalogo()
+
+      expect(llamadas()).toEqual([{ buscar: '', idCategoria: null, pagina: 1, tamano: 24 }])
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toHaveValue('')
     })
   })
 
