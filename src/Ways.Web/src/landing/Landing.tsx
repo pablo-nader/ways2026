@@ -1,8 +1,6 @@
 import { PREFIJO_ONLINE } from '../config/rutasPublicas'
 import { CabeceraPublica } from '../publico/CabeceraPublica'
-import { PiePublico } from '../publico/PiePublico'
 import { PorEstadoDeVitrina } from '../publico/PorEstadoDeVitrina'
-import { temaDeVitrina } from '../publico/tema'
 import { useVitrinaPublica } from '../publico/useVitrinaPublica'
 import { Descripcion } from './Descripcion'
 import { Portada } from './Portada'
@@ -25,7 +23,6 @@ export function Landing() {
             <Descripcion texto={vitrina.descripcion} />
             <Sucursales sucursales={vitrina.sucursales} />
           </main>
-          <PiePublico tema={temaDeVitrina(vitrina.tema)} />
         </div>
       )}
     </PorEstadoDeVitrina>

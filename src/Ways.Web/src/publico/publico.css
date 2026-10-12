@@ -235,43 +235,6 @@
   margin-top: 8px;
 }
 
-/* Pie */
-
-.publico-pie {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 32px 0 40px;
-  border-top: 6px solid var(--pub-acento);
-}
-
-.publico-pie-marca {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  color: var(--pub-secundario);
-}
-
-.publico-pie-wordmark {
-  height: 28px;
-  width: auto;
-}
-
-.publico-pie-chevrones {
-  height: 18px;
-  width: auto;
-  color: var(--pub-acento);
-}
-
-.publico-pie-acceso {
-  color: var(--pub-secundario);
-  font-size: 0.9rem;
-  text-decoration: underline;
-}
-
 /* Estados */
 
 .publico-calma {

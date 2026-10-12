@@ -109,13 +109,6 @@ describe('Landing', () => {
       expect(getComputedStyle(screen.getByRole('img', { name: 'Ferretería Sur' })).maxWidth).toBe('100%')
     })
 
-    it('el wordmark de Ways reserva su tamaño para que el pie no se corra al cargar', async () => {
-      await verPublicada()
-
-      const wordmark = within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })
-      expect(wordmark).toHaveAttribute('height', '28')
-      expect(wordmark).toHaveAttribute('width', '51')
-    })
 
     it('sin logo la cabecera escribe el nombre y no hay imagen del comercio', async () => {
       await verPublicada({ tieneLogo: false })
@@ -231,20 +224,12 @@ describe('Landing', () => {
 
       expect(document.documentElement.dataset.bsTheme).toBe('dark')
       expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#2a9d8f')
-      expect(within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })).toHaveAttribute(
-        'src',
-        '/marca/ways-logo-oscuro.png',
-      )
     })
 
-    it('el tema claro usa data-bs-theme light y el wordmark para fondos claros', async () => {
+    it('el tema claro usa data-bs-theme light', async () => {
       await verPublicada({ tema: 'claro' })
 
       expect(document.documentElement.dataset.bsTheme).toBe('light')
-      expect(within(screen.getByRole('contentinfo')).getByRole('img', { name: 'Ways' })).toHaveAttribute(
-        'src',
-        '/marca/ways-logo-claro.png',
-      )
     })
 
     it('sin color de acento rige el naranja de Ways', async () => {
@@ -253,13 +238,6 @@ describe('Landing', () => {
       expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#F7991C')
     })
 
-    it('el pie dice quién lo hizo y deja el acceso del comercio al login del back office', async () => {
-      await verPublicada()
-
-      const pie = within(screen.getByRole('contentinfo'))
-      expect(pie.getByText('Hecho con')).toBeInTheDocument()
-      expect(pie.getByRole('link', { name: 'Acceso para el comercio' })).toHaveAttribute('href', '/admin/login')
-    })
   })
 
   describe('sin publicar', () => {
