@@ -61,6 +61,7 @@ public static class DependencyInjection
         // Tienda online: publicación e imagen de cada artículo (admin) y consulta del catálogo público.
         services.AddScoped<ServicioDeCatalogoWeb>();
         services.AddScoped<ConsultaDeCatalogoPublico>();
+        services.AddScoped<ConsultaDeCombosPublicos>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();

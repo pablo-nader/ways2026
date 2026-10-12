@@ -26,4 +26,7 @@ public class Combo : EntidadTenant
     public decimal Precio { get; set; }
 
     public bool Activo { get; set; } = true;
+
+    /// <summary><c>true</c> (default) ⇒ la tienda online ofrece el combo.</summary>
+    public bool DisponibleOnline { get; set; } = true;
 }

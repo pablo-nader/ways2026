@@ -9,7 +9,7 @@ namespace Ways.Api.Endpoints;
 /// <summary>
 /// Lo que se puede saber del sitio sin sesión. Solo expone lo que el middleware de dominio ya
 /// resolvió —si es la plataforma o el nombre del comercio de un dominio verificado— y la vitrina
-/// publicada de ese tenant y su catálogo de artículos publicados, leídos en el modo de acceso <c>publico</c>
+/// publicada de ese tenant, su catálogo de artículos disponibles online y sus combos, leídos en el modo de acceso <c>publico</c>
 /// (solo <c>SELECT</c> sobre las tablas de <see cref="ILectorDeVitrinaPublica"/> y
 /// <see cref="ILectorDeCatalogoPublico"/>): ningún otro dato de tenant. La vitrina y el catálogo de un tenant
 /// que no puede operar (suspendido) no se sirven: contestan lo mismo que un comercio sin vitrina publicada.
@@ -79,8 +79,24 @@ public static class PublicoEndpoints
             return Results.Ok(catalogo);
         })
         .WithSummary(
-            "El catálogo de la tienda del dominio: artículos publicados, disponibles para la empresa de la vitrina y con "
-            + "precio en su lista, buscables y paginados, más las categorías con su cuenta.");
+            "El catálogo de la tienda del dominio: artículos disponibles online y a la venta, disponibles para la empresa "
+            + "de la vitrina y con precio en su lista (con la oferta online aplicada cuando la hay), buscables y "
+            + "paginados, más las categorías con su cuenta. En la primera página sin búsqueda ni categoría suma los combos.");
+
+        grupo.MapGet("/combos", async (
+            IDominioActual dominio, ILectorDeCatalogoPublico lector, HttpContext contexto, CancellationToken ct) =>
+        {
+            var combos = (TenantQueSirve(dominio) is { } idTenant ? await lector.ObtenerCombosAsync(idTenant, ct) : null)
+                ?? throw new ErrorDominio(
+                    "vitrina_no_publicada", "Este comercio todavía no publicó su página.", StatusCodes.Status404NotFound);
+
+            contexto.Response.Headers.CacheControl = "public, max-age=60";
+
+            return Results.Ok(combos);
+        })
+        .WithSummary(
+            "Los combos de la tienda: disponibles online, activos, de la empresa de la vitrina y con todos sus "
+            + "componentes artículos de la tienda, con precio en su lista y por unidad. Ordenados por nombre.");
 
         grupo.MapGet("/articulos/{id:int}/imagen", (
             IDominioActual dominio, ILectorDeCatalogoPublico lector, HttpContext contexto, int id, CancellationToken ct) =>

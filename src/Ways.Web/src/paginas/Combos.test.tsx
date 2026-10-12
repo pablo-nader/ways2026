@@ -58,6 +58,7 @@ function comboFixture(sobrescribir: Partial<ComboListado> = {}): ComboListado {
     precio: 5000,
     idEmpresa: null,
     activo: true,
+    disponibleOnline: true,
     componentes: [
       { idArticulo: 1, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
       { idArticulo: null, idFamilia: 7, nombre: 'Línea Coca 500', cantidad: 2, disponible: true },
@@ -176,6 +177,32 @@ describe('Combos — listado', () => {
     expect(screen.getByText(/tipeando su código con la C adelante/)).toBeInTheDocument()
   })
 
+  /**
+   * Cláusula bajo prueba: la columna "Online" dice Sí solo si el combo está disponible online Y activo. Mutación: quitar
+   * `&& combo.activo` hace fallar la aserción del combo inactivo.
+   */
+  it('la columna "Online" dice Sí solo si el combo está disponible online y activo', async () => {
+    mockearApiGet({
+      combos: [
+        comboFixture({ id: 4, nombre: 'En la tienda', disponibleOnline: true }),
+        comboFixture({ id: 5, codigo: 13, nombre: 'Solo en el local', disponibleOnline: false, activo: true }),
+        comboFixture({ id: 6, codigo: 14, nombre: 'Dado de baja', disponibleOnline: true, activo: false }),
+      ],
+    })
+
+    render(<Combos />)
+
+    await screen.findByText('En la tienda')
+    const posicion = screen.getAllByRole('columnheader').map((c) => c.textContent).indexOf('Online')
+    expect(posicion).toBeGreaterThan(-1)
+    const celdaDe = (nombre: string) => within(screen.getByText(nombre).closest('tr')!).getAllByRole('cell')[posicion]
+    expect(celdaDe('En la tienda')).toHaveTextContent('Sí')
+    expect(celdaDe('Solo en el local')).toHaveTextContent('No')
+    expect(within(screen.getByText('Solo en el local').closest('tr')!).getByText('Activo')).toBeInTheDocument()
+    expect(celdaDe('Dado de baja')).toHaveTextContent('No')
+    expect(within(screen.getByText('Dado de baja').closest('tr')!).getByText('Inactivo')).toBeInTheDocument()
+  })
+
   it('marca en la fila el combo con un componente no disponible', async () => {
     mockearApiGet({
       combos: [
@@ -274,6 +301,7 @@ describe('Combos — alta', () => {
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: 1, cantidad: 1 },
         { idFamilia: 7, cantidad: 2 },
@@ -313,6 +341,24 @@ describe('Combos — alta', () => {
     expect((apiPostMock.mock.calls[0][1] as { activo: boolean }).activo).toBe(false)
   })
 
+  /**
+   * Cláusula bajo prueba: un combo nuevo nace disponible online y el alta lo manda. Mutación: arrancar el formulario
+   * con `disponibleOnline: false` hace fallar las dos aserciones.
+   */
+  it('arranca con "Disponible online" marcado, y desmarcarlo viaja como false sin tocar "Activo"', async () => {
+    apiPostMock.mockResolvedValue(comboFixture())
+    await abrirNuevo()
+    expect(screen.getByLabelText('Disponible online')).toBeChecked()
+    expect(screen.getByLabelText('Disponible online')).toHaveAccessibleDescription('Desmarcalo para que la tienda online no lo ofrezca.')
+    await llenarAltaValida()
+    await usuario.click(screen.getByLabelText('Disponible online'))
+
+    await usuario.click(guardar())
+
+    await screen.findByText('Combo "Pancho y Coca" creado.')
+    expect(apiPostMock.mock.calls[0][1]).toMatchObject({ disponibleOnline: false, activo: true })
+  })
+
   it('no ofrece artículos pesables ni inactivos y lo avisa; sin ninguno elegible lo dice', async () => {
     await abrirNuevo()
 
@@ -323,6 +369,20 @@ describe('Combos — alta', () => {
     expect(within(lista).getAllByRole('option').map((o) => o.textContent)).toEqual(['A1 — Pancho', 'A2 — Gaseosa 500'])
     expect(fila(1).getByText(/Se ocultaron 2 resultados de los mostrados/)).toBeInTheDocument()
     expect(fila(1).queryByText(/Se muestran los primeros/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el buscador de componentes pide `soloVendibles=true`, así un artículo de uso interno no llega a
+   * ofrecerse. Mutación: llamar a `listar` sin la opción hace fallar esta aserción.
+   */
+  it('el buscador de componentes pide soloVendibles=true', async () => {
+    await abrirNuevo()
+
+    await usuario.type(fila(1).getByLabelText('Buscar artículo del componente 1'), 'pancho')
+    await usuario.click(fila(1).getByRole('button', { name: 'Buscar artículos del componente 1' }))
+
+    await fila(1).findByRole('listbox')
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos?busqueda=pancho&soloVendibles=true')
   })
 
   it('con más resultados que los recibidos avisa que son los primeros y aclara que lo oculto es de lo mostrado', async () => {
@@ -639,12 +699,36 @@ describe('Combos — edición', () => {
       precio: 5000,
       idEmpresa: null,
       activo: false,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: 2, cantidad: 1 },
         { idFamilia: 7, cantidad: 3 },
       ],
     })
     expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('un combo no disponible online abre desmarcado y el PUT reenvía el valor, también cuando se lo marca', async () => {
+    mockearApiGet({ combos: [comboFixture({ disponibleOnline: false })], articulos: ARTICULOS })
+    apiPutMock.mockResolvedValue(comboFixture({ disponibleOnline: false }))
+    render(<Combos />)
+    await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
+    await screen.findByRole('dialog', { name: 'Editar combo' })
+    await screen.findByRole('option', { name: 'Línea Coca 500' })
+    expect(screen.getByLabelText('Disponible online')).not.toBeChecked()
+
+    await usuario.click(guardar())
+
+    await screen.findByText('Combo "Pancho y Coca" actualizado.')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ disponibleOnline: false })
+
+    await usuario.click(await screen.findByRole('button', { name: 'Editar Pancho y Coca' }))
+    await screen.findByRole('dialog', { name: 'Editar combo' })
+    await usuario.click(screen.getByLabelText('Disponible online'))
+    await usuario.click(guardar())
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
+    expect(apiPutMock.mock.calls[1][1]).toMatchObject({ disponibleOnline: true })
   })
 
   it('un combo de otra empresa que no está en el selector conserva su empresa', async () => {

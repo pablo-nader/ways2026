@@ -28,7 +28,8 @@ vi.mock('../../api/cliente', () => ({
 
 function filaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -173,19 +174,29 @@ describe('GrillaDeArticulos — columnas', () => {
   })
 
   // mutation-proof-tests: cada marca sale de su propio campo de ESA fila; tres filas con combinaciones distintas.
-  it('la columna Tienda marca "Publicado" y "Con imagen" cada una por su campo, en su propia celda', async () => {
+  it('la columna Disponibilidad marca "No se vende", "Online" y "Con imagen" cada una por su campo, en su propia celda', async () => {
     mockearRutas(
       paginaFixture([
-        filaFixture({ id: 1, nombre: 'En la tienda', publicadoWeb: true, tieneImagen: false, proveedor: 'Alfa SA' }),
-        filaFixture({ id: 2, nombre: 'Solo con foto', publicadoWeb: false, tieneImagen: true }),
-        filaFixture({ id: 3, nombre: 'Sin nada', publicadoWeb: false, tieneImagen: false }),
+        filaFixture({
+          id: 1,
+          nombre: 'En la tienda',
+          disponibleOnline: true,
+          disponibleVenta: true,
+          tieneImagen: false,
+          proveedor: 'Alfa SA',
+        }),
+        filaFixture({ id: 2, nombre: 'Solo con foto', disponibleOnline: false, tieneImagen: true }),
+        filaFixture({ id: 3, nombre: 'Sin nada', disponibleOnline: false, tieneImagen: false }),
+        filaFixture({ id: 4, nombre: 'Uso interno', disponibleVenta: false, disponibleOnline: true }),
+        filaFixture({ id: 5, nombre: 'Interno y fuera', disponibleVenta: false, disponibleOnline: false, tieneImagen: true }),
+        filaFixture({ id: 6, nombre: 'Dado de baja', activo: false, disponibleVenta: true, disponibleOnline: true }),
       ]),
     )
     renderGrilla()
 
     await screen.findByText('En la tienda')
     const columnas = screen.getAllByRole('columnheader').map((c) => c.textContent)
-    const posicion = columnas.indexOf('Tienda')
+    const posicion = columnas.indexOf('Disponibilidad')
     expect(posicion).toBeGreaterThan(-1)
 
     const celdaDe = (nombre: string) => {
@@ -195,11 +206,20 @@ describe('GrillaDeArticulos — columnas', () => {
       return within(fila).getAllByRole('cell')[posicion]
     }
 
-    expect(celdaDe('En la tienda')).toHaveTextContent('Publicado')
+    expect(celdaDe('En la tienda')).toHaveTextContent('Online')
     expect(celdaDe('En la tienda')).not.toHaveTextContent('Con imagen')
+    expect(celdaDe('En la tienda')).not.toHaveTextContent('No se vende')
     expect(celdaDe('Solo con foto')).toHaveTextContent('Con imagen')
-    expect(celdaDe('Solo con foto')).not.toHaveTextContent('Publicado')
+    expect(celdaDe('Solo con foto')).not.toHaveTextContent('Online')
     expect(celdaDe('Sin nada')).toBeEmptyDOMElement()
+    // Un artículo que no se vende tampoco figura como online aunque su flag online esté prendido.
+    expect(celdaDe('Uso interno')).toHaveTextContent('No se vende')
+    expect(celdaDe('Uso interno')).not.toHaveTextContent('Online')
+    expect(celdaDe('Interno y fuera')).toHaveTextContent('No se vende')
+    expect(celdaDe('Interno y fuera')).toHaveTextContent('Con imagen')
+    expect(celdaDe('Interno y fuera')).not.toHaveTextContent('Online')
+    // Un artículo inactivo tampoco figura como online (la tienda solo muestra activos), aunque venta y online estén prendidos.
+    expect(celdaDe('Dado de baja')).not.toHaveTextContent('Online')
   })
 
   it('la fila de "No hay artículos" abarca todas las columnas de la tabla', async () => {

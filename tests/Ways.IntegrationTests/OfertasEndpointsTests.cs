@@ -207,7 +207,8 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Acumulable: oferta.Acumulable,
         IdsListas: idsListas,
         Activo: oferta.Activo,
-        IdFamilia: oferta.IdFamilia);
+        IdFamilia: oferta.IdFamilia,
+        DisponibleOnline: oferta.DisponibleOnline);
 
     private static async Task<OfertaListado> CrearOfertaAsync(
         HttpClient cliente, int idGrupo, IReadOnlyList<int>? idsListas = null)

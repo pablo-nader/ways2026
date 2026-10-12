@@ -729,8 +729,11 @@ export type ArticuloListado = {
   /** Código que el proveedor consultado imprime para este artículo: solo viene cuando el listado
    * se pidió con `idProveedor` y la búsqueda coincidió exactamente con ese código. */
   codigoProveedor?: string | null
-  /** El artículo se ofrece en la tienda online. Se escribe aparte (`PUT /api/articulos/{id}/web`), nunca con la edición. */
-  publicadoWeb: boolean
+  /** El artículo se ofrece en la tienda online (por defecto sí). Se escribe aparte (`PUT /api/articulos/{id}/disponibilidad`), nunca con la edición. */
+  disponibleOnline: boolean
+  /** El artículo se puede vender, en la caja y online (por defecto sí). `false` es un artículo de uso interno: se compra y se
+   * stockea, pero no se vende. Se escribe junto con `disponibleOnline` por el mismo endpoint. */
+  disponibleVenta: boolean
   /** El artículo tiene una imagen cargada; los bytes salen de `GET /api/articulos/{id}/imagen`. */
   tieneImagen: boolean
 }
@@ -831,8 +834,9 @@ export type FilaDeGrillaDeArticulos = {
   idProveedorHabitual: number | null
   proveedor: string | null
   activo: boolean
-  /** Estado del artículo en la tienda online: si se publica y si tiene una imagen viva. */
-  publicadoWeb: boolean
+  /** Disponibilidad del artículo (a la venta y en la tienda online) y si tiene una imagen viva. */
+  disponibleOnline: boolean
+  disponibleVenta: boolean
   tieneImagen: boolean
 }
 
@@ -1024,6 +1028,8 @@ export type OfertaListado = {
   prioridad: number
   acumulable: boolean
   activo: boolean
+  /** La tienda online aplica la oferta a los precios que muestra (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   idsListas: number[]
   nombreArticulo?: string | null
 }
@@ -1050,6 +1056,9 @@ export type AltaOferta = {
   acumulable: boolean
   idsListas: number[] | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, la oferta conserva el valor que tenía. El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
 }
 
 export type EdicionOferta = AltaOferta
@@ -1253,6 +1262,8 @@ export type ComboListado = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** La tienda online lista el combo (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   componentes: ComponenteDeComboListado[]
 }
 
@@ -1267,6 +1278,9 @@ export type AltaCombo = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición, si falta, el combo conserva el valor que tenía. El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
   componentes: ComponenteDeSolicitudDeCombo[]
 }
 

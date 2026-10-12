@@ -20,9 +20,9 @@ using Ways.Infrastructure.Multitenancy;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// La administración de la tienda online de cada artículo: <c>PUT /api/articulos/{id}/web</c> (publicar) y
+/// La administración de la tienda online de cada artículo: <c>PUT /api/articulos/{id}/disponibilidad</c> y
 /// <c>GET/PUT/DELETE /api/articulos/{id}/imagen</c>, más lo que expone el resto de la API del artículo
-/// (<c>publicadoWeb</c> y <c>tieneImagen</c>) y la lista de precios de la tienda en la vitrina
+/// (<c>disponibleOnline</c>, <c>disponibleVenta</c> y <c>tieneImagen</c>) y la lista de precios de la tienda en la vitrina
 /// (<c>idListaPrecio</c>). Todo contra Postgres real y la API completa.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
@@ -30,7 +30,9 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
 {
     private readonly ApoyoDeCatalogoOnline apoyo = new(fixture);
 
-    private static string RutaWeb(int id) => $"/api/articulos/{id}/web";
+    private static string RutaDisponibilidad(int id) => $"/api/articulos/{id}/disponibilidad";
+
+    private static object Disponibilidad(bool venta, bool online) => new { disponibleVenta = venta, disponibleOnline = online };
 
     private static string RutaImagen(int id) => $"/api/articulos/{id}/imagen";
 
@@ -59,12 +61,12 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
     public async Task SinSesionDa401SoloElAdminEscribeYUnVendedorPuedeVerLaImagen()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-roles");
-        var id = await apoyo.SembrarArticuloAsync(tienda, "Roles", publicado: false);
+        var id = await apoyo.SembrarArticuloAsync(tienda, "Roles", disponibleOnline: false);
         var bytes = ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoPng);
         Assert.Equal(HttpStatusCode.OK, (await admin.SendAsync(PutImagen(id, bytes))).StatusCode);
 
         using var anonimo = fixture.CreateClient();
-        Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.PutAsJsonAsync(RutaWeb(id), new { publicado = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(true, true))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.SendAsync(PutImagen(id, bytes))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.DeleteAsync(RutaImagen(id))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync(RutaImagen(id))).StatusCode);
@@ -74,7 +76,7 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
             var (mail, password) = await apoyo.Vitrinas.SembrarUsuarioAsync(tienda.IdTenant, rol, rol.ToString().ToLowerInvariant());
             var cliente = await apoyo.Vitrinas.ClienteConSesionAsync(mail, password);
 
-            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.PutAsJsonAsync(RutaWeb(id), new { publicado = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(true, true))).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await cliente.SendAsync(PutImagen(id, bytes))).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await cliente.DeleteAsync(RutaImagen(id))).StatusCode);
 
@@ -83,105 +85,146 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
             Assert.Equal(bytes, await lectura.Content.ReadAsByteArrayAsync());
         }
 
-        Assert.False((await apoyo.LeerArticuloAsync(id)).PublicadoWeb);
+        Assert.False((await apoyo.LeerArticuloAsync(id)).DisponibleOnline);
         Assert.Single(await apoyo.LeerImagenesAsync(id));
     }
 
-    // ---- publicar ---------------------------------------------------------------------------------
+    // ---- disponibilidad ---------------------------------------------------------------------------
 
     [Fact]
-    public async Task UnArticuloPorImporteNoSePuedePublicarPeroSiDespublicar()
+    public async Task UnArticuloPorImporteNoSePuedeOfrecerEnLaTiendaPeroSiRetirarse()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-por-importe");
-        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Fiambrería", publicado: false, unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
+        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Fiambrería", disponibleOnline: false, unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
 
-        var publicar = await admin.PutAsJsonAsync(RutaWeb(porImporte), new { publicado = true });
+        var ofrecer = await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: true, online: true));
 
-        Assert.Equal(HttpStatusCode.BadRequest, publicar.StatusCode);
-        Assert.Equal("articulo_por_importe_no_publicable", (await LeerAsync(publicar)).GetProperty("codigo").GetString());
-        Assert.False((await apoyo.LeerArticuloAsync(porImporte)).PublicadoWeb);
-        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaWeb(porImporte), new { publicado = false })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, ofrecer.StatusCode);
+        Assert.Equal("articulo_por_importe_no_publicable", (await LeerAsync(ofrecer)).GetProperty("codigo").GetString());
+        Assert.False((await apoyo.LeerArticuloAsync(porImporte)).DisponibleOnline);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: true, online: false))).StatusCode);
     }
 
+    /// <summary>Un artículo por importe que ya tiene la bandera online encendida (el valor por defecto de las filas
+    /// existentes) no rompe al cambiar solo la bandera de venta: el rechazo es de encender, no de estar encendida.</summary>
     [Fact]
-    public async Task PublicarYDespublicarCambiaLaBaseYSeVeEnElDetalleElListadoYLaGrilla()
+    public async Task CambiarSoloLaVentaDeUnArticuloPorImporteConLaBanderaOnlineYaEncendidaNoFalla()
     {
-        var (tienda, admin) = await TiendaConAdminAsync("adm-publicar");
-        var a = await apoyo.SembrarVendibleAsync(tienda, "Aaa publicable", 10m, publicado: false);
-        var b = await apoyo.SembrarVendibleAsync(tienda, "Bbb vecino", 20m, publicado: false);
+        var (tienda, admin) = await TiendaConAdminAsync("adm-por-importe-venta");
+        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Verdulería", unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
+
+        var respuesta = await admin.PutAsJsonAsync(RutaDisponibilidad(porImporte), Disponibilidad(venta: false, online: true));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var articulo = await apoyo.LeerArticuloAsync(porImporte);
+        Assert.False(articulo.DisponibleVenta);
+        Assert.True(articulo.DisponibleOnline);
+    }
+
+    /// <summary>Las dos banderas se escriben juntas y cada una por su cuenta: A (online, no se vende), B (se vende, no
+    /// está online) y un vecino C sin tocar, con valores DISTINTOS por artículo y por bandera, de modo que ni un cruce
+    /// entre las dos ni un <c>Where</c> perdido que alcance al vecino pasen. Detalle, listado y grilla leen lo mismo.</summary>
+    [Fact]
+    public async Task CambiarLaDisponibilidadEscribeLasDosBanderasPorSeparadoYSeVeEnElDetalleElListadoYLaGrilla()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-disponibilidad");
+        var a = await apoyo.SembrarVendibleAsync(tienda, "Aaa interno", 10m);
+        var b = await apoyo.SembrarVendibleAsync(tienda, "Bbb sin web", 20m);
+        var c = await apoyo.SembrarVendibleAsync(tienda, "Ccc vecino", 30m);
         await apoyo.SembrarImagenAsync(tienda.IdTenant, b, ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoJpeg));
-        Assert.False((await apoyo.LeerArticuloAsync(a)).PublicadoWeb);
+        var vecinoAntes = await apoyo.LeerArticuloAsync(c);
+        Assert.True(vecinoAntes.DisponibleOnline);
+        Assert.True(vecinoAntes.DisponibleVenta);
 
-        var publicar = await admin.PutAsJsonAsync(RutaWeb(a), new { publicado = true });
+        var primera = await admin.PutAsJsonAsync(RutaDisponibilidad(a), Disponibilidad(venta: false, online: true));
 
-        Assert.Equal(HttpStatusCode.OK, publicar.StatusCode);
-        var cuerpo = await LeerAsync(publicar);
+        Assert.Equal(HttpStatusCode.OK, primera.StatusCode);
+        var cuerpo = await LeerAsync(primera);
         Assert.Equal(a, cuerpo.GetProperty("idArticulo").GetInt32());
-        Assert.True(cuerpo.GetProperty("publicado").GetBoolean());
-        Assert.True((await apoyo.LeerArticuloAsync(a)).PublicadoWeb);
-        Assert.False((await apoyo.LeerArticuloAsync(b)).PublicadoWeb);
+        Assert.False(cuerpo.GetProperty("disponibleVenta").GetBoolean());
+        Assert.True(cuerpo.GetProperty("disponibleOnline").GetBoolean());
 
-        // Detalle, listado y grilla, con valores distintos por artículo: el vecino no se publicó pero tiene imagen.
+        var segunda = await admin.PutAsJsonAsync(RutaDisponibilidad(b), Disponibilidad(venta: true, online: false));
+
+        Assert.Equal(HttpStatusCode.OK, segunda.StatusCode);
+        var cuerpoB = await LeerAsync(segunda);
+        Assert.True(cuerpoB.GetProperty("disponibleVenta").GetBoolean());
+        Assert.False(cuerpoB.GetProperty("disponibleOnline").GetBoolean());
+
+        var enBaseA = await apoyo.LeerArticuloAsync(a);
+        var enBaseB = await apoyo.LeerArticuloAsync(b);
+        Assert.Equal((false, true), (enBaseA.DisponibleVenta, enBaseA.DisponibleOnline));
+        Assert.Equal((true, false), (enBaseB.DisponibleVenta, enBaseB.DisponibleOnline));
+        var vecinoDespues = await apoyo.LeerArticuloAsync(c);
+        Assert.Equal((true, true), (vecinoDespues.DisponibleVenta, vecinoDespues.DisponibleOnline));
+        Assert.Equal(vecinoAntes.UpdatedAt, vecinoDespues.UpdatedAt);
+
+        // Detalle, listado y grilla, con valores distintos por artículo: el vecino de la imagen no está online.
         var detalleA = await LeerAsync(await admin.GetAsync($"/api/articulos/{a}"));
         var detalleB = await LeerAsync(await admin.GetAsync($"/api/articulos/{b}"));
-        Assert.True(detalleA.GetProperty("publicadoWeb").GetBoolean());
-        Assert.False(detalleA.GetProperty("tieneImagen").GetBoolean());
-        Assert.False(detalleB.GetProperty("publicadoWeb").GetBoolean());
-        Assert.True(detalleB.GetProperty("tieneImagen").GetBoolean());
+        Assert.Equal((false, true, false), LeerBanderas(detalleA));
+        Assert.Equal((true, false, true), LeerBanderas(detalleB));
 
         var listado = (await LeerAsync(await admin.GetAsync("/api/articulos?tamanio=50")))
             .GetProperty("items").EnumerateArray().ToDictionary(x => x.GetProperty("id").GetInt32());
-        Assert.True(listado[a].GetProperty("publicadoWeb").GetBoolean());
-        Assert.False(listado[a].GetProperty("tieneImagen").GetBoolean());
-        Assert.False(listado[b].GetProperty("publicadoWeb").GetBoolean());
-        Assert.True(listado[b].GetProperty("tieneImagen").GetBoolean());
+        Assert.Equal((false, true, false), LeerBanderas(listado[a]));
+        Assert.Equal((true, false, true), LeerBanderas(listado[b]));
+        Assert.Equal((true, true, false), LeerBanderas(listado[c]));
 
         var grilla = (await LeerAsync(await admin.GetAsync("/api/articulos/grilla?tamanio=50")))
             .GetProperty("items").EnumerateArray().ToDictionary(x => x.GetProperty("id").GetInt32());
-        Assert.True(grilla[a].GetProperty("publicadoWeb").GetBoolean());
-        Assert.False(grilla[a].GetProperty("tieneImagen").GetBoolean());
-        Assert.False(grilla[b].GetProperty("publicadoWeb").GetBoolean());
-        Assert.True(grilla[b].GetProperty("tieneImagen").GetBoolean());
+        Assert.Equal((false, true, false), LeerBanderas(grilla[a]));
+        Assert.Equal((true, false, true), LeerBanderas(grilla[b]));
+        Assert.Equal((true, true, false), LeerBanderas(grilla[c]));
 
-        var despublicar = await admin.PutAsJsonAsync(RutaWeb(a), new { publicado = false });
+        var devuelta = await admin.PutAsJsonAsync(RutaDisponibilidad(a), Disponibilidad(venta: true, online: true));
 
-        Assert.Equal(HttpStatusCode.OK, despublicar.StatusCode);
-        Assert.False((await LeerAsync(despublicar)).GetProperty("publicado").GetBoolean());
-        Assert.False((await apoyo.LeerArticuloAsync(a)).PublicadoWeb);
+        Assert.Equal(HttpStatusCode.OK, devuelta.StatusCode);
+        var tras = await apoyo.LeerArticuloAsync(a);
+        Assert.Equal((true, true), (tras.DisponibleVenta, tras.DisponibleOnline));
     }
+
+    /// <summary>(disponibleVenta, disponibleOnline, tieneImagen) de un artículo del detalle, el listado o la grilla.</summary>
+    private static (bool Venta, bool Online, bool Imagen) LeerBanderas(JsonElement articulo) =>
+        (articulo.GetProperty("disponibleVenta").GetBoolean(),
+            articulo.GetProperty("disponibleOnline").GetBoolean(),
+            articulo.GetProperty("tieneImagen").GetBoolean());
 
     /// <summary>Pedir el estado que ya tiene contesta lo mismo y no escribe: <c>updated_at</c> no se mueve.</summary>
     [Fact]
-    public async Task PublicarDosVecesEsIdempotenteYLaSegundaNoEscribe()
+    public async Task PedirLaMismaDisponibilidadDosVecesEsIdempotenteYLaSegundaNoEscribe()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-idempotente");
-        var id = await apoyo.SembrarArticuloAsync(tienda, "Idempotente", publicado: false);
+        var id = await apoyo.SembrarArticuloAsync(tienda, "Idempotente", disponibleOnline: false);
 
-        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaWeb(id), new { publicado = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(false, true))).StatusCode);
         var tras1 = await apoyo.LeerArticuloAsync(id);
 
-        var segunda = await admin.PutAsJsonAsync(RutaWeb(id), new { publicado = true });
+        var segunda = await admin.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(false, true));
 
         Assert.Equal(HttpStatusCode.OK, segunda.StatusCode);
-        Assert.True((await LeerAsync(segunda)).GetProperty("publicado").GetBoolean());
+        var cuerpo = await LeerAsync(segunda);
+        Assert.True(cuerpo.GetProperty("disponibleOnline").GetBoolean());
+        Assert.False(cuerpo.GetProperty("disponibleVenta").GetBoolean());
         var tras2 = await apoyo.LeerArticuloAsync(id);
-        Assert.True(tras2.PublicadoWeb);
+        Assert.True(tras2.DisponibleOnline);
+        Assert.False(tras2.DisponibleVenta);
         Assert.Equal(tras1.UpdatedAt, tras2.UpdatedAt);
 
-        var yaDespublicado = await apoyo.SembrarArticuloAsync(tienda, "Ya despublicado", publicado: false);
-        var antes = await apoyo.LeerArticuloAsync(yaDespublicado);
-        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaWeb(yaDespublicado), new { publicado = false })).StatusCode);
-        Assert.Equal(antes.UpdatedAt, (await apoyo.LeerArticuloAsync(yaDespublicado)).UpdatedAt);
+        var yaEnEseEstado = await apoyo.SembrarArticuloAsync(tienda, "Ya apagado", disponibleOnline: false, disponibleVenta: false);
+        var antes = await apoyo.LeerArticuloAsync(yaEnEseEstado);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaDisponibilidad(yaEnEseEstado), Disponibilidad(false, false))).StatusCode);
+        Assert.Equal(antes.UpdatedAt, (await apoyo.LeerArticuloAsync(yaEnEseEstado)).UpdatedAt);
     }
 
-    /// <summary>Editar el artículo por el PUT grande no toca la publicación (no es un campo de esa edición) ni la
+    /// <summary>Editar el artículo por el PUT grande no toca la disponibilidad (no es un campo de esa edición) ni la
     /// imagen, y su respuesta los informa.</summary>
     [Fact]
-    public async Task EditarElArticuloNoCambiaSuPublicacionNiSuImagenYLaRespuestaLosInforma()
+    public async Task EditarElArticuloNoCambiaSuDisponibilidadNiSuImagenYLaRespuestaLosInforma()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-edicion");
-        var id = await apoyo.SembrarVendibleAsync(tienda, "Para editar", 10m, publicado: false);
-        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaWeb(id), new { publicado = true })).StatusCode);
+        var id = await apoyo.SembrarVendibleAsync(tienda, "Para editar", 10m);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(venta: false, online: true))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await admin.SendAsync(PutImagen(id, ApoyoDeVitrinas.Imagen(ValidadorDeImagen.TipoPng)))).StatusCode);
 
         var edicion = await admin.PutAsJsonAsync($"/api/articulos/{id}", new
@@ -208,17 +251,19 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(HttpStatusCode.OK, edicion.StatusCode);
         var cuerpo = await LeerAsync(edicion);
         Assert.Equal("Editado", cuerpo.GetProperty("nombre").GetString());
-        Assert.True(cuerpo.GetProperty("publicadoWeb").GetBoolean());
+        Assert.True(cuerpo.GetProperty("disponibleOnline").GetBoolean());
+        Assert.False(cuerpo.GetProperty("disponibleVenta").GetBoolean());
         Assert.True(cuerpo.GetProperty("tieneImagen").GetBoolean());
 
         var enBase = await apoyo.LeerArticuloAsync(id);
         Assert.Equal("Editado", enBase.Nombre);
-        Assert.True(enBase.PublicadoWeb);
+        Assert.True(enBase.DisponibleOnline);
+        Assert.False(enBase.DisponibleVenta);
         Assert.Single(await apoyo.LeerImagenesAsync(id));
     }
 
     [Fact]
-    public async Task UnArticuloNuevoNaceSinPublicarNiImagenYLaRespuestaDelAltaLoDice()
+    public async Task UnArticuloNuevoNaceDisponibleOnlineYParaLaVentaSinImagenYLaRespuestaDelAltaLoDice()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-alta");
 
@@ -233,40 +278,55 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var cuerpo = await LeerAsync(alta);
-        Assert.False(cuerpo.GetProperty("publicadoWeb").GetBoolean());
+        Assert.True(cuerpo.GetProperty("disponibleOnline").GetBoolean());
+        Assert.True(cuerpo.GetProperty("disponibleVenta").GetBoolean());
         Assert.False(cuerpo.GetProperty("tieneImagen").GetBoolean());
-        Assert.False((await apoyo.LeerArticuloAsync(cuerpo.GetProperty("id").GetInt32())).PublicadoWeb);
+        var creado = await apoyo.LeerArticuloAsync(cuerpo.GetProperty("id").GetInt32());
+        Assert.True(creado.DisponibleOnline);
+        Assert.True(creado.DisponibleVenta);
     }
 
     /// <summary>Un artículo que no se ve (no existe, dado de baja, de otro tenant) contesta 404 ANTES de mirar el
-    /// cuerpo, así que un cuerpo sin <c>publicado</c> no lo convierte en 400. Para uno que se ve, el cuerpo sin
-    /// <c>publicado</c> es 400 <c>publicado_requerido</c> y no escribe.</summary>
+    /// cuerpo, así que un cuerpo incompleto no lo convierte en 400. Para uno que se ve, cada bandera que falta (o viene
+    /// <c>null</c>) es su propio 400 (<c>disponible_venta_requerido</c> / <c>disponible_online_requerido</c>) y no
+    /// escribe.</summary>
     [Fact]
     public async Task UnArticuloQueNoSeVeDa404AntesQueLaValidacionDelCuerpo()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-404-web");
         var ajeno = await apoyo.SembrarTiendaAsync("adm-404-web-ajeno");
-        var propio = await apoyo.SembrarArticuloAsync(tienda, "Propio", publicado: false);
-        var eliminado = await apoyo.SembrarArticuloAsync(tienda, "Eliminado", publicado: false, eliminado: true);
-        var deOtro = await apoyo.SembrarArticuloAsync(ajeno, "De otro", publicado: false);
+        var propio = await apoyo.SembrarArticuloAsync(tienda, "Propio");
+        var eliminado = await apoyo.SembrarArticuloAsync(tienda, "Eliminado", eliminado: true);
+        var deOtro = await apoyo.SembrarArticuloAsync(ajeno, "De otro");
 
         foreach (var id in new[] { 987_654_321, eliminado, deOtro })
         {
-            foreach (var cuerpo in new[] { "{}", "{\"publicado\":true}", "{\"publicado\":null}" })
+            foreach (var cuerpo in new[]
             {
-                var respuesta = await admin.PutAsync(RutaWeb(id), Json(cuerpo));
+                "{}",
+                "{\"disponibleVenta\":false}",
+                "{\"disponibleOnline\":false,\"disponibleVenta\":null}"
+            })
+            {
+                var respuesta = await admin.PutAsync(RutaDisponibilidad(id), Json(cuerpo));
 
                 Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
             }
         }
 
-        Assert.False((await apoyo.LeerArticuloAsync(eliminado)).PublicadoWeb);
-        Assert.False((await apoyo.LeerArticuloAsync(deOtro)).PublicadoWeb);
+        Assert.True((await apoyo.LeerArticuloAsync(eliminado)).DisponibleVenta);
+        Assert.True((await apoyo.LeerArticuloAsync(deOtro)).DisponibleVenta);
 
-        var sinCampo = await admin.PutAsync(RutaWeb(propio), Json("{}"));
-        Assert.Equal(HttpStatusCode.BadRequest, sinCampo.StatusCode);
-        Assert.Equal("publicado_requerido", await ApoyoDeDominios.CodigoDeErrorAsync(sinCampo));
-        Assert.False((await apoyo.LeerArticuloAsync(propio)).PublicadoWeb);
+        var sinVenta = await admin.PutAsync(RutaDisponibilidad(propio), Json("{\"disponibleOnline\":false}"));
+        Assert.Equal(HttpStatusCode.BadRequest, sinVenta.StatusCode);
+        Assert.Equal("disponible_venta_requerido", await ApoyoDeDominios.CodigoDeErrorAsync(sinVenta));
+
+        var sinOnline = await admin.PutAsync(RutaDisponibilidad(propio), Json("{\"disponibleVenta\":false,\"disponibleOnline\":null}"));
+        Assert.Equal(HttpStatusCode.BadRequest, sinOnline.StatusCode);
+        Assert.Equal("disponible_online_requerido", await ApoyoDeDominios.CodigoDeErrorAsync(sinOnline));
+
+        var enBase = await apoyo.LeerArticuloAsync(propio);
+        Assert.Equal((true, true), (enBase.DisponibleVenta, enBase.DisponibleOnline));
     }
 
     // ---- imagen: ida y vuelta ---------------------------------------------------------------------
@@ -537,24 +597,25 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     /// <summary>
-    /// Publicar lee el artículo BAJO el lock: si la baja gana la carrera, la publicación contesta 404 y no
-    /// escribe <c>publicado_web</c> sobre un artículo borrado. Con la lectura antes del lock (o sin lock), EF
+    /// Cambiar la disponibilidad lee el artículo BAJO el lock: si la baja gana la carrera, el cambio contesta 404 y
+    /// no escribe <c>disponible_online</c> ni <c>disponible_venta</c> sobre un artículo borrado. Con la lectura antes del lock (o sin lock), EF
     /// vería el artículo vivo, esperaría recién en el <c>UPDATE</c> y escribiría igual.
     /// </summary>
     [Fact]
-    public async Task UnaPublicacionQuePierdeContraLaBajaDelArticuloDa404YNoEscribe()
+    public async Task UnCambioDeDisponibilidadQuePierdeContraLaBajaDelArticuloDa404YNoEscribe()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-baja-publicar");
-        var id = await apoyo.SembrarArticuloAsync(tienda, "Se da de baja y se publica", publicado: false);
+        var id = await apoyo.SembrarArticuloAsync(tienda, "Se da de baja y cambia", disponibleOnline: false);
 
         await using var sostenedor = await TomarLockDelArticuloAsync(id);
-        var publicar = admin.PutAsJsonAsync(RutaWeb(id), new { publicado = true });
+        var cambio = admin.PutAsJsonAsync(RutaDisponibilidad(id), Disponibilidad(venta: false, online: true));
         await EsperarBloqueadosAsync(esperados: 1);
 
         await sostenedor.DarDeBajaYSoltarAsync();
 
-        Assert.Equal(HttpStatusCode.NotFound, (await publicar).StatusCode);
-        Assert.False((await apoyo.LeerArticuloAsync(id)).PublicadoWeb);
+        Assert.Equal(HttpStatusCode.NotFound, (await cambio).StatusCode);
+        var enBase = await apoyo.LeerArticuloAsync(id);
+        Assert.Equal((false, true), (enBase.DisponibleOnline, enBase.DisponibleVenta));
     }
 
     private Task<SostenedorDeLock> TomarLockDelArticuloAsync(int idArticulo) =>
@@ -707,23 +768,24 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     [Fact]
-    public async Task UnaFallaTransitoriaAlPublicarNoSeReintentaYElArticuloSigueSinPublicar()
+    public async Task UnaFallaTransitoriaAlCambiarLaDisponibilidadNoSeReintentaYElArticuloSigueIgual()
     {
-        var tienda = await apoyo.SembrarTiendaAsync("adm-reintento-publicar");
-        var id = await apoyo.SembrarArticuloAsync(tienda, "Reintento publicar", publicado: false);
+        var tienda = await apoyo.SembrarTiendaAsync("adm-reintento-disponibilidad");
+        var id = await apoyo.SembrarArticuloAsync(tienda, "Reintento disponibilidad", disponibleOnline: false);
         var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", "40001", ClaseDeSentencia.Update);
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma, interceptor))
         {
             var error = await Assert.ThrowsAnyAsync<Exception>(
-                () => ServicioDe(db).PublicarAsync(id, new SolicitudDePublicacionWeb(true)));
+                () => ServicioDe(db).CambiarDisponibilidadAsync(id, new SolicitudDeDisponibilidad(false, true)));
 
             var postgres = error as PostgresException ?? error.InnerException as PostgresException;
             Assert.Equal("40001", Assert.IsType<PostgresException>(postgres).SqlState);
         }
 
         Assert.Equal(1, interceptor.Intentos);
-        Assert.False((await apoyo.LeerArticuloAsync(id)).PublicadoWeb);
+        var enBase = await apoyo.LeerArticuloAsync(id);
+        Assert.Equal((false, true), (enBase.DisponibleOnline, enBase.DisponibleVenta));
     }
 
     [Fact]

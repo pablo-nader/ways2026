@@ -112,7 +112,8 @@ function familiaListado(sobrescribir: Partial<FamiliaListado> = {}): FamiliaList
 
 function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',
@@ -156,7 +157,8 @@ function miembro(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
 
 function filaGrilla(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
   return {
-    publicadoWeb: false,
+    disponibleOnline: true,
+    disponibleVenta: true,
     tieneImagen: false,
     id: 1,
     codigoInterno: 'A0001',

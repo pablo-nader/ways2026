@@ -111,6 +111,11 @@ public class OfertaConfiguration : IEntityTypeConfiguration<Oferta>
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.Property(o => o.DisponibleOnline)
+            .HasColumnName("disponible_online")
+            .HasDefaultValue(true)
+            .IsRequired();
+
         builder.Property(o => o.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(o => o.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(o => o.DeletedAt).HasColumnName("deleted_at");

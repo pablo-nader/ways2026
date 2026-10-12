@@ -231,10 +231,10 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal("A publicada", intacta.Tagline);
     }
 
-    /// <summary>Exactamente las nueve tablas de la landing y la tienda con policy de modo público, todas de solo
+    /// <summary>Exactamente las trece tablas de la landing y la tienda con policy de modo público, todas de solo
     /// lectura: otra tabla con una policy así, o una de escritura, rompe la igualdad.</summary>
     [Fact]
-    public async Task SoloLasNueveTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura()
+    public async Task SoloLasTreceTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura()
     {
         using var _ = fixture.CreateClient();
         await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
@@ -260,9 +260,13 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
                 "articulos:articulos_publico_lectura:SELECT",
                 "articulos_empresas:articulos_empresas_publico_lectura:SELECT",
                 "categorias:categorias_publico_lectura:SELECT",
+                "combos:combos_publico_lectura:SELECT",
+                "combos_componentes:combos_componentes_publico_lectura:SELECT",
                 "empresas:empresas_publico_lectura:SELECT",
                 "imagenes_articulo:imagenes_articulo_publico_lectura:SELECT",
                 "listas_precio:listas_precio_publico_lectura:SELECT",
+                "ofertas:ofertas_publico_lectura:SELECT",
+                "ofertas_listas:ofertas_listas_publico_lectura:SELECT",
                 "precios:precios_publico_lectura:SELECT",
                 "puntos_venta:puntos_venta_publico_lectura:SELECT",
                 "vitrinas:vitrinas_publico_lectura:SELECT"

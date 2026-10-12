@@ -30,18 +30,28 @@ public static class ArticulosEndpoints
             // Con busqueda, suma (y lista primero) los artículos cuyo código de ESE proveedor
             // coincide exacto con el término; sin busqueda no tiene efecto.
             int? idProveedor,
+            // Búsqueda de la caja: deja afuera los artículos que no están disponibles a la venta.
+            bool? soloVendibles,
+            // Anula soloVendibles: la búsqueda de una devolución también ve el artículo de uso interno.
+            bool? incluirNoVendibles,
             CancellationToken ct) =>
             servicio.ListarAsync(
                 busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25,
-                idArea, idCategoria, idMarca, idProveedor, ct))
-        .WithSummary("Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado.");
+                idArea, idCategoria, idMarca, idProveedor,
+                (soloVendibles ?? false) && !(incluirNoVendibles ?? false), ct))
+        .WithSummary(
+            "Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado. Con soloVendibles "
+            + "deja afuera los artículos no disponibles a la venta (la búsqueda de la caja), salvo que se pida "
+            + "incluirNoVendibles=true (devoluciones).");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
         // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda
         // Politicas.OperacionDePos del grupo (Vendedor + Admin, design decisión 6).
-        grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, CancellationToken ct) =>
-            servicio.ResolverAsync(entrada, ct))
-        .WithSummary("Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo.");
+        grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, bool? incluirNoVendibles, CancellationToken ct) =>
+            servicio.ResolverAsync(entrada, incluirNoVendibles ?? false, ct))
+        .WithSummary(
+            "Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo vendible. Con "
+            + "incluirNoVendibles=true también resuelve uno de uso interno (devoluciones).");
 
         // stage-articulos-grilla-api: grilla del back-office con filtros por columna (Código,
         // Nombre, Precio, Proveedor, Estado) — segmento literal, no colisiona con "/{id:int}" de
@@ -101,14 +111,15 @@ public static class ArticulosEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del artículo.");
 
-        // Tienda online: publicar el artículo y su imagen. Mismo grupo y misma policy que editar el artículo.
-        grupo.MapPut("/{id:int}/web", (
-            ServicioDeCatalogoWeb servicio, int id, SolicitudDePublicacionWeb datos, CancellationToken ct) =>
-            servicio.PublicarAsync(id, datos, ct))
+        // Disponibilidad del artículo (online y a la venta) y su imagen. Mismo grupo y misma policy que editar el
+        // artículo.
+        grupo.MapPut("/{id:int}/disponibilidad", (
+            ServicioDeCatalogoWeb servicio, int id, SolicitudDeDisponibilidad datos, CancellationToken ct) =>
+            servicio.CambiarDisponibilidadAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary(
-            "Publica o despublica el artículo en la tienda online. Idempotente. Se publica por artículo: no es un "
-            + "campo de la familia.");
+            "Fija si el artículo está disponible online y a la venta (los dos son obligatorios). Idempotente. Es por "
+            + "artículo: no es un campo de la familia.");
 
         // El cuerpo es la imagen cruda y no JSON: el servicio lo lee acotado y valida el tipo por contenido.
         grupo.MapPut("/{id:int}/imagen", (
