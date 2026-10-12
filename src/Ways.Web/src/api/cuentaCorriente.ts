@@ -140,6 +140,27 @@ export function disponibilidadPrevia(saldo: number, limiteCredito: number, credi
   return creditoIlimitado ? null : limiteCredito - saldo
 }
 
+/** Lo que muestra el chip de saldo del cliente. `limite`, `disponible` y `proporcionUsada` son `null`
+ * con crédito ilimitado (no hay tope ni barra). `proporcionUsada` va de 0 a 1: un saldo a favor deja la
+ * barra vacía y uno por encima del límite la deja llena. `excedido` es solo "pasó el límite": estar
+ * justo en el límite agota el disponible pero no lo excede. */
+export type SaldoParaChip = {
+  saldo: number
+  limite: number | null
+  disponible: number | null
+  proporcionUsada: number | null
+  excedido: boolean
+}
+
+export function derivarSaldoParaChip(cliente: { saldo: number; limiteCredito: number; creditoIlimitado: boolean }): SaldoParaChip {
+  const { saldo, limiteCredito, creditoIlimitado } = cliente
+  if (creditoIlimitado) return { saldo, limite: null, disponible: null, proporcionUsada: null, excedido: false }
+  const disponible = redondear(disponibilidadPrevia(saldo, limiteCredito, false) as number)
+  const excedido = disponible < 0
+  const proporcionUsada = excedido ? 1 : limiteCredito > 0 ? Math.max(saldo / limiteCredito, 0) : 0
+  return { saldo, limite: limiteCredito, disponible, proporcionUsada, excedido }
+}
+
 // ---- Pago a cuenta: filas del panel + validación local --------------------------------------
 
 /** `CuentaCorriente` nunca es un medio válido para pagar una RC — a diferencia de

@@ -368,6 +368,38 @@ body {
   flex: none;
 }
 
+@keyframes girar-icono {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-icono-ocupado svg {
+  animation: girar-icono 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-icono-ocupado svg {
+    animation: none;
+  }
+}
+
+/* Saldo del cliente en la cabecera del carrito (ChipDeSaldo). */
+.chip-saldo {
+  flex: none;
+  min-width: 9.5rem;
+  padding: 0.125rem 0.625rem 0.25rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-pill);
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.chip-saldo .progress {
+  height: 4px;
+}
+
 /* Chips con forma de píldora. */
 .badge {
   --bs-badge-border-radius: var(--bs-border-radius-pill);

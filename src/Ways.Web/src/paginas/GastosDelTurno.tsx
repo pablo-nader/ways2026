@@ -365,14 +365,12 @@ export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDe
   const faltante = efectivoDisponible === null ? 0 : faltanteDeEfectivo(importe, efectivoDisponible)
 
   const herramientas = (
-    <button
-      type="button"
-      className="btn btn-sm btn-outline-secondary"
+    <BotonIcono
+      icono="actualizar"
+      ocupado={buscandoTurno || cargandoDetalle}
       disabled={bloqueado}
       onClick={() => void cargarTurnoYDetalle()}
-    >
-      {buscandoTurno || cargandoDetalle ? 'Actualizando…' : 'Refrescar'}
-    </button>
+    />
   )
 
   return (

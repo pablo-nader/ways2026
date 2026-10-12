@@ -14,7 +14,7 @@ Defines the `articulos` table (doc 10 §3): tenant-wide entity (no
 `articulos` MUST be tenant-wide (`id_tenant`, no `id_empresa` column, doc 10
 §3) with: `nombre`, `descripcion NULL`, `id_area NOT NULL`, `id_categoria
 NULL`, `id_marca NULL`, `id_grupo NULL`, `id_proveedor_habitual NULL`,
-`id_alicuota_iva NOT NULL`, `unidad_venta` (`unidad`|`peso`),
+`id_alicuota_iva NOT NULL`, `unidad_venta` (`unidad`|`peso`|`importe`), `tecla_atajo NULL`,
 `unidades_por_bulto NULL`, `es_producto`, `costo_lista NULL`,
 `descuento_proveedor NULL`, `costo_nominal NULL`, `disponible_para_todas
 BOOLEAN NOT NULL DEFAULT true`, `activo`.

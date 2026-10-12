@@ -18,4 +18,8 @@ public class MedioPago : CatalogoSimple
 
     /// <summary>P.ej. crédito +10%. Opcional.</summary>
     public decimal? RecargoPorcentaje { get; set; }
+
+    /// <summary>Parte de lo vendido con este medio que debe salir facturada, de 0 a 100 con hasta
+    /// 2 decimales. 0 = no se factura por este medio.</summary>
+    public decimal PorcentajeFacturacion { get; set; }
 }

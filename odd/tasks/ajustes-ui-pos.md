@@ -47,15 +47,15 @@ well above 400 authored lines → one PR per slice below.
   - Configuración window (`Ways.Desktop/ui`) restyled to the system's dark theme.
   - Checks: `ShellPos.test.tsx`, `Pos.test.tsx`, `intervaloDeSincronizacion.test.ts`,
     `Modal.test.tsx`, `tsc -b`, `oxlint`.
-- [ ] **T2 — Ventas del turno and Cierres** (delegated)
+- [x] **T2 — Ventas del turno and Cierres** (delegated)
   - Icon buttons with tooltips: Actualizar, Detalle, Anular (trash), Imprimir.
   - Void confirmation as a modal.
   - Cierres: detail icon (uses `GET /caja/turnos/{id}/detalle`) + printer icon.
-- [ ] **T3 — Cart ergonomics** (delegated)
+- [x] **T3 — Cart ergonomics** (delegated)
   - Newest line first; Quitar as trash icon; focus back to barcode input after
     remove/empty; "Vaciar carrito" in the same colour as Quitar, F10 with
     confirmation "¿Está seguro que quiere vaciar el carrito?".
-- [ ] **T4 — Customer in the cart header** (delegated)
+- [x] **T4 — Customer in the cart header** (delegated)
   - Contains-filter select replacing the "Carrito" title; removed from
     "Datos de la venta"; "Ver detalle" icon for current account; balance chip
     (used / limit, progress style).
@@ -80,8 +80,11 @@ well above 400 authored lines → one PR per slice below.
 
 | Task | Route | Commit | PR | Checks |
 |------|-------|--------|----|--------|
-| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3 | this PR | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
+| T1 | delegated (writer trigger: 16 files) | 7ada332f, b9090eb3, 9cb176a8, ff59cebe | #405 (merged) | tsc clean; oxlint exit 0; vitest 208 files / 5790 passed; judgment-day: round 1 no severe (7 warnings fixed in 9cb176a8), scoped re-judgment clean, polish ff59cebe; not checked in a real Tauri window |
+| T2 | delegated (writer trigger: 17 files) | f9b7f3ab, b0c0c368, 02d91938, d9909ed3, 0eb7eeb1 (merge de main) | #406 (merged) | tsc clean; oxlint exit 0; vitest 209 files / 5830 passed; judgment-day: round 1 no severe (fixes in 02d91938), scoped re-judgment no severe (polish d9909ed3); not checked in a real Tauri window |
+| T3 | delegated (preparation trigger: Pos.tsx 4.6k lines) | 5f0a4264, 0d7268ab | #409 (merged) | tsc clean; oxlint exit 0; vitest 212 files / 5965 passed on the branch merged with main; judgment-day: round 1 no severe (2 confirmed warnings fixed in 0d7268ab), scoped re-judgment no severe; residual: local-snapshot scan behind the modal, unreachable through the focus trap; F10 preventDefault not checked in WebView2 |
+| T4 | delegated (writer trigger: 13 files) | ac9bd2a9, 606a2a0f, 794e02cb, 84c49383, 395cfc0e, e6f18d5c | this PR | tsc clean; oxlint exit 0; vitest on the branch merged with main (see PR); judgment-day: round 1 no severe (fixes in 395cfc0e), scoped re-judgment no severe; carried to T5: truncated-list announcement, clear remote cache when the text is emptied; not checked in a real browser (1366x768 header, chip, popup) |
 
 ## Next step
 
-T1 judgment-day + PR, then T2.
+T5.

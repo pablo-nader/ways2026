@@ -150,7 +150,7 @@ public class ServicioDeInstantaneaDePos(
         var articulos = await db.Articulos.AsNoTracking()
             .Where(a => a.Activo)
             .OrderBy(a => a.Id)
-            .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva, a.AcumulaEnVenta, a.UnidadVenta, a.IdFamilia))
+            .Select(a => new ArmadorDeInstantanea.ArticuloAResolver(a.Id, a.CodigoInterno, a.Nombre, a.IdAlicuotaIva, a.AcumulaEnVenta, a.UnidadVenta, a.IdFamilia, a.TeclaAtajo))
             .ToListAsync(ct);
 
         var idsArticulo = articulos.Select(a => a.Id).ToList();
@@ -184,7 +184,7 @@ public class ServicioDeInstantaneaDePos(
         var mediosDePago = await db.MediosPago.AsNoTracking()
             .Where(m => m.Activo)
             .OrderBy(m => m.Orden).ThenBy(m => m.Id)
-            .Select(m => new MedioPagoDeInstantanea(m.Id, m.Nombre, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia))
+            .Select(m => new MedioPagoDeInstantanea(m.Id, m.Nombre, m.Comportamiento, m.AdmiteVuelto, m.RequiereReferencia, m.PorcentajeFacturacion))
             .ToListAsync(ct);
 
         // Mismo criterio de resolución (ResolucionDeParametros.Resolver: punto de venta > empresa

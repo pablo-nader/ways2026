@@ -31,6 +31,7 @@ import type {
   EscalonDeCantidad,
   EscalonDeFamilia,
   InstantaneaDePos,
+  MedioPagoDeInstantanea,
   PrecioDeListaDeInstantanea,
 } from '../api/tipos'
 import type { LineaCarrito } from '../api/carrito'
@@ -563,8 +564,19 @@ describe('aClienteListado / aMedioPagoListado', () => {
 
   it('lleva el medio de pago con su orden por posición', () => {
     expect(aMedioPagoListado({ idMedioPago: 3, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true }, 1)).toEqual({
-      id: 3, nombre: 'Tarjeta', activo: true, idEmpresa: null, orden: 2, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true, recargoPorcentaje: null,
+      id: 3, nombre: 'Tarjeta', activo: true, idEmpresa: null, orden: 2, comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true, recargoPorcentaje: null, porcentajeFacturacion: 0,
     })
+  })
+
+  it('lleva el porcentaje de facturación del medio de pago', () => {
+    const medio = aMedioPagoListado({ idMedioPago: 3, nombre: 'Transferencia', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: false, porcentajeFacturacion: 37.5 }, 0)
+    expect(medio.porcentajeFacturacion).toBe(37.5)
+  })
+
+  // Una copia guardada antes de este campo no lo trae: se lee como 0 (no se factura), nunca undefined.
+  it('una copia guardada sin porcentaje de facturación lo lee como 0', () => {
+    const guardado = { idMedioPago: 3, nombre: 'Efectivo', comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false } as MedioPagoDeInstantanea
+    expect(aMedioPagoListado(guardado, 0).porcentajeFacturacion).toBe(0)
   })
 })
 

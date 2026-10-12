@@ -181,6 +181,31 @@ public class ArmadorDeInstantaneaTests
         Assert.Null(Assert.Single(resultado[1].PreciosPorLista).EscalonesDeFamilia);
     }
 
+    /// <summary>La tecla viaja con su artículo y, ausente, la clave se omite del JSON: la etiqueta de contenido de la
+    /// instantánea de un tenant sin teclas no cambia.</summary>
+    [Fact]
+    public void ArmarArticulosLlevaLaTeclaDeAtajoYLaOmiteDelJsonCuandoNoHay()
+    {
+        var articulos = new[]
+        {
+            new ArticuloAResolver(11, "A11", "Fiambreria", 21, false, UnidadVenta.Importe, TeclaAtajo: TeclaAtajo.F6),
+            new ArticuloAResolver(12, "A12", "Pan", 21, true, UnidadVenta.Unidad),
+        };
+        var resolucion = new[] { Resuelto(11, 3, 2000m, 2000m, 0m), Resuelto(12, 3, 2000m, 2000m, 0m) };
+
+        var resultado = ArmarArticulos(
+            articulos, [3], resolucion, new Dictionary<int, IReadOnlyList<string>>(), new Dictionary<int, decimal> { [21] = 21m });
+
+        Assert.Equal(TeclaAtajo.F6, resultado[0].TeclaAtajo);
+        Assert.Null(resultado[1].TeclaAtajo);
+        var json = System.Text.Json.JsonSerializer.Serialize(resultado, new System.Text.Json.JsonSerializerOptions
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+        });
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(json, "TeclaAtajo"));
+        Assert.Contains("\"TeclaAtajo\":\"F6\"", json, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ArmarArticulosRechazaUnaResolucionDeOtroTamanio()
     {
@@ -204,7 +229,7 @@ public class ArmadorDeInstantaneaTests
             7,
             articulos,
             clientes,
-            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false)],
+            [new MedioPagoDeInstantanea(1, "Efectivo", ComportamientoMedioPago.Efectivo, true, false, 0m)],
             10m);
 
 

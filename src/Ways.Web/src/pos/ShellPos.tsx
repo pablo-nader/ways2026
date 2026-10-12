@@ -332,7 +332,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios))
   }
 
-  /** "Reimprimir" de "Ventas del turno" (stage-desktop-pos): mismo dueño único de la impresión de
+  /** "Imprimir" de "Ventas del turno" (stage-desktop-pos): mismo dueño único de la impresión de
    * escritorio que `alEmitirVenta` — pasa por la MISMA cola FIFO (`encolarImpresion`), nunca un
    * segundo camino de impresión. `{ reimpresion: true }` marca el ticket para que nunca se
    * confunda con el original. */
@@ -343,7 +343,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     )
   }
 
-  /** "Reimprimir ticket de cierre" de "Cierres de caja": el mismo `cierreDeTurno` y la misma cola
+  /** "Imprimir" de "Cierres de caja": el mismo `cierreDeTurno` y la misma cola
    * FIFO que el cierre del turno. */
   function alReimprimirCierre(resumen: ResumenDeCierrePorRetiro) {
     encolarImpresion(`el ticket de cierre del turno #${resumen.idTurnoCaja}`, cierreDeTurno(resumen, contextoDeImpresion))
