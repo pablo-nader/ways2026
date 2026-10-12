@@ -397,7 +397,7 @@ function resumenDeCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> 
     totalVentas: 8000,
     totalDigitales: 0,
     totalEfectivo: 8000,
-    totalCuentaCorriente: 0,
+    ventasACuentaCorriente: 0,
     retiros: [{ fecha: '2026-08-05T15:00:00Z', importe: 3000, motivo: 'Retiro de efectivo', empleado: 'jperez' }],
     totalRetiros: 3000,
     ventasEnEfectivoNetas: 8000,

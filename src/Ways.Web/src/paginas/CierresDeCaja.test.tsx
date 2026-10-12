@@ -78,7 +78,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = {}): R
     totalVentas: 0,
     totalDigitales: 0,
     totalEfectivo: 0,
-    totalCuentaCorriente: 0,
+    ventasACuentaCorriente: 0,
     retiros: [],
     totalRetiros: 0,
     ventasEnEfectivoNetas: 0,

@@ -5,6 +5,7 @@
 import { COLUMNAS_FUENTE_A, ConstructorDeTicket, dosColumnas } from './escpos'
 import type { LineaDeTicket } from './escpos'
 import { formatearPorcentajeDeAjuste, rotuloDeAjusteManual } from '../api/ajusteManual'
+import { tieneDesgloseDeCierre } from '../api/caja'
 import { calcularImporteAplicado } from '../api/cuentaCorriente'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte, formatearImporteConSigno } from '../formato/importes'
@@ -430,15 +431,18 @@ function armarCierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: Context
   if (resumen.ventasPorMedio.length === 0) {
     ticket.linea('Sin ventas en el turno.')
   }
-  // Un resumen anterior al desglose no trae los subtotales: se omiten antes que adivinarlos.
-  if (typeof resumen.totalDigitales === 'number') {
+  // Un resumen anterior al desglose, o parcial, no trae los subtotales: se omiten antes que adivinarlos.
+  const desglose = tieneDesgloseDeCierre(resumen)
+  if (desglose) {
+    ticket.lineaDeGuiones()
     ticket.lineaDeColumnas('Total digitales', formatearMoneda(resumen.totalDigitales))
     ticket.lineaDeColumnas('Total efectivo', formatearMoneda(resumen.totalEfectivo))
-    if (resumen.totalCuentaCorriente !== 0) {
-      ticket.lineaDeColumnas('Total cuenta corriente', formatearMoneda(resumen.totalCuentaCorriente))
-    }
   }
   ticket.negrita(true).lineaDeColumnas('Total general', formatearMoneda(resumen.totalVentas)).negrita(false)
+  if (desglose && resumen.ventasACuentaCorriente !== 0) {
+    ticket.linea('')
+    ticket.lineaDeColumnas('Fiado en cuenta corriente', formatearMoneda(resumen.ventasACuentaCorriente))
+  }
 
   ticket.lineaDeGuiones()
 

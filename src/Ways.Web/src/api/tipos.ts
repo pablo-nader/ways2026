@@ -1518,11 +1518,14 @@ export type ResumenDeCierrePorRetiro = {
   empleadoCierre: string
   fondoInicial: number
   ventasPorMedio: VentaPorMedio[]
-  /** Total general de ventas; `totalDigitales + totalEfectivo + totalCuentaCorriente` lo suman. */
+  /** Total general de lo cobrado por medio (ventas y recibos de cuenta corriente, neto de vuelto en el
+   * efectivo); `totalDigitales + totalEfectivo` lo suman. */
   totalVentas: number
   totalDigitales: number
   totalEfectivo: number
-  totalCuentaCorriente: number
+  /** Ventas del turno hechas con un medio de cuenta corriente: se informan aparte y NO forman parte
+   * de `totalVentas`. */
+  ventasACuentaCorriente: number
   retiros: RetiroDeCierre[]
   totalRetiros: number
   ventasEnEfectivoNetas: number

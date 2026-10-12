@@ -1,3 +1,4 @@
+import { tieneDesgloseDeCierre } from '../api/caja'
 import type { ResumenDeCierrePorRetiro } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 
@@ -16,7 +17,7 @@ function formatearMoneda(valor: number): string {
  * general, sin inventarlos.
  */
 export function VentasPorMedioDeCierre({ cierre }: Props) {
-  const traeSubtotales = typeof cierre.totalDigitales === 'number'
+  const traeSubtotales = tieneDesgloseDeCierre(cierre)
 
   return (
     <>
@@ -55,12 +56,6 @@ export function VentasPorMedioDeCierre({ cierre }: Props) {
                   <td>Total efectivo</td>
                   <td className="text-end">{formatearMoneda(cierre.totalEfectivo)}</td>
                 </tr>
-                {cierre.totalCuentaCorriente !== 0 && (
-                  <tr>
-                    <td>Total cuenta corriente</td>
-                    <td className="text-end">{formatearMoneda(cierre.totalCuentaCorriente)}</td>
-                  </tr>
-                )}
               </>
             )}
             <tr className="fw-bold">
@@ -69,6 +64,11 @@ export function VentasPorMedioDeCierre({ cierre }: Props) {
             </tr>
           </tfoot>
         </table>
+        {traeSubtotales && cierre.ventasACuentaCorriente !== 0 && (
+          <p className="small text-muted mb-0" data-testid="fiado-en-cuenta-corriente">
+            Fiado en cuenta corriente (no incluido en el total): {formatearMoneda(cierre.ventasACuentaCorriente)}
+          </p>
+        )}
       </div>
     </>
   )

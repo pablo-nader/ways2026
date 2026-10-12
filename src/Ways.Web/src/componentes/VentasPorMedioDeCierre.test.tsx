@@ -21,7 +21,7 @@ function cierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = {}): Re
     totalVentas: 8000,
     totalDigitales: 3000,
     totalEfectivo: 5000,
-    totalCuentaCorriente: 0,
+    ventasACuentaCorriente: 0,
     retiros: [],
     totalRetiros: 0,
     ventasEnEfectivoNetas: 5000,
@@ -60,13 +60,16 @@ describe('VentasPorMedioDeCierre', () => {
     expect(filas).toContainEqual(['Total general', '$ 9.999,00'])
   })
 
-  it('muestra "Total cuenta corriente" solo cuando no es cero', () => {
+  it('muestra el fiado en cuenta corriente fuera de la tabla y solo cuando no es cero', () => {
     const { unmount } = render(<VentasPorMedioDeCierre cierre={cierreFixture()} />)
-    expect(screen.queryByText('Total cuenta corriente')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fiado-en-cuenta-corriente')).not.toBeInTheDocument()
     unmount()
 
-    render(<VentasPorMedioDeCierre cierre={cierreFixture({ totalCuentaCorriente: 700, totalVentas: 8700 })} />)
-    expect(celdasDeLaTabla()).toContainEqual(['Total cuenta corriente', '$ 700,00'])
+    render(<VentasPorMedioDeCierre cierre={cierreFixture({ ventasACuentaCorriente: 700 })} />)
+    const fiado = screen.getByTestId('fiado-en-cuenta-corriente')
+    expect(fiado).toHaveTextContent('Fiado en cuenta corriente (no incluido en el total): $ 700,00')
+    expect(screen.getByTestId('ventas-por-medio')).not.toContainElement(fiado)
+    expect(celdasDeLaTabla()).toContainEqual(['Total general', '$ 8.000,00'])
   })
 
   it('un turno sin ventas lo dice y deja el total general en cero', () => {
@@ -79,15 +82,17 @@ describe('VentasPorMedioDeCierre', () => {
     expect(celdasDeLaTabla()).toContainEqual(['Total general', '$ 0,00'])
   })
 
-  it('un resumen sin los subtotales (payload viejo) no los inventa y conserva el total general', () => {
-    const viejo: Partial<ResumenDeCierrePorRetiro> = cierreFixture()
-    delete viejo.totalDigitales
-    delete viejo.totalEfectivo
-    delete viejo.totalCuentaCorriente
-    render(<VentasPorMedioDeCierre cierre={viejo as ResumenDeCierrePorRetiro} />)
+  it.each([
+    ['anterior al desglose', { totalDigitales: undefined, totalEfectivo: undefined, ventasACuentaCorriente: undefined }],
+    ['parcial (falta el efectivo)', { totalEfectivo: undefined, ventasACuentaCorriente: 700 }],
+    ['con un importe que no es número', { totalDigitales: Number.NaN, ventasACuentaCorriente: 700 }],
+  ])('un payload %s no inventa subtotales ni fiado y conserva el total general', (_nombre, defecto) => {
+    render(<VentasPorMedioDeCierre cierre={{ ...cierreFixture(), ...defecto } as ResumenDeCierrePorRetiro} />)
 
     expect(screen.queryByText('Total digitales')).not.toBeInTheDocument()
     expect(screen.queryByText('Total efectivo')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fiado-en-cuenta-corriente')).not.toBeInTheDocument()
+    expect(screen.getByTestId('ventas-por-medio')).not.toHaveTextContent(/undefined|NaN/)
     expect(celdasDeLaTabla()).toContainEqual(['Total general', '$ 8.000,00'])
   })
 })

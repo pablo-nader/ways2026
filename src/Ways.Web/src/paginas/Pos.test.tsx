@@ -4961,7 +4961,7 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       totalVentas: 1000,
       totalDigitales: 0,
       totalEfectivo: 1000,
-      totalCuentaCorriente: 0,
+      ventasACuentaCorriente: 0,
       retiros: [],
       totalRetiros: 0,
       ventasEnEfectivoNetas: 1000,

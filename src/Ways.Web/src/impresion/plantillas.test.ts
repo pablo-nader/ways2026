@@ -689,7 +689,7 @@ function resumenCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = 
     totalVentas: 8000,
     totalDigitales: 0,
     totalEfectivo: 8000,
-    totalCuentaCorriente: 0,
+    ventasACuentaCorriente: 0,
     retiros: [{ fecha: '2026-09-19T15:00:00-03:00', importe: 3000, motivo: 'Retiro de efectivo', empleado: 'jperez' }],
     totalRetiros: 3000,
     ventasEnEfectivoNetas: 8000,
@@ -774,45 +774,59 @@ describe('cierreDeTurno (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () =>
         ventasPorMedio: [
           { idMedioPago: 1, nombre: 'Efectivo', comportamiento: 'Efectivo', importe: 5000 },
           { idMedioPago: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', importe: 3000 },
-          { idMedioPago: 3, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', importe: 700 },
         ],
-        totalVentas: 8700,
+        totalVentas: 8000,
         totalDigitales: 3000,
         totalEfectivo: 5000,
-        totalCuentaCorriente: 700,
+        ventasACuentaCorriente: 700,
       })
 
-    it('imprime digitales, efectivo, cuenta corriente y el total general, en ese orden y alineados', () => {
+    it('imprime separador, digitales, efectivo y total general alineados, y el fiado aparte después del total', () => {
       const lineas = lineasDeCierreDeTurno(resumenMixto(), CONTEXTO).map((l) => l.texto)
-      const cuerpo = lineas.slice(lineas.findIndex((l) => l.startsWith('Tarjeta')))
-      const subtotales = cuerpo.filter((l) => /^Total (digitales|efectivo|cuenta corriente|general)/.test(l))
+      const iTarjeta = lineas.findIndex((l) => l.startsWith('Tarjeta'))
+      const iFiado = lineas.findIndex((l) => l.startsWith('Fiado en cuenta corriente'))
+      const bloque = lineas.slice(iTarjeta + 1, iFiado + 1).map((l) => l.replace(/\s+/g, ' '))
 
-      expect(subtotales.map((l) => l.replace(/\s+/g, ' '))).toEqual([
+      expect(bloque[0]).toMatch(/^-+$/)
+      expect(bloque.slice(1)).toEqual([
         'Total digitales $ 3.000,00',
         'Total efectivo $ 5.000,00',
-        'Total cuenta corriente $ 700,00',
-        'Total general $ 8.700,00',
+        'Total general $ 8.000,00',
+        '',
+        'Fiado en cuenta corriente $ 700,00',
       ])
-      expect(new Set(subtotales.map((l) => l.length)).size).toBe(1)
+      const anchos = lineas.filter((l) => /^(Total (digitales|efectivo|general)|Fiado)/.test(l)).map((l) => l.length)
+      expect(new Set(anchos).size).toBe(1)
       expect(lineas.filter((l) => l.includes('Total general'))).toHaveLength(1)
       expect(lineas.some((l) => l.startsWith('Total ventas'))).toBe(false)
     })
 
-    it('omite "Total cuenta corriente" cuando es cero', () => {
+    it('omite el fiado en cuenta corriente cuando es cero', () => {
       const texto = textoPlano(cierreDeTurno(resumenCierreFixture(), CONTEXTO))
       expect(texto).toContain('Total digitales')
       expect(texto).toContain('Total efectivo')
-      expect(texto).not.toContain('Total cuenta corriente')
+      expect(texto).not.toContain('Fiado')
     })
 
-    it('un resumen sin los subtotales (payload viejo) no los inventa y conserva el total general', () => {
-      const viejo: Partial<ResumenDeCierrePorRetiro> = resumenCierreFixture()
-      delete viejo.totalDigitales
-      delete viejo.totalEfectivo
-      delete viejo.totalCuentaCorriente
-      const texto = textoPlano(cierreDeTurno(viejo as ResumenDeCierrePorRetiro, CONTEXTO))
+    it.each([
+      ['payload anterior al desglose', {}],
+      ['payload parcial (falta un importe)', { totalEfectivo: undefined }],
+      ['payload con un importe que no es número', { totalDigitales: Number.NaN }],
+    ])('%s: no imprime subtotales ni fiado y conserva el total general', (_nombre, defecto) => {
+      const base: Partial<ResumenDeCierrePorRetiro> = resumenMixto()
+      if (Object.keys(defecto).length === 0) {
+        delete base.totalDigitales
+        delete base.totalEfectivo
+        delete base.ventasACuentaCorriente
+      } else {
+        Object.assign(base, defecto)
+      }
+      const texto = textoPlano(cierreDeTurno(base as ResumenDeCierrePorRetiro, CONTEXTO))
       expect(texto).not.toContain('Total digitales')
       expect(texto).not.toContain('Total efectivo')
+      expect(texto).not.toContain('Fiado')
+      expect(texto).not.toContain('undefined')
+      expect(texto).not.toContain('NaN')
       expect(texto).toContain('Total general')
     })
   })
