@@ -791,6 +791,66 @@ describe('VentasDelTurno — acciones con ícono y confirmación en modal', () =
     expect(listados()).toBe(listadosConLaCargaNueva)
   })
 
+  /** Anula la venta 0007-00000001 y cambia de punto de venta con la escritura en vuelo; devuelve cómo resolverla. */
+  async function anularYCambiarDePuntoVenta() {
+    const venta = ventaFixture({ id: 60 })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta] })
+    const { rerender } = render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    let resolver: (valor: unknown) => void = () => undefined
+    let rechazar: (motivo: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          resolver = resolve
+          rechazar = reject
+        }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+    const listados = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+    const antes = listados()
+    estadoDePuntoVenta = { ...estadoDePuntoVenta, puntoVenta: puntoVentaFixture({ id: 8 }) }
+    rerender(<VentasDelTurno />)
+    await waitFor(() => expect(listados()).toBeGreaterThan(antes))
+    return { resolver: () => resolver({ ...venta, estado: 'Anulado' }), rechazar: (e: unknown) => rechazar(e), listadosConLaCargaNueva: listados(), listados }
+  }
+
+  it('si el punto de venta cambió, una anulación que termina bien se informa en un aviso que se puede cerrar, sin tocar el listado nuevo', async () => {
+    const ctx = await anularYCambiarDePuntoVenta()
+
+    await act(async () => {
+      ctx.resolver()
+    })
+
+    const aviso = await screen.findByRole('status')
+    expect(aviso).toHaveTextContent('La venta 0007-00000001 se anuló.')
+    expect(ctx.listados()).toBe(ctx.listadosConLaCargaNueva)
+    await userEvent.click(within(aviso).getByRole('button', { name: 'Cerrar aviso' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('si el punto de venta cambió, una anulación que falla se informa con el motivo en un aviso con role="alert"', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    const ctx = await anularYCambiarDePuntoVenta()
+
+    await act(async () => {
+      ctx.rechazar(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
+    })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo anular la venta 0007-00000001: El turno ya está cerrado.')
+    expect(ctx.listados()).toBe(ctx.listadosConLaCargaNueva)
+  })
+
+  it('al cerrarse la confirmación por un cambio de punto de venta el foco va a "Actualizar", no al documento', async () => {
+    const ctx = await anularYCambiarDePuntoVenta()
+    await act(async () => {
+      ctx.resolver()
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actualizar' })).toHaveFocus())
+  })
+
   it('el error de una anulación fallida se anuncia con role="alert" y el foco queda dentro del modal, en "Cancelar"', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 58 })] })

@@ -283,6 +283,8 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
    * estar bloqueada, porque hasta entonces el botón de la fila (y "Actualizar") siguen deshabilitados. */
   const focoPendienteRef = useRef(false)
   const [anulando, setAnulando] = useState(false)
+  /** Resultado de una anulación que terminó cuando su listado ya no era el de la pantalla. */
+  const [avisoDeAnulacion, setAvisoDeAnulacion] = useState<{ error: boolean; texto: string } | null>(null)
   const anulandoRef = useRef(false)
   const [errorAnular, setErrorAnular] = useState('')
 
@@ -330,6 +332,10 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
     if (!puntoVenta) return
     const miGeneracion = (generacionRef.current += 1)
     // La confirmación pertenece al listado que se está reemplazando: no sobrevive al cambio de contexto.
+    if (filaAAnular) {
+      disparadorRef.current = null
+      focoPendienteRef.current = true
+    }
     setFilaAAnular(null)
     setErrorAnular('')
     setBuscandoTurno(true)
@@ -401,12 +407,18 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
 
     try {
       await clienteDeVentas.anular(fila.id)
-      if (generacionRef.current !== miGeneracion) return
+      if (generacionRef.current !== miGeneracion) {
+        setAvisoDeAnulacion({ error: false, texto: `La venta ${fila.numeroVisible} se anuló.` })
+        return
+      }
       focoPendienteRef.current = true
       setFilaAAnular(null)
       if (turno) await cargarVentas(turno.id, miGeneracion)
     } catch (e) {
-      if (generacionRef.current !== miGeneracion) return
+      if (generacionRef.current !== miGeneracion) {
+        setAvisoDeAnulacion({ error: true, texto: `No se pudo anular la venta ${fila.numeroVisible}: ${mensajeDeErrorAnulacion(e)}` })
+        return
+      }
       setErrorAnular(mensajeDeErrorAnulacion(e))
     } finally {
       anulandoRef.current = false
@@ -528,6 +540,16 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   return (
     <div className="container-fluid py-4">
       <Box titulo="Ventas del turno" variante="inverse" herramientas={herramientas}>
+        {avisoDeAnulacion && (
+          <div
+            className={`alert ${avisoDeAnulacion.error ? 'alert-danger' : 'alert-success'} d-flex justify-content-between align-items-center gap-2`}
+            role={avisoDeAnulacion.error ? 'alert' : 'status'}
+          >
+            <span>{avisoDeAnulacion.texto}</span>
+            <BotonIcono icono="cerrar" etiqueta="Cerrar aviso" title="Cerrar aviso" onClick={() => setAvisoDeAnulacion(null)} />
+          </div>
+        )}
+
         {!puntoVenta && <div className="alert alert-warning mb-0">No hay un punto de venta asociado a este dispositivo.</div>}
 
         {puntoVenta && errorTurno && <div className="alert alert-danger">{errorTurno}</div>}

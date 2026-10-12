@@ -13,6 +13,7 @@ describe('BotonIcono', () => {
     ['agregar', 'Agregar', 'btn-primary'],
     ['ajuste', 'Ajuste manual', 'btn-outline-secondary'],
     ['anular', 'Anular', 'btn-outline-danger'],
+    ['cerrar', 'Cerrar', 'btn-outline-secondary'],
     ['actualizar', 'Actualizar', 'btn-outline-secondary'],
     ['detalle', 'Detalle', 'btn-outline-secondary'],
     ['imprimir', 'Imprimir', 'btn-outline-secondary'],

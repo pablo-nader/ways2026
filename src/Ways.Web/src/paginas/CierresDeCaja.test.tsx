@@ -190,7 +190,7 @@ describe('CierresDeCaja — acciones con ícono', () => {
     for (const nombre of ['Detalle', 'Imprimir']) {
       expect(within(fila).getByRole('button', { name: nombre })).toHaveAttribute('title', nombre)
     }
-    expect(screen.queryByRole('button', { name: 'Reimprimir ticket de cierre' })).not.toBeInTheDocument()
+    expect(within(fila).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Detalle', 'Imprimir'])
   })
 })
 

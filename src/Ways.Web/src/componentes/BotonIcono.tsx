@@ -7,6 +7,7 @@ export type IconoDeAccion =
   | 'editar'
   | 'agregar'
   | 'ajuste'
+  | 'cerrar'
   | 'actualizar'
   | 'detalle'
   | 'imprimir'
@@ -18,6 +19,7 @@ const ETIQUETA_POR_DEFECTO: Record<IconoDeAccion, string> = {
   editar: 'Editar',
   agregar: 'Agregar',
   ajuste: 'Ajuste manual',
+  cerrar: 'Cerrar',
   actualizar: 'Actualizar',
   detalle: 'Detalle',
   imprimir: 'Imprimir',
@@ -30,6 +32,7 @@ const VARIANTE: Record<IconoDeAccion, string> = {
   editar: 'btn-outline-primary',
   agregar: 'btn-primary',
   ajuste: 'btn-outline-secondary',
+  cerrar: 'btn-outline-secondary',
   actualizar: 'btn-outline-secondary',
   detalle: 'btn-outline-secondary',
   imprimir: 'btn-outline-secondary',
@@ -66,6 +69,12 @@ const TRAZADOS: Record<IconoDeAccion, ReactNode> = {
       <path d="M19 5L5 19" />
       <circle cx="7" cy="7" r="2" />
       <circle cx="17" cy="17" r="2" />
+    </>
+  ),
+  cerrar: (
+    <>
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </>
   ),
   actualizar: (

@@ -57,7 +57,7 @@ export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
  * las filas "Desc. manual" y "Recargo". Un comprobante sin ajustes imprime exactamente lo de antes.
  * Los campos son nuevos: un servidor anterior no los manda, y ahí no se imprime nada de esto.
  *
- * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
+ * `opciones.reimpresion` (stage-desktop-pos, acción "Imprimir" de "Ventas del turno"): imprime
  * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
  * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
  * dueño: reimprimir no es una venta nueva, abrir el cajón sin eso es un agujero de control de
