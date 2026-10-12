@@ -8,10 +8,10 @@ import { ROL } from '../api/tipos'
 import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, TurnoResumen, VentaDeTurnoListado } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
-import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { Modal } from '../componentes/Modal'
 import { formatearImporteConSigno } from '../formato/importes'
 import {
@@ -275,6 +275,10 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
 
   const [filaAAnular, setFilaAAnular] = useState<VentaDeTurnoListado | null>(null)
   const disparadorRef = useRef<HTMLElement | null>(null)
+  const refrescarRef = useRef<HTMLButtonElement>(null)
+  /** Se levanta al cerrar el modal de anulación: el foco vuelve recién cuando la pantalla deja de
+   * estar bloqueada, porque hasta entonces el botón de la fila (y "Actualizar") siguen deshabilitados. */
+  const focoPendienteRef = useRef(false)
   const [anulando, setAnulando] = useState(false)
   const anulandoRef = useRef(false)
   const [errorAnular, setErrorAnular] = useState('')
@@ -376,6 +380,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   }
 
   function cancelarAnular() {
+    focoPendienteRef.current = true
     setFilaAAnular(null)
     setErrorAnular('')
   }
@@ -391,6 +396,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
     try {
       await clienteDeVentas.anular(fila.id)
       if (generacionRef.current !== miGeneracion) return
+      focoPendienteRef.current = true
       setFilaAAnular(null)
       if (turno) await cargarVentas(turno.id, miGeneracion)
     } catch (e) {
@@ -398,9 +404,18 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
       setErrorAnular(mensajeDeErrorAnulacion(e))
     } finally {
       anulandoRef.current = false
-      if (generacionRef.current === miGeneracion) setAnulando(false)
+      setAnulando(false)
     }
   }
+
+  /** Devuelve el foco al botón de la fila que abrió la confirmación; si esa fila ya no tiene botón
+   * (la venta quedó anulada), a "Actualizar", que es estable. */
+  useEffect(() => {
+    if (bloqueado || !focoPendienteRef.current) return
+    focoPendienteRef.current = false
+    const destino = esAlcanzable(disparadorRef.current) ? disparadorRef.current : refrescarRef.current
+    destino?.focus()
+  }, [bloqueado])
 
   // ---- Detalle ------------------------------------------------------------------------------
 
@@ -489,14 +504,13 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
   const ventaEnDetalle = idDetalle !== null ? ventas.find((v) => v.id === idDetalle) : undefined
 
   const herramientas = (
-    <button
-      type="button"
-      className="btn btn-sm btn-outline-secondary"
+    <BotonIcono
+      ref={refrescarRef}
+      icono="actualizar"
+      ocupado={buscandoTurno || cargandoVentas}
       disabled={bloqueado}
       onClick={() => void cargarTurnoYVentas()}
-    >
-      {buscandoTurno || cargandoVentas ? 'Actualizando…' : 'Refrescar'}
-    </button>
+    />
   )
 
   return (
@@ -516,7 +530,6 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
           <>
             {errorVentas && <div className="alert alert-danger">{errorVentas}</div>}
             {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
-            {errorAnular && !filaAAnular && <div className="alert alert-danger">{errorAnular}</div>}
 
             {cargandoVentas && ventas.length === 0 && <Cargando />}
 
@@ -621,14 +634,11 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                       </select>
                     </th>
                     <th>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-secondary"
+                      <BotonIcono
+                        icono="limpiar"
                         disabled={!hayFiltrosActivos(filtros)}
                         onClick={() => setFiltros(FILTROS_VACIOS)}
-                      >
-                        Limpiar filtros
-                      </button>
+                      />
                     </th>
                   </tr>
                 </thead>
@@ -657,33 +667,17 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                       </td>
                       <td>
                         <div className="d-flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-secondary"
-                            disabled={bloqueado}
-                            onClick={(e) => abrirDetalle(v, e.currentTarget)}
-                          >
-                            Detalle
-                          </button>
+                          <BotonIcono icono="detalle" disabled={bloqueado} onClick={(e) => abrirDetalle(v, e.currentTarget)} />
                           {puedeAnular(v, rolId) && (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-danger"
-                              disabled={bloqueado}
-                              onClick={(e) => pedirAnular(v, e.currentTarget)}
-                            >
-                              Anular
-                            </button>
+                            <BotonIcono icono="anular" disabled={bloqueado} onClick={(e) => pedirAnular(v, e.currentTarget)} />
                           )}
                           {alReimprimir && puedeReimprimir(v) && (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-secondary"
+                            <BotonIcono
+                              icono="imprimir"
+                              ocupado={idsReimprimiendo.has(v.id)}
                               disabled={bloqueado || idsReimprimiendo.has(v.id)}
                               onClick={() => void reimprimirVenta(v.id)}
-                            >
-                              {idsReimprimiendo.has(v.id) ? 'Reimprimiendo…' : 'Reimprimir'}
-                            </button>
+                            />
                           )}
                         </div>
                         {erroresReimprimir[v.id] && <div className="small text-danger mt-1">{erroresReimprimir[v.id]}</div>}
@@ -709,20 +703,31 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
             </div>
 
             {filaAAnular && (
-              <div className="mt-3">
-                <ConfirmacionDeBaja
-                  titulo={`la venta ${filaAAnular.numeroVisible} por ${formatearMoneda(filaAAnular.total)}`}
-                  pregunta="Anular"
-                  nota="Se revierte el stock y la cuenta corriente en la misma operación. No existe restaurar."
-                  etiquetaConfirmar="Anular venta"
-                  etiquetaEnCurso="Anulando…"
-                  ocupado={anulando}
-                  disparador={disparadorRef.current}
-                  onConfirmar={() => void confirmarAnular()}
-                  onCancelar={cancelarAnular}
-                />
-                {errorAnular && <div className="alert alert-danger mt-2 mb-0">{errorAnular}</div>}
-              </div>
+              <Modal
+                titulo="Confirmar anulación"
+                ocupado={anulando}
+                restaurarFoco={false}
+                etiquetaCerrar="Cerrar confirmación"
+                onCerrar={cancelarAnular}
+                pie={
+                  <>
+                    <button type="button" className="btn btn-outline-secondary" autoFocus disabled={anulando} onClick={cancelarAnular}>
+                      Cancelar
+                    </button>
+                    <button type="button" className="btn btn-danger" disabled={anulando} onClick={() => void confirmarAnular()}>
+                      {anulando ? 'Anulando…' : 'Anular venta'}
+                    </button>
+                  </>
+                }
+              >
+                <p className="mb-2">
+                  <strong>
+                    ¿Anular la venta {filaAAnular.numeroVisible} por {formatearMoneda(filaAAnular.total)}?
+                  </strong>
+                </p>
+                <p className="mb-0">Se revierte el stock y la cuenta corriente en la misma operación. No existe restaurar.</p>
+                {errorAnular && <div className="alert alert-danger mt-3 mb-0">{errorAnular}</div>}
+              </Modal>
             )}
 
             {idDetalle !== null && (

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { VentasDelTurno } from './VentasDelTurno'
@@ -537,7 +537,7 @@ describe('VentasDelTurno — anulación', () => {
     expect(screen.getByText('0 venta(s)')).toBeInTheDocument()
   })
 
-  it('muestra el error inline cuando la anulación falla', async () => {
+  it('muestra el error dentro del modal cuando la anulación falla', async () => {
     const { ErrorApi } = await import('../api/cliente')
     const venta = ventaFixture({ id: 4 })
     mockearRutas({ turno: turnoFixture(), ventas: [venta] })
@@ -549,7 +549,8 @@ describe('VentasDelTurno — anulación', () => {
     apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
     await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
 
-    await screen.findByText('El turno ya está cerrado.')
+    const dialogo = screen.getByRole('dialog', { name: 'Confirmar anulación' })
+    expect(await within(dialogo).findByText('El turno ya está cerrado.')).toBeInTheDocument()
     // La fila NO queda anulada: el error no se confunde con éxito.
     expect(screen.getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
   })
@@ -600,7 +601,8 @@ describe('VentasDelTurno — anulación', () => {
     await screen.findByText('No tenés permiso para anular esta venta.')
   })
 
-  it('un doble click sobre "Anular venta" solo dispara una anulación (guarda de reentrancia)', async () => {
+  /** Cláusula bajo prueba: `anulandoRef`, la guarda de re-entrancia del mismo tick. */
+  it('dos clicks del mismo tick sobre "Anular venta" disparan una sola anulación', async () => {
     mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 6 })] })
     render(<VentasDelTurno />)
 
@@ -616,10 +618,11 @@ describe('VentasDelTurno — anulación', () => {
     )
 
     const boton = screen.getByRole('button', { name: 'Anular venta' })
-    await userEvent.click(boton)
-    // Segundo click mientras la primera solicitud sigue en vuelo — el botón ya está disabled
-    // (`ocupado`), pero se dispara igual el handler para probar la guarda de `anulandoRef`.
-    await userEvent.click(boton)
+    await act(async () => {
+      boton.click()
+      boton.click()
+      await Promise.resolve()
+    })
 
     expect(apiPostMock).toHaveBeenCalledTimes(1)
     resolverAnulacion({ ...ventaFixture({ id: 6 }), estado: 'Anulado' })
@@ -637,6 +640,158 @@ describe('VentasDelTurno — anulación', () => {
 
     expect(screen.queryByRole('button', { name: 'Anular venta' })).not.toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('VentasDelTurno — acciones con ícono y confirmación en modal', () => {
+  it('las acciones de la fila son botones con ícono cuyo nombre accesible es su tooltip, y no queda ningún botón con el texto anterior', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 50, numeroVisible: '0007-00000050' })] })
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    render(<VentasDelTurno alReimprimir={vi.fn()} />)
+
+    await screen.findByText('0007-00000050')
+    for (const nombre of ['Actualizar', 'Detalle', 'Anular', 'Imprimir', 'Limpiar filtros']) {
+      expect(screen.getByRole('button', { name: nombre })).toHaveAttribute('title', nombre)
+    }
+    for (const viejo of ['Refrescar', 'Reimprimir']) {
+      expect(screen.queryByRole('button', { name: viejo })).not.toBeInTheDocument()
+    }
+  })
+
+  it('"Actualizar" vuelve a pedir el turno y las ventas', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 51, numeroVisible: '0007-00000051' })] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000051')
+    const listados = () => apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+    expect(listados()).toBe(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Actualizar' }))
+
+    await waitFor(() => expect(listados()).toBe(2))
+  })
+
+  it('mientras actualiza, "Actualizar" queda deshabilitado y ocupado sin cambiar de nombre', async () => {
+    let resolverListado: (v: VentaDeTurnoListado[]) => void = () => undefined
+    let cantidad = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoFixture())
+      if (ruta.startsWith('/ventas/por-turno/')) {
+        cantidad += 1
+        if (cantidad === 1) return Promise.resolve([ventaFixture({ id: 52, numeroVisible: '0007-00000052' })])
+        return new Promise((resolve) => {
+          resolverListado = resolve
+        })
+      }
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000052')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actualizar' })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Actualizar' }))
+
+    const boton = screen.getByRole('button', { name: 'Actualizar' })
+    expect(boton).toBeDisabled()
+    expect(boton).toHaveAttribute('aria-busy', 'true')
+
+    resolverListado([])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actualizar' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Actualizar' })).not.toHaveAttribute('aria-busy')
+  })
+
+  it('la confirmación de anulación es un diálogo modal, no un panel dentro de la pantalla', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 53, numeroVisible: '0007-00000053', total: 200 })] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000053')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Confirmar anulación' })
+    expect(within(dialogo).getByText(/¿Anular la venta 0007-00000053 por \$ 200,00\?/)).toBeInTheDocument()
+    expect(within(dialogo).getByText(/Se revierte el stock y la cuenta corriente/)).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+  })
+
+  it('durante la anulación el modal queda inerte: botones deshabilitados, Escape no lo cierra', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 54 })] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    apiPostMock.mockImplementationOnce(() => new Promise(() => undefined))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+
+    const dialogo = screen.getByRole('dialog', { name: 'Confirmar anulación' })
+    expect(within(dialogo).getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(within(dialogo).getByRole('button', { name: 'Cerrar confirmación' })).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Confirmar anulación' })).toBeInTheDocument()
+  })
+
+  it('cancelar devuelve el foco al botón "Anular" de la fila', async () => {
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 55 })] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    const anular = screen.getByRole('button', { name: 'Anular' })
+    await userEvent.click(anular)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(anular).toHaveFocus())
+  })
+
+  it('tras anular con éxito la fila ya no tiene botón "Anular": el foco va a "Actualizar" cuando termina de refrescar', async () => {
+    const venta = ventaFixture({ id: 56 })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta] })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    apiPostMock.mockResolvedValueOnce({ ...venta, estado: 'Anulado' })
+    mockearRutas({ turno: turnoFixture(), ventas: [{ ...venta, estado: 'Anulado' }] })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+
+    await screen.findByText('Anulada', { selector: 'span' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actualizar' })).toHaveFocus())
+  })
+
+  /**
+   * Cláusula bajo prueba: la compuerta de generación de `confirmarAnular`. Un cambio de punto de
+   * venta con la anulación en vuelo arranca una carga nueva; la respuesta tardía no debe cerrar el
+   * modal ni releer el listado del turno anterior, pero la ventana inerte sí debe terminar.
+   */
+  it('una respuesta de anulación tardía, de un turno que ya cambió, no cierra el modal ni relee el listado, y libera los botones', async () => {
+    const venta = ventaFixture({ id: 57 })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta] })
+    const { rerender } = render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    let resolverAnulacion: (valor: unknown) => void = () => undefined
+    apiPostMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolverAnulacion = resolve
+        }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+    const listadosAntes = apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+
+    estadoDePuntoVenta = { ...estadoDePuntoVenta, puntoVenta: puntoVentaFixture({ id: 8 }) }
+    rerender(<VentasDelTurno />)
+    await waitFor(() =>
+      expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length).toBeGreaterThan(listadosAntes),
+    )
+    const listadosConLaCargaNueva = apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length
+
+    resolverAnulacion({ ...venta, estado: 'Anulado' })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled())
+    expect(screen.getByRole('dialog', { name: 'Confirmar anulación' })).toBeInTheDocument()
+    expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/ventas/por-turno/')).length).toBe(listadosConLaCargaNueva)
   })
 })
 
@@ -926,21 +1081,22 @@ describe('VentasDelTurno — detalle de venta', () => {
 })
 
 describe('VentasDelTurno — reimprimir', () => {
-  it('sin la prop alReimprimir, ninguna fila ni el modal de detalle ofrecen "Reimprimir"', async () => {
+  it('sin la prop alReimprimir, ninguna fila ni el modal de detalle ofrecen imprimir', async () => {
     const venta = ventaFixture({ id: 40, numeroVisible: '0007-00000040' })
     const comprobante = comprobanteFixture({ id: 40, numeroVisible: '0007-00000040' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 40: comprobante } })
     render(<VentasDelTurno />)
 
     await screen.findByText('0007-00000040')
-    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
     await screen.findByRole('dialog')
+    expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
-  it('con alReimprimir provisto, una venta Anulada nunca ofrece "Reimprimir" (fila ni modal)', async () => {
+  it('con alReimprimir provisto, una venta Anulada nunca ofrece imprimir (fila ni modal)', async () => {
     const venta = ventaFixture({ id: 41, numeroVisible: '0007-00000041', estado: 'Anulado' })
     const comprobante = comprobanteFixture({ id: 41, numeroVisible: '0007-00000041', estado: 'Anulado' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 41: comprobante } })
@@ -948,14 +1104,15 @@ describe('VentasDelTurno — reimprimir', () => {
     render(<VentasDelTurno alReimprimir={alReimprimir} />)
 
     await screen.findByText('0007-00000041')
-    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
     await screen.findByRole('dialog')
+    expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
-  it('"Reimprimir" de la fila busca el comprobante y llama a la prop con el comprobante y los medios', async () => {
+  it('"Imprimir" de la fila busca el comprobante y llama a la prop con el comprobante y los medios', async () => {
     const venta = ventaFixture({ id: 42, numeroVisible: '0007-00000042' })
     const comprobante = comprobanteFixture({ id: 42, numeroVisible: '0007-00000042' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 42: comprobante } })
@@ -963,7 +1120,7 @@ describe('VentasDelTurno — reimprimir', () => {
     render(<VentasDelTurno alReimprimir={alReimprimir} />)
 
     await screen.findByText('0007-00000042')
-    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
 
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
   })
@@ -992,7 +1149,7 @@ describe('VentasDelTurno — reimprimir', () => {
     expect(cantidadDeGetsDespues).toBe(cantidadDeGetsAntes + 1)
   })
 
-  it('fila: si el listado dice Emitida pero el GET fresco dice Anulada, no imprime — muestra el error y la fila se refresca (el botón desaparece) — JD-E1-2', async () => {
+  it('fila: si el listado dice Emitida pero el GET fresco dice Anulada, no imprime — muestra el error y la fila se refresca (el botón "Imprimir" desaparece) — JD-E1-2', async () => {
     const venta = ventaFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Emitido' })
     const comprobanteAnuladoFresco = comprobanteFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Anulado' })
     mockearRutas({
@@ -1007,13 +1164,13 @@ describe('VentasDelTurno — reimprimir', () => {
     await screen.findByText('0007-00000046')
     // Emitida en el listado — el botón "Reimprimir" está visible antes de la búsqueda fresca.
     expect(screen.getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
 
     await screen.findByText('La venta fue anulada, no se puede reimprimir.')
     expect(alReimprimir).not.toHaveBeenCalled()
     // La fila se refresca con el estado real: el badge pasa a Anulada y "Reimprimir" desaparece.
     expect(await screen.findByText('Anulada', { selector: 'span' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Imprimir' })).not.toBeInTheDocument()
   })
 
   it('modal: si el detalle ya cargado dice Emitida pero el GET fresco de "Reimprimir" dice Anulada, no imprime — el modal se refresca (badge y botón) — JD-E1-2', async () => {
@@ -1053,7 +1210,7 @@ describe('VentasDelTurno — reimprimir', () => {
     expect(within(dialog).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
-  it('muestra la etiqueta "Reimprimiendo…" mientras busca el comprobante, y un error visible si falla', async () => {
+  it('mientras busca el comprobante el botón "Imprimir" queda deshabilitado y ocupado con el mismo nombre, y un error visible si falla', async () => {
     const { ErrorApi } = await import('../api/cliente')
     const venta = ventaFixture({ id: 44, numeroVisible: '0007-00000044' })
     let rechazar: (motivo: unknown) => void = () => undefined
@@ -1071,16 +1228,17 @@ describe('VentasDelTurno — reimprimir', () => {
     render(<VentasDelTurno alReimprimir={alReimprimir} />)
 
     await screen.findByText('0007-00000044')
-    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimir' }))
 
-    await screen.findByRole('button', { name: 'Reimprimiendo…' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Imprimir' })).toHaveAttribute('aria-busy', 'true'))
+    expect(screen.getByRole('button', { name: 'Imprimir' })).toBeDisabled()
 
     rechazar(new ErrorApi(500, 'error', 'No se pudo obtener la venta.'))
     await screen.findByText('No se pudo obtener la venta.')
     expect(alReimprimir).not.toHaveBeenCalled()
   })
 
-  it('un doble click sobre "Reimprimir" de la misma fila solo dispara una búsqueda (guarda por fila)', async () => {
+  it('un doble click sobre "Imprimir" de la misma fila solo dispara una búsqueda (guarda por fila)', async () => {
     const venta = ventaFixture({ id: 45, numeroVisible: '0007-00000045' })
     const comprobante = comprobanteFixture({ id: 45, numeroVisible: '0007-00000045' })
     let cantidadDeGets = 0
@@ -1101,7 +1259,7 @@ describe('VentasDelTurno — reimprimir', () => {
     render(<VentasDelTurno alReimprimir={alReimprimir} />)
 
     await screen.findByText('0007-00000045')
-    const boton = screen.getByRole('button', { name: 'Reimprimir' })
+    const boton = screen.getByRole('button', { name: 'Imprimir' })
     await userEvent.click(boton)
     await userEvent.click(boton)
 

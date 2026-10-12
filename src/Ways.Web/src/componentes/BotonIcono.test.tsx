@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { createRef } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BotonIcono, EnlaceIcono } from './BotonIcono'
@@ -11,6 +12,11 @@ describe('BotonIcono', () => {
     ['editar', 'Editar', 'btn-outline-primary'],
     ['agregar', 'Agregar', 'btn-primary'],
     ['ajuste', 'Ajuste manual', 'btn-outline-secondary'],
+    ['anular', 'Anular', 'btn-outline-danger'],
+    ['actualizar', 'Actualizar', 'btn-outline-secondary'],
+    ['detalle', 'Detalle', 'btn-outline-secondary'],
+    ['imprimir', 'Imprimir', 'btn-outline-secondary'],
+    ['limpiar', 'Limpiar filtros', 'btn-outline-secondary'],
   ] as const)('el ícono %s expone nombre accesible, tooltip y variante', (icono, etiqueta, variante) => {
     render(<BotonIcono icono={icono} />)
 
@@ -53,6 +59,30 @@ describe('BotonIcono', () => {
 
     expect(boton).toBeDisabled()
     expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('ocupado marca aria-busy y la clase que gira, sin cambiar nombre ni tooltip', () => {
+    render(<BotonIcono icono="actualizar" ocupado disabled />)
+
+    const boton = screen.getByRole('button', { name: 'Actualizar' })
+    expect(boton).toHaveAttribute('aria-busy', 'true')
+    expect(boton).toHaveAttribute('title', 'Actualizar')
+    expect(boton).toHaveClass('btn-icono-ocupado')
+  })
+
+  it('sin ocupado no declara aria-busy ni la clase que gira', () => {
+    render(<BotonIcono icono="actualizar" />)
+
+    const boton = screen.getByRole('button', { name: 'Actualizar' })
+    expect(boton).not.toHaveAttribute('aria-busy')
+    expect(boton).not.toHaveClass('btn-icono-ocupado')
+  })
+
+  it('reenvía el ref al botón', () => {
+    const ref = createRef<HTMLButtonElement>()
+    render(<BotonIcono icono="detalle" ref={ref} />)
+
+    expect(ref.current).toBe(screen.getByRole('button', { name: 'Detalle' }))
   })
 
   it('conserva las clases extra del llamador', () => {
