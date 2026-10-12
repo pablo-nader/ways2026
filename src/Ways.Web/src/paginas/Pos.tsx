@@ -1063,6 +1063,25 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     sincronizarAntesDeVender: corriendoEnTauri(),
   })
 
+  // Cada vez que el drenado saca ventas de la cola, lo que el servidor sabe del saldo cambió: el que está en
+  // pantalla deja de estar confirmado (y los recibos y tickets en vuelo que lo leyeron antes lo saben por el
+  // contador) hasta que, con señal, una lectura nueva lo reemplace.
+  const descensosDeLaColaRef = useRef(0)
+  // Descensos de la cola al registrarse el último pago: si cambió al imprimir su recibo, el saldo posterior leído puede no incluir lo que se drenó.
+  const descensosAlPagarRef = useRef(0)
+  const largoPrevioDeLaColaRef = useRef(sincronizacionOffline.outboxCount)
+  useEffect(() => {
+    const previo = largoPrevioDeLaColaRef.current
+    largoPrevioDeLaColaRef.current = sincronizacionOffline.outboxCount
+    if (sincronizacionOffline.outboxCount >= previo) return
+    descensosDeLaColaRef.current += 1
+    saldoConfirmadoRef.current = null
+    if (sincronizacionOffline.enLinea && clienteSeleccionado && !clienteSeleccionado.esConsumidorFinal) {
+      refrescarClienteSeleccionado(clienteSeleccionado.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizacionOffline.outboxCount])
+
   // Venta local primero: con una instantánea de ESTE punto de venta, el escaneo se resuelve contra
   // la instantánea sin esperar la red (decisión del dueño: un precio algo viejo es aceptable, una
   // caja lenta no). La vista previa y el cobro locales son del Consumidor Final y de los clientes
@@ -3166,6 +3185,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           // encolarlo ahora con otro número pre-asignado duplicaría la venta. Se informa como
           // resultado incierto, igual que un 503 `resultado_incierto`.
           if (e instanceof ErrorDeRed) {
+            // La venta pudo registrarse: el saldo de pantalla ya no es el del servidor.
+            saldoConfirmadoRef.current = null
             setErrorCobro(MENSAJE_DE_COBRO_INCIERTO)
             return null
           }
@@ -3175,7 +3196,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
       // La lectura de la cola se pide antes de emitir: la cola atiende en orden, así que no incluye la venta que
       // se está encolando ahora (ni se la cuenta dos veces si es online).
-      const saldoConfirmado = saldoConfirmadoRef.current === clienteSeleccionado
+      const marcaDeLaCola = descensosDeLaColaRef.current
       const lecturaDeLaCola = clienteSeleccionado.esConsumidorFinal
         ? null
         : conTiempoLimite(() => sincronizacionOffline.consumoPendienteDeCuentaCorriente(clienteSeleccionado.id), ESPERA_DE_LA_COLA_PARA_EL_TICKET_MS).catch(() => null)
@@ -3202,12 +3223,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
+      // Confirmado solo si la lectura del servidor es la que está en pantalla y ninguna venta salió de la cola desde que se empezó a cobrar.
+      const saldoConfirmadoAlCobrar = saldoConfirmadoRef.current === clienteSeleccionado && descensosDeLaColaRef.current === marcaDeLaCola
       saldoConfirmadoRef.current = null
       if (lecturaDeLaCola === null) {
         alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
       } else {
         const clienteDeLaVenta = clienteSeleccionado
-        void lecturaDeLaCola.then((consumoPendiente) => alEmitir?.(emitido, clienteDeLaVenta, medios ?? [], { consumoPendiente, saldoConfirmado }))
+        void lecturaDeLaCola.then((consumoPendiente) =>
+          alEmitir?.(emitido, clienteDeLaVenta, medios ?? [], { consumoPendiente, saldoConfirmado: saldoConfirmadoAlCobrar }),
+        )
       }
       setLineas([])
       setPrecios({})
@@ -3235,6 +3260,8 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       }
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
+      // Un cobro que falló sin respuesta definitiva (por ejemplo un 503 `resultado_incierto`) pudo registrarse igual.
+      saldoConfirmadoRef.current = null
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
       // — reintentar el checkout sin turno abierto solo repetiría el mismo 409.
       if (e instanceof ErrorApi && e.codigo === 'turno_no_abierto') {
@@ -3361,6 +3388,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       saldoPosterior: pago.saldoPosterior,
       consumoPendiente: consumoPendiente ?? 0,
     })
+    const colaSinCambios = descensosDeLaColaRef.current === descensosAlPagarRef.current
     cajaDeEscritorio.encolarImpresion(
       'el recibo del pago a cuenta',
       ticketDePagoACuenta(
@@ -3369,7 +3397,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           cliente: { numero: pago.cliente.numero, nombre: nombreCompletoDeCliente(pago.cliente) },
           saldoAnterior: saldos.anterior,
           saldoNuevo: saldos.nuevo,
-          estimado: esSaldoEstimado({ confirmado: pago.saldoPosterior !== null, consumoPendiente }),
+          estimado: esSaldoEstimado({ confirmado: pago.saldoPosterior !== null && colaSinCambios, consumoPendiente }),
         },
         cajaDeEscritorio.contexto,
         medios ?? [],
@@ -4190,6 +4218,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
           onPagoRegistrado={(idCliente) => {
             // El saldo en pantalla quedó viejo: deja de ser confirmado hasta que la lectura nueva lo reemplace.
             saldoConfirmadoRef.current = null
+            descensosAlPagarRef.current = descensosDeLaColaRef.current
             refrescarClienteSeleccionado(idCliente)
           }}
           onReciboListo={cajaDeEscritorio ? imprimirReciboDePago : undefined}

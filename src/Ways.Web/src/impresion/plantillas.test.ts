@@ -248,6 +248,19 @@ describe('ticketDeVenta — cliente identificado con su saldo', () => {
     expect(lineas).toContain(dosColumnas('Saldo actual', '$ 70,00'))
   })
 
+  it('con un importe de 9 dígitos la marca "(estimado)" sobrevive: se abrevia la base del rótulo', () => {
+    const cliente = { ...CLIENTE, saldoAntes: -123456789, saldoDespues: -123456739, estimado: true }
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente }))
+    expect(lineas).toContain(dosColumnas('Saldo ant. a fav. (estimado)', '$ 123.456.789,00'))
+    expect(lineas).toContain(dosColumnas('Saldo actual a favor (estimado)', '$ 123.456.739,00'))
+    expect(lineas.filter((l) => l.startsWith('Saldo') && !l.includes('(estimado)'))).toEqual([])
+  })
+
+  it('con importes que entran, los rótulos no se abrevian', () => {
+    const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, saldoAntes: -1234, saldoDespues: -1000, estimado: true } }))
+    expect(lineas).toContain(dosColumnas('Saldo anterior a favor (estimado)', '$ 1.234,00'))
+  })
+
   it('un nombre largo se recorta al ancho del ticket en vez de partir la línea', () => {
     const nombre = 'Distribuidora Mayorista de Productos Regionales Sociedad Anonima'
     const lineas = lineasDe(ticketDeVenta(comprobanteFixture(), CONTEXTO, MEDIOS, { cliente: { ...CLIENTE, nombre } }))
@@ -326,6 +339,12 @@ describe('ticketDePagoACuenta', () => {
     expect(lineas).toContain(dosColumnas('Saldo anterior', '$ 100,00'))
     expect(lineas).toContain(dosColumnas('Saldo nuevo a favor', '$ 550,00'))
     expect(lineas.filter((l) => l.includes('-$'))).toEqual([])
+  })
+
+  it('con un importe de 9 dígitos la marca "(estimado)" del recibo sobrevive', () => {
+    const lineas = lineasDe(ticketDePagoACuenta({ ...DATOS, saldoAnterior: 123456789, saldoNuevo: -1234567890, estimado: true }, CONTEXTO, MEDIOS))
+    expect(lineas).toContain(dosColumnas('Saldo anterior (estimado)', '$ 123.456.789,00'))
+    expect(lineas).toContain(dosColumnas('Saldo nvo. a fav. (estimado)', '$ 1.234.567.890,00'))
   })
 
   it('un nombre largo se recorta al ancho del ticket', () => {

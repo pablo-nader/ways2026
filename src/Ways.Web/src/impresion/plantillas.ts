@@ -63,11 +63,22 @@ function lineaDeCliente(cliente: { numero: number; nombre: string }): string {
   return dosColumnas(`Cliente: #${cliente.numero} - ${cliente.nombre}`, '').trimEnd()
 }
 
+const ABREVIATURAS_DE_SALDO: Record<string, string> = {
+  'Saldo anterior': 'Saldo ant.',
+  'Saldo actual': 'Saldo act.',
+  'Saldo nuevo': 'Saldo nvo.',
+}
+
 /** Una línea de saldo: un saldo negativo es plata a favor del cliente y se imprime con su valor
- * absoluto; uno no confirmado se rotula "(estimado)". */
+ * absoluto; uno no confirmado se rotula "(estimado)". Si con un importe grande el rótulo no entra
+ * en el ancho, se abrevia la base ("Saldo ant.", "a fav.") antes de perder la marca: el helper de
+ * columnas recorta lo de la izquierda, y "(estimado)" va al final. */
 function lineaDeSaldo(ticket: ConstructorDeTicket, rotulo: string, valor: number, estimado: boolean): void {
-  const etiqueta = `${rotulo}${valor < 0 ? ' a favor' : ''}${estimado ? ' (estimado)' : ''}`
-  ticket.lineaDeColumnas(etiqueta, formatearMoneda(Math.abs(valor)))
+  const importe = formatearMoneda(Math.abs(valor))
+  const armar = (base: string, aFavor: string) => `${base}${valor < 0 ? aFavor : ''}${estimado ? ' (estimado)' : ''}`
+  let etiqueta = armar(rotulo, ' a favor')
+  if (etiqueta.length + 1 + importe.length > COLUMNAS_FUENTE_A) etiqueta = armar(ABREVIATURAS_DE_SALDO[rotulo] ?? rotulo, ' a fav.')
+  ticket.lineaDeColumnas(etiqueta, importe)
 }
 
 /**

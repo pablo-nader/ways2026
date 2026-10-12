@@ -439,7 +439,12 @@ describe('ModalCuentaCorrientePos — el recibo no espera para siempre', () => {
     // Testing Library detecta los relojes falsos por el global `jest`: sin él, esperar a un `findBy` cuelga.
     vi.stubGlobal('jest', { advanceTimersByTime: vi.advanceTimersByTime })
     const usuario = userEvent.setup({ delay: null })
-    registrarPagoMock.mockResolvedValue(comprobanteDePago())
+    // Instantes del reloj falso: los `waitFor` también lo avanzan, así que se mide en vez de contar milisegundos.
+    const instantes: { pago?: number; recibo?: number } = {}
+    registrarPagoMock.mockImplementation(async () => {
+      instantes.pago = Date.now()
+      return comprobanteDePago()
+    })
     const siguientes: { resolver: (e: EstadoDeCuenta) => void; rechazar: (e: Error) => void }[] = []
     obtenerEstadoMock.mockReset()
     obtenerEstadoMock.mockResolvedValueOnce(estado(500))
@@ -450,6 +455,9 @@ describe('ModalCuentaCorrientePos — el recibo no espera para siempre', () => {
         }),
     )
     const modal = montar()
+    modal.onReciboListo.mockImplementation(() => {
+      instantes.recibo = Date.now()
+    })
     await waitFor(() => expect(dialogo().getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
     await usuario.click(dialogo().getByRole('button', { name: 'Registrar pago' }))
     await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
@@ -458,7 +466,7 @@ describe('ModalCuentaCorrientePos — el recibo no espera para siempre', () => {
     await usuario.type(pago.getByLabelText('Importe'), '300')
     await usuario.click(pago.getByRole('button', { name: 'Registrar pago' }))
     await waitFor(() => expect(siguientes).toHaveLength(1))
-    return { ...modal, siguientes }
+    return { ...modal, siguientes, instantes }
   }
 
   it('consulta rápida: un único recibo con el saldo posterior, y el vencimiento posterior no imprime otro', async () => {
@@ -473,12 +481,11 @@ describe('ModalCuentaCorrientePos — el recibo no espera para siempre', () => {
   })
 
   it('consulta lenta: al vencer la espera sale un único recibo sin saldo posterior; la respuesta tardía actualiza la pantalla pero no imprime otro', async () => {
-    const { onReciboListo, siguientes } = await pagarConRelojFalso()
+    const { onReciboListo, siguientes, instantes } = await pagarConRelojFalso()
 
-    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS - 1))
-    expect(onReciboListo).not.toHaveBeenCalled()
-    await act(() => vi.advanceTimersByTimeAsync(1))
+    await act(() => vi.advanceTimersByTimeAsync(ESPERA_MAXIMA_DEL_RECIBO_MS))
     expect(onReciboListo).toHaveBeenCalledTimes(1)
+    expect(instantes.recibo! - instantes.pago!).toBeGreaterThanOrEqual(ESPERA_MAXIMA_DEL_RECIBO_MS)
     expect(onReciboListo.mock.calls[0][0]).toMatchObject({ saldoEnPantalla: 500, saldoPosterior: null })
 
     await act(async () => siguientes[0].resolver(estado(150)))
