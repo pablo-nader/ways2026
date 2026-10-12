@@ -183,6 +183,28 @@ describe('calcularTotalesDeLinea', () => {
   })
 })
 
+describe('calcularTotalesDeLinea con unidades de combo', () => {
+  it.each([
+    // el combo consumió toda la línea: cobra lista menos su parte
+    [{ cantidad: 1, precioOriginal: 1000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 333 }, { bruto: 1000, descuento: 333, neto: 667, ajuste: 0, total: 667 }],
+    // la oferta unitaria solo alcanza a la unidad que el combo no consumió
+    [{ cantidad: 3, precioOriginal: 1000, descuentoUnitario: 100, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 800 }, { bruto: 3000, descuento: 900, neto: 2100, ajuste: 0, total: 2100 }],
+    // cantidad fraccionaria con unidades enteras de combo
+    [{ cantidad: 2.5, precioOriginal: 100.5, descuentoUnitario: 0.5, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 100 }, { bruto: 251, descuento: 100, neto: 151, ajuste: 0, total: 151 }],
+    // empate exacto en la parte del combo: 3 × 0,35 − 0,55 = 0,5 sube a 1
+    [{ cantidad: 3, precioOriginal: 0.35, descuentoUnitario: 0, unidadesConsumidasPorCombo: 3, ahorroDeCombo: 0.55 }, { bruto: 1, descuento: 0, neto: 1, ajuste: 0, total: 1 }],
+    // el ajuste manual se aplica sobre el neto con combo
+    [{ cantidad: 3, precioOriginal: 1000, descuentoUnitario: 100, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 800, porcentaje: -10 }, { bruto: 3000, descuento: 900, neto: 2100, ajuste: -210, total: 1890 }],
+  ])('paridad con CalculadorDeTotales: %j', (entrada, esperado) => {
+    expect(calcularTotalesDeLinea({ porcentaje: null, ...entrada })).toEqual(esperado)
+  })
+
+  it('sin datos de combo el resultado es el de siempre', () => {
+    const base = { cantidad: 3, precioOriginal: 1500, descuentoUnitario: 333.34, porcentaje: null }
+    expect(calcularTotalesDeLinea({ ...base, unidadesConsumidasPorCombo: 0, ahorroDeCombo: 0 })).toEqual(calcularTotalesDeLinea(base))
+  })
+})
+
 describe('totalesDeAjusteManual', () => {
   it('sin líneas o sin ajustes ambos totales son 0', () => {
     expect(totalesDeAjusteManual([])).toEqual({ descuentoManualTotal: 0, recargoManualTotal: 0 })

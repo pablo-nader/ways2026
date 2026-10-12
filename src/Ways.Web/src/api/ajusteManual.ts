@@ -8,7 +8,7 @@
  * cuenta: imprimen los montos que ya trae el comprobante. El servidor recalcula cada monto con la
  * misma fórmula, en decimal, y es quien manda; acá solo se anticipa lo que va a cobrar.
  */
-import { productoAPeso, productoDeDiferenciaAPeso, redondearImporte } from '../formato/importes'
+import { diferenciaDeProductoAPeso, productoAPeso, productoDeDiferenciasAPeso, redondearImporte } from '../formato/importes'
 
 /** Magnitud máxima admitida del porcentaje (el rango válido es de -100 a 100; el 0 no es un ajuste). */
 export const PORCENTAJE_MAXIMO_DE_AJUSTE = 100
@@ -50,9 +50,16 @@ export function calcularTotalesDeLinea(params: {
   precioOriginal: number
   descuentoUnitario: number
   porcentaje: number | null | undefined
+  /** Unidades de la línea que un combo consumió (mismo signo que `cantidad`); `0` o ausente sin combo. */
+  unidadesConsumidasPorCombo?: number
+  /** Importe de LÍNEA que el combo repartió a esas unidades (lista menos lo que cobra); `0` o ausente sin combo. */
+  ahorroDeCombo?: number
 }): TotalesDeLinea {
+  const consumidas = params.unidadesConsumidasPorCombo ?? 0
   const bruto = productoAPeso([params.cantidad, params.precioOriginal])
-  const neto = productoDeDiferenciaAPeso(params.cantidad, params.precioOriginal, params.descuentoUnitario)
+  const neto =
+    productoDeDiferenciasAPeso(params.cantidad, consumidas, params.precioOriginal, params.descuentoUnitario) +
+    diferenciaDeProductoAPeso(consumidas, params.precioOriginal, params.ahorroDeCombo ?? 0)
   const descuento = bruto - neto
   const ajuste = calcularAjusteManual(neto, params.porcentaje)
   return { bruto, descuento, neto, ajuste, total: neto + ajuste }
