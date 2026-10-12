@@ -455,7 +455,7 @@ Ofertas, Combos, Instantanea) 1196 passed in 10 m 35 s; web `tsc -b`, `oxlint` (
 
 ## Delivery slices
 
-- PR 11: T1 + T2, against main (#403 already merged). PR 12: T3, stacked on PR 11.
+- PR #417: T1 + T2 (the tasks' "PR 11" and "PR 12" labels), against main. Next PR ("PR 13"): T3, stacked on #417.
 
 ## Next step
 
