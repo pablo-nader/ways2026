@@ -90,6 +90,20 @@ public class CatalogoOnlineAdminTests(WaysApiFixture fixture) : IClassFixture<Wa
     // ---- publicar ---------------------------------------------------------------------------------
 
     [Fact]
+    public async Task UnArticuloPorImporteNoSePuedePublicarPeroSiDespublicar()
+    {
+        var (tienda, admin) = await TiendaConAdminAsync("adm-por-importe");
+        var porImporte = await apoyo.SembrarArticuloAsync(tienda, "Fiambrería", publicado: false, unidadVenta: Ways.Domain.Articulos.UnidadVenta.Importe);
+
+        var publicar = await admin.PutAsJsonAsync(RutaWeb(porImporte), new { publicado = true });
+
+        Assert.Equal(HttpStatusCode.BadRequest, publicar.StatusCode);
+        Assert.Equal("articulo_por_importe_no_publicable", (await LeerAsync(publicar)).GetProperty("codigo").GetString());
+        Assert.False((await apoyo.LeerArticuloAsync(porImporte)).PublicadoWeb);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync(RutaWeb(porImporte), new { publicado = false })).StatusCode);
+    }
+
+    [Fact]
     public async Task PublicarYDespublicarCambiaLaBaseYSeVeEnElDetalleElListadoYLaGrilla()
     {
         var (tienda, admin) = await TiendaConAdminAsync("adm-publicar");

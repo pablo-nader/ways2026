@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
@@ -13,7 +14,12 @@ namespace Ways.Application.Ventas;
 /// <c>codigo_interno</c> — el llamador (carrito del POS) usa <see cref="Cantidad"/> tal cual la
 /// devolvió <see cref="Ways.Domain.Ventas.ParserDeEscaneo"/>. <see cref="UnidadVenta"/> le dice al
 /// carrito si la línea admite fracciones (<see cref="ReglaDeCantidadDeVenta"/>). <see cref="TeclaAtajo"/> es la tecla
-/// de función asignada a un artículo por importe, tal como está guardada (<c>null</c> = sin atajo).</summary>
+/// de función asignada a un artículo por importe, tal como está guardada (<c>null</c> = sin atajo).
+///
+/// <para>Un artículo por importe responde siempre <see cref="Cantidad"/> 1; <see cref="Importe"/> es el monto que el cajero
+/// escribió antes del <c>*</c> (<c>150*500</c>) y se omite del JSON cuando no escribió ninguno: con el código solo, el
+/// cliente es quien lo pide. Para cualquier otro artículo <see cref="Importe"/> es siempre <c>null</c> y la respuesta es
+/// la de siempre.</para></summary>
 public record ArticuloEscaneado(
     int IdArticulo,
     string CodigoInterno,
@@ -22,7 +28,9 @@ public record ArticuloEscaneado(
     decimal Cantidad,
     bool AcumulaEnVenta,
     UnidadVenta UnidadVenta,
-    TeclaAtajo? TeclaAtajo = null);
+    TeclaAtajo? TeclaAtajo = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? Importe = null);
 
 /// <summary>
 /// Resolución de escaneo del POS (design decisiones 7 y 10) — servicio de Application dedicado,
@@ -59,14 +67,40 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             throw ErrorDominio.NoEncontrado($"No se encontró un artículo activo para el código {parseado.Codigo}.");
         }
 
+        var (cantidad, importe) = articulo.UnidadVenta == UnidadVenta.Importe
+            ? (1m, LeerImporte(parseado.Prefijo))
+            : (parseado.Cantidad, null);
+
         return new ArticuloEscaneado(
             articulo.Id,
             articulo.CodigoInterno,
             articulo.Nombre,
             parseado.Objetivo == ObjetivoDeEscaneo.CodigoBarra ? parseado.Codigo : null,
-            parseado.Cantidad,
+            cantidad,
             articulo.AcumulaEnVenta,
             articulo.UnidadVenta,
-            articulo.TeclaAtajo);
+            articulo.TeclaAtajo,
+            importe);
+    }
+
+    /// <summary>Para un artículo por importe el prefijo no es una cantidad sino el monto, y un prefijo que no es un importe
+    /// válido NO cae a "cantidad 1 sin importe" como en los demás artículos: se rechaza (400 <c>importe_invalido</c>),
+    /// porque el cliente cobraría un monto distinto del que se tipeó. Sin <c>*</c> no hay importe y el cliente lo pide.</summary>
+    private static decimal? LeerImporte(string? prefijo)
+    {
+        if (prefijo is null)
+        {
+            return null;
+        }
+
+        if (!ReglaDeImporteDeVenta.TryParsear(prefijo, out var importe))
+        {
+            throw new ErrorDominio(
+                "importe_invalido",
+                "El importe antes del * tiene que ser un número mayor a cero, con punto decimal y hasta 2 decimales.",
+                400);
+        }
+
+        return importe;
     }
 }
