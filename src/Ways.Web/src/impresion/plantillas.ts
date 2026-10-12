@@ -27,7 +27,7 @@ function formatearFechaHora(iso: string): string {
 /** Solo hora:minuto — usado en el detalle de retiros del ticket de cierre, donde la fecha ya
  * está dada por la propia jornada del turno y repetirla en cada fila sería ruido. */
 function formatearHora(iso: string): string {
-  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 }
 
 function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion): void {
