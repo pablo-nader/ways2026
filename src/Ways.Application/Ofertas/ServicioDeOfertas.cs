@@ -3,7 +3,9 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Combos;
 using Ways.Application.Precios;
+using Ways.Domain.Articulos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 
@@ -396,12 +398,18 @@ public class ServicioDeOfertas(
 
     private async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
-        CancellationToken ct)
+        CancellationToken ct) =>
+        (await ResolverConContextoAsync(lineas, momento, agregarPorFamilia, ct)).Resultados;
+
+    private async Task<(IReadOnlyList<ResultadoDeResolucion> Resultados, ContextoDeResolucion? Contexto)>
+        ResolverConContextoAsync(
+            IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, bool agregarPorFamilia,
+            CancellationToken ct)
     {
         var lineasPedidas = ExigirLineas(lineas);
         if (lineasPedidas.Count == 0)
         {
-            return [];
+            return ([], null);
         }
 
         var contexto = await ConstruirContextoAsync(lineasPedidas, momento, ct);
@@ -420,7 +428,86 @@ public class ServicioDeOfertas(
                 linea, ResolvedorDeOfertas.Resolver(preparada.Linea, preparada.Candidatas)));
         }
 
-        return resultado;
+        return (resultado, contexto);
+    }
+
+    /// <summary>
+    /// Vista previa de lo que la venta online cobrará: la resolución de siempre (<see cref="ResolverSolicitudAsync"/>) más
+    /// los combos que <c>ServicioDeVentas.EmitirAsync</c> detectaría sobre esas mismas líneas, por el mismo camino
+    /// (<see cref="CombosEnVenta.DetectarAsync"/>: mismas exclusiones —artículos que no se venden por unidad, líneas sin
+    /// precio vigente, descuento de oferta negativo—, mismo mínimo de 2 unidades, mismas reglas de empresa y mismo
+    /// combo de menor id por línea). Con <see cref="AgregacionDeResolucion.PorLinea"/> no hay documento y nunca hay
+    /// combos: el resultado es el de <see cref="ResolverPorLineaAsync"/> con la lista de combos vacía (y un valor
+    /// de agregación fuera del enum se rechaza igual que en <see cref="ResolverSolicitudAsync"/>).
+    ///
+    /// <para>Un documento pertenece a una sola empresa (la del punto de venta), así que todas las líneas tienen que
+    /// traer la misma <see cref="LineaDeResolucion.IdEmpresa"/> (incluida la ausencia): si no, 400
+    /// <c>empresa_inconsistente</c>. Con la empresa ausente solo participan los combos de todo el tenant. (El
+    /// <c>/resolver</c> de siempre no rechaza una mezcla porque filtra las ofertas línea por línea; los combos
+    /// se detectan sobre el documento entero y una empresa por documento es la única lectura coherente.)</para>
+    ///
+    /// <para>Presupuesto: las 7 consultas de la resolución más UNA de candidatos de combos, que se omite si el
+    /// documento suma menos de 2 unidades. No escribe nada.</para>
+    /// </summary>
+    public async Task<ResolucionConCombos> ResolverConCombosAsync(
+        SolicitudDeResolucion solicitud, CancellationToken ct = default)
+    {
+        if (solicitud.Agregacion != AgregacionDeResolucion.Documento)
+        {
+            return new ResolucionConCombos(await ResolverSolicitudAsync(solicitud, ct), []);
+        }
+
+        var lineasPedidas = ExigirLineas(solicitud.Lineas);
+        var idEmpresa = ExigirUnaSolaEmpresa(lineasPedidas);
+
+        var (resultados, contexto) = await ResolverConContextoAsync(
+            lineasPedidas, solicitud.Momento, agregarPorFamilia: true, ct);
+
+        if (contexto is null)
+        {
+            return new ResolucionConCombos(resultados, []);
+        }
+
+        var lineasParaCombos = new List<LineaDeVentaParaCombos>(lineasPedidas.Count);
+        for (var i = 0; i < lineasPedidas.Count; i++)
+        {
+            var alcance = contexto.AlcancePorArticulo[lineasPedidas[i].IdArticulo];
+            lineasParaCombos.Add(new LineaDeVentaParaCombos(
+                lineasPedidas[i].IdArticulo, alcance.IdFamilia, alcance.UnidadVenta, lineasPedidas[i].Cantidad,
+                resultados[i].PrecioOriginal, resultados[i].DescuentoUnitario));
+        }
+
+        var deteccion = await CombosEnVenta.DetectarAsync(db, idEmpresa, lineasParaCombos, ct);
+        if (deteccion.Lineas.Count == 0)
+        {
+            return new ResolucionConCombos(resultados, []);
+        }
+
+        var codigoPorCombo = deteccion.Candidatos.ToDictionary(c => c.Id, c => c.Codigo);
+        var conCombos = resultados
+            .Select((r, i) => deteccion.Lineas.TryGetValue(i, out var combo)
+                ? r with { Combo = new ComboDeLineaDto(combo.UnidadesConsumidas, combo.Ahorro, combo.IdCombo) }
+                : r)
+            .ToList();
+
+        return new ResolucionConCombos(
+            conCombos,
+            [.. deteccion.Combos.Select(c =>
+                new ComboAplicadoDto(c.IdCombo, codigoPorCombo[c.IdCombo], c.Nombre, c.Veces, c.Ahorro))]);
+    }
+
+    private static int? ExigirUnaSolaEmpresa(IReadOnlyList<LineaDeResolucion> lineas)
+    {
+        var empresas = lineas.Select(l => l.IdEmpresa).Distinct().ToList();
+        if (empresas.Count > 1)
+        {
+            throw new ErrorDominio(
+                "empresa_inconsistente",
+                "Las líneas de un documento con combos tienen que ser todas de la misma empresa.",
+                400);
+        }
+
+        return empresas.Count == 1 ? empresas[0] : null;
     }
 
     /// <summary>
@@ -498,7 +585,8 @@ public class ServicioDeOfertas(
     /// <summary>Alcance de UN artículo del lote ya resuelto: grupo propio y cadena completa de
     /// ancestros de categoría (<see cref="CadenaDeCategorias"/>), lista para entrar en un
     /// <see cref="LineaAResolver"/> sin rearmarse por línea.</summary>
-    private sealed record AlcanceDeArticulo(int? IdGrupo, int? IdFamilia, IReadOnlyList<int> IdsCategorias);
+    private sealed record AlcanceDeArticulo(
+        int? IdGrupo, int? IdFamilia, IReadOnlyList<int> IdsCategorias, UnidadVenta UnidadVenta);
 
     /// <summary>Una candidata materializada + el <c>id_empresa</c> de su fila — el único eje que
     /// NO evalúa el resolver puro (<see cref="LineaAResolver"/> no lleva ese dato, design:
@@ -537,7 +625,7 @@ public class ServicioDeOfertas(
         // 1 consulta: alcance de los artículos pedidos (categoría/grupo/familia propios).
         var articulos = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
-            .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia })
+            .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo, a.IdFamilia, a.UnidadVenta })
             .ToListAsync(ct);
 
         var idsArticuloFaltantes = idsArticulo.Except(articulos.Select(a => a.Id)).ToList();
@@ -564,7 +652,7 @@ public class ServicioDeOfertas(
                 ? CadenaDeCategorias.ConstruirAncestros(idCategoria, padrePorCategoria)
                 : (IReadOnlySet<int>)new HashSet<int>();
 
-            alcancePorArticulo[articulo.Id] = new AlcanceDeArticulo(articulo.IdGrupo, articulo.IdFamilia, ancestros.ToList());
+            alcancePorArticulo[articulo.Id] = new AlcanceDeArticulo(articulo.IdGrupo, articulo.IdFamilia, ancestros.ToList(), articulo.UnidadVenta);
             todasLasCategoriasAlcanzables.UnionWith(ancestros);
 
             if (articulo.IdGrupo is { } idGrupo)
