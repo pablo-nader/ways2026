@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Ways.Domain.Catalogos;
 
 namespace Ways.Application.Catalogos;
@@ -27,6 +28,11 @@ public sealed record GrupoAlta(string Nombre, int? IdEmpresa, decimal? Margen, b
 public sealed record GrupoListado(int Id, string Nombre, bool Activo, int? IdEmpresa, decimal? Margen)
     : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
+/// <summary>Alta y edición de un medio de pago. <c>PorcentajeFacturacion</c> y los cuatro campos de la cuenta de
+/// tesorería son opcionales: ausentes, la edición conserva lo guardado y el alta nace sin cuenta y en 0; así un cliente
+/// que no los conoce no los pisa. Enviados se aplican, incluido <c>IdCuentaTesoreria</c> en null (quita la cuenta) y un
+/// porcentaje en 0. En los porcentajes, null equivale a ausente. Un medio que no es electrónico no tiene cuenta ni
+/// porcentajes: ver <see cref="ReglasDeCuentaDeMedioPago.Resolver"/>.</summary>
 public sealed record MedioPagoAlta(
     string Nombre,
     int? IdEmpresa,
@@ -36,8 +42,16 @@ public sealed record MedioPagoAlta(
     bool RequiereReferencia,
     decimal? RecargoPorcentaje,
     decimal? PorcentajeFacturacion = null,
-    bool Activo = true) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
+    bool Activo = true,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    CampoOpcional<int?> IdCuentaTesoreria = default,
+    decimal? ComisionPorcentaje = null,
+    decimal? RetencionIibbPorcentaje = null,
+    decimal? RetencionIvaPorcentaje = null,
+    decimal? RetencionGananciasPorcentaje = null) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
 
+/// <summary>Listado de medios de pago. Una cuenta dada de baja se lista como "sin cuenta" (<c>IdCuentaTesoreria</c>
+/// null); una cuenta desactivada se lista con su nombre y <c>CuentaTesoreriaInactiva</c> en true.</summary>
 public sealed record MedioPagoListado(
     int Id,
     string Nombre,
@@ -48,7 +62,14 @@ public sealed record MedioPagoListado(
     bool AdmiteVuelto,
     bool RequiereReferencia,
     decimal? RecargoPorcentaje,
-    decimal PorcentajeFacturacion) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
+    decimal PorcentajeFacturacion,
+    int? IdCuentaTesoreria,
+    decimal ComisionPorcentaje,
+    decimal RetencionIibbPorcentaje,
+    decimal RetencionIvaPorcentaje,
+    decimal RetencionGananciasPorcentaje,
+    string? NombreCuentaTesoreria = null,
+    bool CuentaTesoreriaInactiva = false) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
 public sealed record CategoriaAlta(
     string Nombre, int? IdEmpresa, int Orden, int? IdCategoriaPadre, bool Activo = true)

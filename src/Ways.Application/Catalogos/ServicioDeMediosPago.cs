@@ -1,14 +1,26 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Bajas;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 
 namespace Ways.Application.Catalogos;
 
+/// <summary>
+/// Además del catálogo genérico, administra la cuenta de tesorería, la comisión y las retenciones del medio. Las reglas
+/// de valores y de comportamiento son puras (<see cref="ReglasDeCuentaDeMedioPago"/>); acá se agrega lo que necesita
+/// la base: que la cuenta exista, sea de la empresa del medio y esté activa si es nueva. El alta y la edición corren sin
+/// reintento y bajo <c>FOR KEY SHARE</c> sobre la fila viva de la cuenta, que choca contra el <c>FOR UPDATE</c> de su
+/// baja: o la baja gana y la cuenta ya no existe para esta escritura, o espera y ve la referencia. La cuenta se lee una
+/// sola vez, dentro de la transacción y después del lock. El listado trae el nombre de la cuenta en la misma consulta.
+/// </summary>
 public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
     : ServicioDeCatalogo<MedioPago, MedioPagoListado, MedioPagoAlta>(db, reloj, guarda)
 {
+    // Copia del parámetro en un campo (no una captura): evita CS9107.
+    private readonly GuardaDeReferencias guardaDeCuentas = guarda;
+
     protected override DbSet<MedioPago> Conjunto => Db.MediosPago;
 
     protected override string CodigoEnUso => "medio_pago_en_uso";
@@ -18,7 +30,8 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
     protected override MedioPagoListado Proyectar(MedioPago entidad) => new(
         entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa, entidad.Orden,
         entidad.Comportamiento, entidad.AdmiteVuelto, entidad.RequiereReferencia, entidad.RecargoPorcentaje,
-        entidad.PorcentajeFacturacion);
+        entidad.PorcentajeFacturacion, entidad.IdCuentaTesoreria, entidad.ComisionPorcentaje,
+        entidad.RetencionIibbPorcentaje, entidad.RetencionIvaPorcentaje, entidad.RetencionGananciasPorcentaje);
 
     protected override MedioPago Instanciar(string nombre, int? idEmpresa, bool activo, DateTimeOffset ahora) =>
         new() { Nombre = nombre, IdEmpresa = idEmpresa, Activo = activo, CreatedAt = ahora, UpdatedAt = ahora };
@@ -28,6 +41,7 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
         // Ausente conserva lo guardado: un cliente que no conoce el campo no puede pisarlo con 0.
         var porcentaje = datos.PorcentajeFacturacion ?? entidad.PorcentajeFacturacion;
         ExigirPorcentajeDeFacturacionValido(porcentaje);
+        var cuenta = ResolverCuenta(entidad, datos);
 
         entidad.Orden = datos.Orden;
         entidad.Comportamiento = datos.Comportamiento;
@@ -35,6 +49,11 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
         entidad.RequiereReferencia = datos.RequiereReferencia;
         entidad.RecargoPorcentaje = datos.RecargoPorcentaje;
         entidad.PorcentajeFacturacion = porcentaje;
+        entidad.IdCuentaTesoreria = cuenta.IdCuentaTesoreria;
+        entidad.ComisionPorcentaje = cuenta.Comision;
+        entidad.RetencionIibbPorcentaje = cuenta.RetencionIibb;
+        entidad.RetencionIvaPorcentaje = cuenta.RetencionIva;
+        entidad.RetencionGananciasPorcentaje = cuenta.RetencionGanancias;
     }
 
     /// <summary>Entre 0 y 100 con hasta 2 decimales, que es lo que guarda <c>numeric(5,2)</c>: más
@@ -49,5 +68,122 @@ public class ServicioDeMediosPago(IWaysDbContext db, IRelojDelSistema reloj, Gua
                 "El porcentaje a facturar tiene que estar entre 0 y 100, con hasta 2 decimales.",
                 400);
         }
+    }
+
+    private static CuentaDeMedioPago ResolverCuenta(MedioPago guardado, MedioPagoAlta datos) =>
+        ReglasDeCuentaDeMedioPago.Resolver(
+            datos.Comportamiento,
+            new CuentaDeMedioPago(
+                guardado.IdCuentaTesoreria, guardado.ComisionPorcentaje, guardado.RetencionIibbPorcentaje,
+                guardado.RetencionIvaPorcentaje, guardado.RetencionGananciasPorcentaje),
+            new CuentaEnviadaDeMedioPago(
+                datos.IdCuentaTesoreria.Presente, datos.IdCuentaTesoreria.Valor, datos.ComisionPorcentaje,
+                datos.RetencionIibbPorcentaje, datos.RetencionIvaPorcentaje, datos.RetencionGananciasPorcentaje));
+
+    private sealed record FilaDeMedio(MedioPago Medio, string? NombreCuenta, bool CuentaVisible, bool CuentaActiva);
+
+    /// <summary>Una sola consulta: la cuenta va por LEFT JOIN, así que una cuenta dada de baja deja el medio listado
+    /// "sin cuenta" (id en null) en vez de ocultarlo.</summary>
+    private IQueryable<FilaDeMedio> ConCuenta(IQueryable<MedioPago> medios) =>
+        from m in medios
+        join c in Db.CuentasTesoreria on m.IdCuentaTesoreria equals (int?)c.Id into cuentas
+        from c in cuentas.DefaultIfEmpty()
+        select new FilaDeMedio(m, c == null ? null : c.Nombre, c != null, c != null && c.Activo);
+
+    private MedioPagoListado Armar(FilaDeMedio fila)
+    {
+        var listado = Proyectar(fila.Medio);
+
+        return fila.CuentaVisible
+            ? listado with { NombreCuentaTesoreria = fila.NombreCuenta, CuentaTesoreriaInactiva = !fila.CuentaActiva }
+            : listado with { IdCuentaTesoreria = null };
+    }
+
+    public override async Task<IReadOnlyList<MedioPagoListado>> ListarAsync(
+        bool incluirInactivos = false, CancellationToken ct = default)
+    {
+        var medios = Conjunto.AsQueryable();
+
+        if (!incluirInactivos)
+        {
+            medios = medios.Where(m => m.Activo);
+        }
+
+        var filas = await ConCuenta(medios.OrderBy(m => m.Nombre)).ToListAsync(ct);
+        return filas.Select(Armar).ToList();
+    }
+
+    public override async Task<MedioPagoListado> ObtenerAsync(int id, CancellationToken ct = default)
+    {
+        var fila = await ConCuenta(Conjunto.Where(m => m.Id == id)).FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el recurso {id}.");
+
+        return Armar(fila);
+    }
+
+    public override async Task<MedioPagoListado> CrearAsync(MedioPagoAlta datos, CancellationToken ct = default)
+    {
+        var id = await GuardarAsync(null, datos, ct);
+        return await ObtenerAsync(id, ct);
+    }
+
+    public override async Task<MedioPagoListado> ActualizarAsync(
+        int id, MedioPagoAlta datos, CancellationToken ct = default)
+    {
+        await GuardarAsync(id, datos, ct);
+        return await ObtenerAsync(id, ct);
+    }
+
+    /// <summary>Sin reintento: el alta no tiene clave de idempotencia y el lock de la cuenta vive en la transacción. El
+    /// orden es 404, reglas puras, cuenta (lock, lectura, reglas) y por último el flujo genérico. Si ni la cuenta ni
+    /// la empresa del medio cambian, no hay nada nuevo que validar ni que bloquear.</summary>
+    private async Task<int> GuardarAsync(int? id, MedioPagoAlta datos, CancellationToken ct)
+    {
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(Db);
+
+        return await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await Db.Database.BeginTransactionAsync(ct);
+
+            var actual = id is { } existente ? await BuscarAsync(existente, ct) : null;
+            var cuenta = ResolverCuenta(actual ?? new MedioPago { Nombre = string.Empty }, datos);
+
+            if (cuenta.IdCuentaTesoreria is { } idCuenta
+                && (idCuenta != actual?.IdCuentaTesoreria || datos.IdEmpresa != actual.IdEmpresa))
+            {
+                await ExigirCuentaAsignableAsync(
+                    idCuenta, datos.IdEmpresa, asignacionNueva: idCuenta != actual?.IdCuentaTesoreria, ct);
+            }
+
+            var guardado = actual is null
+                ? await base.CrearAsync(datos, ct)
+                : await base.ActualizarAsync(actual.Id, datos, ct);
+
+            await transaccion.CommitAsync(ct);
+            return guardado.Id;
+        });
+    }
+
+    private async Task ExigirCuentaAsignableAsync(
+        int idCuenta, int? idEmpresaDelMedio, bool asignacionNueva, CancellationToken ct)
+    {
+        if (!await guardaDeCuentas.BloquearSiEstaVivaAsync<CuentaTesoreria>(idCuenta, ct))
+        {
+            throw new ErrorDominio("referencia_invalida", $"No existe la cuenta de tesorería {idCuenta}.", 400);
+        }
+
+        var cuenta = await Db.CuentasTesoreria
+            .Where(c => c.Id == idCuenta)
+            .Select(c => new CuentaAsignable(c.IdEmpresa, c.Activo))
+            .FirstAsync(ct);
+
+        int? idUnicaEmpresa = null;
+        if (idEmpresaDelMedio is null)
+        {
+            var empresas = await Db.Empresas.Select(e => e.Id).Take(2).ToListAsync(ct);
+            idUnicaEmpresa = empresas.Count == 1 ? empresas[0] : null;
+        }
+
+        ReglasDeCuentaDeMedioPago.ExigirCuentaAsignable(idEmpresaDelMedio, cuenta, asignacionNueva, idUnicaEmpresa);
     }
 }

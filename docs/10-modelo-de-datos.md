@@ -342,15 +342,25 @@ tenant, no una migración.
 `porcentaje_facturacion` solo se guarda y se expone (ABM y copia offline del POS); la
 decisión de qué tickets se facturan es de una etapa posterior.
 
-> **Estado (cuentas de tesorería, esquema):** `id_cuenta_tesoreria` y los cuatro porcentajes de
-> comisión y retenciones son solo esquema: ningún DTO, endpoint, descriptor ni la instantánea del
-> POS los expone todavía, y el servicio del catálogo no los lee ni los escribe (las filas
-> existentes quedan en 0 y sin cuenta). Tres CHECK: `ck_medios_pago_porcentajes_cuenta_rango` (cada
-> porcentaje entre 0 y 100), `ck_medios_pago_porcentajes_cuenta_suma` (la suma de los cuatro es a lo
-> sumo 100) y `ck_medios_pago_cuenta_solo_electronico` (cuenta y porcentajes distintos de cero solo
-> con `comportamiento = 'electronico'`). Que la cuenta pertenezca a la misma empresa que el medio
-> no lo valida la base: lo valida el servicio que escriba el campo. Índice de soporte de la FK:
-> `ix_medios_pago_cuenta_tesoreria`.
+> **Cuenta, comisión y retenciones (cuentas de tesorería).** El ABM del catálogo (`/api/catalogos/medios-pago`)
+> guarda y devuelve `id_cuenta_tesoreria` y los cuatro porcentajes (`idCuentaTesoreria`, `comisionPorcentaje`,
+> `retencionIibbPorcentaje`, `retencionIvaPorcentaje`, `retencionGananciasPorcentaje`); el listado trae además el
+> nombre de la cuenta y si está inactiva, y trata una cuenta dada de baja como "sin cuenta". La instantánea del POS no los
+> lleva. Una edición que omite un campo conserva lo guardado (igual que `porcentaje_facturacion`); uno enviado se aplica,
+> incluidos la cuenta en `null` y un porcentaje en `0`. Cada porcentaje va de 0 a 100 con hasta 3 decimales y los cuatro
+> suman a lo sumo 100. La cuenta y los porcentajes distintos de cero solo existen con `comportamiento = 'electronico'`:
+> enviar una cuenta o un porcentaje distinto de cero a un medio que no lo es se rechaza (400
+> `cuenta_solo_electronico`), y cambiar el comportamiento sin enviarlos los limpia (cuenta en `NULL`, porcentajes en 0) y la
+> respuesta ya lo muestra. Tres CHECK de respaldo: `ck_medios_pago_porcentajes_cuenta_rango`,
+> `ck_medios_pago_porcentajes_cuenta_suma` y `ck_medios_pago_cuenta_solo_electronico`, traducidas a los mismos códigos
+> que el servicio (`porcentaje_cuenta_invalido`, `porcentajes_cuenta_suma_invalida`, `cuenta_solo_electronico`); la FK
+> compuesta a la cuenta sale como 400 `referencia_invalida`. Índice de soporte de la FK: `ix_medios_pago_cuenta_tesoreria`.
+> Lo que la base no valida lo valida `ServicioDeMediosPago` al asignar una cuenta: existe en el tenant (400
+> `referencia_invalida`, sin distinguir otro tenant de inexistente), es de la empresa del medio (400
+> `cuenta_tesoreria_de_otra_empresa`), un medio de todo el tenant solo la toma en un tenant de una sola empresa (400
+> `cuenta_tesoreria_requiere_empresa`) y no está inactiva (400 `cuenta_tesoreria_inactiva`; un medio que ya apuntaba a una
+> cuenta desactivada después se guarda sin cambiarla). La asignación toma `FOR KEY SHARE` sobre la fila viva de la
+> cuenta, que choca con el `FOR UPDATE` de su baja: una cuenta no queda dada de baja con un medio apuntándole.
 
 ---
 
@@ -2565,12 +2575,15 @@ movimientos_cuenta (          -- [operativa — libro append-only] encadenado po
 >   `saldo_inicial` y que el libro sea solo de altas (sin UPDATE ni DELETE) lo garantiza el escritor,
 >   que agrega bajo el lock de la cuenta.
 > - La cuenta de un medio de pago pertenece a la empresa del medio; un medio de todo el tenant
->   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa.
+>   (`id_empresa NULL`) solo puede tener cuenta en un tenant de una sola empresa. Lo exige
+>   `ServicioDeMediosPago` al asignarla o al cambiar la empresa del medio. Si el tenant suma una empresa
+>   después, un medio de todo el tenant que ya tenía cuenta la conserva: la regla se revisa al escribir, no hay trigger.
 > - El turno y el medio de un movimiento pertenecen a la empresa de la cuenta, y el medio apunta a esa cuenta.
 > - La baja lógica de una cuenta solo se permite sin referencias (medios o movimientos): la baja lógica
 >   esquiva RESTRICT.
 > - Cambiar `comportamiento` de un medio con cuenta o porcentajes distintos de cero a algo que no es
->   `electronico` falla con 23514: el servicio de medios de pago debe limpiarlos antes.
+>   `electronico` falla con 23514 si no se limpian: `ServicioDeMediosPago` los limpia (cuenta en `NULL`, porcentajes en 0)
+>   cuando el cuerpo no los envía, y rechaza con 400 si los envía con valor.
 > - Un `final` negativo es válido a propósito (no hay CHECK de saldo).
 > - Ninguna CHECK liga `tipo` con un lado: un bruto negativo se escribe como `cobro` del lado `egreso`.
 

@@ -532,6 +532,18 @@ public class ManejadorDeErrores(
             { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentaje_facturacion" } =>
                 (StatusCodes.Status400BadRequest, "El porcentaje a facturar tiene que estar entre 0 y 100.", "porcentaje_facturacion_invalido"),
 
+            // Backstops de la cuenta de tesorería del medio de pago: ServicioDeMediosPago aplica antes las mismas
+            // reglas (ReglasDeCuentaDeMedioPago) con los mismos códigos; esto atrapa una escritura cruda. La FK
+            // fk_medios_pago_cuenta_tesoreria sale como referencia_invalida por el backstop genérico de las fk_*.
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_rango" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones tienen que estar entre 0 y 100.", "porcentaje_cuenta_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_porcentajes_cuenta_suma" } =>
+                (StatusCodes.Status400BadRequest, "La comisión y las retenciones, sumadas, no pueden superar el 100%.", "porcentajes_cuenta_suma_invalida"),
+
+            { SqlState: "23514", ConstraintName: "ck_medios_pago_cuenta_solo_electronico" } =>
+                (StatusCodes.Status400BadRequest, "La cuenta de tesorería, la comisión y las retenciones solo se admiten en medios de pago electrónicos.", "cuenta_solo_electronico"),
+
             // Backstop de la base del costo de lista del artículo: ServicioDeArticulos rechaza antes
             // (costo_lista_por_invalido) cualquier valor fuera de Unidad/Bulto; esto atrapa una escritura cruda.
             { SqlState: "23514", ConstraintName: "ck_articulos_costo_lista_por" } =>
