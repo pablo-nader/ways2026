@@ -7051,25 +7051,23 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       ])
     })
 
-    it('un artículo pesable no entra al combo: ni se descuenta ni viajan campos de combo', async () => {
+    it('un artículo pesable entra al combo cuando su unidad admite la cantidad del componente: se descuenta y viajan los campos de combo', async () => {
       await prepararAlmacenOffline({ instantanea: instantaneaConCombo('Peso'), bloque: { desde: 500, hasta: 599, proximo: 500 } })
       mockearEnvioColgado()
       await montarConInstantanea()
       await cargarPanchoYCoca()
-      await waitFor(() => expect(screen.getByText('$ 5.500,00', { selector: 'strong' })).toBeInTheDocument())
-      await cobrarConEfectivo('5500')
+      await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+      await cobrarConEfectivo('5000')
       await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
 
       await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
       expect(await screen.findByText('Guardada en este dispositivo')).toBeInTheDocument()
       const outbox = await leerOutbox(crearAlmacenIndexedDb())
-      expect(outbox[0].solicitud.lineas).toHaveLength(2)
-      for (const linea of outbox[0].solicitud.lineas ?? []) {
-        expect(linea).not.toHaveProperty('idCombo')
-        expect(linea).not.toHaveProperty('ahorroDeCombo')
-        expect(linea).not.toHaveProperty('unidadesConsumidasPorCombo')
-      }
+      expect(outbox[0].solicitud.lineas).toEqual([
+        expect.objectContaining({ idArticulo: 1, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+        expect.objectContaining({ idArticulo: 2, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
+      ])
     })
   })
 
@@ -8564,15 +8562,16 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       })
     })
 
-    it('los miembros de la familia salen de la instantánea y solo los de unidad: el pesable no entra, así que queda uno y se agrega directo', async () => {
+    it('los miembros de la familia salen de la instantánea: el pesable admite la cantidad entera del componente, así que hay dos y se abre el selector', async () => {
       mockearCombos()
       await montarConInstantanea([comboLocal({ componentes: [{ idArticulo: PANCHO, cantidad: 1 }, { idFamilia: 9, cantidad: 2 }] })])
 
       await tipearYAgregar('C7')
 
-      await articuloEnElCarrito('Sprite 1L')
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-      expect(screen.queryByText('Pesable')).not.toBeInTheDocument()
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      expect(within(dialogo).getByLabelText('Pesable')).toHaveAttribute('step', '0.001')
+      expect(within(dialogo).getByLabelText('Sprite 1L')).toHaveAttribute('step', '1')
+      expect(llamadasGet('/combos')).toEqual([])
     })
 
     it('un combo cuyo componente no tiene precio en la lista del cliente se ve deshabilitado con el motivo', async () => {

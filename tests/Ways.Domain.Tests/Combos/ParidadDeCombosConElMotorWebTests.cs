@@ -1,3 +1,4 @@
+using Ways.Domain.Articulos;
 using Ways.Domain.Combos;
 using Ways.Domain.Ventas;
 
@@ -9,8 +10,27 @@ namespace Ways.Domain.Tests.Combos;
 /// <see cref="CalculadorDeTotales"/>. Un cambio de un número en una de las dos tablas exige el mismo cambio en la otra.</summary>
 public class ParidadDeCombosConElMotorWebTests
 {
-    private static LineaParaCombos Linea(int indice, int idArticulo, decimal precio, decimal cantidad = 1m, decimal descuentoDeOferta = 0m) =>
-        new(indice, idArticulo, null, cantidad, precio, descuentoDeOferta);
+    private const int Jamon = 5;
+    private const int Queso = 6;
+    private const int Salame = 7;
+    private const int FamiliaFiambres = 30;
+
+    private static readonly ComboCandidato DoscientosMasDoscientos = ComboDe(7, 3000m, Art(Jamon, 0.200m), Art(Queso, 0.200m));
+
+    private static LineaParaCombos Linea(
+        int indice, int idArticulo, decimal precio, decimal cantidad = 1m, decimal descuentoDeOferta = 0m,
+        UnidadVenta unidad = UnidadVenta.Unidad, int? idFamilia = null) =>
+        new(indice, idArticulo, idFamilia, cantidad, precio, descuentoDeOferta, unidad);
+
+    private static LineaParaCombos PorPeso(int indice, int idArticulo, decimal precioPorKilo, decimal kilos, int? idFamilia = null) =>
+        Linea(indice, idArticulo, precioPorKilo, kilos, 0m, UnidadVenta.Peso, idFamilia);
+
+    private static ComponenteDeCombo Art(int idArticulo, decimal cantidad) => new(idArticulo, null, cantidad);
+
+    private static ComponenteDeCombo Fam(int idFamilia, decimal cantidad) => new(null, idFamilia, cantidad);
+
+    private static ComboCandidato ComboDe(int id, decimal precio, params ComponenteDeCombo[] componentes) =>
+        new(id, $"combo {id}", precio, componentes);
 
     private static ComboCandidato Combo(int id, decimal precio, params int[] articulos) =>
         new(id, $"combo {id}", precio, articulos.Select(a => new ComponenteDeCombo(a, null, 1m)).ToArray());
@@ -82,4 +102,66 @@ public class ParidadDeCombosConElMotorWebTests
     [Fact]
     public void UnEmpateExactoDelRepartoSubeAlPesoAunqueEnPuntoFlotanteQuedeDebajo() =>
         Verificar([Linea(0, 1, 1.2m), Linea(1, 2, 6m)], Combo(7, 3m, 1, 2), [1m, 2m], [0.2m, 4m]);
+
+    [Fact]
+    public void DosComponentesPesablesDeDoscientosGramosRepartenElCobroEntreLasDosLineas() =>
+        Verificar(
+            [PorPeso(0, Jamon, 10000m, 0.200m), PorPeso(1, Queso, 8000m, 0.200m)], DoscientosMasDoscientos,
+            [1667m, 1333m], [333m, 267m]);
+
+    [Fact]
+    public void UnaLineaDeDoscientosQuinceGramosAportaDoscientosAlComboYLoQueSobraSeCobraAPrecioDeLista()
+    {
+        LineaParaCombos[] lineas = [PorPeso(0, Jamon, 10000m, 0.215m), PorPeso(1, Queso, 8000m, 0.200m)];
+
+        Verificar(lineas, DoscientosMasDoscientos, [1817m, 1333m], [333m, 267m]);
+        Assert.Equal(
+            [0.200m, 0.200m],
+            ResolvedorDeCombos.Resolver(lineas, [DoscientosMasDoscientos]).Lineas.Select(l => l.UnidadesConsumidas));
+    }
+
+    [Fact]
+    public void CuatrocientosGramosDeCadaComponenteAplicanElComboDosVeces() =>
+        Verificar(
+            [PorPeso(0, Jamon, 10000m, 0.400m), PorPeso(1, Queso, 8000m, 0.400m)], DoscientosMasDoscientos,
+            [3334m, 2666m], [666m, 534m]);
+
+    [Fact]
+    public void CientoCincuentaGramosNoCompletanUnComponenteDeDoscientosYElComboNoSeAplica() =>
+        Verificar(
+            [PorPeso(0, Jamon, 10000m, 0.150m), PorPeso(1, Queso, 8000m, 0.200m)], DoscientosMasDoscientos,
+            [1500m, 1600m], [0m, 0m]);
+
+    [Fact]
+    public void ElImporteDeListaDeLaPorcionConsumidaRedondeaElMedioCentavoHaciaArriba() =>
+        Verificar(
+            [PorPeso(0, Jamon, 100.10m, 0.250m), PorPeso(1, Queso, 8000m, 0.200m)],
+            ComboDe(7, 1000m, Art(Jamon, 0.250m), Art(Queso, 0.200m)),
+            [15m, 985m], [10.03m, 615m]);
+
+    [Fact]
+    public void EnUnaFamiliaMixtaElMiembroPorUnidadNoEsCandidatoDeUnComponenteDeUnoYMedioYLoCompletaElPesable() =>
+        Verificar(
+            [
+                Linea(0, Salame, 400m, 2m, 0m, UnidadVenta.Unidad, FamiliaFiambres),
+                PorPeso(1, Jamon, 1000m, 1.500m, FamiliaFiambres),
+                Linea(2, 2, 2500m)
+            ],
+            ComboDe(7, 1000m, Fam(FamiliaFiambres, 1.500m), Art(2, 1m)),
+            [800m, 375m, 625m], [0m, 1125m, 1875m]);
+
+    [Fact]
+    public void EnUnaFamiliaMixtaUnComponenteDeDoscientosGramosLoCompletaElMiembroPesableYNoElDeUnidad() =>
+        Verificar(
+            [
+                Linea(0, Salame, 400m, 1m, 0m, UnidadVenta.Unidad, FamiliaFiambres),
+                PorPeso(1, Jamon, 10000m, 0.200m, FamiliaFiambres),
+                PorPeso(2, Queso, 8000m, 0.200m)
+            ],
+            ComboDe(7, 3000m, Fam(FamiliaFiambres, 0.200m), Art(Queso, 0.200m)),
+            [400m, 1667m, 1333m], [0m, 333m, 267m]);
+
+    [Fact]
+    public void UnaLineaPorUnidadConCantidadFraccionariaSeIgnora() =>
+        Verificar([Linea(0, 1, 3000m, 1.5m), Linea(1, 2, 2500m)], Combo(7, 5000m, 1, 2), [4500m, 2500m], [0m, 0m]);
 }

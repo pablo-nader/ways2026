@@ -1,12 +1,16 @@
 /**
  * Cargar un combo en el carrito del POS: puro y sin DOM. Un combo nunca es una línea de venta: cargarlo agrega las
  * mismas líneas de artículo que se agregarían escaneándolas por separado, y es el carrito el que después detecta el
- * combo por sí mismo. Acá se decide QUÉ artículos y cuántas unidades; agregarlas es del camino de escaneo de la pantalla.
+ * combo por sí mismo. Acá se decide QUÉ artículos y qué cantidad de cada uno (unidades, o kilos con hasta tres decimales
+ * si el artículo se vende por peso); agregarlas es del camino de escaneo de la pantalla.
  */
+import { DECIMALES_DE_PESO, esCantidadValida, respetaGranularidad } from '../api/cantidadPorUnidad'
 import type { ArticuloEscaneado } from '../api/tipos'
+import { redondearImporte } from '../formato/importes'
 
 /** Un componente listo para cargar. `candidatos` es vacía cuando no se puede vender; con uno solo, ese es el artículo; con
- * varios (una familia), el cajero reparte la cantidad entre ellos. */
+ * varios (una familia), el cajero reparte la cantidad entre ellos. Las dos fuentes (la instantánea y la API) dejan como
+ * candidatos solo los artículos cuya unidad de venta admite `cantidad`. */
 export type ComponenteParaCargar = {
   idArticulo: number | null
   idFamilia: number | null
@@ -24,7 +28,7 @@ export type ComboParaCargar = {
   componentes: ComponenteParaCargar[]
 }
 
-/** Qué unidades de cada miembro eligió el cajero, por índice de componente y por `idArticulo`. */
+/** Qué cantidad de cada miembro eligió el cajero, por índice de componente y por `idArticulo`. */
 export type EleccionDeMiembros = Readonly<Record<number, Readonly<Record<number, number>>>>
 
 export type ResolucionDeCombo = { ok: true; lineas: ArticuloEscaneado[] } | { ok: false; motivo: string }
@@ -48,13 +52,17 @@ export function rotuloDeCodigoDeCombo(codigo: number): string {
   return `C${codigo}`
 }
 
-function esCantidadEnteraPositiva(cantidad: number): boolean {
-  return Number.isInteger(cantidad) && cantidad > 0
+/** Cantidad para mostrar: coma decimal, sin ceros de más (`2`, `0,2`). */
+export function formatearCantidadDeCombo(cantidad: number): string {
+  return String(cantidad).replace('.', ',')
 }
 
-/** Por qué un componente no se puede cargar, o `null` si se puede (aunque haya que elegir entre varios miembros). */
+/** Por qué un componente no se puede cargar, o `null` si se puede (aunque haya que elegir entre varios miembros). La
+ * cantidad tiene que ser positiva y con a lo sumo los decimales de una cantidad por peso; con un solo candidato, que es
+ * el artículo que se va a cargar con toda la cantidad, tiene que ser además la que admite su unidad de venta. */
 export function motivoDeComponenteNoCargable(componente: ComponenteParaCargar): string | null {
-  if (!esCantidadEnteraPositiva(componente.cantidad)) return `La cantidad de «${componente.etiqueta}» no es válida.`
+  const unidadVenta = componente.candidatos.length === 1 ? componente.candidatos[0].unidadVenta : 'Peso'
+  if (!esCantidadValida(unidadVenta, componente.cantidad)) return `La cantidad de «${componente.etiqueta}» no es válida.`
   if (componente.candidatos.length === 0) return `No hay artículos disponibles para «${componente.etiqueta}».`
   return null
 }
@@ -74,9 +82,10 @@ export function componentesAElegir(combo: ComboParaCargar): number[] {
   return combo.componentes.flatMap((componente, indice) => (componente.candidatos.length > 1 ? [indice] : []))
 }
 
-/** Unidades repartidas entre los miembros de un componente. */
+/** Cantidad repartida entre los miembros de un componente, exacta a tres decimales (0,1 + 0,2 es 0,3). */
 export function totalElegido(elecciones: EleccionDeMiembros, indiceDeComponente: number): number {
-  return Object.values(elecciones[indiceDeComponente] ?? {}).reduce((suma, cantidad) => suma + cantidad, 0)
+  const suma = Object.values(elecciones[indiceDeComponente] ?? {}).reduce((total, cantidad) => total + cantidad, 0)
+  return redondearImporte(suma, DECIMALES_DE_PESO)
 }
 
 /**
@@ -84,7 +93,8 @@ export function totalElegido(elecciones: EleccionDeMiembros, indiceDeComponente:
  * componente con un solo candidato se carga entero con ese artículo; con varios, la cantidad se reparte según
  * `elecciones` y el total elegido tiene que ser exactamente la del componente. Todo o nada: si algo no cierra (un
  * componente sin artículos, una elección que falta, un total distinto, un artículo que no es candidato, una cantidad que
- * no es entera) no devuelve ninguna línea, de modo que el carrito nunca queda con un combo a medias.
+ * la unidad de venta de ese miembro no admite) no devuelve ninguna línea, de modo que el carrito nunca queda con un combo
+ * a medias.
  */
 export function resolverLineasDeCombo(combo: ComboParaCargar, elecciones: EleccionDeMiembros = {}): ResolucionDeCombo {
   const lineas: ArticuloEscaneado[] = []
@@ -108,9 +118,10 @@ export function resolverLineasDeCombo(combo: ComboParaCargar, elecciones: Elecci
         motivo: `Falta elegir los artículos de «${componente.etiqueta}».`,
       }
 
-    const idsDeCandidatos = new Set(componente.candidatos.map((c) => c.idArticulo))
+    const candidatosPorId = new Map(componente.candidatos.map((c) => [c.idArticulo, c]))
     for (const [id, cantidad] of Object.entries(elegidas)) {
-      if (!idsDeCandidatos.has(Number(id)) || !Number.isInteger(cantidad) || cantidad < 0) {
+      const candidato = candidatosPorId.get(Number(id))
+      if (candidato === undefined || !respetaGranularidad(candidato.unidadVenta, cantidad) || cantidad < 0) {
         return {
           ok: false,
           motivo: `La elección de «${componente.etiqueta}» no es válida.`,
@@ -121,7 +132,7 @@ export function resolverLineasDeCombo(combo: ComboParaCargar, elecciones: Elecci
     if (totalElegido(elecciones, indice) !== componente.cantidad) {
       return {
         ok: false,
-        motivo: `Elegí exactamente ${componente.cantidad} para «${componente.etiqueta}».`,
+        motivo: `Elegí exactamente ${formatearCantidadDeCombo(componente.cantidad)} para «${componente.etiqueta}».`,
       }
     }
 

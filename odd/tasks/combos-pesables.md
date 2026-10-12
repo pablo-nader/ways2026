@@ -39,7 +39,7 @@ Out: scale-label barcodes with embedded weight, POS desktop release (separate bu
   (decimal counters), `CombosEnVenta`, `ServicioDeCombos` (validation + POS candidates), consumed-units contracts
   `int` → `decimal`, `ExigirComboOfflineValido`. Tests flipped and added; C# side of the parity fixtures.
   Checks: `dotnet test` unit + integration for combos/ventas/ofertas and the structural guard tests.
-- [ ] **T2 — Offline engine and POS (TypeScript).** Route: delegated writer. `motorDeCombos.ts` (thousandths),
+- [x] **T2 — Offline engine and POS (TypeScript).** Route: delegated writer. `motorDeCombos.ts` (thousandths),
   `instantaneaOffline.ts`, `fuenteDeCombos.ts`, `cargaDeCombos.ts`, `SelectorDeMiembrosDeCombo`, parity cases with
   fractional quantities mirrored in C#. Checks: `vitest run` for pos/api/componentes + C# parity test.
 - [ ] **T3 — Back-office editor.** Route: delegated writer. `combosAbm.ts`, `EditorDeComponentes.tsx`,
@@ -95,5 +95,34 @@ Strategy `ask-on-risk`, chain `stacked-to-main` (cached). Forecast: ~900 authore
     line consumed 100 or more times can drift one peso from `times × combo price`. Unit lines have no drift.
   - Checks: Domain 1376/1376, Application 846/846, Integration 3758/3758 (full, unfiltered). 23 mutations
     killed (16 unit, 7 integration).
+- T2 implemented on the same branch. Route: delegated writer.
+  - Two tests of `src/Ways.Web/src/paginas/Pos.test.tsx` pinned the old restriction and were flipped (the surface was
+    extended by the parent): a weighable article with quantity 1 now enters a combo of integer quantities, as on the
+    server, and a weighable family member is a candidate of a component of quantity 2, so the member selector opens.
+  - Engine (`motorDeCombos.ts`): quantities in integer thousandths read from the shortest decimal form of the number,
+    amounts in `bigint` at `price scale + 3`. Same rules and same A4 order as `ResolvedorDeCombos`. `LineaParaCombos`
+    gained a required `unidadVenta` (`UnidadVenta | null | undefined`). `UNIDADES_MINIMAS_DE_COMBO` was replaced by
+    `CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO`.
+  - Divergence found at HEAD and closed: the TypeScript engine did not round the list amount to 2 decimals (A4) nor
+    skip on `cobro >= totalDeLista`, so with prices of more than 2 decimals it produced savings of 3+ decimals that the
+    server no longer produces. With 2-decimal prices and integer quantities both engines already agreed.
+  - Decisions not covered by A1–A5:
+    - A missing unit of sale counts as `Peso` in the engine, the snapshot source and the load (the convention of
+      `api/cantidadPorUnidad.ts`; the server never sends a missing unit, it only happens in a snapshot older than the
+      field). With integer quantities it behaves exactly like `Unidad`.
+    - The "saving with more than 2 decimals → drop every combo" guard of `resolverDocumentoOffline` was removed: A4
+      makes it unreachable, and its tests could only pass by asserting the old engine. A document with a sub-cent price
+      now applies the combo with 2-decimal savings, like the server.
+    - The zero-take guard of the C# engine (`if (milesimas == 0) continue`) is not ported: in TypeScript a take of zero
+      has no observable effect (no integer division by zero), so no test can kill it; it ships as a comment.
+    - Cart merge (`carrito.ts`): the sum is exact to 3 decimals only when both quantities have at most 3 decimals; a
+      quantity with more decimals is added as is instead of being rounded into a valid one.
+    - Load (`cargaDeCombos.ts`): with a single candidate the component quantity must be admitted by that article's
+      unit of sale (`La cantidad de «…» no es válida.`); member picks are validated with each member's unit; the member
+      total is compared exactly at 3 decimals. Quantities are shown with a decimal comma (`Jamón × 0,2`).
+  - Parity: 8 fractional cases added to `paridadDeCombos.test.ts` and `ParidadDeCombosConElMotorWebTests.cs` with
+    identical inputs and numbers (18/18 on each side). No defect found in the C# engine.
+  - Checks: `tsc -b` exit 0; `oxlint` exit 0; `vitest run` 5839/5839 (206 files); `dotnet test
+    tests/Ways.Domain.Tests` 1384/1384. 27 mutations killed, 1 survivor removed (the zero-take guard above).
 
-Next step: T2.
+Next step: T3.

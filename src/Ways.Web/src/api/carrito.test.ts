@@ -43,6 +43,36 @@ describe('reducirCarrito — escanear', () => {
     expect(resultado[0].cantidad).toBe(3)
   })
 
+  it('re-escanear un artículo pesable suma exacto a tres decimales: 0,1 + 0,2 es 0,3 y no 0,30000000000000004', () => {
+    const articulo = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Jamón', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Peso' as const }
+
+    const resultado = reducirCarrito([lineaFixture({ cantidad: 0.1, unidadVenta: 'Peso' })], { tipo: 'escanear', linea: articulo, cantidad: 0.2, idLinea: 'nueva' })
+
+    expect(resultado).toHaveLength(1)
+    expect(resultado[0].cantidad).toBe(0.3)
+  })
+
+  it('cargar dos veces un componente de 200 g deja 400 g en la línea', () => {
+    const articulo = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Jamón', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Peso' as const }
+
+    const una = reducirCarrito([], { tipo: 'escanear', linea: articulo, cantidad: 0.2, idLinea: 'l1' })
+    const dos = reducirCarrito(una, { tipo: 'escanear', linea: articulo, cantidad: 0.2, idLinea: 'otra' })
+
+    expect(dos.map((l) => l.cantidad)).toEqual([0.4])
+  })
+
+  // Cláusula: la suma solo se lleva a tres decimales si las dos cantidades los respetan.
+  it.each([
+    [1, 0.12345],
+    [0.12345, 1],
+  ])('una cantidad con más de tres decimales se suma tal cual, sin redondearla a una cantidad válida (%s + %s)', (deLaLinea, delEscaneo) => {
+    const articulo = { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Jamón', codigoBarra: null, acumulaEnVenta: true, unidadVenta: 'Peso' as const }
+
+    const resultado = reducirCarrito([lineaFixture({ cantidad: deLaLinea, unidadVenta: 'Peso' })], { tipo: 'escanear', linea: articulo, cantidad: delEscaneo, idLinea: 'nueva' })
+
+    expect(resultado[0].cantidad).toBe(1.12345)
+  })
+
   it('la línea nueva conserva la unidad de venta del escaneo', () => {
     const resultado = reducirCarrito([], {
       tipo: 'escanear',

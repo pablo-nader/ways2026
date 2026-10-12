@@ -5,22 +5,31 @@
  * aplica `resolverDocumentoOffline`, no este módulo). Duplicado a propósito, como `ParserDeEscaneo`: un cambio en la regla del servidor tiene
  * que replicarse acá a mano, y `motorDeCombos.test.ts` espeja caso por caso `ResolvedorDeCombosTests`.
  *
- * Es voraz: en cada vuelta elige, entre los combos que caben con las unidades restantes, el de
- * mayor ganancia real por aplicación (costo de esas unidades con sus ofertas menos lo que el combo
+ * Es voraz: en cada vuelta elige, entre los combos que caben con las cantidades restantes, el de
+ * mayor ganancia real por aplicación (costo de esas cantidades con sus ofertas menos lo que el combo
  * cobra; empate: menor id), lo aplica k veces de una vez y reevalúa. El componente artículo se
  * cubre antes que el de familia y las líneas se toman en orden de documento. Lo que cobra una
  * aplicación es el precio del combo redondeado al peso entero, y ese cobro (no el ahorro) se reparte
  * según el importe de lista de cada línea en pesos enteros que suman exacto el cobro, cada parte
- * entre cero y el importe de lista de las unidades que aporta (hacia abajo al peso); el resto cae
- * hacia atrás desde la última línea. Un combo cuyo cobro redondeado no es menor al costo con ofertas,
- * o cuyos topes no alcanzan a contener el cobro, no se aplica. El ahorro de cada línea es su importe de
- * lista menos su parte del cobro y puede llevar centavos si el precio de lista los tiene.
+ * entre cero y el importe de lista de la cantidad que aporta (hacia abajo al peso); el resto cae
+ * hacia atrás desde la última línea. El importe de lista de la cantidad que aporta una línea se redondea a dos
+ * decimales antes del reparto, así que el ahorro de cada línea (ese importe menos su parte del cobro) lleva a lo
+ * sumo dos decimales. Un combo cuyo cobro redondeado no es menor al costo con ofertas ni al total de lista,
+ * o cuyos topes no alcanzan a contener el cobro, no se aplica.
+ *
+ * Cantidades: una línea aporta toda su cantidad y el combo consume exactamente la cantidad de cada componente; lo
+ * que sobra queda fuera del combo y la línea nunca se parte. Qué cantidades valen lo decide la unidad de venta de
+ * la línea, nunca la forma del número: una línea cuya cantidad su unidad no admite no se detecta, una línea solo
+ * es candidata de un componente cuya cantidad su unidad admite, y de una línea por unidad solo se toman unidades
+ * enteras. Las cuentas de cantidad se hacen en milésimas enteras, nunca en punto flotante.
  *
  * Aritmética exacta: el servidor trabaja en `decimal` con `MidpointRounding.AwayFromZero`. Acá
- * cada importe entra por su representación decimal más corta (la que `JSON.stringify` mandó y el
- * servidor leyó) y todo se opera en `bigint` escalado a la mayor cantidad de decimales de la
- * entrada; solo el precio del combo y el prorrateo por línea redondean, al peso, "mitad lejos de cero".
+ * cada importe y cada cantidad entra por su representación decimal más corta (la que `JSON.stringify` mandó y el
+ * servidor leyó) y todo se opera en `bigint` escalado a la mayor cantidad de decimales de los importes de la
+ * entrada más los tres de una cantidad; redondean el importe de lista de cada línea (a dos decimales) y el precio
+ * del combo y el prorrateo por línea (al peso), siempre "mitad lejos de cero". Los precios de lista no son negativos.
  */
+import type { UnidadVenta } from '../api/tipos'
 
 export type ComponenteDeCombo = { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }
 
@@ -28,7 +37,9 @@ export type ComponenteDeCombo = { idArticulo?: number | null; idFamilia?: number
  * combos aplicados: el motor no lo usa. */
 export type ComboCandidato = { id: number; nombre: string; precio: number; componentes: readonly ComponenteDeCombo[]; codigo?: number }
 
-/** El orden de la lista es el orden del documento; `indice` solo identifica la línea en la salida. */
+/** El orden de la lista es el orden del documento; `indice` solo identifica la línea en la salida. `cantidad` va
+ * en la unidad de venta del artículo (unidades enteras o kilos con hasta tres decimales). Una `unidadVenta` ausente
+ * se trata como `Peso`, el mismo criterio que `api/cantidadPorUnidad`. */
 export type LineaParaCombos = {
   indice: number
   idArticulo: number
@@ -36,27 +47,38 @@ export type LineaParaCombos = {
   cantidad: number
   precioLista: number
   descuentoUnitarioDeOferta: number
+  unidadVenta: UnidadVenta | null | undefined
 }
 
 /** Quien llama calcula la línea con `calcularTotalesDeLinea`, pasando `unidadesConsumidas` y `ahorroDeCombo` (el
- * ahorro es un importe de línea, no por unidad). */
+ * ahorro es un importe de línea, no por unidad). `unidadesConsumidas` va en la unidad de venta de la línea: unidades
+ * enteras o kilos con hasta tres decimales. */
 export type ConsumoDeLinea = { indice: number; unidadesConsumidas: number; ahorroDeCombo: number; idsDeCombo: number[] }
 
 export type ComboAplicado = { idCombo: number; nombre: string; veces: number; ahorro: number; codigo?: number }
 
 export type ResolucionDeCombos = { lineas: ConsumoDeLinea[]; combos: ComboAplicado[] }
 
-/** Espejo de `ReglaDeCombos.UnidadesMinimas` y `ReglaDeCombos.CantidadMaxima`. */
-export const UNIDADES_MINIMAS_DE_COMBO = 2
+/** Espejo de `ReglaDeCombos.CantidadMinimaDeUnComponenteUnico` y `ReglaDeCombos.CantidadMaxima`. */
+export const CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO = 2
 export const CANTIDAD_MAXIMA_DE_COMPONENTE = 999_999
 
 const ENTERO_MAXIMO = 2_147_483_647
 
 const DECIMALES_DE_IMPORTE = 2
 
-type Toma = { posicion: number; unidades: number; ahorro: bigint }
+/** Los decimales de una cantidad por peso (`ReglaDeCantidadDeVenta.DecimalesMaximosDePeso`). */
+const DECIMALES_DE_CANTIDAD = 3
+const MILESIMAS_POR_UNIDAD = 1000
+
+type Toma = { posicion: number; milesimas: number; ahorro: bigint }
 
 type Aplicacion = { combo: ComboCandidato; ganancia: bigint; ahorro: bigint; reparto: Toma[] }
+
+type ComponentePreparado = { idArticulo: number | null; idFamilia: number | null; milesimas: number }
+
+/** Un combo aplicable, con el precio escalado y los componentes en milésimas, los de artículo antes que los de familia. */
+type ComboPreparado = { combo: ComboCandidato; precio: bigint; componentes: ComponentePreparado[] }
 
 const PATRON_DE_NUMERO = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i
 
@@ -101,71 +123,98 @@ export function tieneMasDeDosDecimales(valor: number): boolean {
   return escalaDe(valor) > DECIMALES_DE_IMPORTE
 }
 
-function unidadesDetectables(cantidad: number): number {
-  return cantidad > 0 && cantidad <= ENTERO_MAXIMO && Number.isInteger(cantidad) ? cantidad : 0
+/** La cantidad en milésimas enteras, o `null` si no es finita o lleva más de tres decimales. */
+function aMilesimas(cantidad: number): number | null {
+  if (!Number.isFinite(cantidad) || escalaDe(cantidad) > DECIMALES_DE_CANTIDAD) return null
+  return Number(escalar(cantidad, DECIMALES_DE_CANTIDAD))
 }
 
-function esAplicable(combo: ComboCandidato): boolean {
-  if (!(combo.precio > 0) || combo.componentes.length === 0) return false
+/** Espejo de `ReglaDeCantidadDeVenta.EsCantidadAdmitida` sobre milésimas: por unidad, solo enteros. */
+function admite(unidadVenta: UnidadVenta | null | undefined, milesimas: number): boolean {
+  return unidadVenta !== 'Unidad' || milesimas % MILESIMAS_POR_UNIDAD === 0
+}
 
-  let unidades = 0
+/** La cantidad de la línea en milésimas, o cero si la línea no se detecta: cantidad no positiva, que su unidad de
+ * venta no admite, o fuera de tope (2^31−1 unidades para una línea por unidad y 2^31−1 milésimas para una pesable,
+ * los topes del servidor). */
+function milesimasDetectables(linea: LineaParaCombos): number {
+  if (!(linea.cantidad > 0) || linea.cantidad > ENTERO_MAXIMO) return 0
+  const milesimas = aMilesimas(linea.cantidad)
+  if (milesimas === null || !admite(linea.unidadVenta, milesimas)) return 0
+  return linea.unidadVenta !== 'Unidad' && milesimas > ENTERO_MAXIMO ? 0 : milesimas
+}
+
+/** Espejo de `ReglaDeCombos.EsCantidadDeComponenteValida`: las milésimas del componente, o `null` si su cantidad
+ * no es mayor a cero, supera el tope o lleva más de tres decimales. */
+function milesimasDeComponente(cantidad: number): number | null {
+  return cantidad > 0 && cantidad <= CANTIDAD_MAXIMA_DE_COMPONENTE ? aMilesimas(cantidad) : null
+}
+
+/** El combo listo para intentarse, o `null` si no es aplicable: sin precio positivo, por debajo del mínimo
+ * (`ReglaDeCombos.AlcanzaElMinimo`: dos componentes, o uno solo con cantidad dos o más) o con un componente inválido.
+ * Que la cantidad sea la que admite la unidad de venta de cada línea candidata lo decide `intentar`. */
+function preparar(combo: ComboCandidato, escala: number): ComboPreparado | null {
+  const cantidad = combo.componentes.length
+  const alcanzaElMinimo = cantidad >= 2 || (cantidad === 1 && combo.componentes[0].cantidad >= CANTIDAD_MINIMA_DE_UN_COMPONENTE_UNICO)
+  if (!(combo.precio > 0) || !alcanzaElMinimo) return null
+
+  const componentes: ComponentePreparado[] = []
   for (const componente of combo.componentes) {
-    const tieneArticulo = componente.idArticulo != null
-    const tieneFamilia = componente.idFamilia != null
-    if (
-      tieneArticulo === tieneFamilia ||
-      !(componente.cantidad > 0) ||
-      !Number.isInteger(componente.cantidad) ||
-      componente.cantidad > CANTIDAD_MAXIMA_DE_COMPONENTE
-    ) {
-      return false
-    }
-    unidades += componente.cantidad
+    const milesimas = milesimasDeComponente(componente.cantidad)
+    if ((componente.idArticulo != null) === (componente.idFamilia != null) || milesimas === null) return null
+    componentes.push({ idArticulo: componente.idArticulo ?? null, idFamilia: componente.idFamilia ?? null, milesimas })
   }
-  return unidades >= UNIDADES_MINIMAS_DE_COMBO
+  // Orden estable: los componentes artículo antes que los de familia.
+  componentes.sort((a, b) => (a.idArticulo === null ? 1 : 0) - (b.idArticulo === null ? 1 : 0))
+
+  return { combo, precio: escalar(combo.precio, escala), componentes }
 }
 
+/** `escala` es la de los importes de la entrada; las cuentas van en `escala + 3` decimales, los que suma una cantidad. */
 type Escalados = { escala: number; precioLista: bigint[]; descuento: bigint[] }
 
-function intentar(combo: ComboCandidato, precioDelCombo: bigint, lineas: readonly LineaParaCombos[], restantes: readonly number[], e: Escalados): Aplicacion | null {
+function intentar(preparado: ComboPreparado, lineas: readonly LineaParaCombos[], restantes: readonly number[], e: Escalados): Aplicacion | null {
   const disponibles = [...restantes]
   const tomado = new Map<number, number>()
 
-  // Orden estable: los componentes artículo antes que los de familia.
-  const ordenados = [...combo.componentes].sort((a, b) => (a.idArticulo == null ? 1 : 0) - (b.idArticulo == null ? 1 : 0))
-
-  for (const componente of ordenados) {
-    let faltan = componente.cantidad
+  for (const componente of preparado.componentes) {
+    let faltan = componente.milesimas
     for (let i = 0; i < lineas.length && faltan > 0; i++) {
-      const coincide = componente.idArticulo != null ? lineas[i].idArticulo === componente.idArticulo : lineas[i].idFamilia === componente.idFamilia
-      if (!coincide || disponibles[i] === 0) continue
+      const coincide = componente.idArticulo !== null ? lineas[i].idArticulo === componente.idArticulo : lineas[i].idFamilia === componente.idFamilia
+      if (!coincide || disponibles[i] === 0 || !admite(lineas[i].unidadVenta, componente.milesimas)) continue
 
-      const unidades = Math.min(faltan, disponibles[i])
-      disponibles[i] -= unidades
-      faltan -= unidades
-      tomado.set(i, (tomado.get(i) ?? 0) + unidades)
+      let milesimas = Math.min(faltan, disponibles[i])
+      // De una línea por unidad solo se toman unidades enteras. Si le llega menos de una unidad la toma queda en cero y
+      // se anota sin efecto: no consume, no recibe parte del cobro y no figura en la salida.
+      if (lineas[i].unidadVenta === 'Unidad') milesimas -= milesimas % MILESIMAS_POR_UNIDAD
+
+      disponibles[i] -= milesimas
+      faltan -= milesimas
+      tomado.set(i, (tomado.get(i) ?? 0) + milesimas)
     }
     if (faltan > 0) return null
   }
+
+  const escalaDeCuenta = e.escala + DECIMALES_DE_CANTIDAD
+  const unidadDePeso = 10n ** BigInt(escalaDeCuenta)
+  const unidadDeCentavo = 10n ** BigInt(escalaDeCuenta - DECIMALES_DE_IMPORTE)
 
   const posiciones = [...tomado.keys()].sort((a, b) => a - b)
   let totalDeLista = 0n
   let costoConOfertas = 0n
   const importes: bigint[] = []
   for (const p of posiciones) {
-    const unidades = BigInt(tomado.get(p) as number)
-    const importe = unidades * e.precioLista[p]
+    const milesimas = BigInt(tomado.get(p) as number)
+    const importe = dividirRedondeando(milesimas * e.precioLista[p], unidadDeCentavo) * unidadDeCentavo
     importes.push(importe)
     totalDeLista += importe
-    costoConOfertas += unidades * (e.precioLista[p] - e.descuento[p])
+    costoConOfertas += milesimas * (e.precioLista[p] - e.descuento[p])
   }
 
-  const unidadDePeso = 10n ** BigInt(e.escala)
-  const cobro = dividirRedondeando(precioDelCombo, unidadDePeso) * unidadDePeso
-  // Compuerta D1: el combo se aplica solo si lo que cobra, ya al peso, es estrictamente menor que esas unidades con su oferta.
-  if (cobro >= costoConOfertas) return null
-  // Sin guarda de `totalDeLista <= 0n`: con descuentos de oferta no negativos (los que deja pasar quien llama,
-  // igual que `CombosEnVenta.Detectar`) la compuerta de arriba ya garantiza `totalDeLista >= costoConOfertas > 0`.
+  const cobro = dividirRedondeando(preparado.precio, 10n ** BigInt(e.escala)) * unidadDePeso
+  // Compuerta D1: el combo se aplica solo si lo que cobra, ya al peso, es estrictamente menor que esas cantidades con
+  // su oferta (sin redondear) y que su total de lista (ya redondeado, que puede quedar en cero).
+  if (cobro >= costoConOfertas || cobro >= totalDeLista) return null
 
   const topesAlPeso = importes.map((importe) => (importe / unidadDePeso) * unidadDePeso)
   const partes = importes.map((importe, k) => {
@@ -181,28 +230,30 @@ function intentar(combo: ComboCandidato, precioDelCombo: bigint, lineas: readonl
   }
   if (resto !== 0n) return null
 
-  const reparto = posiciones.map((posicion, k) => ({ posicion, unidades: tomado.get(posicion) as number, ahorro: importes[k] - partes[k] }))
-  return { combo, ganancia: costoConOfertas - cobro, ahorro: totalDeLista - cobro, reparto }
+  const reparto = posiciones.map((posicion, k) => ({ posicion, milesimas: tomado.get(posicion) as number, ahorro: importes[k] - partes[k] }))
+  return { combo: preparado.combo, ganancia: costoConOfertas - cobro, ahorro: totalDeLista - cobro, reparto }
 }
 
 export function resolverCombos(lineas: readonly LineaParaCombos[], combos: readonly ComboCandidato[]): ResolucionDeCombos {
   const vacia: ResolucionDeCombos = { lineas: [], combos: [] }
-  const aplicables = combos.filter(esAplicable)
-  if (lineas.length === 0 || aplicables.length === 0) return vacia
+  if (lineas.length === 0) return vacia
 
   const escala = Math.max(
     DECIMALES_DE_IMPORTE,
     ...lineas.flatMap((l) => [escalaDe(l.precioLista), escalaDe(l.descuentoUnitarioDeOferta)]),
-    ...aplicables.map((c) => escalaDe(c.precio)),
+    ...combos.map((c) => escalaDe(c.precio)),
   )
+  const aplicables = combos.flatMap((c) => preparar(c, escala) ?? [])
+  if (aplicables.length === 0) return vacia
+
   const escalados: Escalados = {
     escala,
     precioLista: lineas.map((l) => escalar(l.precioLista, escala)),
     descuento: lineas.map((l) => escalar(l.descuentoUnitarioDeOferta, escala)),
   }
-  const preciosDeCombo = new Map(aplicables.map((c) => [c, escalar(c.precio, escala)]))
+  const escalaDeCuenta = escala + DECIMALES_DE_CANTIDAD
 
-  const restantes = lineas.map((l) => unidadesDetectables(l.cantidad))
+  const restantes = lineas.map(milesimasDetectables)
   const consumidas = lineas.map(() => 0)
   const ahorroPorLinea = lineas.map(() => 0n)
   const combosPorLinea = lineas.map(() => new Set<number>())
@@ -210,21 +261,21 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
 
   for (;;) {
     let mejor: Aplicacion | null = null
-    for (const combo of aplicables) {
-      const candidata = intentar(combo, preciosDeCombo.get(combo) as bigint, lineas, restantes, escalados)
+    for (const preparado of aplicables) {
+      const candidata = intentar(preparado, lineas, restantes, escalados)
       if (candidata === null) continue
-      if (mejor === null || candidata.ganancia > mejor.ganancia || (candidata.ganancia === mejor.ganancia && combo.id < mejor.combo.id)) {
+      if (mejor === null || candidata.ganancia > mejor.ganancia || (candidata.ganancia === mejor.ganancia && preparado.combo.id < mejor.combo.id)) {
         mejor = candidata
       }
     }
     if (mejor === null) break
 
-    let veces = Number.MAX_SAFE_INTEGER
-    for (const { posicion, unidades } of mejor.reparto) veces = Math.min(veces, Math.floor(restantes[posicion] / unidades))
+    let veces = ENTERO_MAXIMO
+    for (const { posicion, milesimas } of mejor.reparto) veces = Math.min(veces, Math.floor(restantes[posicion] / milesimas))
 
-    for (const { posicion, unidades, ahorro } of mejor.reparto) {
-      restantes[posicion] -= unidades * veces
-      consumidas[posicion] += unidades * veces
+    for (const { posicion, milesimas, ahorro } of mejor.reparto) {
+      restantes[posicion] -= milesimas * veces
+      consumidas[posicion] += milesimas * veces
       ahorroPorLinea[posicion] += ahorro * BigInt(veces)
       combosPorLinea[posicion].add(mejor.combo.id)
     }
@@ -240,8 +291,8 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
     if (consumidas[i] > 0) {
       resultadoLineas.push({
         indice: linea.indice,
-        unidadesConsumidas: consumidas[i],
-        ahorroDeCombo: desescalar(ahorroPorLinea[i], escala),
+        unidadesConsumidas: desescalar(BigInt(consumidas[i]), DECIMALES_DE_CANTIDAD),
+        ahorroDeCombo: desescalar(ahorroPorLinea[i], escalaDeCuenta),
         idsDeCombo: [...combosPorLinea[i]].sort((a, b) => a - b),
       })
     }
@@ -249,7 +300,7 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
 
   const vistos = new Set<number>()
   const resultadoCombos: ComboAplicado[] = []
-  for (const combo of aplicables) {
+  for (const { combo } of aplicables) {
     const aplicado = vecesPorCombo.get(combo.id)
     if (aplicado === undefined || vistos.has(combo.id)) continue
     vistos.add(combo.id)
@@ -257,7 +308,7 @@ export function resolverCombos(lineas: readonly LineaParaCombos[], combos: reado
       idCombo: combo.id,
       nombre: combo.nombre,
       veces: aplicado.veces,
-      ahorro: desescalar(aplicado.ahorro, escala),
+      ahorro: desescalar(aplicado.ahorro, escalaDeCuenta),
       ...(combo.codigo !== undefined ? { codigo: combo.codigo } : {}),
     })
   }

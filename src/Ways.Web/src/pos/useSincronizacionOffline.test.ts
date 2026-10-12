@@ -2485,7 +2485,7 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
     ])
   })
 
-  it('con una parte de combo de fracción de centavo, el documento se encola sin campos de combo (el servidor la rechazaría)', async () => {
+  it('con un precio de fracción de centavo, el documento se encola con el combo y partes de a lo sumo dos decimales', async () => {
     const subcentavo = instantaneaConCombo({
       articulos: [
         articuloFixture({ idArticulo: COCA, precioOriginal: 2, precioFinal: 2, unidadVenta: 'Unidad' }),
@@ -2496,11 +2496,9 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
 
     const { lineas } = await encolar(subcentavo)
 
-    expect(lineas).toHaveLength(2)
-    for (const l of lineas) {
-      expect(l).not.toHaveProperty('idCombo')
-      expect(l).not.toHaveProperty('ahorroDeCombo')
-      expect(l).not.toHaveProperty('unidadesConsumidasPorCombo')
-    }
+    expect(lineas).toEqual([
+      expect.objectContaining({ idArticulo: COCA, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 1, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 0.01, idCombo: 7 }),
+    ])
   })
 })

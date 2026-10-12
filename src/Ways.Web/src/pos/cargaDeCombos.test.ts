@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { ArticuloEscaneado } from '../api/tipos'
+import type { ArticuloEscaneado, UnidadVenta } from '../api/tipos'
 import {
   componentesAElegir,
+  formatearCantidadDeCombo,
   motivoDeComboNoCargable,
   parsearCodigoDeCombo,
   resolverLineasDeCombo,
@@ -11,13 +12,15 @@ import {
   type ComponenteParaCargar,
 } from './cargaDeCombos'
 
-function articulo(idArticulo: number, nombre: string): ArticuloEscaneado {
-  return { idArticulo, codigoInterno: `A${idArticulo}`, nombre, codigoBarra: null, cantidad: 1, acumulaEnVenta: true, unidadVenta: 'Unidad' }
+function articulo(idArticulo: number, nombre: string, unidadVenta: UnidadVenta = 'Unidad'): ArticuloEscaneado {
+  return { idArticulo, codigoInterno: `A${idArticulo}`, nombre, codigoBarra: null, cantidad: 1, acumulaEnVenta: true, unidadVenta }
 }
 
 const PANCHO = articulo(1, 'Pancho')
 const COCA = articulo(2, 'Coca')
 const SPRITE = articulo(3, 'Sprite')
+const JAMON = articulo(5, 'Jamón', 'Peso')
+const QUESO = articulo(6, 'Queso', 'Peso')
 
 function deArticulo(a: ArticuloEscaneado, cantidad: number): ComponenteParaCargar {
   return { idArticulo: a.idArticulo, idFamilia: null, etiqueta: a.nombre, cantidad, candidatos: [a] }
@@ -112,7 +115,7 @@ describe('resolverLineasDeCombo', () => {
     expect(resolverLineasDeCombo(c)).toEqual({ ok: false, motivo: 'Falta elegir los artículos de «Gaseosas».' })
   })
 
-  it('una elección que nombra un artículo que no es candidato, o con cantidad negativa o fraccionaria, se rechaza', () => {
+  it('una elección que nombra un artículo que no es candidato, o con cantidad negativa o fraccionaria en un miembro por unidad, se rechaza', () => {
     const c = combo([deFamilia(9, 'Gaseosas', 2, [COCA, SPRITE]), deArticulo(PANCHO, 1)])
 
     for (const eleccion of [
@@ -130,10 +133,78 @@ describe('resolverLineasDeCombo', () => {
     expect(resolverLineasDeCombo(c)).toEqual({ ok: false, motivo: 'No hay artículos disponibles para «Gaseosas».' })
   })
 
-  it('una cantidad de componente que no es entera positiva no se carga', () => {
-    for (const cantidad of [0, -1, 1.5]) {
-      expect(resolverLineasDeCombo(combo([deArticulo(PANCHO, cantidad), deArticulo(COCA, 1)])).ok).toBe(false)
-    }
+  it.each([0, -1, 0.2005, Number.NaN])('una cantidad de componente no positiva o con más de tres decimales no se carga (%s)', (cantidad) => {
+    expect(resolverLineasDeCombo(combo([deArticulo(JAMON, cantidad), deArticulo(COCA, 1)]))).toEqual({
+      ok: false,
+      motivo: 'La cantidad de «Jamón» no es válida.',
+    })
+  })
+
+  // Cláusula: con un solo candidato, la cantidad tiene que ser la que admite la unidad de venta de ese artículo.
+  it('una cantidad fraccionaria para un único candidato que se vende por unidad no se carga, ni las líneas de los demás', () => {
+    expect(resolverLineasDeCombo(combo([deArticulo(PANCHO, 1), deArticulo(COCA, 1.5)]))).toEqual({
+      ok: false,
+      motivo: 'La cantidad de «Coca» no es válida.',
+    })
+    expect(motivoDeComboNoCargable(combo([deFamilia(9, 'Gaseosas', 0.5, [COCA]), deArticulo(PANCHO, 1)]))).toBe('La cantidad de «Gaseosas» no es válida.')
+  })
+
+  it('un único candidato sin unidad de venta se trata como pesable y se carga con una cantidad fraccionaria', () => {
+    const sinUnidad: ArticuloEscaneado = { ...articulo(9, 'Suelto'), unidadVenta: undefined }
+
+    expect(resolverLineasDeCombo(combo([deArticulo(sinUnidad, 0.25), deArticulo(PANCHO, 1)]))).toEqual({
+      ok: true,
+      lineas: [{ ...sinUnidad, cantidad: 0.25 }, { ...PANCHO, cantidad: 1 }],
+    })
+  })
+
+  it('con varios candidatos la cantidad del componente no se juzga por la unidad del primero: la reparte la elección', () => {
+    const c = combo([deFamilia(30, 'Picada', 0.5, [COCA, JAMON]), deArticulo(PANCHO, 1)])
+
+    expect(motivoDeComboNoCargable(c)).toBeNull()
+    expect(resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 0.5 } })).toEqual({ ok: true, lineas: [{ ...JAMON, cantidad: 0.5 }, { ...PANCHO, cantidad: 1 }] })
+  })
+
+  it('un componente pesable se carga con su cantidad en kilos: una línea por componente', () => {
+    const resultado = resolverLineasDeCombo(combo([deArticulo(JAMON, 0.2), deArticulo(QUESO, 0.2)]))
+
+    expect(resultado).toEqual({ ok: true, lineas: [{ ...JAMON, cantidad: 0.2 }, { ...QUESO, cantidad: 0.2 }] })
+  })
+
+  it('una familia pesable reparte la cantidad en kilos y el total se compara exacto (0,1 + 0,2 es 0,3)', () => {
+    const c = combo([deFamilia(30, 'Fiambres', 0.3, [JAMON, QUESO]), deArticulo(COCA, 1)])
+
+    const resultado = resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 0.1, [QUESO.idArticulo]: 0.2 } })
+
+    expect(resultado).toEqual({ ok: true, lineas: [{ ...JAMON, cantidad: 0.1 }, { ...QUESO, cantidad: 0.2 }, { ...COCA, cantidad: 1 }] })
+  })
+
+  it('el total de una familia pesable que no cierra se rechaza, con la cantidad con coma', () => {
+    const c = combo([deFamilia(30, 'Fiambres', 0.3, [JAMON, QUESO]), deArticulo(COCA, 1)])
+
+    expect(resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 0.1, [QUESO.idArticulo]: 0.199 } })).toEqual({
+      ok: false,
+      motivo: 'Elegí exactamente 0,3 para «Fiambres».',
+    })
+  })
+
+  it('en un miembro pesable una cantidad con más de tres decimales se rechaza', () => {
+    const c = combo([deFamilia(30, 'Fiambres', 0.3, [JAMON, QUESO]), deArticulo(COCA, 1)])
+
+    expect(resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 0.1005, [QUESO.idArticulo]: 0.1995 } })).toEqual({
+      ok: false,
+      motivo: 'La elección de «Fiambres» no es válida.',
+    })
+  })
+
+  it('en una familia mixta cada miembro sigue su unidad de venta: el pesable admite fracción y el de unidad no', () => {
+    const c = combo([deFamilia(30, 'Picada', 2, [JAMON, COCA]), deArticulo(PANCHO, 1)])
+
+    expect(resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 1, [COCA.idArticulo]: 1 } }).ok).toBe(true)
+    expect(resolverLineasDeCombo(c, { 0: { [JAMON.idArticulo]: 1.5, [COCA.idArticulo]: 0.5 } })).toEqual({
+      ok: false,
+      motivo: 'La elección de «Picada» no es válida.',
+    })
   })
 
   it('un componente con un solo candidato ignora una elección que venga de más', () => {
@@ -176,6 +247,14 @@ describe('motivoDeComboNoCargable y componentesAElegir', () => {
   it('totalElegido suma lo repartido en el componente y es cero sin elección', () => {
     expect(totalElegido({ 1: { 2: 1, 3: 2 } }, 1)).toBe(3)
     expect(totalElegido({}, 1)).toBe(0)
+  })
+
+  it('totalElegido es exacto a tres decimales: 0,1 + 0,2 es 0,3 y no 0,30000000000000004', () => {
+    expect(totalElegido({ 0: { 5: 0.1, 6: 0.2 } }, 0)).toBe(0.3)
+  })
+
+  it('la cantidad se muestra con coma decimal y sin ceros de más', () => {
+    expect([2, 0.2, 1.125].map(formatearCantidadDeCombo)).toEqual(['2', '0,2', '1,125'])
   })
 })
 

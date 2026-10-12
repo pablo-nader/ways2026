@@ -43,6 +43,19 @@ describe('calcularTotalesDeLineaConCombo', () => {
     expect(totales).toMatchObject({ descuento: 546, total: 5454 })
   })
 
+  it('una línea pesable con parte de su peso en el combo: 215 g a 10000 con 200 g consumidos (ahorro 333)', () => {
+    const totales = calcularTotalesDeLineaConCombo({
+      cantidad: 0.215,
+      precioOriginal: 10000,
+      descuentoUnitario: 0,
+      porcentaje: null,
+      combo: { unidadesConsumidas: 0.2, ahorro: 333 },
+    })
+
+    // 15 g a precio de lista (150) más los 200 g del combo (2000 − 333).
+    expect(totales).toEqual({ bruto: 2150, descuento: 333, neto: 1817, ajuste: 0, total: 1817 })
+  })
+
   it('el ajuste manual se calcula sobre el neto que ya incluye el combo, con redondeo decimal exacto', () => {
     const totales = calcularTotalesDeLineaConCombo({
       cantidad: 1,

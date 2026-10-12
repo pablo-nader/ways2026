@@ -9,7 +9,8 @@ import { api } from './cliente'
 import type { ComboAplicadoEnPrevia, ComboCargableDeApi, ComboDeLinea, ComboListado } from './tipos'
 
 /**
- * El combo de una línea solo vale si no consumió más unidades que su `cantidad` (el servidor valida lo mismo
+ * El combo de una línea solo vale si no consumió más que su `cantidad` (unidades, o kilos si el artículo se vende
+ * por peso; el servidor valida lo mismo
  * en una línea offline, `combo_offline_invalido`). Con la cantidad ya reducida y la
  * resolución todavía sin refrescar (o un borrador restaurado), el combo viejo consume más de lo que hay:
  * se ignora entero hasta que la vista previa se resuelva de nuevo, en vez de acotar las unidades y
