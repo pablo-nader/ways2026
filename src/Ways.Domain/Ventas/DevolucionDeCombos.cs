@@ -1,3 +1,5 @@
+using Ways.Domain.Dinero;
+
 namespace Ways.Domain.Ventas;
 
 /// <summary>Un item de la venta original que consumió un combo (<c>id_combo</c> no nulo), con lo que se
@@ -24,11 +26,11 @@ public readonly record struct TramoDeDevolucion(ItemVendidoConCombo Origen, deci
 /// siempre.</para>
 ///
 /// <para>Importe: se acredita por unidades acumuladas. El crédito de una toma es
-/// <c>round(Total × (unidades ya tomadas + unidades de esta toma) / Cantidad)</c> en centavos
-/// (<see cref="MidpointRounding.AwayFromZero"/>) menos lo ya acreditado de ese item. El consumo se acumula entre las
-/// líneas del mismo documento: devolver TODAS las unidades de un item acredita exactamente su <c>Total</c>, y como el
-/// redondeo es monótono ninguna toma resulta negativa ni la suma supera el <c>Total</c>, sea cual sea el reparto en
-/// líneas.</para>
+/// <c>round(Total × (unidades ya tomadas + unidades de esta toma) / Cantidad)</c> al peso entero
+/// (<see cref="RedondeoDePeso"/>) menos lo ya acreditado de ese item. El consumo se acumula entre las
+/// líneas del mismo documento: devolver TODAS las unidades de un item acredita exactamente su <c>Total</c> (las
+/// ventas con combo se guardan en pesos enteros), y como el redondeo es monótono ninguna toma resulta negativa ni la
+/// suma supera el <c>Total</c>, sea cual sea el reparto en líneas.</para>
 ///
 /// <para>No lleva cuenta de lo devuelto por notas de crédito anteriores de la misma venta: el tope es por documento.</para>
 /// </summary>
@@ -75,7 +77,7 @@ public static class DevolucionDeCombos
 
                 var unidades = Math.Min(faltan, disponibles);
                 var tomadas = tomadasPorItem[vendido.IdItem] + unidades;
-                var credito = Math.Round(vendido.Total * tomadas / vendido.Cantidad, 2, MidpointRounding.AwayFromZero)
+                var credito = RedondeoDePeso.APesoEntero(vendido.Total * tomadas / vendido.Cantidad)
                     - devueltoPorItem[vendido.IdItem];
 
                 restantes[vendido.IdItem] = disponibles - unidades;

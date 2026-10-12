@@ -1988,8 +1988,7 @@ public class ServicioDeVentas(
                 foreach (var tramo in tramos)
                 {
                     var cantidadDelTramo = -tramo.Cantidad;
-                    var bruto = Math.Round(
-                        cantidadDelTramo * tramo.Origen.PrecioUnitario, 2, MidpointRounding.AwayFromZero);
+                    var bruto = cantidadDelTramo * tramo.Origen.PrecioUnitario;
 
                     lineasParaCalcular.Add(new LineaParaCalcular(
                         cantidadDelTramo, tramo.Origen.PrecioUnitario, 0m, linea.AjusteManualPorcentaje,
