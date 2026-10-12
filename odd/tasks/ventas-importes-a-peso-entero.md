@@ -89,10 +89,25 @@ price difference below one peso of line net is no longer flagged as a discrepanc
 Accepted tradeoff from the fix: a raw UPDATE of an item's cantidad or precio_unitario that leaves the
 stored amounts untouched is no longer caught by the conversion/invoicing integrity check.
 
+- Integration with main's combos (merged while CI ran). `ResolvedorDeCombos` now distributes the combo's
+  peso-rounded PRICE across lines in whole pesos (commits `b7db4208`, `2df92023`); the calculator rounds
+  the combo part and the rest of the line separately: `neto = peso((cant - consumidas) x (precio - descU))
+  + peso(consumidas x precio - ahorroDeCombo)`. A combo that is not cheaper than the offers after rounding,
+  or whose charge cannot be placed within the line caps, is not applied. Judgment-day on this delta: both
+  judges confirmed an overcharge with cent list prices (500.50 + 999.50, combo 1000 -> 1001); fixed and
+  re-judged clean.
+- Combo credit notes (`DevolucionDeCombos`, commit `2f6d9c5e`): the credit is split in whole pesos with
+  cumulative rounding (2 units charged 2727 -> 1364 + 1363). Judged clean.
+- Final checks before push: Domain 1256, Application 806, targeted integration 432 passed; full
+  integration left to CI.
+
+Known limitations (pre-existing on main): the cap of a combo return is per credit-note document, so two
+separate credit notes over the same item can credit one peso more than charged. A combo item stored
+with cents before this change is credited rounded to the peso.
+
 Next step: merge the PR, then the POS desktop release.
 
 ## Follow-ups
 
 - POS desktop bundle needs a `Ways.Desktop` version bump + `pos-v*` tag for the cashiers to get T2.
 - Sale amounts still print ",00" on screen; dropping the decimals from display is an open product decision.
-- `ResolvedorDeCombos` (domain-only, not wired to sales yet) splits the combo saving per line at 2 decimals; it must split in whole pesos before a sale path consumes it.
