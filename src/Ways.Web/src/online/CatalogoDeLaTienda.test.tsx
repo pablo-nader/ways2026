@@ -6,6 +6,7 @@ import type { CatalogoPublico, ConsultaDeCatalogo } from '../api/publico'
 import { ErrorApi } from '../api/cliente'
 import type { VitrinaPublica } from '../api/tipos'
 import '../publico/publico.css'
+import { claveDelCarrito } from './carrito'
 import { articuloPublico, catalogoPublico, categoriaPublica, diferida } from './datosDePrueba'
 import { Tienda } from './Tienda'
 
@@ -405,6 +406,95 @@ describe('catálogo de la tienda', () => {
       await userEvent.type(cantidad, '999')
 
       expect(screen.getByRole('button', { name: 'Agregar uno más de Martillo' })).toBeDisabled()
+    })
+  })
+
+  describe('las líneas del carrito siguen al catálogo', () => {
+    function buscarAhora(texto: string) {
+      const campo = screen.getByRole('searchbox', { name: 'Buscar artículos' })
+      fireEvent.change(campo, { target: { value: texto } })
+      fireEvent.submit(campo.closest('form') as HTMLFormElement)
+    }
+
+    async function abrirElPanel() {
+      await userEvent.click(screen.getByRole('button', { name: /^Carrito/ }))
+
+      return screen.getByRole('dialog', { name: 'Carrito' })
+    }
+
+    async function lineaDelPanel(nombre: string) {
+      return within(await abrirElPanel()).getByText(nombre).closest('li') as HTMLElement
+    }
+
+    it('una línea guardada con un precio viejo se pone al día con la primera lectura del catálogo', async () => {
+      localStorage.setItem(
+        claveDelCarrito(window.location.host),
+        JSON.stringify([{ idArticulo: 1, nombre: 'Martillo', precio: 100, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: null }]),
+      )
+      await verCatalogo()
+
+      const linea = await lineaDelPanel('Martillo')
+
+      expect(linea).toHaveTextContent('$ 1.234,56')
+      expect(linea).toHaveTextContent('$ 2.469,12')
+      expect(JSON.parse(localStorage.getItem(claveDelCarrito(window.location.host)) as string)).toEqual([
+        { idArticulo: 1, nombre: 'Martillo', precio: 1234.56, unidadVenta: 'Unidad', cantidad: 2, imagenVersion: 42 },
+      ])
+    })
+
+    it('un artículo agregado a 100 pasa a 120 cuando otra búsqueda lo trae a 120', async () => {
+      await verCatalogo(catalogoPublico({ articulos: [articuloPublico(1, { nombre: 'Martillo', precio: 100 })] }))
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
+      obtenerCatalogoMock.mockResolvedValue(
+        catalogoPublico({ articulos: [articuloPublico(1, { nombre: 'Martillo', precio: 120 })] }),
+      )
+
+      buscarAhora('mart')
+      await waitFor(() => expect(screen.getAllByText('$ 120,00')).toHaveLength(1))
+      const linea = await lineaDelPanel('Martillo')
+
+      expect(linea).toHaveTextContent('$ 120,00')
+      expect(linea).not.toHaveTextContent('$ 100,00')
+    })
+
+    it('un artículo que pasó de Peso a Unidad redondea la cantidad de su línea', async () => {
+      await verCatalogo(catalogoPublico({ articulos: [articuloPublico(2, { nombre: 'Clavos', unidadVenta: 'Peso' })] }))
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar Clavos al carrito' }))
+      for (let i = 0; i < 3; i++) await userEvent.click(screen.getByRole('button', { name: 'Agregar medio kilo más de Clavos' }))
+      expect(screen.getByRole('textbox', { name: 'Cantidad de Clavos' })).toHaveValue('2,5')
+      obtenerCatalogoMock.mockResolvedValue(
+        catalogoPublico({ articulos: [articuloPublico(2, { nombre: 'Clavos', unidadVenta: 'Unidad' })] }),
+      )
+
+      buscarAhora('clavos')
+
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Cantidad de Clavos' })).toHaveValue('3'))
+      expect(screen.getByRole('button', { name: 'Agregar uno más de Clavos' })).toBeInTheDocument()
+    })
+
+    it('"Ver más" pone al día las líneas de los artículos que trae y no toca las de los que no están', async () => {
+      localStorage.setItem(
+        claveDelCarrito(window.location.host),
+        JSON.stringify([
+          { idArticulo: 3, nombre: 'Tres', precio: 100, unidadVenta: 'Unidad', cantidad: 1, imagenVersion: null },
+          { idArticulo: 4, nombre: 'Cuatro', precio: 50, unidadVenta: 'Unidad', cantidad: 1, imagenVersion: null },
+        ]),
+      )
+      await verCatalogo(
+        catalogoPublico({ articulos: [articuloPublico(1, { nombre: 'Uno' }), articuloPublico(2, { nombre: 'Dos' })], total: 30 }),
+      )
+      expect(await lineaDelPanel('Tres')).toHaveTextContent('$ 100,00')
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+      obtenerCatalogoMock.mockResolvedValue(
+        catalogoPublico({ articulos: [articuloPublico(3, { nombre: 'Tres', precio: 120 })], total: 30, pagina: 2 }),
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: 'Ver más' }))
+      await screen.findByRole('heading', { name: 'Tres' })
+
+      const panel = await abrirElPanel()
+      expect(within(panel).getByText('Tres').closest('li')).toHaveTextContent('$ 120,00')
+      expect(within(panel).getByText('Cuatro').closest('li')).toHaveTextContent('$ 50,00')
     })
   })
 })

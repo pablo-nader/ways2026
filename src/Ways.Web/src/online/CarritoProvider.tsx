@@ -69,14 +69,18 @@ export function CarritoProvider({
     despachar({ tipo: 'cambiarCantidad', idArticulo, cantidad })
   }, [])
 
+  const sincronizar = useCallback((articulos: readonly ArticuloParaElCarrito[]) => {
+    despachar({ tipo: 'sincronizar', articulos })
+  }, [])
+
   const vaciar = useCallback(() => {
     despachar({ tipo: 'vaciar' })
     anunciar('Carrito vaciado')
   }, [anunciar])
 
   const acciones = useMemo(
-    () => ({ agregar, quitar, cambiarCantidad, vaciar }),
-    [agregar, quitar, cambiarCantidad, vaciar],
+    () => ({ agregar, quitar, cambiarCantidad, sincronizar, vaciar }),
+    [agregar, quitar, cambiarCantidad, sincronizar, vaciar],
   )
 
   const valor = useMemo(

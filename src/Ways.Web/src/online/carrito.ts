@@ -3,6 +3,7 @@
  * persistencia en el navegador. No toca React ni el DOM; `CarritoProvider` la conecta.
  */
 import { DECIMALES_DE_PESO, esCantidadValida } from '../api/cantidadPorUnidad'
+import type { ArticuloPublico } from '../api/publico'
 import type { UnidadVenta } from '../api/tipos'
 import { formatearImporte, productoRedondeado } from '../formato/importes'
 
@@ -28,7 +29,19 @@ export type AccionDelCarrito =
   | { tipo: 'agregar'; articulo: ArticuloParaElCarrito; cantidad: number }
   | { tipo: 'quitar'; idArticulo: number }
   | { tipo: 'cambiarCantidad'; idArticulo: number; cantidad: number }
+  | { tipo: 'sincronizar'; articulos: readonly ArticuloParaElCarrito[] }
   | { tipo: 'vaciar' }
+
+/** De un artículo del catálogo público a lo que el carrito guarda de él. */
+export function articuloParaElCarrito(articulo: ArticuloPublico): ArticuloParaElCarrito {
+  return {
+    idArticulo: articulo.id,
+    nombre: articulo.nombre,
+    precio: articulo.precio,
+    unidadVenta: articulo.unidadVenta,
+    imagenVersion: articulo.imagenVersion,
+  }
+}
 
 const FACTOR_DE_PESO = 10 ** DECIMALES_DE_PESO
 
@@ -77,6 +90,42 @@ export function formatearPrecioUnitario(precio: number, unidadVenta: UnidadVenta
   return unidadVenta === 'Peso' ? `${formatearPrecio(precio)} por kg` : formatearPrecio(precio)
 }
 
+/**
+ * La cantidad guardada pasada a la unidad actual del artículo. Los enteros valen en las dos
+ * unidades; una cantidad con decimales (de un artículo que pasó de `Peso` a `Unidad`) se redondea al
+ * entero más cercano, y no baja de 1.
+ */
+function cantidadParaLaUnidad(unidadVenta: UnidadVenta, cantidad: number): number {
+  if (unidadVenta !== 'Unidad' || Number.isInteger(cantidad)) return cantidad
+
+  return Math.max(1, Math.round(cantidad))
+}
+
+/** Pone al día nombre, precio, unidad e imagen de las líneas que figuran en `articulos`; las demás no se tocan. */
+function sincronizarLineas(items: readonly ItemDelCarrito[], articulos: readonly ArticuloParaElCarrito[]): readonly ItemDelCarrito[] {
+  const porId = new Map(articulos.map((a) => [a.idArticulo, a]))
+  let huboCambios = false
+  const resultado = items.map((item) => {
+    const actual = porId.get(item.idArticulo)
+    if (actual === undefined) return item
+    const cantidad = cantidadParaLaUnidad(actual.unidadVenta, item.cantidad)
+    if (
+      actual.nombre === item.nombre &&
+      actual.precio === item.precio &&
+      actual.unidadVenta === item.unidadVenta &&
+      actual.imagenVersion === item.imagenVersion &&
+      cantidad === item.cantidad
+    ) {
+      return item
+    }
+    huboCambios = true
+
+    return { ...actual, cantidad }
+  })
+
+  return huboCambios ? resultado : items
+}
+
 export function reducirCarrito(items: readonly ItemDelCarrito[], accion: AccionDelCarrito): readonly ItemDelCarrito[] {
   switch (accion.tipo) {
     case 'agregar': {
@@ -85,7 +134,8 @@ export function reducirCarrito(items: readonly ItemDelCarrito[], accion: AccionD
       const existente = items.find((i) => i.idArticulo === articulo.idArticulo)
       if (existente === undefined) return [...items, { ...articulo, cantidad }]
 
-      // El precio y el nombre de la última lectura del catálogo mandan; la cantidad se suma.
+      // En la interfaz se llega por dos "Agregar" del mismo artículo en el mismo instante (si la
+      // línea ya existe, la tarjeta muestra el selector de cantidad). Manda la lectura más nueva y la cantidad se suma.
       return items.map((i) =>
         i.idArticulo === articulo.idArticulo
           ? { ...articulo, cantidad: normalizarCantidad(i.cantidad + cantidad) }
@@ -100,6 +150,8 @@ export function reducirCarrito(items: readonly ItemDelCarrito[], accion: AccionD
 
       return items.map((i) => (i.idArticulo === accion.idArticulo ? { ...i, cantidad: accion.cantidad } : i))
     }
+    case 'sincronizar':
+      return sincronizarLineas(items, accion.articulos)
     case 'vaciar':
       return items.length === 0 ? items : []
   }

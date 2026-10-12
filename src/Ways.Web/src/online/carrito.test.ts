@@ -194,6 +194,59 @@ describe('reducirCarrito', () => {
     expect(() => reducirCarrito(items, { tipo: 'agregar', articulo: martillo, cantidad: 1 })).not.toThrow()
     expect(() => reducirCarrito(items, { tipo: 'cambiarCantidad', idArticulo: 1, cantidad: 3 })).not.toThrow()
     expect(() => reducirCarrito(items, { tipo: 'quitar', idArticulo: 1 })).not.toThrow()
+    expect(() => reducirCarrito(items, { tipo: 'sincronizar', articulos: [{ ...martillo, precio: 1 }] })).not.toThrow()
+  })
+
+  describe('sincronizar', () => {
+    it('pone al día nombre, precio e imagen de la línea y conserva su cantidad', () => {
+      const items = reducirCarrito([item(martillo, 3)], {
+        tipo: 'sincronizar',
+        articulos: [{ ...martillo, nombre: 'Martillo carpintero', precio: 1800, imagenVersion: 9 }],
+      })
+
+      expect(items).toEqual([item({ ...martillo, nombre: 'Martillo carpintero', precio: 1800, imagenVersion: 9 }, 3)])
+    })
+
+    it('cada campo por separado alcanza para actualizar la línea', () => {
+      for (const cambio of [{ nombre: 'Otro' }, { precio: 1 }, { imagenVersion: null }, { unidadVenta: 'Peso' as const }]) {
+        const base = [item(martillo, 2)]
+
+        const resultado = reducirCarrito(base, { tipo: 'sincronizar', articulos: [{ ...martillo, ...cambio }] })
+
+        expect(resultado, JSON.stringify(cambio)).not.toBe(base)
+        expect(resultado[0]).toMatchObject(cambio)
+      }
+    })
+
+    it('si la unidad pasó de Peso a Unidad redondea la cantidad al entero más cercano y no baja de 1', () => {
+      const comoUnidad = { ...clavos, unidadVenta: 'Unidad' as const }
+
+      expect(reducirCarrito([item(clavos, 2.5)], { tipo: 'sincronizar', articulos: [comoUnidad] })[0].cantidad).toBe(3)
+      expect(reducirCarrito([item(clavos, 2.4)], { tipo: 'sincronizar', articulos: [comoUnidad] })[0].cantidad).toBe(2)
+      expect(reducirCarrito([item(clavos, 0.25)], { tipo: 'sincronizar', articulos: [comoUnidad] })[0].cantidad).toBe(1)
+    })
+
+    it('si la unidad pasó de Unidad a Peso la cantidad entera sigue valiendo', () => {
+      const comoPeso = { ...martillo, unidadVenta: 'Peso' as const }
+
+      expect(reducirCarrito([item(martillo, 4)], { tipo: 'sincronizar', articulos: [comoPeso] })).toEqual([item(comoPeso, 4)])
+    })
+
+    it('las líneas cuyo artículo no figura en la lista quedan como estaban', () => {
+      const items = [item(martillo, 1), item(clavos, 2)]
+
+      const resultado = reducirCarrito(items, { tipo: 'sincronizar', articulos: [{ ...martillo, precio: 1 }] })
+
+      expect(resultado[0].precio).toBe(1)
+      expect(resultado[1]).toBe(items[1])
+    })
+
+    it('si nada cambia devuelve el mismo arreglo, así no se vuelve a guardar ni a dibujar', () => {
+      const items = [item(martillo, 1), item(clavos, 2.5)]
+
+      expect(reducirCarrito(items, { tipo: 'sincronizar', articulos: [martillo, clavos] })).toBe(items)
+      expect(reducirCarrito(items, { tipo: 'sincronizar', articulos: [] })).toBe(items)
+    })
   })
 })
 

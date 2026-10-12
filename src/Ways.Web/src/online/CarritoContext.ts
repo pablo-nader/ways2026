@@ -7,6 +7,8 @@ export type AccionesDelCarrito = {
   agregar: (articulo: ArticuloParaElCarrito, cantidad?: number) => void
   quitar: (idArticulo: number) => void
   cambiarCantidad: (idArticulo: number, cantidad: number) => void
+  /** Pone al día nombre, precio, unidad e imagen de las líneas cuyo artículo figura en `articulos`. */
+  sincronizar: (articulos: readonly ArticuloParaElCarrito[]) => void
   vaciar: () => void
 }
 

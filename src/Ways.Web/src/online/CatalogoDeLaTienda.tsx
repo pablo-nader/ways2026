@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Chevrones } from '../publico/Glifos'
 import { BarraDelCatalogo } from './BarraDelCatalogo'
+import { articuloParaElCarrito } from './carrito'
 import { useCarrito } from './CarritoContext'
 import { TarjetaDeArticulo } from './TarjetaDeArticulo'
 import { useCatalogo } from './useCatalogo'
@@ -53,7 +54,14 @@ export function CatalogoDeLaTienda() {
   const [buscar, setBuscar] = useState('')
   const [idCategoria, setIdCategoria] = useState<number | null>(null)
   const catalogo = useCatalogo({ buscar, idCategoria })
-  const { cantidades } = useCarrito()
+  const { cantidades, sincronizar } = useCarrito()
+
+  // Cada lista que llega (primera lectura, otro filtro, "Ver más") pone al día las líneas del
+  // carrito cuyo artículo figura en ella: nombre, precio, unidad e imagen salen de la última lectura.
+  const articulosLeidos = catalogo.articulos
+  useEffect(() => {
+    sincronizar(articulosLeidos.map(articuloParaElCarrito))
+  }, [articulosLeidos, sincronizar])
 
   if (!catalogo.cargadoAlgunaVez) {
     return catalogo.fase === 'error' ? (

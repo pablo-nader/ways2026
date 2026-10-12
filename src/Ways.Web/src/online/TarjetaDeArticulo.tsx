@@ -2,7 +2,7 @@ import { memo, useState } from 'react'
 
 import { urlDeLaImagenDelArticulo, type ArticuloPublico } from '../api/publico'
 import { Chevrones } from '../publico/Glifos'
-import { formatearPrecio } from './carrito'
+import { articuloParaElCarrito, formatearPrecio } from './carrito'
 import { useAccionesDelCarrito } from './CarritoContext'
 import { ControlDeCantidad } from './ControlDeCantidad'
 
@@ -58,15 +58,7 @@ export const TarjetaDeArticulo = memo(function TarjetaDeArticulo({
           type="button"
           className="publico-boton publico-boton-acento publico-articulo-agregar"
           aria-label={`Agregar ${articulo.nombre} al carrito`}
-          onClick={() =>
-            agregar({
-              idArticulo: articulo.id,
-              nombre: articulo.nombre,
-              precio: articulo.precio,
-              unidadVenta: articulo.unidadVenta,
-              imagenVersion: articulo.imagenVersion,
-            })
-          }
+          onClick={() => agregar(articuloParaElCarrito(articulo))}
         >
           Agregar
         </button>
