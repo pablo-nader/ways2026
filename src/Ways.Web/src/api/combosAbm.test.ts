@@ -48,6 +48,7 @@ function formulario(sobrescribir: Partial<FormularioCombo> = {}): FormularioComb
     precio: 5000,
     idEmpresa: '',
     activo: true,
+    disponibleOnline: true,
     componentes: [articulo(1), familia(7)],
     ...sobrescribir,
   }
@@ -65,6 +66,7 @@ function comboListado(sobrescribir: Partial<ComboListado> = {}): ComboListado {
     precio: 5000,
     idEmpresa: null,
     activo: true,
+    disponibleOnline: true,
     componentes: [componenteListado(), componenteListado({ idArticulo: null, idFamilia: 7, nombre: 'Línea Coca 500', cantidad: 2 })],
     ...sobrescribir,
   }
@@ -78,7 +80,7 @@ describe('formularioComboVacio', () => {
   it('arranca activo, sin código ni precio y con dos filas de artículo vacías de cantidad 1 y clave distinta', () => {
     const f = formularioComboVacio()
 
-    expect(f).toMatchObject({ id: null, codigo: '', nombre: '', precio: null, idEmpresa: '', activo: true })
+    expect(f).toMatchObject({ id: null, codigo: '', nombre: '', precio: null, idEmpresa: '', activo: true, disponibleOnline: true })
     expect(f.componentes).toHaveLength(2)
     expect(f.componentes.map((c) => [c.tipo, c.idArticulo, c.idFamilia, c.cantidad, c.disponible])).toEqual([
       ['Articulo', '', '', '1', true],
@@ -92,7 +94,7 @@ describe('aValoresCombo', () => {
   it('lleva el combo al formulario: código y cantidad como texto, empresa nula como vacío, tipo por la referencia', () => {
     const f = aValoresCombo(comboListado())
 
-    expect(f).toMatchObject({ id: 4, codigo: '12', nombre: 'Pancho y Coca', precio: 5000, idEmpresa: '', activo: true })
+    expect(f).toMatchObject({ id: 4, codigo: '12', nombre: 'Pancho y Coca', precio: 5000, idEmpresa: '', activo: true, disponibleOnline: true })
     expect(f.componentes.map((c) => [c.tipo, c.idArticulo, c.idFamilia, c.nombre, c.cantidad, c.disponible])).toEqual([
       ['Articulo', 1, '', 'Pancho', '1', true],
       ['Familia', '', 7, 'Línea Coca 500', '2', true],
@@ -104,12 +106,14 @@ describe('aValoresCombo', () => {
       comboListado({
         idEmpresa: 3,
         activo: false,
+        disponibleOnline: false,
         componentes: [componenteListado({ nombre: null, disponible: false }), componenteListado({ idArticulo: 2 })],
       }),
     )
 
     expect(f.idEmpresa).toBe(3)
     expect(f.activo).toBe(false)
+    expect(f.disponibleOnline).toBe(false)
     expect(f.componentes[0]).toMatchObject({ idArticulo: 1, nombre: '', disponible: false })
     expect(f.componentes[1].disponible).toBe(true)
   })
@@ -124,6 +128,7 @@ describe('aSolicitudDeCombo', () => {
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: 1, cantidad: 1 },
         { idFamilia: 7, cantidad: 2 },
@@ -138,6 +143,18 @@ describe('aSolicitudDeCombo', () => {
     expect(cuerpo.codigo).toBe(12)
     expect(cuerpo.idEmpresa).toBe(3)
     expect(cuerpo.activo).toBe(false)
+  })
+
+  it('manda disponibleOnline siempre, marcado o no, independiente de "activo"', () => {
+    expect(aSolicitudDeCombo(formulario({ disponibleOnline: false, activo: true }))).toMatchObject({
+      disponibleOnline: false,
+      activo: true,
+    })
+    expect(aSolicitudDeCombo(formulario({ disponibleOnline: true, activo: false }))).toMatchObject({
+      disponibleOnline: true,
+      activo: false,
+    })
+    expect(aSolicitudDeCombo(formulario({ id: 4, disponibleOnline: false })).disponibleOnline).toBe(false)
   })
 
   it('recorta el nombre y convierte la cantidad escrita con espacios', () => {
@@ -158,6 +175,7 @@ describe('comboCoincideConAlta', () => {
     precio: 5000,
     idEmpresa: null,
     activo: true,
+    disponibleOnline: true,
     componentes: [
       { idArticulo: 1, cantidad: 1 },
       { idFamilia: 7, cantidad: 2 },
@@ -189,6 +207,7 @@ describe('comboCoincideConAlta', () => {
     ['precio', { precio: 5001 }],
     ['empresa', { idEmpresa: 3 }],
     ['activo', { activo: false }],
+    ['disponibleOnline', { disponibleOnline: false }],
     ['cantidad de un componente', { componentes: [componenteListado(), componenteListado({ idArticulo: null, idFamilia: 7, cantidad: 3 })] }],
     ['artículo de un componente', { componentes: [componenteListado({ idArticulo: 2 }), componenteListado({ idArticulo: null, idFamilia: 7, cantidad: 2 })] }],
     ['familia de un componente', { componentes: [componenteListado(), componenteListado({ idArticulo: null, idFamilia: 8, cantidad: 2 })] }],
@@ -415,6 +434,7 @@ describe('errorDeServidorDeCombo — cada código del contrato cae en su lugar',
     [400, 'nombre_requerido', 'nombre'],
     [400, 'nombre_muy_largo', 'nombre'],
     [400, 'activo_requerido', 'formulario'],
+    [400, 'disponible_online_requerido', 'formulario'],
   ])('%i %s → %s, con un mensaje propio y no el del servidor', (estado, codigo, campo) => {
     const resultado = errorDeServidorDeCombo(rechazo(estado, codigo))
 

@@ -86,6 +86,7 @@ export type FormularioOferta = {
   acumulable: boolean
   idsListas: number[]
   activo: boolean
+  disponibleOnline: boolean
 }
 
 export function formularioOfertaVacio(): FormularioOferta {
@@ -113,6 +114,7 @@ export function formularioOfertaVacio(): FormularioOferta {
     acumulable: false,
     idsListas: [],
     activo: true,
+    disponibleOnline: true,
   }
 }
 
@@ -159,6 +161,7 @@ export function aAltaOferta(f: FormularioOferta): AltaOferta {
     acumulable: f.acumulable,
     idsListas: f.idsListas,
     activo: f.activo,
+    disponibleOnline: f.disponibleOnline,
   }
 }
 
@@ -199,7 +202,19 @@ export function aValoresOferta(o: OfertaListado): FormularioOferta {
     acumulable: o.acumulable,
     idsListas: o.idsListas,
     activo: o.activo,
+    disponibleOnline: o.disponibleOnline,
   }
+}
+
+const COPIA_ONLINE_REQUERIDO = 'Falta indicar si la oferta está disponible online. Recargá la pantalla e intentá de nuevo.'
+
+/** Texto a mostrar ante el fallo de guardar una oferta: el `400 disponible_online_requerido` (un cliente viejo que no
+ * manda el campo) rinde su copia propia; cualquier otro rechazo de la API, el mensaje del servidor. */
+export function copiaDeFalloAlGuardarOferta(e: unknown): string {
+  if (!(e instanceof ErrorApi)) return 'No se pudo guardar la oferta.'
+  if (e.codigo === 'disponible_online_requerido') return COPIA_ONLINE_REQUERIDO
+
+  return e.message
 }
 
 /** Opciones del multi-select de listas objetivo: solo listas activas (una lista dada de baja no

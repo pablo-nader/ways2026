@@ -313,6 +313,7 @@ export function Combos() {
                   <th className="text-end">Precio</th>
                   <th>Componentes</th>
                   <th>Estado</th>
+                  <th>Online</th>
                   <th className="text-end">Acciones</th>
                 </tr>
               </thead>
@@ -335,6 +336,7 @@ export function Combos() {
                         {combo.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
+                    <td>{combo.disponibleOnline ? 'Sí' : 'No'}</td>
                     <td className="text-end text-nowrap">
                       <BotonIcono
                         icono="editar"
@@ -354,7 +356,7 @@ export function Combos() {
                 ))}
                 {combos !== null && combos.length === 0 && errorDeCarga === '' && (
                   <tr>
-                    <td colSpan={6} className="text-center text-muted py-4">
+                    <td colSpan={7} className="text-center text-muted py-4">
                       No hay combos cargados.
                     </td>
                   </tr>

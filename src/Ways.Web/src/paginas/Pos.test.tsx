@@ -7524,6 +7524,7 @@ describe('Pos — cargar un combo (buscador, código C y selector de familias)',
       precio: 5000,
       idEmpresa: null,
       activo: true,
+      disponibleOnline: true,
       componentes: [
         { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
         { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, disponible: true },

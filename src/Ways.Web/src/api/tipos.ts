@@ -1015,6 +1015,8 @@ export type OfertaListado = {
   prioridad: number
   acumulable: boolean
   activo: boolean
+  /** La tienda online aplica la oferta a los precios que muestra (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   idsListas: number[]
   nombreArticulo?: string | null
 }
@@ -1041,6 +1043,9 @@ export type AltaOferta = {
   acumulable: boolean
   idsListas: number[] | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición es obligatorio (`400 disponible_online_requerido`). El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
 }
 
 export type EdicionOferta = AltaOferta
@@ -1244,6 +1249,8 @@ export type ComboListado = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** La tienda online lista el combo (por defecto sí). Independiente de `activo`. */
+  disponibleOnline: boolean
   componentes: ComponenteDeComboListado[]
 }
 
@@ -1258,6 +1265,9 @@ export type AltaCombo = {
   precio: number
   idEmpresa: number | null
   activo: boolean
+  /** En el alta el servidor asume `true` si falta; en la edición es obligatorio (`400 disponible_online_requerido`). El
+   * formulario lo manda siempre. */
+  disponibleOnline: boolean
   componentes: ComponenteDeSolicitudDeCombo[]
 }
 

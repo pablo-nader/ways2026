@@ -63,6 +63,7 @@ export type FormularioCombo = {
   precio: number | null
   idEmpresa: number | ''
   activo: boolean
+  disponibleOnline: boolean
   componentes: FilaDeComponente[]
 }
 
@@ -82,6 +83,7 @@ export function formularioComboVacio(): FormularioCombo {
     precio: null,
     idEmpresa: '',
     activo: true,
+    disponibleOnline: true,
     componentes: [filaDeComponenteVacia(), filaDeComponenteVacia()],
   }
 }
@@ -94,6 +96,7 @@ export function aValoresCombo(combo: ComboListado): FormularioCombo {
     precio: combo.precio,
     idEmpresa: combo.idEmpresa ?? '',
     activo: combo.activo,
+    disponibleOnline: combo.disponibleOnline,
     componentes: combo.componentes.map((c) => {
       const fila = filaDeComponenteVacia(c.idArticulo !== null ? 'Articulo' : 'Familia')
       return {
@@ -115,7 +118,7 @@ function aComponenteDeSolicitud(fila: FilaDeComponente): ComponenteDeSolicitudDe
     : { idFamilia: Number(fila.idFamilia), cantidad }
 }
 
-/** Cuerpo de alta y de edición (el mismo: `activo` viaja siempre). Se llama con el formulario ya validado. Un código
+/** Cuerpo de alta y de edición (el mismo: `activo` y `disponibleOnline` viajan siempre). Se llama con el formulario ya validado. Un código
  * vacío no viaja: en el alta el servidor asigna el siguiente libre y en la edición conserva el actual. */
 export function aSolicitudDeCombo(f: FormularioCombo): AltaCombo {
   const codigo = f.codigo.trim()
@@ -125,6 +128,7 @@ export function aSolicitudDeCombo(f: FormularioCombo): AltaCombo {
     precio: Number(f.precio),
     idEmpresa: f.idEmpresa === '' ? null : f.idEmpresa,
     activo: f.activo,
+    disponibleOnline: f.disponibleOnline,
     componentes: f.componentes.map(aComponenteDeSolicitud),
   }
 }
@@ -142,6 +146,7 @@ export function comboCoincideConAlta(cuerpo: AltaCombo, combo: ComboListado): bo
   if (combo.precio !== cuerpo.precio) return false
   if (combo.idEmpresa !== cuerpo.idEmpresa) return false
   if (combo.activo !== cuerpo.activo) return false
+  if (combo.disponibleOnline !== cuerpo.disponibleOnline) return false
   if (combo.componentes.length !== cuerpo.componentes.length) return false
   const esperados = cuerpo.componentes.map(claveDeComponente).sort()
   const reales = combo.componentes.map(claveDeComponente).sort()
@@ -317,6 +322,10 @@ const RECHAZOS_CONOCIDOS: ReadonlyMap<string, ErrorDeServidorDeCombo> = new Map<
   [
     'activo_requerido',
     { campo: 'formulario', mensaje: 'Falta indicar si el combo está activo. Recargá la pantalla e intentá de nuevo.' },
+  ],
+  [
+    'disponible_online_requerido',
+    { campo: 'formulario', mensaje: 'Falta indicar si el combo está disponible online. Recargá la pantalla e intentá de nuevo.' },
   ],
 ])
 
