@@ -1226,14 +1226,14 @@ que una ausente, y como el motor del dispositivo necesita el conjunto completo, 
 componente.
 
 **Venta offline (`POST /api/ventas` con `NumeroPreasignado`).** `LineaDeVenta` suma tres campos opcionales, válidos solo
-junto al precio offline de la línea: `unidadesConsumidasPorCombo` (entero), `ahorroDeCombo` (importe de línea) e `idCombo`. El
+junto al precio offline de la línea: `unidadesConsumidasPorCombo` (entero por unidad, hasta 3 decimales por peso), `ahorroDeCombo` (importe de línea) e `idCombo`. El
 servidor los graba tal cual: el descuento de la línea es `round(descuentoUnitario × (cantidad − unidadesConsumidasPorCombo)) +
 ahorroDeCombo` (`CalculadorDeTotales`) y el combo queda en `items_comprobante_venta.id_combo`; una línea con todas sus
 unidades en el combo no lleva `id_oferta`, una con unidades fuera del combo conserva la oferta. Validación
 (`ExigirPreciosOfflineValidos`): sin `precioUnitario` en la línea `400 combo_offline_no_admitido`; los tres o ninguno
-(`400 combo_offline_incompleto`); unidades entre 1 y la cantidad de la línea, ahorro entre 0 y el bruto de las unidades
+(`400 combo_offline_incompleto`); unidades mayores a cero, hasta la cantidad de la línea y admitidas por la unidad de venta del artículo, ahorro entre 0 y el bruto de las unidades
 consumidas con a lo sumo dos decimales, e id positivo (`400 combo_offline_invalido`); una nota de crédito no admite combos
-(`400 combo_offline_no_admitido`). Unidades fraccionarias no llegan al servicio (el binding las rechaza). El camino online
+(`400 combo_offline_no_admitido`). El camino online
 nunca los admite: sin precio offline son siempre un rechazo.
 
 - **Id de combo inexistente.** La venta ya ocurrió y el ticket está en manos del cliente: nunca se la deja varada. Si el id no
