@@ -9,9 +9,9 @@ import { formatearImporte, productoRedondeado } from '../formato/importes'
 
 export const CANTIDAD_MAXIMA = 999
 
-/** Lo que el botón "más" y "menos" suman: un entero para `Unidad`, medio kilo para `Peso`. */
+/** Lo que el botón "más" y "menos" suman: medio kilo para `Peso`, un entero para el resto. */
 export function pasoDelBoton(unidadVenta: UnidadVenta): number {
-  return unidadVenta === 'Unidad' ? 1 : 0.5
+  return unidadVenta === 'Peso' ? 0.5 : 1
 }
 
 export type ItemDelCarrito = {
@@ -97,7 +97,7 @@ export function formatearPrecioUnitario(precio: number, unidadVenta: UnidadVenta
  * entero más cercano, y no baja de 1.
  */
 function cantidadParaLaUnidad(unidadVenta: UnidadVenta, cantidad: number): number {
-  if (unidadVenta !== 'Unidad' || Number.isInteger(cantidad)) return cantidad
+  if (unidadVenta === 'Peso' || Number.isInteger(cantidad)) return cantidad
 
   return Math.max(1, Math.round(cantidad))
 }
@@ -170,6 +170,7 @@ type AlmacenDeTexto = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 function esItemValido(valor: unknown): valor is ItemDelCarrito {
   if (typeof valor !== 'object' || valor === null) return false
   const i = valor as Record<string, unknown>
+  // Un artículo por importe no se vende en la tienda: una línea guardada con esa unidad se descarta.
   if (i.unidadVenta !== 'Unidad' && i.unidadVenta !== 'Peso') return false
 
   return (

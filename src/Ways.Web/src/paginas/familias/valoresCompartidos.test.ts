@@ -53,6 +53,13 @@ describe('formatearValorCompartido', () => {
     expect(formatearValorCompartido(clave, valores(), nombres)).toBe(esperado)
   })
 
+  it('una familia por importe muestra "Por importe" y que no acumula', () => {
+    const porImporte = valores({ unidadVenta: 'Importe', acumulaEnVenta: false })
+
+    expect(formatearValorCompartido('unidadVenta', porImporte, nombres)).toBe('Por importe')
+    expect(formatearValorCompartido('acumulaEnVenta', porImporte, nombres)).toBe('No')
+  })
+
   it('una unidad de venta que el cliente no conoce se muestra tal cual, sin romper', () => {
     expect(formatearValorCompartido('unidadVenta', valores({ unidadVenta: 'Unidad' }), nombres)).toBe('Por unidad')
     expect(formatearValorCompartido('unidadVenta', valores({ unidadVenta: 'Docena' as unknown as UnidadVenta }), nombres)).toBe('Docena')

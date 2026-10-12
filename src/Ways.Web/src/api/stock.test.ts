@@ -193,6 +193,11 @@ describe('contadaValida', () => {
     expect(contadaValida('12.5')).toBe(true)
     expect(contadaValida('12.5', null)).toBe(true)
   })
+
+  it('un artículo por importe no es un peso: cuenta enteros, como uno por unidad', () => {
+    expect(contadaValida('3', 'Importe')).toBe(true)
+    expect(contadaValida('0.5', 'Importe')).toBe(false)
+  })
 })
 
 describe('aSolicitudDeConteo', () => {
