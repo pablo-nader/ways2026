@@ -48,6 +48,12 @@ public class PersonalConfiguration : IEntityTypeConfiguration<Personal>
             .HasDefaultValue(0m)
             .IsRequired();
 
+        builder.Property(p => p.Saldo)
+            .HasColumnName("saldo")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
         builder.Property(p => p.IdUsuario).HasColumnName("id_usuario");
         builder.Property(p => p.IdCliente).HasColumnName("id_cliente");
 

@@ -7,6 +7,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Plantel;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -31,7 +32,8 @@ public class InventarioDeDependientesTests
     [
         typeof(Tenant), typeof(Empresa), typeof(PuntoVenta), typeof(Usuario),
         typeof(Area), typeof(Categoria), typeof(Marca), typeof(Grupo), typeof(MedioPago),
-        typeof(ListaPrecio), typeof(Proveedor), typeof(Familia)
+        typeof(ListaPrecio), typeof(Proveedor), typeof(Familia),
+        typeof(Personal)
     ];
 
     private static WaysDbContext CrearContexto()
@@ -54,7 +56,7 @@ public class InventarioDeDependientesTests
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las doce anclas (las cuatro de
+    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las trece anclas (las cuatro de
     /// organización, más las siete de fix/bajas-catalogos-guarda-de-uso: los 6 catálogos de
     /// tenant y proveedores, más la familia que usa su disolución). Las tres imposibilidades mecánicas (tipo sin tabla mapeada, tipo
     /// <c>Marcado</c> sin <c>created_at</c> resoluble, clave principal no legible desde el ancla)
@@ -75,7 +77,8 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
     [InlineData(typeof(Familia))]
-    public void N1_ConstruirNoTiraParaNingunaDeLasDoceAnclas(Type ancla)
+    [InlineData(typeof(Personal))]
+    public void N1_ConstruirNoTiraParaNingunaDeLasTreceAnclas(Type ancla)
     {
         using var db = CrearContexto();
 
@@ -108,6 +111,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
     [InlineData(typeof(Familia))]
+    [InlineData(typeof(Personal))]
     public void N1_NingunaFkSeCaeEnSilencioYLosCarveOutsNoEjecutan(Type ancla)
     {
         using var db = CrearContexto();
@@ -172,6 +176,7 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(ListaPrecio))]
     [InlineData(typeof(Proveedor))]
     [InlineData(typeof(Familia))]
+    [InlineData(typeof(Personal))]
     public void N2_UsaAnclaEquivaleAEntidadBaseConColumnaCreatedAt(Type ancla)
     {
         using var db = CrearContexto();

@@ -80,6 +80,14 @@ public class EscriturasSinReintentoEstructuralesTests
         // proveedores (entidad dedicada, no extiende ServicioDeCatalogo).
         { "Ways.Application/Proveedores/ServicioDeProveedores.cs", "EliminarAsync" },
 
+        // Personal: la baja lee la fila bajo su FOR UPDATE y consulta sus referencias (los movimientos de su
+        // cuenta); un reintento tras un commit ambiguo respondería 404 a una baja que sí tuvo éxito.
+        { "Ways.Application/Plantel/ServicioDePersonal.cs", "EliminarAsync" },
+
+        // Cuenta del personal: carga de horas y ajuste mueven el saldo cacheado y escriben el asiento sin clave de
+        // idempotencia; un reintento tras un commit ambiguo duplicaría el movimiento.
+        { "Ways.Application/Plantel/ServicioDeCuentaDePersonal.cs", "EscribirAsync" },
+
         // stage-gasto-a-compra (PR4): vincular un gasto a una compra muta saldo de proveedor y
         // ledger de CC sin ninguna clave de idempotencia — un reintento sobre un commit ambiguo
         // podría re-imputar o re-descontar, mismo criterio que ServicioDeGastos.RegistrarAsync/

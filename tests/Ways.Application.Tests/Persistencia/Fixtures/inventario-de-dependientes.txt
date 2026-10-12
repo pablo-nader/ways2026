@@ -59,6 +59,7 @@ MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
 MedioPago | gastos | id_medio_pago,id_tenant | marcado
 MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
 MedioPago | turnos_caja | id_medio_pago_efectivo,id_tenant | marcado
+Personal | movimientos_personal | id_personal,id_tenant | sinmarca
 Proveedor | articulos | id_proveedor_habitual,id_tenant | marcado
 Proveedor | codigos_proveedor | id_proveedor,id_tenant | marcado
 Proveedor | comprobantes_compra | id_proveedor,id_tenant | marcado
@@ -119,6 +120,7 @@ Tenant | medios_pago | id_tenant | marcado
 Tenant | movimientos_caja | id_tenant | sinmarca
 Tenant | movimientos_cuenta_corriente | id_tenant | sinmarca
 Tenant | movimientos_cuenta_corriente_proveedor | id_tenant | sinmarca
+Tenant | movimientos_personal | id_tenant | sinmarca
 Tenant | movimientos_stock | id_tenant | sinmarca
 Tenant | movimientos_tesoreria | id_tenant | sinmarca
 Tenant | numeraciones_articulos | id_tenant | sinmarca
@@ -151,6 +153,7 @@ Usuario | gastos | id_empleado | marcado
 Usuario | movimientos_caja | id_empleado | sinmarca
 Usuario | movimientos_cuenta_corriente | id_empleado | sinmarca
 Usuario | movimientos_cuenta_corriente_proveedor | id_empleado | sinmarca
+Usuario | movimientos_personal | id_empleado | sinmarca
 Usuario | movimientos_stock | id_empleado | sinmarca
 Usuario | movimientos_tesoreria | id_empleado | sinmarca
 Usuario | ordenes_compra | id_empleado | marcado
