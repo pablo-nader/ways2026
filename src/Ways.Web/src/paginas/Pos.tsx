@@ -143,11 +143,10 @@ function etiquetaDeCliente(c: ClienteListado): string {
   return `#${c.numero} — ${nombreCompleto}`
 }
 
-/** `local`: el cliente salió de la copia local (su saldo es el de la última sincronización) y no del servidor. */
-type OpcionDeCliente = OpcionDeSelector & { cliente: ClienteListado; local: boolean }
+type OpcionDeCliente = OpcionDeSelector & { cliente: ClienteListado }
 
-function aOpcionDeCliente(cliente: ClienteListado, local: boolean): OpcionDeCliente {
-  return { id: cliente.id, etiqueta: etiquetaDeCliente(cliente), cliente, local }
+function aOpcionDeCliente(cliente: ClienteListado): OpcionDeCliente {
+  return { id: cliente.id, etiqueta: etiquetaDeCliente(cliente), cliente }
 }
 
 function formatearMoneda(valor: number): string {
@@ -980,9 +979,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   // post-venta (en `cobrar()`) no puede re-derivarlo desde el estado en ese momento, necesita este
   // valor congelado apenas se conoce.
   const consumidorFinalRef = useRef<ClienteListado | null>(null)
-  // Ids de `opcionesClientes` que salieron de la instantánea local (arranque sin respuesta del
-  // servidor) y no de `GET /clientes`: al elegir uno con red se trae el registro fresco.
-  const idsDeOpcionesLocalesRef = useRef<ReadonlySet<number>>(new Set())
 
   // stage-pos-adjustments: `clienteSeleccionado` es un `ClienteListado` cacheado — un pago a
   // cuenta registrado desde `ModalCuentaCorrientePos` (JD-1) o un cliente restaurado desde el
@@ -1310,6 +1306,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       ? sincronizacionOffline.instantanea
       : null
 
+  // Opciones del selector de cliente y su búsqueda en la copia local: estables entre renders para que la
+  // lista no recalcule el filtro de todos los clientes en cada cambio de la pantalla.
+  const opcionesDeCliente = useMemo(
+    () => fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map(aOpcionDeCliente),
+    [opcionesClientes, clienteSeleccionado],
+  )
+  const buscarClientesLocales = useCallback(
+    (termino: string): OpcionDeCliente[] =>
+      instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, termino).map((c) => aOpcionDeCliente(aClienteListado(c))) : [],
+    [instantaneaDelPuntoVenta],
+  )
+
   // Los combos salen de la instantánea cuando hay una utilizable (también sin red) y, si no, de la API.
   const idListaDeLaVenta = clienteSeleccionado?.idListaPrecio ?? null
   const idEmpresaDeLaVenta = puntoVentaSeleccionada?.idEmpresa ?? null
@@ -1444,7 +1452,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       .listar('', false)
       .then((pagina) => {
         if (!montadoRef.current || generacionCargaClientesRef.current !== generacionCarga) return
-        idsDeOpcionesLocalesRef.current = new Set()
         setOpcionesClientes(pagina.items)
         setErrorCargaClientes('')
         setErrorCargaClientesEsDeRed(false)
@@ -1513,13 +1520,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     const consumidorFinal = aClienteListado(consumidorFinalLocal)
     consumidorFinalRef.current = consumidorFinal
     const opcionesLocales = buscarClientesOffline(instantaneaDelPuntoVenta, '').map(aClienteListado)
-    if (opcionesClientes.length === 0) idsDeOpcionesLocalesRef.current = new Set(opcionesLocales.map((c) => c.id))
     setOpcionesClientes((prev) => (prev.length === 0 ? opcionesLocales : prev))
     if (!clienteRestauradoDelBorradorRef.current) {
       setClienteSeleccionado((prev) => prev ?? consumidorFinal)
     }
-    // `opcionesClientes` se lee solo para marcar el origen de la lista; no debe re-disparar la siembra.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datosLocalesDisponibles, instantaneaDelPuntoVenta])
 
   // stage-pos-adjustments (JD-2): un cliente restaurado desde el borrador (navegación afuera y
@@ -2741,18 +2745,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
     }
   }
 
-  /** Coincidencias de la instantánea local (nombre, apellido, razón social, número o documento): se ofrecen
-   * al instante, también sin red. */
-  function buscarClientesLocales(termino: string): OpcionDeCliente[] {
-    return instantaneaDelPuntoVenta ? buscarClientesOffline(instantaneaDelPuntoVenta, termino).map((c) => aOpcionDeCliente(aClienteListado(c), true)) : []
-  }
-
-  /** Con señal consulta además al servidor y suma lo que la copia local no tiene (un cliente dado de alta
-   * después de la última sincronización); para un mismo cliente gana el registro del servidor. */
+  /** Consulta al servidor los clientes que la copia local no tiene (un cliente dado de alta después de la
+   * última sincronización); para un mismo cliente el selector toma el registro del servidor. */
   async function buscarClientesEnElServidor(termino: string): Promise<OpcionDeCliente[]> {
     try {
       const pagina = await clienteDeClientes.listar(termino, false)
-      return pagina.items.map((c) => aOpcionDeCliente(c, false))
+      return pagina.items.map(aOpcionDeCliente)
     } catch (e) {
       throw e instanceof ErrorApi ? e : new Error('No se pudieron buscar clientes.')
     }
@@ -2774,10 +2772,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
 
   function cambiarCliente(elegido: OpcionDeCliente) {
     if (cobrandoRef.current) return
-    setClienteSeleccionado(elegido.cliente)
-    // Un cliente de la copia local trae el saldo de la última sincronización: con señal se trae
-    // el registro del servidor en segundo plano (la vista previa ya arrancó con el local).
-    if (elegido.local && sincronizacionOffline.enLinea) refrescarClienteSeleccionado(elegido.cliente.id)
+    // Elegir al cliente que ya está elegido no pisa sus datos (que pueden ser más frescos que los de la lista).
+    if (elegido.cliente.id !== clienteSeleccionado?.id) {
+      setClienteSeleccionado(elegido.cliente)
+      // El saldo y el límite de la lista pueden ser viejos (copia local, o una lista cargada hace rato) y
+      // alimentan la validación del crédito: con señal se trae el registro del servidor en segundo plano.
+      if (sincronizacionOffline.enLinea) refrescarClienteSeleccionado(elegido.cliente.id)
+    }
     pedirFocoEnElCodigo()
   }
 
@@ -3835,9 +3836,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                     className="form-select-sm"
                     // Sin conexión se puede elegir cualquier cliente de la instantánea: la vista previa
                     // y el cobro local salen de su propia lista (`admisibilidadDeVentaOffline`).
-                    opciones={fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) =>
-                      aOpcionDeCliente(c, idsDeOpcionesLocalesRef.current.has(c.id)),
-                    )}
+                    opciones={opcionesDeCliente}
                     valor={clienteSeleccionado?.id ?? null}
                     disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
                     buscarLocal={buscarClientesLocales}
@@ -3922,11 +3921,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
                 >
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
-                {/* "Buscar artículo" en vez de "Buscar" a secas: ya existe un botón "Buscar" en el
-                    panel de cliente de esta misma pantalla (`Buscar cliente`) — un nombre
-                    accesible idéntico rompería cualquier `getByRole('button', { name: 'Buscar' })`
-                    (ambos quedarían matcheados a la vez, tests preexistentes incluidos). El
-                    `(F2)` es `aria-hidden`: solo decoración visual, el nombre accesible sigue
+                {/* "Buscar artículo" en vez de "Buscar" a secas: así el nombre dice qué se busca y no se
+                    confunde con la búsqueda de clientes del selector de la cabecera. El `(F2)` es
+                    `aria-hidden`: solo decoración visual, el nombre accesible sigue
                     siendo "Buscar artículo" a secas — `aria-keyshortcuts` es la forma correcta de
                     exponer el atajo a tecnología asistiva. */}
                 <button

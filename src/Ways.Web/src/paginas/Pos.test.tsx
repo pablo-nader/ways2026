@@ -839,6 +839,27 @@ describe('Pos — selector de cliente', () => {
     expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
   })
 
+  it('al elegir un cliente se trae su registro fresco, aunque la lista ya lo tuviera; elegir al que ya está elegido no pisa sus datos', async () => {
+    const enLista = clienteFixture({ id: 2, numero: 2, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false, saldo: 5000, limiteCredito: 80000, creditoIlimitado: false })
+    mockearApiGet((ruta) => {
+      if (ruta === '/clientes') return Promise.resolve<PaginaDe<ClienteListado>>({ items: [consumidorFinal, enLista], total: 2, pagina: 1, tamanio: 25 })
+      if (ruta === '/clientes/2') return Promise.resolve({ ...enLista, saldo: 7000 })
+      return undefined
+    })
+    renderPos()
+    await esperarAlConsumidorFinal()
+
+    await elegirCliente(/Juan Pérez/)
+    await waitFor(() => expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 7.000,00 / $ 80.000,00'))
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')).toHaveLength(1)
+
+    await elegirCliente(/Juan Pérez/)
+
+    expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 7.000,00 / $ 80.000,00')
+    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/clientes/2')).toHaveLength(1)
+    await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toHaveFocus())
+  })
+
   it('el selector vive en la cabecera del carrito, con "Ver detalle" al lado, y "Datos de la venta" ya no tiene el cliente ni su buscador', async () => {
     renderPos()
     await esperarAlConsumidorFinal()
@@ -6557,12 +6578,12 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       expect(await screen.findByRole('option', { name: /Juan Pérez/ })).toBeInTheDocument()
       expect(screen.getByRole('option', { name: '#30 — José Gómez' })).toBeInTheDocument()
 
-      // El del servidor ya es el registro fresco: no se vuelve a pedir.
+      // Con señal se pide el registro fresco de cualquiera que se elija, venga del servidor o de la copia local.
       await userEvent.click(screen.getByRole('option', { name: /Juan Pérez/ }))
       expect(screen.getByLabelText('Cliente')).toHaveValue(etiquetaDeClienteDePrueba(otroCliente))
-      expect(llamadasGet('/clientes/2')).toHaveLength(0)
+      await waitFor(() => expect(llamadasGet('/clientes/2')).toHaveLength(1))
 
-      // El de la copia local trae el saldo de la última sincronización: se pide el registro fresco.
+      // El de la copia local trae el saldo de la última sincronización: también se pide fresco.
       await userEvent.click(screen.getByLabelText('Cliente'))
       await userEvent.keyboard('gómez')
       await userEvent.click(await screen.findByRole('option', { name: '#30 — José Gómez' }))
@@ -6624,6 +6645,22 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
       await buscarYElegirCliente('gomez', '#30 — José Gómez')
 
       await waitFor(() => expect(screen.getByTestId('chip-de-saldo')).toHaveTextContent('$ 999,00 / $ 2.000,00'))
+    })
+
+    it('sin conexión, elegir un cliente de la copia local no intenta traer su registro del servidor', async () => {
+      await llegarConEnLineaFalse(
+        instantaneaFixture({
+          clientes: [
+            clienteDeInstantaneaFixture(),
+            clienteDeInstantaneaFixture({ idCliente: 30, numero: 30, nombre: 'José', apellido: 'Gómez', esConsumidorFinal: false }),
+          ],
+        }),
+      )
+
+      await buscarYElegirCliente('gomez', '#30 — José Gómez')
+
+      expect(screen.getByLabelText('Cliente')).toHaveValue('#30 — José Gómez')
+      expect(llamadasGet('/clientes/30')).toHaveLength(0)
     })
 
     it('sin coincidencias en la copia local y sin conexión, lo dice en vez de ir a la red', async () => {

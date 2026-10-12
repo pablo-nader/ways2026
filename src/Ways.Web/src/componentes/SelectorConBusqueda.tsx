@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { contieneSinAcentos } from '../formato/texto'
 
@@ -11,22 +11,35 @@ const ALTO_MAXIMO_DE_LISTA_PX = 320
 const MARGEN_CON_LA_VENTANA_PX = 8
 const ESPACIO_MINIMO_ABAJO_PX = 180
 const ESPERA_DE_TIPEO_MS = 300
+/** Tope de opciones dibujadas: una copia local completa de clientes no se vuelca entera en la lista. */
+export const MAXIMO_DE_OPCIONES_VISIBLES = 50
 
 /** Las opciones cuya etiqueta contiene `texto`, sin distinguir mayúsculas ni acentos. Un texto vacío no filtra. */
 export function filtrarOpciones<T extends OpcionDeSelector>(opciones: readonly T[], texto: string): T[] {
   return opciones.filter((o) => contieneSinAcentos(o.etiqueta, texto))
 }
 
-/** Las remotas primero y, a continuación, las locales que no estén ya en las remotas: para un mismo id gana la remota. */
-export function combinarResultados<T extends OpcionDeSelector>(remotas: readonly T[], locales: readonly T[]): T[] {
+/** Las `primeras` en su orden y, a continuación, las `siguientes` que no estén ya: lo ya mostrado nunca se reordena. */
+export function combinarResultados<T extends OpcionDeSelector>(primeras: readonly T[], siguientes: readonly T[]): T[] {
   const vistos = new Set<T['id']>()
   const resultado: T[] = []
-  for (const opcion of [...remotas, ...locales]) {
+  for (const opcion of [...primeras, ...siguientes]) {
     if (vistos.has(opcion.id)) continue
     vistos.add(opcion.id)
     resultado.push(opcion)
   }
   return resultado
+}
+
+/** Las coincidencias locales en su orden, con las remotas detrás. Un id que viene de las dos fuentes
+ * conserva su posición local pero toma los datos de la copia remota. */
+export function sumarRemotas<T extends OpcionDeSelector>(locales: readonly T[], remotas: readonly T[]): T[] {
+  if (remotas.length === 0) return locales as T[]
+  const remotaPorId = new Map(remotas.map((o) => [o.id, o]))
+  return combinarResultados(
+    locales.map((o) => remotaPorId.get(o.id) ?? o),
+    remotas,
+  )
 }
 
 type ResultadoRemoto<T> = { texto: string; opciones: readonly T[]; error: string | null }
@@ -41,7 +54,8 @@ type Props<T extends OpcionDeSelector> = {
   onChange: (opcion: T) => void
   /** Coincidencias que la etiqueta no alcanza a ver (otros campos, una copia local): se suman al instante, sin esperar a `alBuscar`. */
   buscarLocal?: (texto: string) => readonly T[]
-  /** Consulta remota con el texto tipeado, con espera de tipeo y respuesta tardía descartada. Si rechaza, el mensaje del
+  /** Consulta remota con el texto tipeado, con espera de tipeo y respuesta tardía descartada. Lo que trae se
+   * agrega detrás de lo ya mostrado, sin reordenarlo. Si rechaza, el mensaje del
    * error se muestra solo cuando no hay ninguna coincidencia local. */
   alBuscar?: (texto: string) => Promise<readonly T[]>
   esperaMs?: number
@@ -80,8 +94,8 @@ function calcularPosicion(caja: DOMRect): PosicionDeLista {
 
 /**
  * Select con aspecto de `form-select` en el que se puede tipear para filtrar las opciones por
- * "contiene" (sin distinguir mayúsculas ni acentos). Combobox WAI-ARIA con listbox: flechas, Home y
- * End mueven la opción activa; Enter elige; Escape cierra y restaura la etiqueta elegida; perder el
+ * "contiene" (sin distinguir mayúsculas ni acentos). Combobox WAI-ARIA con listbox: flechas mueven la opción
+ * activa; Enter elige; Escape cierra y restaura la etiqueta elegida; perder el
  * foco cierra sin elegir. Tipear nunca cambia el valor por sí solo. La lista se ancla a la ventana y
  * se desplaza por dentro si no entra.
  */
@@ -139,14 +153,27 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
     return () => clearTimeout(temporizador)
   }, [buscado, visible, esperaMs, hayBusquedaRemota])
 
+  // Sin consulta remota (por ejemplo, sin red) no queda nada de lo que trajo antes.
+  useEffect(() => {
+    if (!hayBusquedaRemota) setRemoto(null)
+  }, [hayBusquedaRemota])
+
+  // Cerrada la lista o deshabilitado el control no queda nada abierto ni tipeado: al volver no reaparece.
+  useEffect(() => {
+    if (disabled) cerrar()
+  }, [disabled])
+
   const remotoVigente = remoto !== null && remoto.texto === buscado ? remoto : null
   const buscando = visible && buscado !== '' && hayBusquedaRemota && remotoVigente === null
 
-  const locales =
-    buscado === ''
-      ? opciones
-      : combinarResultados(buscarLocal ? buscarLocal(buscado) : [], filtrarOpciones(opciones, buscado))
-  const lista = combinarResultados(remotoVigente?.opciones ?? [], locales)
+  const locales = useMemo(
+    () =>
+      buscado === '' ? opciones : combinarResultados(buscarLocal ? buscarLocal(buscado) : [], filtrarOpciones(opciones, buscado)),
+    [buscado, opciones, buscarLocal],
+  )
+  const coincidencias = useMemo(() => sumarRemotas(locales, remotoVigente?.opciones ?? []), [locales, remotoVigente])
+  const hayMas = coincidencias.length > MAXIMO_DE_OPCIONES_VISIBLES
+  const lista = useMemo(() => coincidencias.slice(0, MAXIMO_DE_OPCIONES_VISIBLES), [coincidencias])
 
   const posicionActiva = lista.findIndex((o) => o.id === idActivo)
   const indiceActivo = posicionActiva >= 0 ? posicionActiva : buscado !== '' && lista.length > 0 ? 0 : -1
@@ -186,12 +213,14 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
     setAbierta(false)
     setTexto(null)
     setIdActivo(null)
+    setRemoto(null)
   }
 
   function abrir() {
     if (disabled || abierta) return
     setAbierta(true)
     setIdActivo(valor)
+    cajaRef.current?.select()
   }
 
   function elegir(opcion: T) {
@@ -217,14 +246,9 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
         moverActiva(indiceActivo < 0 ? (paso > 0 ? 0 : lista.length - 1) : indiceActivo + paso)
         return
       }
-      case 'Home':
-      case 'End':
-        if (!visible || lista.length === 0) return
-        evento.preventDefault()
-        moverActiva(evento.key === 'Home' ? 0 : lista.length - 1)
-        return
       case 'Enter':
-        if (!visible) return
+        // Enter que confirma una composición (IME, tecla muerta) no es una elección.
+        if (!visible || evento.nativeEvent.isComposing || evento.keyCode === 229) return
         evento.preventDefault()
         if (opcionActiva !== null) elegir(opcionActiva)
         else cerrar()
@@ -295,6 +319,11 @@ export function SelectorConBusqueda<T extends OpcionDeSelector>({
               </li>
             ))}
           </ul>
+          {hayMas && (
+            <div className="list-group-item small text-muted py-1 px-2">
+              Se muestran las primeras {MAXIMO_DE_OPCIONES_VISIBLES} coincidencias: seguí escribiendo para acotar.
+            </div>
+          )}
           {buscando && <div className="list-group-item small text-muted py-1 px-2">Buscando…</div>}
           {mensajeVacio !== null && (
             <div role="status" className="list-group-item small text-muted py-1 px-2">
