@@ -83,7 +83,7 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
 - [x] T3 — Online sale. `id_combo` on the item; combos applied in the decide phase of
   `ServicioDeVentas.EmitirAsync` after ofertas (D1); line-amount discount through
   `CalculadorDeTotales`; query-budget guard updated on purpose. Route: delegated (writer).
-- [ ] T3b — Preview and offline (split out of T3, 2026-10-11). `POST /api/ofertas/resolver`
+- [x] T3b — Preview and offline (split out of T3, 2026-10-11). `POST /api/ofertas/resolver`
   (document aggregation) returns the combo share so the POS cart shows the same total the
   server will charge; offline request line carries the combo fields, and the discrepancy audit
   and `ExigirMismoContenido` understand them. Route: delegated (writer).
@@ -220,6 +220,46 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
      only for positive-sign documents), so half a pancho can be returned.
   6. NCX of a sale WITHOUT combos still credits today's list and ofertas, not what was paid.
 
+- Delivered and merged 2026-10-11: #381 (T2), #382 (T3), #386 (CI cap), #390 (TNC).
+- T3b implemented on `pnader/combos-pos-servidor` — commits `6a185c47` and `dd16c95c`
+  (judgment fixes). Route: delegated writer. Contract for the TypeScript port:
+  - Preview: `POST /api/ofertas/resolver-con-combos` (sibling route; `/resolver` returns a bare
+    array and is unchanged). Same body as `/resolver`. Response `{ lineas: [ …fields of
+    /resolver…, combo?: { unidadesConsumidas:int, ahorro:decimal (LINE amount), idCombo:int } ],
+    combos: [ { idCombo, codigo, nombre, veces, ahorro } ] }`; `combo` key absent on lines no
+    combo consumed. Line net = round(cantidad × precioOriginal) − (round(descuentoUnitario ×
+    (cantidad − unidadesConsumidas)) + ahorro). The client MUST send the point of sale's
+    `idEmpresa` and the customer's `idListaPrecio` on every line; mixed values → 400
+    `empresa_inconsistente` / `lista_inconsistente`. `agregacion: PorLinea` → `combos: []`.
+  - Snapshot `GET /api/pos/instantanea?version=2`: optional top-level `combos` (key omitted
+    when none): `{ idCombo, codigo, nombre, precio, componentes: [{ idArticulo? | idFamilia?,
+    cantidad }] }`, combos by ascending id, article components before family ones. A combo is
+    sent whole or not at all: dropped if a component cannot be sold offline.
+  - Offline line: `unidadesConsumidasPorCombo?:int`, `ahorroDeCombo?:decimal`, `idCombo?:int`,
+    all three or none, only with offline `precioUnitario`, never on credit notes (400
+    `combo_offline_no_admitido|incompleto|invalido`). Stored literally. Unknown combo id →
+    amounts kept, `id_combo` null, audited. The discrepancy audit compares against the
+    server's own detection; `PrecioDiscrepante` is also true for combo-only differences. The
+    three fields are not part of `ExigirMismoContenido`.
+  Observed (fix actor): build 0 errors; Application 820/820; `SuperficieDeAutorizacion` 5/5;
+  integration `Combos|VentaOffline|OfertasResolucion|Instantanea|VentasCheckout` 315/315;
+  writer run before fixes `Combos|Ventas|Venta|Ofertas|Instantanea|Pos` 992/992. After merging
+  main (parent): build 0 errors, Application 820/820, Domain 1219/1219. Query pins in
+  `CombosConsultasTests`: offline sale 21 / 20 / 19, preview 6 / 5. No RED (implementation
+  first); 39 mutants killed, two survivors fixed.
+- Judgment-day, T3b: round 1 — 1 CRITICAL (one judge, deterministic, confirmed by running the
+  test): the new POST route was missing from the allow-list of
+  `SuperficieDeAutorizacionTests`, CI would have failed. Fixed with the allow-list entry and a
+  Vendedor-role test. Also fixed: Q2 preview trusts the request's empresa (documented as a
+  contract requirement, mixed lists rejected, divergence pinned by a test), Q3 query costs
+  pinned, Q4 overflow order, Q5 `combo_esperado` null, Q6 docs, Q7 test code. Scoped
+  re-judgment: both judges, all resolved, 0 CRITICAL → APPROVED.
+- Skills loop: the same miss three times (golden inventory in T1, `RemoveRange` allow-list in
+  T2, endpoint allow-list in T3b) → new project skill `structural-guard-tests`.
+- Rollout note: a device that does not apply combos (older POS build or snapshot) selling a
+  cart that matches an active combo is recorded at what it charged and audited as discrepant.
+  Another reason for T4 (the screen that creates combos) to ship after the POS release.
+
 ## Next step
 
-PR for TNC (slice 4); then T3b.
+PR for T3b (slice 5); then T5 (POS web + Desktop release), then T4.
