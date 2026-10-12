@@ -152,7 +152,28 @@ describe('catálogo de la tienda', () => {
     await waitFor(() => expect(llamadas().at(-1)).toEqual({ buscar: '', idCategoria: null, pagina: 1, tamano: 24 }))
   })
 
+  it('si la categoría elegida llega sin categorías en la respuesta, "Todos" sigue ahí para salir del filtro', async () => {
+    await verCatalogo()
+    obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [], categorias: [], total: 0 }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Fijaciones 1' }))
+
+    expect(await screen.findByText('No encontramos artículos para esa búsqueda.')).toBeInTheDocument()
+    const todos = screen.getByRole('button', { name: 'Todos' })
+    expect(todos).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('button', { name: 'Fijaciones 1' })).not.toBeInTheDocument()
+    obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [martillo, clavos], categorias }))
+
+    await userEvent.click(todos)
+
+    expect(await screen.findByRole('heading', { name: 'Martillo' })).toBeInTheDocument()
+    expect(llamadas().at(-1)).toEqual({ buscar: '', idCategoria: null, pagina: 1, tamano: 24 })
+    expect(screen.getByRole('button', { name: 'Todos' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   describe('búsqueda', () => {
+    // El reloj falso se instala con la barra ya montada. No queda un temporizador real colgado
+    // porque la barra no agenda nada al montarse (lo prueba `BarraDelCatalogo.test.tsx`).
     async function conRelojFalso(accion: () => void | Promise<void>) {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       await act(async () => {
@@ -233,8 +254,88 @@ describe('catálogo de la tienda', () => {
     })
   })
 
+  describe('limpiar una búsqueda sin resultados', () => {
+    async function conUnaBusquedaSinResultados() {
+      await verCatalogo()
+      const sinFiltros = diferida<CatalogoPublico>()
+      obtenerCatalogoMock.mockImplementation(({ buscar }) =>
+        buscar === 'zzz' ? Promise.resolve(catalogoPublico({ articulos: [], categorias: [], total: 0 })) : sinFiltros.promesa,
+      )
+      const campo = screen.getByRole('searchbox', { name: 'Buscar artículos' })
+      campo.focus()
+      fireEvent.change(campo, { target: { value: 'zzz' } })
+      fireEvent.submit(campo.closest('form') as HTMLFormElement)
+      await screen.findByText('No encontramos artículos para esa búsqueda.')
+
+      return { campo, sinFiltros }
+    }
+
+    /**
+     * Entre que el filtro vuelve a "sin filtros" y llega la respuesta nueva, la pantalla se dibuja una
+     * vez más con la respuesta vieja (la vacía, pedida con "zzz"). Ese dibujo no se puede observar
+     * desde afuera, pero si reemplazara la barra por la pantalla de "se está preparando" la barra
+     * volvería a montarse: se afirma que sigue siendo el mismo elemento, con foco, mientras la
+     * respuesta nueva está en vuelo.
+     */
+    async function afirmarQueLaBarraSobrevive(campo: HTMLElement) {
+      await waitFor(() => expect(llamadas().at(-1)?.buscar).toBe(''))
+      expect(screen.queryByText('El catálogo se está preparando.')).not.toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toBe(campo)
+      expect(campo).toBeInTheDocument()
+      expect(campo).toHaveFocus()
+    }
+
+    it('con Enter sobre la caja vacía la barra sigue, con foco, y llega el catálogo completo', async () => {
+      const { campo, sinFiltros } = await conUnaBusquedaSinResultados()
+
+      fireEvent.change(campo, { target: { value: '' } })
+      fireEvent.submit(campo.closest('form') as HTMLFormElement)
+
+      await afirmarQueLaBarraSobrevive(campo)
+      await act(async () => sinFiltros.resolver(catalogoPublico({ articulos: [martillo, clavos], categorias })))
+      expect(await screen.findByRole('heading', { name: 'Martillo' })).toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toBe(campo)
+      expect(campo).toHaveFocus()
+      expect(screen.queryByText('El catálogo se está preparando.')).not.toBeInTheDocument()
+    })
+
+    it('borrando con Backspace hasta vaciar la caja pasa lo mismo, después de la pausa', async () => {
+      const { campo, sinFiltros } = await conUnaBusquedaSinResultados()
+
+      await userEvent.type(campo, '{Backspace}{Backspace}{Backspace}')
+      expect(campo).toHaveValue('')
+
+      await afirmarQueLaBarraSobrevive(campo)
+      await act(async () => sinFiltros.resolver(catalogoPublico({ articulos: [martillo, clavos], categorias })))
+      expect(await screen.findByRole('heading', { name: 'Martillo' })).toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toBe(campo)
+    })
+
+    it('si el comercio quedó sin artículos mientras tanto, avisa sin reemplazar la barra', async () => {
+      const { campo, sinFiltros } = await conUnaBusquedaSinResultados()
+
+      fireEvent.change(campo, { target: { value: '' } })
+      fireEvent.submit(campo.closest('form') as HTMLFormElement)
+      await act(async () => sinFiltros.resolver(catalogoPublico({ articulos: [], categorias: [], total: 0 })))
+
+      expect(await screen.findByText('Por ahora no hay artículos publicados.')).toBeInTheDocument()
+      expect(screen.queryByText('No encontramos artículos para esa búsqueda.')).not.toBeInTheDocument()
+      expect(screen.queryByText('El catálogo se está preparando.')).not.toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Buscar artículos' })).toBe(campo)
+    })
+
+    it('si la primera lectura sin filtros viene vacía sí muestra la pantalla de "se está preparando", sin barra', async () => {
+      obtenerVitrinaMock.mockResolvedValue(vitrina)
+      obtenerCatalogoMock.mockResolvedValue(catalogoPublico())
+      render(<Tienda />)
+
+      expect(await screen.findByRole('heading', { level: 1, name: 'El catálogo se está preparando.' })).toBeInTheDocument()
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    })
+  })
+
   describe('"Ver más"', () => {
-    const primera = [articuloPublico(1, { nombre: 'Uno' }), articuloPublico(2, { nombre: 'Dos' })]
+    const primera =[articuloPublico(1, { nombre: 'Uno' }), articuloPublico(2, { nombre: 'Dos' })]
 
     it('trae la página siguiente y la agrega debajo, y desaparece cuando ya está todo', async () => {
       await verCatalogo(catalogoPublico({ articulos: primera, total: 30 }))
@@ -278,7 +379,12 @@ describe('catálogo de la tienda', () => {
       obtenerCatalogoMock.mockReturnValue(new Promise(() => {}))
       render(<Tienda />)
 
-      expect(await screen.findByRole('status', { name: 'Cargando el catálogo' })).toHaveAttribute('aria-busy', 'true')
+      const cargando = await screen.findByRole('status', { name: 'Cargando el catálogo' })
+
+      expect(cargando).toHaveAttribute('aria-busy', 'true')
+      const principal = screen.getByRole('main')
+      expect(principal).not.toHaveAttribute('role')
+      expect(principal).toContainElement(cargando)
       expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
     })
 

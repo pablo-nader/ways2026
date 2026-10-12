@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import type { CategoriaPublica } from '../api/publico'
 
@@ -12,19 +12,36 @@ type PropsDeBarra = {
   alElegirCategoria: (idCategoria: number | null) => void
 }
 
-/** Barra fija sobre el catálogo: caja de búsqueda y categorías como filtros. */
+/**
+ * Barra fija sobre el catálogo: caja de búsqueda y categorías como filtros. Avisa una búsqueda solo
+ * cuando difiere de la última que avisó, así que al montarse no agenda nada y volver al texto de
+ * antes dentro de la pausa no dispara una búsqueda de más. Si hay una categoría elegida, "Todos"
+ * se ve aunque la respuesta no traiga categorías, para poder salir de ese filtro.
+ */
 export function BarraDelCatalogo({ categorias, idCategoria, alBuscar, alElegirCategoria }: PropsDeBarra) {
   const [texto, setTexto] = useState('')
+  const ultimaBusqueda = useRef('')
+
+  const buscar = useCallback(
+    (valor: string) => {
+      if (valor === ultimaBusqueda.current) return
+      ultimaBusqueda.current = valor
+      alBuscar(valor)
+    },
+    [alBuscar],
+  )
 
   useEffect(() => {
-    const temporizador = setTimeout(() => alBuscar(texto.trim()), RETARDO_DE_BUSQUEDA_MS)
+    const limpio = texto.trim()
+    if (limpio === ultimaBusqueda.current) return undefined
+    const temporizador = setTimeout(() => buscar(limpio), RETARDO_DE_BUSQUEDA_MS)
 
     return () => clearTimeout(temporizador)
-  }, [texto, alBuscar])
+  }, [texto, buscar])
 
   const buscarYa = (evento: FormEvent) => {
     evento.preventDefault()
-    alBuscar(texto.trim())
+    buscar(texto.trim())
   }
 
   return (
@@ -41,7 +58,7 @@ export function BarraDelCatalogo({ categorias, idCategoria, alBuscar, alElegirCa
           onChange={(evento) => setTexto(evento.target.value)}
         />
       </form>
-      {categorias.length > 0 && (
+      {(categorias.length > 0 || idCategoria !== null) && (
         <div className="publico-chips" role="group" aria-label="Categorías">
           <button
             type="button"

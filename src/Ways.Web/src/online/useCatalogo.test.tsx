@@ -87,6 +87,89 @@ describe('useCatalogo', () => {
     expect(result.current.articulos.map((a) => a.id)).toEqual([1])
   })
 
+  describe('catálogo vacío', () => {
+    function verHistorial(inicial: FiltroDelCatalogo) {
+      const dibujos: { fase: string; total: number; respuestaSinFiltros: boolean; vacioAlEntrar: boolean }[] = []
+      const vista = renderHook(
+        (filtro: FiltroDelCatalogo) => {
+          const catalogo = useCatalogo(filtro)
+          dibujos.push({
+            fase: catalogo.fase,
+            total: catalogo.total,
+            respuestaSinFiltros: catalogo.respuestaSinFiltros,
+            vacioAlEntrar: catalogo.vacioAlEntrar,
+          })
+
+          return catalogo
+        },
+        { initialProps: inicial },
+      )
+
+      return { ...vista, dibujos }
+    }
+
+    it('entre limpiar el filtro y que llegue la respuesta nueva, la respuesta vacía de antes no figura como pedida sin filtros', async () => {
+      const sinFiltros = diferida<CatalogoPublico>()
+      obtenerCatalogoMock.mockImplementation(({ buscar }) =>
+        buscar === 'zzz' ? Promise.resolve(catalogoPublico({ articulos: [], total: 0 })) : sinFiltros.promesa,
+      )
+      const { result, rerender, dibujos } = verHistorial({ buscar: 'zzz', idCategoria: null })
+      await waitFor(() => expect(result.current.fase).toBe('listo'))
+      expect(result.current.respuestaSinFiltros).toBe(false)
+      expect(result.current.vacioAlEntrar).toBe(false)
+      dibujos.length = 0
+
+      rerender(SIN_FILTROS)
+
+      expect(dibujos.length).toBeGreaterThan(0)
+      expect(dibujos.filter((d) => d.respuestaSinFiltros || d.vacioAlEntrar)).toEqual([])
+      await act(async () => sinFiltros.resolver(catalogoPublico({ articulos: [articuloPublico(1)] })))
+      expect(result.current.respuestaSinFiltros).toBe(true)
+      expect(result.current.vacioAlEntrar).toBe(false)
+    })
+
+    it('la primera respuesta buena, sin filtros y sin artículos, es "vacío al entrar"', async () => {
+      obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [], total: 0 }))
+
+      const { result } = verHistorial(SIN_FILTROS)
+      await waitFor(() => expect(result.current.fase).toBe('listo'))
+
+      expect(result.current.vacioAlEntrar).toBe(true)
+      expect(result.current.respuestaSinFiltros).toBe(true)
+    })
+
+    it('una respuesta sin artículos pedida con una búsqueda o con una categoría no es "vacío al entrar"', async () => {
+      obtenerCatalogoMock.mockResolvedValue(catalogoPublico({ articulos: [], total: 0 }))
+
+      const conFiltro = verHistorial({ buscar: 'x', idCategoria: null })
+      await waitFor(() => expect(conFiltro.result.current.fase).toBe('listo'))
+      expect(conFiltro.result.current.vacioAlEntrar).toBe(false)
+
+      const conCategoria = verHistorial({ buscar: '', idCategoria: 5 })
+      await waitFor(() => expect(conCategoria.result.current.fase).toBe('listo'))
+      expect(conCategoria.result.current.vacioAlEntrar).toBe(false)
+      expect(conCategoria.result.current.respuestaSinFiltros).toBe(false)
+    })
+
+    it('si ya hubo una primera respuesta con artículos, una vacía sin filtros después no lo enciende', async () => {
+      obtenerCatalogoMock
+        .mockResolvedValueOnce(catalogoPublico({ articulos: [articuloPublico(1)] }))
+        .mockResolvedValueOnce(catalogoPublico({ articulos: [], total: 0 }))
+        .mockResolvedValueOnce(catalogoPublico({ articulos: [], total: 0 }))
+      const { result, rerender } = verHistorial(SIN_FILTROS)
+      await waitFor(() => expect(result.current.fase).toBe('listo'))
+      rerender({ buscar: 'x', idCategoria: null })
+      await waitFor(() => expect(result.current.total).toBe(0))
+
+      rerender(SIN_FILTROS)
+      await waitFor(() => expect(obtenerCatalogoMock).toHaveBeenCalledTimes(3))
+      await waitFor(() => expect(result.current.respuestaSinFiltros).toBe(true))
+
+      expect(result.current.total).toBe(0)
+      expect(result.current.vacioAlEntrar).toBe(false)
+    })
+  })
+
   it('"Ver más" pide la página siguiente y la agrega sin repetir artículos', async () => {
     obtenerCatalogoMock
       .mockResolvedValueOnce(catalogoPublico({ articulos: [articuloPublico(1), articuloPublico(2)], total: 50 }))

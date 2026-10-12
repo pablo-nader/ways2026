@@ -35,20 +35,24 @@ function AvisoDeError({ mensaje, alReintentar }: { mensaje: string; alReintentar
 
 function EsqueletoDelCatalogo() {
   return (
-    <main className="publico-catalogo" role="status" aria-busy="true" aria-label="Cargando el catálogo">
-      <ul className="publico-grilla" aria-hidden="true">
-        {Array.from({ length: 6 }, (_, i) => (
-          <li key={i} className="publico-articulo publico-articulo-esqueleto" />
-        ))}
-      </ul>
+    <main className="publico-catalogo">
+      <div role="status" aria-busy="true" aria-label="Cargando el catálogo">
+        <ul className="publico-grilla" aria-hidden="true">
+          {Array.from({ length: 6 }, (_, i) => (
+            <li key={i} className="publico-articulo publico-articulo-esqueleto" />
+          ))}
+        </ul>
+      </div>
     </main>
   )
 }
 
 /**
  * Catálogo de la tienda: barra de búsqueda y categorías, grilla de artículos y "Ver más".
- * Mientras no hay una primera respuesta buena se ve el esqueleto o el error; si el comercio no
- * publicó nada (sin filtros y sin artículos) se ve la pantalla de "se está preparando".
+ * Mientras no hay una primera respuesta buena se ve el esqueleto o el error. Si esa primera
+ * respuesta, pedida sin filtros, no trae artículos (el comercio no publicó nada) se ve la pantalla
+ * de "se está preparando". Si en cambio trajo artículos, la barra no se desmonta más: ni un
+ * resultado vacío ni limpiar la búsqueda la reemplazan, así no se pierden el foco ni lo tipeado.
  */
 export function CatalogoDeLaTienda() {
   const [buscar, setBuscar] = useState('')
@@ -73,8 +77,7 @@ export function CatalogoDeLaTienda() {
     )
   }
 
-  const sinFiltros = buscar === '' && idCategoria === null
-  if (catalogo.fase === 'listo' && sinFiltros && catalogo.total === 0) return <CatalogoEnPreparacion />
+  if (catalogo.vacioAlEntrar) return <CatalogoEnPreparacion />
 
   const cargando = catalogo.fase === 'cargando'
 
@@ -95,7 +98,11 @@ export function CatalogoDeLaTienda() {
             {catalogo.total} {catalogo.total === 1 ? 'artículo' : 'artículos'}
           </p>
           {catalogo.articulos.length === 0 && !cargando ? (
-            <p className="publico-catalogo-aviso">No encontramos artículos para esa búsqueda.</p>
+            <p className="publico-catalogo-aviso">
+              {catalogo.respuestaSinFiltros
+                ? 'Por ahora no hay artículos publicados.'
+                : 'No encontramos artículos para esa búsqueda.'}
+            </p>
           ) : (
             <ul className={cargando ? 'publico-grilla publico-grilla-atenuada' : 'publico-grilla'} aria-busy={cargando}>
               {catalogo.articulos.map((articulo) => (
