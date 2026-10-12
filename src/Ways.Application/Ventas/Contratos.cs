@@ -125,7 +125,14 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// (<c>items_comprobante_venta.ajuste_manual_porcentaje</c>/<c>ajuste_manual</c>), así que una
 /// relectura devuelve lo mismo que el checkout fresco: porcentaje con signo (<c>null</c> = sin
 /// ajuste) y monto con signo ya incluido en <see cref="Total"/> (<c>0</c> sin ajuste). Un item de
-/// un <c>TXR</c> (que viene de <c>items_remito</c>) siempre los lleva en <c>null</c>/<c>0</c>.</summary>
+/// un <c>TXR</c> (que viene de <c>items_remito</c>) siempre los lleva en <c>null</c>/<c>0</c>.
+///
+/// <see cref="IdCombo"/> sí se persiste (<c>items_comprobante_venta.id_combo</c>) y una relectura devuelve
+/// lo mismo que el checkout fresco: el combo (el de menor id si varios consumieron la línea) cuyo descuento
+/// está incluido en <see cref="Descuento"/>; <c>null</c> si ninguno. En un item de nota de crédito asociada a
+/// una venta con combo es el <c>id_combo</c> del item original cuyas unidades devuelve. Solo el id, igual que
+/// <see cref="IdOferta"/>: el nombre no viaja en la venta emitida y un combo dado de baja después no la
+/// afecta. Un item de un <c>TXR</c> siempre lo lleva en <c>null</c>.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -145,7 +152,8 @@ public sealed record ItemEmitido(
     int? IdLote = null,
     string? CodigoLote = null,
     bool LoteVencido = false,
-    bool PrecioDiscrepante = false);
+    bool PrecioDiscrepante = false,
+    int? IdCombo = null);
 
 /// <summary>Un pago ya emitido.</summary>
 public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);

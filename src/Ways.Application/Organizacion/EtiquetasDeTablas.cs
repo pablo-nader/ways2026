@@ -40,6 +40,8 @@ public static class EtiquetasDeTablas
             ["certificados_fiscales"] = "certificados fiscales",
             ["clientes"] = "clientes",
             ["codigos_barra"] = "códigos de barra",
+            ["combos"] = "combos",
+            ["combos_componentes"] = "combos",
             ["comprobantes_compra"] = "compras",
             ["comprobantes_venta"] = "ventas",
             ["dispositivos"] = "dispositivos vinculados",

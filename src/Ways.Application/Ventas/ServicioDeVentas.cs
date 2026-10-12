@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.Caja;
+using Ways.Application.Combos;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Ofertas;
@@ -15,6 +16,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Combos;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
@@ -197,9 +199,28 @@ public class ServicioDeVentas(
         // es un materializador PRIVADO SEPARADO, MaterializarItems (:1007 y siguientes) queda
         // literalmente intacto — el de la venta común corre CalculadorDeTotales.Calcular y el del
         // presupuesto suma los importes ya guardados (TotalesGuardados).
-        var (items, totales) = presupuestoOrigen is null
-            ? MaterializarItems(tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio)
-            : MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId);
+        // Combos (D1-D8 del feature combos): solo en la venta online, que es la que el servidor precia.
+        // Quedan fuera la conversión de un presupuesto (precios congelados), la venta offline con
+        // NumeroPreasignado (precios del dispositivo) y la devolución (signo negativo). Todo lo que se
+        // decide acá viaja en el plan: la lambda reintentable no vuelve a detectar combos.
+        var combosPorLinea = presupuestoOrigen is null && solicitud.NumeroPreasignado is null && tipo.Signo > 0
+            ? await DetectarCombosAsync(puntoVenta.IdEmpresa, lineas, resolucion!, articuloPorId, ct)
+            : SinCombos;
+
+        // Devolución de una venta con combo: la nota de crédito asociada a una venta cuyos items consumieron un
+        // combo devuelve lo que se cobró por esas unidades, no lo que cuestan hoy (feature combos, decisión del
+        // dueño 2026-10-11). ValidarComprobanteAsociado ya garantizó que un asociado solo existe con signo negativo.
+        // Queda fuera la devolución offline con NumeroPreasignado (precios del dispositivo). Se decide acá, no en la
+        // lambda reintentable.
+        var devolucionesDeCombo = asociado is not null && solicitud.NumeroPreasignado is null
+            ? await ResolverDevolucionesDeComboAsync(asociado.Id, lineas, ct)
+            : SinDevolucionesDeCombo;
+
+        var (items, totales, lineaDeItem) = presupuestoOrigen is null
+            ? MaterializarItems(
+                tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio, combosPorLinea,
+                devolucionesDeCombo)
+            : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
         // presupuesto_inconsistente): la suma de los importes guardados de los items del snapshot
@@ -241,7 +262,7 @@ public class ServicioDeVentas(
         // SIN lote efectivo no tiene destino — antes se ignoraba en silencio. Un cliente que lo
         // manda ahí está en un error real (artículo no controla lote, o el módulo está apagado),
         // así que se rechaza con el mismo código que un idLote inválido, en vez de tragárselo.
-        var indicesConLoteEfectivo = lineasConLote.Select(x => x.Indice).ToHashSet();
+        var indicesConLoteEfectivo = lineasConLote.Select(x => lineaDeItem[x.Indice]).ToHashSet();
         for (var indice = 0; indice < lineas.Count; indice++)
         {
             if (!indicesConLoteEfectivo.Contains(indice) && lineas[indice].IdLote is not null)
@@ -259,7 +280,7 @@ public class ServicioDeVentas(
         {
             var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo).Distinct().ToList();
             var idsLotePedidos = lineasConLote
-                .Select(x => lineas[x.Indice].IdLote)
+                .Select(x => lineas[lineaDeItem[x.Indice]].IdLote)
                 .Where(idLote => idLote is not null)
                 .Select(idLote => idLote!.Value)
                 .Distinct()
@@ -278,7 +299,7 @@ public class ServicioDeVentas(
             foreach (var (item, indice) in lineasConLote)
             {
                 var saldosDelArticulo = saldosPorArticulo[item.IdArticulo].ToList();
-                var idLotePedido = lineas[indice].IdLote;
+                var idLotePedido = lineas[lineaDeItem[indice]].IdLote;
 
                 // stage-12 slice 9 (design: "NCX", decisión 8 del proposal): el default FEFO se
                 // RECHAZA en una línea de nota de crédito (tipo.Signo < 0) — "el más viejo
@@ -484,6 +505,94 @@ public class ServicioDeVentas(
 
             return existente;
         });
+    }
+
+    private static readonly IReadOnlyDictionary<int, ComboEnLinea> SinCombos = new Dictionary<int, ComboEnLinea>();
+
+    private static readonly IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> SinDevolucionesDeCombo =
+        new Dictionary<int, IReadOnlyList<TramoDeDevolucion>>();
+
+    /// <summary>Reparte las líneas de una nota de crédito entre los items de la venta asociada que consumieron un
+    /// combo (<see cref="DevolucionDeCombos"/>). Cuesta UNA consulta, solo en una nota de crédito asociada a una
+    /// venta: trae los items de esa venta con <c>id_combo</c> y cantidad positiva de los artículos devueltos. Una
+    /// venta sin items de combo (o sin esos artículos en un combo) devuelve el diccionario vacío y la nota de crédito
+    /// se precia como siempre. La clave es el índice de la línea devuelta; solo figuran las líneas con algún tramo.</summary>
+    private async Task<IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>>> ResolverDevolucionesDeComboAsync(
+        int idComprobanteAsociado, IReadOnlyList<LineaDeVenta> lineas, CancellationToken ct)
+    {
+        var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
+
+        var vendidos = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == idComprobanteAsociado
+                && i.IdCombo != null
+                && i.Cantidad > 0m
+                && i.IdArticulo != null
+                && idsArticulo.Contains(i.IdArticulo.Value))
+            .Select(i => new ItemVendidoConCombo(
+                i.Id, i.Orden, i.IdArticulo!.Value, i.Cantidad, i.PrecioUnitario, i.Total, i.IdCombo!.Value,
+                i.IdOferta, i.IdListaPrecio, i.IdAlicuotaIva, i.PorcentajeIva))
+            .ToListAsync(ct);
+
+        if (vendidos.Count == 0)
+        {
+            return SinDevolucionesDeCombo;
+        }
+
+        var tramosPorLinea = DevolucionDeCombos.Repartir(
+            vendidos, [.. lineas.Select(l => new LineaDevuelta(l.IdArticulo, l.Cantidad))]);
+
+        var resultado = new Dictionary<int, IReadOnlyList<TramoDeDevolucion>>();
+        for (var i = 0; i < tramosPorLinea.Count; i++)
+        {
+            if (tramosPorLinea[i].Count > 0)
+            {
+                resultado[i] = tramosPorLinea[i];
+            }
+        }
+
+        return resultado;
+    }
+
+    private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales, IReadOnlyList<int> LineaDeItem)
+        ConLineaDeOrigenIdentidad((IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales) materializado) =>
+        (materializado.Items, materializado.Totales, [.. Enumerable.Range(0, materializado.Items.Count)]);
+
+    /// <summary>Detecta los combos de una venta online ya resuelta por ofertas. Cuesta UNA consulta
+    /// (<see cref="ServicioDeCombos.CargarCandidatosParaVentaAsync"/>), y ninguna si la venta suma menos
+    /// unidades que el mínimo de un combo: con menos no puede completarse ninguno. Es solo una
+    /// optimización; qué líneas entran a la detección lo decide <see cref="CombosEnVenta.Resolver"/>.</summary>
+    private async Task<IReadOnlyDictionary<int, ComboEnLinea>> DetectarCombosAsync(
+        int idEmpresa,
+        IReadOnlyList<LineaDeVenta> lineas,
+        IReadOnlyList<ResultadoDeResolucion> resolucion,
+        IReadOnlyDictionary<int, Articulo> articuloPorId,
+        CancellationToken ct)
+    {
+        if (lineas.Sum(l => l.Cantidad) < ReglaDeCombos.UnidadesMinimas)
+        {
+            return SinCombos;
+        }
+
+        var lineasParaCombos = lineas
+            .Select((linea, i) =>
+            {
+                var articulo = articuloPorId[linea.IdArticulo];
+
+                return new LineaDeVentaParaCombos(
+                    linea.IdArticulo, articulo.IdFamilia, articulo.UnidadVenta, linea.Cantidad,
+                    resolucion[i].PrecioOriginal, resolucion[i].DescuentoUnitario);
+            })
+            .ToList();
+
+        var detectables = lineasParaCombos.Where(l => l.UnidadVenta == UnidadVenta.Unidad).ToList();
+        var candidatos = await ServicioDeCombos.CargarCandidatosParaVentaAsync(
+            db,
+            idEmpresa,
+            [.. detectables.Select(l => l.IdArticulo).Distinct()],
+            [.. detectables.Where(l => l.IdFamilia.HasValue).Select(l => l.IdFamilia!.Value).Distinct()],
+            ct);
+
+        return CombosEnVenta.Resolver(lineasParaCombos, candidatos);
     }
 
     /// <summary>judgment-day (CRITICAL, ronda 2): guarda de IDENTIDAD del camino
@@ -1334,6 +1443,7 @@ public class ServicioDeVentas(
                 IdArea = i.IdArea,
                 IdListaPrecio = i.IdListaPrecio,
                 IdOferta = i.IdOferta,
+                IdCombo = i.IdCombo,
                 IdAlicuotaIva = i.IdAlicuotaIva,
                 PorcentajeIva = i.PorcentajeIva,
                 Cantidad = i.Cantidad,
@@ -1824,16 +1934,27 @@ public class ServicioDeVentas(
     /// unidades, no en signo contable); el signo lo aplica esta clase a partir de
     /// <c>tipos_comprobante.signo</c> ANTES de calcular — así <c>CalculadorDeTotales</c> hace la
     /// misma aritmética para TX y NCX, sin rama especial (design: decisión 4, "aritmética
-    /// uniforme para ambos signos").</summary>
-    private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales) MaterializarItems(
-        short signoTipoComprobante,
-        IReadOnlyList<LineaDeVenta> lineas,
-        IReadOnlyList<ResultadoDeResolucion> resolucion,
-        IReadOnlyDictionary<int, Articulo> articuloPorId,
-        IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
-        int idListaPrecio)
+    /// uniforme para ambos signos").
+    ///
+    /// <para>Una línea devuelta puede dar más de un item del plan: cada tramo que
+    /// <paramref name="devolucionesDeCombo"/> toma de un item de combo de la venta asociada es un item con el precio
+    /// unitario, la alícuota, la lista, la oferta y el combo de ese item original, y como descuento la diferencia entre
+    /// su bruto y lo que se cobró por esas unidades; las unidades que ningún tramo cubre se precian como siempre.
+    /// <c>LineaDeItem</c> dice de qué línea de <paramref name="lineas"/> sale cada item. Sin devoluciones de combo hay
+    /// un item por línea y el resultado es el de siempre.</para></summary>
+    private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales, IReadOnlyList<int> LineaDeItem)
+        MaterializarItems(
+            short signoTipoComprobante,
+            IReadOnlyList<LineaDeVenta> lineas,
+            IReadOnlyList<ResultadoDeResolucion> resolucion,
+            IReadOnlyDictionary<int, Articulo> articuloPorId,
+            IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
+            int idListaPrecio,
+            IReadOnlyDictionary<int, ComboEnLinea> combosPorLinea,
+            IReadOnlyDictionary<int, IReadOnlyList<TramoDeDevolucion>> devolucionesDeCombo)
     {
         var lineasParaCalcular = new List<LineaParaCalcular>(lineas.Count);
+        var origenes = new List<(int Linea, TramoDeDevolucion? Tramo)>(lineas.Count);
 
         for (var i = 0; i < lineas.Count; i++)
         {
@@ -1853,7 +1974,34 @@ public class ServicioDeVentas(
             {
                 lineasParaCalcular.Add(new LineaParaCalcular(
                     cantidadConSigno, precioOffline, linea.DescuentoUnitario ?? 0m, linea.AjusteManualPorcentaje));
+                origenes.Add((i, null));
                 continue;
+            }
+
+            // Devolución de combo: cada tramo se cobra por lo que se pagó. El bruto sale del precio unitario del
+            // item original y el descuento es la diferencia contra el importe devuelto, con el signo de la
+            // cantidad (negativa), así que bruto − descuento = −crédito. El ajuste manual que traiga la línea
+            // se aplica sobre ese neto, como en cualquier línea.
+            var cantidadDeTramos = 0m;
+            if (devolucionesDeCombo.TryGetValue(i, out var tramos))
+            {
+                foreach (var tramo in tramos)
+                {
+                    var cantidadDelTramo = -tramo.Cantidad;
+                    var bruto = cantidadDelTramo * tramo.Origen.PrecioUnitario;
+
+                    lineasParaCalcular.Add(new LineaParaCalcular(
+                        cantidadDelTramo, tramo.Origen.PrecioUnitario, 0m, linea.AjusteManualPorcentaje,
+                        cantidadDelTramo, bruto + tramo.Credito));
+                    origenes.Add((i, tramo));
+                    cantidadDeTramos += tramo.Cantidad;
+                }
+
+                cantidadConSigno = -(linea.Cantidad - cantidadDeTramos);
+                if (cantidadConSigno == 0m)
+                {
+                    continue;
+                }
             }
 
             if (resultado.PrecioOriginal is null)
@@ -1864,9 +2012,14 @@ public class ServicioDeVentas(
                     400);
             }
 
+            // El combo es un descuento de línea sobre las unidades que consumió; las demás conservan su
+            // oferta unitaria (CalculadorDeTotales). Sin combo en la línea, el cálculo es el de siempre.
+            combosPorLinea.TryGetValue(i, out var comboDeLaLinea);
+
             lineasParaCalcular.Add(new LineaParaCalcular(
                 cantidadConSigno, resultado.PrecioOriginal.Value, resultado.DescuentoUnitario,
-                linea.AjusteManualPorcentaje));
+                linea.AjusteManualPorcentaje, comboDeLaLinea.UnidadesConsumidas, comboDeLaLinea.Ahorro));
+            origenes.Add((i, null));
         }
 
         var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
@@ -1876,20 +2029,46 @@ public class ServicioDeVentas(
         // negocio alcanzable.
         ReglaDeComprobantes.ValidarSignoDeLineas(signoTipoComprobante, totales.Items.Select(it => it.Cantidad).ToList());
 
-        var items = new List<LineaDelPlan>(lineas.Count);
+        var items = new List<LineaDelPlan>(origenes.Count);
 
-        for (var i = 0; i < lineas.Count; i++)
+        for (var k = 0; k < origenes.Count; k++)
         {
+            var (i, tramoDeDevolucion) = origenes[k];
             var linea = lineas[i];
             var resultado = resolucion[i];
-            var calculado = totales.Items[i];
+            var calculado = totales.Items[k];
             var articulo = articuloPorId[linea.IdArticulo];
+
+            if (tramoDeDevolucion is { } tramoDevuelto)
+            {
+                // La alícuota, la lista, la oferta y el combo son las del item vendido: el artículo pudo cambiar de
+                // alícuota desde entonces, y el IVA de lo que se devuelve es el de lo que se cobró.
+                items.Add(new LineaDelPlan(
+                    articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, tramoDevuelto.Origen.IdListaPrecio,
+                    tramoDevuelto.Origen.IdOferta, tramoDevuelto.Origen.IdAlicuotaIva, tramoDevuelto.Origen.PorcentajeIva,
+                    calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
+                    articulo.EsProducto, articulo.CostoNominal,
+                    AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
+                    AjusteManual: calculado.AjusteManual,
+                    IdCombo: tramoDevuelto.Origen.IdCombo));
+                continue;
+            }
 
             // Solo UNA columna id_oferta por item (esquema): cuando se acumulan varias ofertas
             // en la misma línea, se snapshotea la de mayor prioridad (la primera de la lista que
             // arma ResolvedorDeOfertas) — el descuento total sigue siendo la suma de todas, ese
             // no se pierde.
             var idOferta = resultado.Aplicadas.Count > 0 ? resultado.Aplicadas[0].IdOferta : (int?)null;
+
+            // Combos: una línea cuyas unidades se consumieron TODAS por combos no recibió ninguna oferta
+            // (se vendió a lista menos su parte del combo), así que no lleva id_oferta; si le quedan
+            // unidades fuera del combo, esas unidades sí tuvieron su oferta y la conserva. id_combo es el
+            // combo de menor id entre los que consumieron unidades de la línea.
+            var tieneCombo = combosPorLinea.TryGetValue(i, out var combo);
+            if (tieneCombo && combo.UnidadesConsumidas == linea.Cantidad)
+            {
+                idOferta = null;
+            }
 
             // stage-pos-venta-offline-backend: "lo que el servidor HUBIERA cobrado" HOY, solo
             // para DETECTAR (nunca bloquear ni recalcular) una discrepancia — nunca se persiste
@@ -1919,10 +2098,11 @@ public class ServicioDeVentas(
                 PrecioEsperado: discrepante ? resultado.PrecioOriginal : null,
                 DescuentoEsperado: discrepante ? resultado.DescuentoUnitario : null,
                 AjusteManualPorcentaje: linea.AjusteManualPorcentaje,
-                AjusteManual: calculado.AjusteManual));
+                AjusteManual: calculado.AjusteManual,
+                IdCombo: tieneCombo ? combo.IdCombo : null));
         }
 
-        return (items, totales);
+        return (items, totales, [.. origenes.Select(o => o.Linea)]);
     }
 
     // ---- Statements crudos de la transacción (ADO.NET, misma convención que
@@ -2213,7 +2393,7 @@ public class ServicioDeVentas(
                     i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento,
                     i.AjusteManualPorcentaje, i.AjusteManual, i.Total,
                     planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false,
-                    planItem?.PrecioDiscrepante ?? false);
+                    planItem?.PrecioDiscrepante ?? false, i.IdCombo);
             })
             .ToList();
 
@@ -2259,7 +2439,7 @@ public class ServicioDeVentas(
         decimal Total, bool EsProducto, decimal? CostoUnitario,
         int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false,
         bool PrecioDiscrepante = false, decimal? PrecioEsperado = null, decimal? DescuentoEsperado = null,
-        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m);
+        decimal? AjusteManualPorcentaje = null, decimal AjusteManual = 0m, int? IdCombo = null);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);

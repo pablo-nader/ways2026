@@ -4518,26 +4518,81 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
       expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
     })
 
-    it('cancelar el modal de monto: el cajón ya quedó abierto (auditado) pero NO se registra ningún Retiro', async () => {
-      const cajaDeEscritorio = cajaDeEscritorioFixture()
-      apiPostMock.mockImplementation((ruta: string) =>
-        ruta === RUTA_MOVIMIENTOS
-          ? Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, tipo: 'AperturaCajon', importe: 0, motivo: 'x', idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
-          : Promise.reject(new Error(`ruta no mockeada en el test: ${RUTA_MOVIMIENTOS}`)),
-      )
+    describe('modal de monto (cajón ya abierto): no descartable', () => {
+      function aperturaOk(extra?: (ruta: string, cuerpo: unknown) => Promise<unknown> | undefined) {
+        apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+          if (ruta === RUTA_MOVIMIENTOS) {
+            const propio = extra?.(ruta, cuerpo)
+            if (propio) return propio
+            return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+          }
+          return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+        })
+      }
 
-      await entrarConTurnoAbierto(cajaDeEscritorio)
-      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
-      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
-      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+      async function abrirModalDeMonto(cajaDeEscritorio: CajaDeEscritorio) {
+        await entrarConTurnoAbierto(cajaDeEscritorio)
+        await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+        const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+        await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+        return within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
+      }
 
-      const modalMonto = within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
-      await userEvent.click(modalMonto.getByRole('button', { name: 'Cancelar' }))
+      it('no tiene × ni "Cancelar"; Escape y el click en el fondo no lo cierran y no se registra ningún Retiro', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        aperturaOk()
 
-      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-      // Un solo POST (la apertura) — cancelar el monto nunca dispara el POST de Retiro.
-      expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(1)
-      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+
+        expect(modalMonto.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+        expect(modalMonto.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument()
+
+        fireEvent.keyDown(document, { key: 'Escape' })
+        fireEvent.click(screen.getByRole('dialog', { name: 'Monto retirado' }))
+
+        expect(screen.getByRole('dialog', { name: 'Monto retirado' })).toBeInTheDocument()
+        expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(1)
+        expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+      })
+
+      it('se cierra recién cuando el Retiro se registra con éxito', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        aperturaOk()
+
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+        await userEvent.type(modalMonto.getByLabelText('Monto'), '1500')
+        await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(2)
+      })
+
+      it('si el POST del Retiro falla, el modal sigue abierto con el error, sigue sin poder descartarse y permite reintentar', async () => {
+        const cajaDeEscritorio = cajaDeEscritorioFixture()
+        let intentosDeRetiro = 0
+        aperturaOk((_ruta, cuerpo) => {
+          if ((cuerpo as { tipo: string }).tipo !== 'Retiro') return undefined
+          intentosDeRetiro += 1
+          return intentosDeRetiro === 1
+            ? Promise.reject(new ErrorApi(500, 'error', 'No se pudo registrar el retiro.'))
+            : undefined
+        })
+
+        const modalMonto = await abrirModalDeMonto(cajaDeEscritorio)
+        await userEvent.type(modalMonto.getByLabelText('Monto'), '1500')
+        await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+        expect(await modalMonto.findByText('No se pudo registrar el retiro.')).toBeInTheDocument()
+        fireEvent.keyDown(document, { key: 'Escape' })
+        expect(screen.getByRole('dialog', { name: 'Monto retirado' })).toBeInTheDocument()
+        expect(modalMonto.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+
+        await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        expect(intentosDeRetiro).toBe(2)
+      })
     })
 
     it('validación: "Confirmar" queda deshabilitado con el monto vacío o en 0', async () => {

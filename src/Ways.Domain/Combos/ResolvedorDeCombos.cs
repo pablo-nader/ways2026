@@ -1,3 +1,5 @@
+using Ways.Domain.Dinero;
+
 namespace Ways.Domain.Combos;
 
 /// <summary>
@@ -5,13 +7,17 @@ namespace Ways.Domain.Combos;
 /// líneas de un documento y reparte el ahorro de cada aplicación entre las líneas consumidas.
 /// Es voraz y se define así: en cada vuelta se elige, entre los combos que caben con las unidades
 /// restantes, el de mayor ganancia real por aplicación (costo de esas unidades con sus ofertas
-/// menos el precio del combo, la misma cantidad que decide si el combo es aplicable; empate: menor
+/// menos lo que el combo cobra; empate: menor
 /// id). Con la asignación de líneas de esa vuelta, el combo se aplica de una vez k veces, con
 /// k = mínimo, entre las líneas asignadas, de (unidades restantes / unidades tomadas por
 /// aplicación) redondeado hacia abajo, y recién entonces se reevalúa. El reparto por línea se
-/// calcula para UNA aplicación y se multiplica por k, de modo que cada conjunto suma exacto el
-/// precio del combo. El ahorro se reparte según el importe de lista de cada línea, y la parte de
-/// cada línea queda entre cero y el importe de lista de las unidades que aporta. Un componente
+/// calcula para UNA aplicación y se multiplica por k, de modo que cada conjunto cobra exacto
+/// el precio del combo redondeado al peso. Lo que cobra una aplicación es el precio del combo redondeado al peso entero,
+/// y ese cobro se reparte según el importe de lista de cada línea en pesos enteros que suman
+/// exactamente el cobro, cada parte entre cero y el importe de lista de las unidades que aporta
+/// (hacia abajo al peso). El ahorro de cada línea es su importe de lista menos su parte del cobro y
+/// puede llevar centavos si el precio de lista los tiene. Un combo que tras ese redondeo no cobra
+/// menos que las ofertas, o cuyos topes no alcanzan a contener el cobro, no se aplica. Un componente
 /// familia toma líneas en orden de documento (el orden de entrada es el orden del documento), así
 /// que un combo puede descartarse aunque otro emparejamiento del documento lo completaría. No
 /// busca el óptimo global entre combos que se pisan.
@@ -174,21 +180,22 @@ public static class ResolvedorDeCombos
         var totalDeLista = posiciones.Sum(p => tomado[p] * lineas[p].PrecioLista);
         var costoConOfertas = posiciones.Sum(p => tomado[p] * (lineas[p].PrecioLista - lineas[p].DescuentoUnitarioDeOferta));
 
-        if (combo.Precio >= costoConOfertas)
+        var cobro = RedondeoDePeso.APesoEntero(combo.Precio);
+        if (cobro >= costoConOfertas)
         {
             return null;
         }
 
-        var ahorro = totalDeLista - combo.Precio;
-        var topes = posiciones.Select(p => tomado[p] * lineas[p].PrecioLista).ToArray();
+        var importesDeLista = posiciones.Select(p => tomado[p] * lineas[p].PrecioLista).ToArray();
+        var topes = importesDeLista.Select(decimal.Floor).ToArray();
         var partes = new decimal[posiciones.Count];
         for (var k = 0; k < partes.Length; k++)
         {
-            var proporcional = Math.Round(ahorro * topes[k] / totalDeLista, 2, MidpointRounding.AwayFromZero);
+            var proporcional = RedondeoDePeso.APesoEntero(cobro * importesDeLista[k] / totalDeLista);
             partes[k] = Math.Clamp(proporcional, 0m, topes[k]);
         }
 
-        var resto = ahorro - partes.Sum();
+        var resto = cobro - partes.Sum();
         for (var k = partes.Length - 1; k >= 0 && resto != 0; k--)
         {
             var ajuste = resto > 0
@@ -198,12 +205,17 @@ public static class ResolvedorDeCombos
             resto -= ajuste;
         }
 
+        if (resto != 0)
+        {
+            return null;
+        }
+
         var reparto = new List<(int Posicion, int Unidades, decimal Ahorro)>(posiciones.Count);
         for (var k = 0; k < partes.Length; k++)
         {
-            reparto.Add((posiciones[k], tomado[posiciones[k]], partes[k]));
+            reparto.Add((posiciones[k], tomado[posiciones[k]], importesDeLista[k] - partes[k]));
         }
 
-        return new Aplicacion(combo, costoConOfertas - combo.Precio, ahorro, reparto);
+        return new Aplicacion(combo, costoConOfertas - cobro, totalDeLista - cobro, reparto);
     }
 }

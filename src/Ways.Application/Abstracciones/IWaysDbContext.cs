@@ -8,6 +8,7 @@ using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Combos;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Dispositivos;
@@ -79,6 +80,9 @@ public interface IWaysDbContext
     // (list/create/edit/soft-delete + replace-set de ofertas_listas).
     DbSet<Oferta> Ofertas { get; }
     DbSet<OfertaLista> OfertasListas { get; }
+
+    DbSet<Combo> Combos { get; }
+    DbSet<ComboComponente> CombosComponentes { get; }
 
     // stage-5-pos-ventas, Slice 4: ServicioDeVentas es el primer consumidor de Application de
     // estos 6 — Slice 3 solo adelantaba el modelo a la migración (design: Table Shapes A/B/C).

@@ -18,6 +18,7 @@ import type {
   SolicitudDeEdicionDeGasto,
   TurnoResumen,
 } from '../api/tipos'
+import { pulsoDeCajon } from '../impresion/plantillas'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { Box } from '../componentes/Box'
 import { BotonIcono } from '../componentes/BotonIcono'
@@ -25,14 +26,19 @@ import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { etiquetaDeProveedor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeEdicionDeGasto } from './ModalDeEdicionDeGasto'
+import type { CajaDeEscritorio } from './Pos'
 import {
   aSolicitudDeGasto,
+  areaPorDefecto,
   categoriaAlElegirProveedor,
+  efectivoDisponibleEnCaja,
   etiquetaDeCategoriaGasto,
   etiquetaDeOrigenFondos,
+  faltanteDeEfectivo,
   formatearFechaHora,
   formatearMoneda,
   mediosValidosParaGasto,
+  salidaDeEfectivoDeCaja,
   totalDeGastos,
 } from './utilidadesGastosDelTurno'
 
@@ -65,8 +71,13 @@ const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
  * generación del detalle: mientras la edición está abierta o en vuelo, el resto de la pantalla
  * queda inerte (regla 9 — se bloquea el supersede, no se reconcilia). Si el servidor responde
  * `409 gasto_turno_cerrado` el modal queda abierto con el motivo y el detalle se refresca.
+ *
+ * Efectivo de caja: un gasto en medio Efectivo pagado desde la caja del turno
+ * (`salidaDeEfectivoDeCaja`) muestra el efectivo disponible del resumen del turno y, si el importe
+ * lo supera, avisa cuánto falta sin impedir el registro. Con el seam de escritorio
+ * (`cajaDeEscritorio`), un alta confirmada de ese tipo encola el pulso del cajón.
  */
-export function GastosDelTurno() {
+export function GastosDelTurno({ cajaDeEscritorio }: { cajaDeEscritorio?: CajaDeEscritorio } = {}) {
   const { puntoVenta } = usePuntoVenta()
 
   const [turno, setTurno] = useState<TurnoResumen | null>(null)
@@ -86,6 +97,7 @@ export function GastosDelTurno() {
   const [errorProveedores, setErrorProveedores] = useState('')
 
   const [areas, setAreas] = useState<AreaListado[] | null>(null)
+  const [errorAreas, setErrorAreas] = useState('')
 
   const [edicion, setEdicion] = useState<GastoDeTurno | null>(null)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
@@ -95,6 +107,7 @@ export function GastosDelTurno() {
   const [idMedioPago, setIdMedioPago] = useState<number | ''>('')
   const [categoria, setCategoria] = useState<CategoriaGasto>('Otros')
   const [idProveedor, setIdProveedor] = useState<number | ''>('')
+  const [idAreaElegida, setIdAreaElegida] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
   const [origenFondos, setOrigenFondos] = useState<OrigenFondosGasto>('CajaTurno')
 
@@ -136,8 +149,8 @@ export function GastosDelTurno() {
         setErrorProveedores(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
       })
 
-    // El área solo se usa para precargar la edición: si no carga, el formulario conserva el valor
-    // del gasto rotulado como no disponible, así que no hace falta un aviso aparte.
+    // Hasta que responde (`areas === null`) el alta queda deshabilitada; si falla, queda en `[]` y
+    // el aviso dice que los gastos se registran sin área.
     clienteAreas
       .listar(false)
       .then((lista) => {
@@ -147,6 +160,7 @@ export function GastosDelTurno() {
       .catch(() => {
         if (!vigente) return
         setAreas([])
+        setErrorAreas('No se pudieron cargar las áreas: los gastos se registran sin área.')
       })
 
     return () => {
@@ -214,6 +228,7 @@ export function GastosDelTurno() {
     setIdMedioPago('')
     setCategoria('Otros')
     setIdProveedor('')
+    setIdAreaElegida('')
     setObservaciones('')
     setOrigenFondos('CajaTurno')
   }
@@ -238,6 +253,11 @@ export function GastosDelTurno() {
       return
     }
 
+    const abreElCajon = salidaDeEfectivoDeCaja(
+      medios?.find((m) => m.id === idMedioPago),
+      origenFondos,
+    )
+
     guardandoRef.current = true
     setGuardando(true)
     setErrorGuardar('')
@@ -254,10 +274,19 @@ export function GastosDelTurno() {
           idMedioPago,
           categoria,
           idProveedor: idProveedor === '' ? null : idProveedor,
+          idArea: idArea === '' ? null : idArea,
           observaciones,
           origenFondos,
         }),
       )
+      // El alta ya está confirmada: el cajón se abre aunque la respuesta llegue desactualizada.
+      if (abreElCajon) {
+        try {
+          cajaDeEscritorio?.encolarImpresion('la apertura de cajón', pulsoDeCajon())
+        } catch {
+          // Un fallo sincrónico del seam no desmiente el alta ya confirmada.
+        }
+      }
       if (generacionRef.current !== miGeneracion) return
       limpiarFormulario()
       setAviso('Gasto registrado.')
@@ -327,6 +356,13 @@ export function GastosDelTurno() {
   const proveedoresOrdenados = ordenarProveedoresPorEtiqueta(proveedores ?? [])
   const gastos = detalle?.gastos ?? []
   const total = totalDeGastos(gastos)
+  const idArea = idAreaElegida !== '' ? idAreaElegida : areaPorDefecto(areas ?? [])
+  const saleDeLaCaja = salidaDeEfectivoDeCaja(
+    medios?.find((m) => m.id === idMedioPago),
+    origenFondos,
+  )
+  const efectivoDisponible = detalle ? efectivoDisponibleEnCaja(detalle.resumen) : null
+  const faltante = efectivoDisponible === null ? 0 : faltanteDeEfectivo(importe, efectivoDisponible)
 
   const herramientas = (
     <button
@@ -356,6 +392,7 @@ export function GastosDelTurno() {
           <>
             {errorMedios && <div className="alert alert-warning py-1 px-2 small">{errorMedios}</div>}
             {errorProveedores && <div className="alert alert-warning py-1 px-2 small">{errorProveedores}</div>}
+            {errorAreas && <div className="alert alert-warning py-1 px-2 small">{errorAreas}</div>}
             {aviso && <div className="alert alert-success">{aviso}</div>}
             {errorGuardar && <div className="alert alert-danger">{errorGuardar}</div>}
 
@@ -424,6 +461,29 @@ export function GastosDelTurno() {
               </div>
 
               <div className="col-md-2">
+                <label className="form-label" htmlFor="gasto-area">
+                  Área
+                </label>
+                <select
+                  id="gasto-area"
+                  className="form-select"
+                  value={idArea}
+                  onChange={(e) => setIdAreaElegida(Number(e.target.value))}
+                >
+                  {(areas ?? []).length === 0 && (
+                    <option value="" disabled>
+                      Sin áreas
+                    </option>
+                  )}
+                  {(areas ?? []).map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="col-md-2">
                 <label className="form-label" htmlFor="gasto-origen-fondos">
                   Pagado desde
                 </label>
@@ -441,13 +501,18 @@ export function GastosDelTurno() {
                 </select>
               </div>
 
-              <div className="col-md-2">
-                <button type="button" className="btn btn-primary w-100" onClick={() => void registrarGasto()}>
-                  {guardando ? 'Guardando…' : 'Registrar'}
-                </button>
-              </div>
+              {saleDeLaCaja && efectivoDisponible !== null && (
+                <div className="col-12">
+                  <div className="small text-muted">Disponible en caja: {formatearMoneda(efectivoDisponible)}</div>
+                  {faltante > 0 && (
+                    <div className="alert alert-warning py-1 px-2 small mt-1 mb-0" role="alert">
+                      Falta {formatearMoneda(faltante)} en la caja para pagar este gasto.
+                    </div>
+                  )}
+                </div>
+              )}
 
-              <div className="col-12">
+              <div className="col-md-10">
                 <label className="form-label" htmlFor="gasto-observaciones">
                   Observaciones (opcional)
                 </label>
@@ -458,6 +523,12 @@ export function GastosDelTurno() {
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
                 />
+              </div>
+
+              <div className="col-md-2">
+                <button type="button" className="btn btn-primary w-100" disabled={areas === null} onClick={() => void registrarGasto()}>
+                  {guardando ? 'Guardando…' : 'Registrar'}
+                </button>
               </div>
             </fieldset>
 
