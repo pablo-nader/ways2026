@@ -225,7 +225,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ahora = DateTimeOffset.UtcNow;
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, a, tienda.IdListaDefault, 100m, desde: ahora.AddDays(-10));
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, a, mayorista, 80m, desde: ahora.AddDays(-1));
-        await apoyo.SembrarPrecioAsync(tienda.IdTenant, b, tienda.IdListaDefault, 33.33m);
+        await apoyo.SembrarPrecioAsync(tienda.IdTenant, b, tienda.IdListaDefault, 35m);
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, c, mayorista, 7m);
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, d, tienda.IdListaDefault, 0.15m, desde: ahora.AddDays(-10));
         await apoyo.SembrarPrecioAsync(tienda.IdTenant, d, mayorista, 1m, desde: ahora.AddDays(-1));
@@ -235,7 +235,7 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         // Sin lista en la vitrina: la default compartida.
         var porDefecto = await ApoyoDeCatalogoOnline.CatalogoAsync(cliente);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 100m, ["B solo en la default"] = 33.33m, ["D centavos"] = 0.15m },
+            new Dictionary<string, decimal> { ["A con todo"] = 100m, ["B solo en la default"] = 35m, ["D centavos"] = 0.15m },
             PreciosPorNombre(porDefecto));
 
         // Lista fija en la vitrina: sus precios, y los artículos sin precio en ella desaparecen.
@@ -246,22 +246,22 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             PreciosPorNombre(fija));
         Assert.Equal(3, fija.GetProperty("total").GetInt32());
 
-        // Derivadas: el porcentaje sobre el precio de la BASE (no sobre otra lista), redondeado lejos de cero, y sin
+        // Derivadas: el porcentaje sobre el precio de la BASE (no sobre otra lista), redondeado al peso entero lejos de cero, y sin
         // precio en la base no hay artículo aunque la derivada no tenga filas propias.
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, recargo);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 110m, ["B solo en la default"] = 36.66m, ["D centavos"] = 0.17m },
+            new Dictionary<string, decimal> { ["A con todo"] = 110m, ["B solo en la default"] = 39m, ["D centavos"] = 0m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
 
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, descuento);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 90m, ["B solo en la default"] = 30m, ["D centavos"] = 0.14m },
+            new Dictionary<string, decimal> { ["A con todo"] = 90m, ["B solo en la default"] = 32m, ["D centavos"] = 0m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
 
-        // 0,15 × 1,5 = 0,225: lejos de cero da 0,23 (el redondeo bancario daría 0,22).
+        // 35 × 1,5 = 52,5: al peso entero y lejos de cero da 53 (el redondeo bancario daría 52).
         await apoyo.FijarListaDeLaVitrinaAsync(tienda.IdEmpresa, recargoMitad);
         Assert.Equal(
-            new Dictionary<string, decimal> { ["A con todo"] = 150m, ["B solo en la default"] = 50m, ["D centavos"] = 0.23m },
+            new Dictionary<string, decimal> { ["A con todo"] = 150m, ["B solo en la default"] = 53m, ["D centavos"] = 0m },
             PreciosPorNombre(await ApoyoDeCatalogoOnline.CatalogoAsync(cliente)));
     }
 
