@@ -131,20 +131,66 @@ describe('construirComprobanteOfflineSintetico', () => {
     expect(comprobante).toMatchObject({ subtotal: 450, descuentoTotal: 90, total: 360 })
   })
 
-  it('un bruto que es empate exacto de medio centavo sube como en el servidor: 0,7 × 1,15 = 0,81, no 0,80', () => {
+  it('un bruto que es empate exacto de medio peso sube como en el servidor: 0,7 × 45 = 32, no 31', () => {
     const comprobante = construir({
       numero: 7,
       numeroVisible: '0007-00000007',
       idPuntoVenta: 7,
       idCliente: 1,
       lineas: [lineaFixture({ cantidad: 0.7 })],
-      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 1.15, precioFinal: 1.15, descuentoUnitario: 0 })]),
-      pagos: [{ idMedioPago: 1, importe: 0.81, referencia: null, vuelto: 0 }],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 45, precioFinal: 45, descuentoUnitario: 0 })]),
+      pagos: [{ idMedioPago: 1, importe: 32, referencia: null, vuelto: 0 }],
       ahora: new Date('2026-09-20T10:05:00.000Z'),
     })
 
-    expect(comprobante?.items[0]).toMatchObject({ cantidad: 0.7, precioUnitario: 1.15, descuento: 0, total: 0.81 })
-    expect(comprobante).toMatchObject({ subtotal: 0.81, descuentoTotal: 0, total: 0.81 })
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 0.7, precioUnitario: 45, descuento: 0, total: 32 })
+    expect(comprobante).toMatchObject({ subtotal: 32, descuentoTotal: 0, total: 32 })
+  })
+
+  it('la oferta x3 por 3500 (1166,66 por unidad) cobra 3500 en el comprobante: línea, subtotal, descuento y total enteros', () => {
+    const comprobante = construir({
+      numero: 7,
+      numeroVisible: '0007-00000007',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad: 3 })],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 1500, precioFinal: 1166.66, descuentoUnitario: 333.34 })]),
+      pagos: [{ idMedioPago: 1, importe: 3500, referencia: null, vuelto: 0 }],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ cantidad: 3, precioUnitario: 1500, descuento: 1000, total: 3500 })
+    expect(comprobante).toMatchObject({ subtotal: 4500, descuentoTotal: 1000, total: 3500 })
+  })
+
+  // Mismos importes que los tramos de la curva del servidor (EscalonesDeCantidad): el cajero
+  // offline elige el último tramo que entra y cada uno cobra el neto verdadero redondeado al peso.
+  it.each([
+    [1, 1500, 0, 1500],
+    [2, 3000, 0, 3000],
+    [3, 4500, 1000, 3500],
+    [5, 7500, 1667, 5833],
+    [7, 10500, 2333, 8167],
+  ])('cantidad %s sobre una curva con 1166,66 en el tramo de 3: bruto %s, descuento %s, total %s', (cantidad, bruto, descuento, total) => {
+    const tramo: EscalonDeCantidad = {
+      cantidadDesde: 3,
+      precioFinal: 1166.66,
+      descuentoUnitario: 333.34,
+      aplicadas: [{ idOferta: 9, nombre: 'x3 por 3500', descuentoUnitario: 333.34 }],
+    }
+    const comprobante = construir({
+      numero: 7,
+      numeroVisible: '0007-00000007',
+      idPuntoVenta: 7,
+      idCliente: 1,
+      lineas: [lineaFixture({ cantidad })],
+      instantanea: instantaneaFixture([articuloFixture({ precioOriginal: 1500, precioFinal: 1500, descuentoUnitario: 0, aplicadas: [], escalones: [tramo] })]),
+      pagos: [],
+      ahora: new Date('2026-09-20T10:05:00.000Z'),
+    })
+
+    expect(comprobante?.items[0]).toMatchObject({ descuento, total })
+    expect(comprobante).toMatchObject({ subtotal: bruto, descuentoTotal: descuento, total })
   })
 
   it('suma correctamente varias líneas con valores discriminantes (nunca confunde una línea con otra)', () => {
@@ -416,7 +462,7 @@ describe('construirComprobanteOfflineSintetico', () => {
     })
 
     it('redondea el ajuste half-away-from-zero con ambos signos', () => {
-      const instantanea = instantaneaFixture([articuloFixture({ precioOriginal: 10.05, precioFinal: 10.05, descuentoUnitario: 0 })])
+      const instantanea = instantaneaFixture([articuloFixture({ precioOriginal: 105, precioFinal: 105, descuentoUnitario: 0 })])
       const descuento = construir({
         numero: 25,
         numeroVisible: '0007-00000025',
@@ -438,8 +484,8 @@ describe('construirComprobanteOfflineSintetico', () => {
         ahora: AHORA,
       })
 
-      expect(descuento?.items[0]).toMatchObject({ ajusteManual: -1.01, total: 9.04 })
-      expect(recargo?.items[0]).toMatchObject({ ajusteManual: 1.01, total: 11.06 })
+      expect(descuento?.items[0]).toMatchObject({ ajusteManual: -11, total: 94 })
+      expect(recargo?.items[0]).toMatchObject({ ajusteManual: 11, total: 116 })
     })
 
     it('con una cantidad que cruza un umbral, el ajuste va sobre el neto del TRAMO', () => {
@@ -530,8 +576,8 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     const comprobante = construir({ ...base, lineas, instantanea: instantaneaConCombo() })
 
     expect(comprobante?.items.map((i) => ({ precioUnitario: i.precioUnitario, descuento: i.descuento, total: i.total, idCombo: i.idCombo }))).toEqual([
-      { precioUnitario: 2500, descuento: 227.27, total: 2272.73, idCombo: 7 },
-      { precioUnitario: 3000, descuento: 272.73, total: 2727.27, idCombo: 7 },
+      { precioUnitario: 2500, descuento: 227, total: 2273, idCombo: 7 },
+      { precioUnitario: 3000, descuento: 273, total: 2727, idCombo: 7 },
     ])
     expect(comprobante).toMatchObject({ subtotal: 5500, descuentoTotal: 500, total: 5000 })
   })
@@ -547,9 +593,9 @@ describe('construirComprobanteOfflineSintetico — combos (T5a)', () => {
     const conAjuste = [lineas[0], { ...lineas[1], ajusteManualPorcentaje: -10 }]
     const comprobante = construir({ ...base, lineas: conAjuste, instantanea: instantaneaConCombo() })
 
-    // neto 3000 − 272,73 = 2727,27; 10 % = 272,727 → 272,73.
-    expect(comprobante?.items[1]).toMatchObject({ ajusteManual: -272.73, total: 2454.54 })
-    expect(comprobante).toMatchObject({ descuentoManualTotal: 272.73, total: 4727.27 })
+    // neto 3000 − 273 = 2727; 10 % = 272,7 → 273 al peso.
+    expect(comprobante?.items[1]).toMatchObject({ ajusteManual: -273, total: 2454 })
+    expect(comprobante).toMatchObject({ descuentoManualTotal: 273, total: 4727 })
   })
 
   describe('idOferta de un artículo con oferta cuando un combo consume sus unidades (el servidor la persiste igual)', () => {

@@ -6,17 +6,20 @@
  * que replicarse acá a mano, y `motorDeCombos.test.ts` espeja caso por caso `ResolvedorDeCombosTests`.
  *
  * Es voraz: en cada vuelta elige, entre los combos que caben con las unidades restantes, el de
- * mayor ganancia real por aplicación (costo de esas unidades con sus ofertas menos el precio del
- * combo; empate: menor id), lo aplica k veces de una vez y reevalúa. El componente artículo se
- * cubre antes que el de familia y las líneas se toman en orden de documento. El ahorro de una
- * aplicación se reparte según el importe de lista de cada línea, en centavos, con el resto
- * acotado cayendo hacia atrás desde la última línea, de modo que cada conjunto suma exacto el
- * precio del combo.
+ * mayor ganancia real por aplicación (costo de esas unidades con sus ofertas menos lo que el combo
+ * cobra; empate: menor id), lo aplica k veces de una vez y reevalúa. El componente artículo se
+ * cubre antes que el de familia y las líneas se toman en orden de documento. Lo que cobra una
+ * aplicación es el precio del combo redondeado al peso entero, y ese cobro (no el ahorro) se reparte
+ * según el importe de lista de cada línea en pesos enteros que suman exacto el cobro, cada parte
+ * entre cero y el importe de lista de las unidades que aporta (hacia abajo al peso); el resto cae
+ * hacia atrás desde la última línea. Un combo cuyo cobro redondeado no es menor al costo con ofertas,
+ * o cuyos topes no alcanzan a contener el cobro, no se aplica. El ahorro de cada línea es su importe de
+ * lista menos su parte del cobro y puede llevar centavos si el precio de lista los tiene.
  *
  * Aritmética exacta: el servidor trabaja en `decimal` con `MidpointRounding.AwayFromZero`. Acá
  * cada importe entra por su representación decimal más corta (la que `JSON.stringify` mandó y el
  * servidor leyó) y todo se opera en `bigint` escalado a la mayor cantidad de decimales de la
- * entrada; solo el prorrateo por línea redondea, a centavos, "mitad lejos de cero".
+ * entrada; solo el precio del combo y el prorrateo por línea redondean, al peso, "mitad lejos de cero".
  */
 
 export type ComponenteDeCombo = { idArticulo?: number | null; idFamilia?: number | null; cantidad: number }
@@ -35,8 +38,8 @@ export type LineaParaCombos = {
   descuentoUnitarioDeOferta: number
 }
 
-/** Descuento de línea que graba quien llama: `descuentoUnitarioDeOferta × (cantidad − unidadesConsumidas) +
- * ahorroDeCombo` (el ahorro es un importe de línea, no por unidad). */
+/** Quien llama calcula la línea con `calcularTotalesDeLinea`, pasando `unidadesConsumidas` y `ahorroDeCombo` (el
+ * ahorro es un importe de línea, no por unidad). */
 export type ConsumoDeLinea = { indice: number; unidadesConsumidas: number; ahorroDeCombo: number; idsDeCombo: number[] }
 
 export type ComboAplicado = { idCombo: number; nombre: string; veces: number; ahorro: number; codigo?: number }
@@ -148,36 +151,38 @@ function intentar(combo: ComboCandidato, precioDelCombo: bigint, lineas: readonl
   const posiciones = [...tomado.keys()].sort((a, b) => a - b)
   let totalDeLista = 0n
   let costoConOfertas = 0n
-  const topes: bigint[] = []
+  const importes: bigint[] = []
   for (const p of posiciones) {
     const unidades = BigInt(tomado.get(p) as number)
-    const tope = unidades * e.precioLista[p]
-    topes.push(tope)
-    totalDeLista += tope
+    const importe = unidades * e.precioLista[p]
+    importes.push(importe)
+    totalDeLista += importe
     costoConOfertas += unidades * (e.precioLista[p] - e.descuento[p])
   }
 
-  // Compuerta D1: el combo se aplica solo si es estrictamente más barato que esas unidades con su oferta.
-  if (precioDelCombo >= costoConOfertas) return null
+  const unidadDePeso = 10n ** BigInt(e.escala)
+  const cobro = dividirRedondeando(precioDelCombo, unidadDePeso) * unidadDePeso
+  // Compuerta D1: el combo se aplica solo si lo que cobra, ya al peso, es estrictamente menor que esas unidades con su oferta.
+  if (cobro >= costoConOfertas) return null
   // Sin guarda de `totalDeLista <= 0n`: con descuentos de oferta no negativos (los que deja pasar quien llama,
   // igual que `CombosEnVenta.Detectar`) la compuerta de arriba ya garantiza `totalDeLista >= costoConOfertas > 0`.
 
-  const ahorro = totalDeLista - precioDelCombo
-  const unidadDeCentavo = 10n ** BigInt(Math.max(0, e.escala - DECIMALES_DE_IMPORTE))
-  const partes = topes.map((tope) => {
-    const proporcional = dividirRedondeando(ahorro * tope, totalDeLista * unidadDeCentavo) * unidadDeCentavo
-    return proporcional < 0n ? 0n : proporcional > tope ? tope : proporcional
+  const topesAlPeso = importes.map((importe) => (importe / unidadDePeso) * unidadDePeso)
+  const partes = importes.map((importe, k) => {
+    const proporcional = dividirRedondeando(cobro * importe, totalDeLista * unidadDePeso) * unidadDePeso
+    return proporcional < 0n ? 0n : proporcional > topesAlPeso[k] ? topesAlPeso[k] : proporcional
   })
 
-  let resto = ahorro - partes.reduce((a, b) => a + b, 0n)
+  let resto = cobro - partes.reduce((a, b) => a + b, 0n)
   for (let k = partes.length - 1; k >= 0 && resto !== 0n; k--) {
-    const ajuste = resto > 0n ? minimo(resto, topes[k] - partes[k]) : -minimo(-resto, partes[k])
+    const ajuste = resto > 0n ? minimo(resto, topesAlPeso[k] - partes[k]) : -minimo(-resto, partes[k])
     partes[k] += ajuste
     resto -= ajuste
   }
+  if (resto !== 0n) return null
 
-  const reparto = posiciones.map((posicion, k) => ({ posicion, unidades: tomado.get(posicion) as number, ahorro: partes[k] }))
-  return { combo, ganancia: costoConOfertas - precioDelCombo, ahorro, reparto }
+  const reparto = posiciones.map((posicion, k) => ({ posicion, unidades: tomado.get(posicion) as number, ahorro: importes[k] - partes[k] }))
+  return { combo, ganancia: costoConOfertas - cobro, ahorro: totalDeLista - cobro, reparto }
 }
 
 export function resolverCombos(lineas: readonly LineaParaCombos[], combos: readonly ComboCandidato[]): ResolucionDeCombos {

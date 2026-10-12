@@ -283,16 +283,33 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(5500m, emitido.Subtotal);
         Assert.Equal(500m, emitido.DescuentoTotal);
         Assert.Equal([pancho, coca], emitido.Items.Select(i => i.IdArticulo));
-        Assert.Equal([2727.27m, 2272.73m], emitido.Items.Select(i => i.Total));
-        Assert.Equal([272.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([2727m, 2273m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([273m, 227m], emitido.Items.Select(i => i.Descuento));
         Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
 
         var persistidos = await ItemsAsync(ctx, emitido.Id);
-        Assert.Equal([2727.27m, 2272.73m], persistidos.Select(i => i.Total));
+        Assert.Equal([2727m, 2273m], persistidos.Select(i => i.Total));
         Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
 
         var releido = await ctx.Admin.GetFromJsonAsync<ComprobanteEmitido>($"/api/ventas/{emitido.Id}", OpcionesJson);
         Assert.All(releido!.Items, i => Assert.Equal(combo, i.IdCombo));
+    }
+
+    [Fact]
+    public async Task TresArticulosDeMilConUnComboDeDosMilCobranExactamenteDosMilConLineasEnteras()
+    {
+        var ctx = await PrepararAsync(nameof(TresArticulosDeMilConUnComboDeDosMilCobranExactamenteDosMilConLineasEnteras));
+        var a = await ArticuloAsync(ctx, "a", 1000m);
+        var b = await ArticuloAsync(ctx, "b", 1000m);
+        var c = await ArticuloAsync(ctx, "c", 1000m);
+        var combo = await ComboAsync(ctx, 2000m, [Art(a), Art(b), Art(c)]);
+
+        var emitido = await EmitirAsync(ctx, 2000m, (a, 1m), (b, 1m), (c, 1m));
+
+        Assert.Equal(2000m, emitido.Total);
+        Assert.Equal([667m, 667m, 666m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([333m, 333m, 334m], emitido.Items.Select(i => i.Descuento));
+        Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
     }
 
     [Fact]
@@ -369,8 +386,8 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
             .ToList();
         var fiscales = ComposicionDeTotalesFiscales.Componer(lineasFiscales);
 
-        var netoBajo = Math.Round(2727.27m / (1 + (baja.Porcentaje / 100m)), 2, MidpointRounding.AwayFromZero);
-        var netoAlto = Math.Round(2272.73m / (1 + (alta.Porcentaje / 100m)), 2, MidpointRounding.AwayFromZero);
+        var netoBajo = Math.Round(2727m / (1 + (baja.Porcentaje / 100m)), 2, MidpointRounding.AwayFromZero);
+        var netoAlto = Math.Round(2273m / (1 + (alta.Porcentaje / 100m)), 2, MidpointRounding.AwayFromZero);
         Assert.Equal(netoBajo + netoAlto, fiscales.ImpNeto);
         Assert.Equal(5000m - netoBajo - netoAlto, fiscales.ImpIVA);
         Assert.Equal(5000m, fiscales.ImpTotal);
@@ -411,7 +428,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         Assert.Equal(8000m, emitido.Total);
         Assert.Equal(500m, emitido.DescuentoTotal);
-        Assert.Equal([5727.27m, 2272.73m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([5727m, 2273m], emitido.Items.Select(i => i.Total));
         Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
         Assert.Equal(-2m, await StockAsync(ctx, pancho));
     }
@@ -427,12 +444,12 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var emitido = await EmitirAsync(ctx, 7700m, (pancho, 2m), (coca, 1m));
 
-        // El pancho consumido va a lista menos su parte (272.73); el no consumido conserva los 300 de la oferta.
-        Assert.Equal(572.73m, emitido.Items[0].Descuento);
-        Assert.Equal(5427.27m, emitido.Items[0].Total);
+        // El pancho consumido va a lista menos su parte (273); el no consumido conserva los 300 de la oferta.
+        Assert.Equal(573m, emitido.Items[0].Descuento);
+        Assert.Equal(5427m, emitido.Items[0].Total);
         Assert.Equal(oferta, emitido.Items[0].IdOferta);
         Assert.Equal(combo, emitido.Items[0].IdCombo);
-        Assert.Equal(2272.73m, emitido.Items[1].Total);
+        Assert.Equal(2273m, emitido.Items[1].Total);
         Assert.Equal(7700m, emitido.Total);
     }
 
@@ -448,7 +465,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var emitido = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
         Assert.Equal(5000m, emitido.Total);
-        Assert.Equal(272.73m, emitido.Items[0].Descuento);
+        Assert.Equal(273m, emitido.Items[0].Descuento);
         Assert.Null(emitido.Items[0].IdOferta);
         Assert.Equal(combo, emitido.Items[0].IdCombo);
 
@@ -696,28 +713,28 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         var combo = await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
 
-        // Combo: pancho 3000 − 272.73 = 2727.27 y coca 2500 − 227.27 = 2272.73. El −10 % de la coca es
-        // 2272.73 × 0.10 = 227.273 → 227.27 (sobre el neto con el combo, no sobre los 2500 de lista):
-        // la línea queda en 2272.73 − 227.27 = 2045.46 y la venta en 2727.27 + 2045.46 = 4772.73.
+        // Combo: pancho 3000 − 273 = 2727 y coca 2500 − 227 = 2273. El −10 % de la coca es
+        // 2273 × 0.10 = 227.3 → 227 (sobre el neto con el combo, no sobre los 2500 de lista):
+        // la línea queda en 2273 − 227 = 2046 y la venta en 2727 + 2046 = 4773.
         var emitido = await EmitirAsync(
             ctx,
             VentaConLineas(
-                ctx, 4772.73m,
+                ctx, 4773m,
                 new LineaDeVenta(pancho, 1m, null),
                 new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
 
-        Assert.Equal(4772.73m, emitido.Total);
+        Assert.Equal(4773m, emitido.Total);
         Assert.Equal(5500m, emitido.Subtotal);
         Assert.Equal(500m, emitido.DescuentoTotal);
-        Assert.Equal(227.27m, emitido.DescuentoManualTotal);
-        Assert.Equal([2727.27m, 2045.46m], emitido.Items.Select(i => i.Total));
-        Assert.Equal([272.73m, 227.27m], emitido.Items.Select(i => i.Descuento));
-        Assert.Equal([0m, -227.27m], emitido.Items.Select(i => i.AjusteManual));
+        Assert.Equal(227m, emitido.DescuentoManualTotal);
+        Assert.Equal([2727m, 2046m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([273m, 227m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([0m, -227m], emitido.Items.Select(i => i.AjusteManual));
         Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
 
         var persistidos = await ItemsAsync(ctx, emitido.Id);
-        Assert.Equal([2727.27m, 2045.46m], persistidos.Select(i => i.Total));
-        Assert.Equal([0m, -227.27m], persistidos.Select(i => i.AjusteManual));
+        Assert.Equal([2727m, 2046m], persistidos.Select(i => i.Total));
+        Assert.Equal([0m, -227m], persistidos.Select(i => i.AjusteManual));
     }
 
     [Fact]
@@ -756,8 +773,8 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var emitido = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
         var item = emitido.Items[0];
-        Assert.Equal(272.73m, item.Descuento);
-        Assert.Equal(2727.27m, item.Total);
+        Assert.Equal(273m, item.Descuento);
+        Assert.Equal(2727m, item.Total);
         Assert.Equal(combo, item.IdCombo);
         Assert.Equal(idLote, item.IdLote);
 
@@ -786,7 +803,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         // Un set completo: el combo toma el primer pancho y la coca; el segundo pancho queda a lista.
         Assert.Equal(8000m, emitido.Total);
         Assert.Equal(500m, emitido.DescuentoTotal);
-        Assert.Equal([2727.27m, 2272.73m, 3000m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([2727m, 2273m, 3000m], emitido.Items.Select(i => i.Total));
         Assert.Equal([combo, combo, (int?)null], emitido.Items.Select(i => i.IdCombo));
         Assert.Equal(-2m, await StockAsync(ctx, pancho));
         Assert.Equal(-1m, await StockAsync(ctx, coca));
@@ -802,11 +819,11 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var emitido = await EmitirAsync(ctx, 10000m, (pancho, 1m), (coca, 2m), (pancho, 1m));
 
-        // Dos sets: cada pancho se lleva 272.73 y la coca 2 × 227.27 = 454.54; los dos sets suman 10000.
+        // Dos sets: cada pancho se lleva 273 y la coca 2 × 227 = 454; los dos sets suman 10000.
         Assert.Equal(10000m, emitido.Total);
         Assert.Equal(1000m, emitido.DescuentoTotal);
-        Assert.Equal([272.73m, 454.54m, 272.73m], emitido.Items.Select(i => i.Descuento));
-        Assert.Equal([2727.27m, 4545.46m, 2727.27m], emitido.Items.Select(i => i.Total));
+        Assert.Equal([273m, 454m, 273m], emitido.Items.Select(i => i.Descuento));
+        Assert.Equal([2727m, 4546m, 2727m], emitido.Items.Select(i => i.Total));
         Assert.All(emitido.Items, i => Assert.Equal(combo, i.IdCombo));
         Assert.Equal(-2m, await StockAsync(ctx, pancho));
         Assert.Equal(-2m, await StockAsync(ctx, coca));
@@ -853,14 +870,14 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(-5500m, ncx.Subtotal);
         Assert.Equal(-500m, ncx.DescuentoTotal);
         Assert.Equal([pancho, coca], ncx.Items.Select(i => i.IdArticulo));
-        Assert.Equal([-2727.27m, -2272.73m], ncx.Items.Select(i => i.Total));
-        Assert.Equal([-272.73m, -227.27m], ncx.Items.Select(i => i.Descuento));
+        Assert.Equal([-2727m, -2273m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-273m, -227m], ncx.Items.Select(i => i.Descuento));
         Assert.Equal([3000m, 2500m], ncx.Items.Select(i => i.PrecioUnitario));
         Assert.Equal([-1m, -1m], ncx.Items.Select(i => i.Cantidad));
         Assert.All(ncx.Items, i => Assert.Equal(combo, i.IdCombo));
 
         var persistidos = await ItemsAsync(ctx, ncx.Id);
-        Assert.Equal([-2727.27m, -2272.73m], persistidos.Select(i => i.Total));
+        Assert.Equal([-2727m, -2273m], persistidos.Select(i => i.Total));
         Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
 
         Assert.Equal(0m, await StockAsync(ctx, pancho));
@@ -876,19 +893,19 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
         var venta = await EmitirAsync(ctx, 10000m, (pancho, 2m), (coca, 2m));
-        Assert.Equal([5454.54m, 4545.46m], venta.Items.Select(i => i.Total));
+        Assert.Equal([5454m, 4546m], venta.Items.Select(i => i.Total));
 
         var uno = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         var item = Assert.Single(uno.Items);
-        Assert.Equal(-2727.27m, item.Total);
-        Assert.Equal(-2727.27m, uno.Total);
+        Assert.Equal(-2727m, item.Total);
+        Assert.Equal(-2727m, uno.Total);
         Assert.Equal(3000m, item.PrecioUnitario);
-        Assert.Equal(-272.73m, item.Descuento);
+        Assert.Equal(-273m, item.Descuento);
         Assert.Equal(-1m, item.Cantidad);
 
         var todos = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
-        Assert.Equal(-5454.54m, Assert.Single(todos.Items).Total);
-        Assert.Equal(-545.46m, Assert.Single(todos.Items).Descuento);
+        Assert.Equal(-5454m, Assert.Single(todos.Items).Total);
+        Assert.Equal(-546m, Assert.Single(todos.Items).Descuento);
     }
 
     [Fact]
@@ -906,8 +923,8 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(otro, 1m, null), new LineaDeVenta(pancho, 1m, null)));
 
         // El artículo que nunca estuvo en un combo se acredita al precio de HOY (con su oferta de hoy); el del combo, a lo cobrado.
-        Assert.Equal([-80m, -2727.27m], ncx.Items.Select(i => i.Total));
-        Assert.Equal([-20m, -272.73m], ncx.Items.Select(i => i.Descuento));
+        Assert.Equal([-80m, -2727m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-20m, -273m], ncx.Items.Select(i => i.Descuento));
         Assert.Null(ncx.Items[0].IdCombo);
         Assert.NotNull(ncx.Items[1].IdCombo);
     }
@@ -944,16 +961,16 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var venta = await EmitirAsync(
             ctx,
             VentaConLineas(
-                ctx, 4772.73m,
+                ctx, 4773m,
                 new LineaDeVenta(pancho, 1m, null),
                 new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
-        Assert.Equal([2727.27m, 2045.46m], venta.Items.Select(i => i.Total));
+        Assert.Equal([2727m, 2046m], venta.Items.Select(i => i.Total));
 
         var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null)));
 
         var item = Assert.Single(ncx.Items);
-        Assert.Equal(-2045.46m, item.Total);
-        Assert.Equal(-454.54m, item.Descuento);
+        Assert.Equal(-2046m, item.Total);
+        Assert.Equal(-454m, item.Descuento);
         Assert.Equal(0m, item.AjusteManual);
         Assert.Null(item.AjusteManualPorcentaje);
     }
@@ -970,12 +987,12 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var ncx = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: -10m)));
 
-        // Neto devuelto −2272.73; −10 % sobre ese neto: −2272.73 × −0.10 = +227.27 (se devuelve menos).
+        // Neto devuelto −2273; −10 % sobre ese neto: −2273 × −0.10 = +227.3, al peso +227 (se devuelve menos).
         var item = Assert.Single(ncx.Items);
         Assert.Equal(-10m, item.AjusteManualPorcentaje);
-        Assert.Equal(227.27m, item.AjusteManual);
-        Assert.Equal(-2045.46m, item.Total);
-        Assert.Equal(-2045.46m, ncx.Total);
+        Assert.Equal(227m, item.AjusteManual);
+        Assert.Equal(-2046m, item.Total);
+        Assert.Equal(-2046m, ncx.Total);
     }
 
     [Fact]
@@ -1028,27 +1045,27 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
 
-        // Dos juegos en cuatro líneas; el segundo pancho lleva −10 %: queda en 2727.27 − 272.73 = 2454.54.
+        // Dos juegos en cuatro líneas; el segundo pancho lleva −10 %: queda en 2727 − 273 = 2454.
         var venta = await EmitirAsync(
             ctx,
             VentaConLineas(
-                ctx, 9727.27m,
+                ctx, 9727m,
                 new LineaDeVenta(pancho, 1m, null),
                 new LineaDeVenta(coca, 1m, null),
                 new LineaDeVenta(pancho, 1m, null, AjusteManualPorcentaje: -10m),
                 new LineaDeVenta(coca, 1m, null)));
-        Assert.Equal([2727.27m, 2272.73m, 2454.54m, 2272.73m], venta.Items.Select(i => i.Total));
+        Assert.Equal([2727m, 2273m, 2454m, 2273m], venta.Items.Select(i => i.Total));
 
         var unaUnidad = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
-        Assert.Equal(-2727.27m, Assert.Single(unaUnidad.Items).Total);
+        Assert.Equal(-2727m, Assert.Single(unaUnidad.Items).Total);
 
         var dosUnidades = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
-        Assert.Equal([-2727.27m, -2454.54m], dosUnidades.Items.Select(i => i.Total));
-        Assert.Equal(-5181.81m, dosUnidades.Total);
+        Assert.Equal([-2727m, -2454m], dosUnidades.Items.Select(i => i.Total));
+        Assert.Equal(-5181m, dosUnidades.Total);
 
         var enDosLineas = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(pancho, 1m, null)));
-        Assert.Equal([-2727.27m, -2454.54m], enDosLineas.Items.Select(i => i.Total));
+        Assert.Equal([-2727m, -2454m], enDosLineas.Items.Select(i => i.Total));
     }
 
     [Fact]
@@ -1065,15 +1082,15 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var una = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         var item = Assert.Single(una.Items);
-        Assert.Equal(-2727.27m, item.Total);
+        Assert.Equal(-2727m, item.Total);
         Assert.Equal(combo, item.IdCombo);
 
         // La segunda unidad ya no la cubre ningún item de combo: se precia con la lista y la oferta de hoy.
         var dos = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
-        Assert.Equal([-2727.27m, -2900m], dos.Items.Select(i => i.Total));
+        Assert.Equal([-2727m, -2900m], dos.Items.Select(i => i.Total));
         Assert.Equal([combo, (int?)null], dos.Items.Select(i => i.IdCombo));
         Assert.Equal([-1m, -1m], dos.Items.Select(i => i.Cantidad));
-        Assert.Equal(-5627.27m, dos.Total);
+        Assert.Equal(-5627m, dos.Total);
     }
 
     [Fact]
@@ -1088,7 +1105,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var ncx = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null), new LineaDeVenta(coca, 1m, null)));
 
-        Assert.Equal([-2727.27m, -3000m, -2272.73m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-2727m, -3000m, -2273m], ncx.Items.Select(i => i.Total));
         Assert.Equal([-1m, -1m, -1m], ncx.Items.Select(i => i.Cantidad));
         Assert.Null(ncx.Items[1].IdCombo);
     }
@@ -1106,8 +1123,8 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var segunda = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
 
         // Sin acumulado de lo devuelto por documentos anteriores: cada nota de crédito parte de la venta original.
-        Assert.Equal(-2727.27m, primera.Total);
-        Assert.Equal(-2727.27m, segunda.Total);
+        Assert.Equal(-2727m, primera.Total);
+        Assert.Equal(-2727m, segunda.Total);
     }
 
     [Fact]
@@ -1199,17 +1216,17 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
             await db.SaveChangesAsync();
         }
 
-        // El segundo pancho lleva −10 %: cada item original pagó un total distinto (2727.27 y 2454.54), así que el
+        // El segundo pancho lleva −10 %: cada item original pagó un total distinto (2727 y 2454), así que el
         // total de cada item de la nota de crédito dice de cuál de los dos salió.
         var venta = await EmitirAsync(
             ctx,
             VentaConLineas(
-                ctx, 9727.27m,
+                ctx, 9727m,
                 new LineaDeVenta(pancho, 1m, null),
                 new LineaDeVenta(coca, 1m, null),
                 new LineaDeVenta(pancho, 1m, null, AjusteManualPorcentaje: -10m),
                 new LineaDeVenta(coca, 1m, null)));
-        Assert.Equal([2727.27m, 2272.73m, 2454.54m, 2272.73m], venta.Items.Select(i => i.Total));
+        Assert.Equal([2727m, 2273m, 2454m, 2273m], venta.Items.Select(i => i.Total));
 
         var ncx = await EmitirAsync(
             ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null, idLote)));
@@ -1217,15 +1234,15 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(2, ncx.Items.Count);
         Assert.All(ncx.Items, i => Assert.Equal(idLote, i.IdLote));
         Assert.Equal([-1m, -1m], ncx.Items.Select(i => i.Cantidad));
-        Assert.Equal([-2727.27m, -2454.54m], ncx.Items.Select(i => i.Total));
+        Assert.Equal([-2727m, -2454m], ncx.Items.Select(i => i.Total));
         Assert.Equal([3000m, 3000m], ncx.Items.Select(i => i.PrecioUnitario));
-        Assert.Equal([-272.73m, -545.46m], ncx.Items.Select(i => i.Descuento));
-        Assert.Equal(-5181.81m, ncx.Total);
+        Assert.Equal([-273m, -546m], ncx.Items.Select(i => i.Descuento));
+        Assert.Equal(-5181m, ncx.Total);
 
         var persistidos = await ItemsAsync(ctx, ncx.Id);
         Assert.Equal([-1m, -1m], persistidos.Select(i => i.Cantidad));
-        Assert.Equal([-2727.27m, -2454.54m], persistidos.Select(i => i.Total));
-        Assert.Equal([-272.73m, -545.46m], persistidos.Select(i => i.Descuento));
+        Assert.Equal([-2727m, -2454m], persistidos.Select(i => i.Total));
+        Assert.Equal([-273m, -546m], persistidos.Select(i => i.Descuento));
         Assert.Equal(10m, await StockAsync(ctx, pancho));
 
         await using var lectura = Db(ctx.IdTenant);
@@ -1261,8 +1278,8 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(ctx.IdListaPrecio, persistido.IdListaPrecio);
         Assert.Equal(combo, persistido.IdCombo);
         Assert.Equal(oferta, Assert.Single(ncx.Items).IdOferta);
-        Assert.Equal(5627.27m, vendido.Total);
-        Assert.Equal(-2813.64m, persistido.Total);
+        Assert.Equal(5627m, vendido.Total);
+        Assert.Equal(-2814m, persistido.Total);
     }
 
     private async Task CerrarElPrecioVigenteAsync(Contexto ctx, int idArticulo)
@@ -1296,9 +1313,9 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         // Cubierto por completo por el item vendido: se acredita lo cobrado sin necesitar el precio de hoy.
         var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null)));
         var item = Assert.Single(ncx.Items);
-        Assert.Equal(-2727.27m, item.Total);
+        Assert.Equal(-2727m, item.Total);
         Assert.Equal(3000m, item.PrecioUnitario);
-        Assert.Equal(-272.73m, item.Descuento);
+        Assert.Equal(-273m, item.Descuento);
     }
 
     [Fact]
@@ -1312,13 +1329,41 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var venta = await EmitirAsync(ctx, 5000m, (pancho, 1m), (coca, 1m));
 
         // La regla de cantidad entera de una unidad de venta Unidad solo alcanza a las ventas (signo positivo): una
-        // devolución fraccionaria llega al reparto, y el crédito es la mitad de lo cobrado por el item, 2727.27 / 2.
+        // devolución fraccionaria llega al reparto, y el crédito es la mitad de lo cobrado por el item, 2727 / 2 = 1363.5, al peso 1364.
         var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 0.5m, null)));
 
         var item = Assert.Single(ncx.Items);
         Assert.Equal(-0.5m, item.Cantidad);
-        Assert.Equal(-1363.64m, item.Total);
-        Assert.Equal(-1363.64m, ncx.Total);
+        Assert.Equal(-1364m, item.Total);
+        Assert.Equal(-1364m, ncx.Total);
+    }
+
+    [Fact]
+    public async Task LaDevolucionDeLasDosUnidadesDeUnItemConTotalImparAcreditaPesosEnterosQueSumanLoCobrado()
+    {
+        var ctx = await PrepararAsync(
+            nameof(LaDevolucionDeLasDosUnidadesDeUnItemConTotalImparAcreditaPesosEnterosQueSumanLoCobrado));
+        var pancho = await ArticuloAsync(ctx, "pancho", 3000m);
+        var coca = await ArticuloAsync(ctx, "coca", 2500m);
+        await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
+
+        // Dos juegos; las dos unidades de pancho llevan −10 %: 5454 − 545 (545.4 al peso) = 4909, impar.
+        var venta = await EmitirAsync(
+            ctx,
+            VentaConLineas(
+                ctx, 9455m,
+                new LineaDeVenta(pancho, 2m, null, AjusteManualPorcentaje: -10m),
+                new LineaDeVenta(coca, 2m, null)));
+        Assert.Equal([4909m, 4546m], venta.Items.Select(i => i.Total));
+
+        var todas = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 2m, null)));
+        Assert.Equal(-4909m, Assert.Single(todas.Items).Total);
+
+        // De a una unidad en el mismo documento: 4909 / 2 = 2454.5 acredita 2455 la primera y el resto, 2454, la segunda.
+        var deAUna = await EmitirAsync(
+            ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(pancho, 1m, null), new LineaDeVenta(pancho, 1m, null)));
+        Assert.Equal([-2455m, -2454m], deAUna.Items.Select(i => i.Total));
+        Assert.Equal(-4909m, deAUna.Total);
     }
 
     [Fact]
@@ -1330,28 +1375,28 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         var coca = await ArticuloAsync(ctx, "coca", 2500m);
         await ComboAsync(ctx, 5000m, [Art(pancho), Art(coca)]);
 
-        // +20 % sobre la coca: 2272.73 de combo + 454.55 de recargo = 2727.28, más que su precio de lista (2500).
+        // +20 % sobre la coca: 2273 de combo + 455 de recargo = 2728, más que su precio de lista (2500).
         var venta = await EmitirAsync(
             ctx,
             VentaConLineas(
-                ctx, 5454.55m,
+                ctx, 5455m,
                 new LineaDeVenta(pancho, 1m, null),
                 new LineaDeVenta(coca, 1m, null, AjusteManualPorcentaje: 20m)));
-        Assert.Equal([2727.27m, 2727.28m], venta.Items.Select(i => i.Total));
+        Assert.Equal([2727m, 2728m], venta.Items.Select(i => i.Total));
 
         var ncx = await EmitirAsync(ctx, Devolucion(ctx, venta.Id, new LineaDeVenta(coca, 1m, null)));
 
-        // Se devuelve lo pagado (2727.28 > bruto 2500): el descuento del item tiene signo POSITIVO, al revés que el de
-        // una nota de crédito común, porque bruto (−2500) − descuento (+227.28) = −crédito (−2727.28).
+        // Se devuelve lo pagado (2728 > bruto 2500): el descuento del item tiene signo POSITIVO, al revés que el de
+        // una nota de crédito común, porque bruto (−2500) − descuento (+228) = −crédito (−2728).
         var item = Assert.Single(ncx.Items);
-        Assert.Equal(-2727.28m, item.Total);
-        Assert.Equal(-2727.28m, ncx.Total);
+        Assert.Equal(-2728m, item.Total);
+        Assert.Equal(-2728m, ncx.Total);
         Assert.Equal(-2500m, item.Cantidad * item.PrecioUnitario);
-        Assert.Equal(227.28m, item.Descuento);
+        Assert.Equal(228m, item.Descuento);
 
         var persistido = Assert.Single(await ItemsAsync(ctx, ncx.Id));
-        Assert.Equal(-2727.28m, persistido.Total);
-        Assert.Equal(227.28m, persistido.Descuento);
+        Assert.Equal(-2728m, persistido.Total);
+        Assert.Equal(228m, persistido.Descuento);
     }
 
     // =================================================================================================
@@ -1445,7 +1490,7 @@ public class CombosVentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         await using var db = Db(ctx.IdTenant);
         Assert.Equal(1, await db.ComprobantesVenta.CountAsync(c => c.IdPuntoVenta == ctx.IdPuntoVenta));
         var persistidos = await ItemsAsync(ctx, emitido.Id);
-        Assert.Equal([2727.27m, 2272.73m], persistidos.Select(i => i.Total));
+        Assert.Equal([2727m, 2273m], persistidos.Select(i => i.Total));
         Assert.All(persistidos, i => Assert.Equal(combo, i.IdCombo));
         Assert.Equal(-1m, await StockAsync(ctx, pancho));
     }

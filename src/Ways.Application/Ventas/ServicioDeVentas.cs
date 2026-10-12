@@ -208,8 +208,8 @@ public class ServicioDeVentas(
         // idPresupuestoOrigen, MaterializarItems NO puede reusarse — lee IdAlicuotaIva/
         // porcentaje_iva de HOY, ambos parte de la promesa congelada. MaterializarItemsDesdePresupuesto
         // es un materializador PRIVADO SEPARADO, MaterializarItems (:1007 y siguientes) queda
-        // literalmente intacto — los dos corren CalculadorDeTotales.Calcular como única
-        // autoridad aritmética (tensión T2).
+        // literalmente intacto — el de la venta común corre CalculadorDeTotales.Calcular y el del
+        // presupuesto suma los importes ya guardados (TotalesGuardados).
         // Combos (D1-D8 del feature combos): se detectan en toda venta de signo positivo que el servidor precia o
         // audita. Quedan fuera la conversión de un presupuesto (precios congelados) y la devolución (signo
         // negativo). En la venta online la detección se APLICA; en la venta offline con NumeroPreasignado se graba
@@ -241,8 +241,8 @@ public class ServicioDeVentas(
             : ConLineaDeOrigenIdentidad(MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId));
 
         // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
-        // presupuesto_inconsistente): los totales recomputados por CalculadorDeTotales sobre el
-        // snapshot congelado tienen que coincidir EXACTO con el header ya guardado del
+        // presupuesto_inconsistente): la suma de los importes guardados de los items del snapshot
+        // congelado tiene que coincidir EXACTO con el header ya guardado del
         // presupuesto — un raw UPDATE que desincroniza presupuestos.total de sus items nunca
         // produce una venta silenciosamente distinta, produce este 409.
         if (presupuestoOrigen is not null
@@ -1522,7 +1522,7 @@ public class ServicioDeVentas(
         // 4.5. stage-pos-venta-offline-backend: rastro auditable (nunca un bloqueo, nunca una
         // recomputación silenciosa del comprobante) de cada línea offline cuyo precio congelado
         // no coincide con lo que ResolverAsync hubiera cobrado HOY — ver
-        // MaterializarItems/NetoDeLinea. Decisión explícita (docs/10 §9.2, ítem cerrado por esta
+        // MaterializarItems/CalculadorDeTotales.NetoDeLinea. Decisión explícita (docs/10 §9.2, ítem cerrado por esta
         // etapa): auditoria en vez de una columna nueva en items_comprobante_venta — cero DB
         // CHANGE GATE, reusa el writer/lector ya existentes (GET /api/auditoria), y "warning,
         // nunca bloqueo" es exactamente el criterio que ya tiene ItemComprobanteVenta.LoteVencido.
@@ -1917,8 +1917,10 @@ public class ServicioDeVentas(
     }
 
     /// <summary>design decisión 3, fact 2: el SEGUNDO materializador privado — <see
-    /// cref="MaterializarItems"/> (más abajo) queda literalmente intacto. Ambos corren
-    /// <see cref="CalculadorDeTotales.Calcular"/> como única autoridad aritmética (tensión T2).
+    /// cref="MaterializarItems"/> (más abajo) queda literalmente intacto. A diferencia de él, no
+    /// recalcula: los importes de cada item y los totales salen de lo guardado en el presupuesto
+    /// (<see cref="TotalesGuardados"/>), porque un presupuesto emitido antes del redondeo a peso
+    /// entero conserva centavos que la fórmula vigente cambiaría.
     /// <c>precio_unitario</c>/<c>descuento</c>/<c>id_lista_precio</c>/<c>id_oferta</c>/
     /// <c>id_alicuota_iva</c>/<c>porcentaje_iva</c>/<c>descripcion</c> SIEMPRE salen congeladas de
     /// <paramref name="itemsPresupuesto"/> (mutation targets 25-28), nunca re-resueltas contra el
@@ -1941,12 +1943,11 @@ public class ServicioDeVentas(
                 "— invariante de servicio violado (una lista por documento).");
         }
 
-        var lineasParaCalcular = itemsPresupuesto
-            .Select(i => new LineaParaCalcular(
-                i.Cantidad, i.PrecioUnitario, i.Cantidad == 0m ? 0m : i.Descuento / i.Cantidad))
+        var itemsGuardados = itemsPresupuesto
+            .Select(i => new ItemCalculado(i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total))
             .ToList();
 
-        var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
+        var totales = TotalesGuardados.Sumar(itemsGuardados);
 
         // Defensa en profundidad (design: Domain rules first) — un presupuesto nunca es una
         // devolución (p5 arriba ya exige signo positivo), así que esto siempre pasa; si no pasa,
@@ -2032,8 +2033,7 @@ public class ServicioDeVentas(
                 foreach (var tramo in tramos)
                 {
                     var cantidadDelTramo = -tramo.Cantidad;
-                    var bruto = Math.Round(
-                        cantidadDelTramo * tramo.Origen.PrecioUnitario, 2, MidpointRounding.AwayFromZero);
+                    var bruto = cantidadDelTramo * tramo.Origen.PrecioUnitario;
 
                     lineasParaCalcular.Add(new LineaParaCalcular(
                         cantidadDelTramo, tramo.Origen.PrecioUnitario, 0m, linea.AjusteManualPorcentaje,

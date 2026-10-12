@@ -2394,8 +2394,8 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
     const { lineas } = await encolar(instantaneaConCombo())
 
     expect(lineas).toEqual([
-      expect.objectContaining({ idArticulo: COCA, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227.27, idCombo: 7 }),
-      expect.objectContaining({ idArticulo: PANCHO, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 272.73, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: COCA, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
     ])
   })
 
@@ -2480,8 +2480,8 @@ describe('useSincronizacionOffline — venta offline con combos', () => {
     const { lineas } = await encolar(guardada)
 
     expect(lineas).toEqual([
-      expect.objectContaining({ idArticulo: COCA, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227.27, idCombo: 7 }),
-      expect.objectContaining({ idArticulo: PANCHO, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 272.73, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: COCA, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
     ])
   })
 

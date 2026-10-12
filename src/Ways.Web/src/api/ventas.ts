@@ -8,7 +8,7 @@ import { api } from './cliente'
 import { totalesDeAjusteManual } from './ajusteManual'
 import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea } from './combos'
 import type { ArticuloParaCarrito, LineaCarrito } from './carrito'
-import { redondearImporte } from '../formato/importes'
+import { redondearAPeso } from '../formato/importes'
 import type {
   ArticuloEscaneado,
   BloqueDeNumeracionReservado,
@@ -96,12 +96,13 @@ export function indexarResolucionPorLinea(lineas: readonly LineaCarrito[], resul
   return indice
 }
 
-/** Previsualización de una línea con la fórmula del servidor (`calcularTotalesDeLineaConCombo`): bruto y
- * descuento por oferta se redondean cada uno, el ahorro del combo que consumió unidades de la línea (si lo
- * hay) se suma al descuento, y el ajuste manual de la línea (si lo tiene) se aplica sobre ese neto
- * posterior a ofertas y combo. `total` ya incluye el ajuste y `ajusteManual` es su monto con signo (0 sin
- * ajuste). `ahorroDeCombo` es el importe de línea que el combo descuenta (0 sin combo). Nunca autoritativo
- * (design decisión 3: el servidor vuelve a resolver en el checkout). */
+/** Previsualización de una línea con la fórmula del servidor (`calcularTotalesDeLinea`): el bruto se
+ * redondea al peso entero y el neto es la suma de dos términos al peso (las unidades fuera del combo con su
+ * oferta, y las que consumió el combo con su ahorro); el descuento es `bruto − neto`. El ajuste manual de la
+ * línea (si lo tiene) se aplica sobre ese neto posterior a ofertas y combo. `total` ya incluye el ajuste y
+ * `ajusteManual` es su monto con signo (0 sin ajuste). `ahorroDeCombo` es el importe de línea que el combo
+ * descuenta (0 sin combo). Nunca autoritativo (design decisión 3: el servidor vuelve a resolver en el
+ * checkout). */
 export function previaDeLinea(
   linea: LineaCarrito,
   resultado: ResultadoDeResolucion | undefined,
@@ -132,7 +133,7 @@ export function previaDeLinea(
  * precio propio dentro de un carrito parcialmente resuelto contribuye 0 y no rompe la suma. */
 export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: PreciosPorLinea): number | null {
   if (Object.keys(precios).length === 0) return null
-  return redondearImporte(
+  return redondearAPeso(
     lineas.reduce((acumulado, l) => {
       const previa = previaDeLinea(l, precios[l.idLinea])
       return acumulado + (previa.total ?? 0)

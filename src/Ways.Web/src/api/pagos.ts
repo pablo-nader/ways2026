@@ -6,6 +6,7 @@
  * para que el mensaje que ve el cajero en pantalla sea consistente con el que devolvería el
  * servidor si de todos modos se envía una mezcla inválida.
  */
+import { redondearImporte } from '../formato/importes'
 import type { ComportamientoMedioPago, MedioPagoListado, PagoDeVenta } from './tipos'
 
 /** Un pago ya resuelto contra su medio de pago — espejo de `PagoAValidar` (Ways.Domain.Ventas).
@@ -61,12 +62,10 @@ export function medioDisponibleParaCliente(medio: MedioPagoListado, esConsumidor
   return medio.comportamiento !== 'CuentaCorriente' || !esConsumidorFinal
 }
 
-// Redondeo a 2 decimales solo para lo que se muestra/calcula en pantalla; el servidor valida
-// contra las sumas exactas (sin este redondeo intermedio) — una diferencia de centavos entre
-// cliente y servidor es solo de presentación, nunca autoritativa (ver el doc-comment del módulo).
-function redondear(valor: number): number {
-  return Math.round((valor + Number.EPSILON) * 100) / 100
-}
+// Sumas de importes TIPEADOS por el cajero (pagos, vueltos, saldos): conservan hasta 2 decimales,
+// no son importes de venta calculados. Se redondean con el helper central para limpiar el ruido
+// de punto flotante; el servidor valida contra las sumas exactas (ver el doc-comment del módulo).
+const redondear = (valor: number): number => redondearImporte(valor)
 
 export function sumarImportes(pagos: { importe: number }[]): number {
   return redondear(pagos.reduce((acumulado, p) => acumulado + p.importe, 0))

@@ -15,72 +15,76 @@ public class DevolucionDeCombosTests
     [Fact]
     public void DevolverTodasLasUnidadesDeUnItemDevuelveExactamenteSuTotal()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, 3m, 1000m, 2333.34m) };
+        var vendidos = new[] { Item(1, 1, Pancho, 3m, 1000m, 2333m) };
 
         var tramos = DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 3m)]);
 
         var tramo = Assert.Single(Assert.Single(tramos));
-        Assert.Equal(2333.34m, tramo.Credito);
+        Assert.Equal(2333m, tramo.Credito);
         Assert.Equal(3m, tramo.Cantidad);
         Assert.Equal(1, tramo.Origen.IdItem);
     }
 
     [Fact]
-    public void UnaDevolucionParcialDevuelveElTotalProporcionalALasUnidadesRedondeadoAlCentavo()
+    public void UnaDevolucionParcialDevuelveElTotalProporcionalALasUnidadesRedondeadoAlPeso()
     {
-        // 3 unidades pagaron 100.00: una vale 33.33, dos valen 66.67 (66.666… redondea lejos de cero).
+        // 3 unidades pagaron 100: una vale 33 (33.33…), dos valen 67 (66.66…).
         var vendidos = new[] { Item(1, 1, Pancho, 3m, 40m, 100m) };
 
-        Assert.Equal(33.33m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)]))).Credito);
-        Assert.Equal(66.67m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 2m)]))).Credito);
+        Assert.Equal(33m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)]))).Credito);
+        Assert.Equal(67m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 2m)]))).Credito);
+    }
+
+    [Fact]
+    public void DosUnidadesCobradasPorUnTotalImparSeDevuelvenEnPesosEnterosYLasMitadesSumanElTotal()
+    {
+        // 2 unidades pagaron 2727: cada una vale 1363.5, que redondea lejos de cero a 1364. Devolver la primera
+        // acredita 1364 y devolver la segunda el resto, 1363: nunca un centavo, y entre las dos exactamente 2727.
+        var vendidos = new[] { Item(1, 1, Pancho, 2m, 1500m, 2727m) };
+
+        var deAUna = DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m), new LineaDevuelta(Pancho, 1m)]);
+        var creditos = deAUna.Select(t => Assert.Single(t).Credito).ToList();
+
+        Assert.Equal([1364m, 1363m], creditos);
+        Assert.Equal(2727m, creditos.Sum());
+
+        var todas = Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 2m)])));
+        Assert.Equal(2727m, todas.Credito);
     }
 
     [Fact]
     public void LaMitadDeUnTotalImparRedondeaLejosDeCero()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, 2m, 1m, 0.01m) };
+        var vendidos = new[] { Item(1, 1, Pancho, 2m, 1m, 1m) };
 
-        Assert.Equal(0.01m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)]))).Credito);
+        Assert.Equal(1m, Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)]))).Credito);
     }
 
     [Fact]
-    public void RepartirLasUnidadesEnVariasLineasDelMismoDocumentoDevuelveElTotalSinPerderCentavos()
+    public void RepartirLasUnidadesEnVariasLineasDelMismoDocumentoDevuelveElTotalSinPerderPesos()
     {
         var vendidos = new[] { Item(1, 1, Pancho, 3m, 40m, 100m) };
 
         var tramos = DevolucionDeCombos.Repartir(
             vendidos, [new LineaDevuelta(Pancho, 1m), new LineaDevuelta(Pancho, 1m), new LineaDevuelta(Pancho, 1m)]);
 
-        // Por unidades acumuladas: 33.33, 66.67 − 33.33 = 33.34 y 100 − 66.67 = 33.33.
-        Assert.Equal([33.33m, 33.34m, 33.33m], tramos.Select(t => Assert.Single(t).Credito));
+        // Por unidades acumuladas: 33, 67 − 33 = 34 y 100 − 67 = 33.
+        Assert.Equal([33m, 34m, 33m], tramos.Select(t => Assert.Single(t).Credito));
         Assert.Equal(100m, tramos.Sum(t => t[0].Credito));
     }
 
     [Fact]
     public void UnTotalMinimoRepartidoEnUnaUnidadPorLineaNuncaDaUnCreditoNegativoYSumaElTotal()
     {
-        // 5 unidades pagaron 0.03: redondear toma por toma daba 0.01 × 4 y una quinta de −0.01.
-        var vendidos = new[] { Item(1, 1, Pancho, 5m, 0.01m, 0.03m) };
+        // 5 unidades pagaron 3: redondear toma por toma daba 1 × 5 (suma 5); por acumuladas: 1, 0, 1, 0, 1.
+        var vendidos = new[] { Item(1, 1, Pancho, 5m, 1m, 3m) };
 
         var tramos = DevolucionDeCombos.Repartir(vendidos, Enumerable.Repeat(new LineaDevuelta(Pancho, 1m), 5).ToList());
 
         var creditos = tramos.Select(t => Assert.Single(t).Credito).ToList();
-        Assert.Equal([0.01m, 0m, 0.01m, 0m, 0.01m], creditos);
+        Assert.Equal([1m, 0m, 1m, 0m, 1m], creditos);
         Assert.All(creditos, c => Assert.True(c >= 0m));
-        Assert.Equal(0.03m, creditos.Sum());
-    }
-
-    [Fact]
-    public void UnTotalDeCuatroCentavosEnSeisUnidadesRepartidoDeAUnaSumaElTotalSinCreditosNegativos()
-    {
-        var vendidos = new[] { Item(1, 1, Pancho, 6m, 0.01m, 0.04m) };
-
-        var tramos = DevolucionDeCombos.Repartir(vendidos, Enumerable.Repeat(new LineaDevuelta(Pancho, 1m), 6).ToList());
-
-        var creditos = tramos.Select(t => Assert.Single(t).Credito).ToList();
-        Assert.Equal([0.01m, 0m, 0.01m, 0.01m, 0m, 0.01m], creditos);
-        Assert.All(creditos, c => Assert.True(c >= 0m));
-        Assert.Equal(0.04m, creditos.Sum());
+        Assert.Equal(3m, creditos.Sum());
     }
 
     [Fact]
@@ -88,16 +92,15 @@ public class DevolucionDeCombosTests
     {
         for (var cantidad = 1; cantidad <= 12; cantidad++)
         {
-            for (var centavos = 0; centavos <= 60; centavos++)
+            for (var total = 0; total <= 60; total++)
             {
-                var total = centavos / 100m;
                 var vendidos = new[] { Item(1, 1, Pancho, cantidad, 1m, total) };
 
                 // Una unidad por línea y, además, todo junto en una sola línea partida en dos.
                 var deAUna = DevolucionDeCombos.Repartir(
                     vendidos, Enumerable.Repeat(new LineaDevuelta(Pancho, 1m), cantidad).ToList());
                 var deAUnaCreditos = deAUna.Select(t => Assert.Single(t).Credito).ToList();
-                Assert.All(deAUnaCreditos, c => Assert.True(c >= 0m, $"cantidad {cantidad}, total {total}"));
+                Assert.All(deAUnaCreditos, c => Assert.True(c >= 0m && c == decimal.Truncate(c), $"cantidad {cantidad}, total {total}"));
                 Assert.Equal(total, deAUnaCreditos.Sum());
 
                 var mitad = cantidad / 2;
@@ -110,7 +113,7 @@ public class DevolucionDeCombosTests
                 partidas.Add(new LineaDevuelta(Pancho, cantidad - mitad));
                 var enDos = DevolucionDeCombos.Repartir(vendidos, partidas);
                 var enDosCreditos = enDos.SelectMany(t => t).Select(t => t.Credito).ToList();
-                Assert.All(enDosCreditos, c => Assert.True(c >= 0m, $"cantidad {cantidad}, total {total}"));
+                Assert.All(enDosCreditos, c => Assert.True(c >= 0m && c == decimal.Truncate(c), $"cantidad {cantidad}, total {total}"));
                 Assert.Equal(total, enDosCreditos.Sum());
             }
         }
@@ -124,14 +127,14 @@ public class DevolucionDeCombosTests
         var vendidos = new[]
         {
             Item(3, 2, Pancho, 1m, 3000m, 3000m, idCombo: 2),
-            Item(7, 1, Pancho, 1m, 3000m, 2727.27m, idCombo: 1),
+            Item(7, 1, Pancho, 1m, 3000m, 2727m, idCombo: 1),
         };
 
         var tramos = DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)]);
 
         var tramo = Assert.Single(Assert.Single(tramos));
         Assert.Equal(7, tramo.Origen.IdItem);
-        Assert.Equal(2727.27m, tramo.Credito);
+        Assert.Equal(2727m, tramo.Credito);
     }
 
     [Fact]
@@ -140,7 +143,7 @@ public class DevolucionDeCombosTests
         var vendidos = new[]
         {
             Item(9, 1, Pancho, 1m, 3000m, 3000m),
-            Item(4, 1, Pancho, 1m, 3000m, 2727.27m),
+            Item(4, 1, Pancho, 1m, 3000m, 2727m),
         };
 
         var tramo = Assert.Single(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)])));
@@ -153,32 +156,32 @@ public class DevolucionDeCombosTests
     {
         var vendidos = new[]
         {
-            Item(1, 1, Pancho, 1m, 3000m, 2727.27m, idCombo: 1),
+            Item(1, 1, Pancho, 1m, 3000m, 2727m, idCombo: 1),
             Item(2, 3, Pancho, 1m, 3000m, 2800m, idCombo: 2),
         };
 
         var tramos = Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 2m)]));
 
         Assert.Equal([1, 2], tramos.Select(t => t.Origen.IdItem));
-        Assert.Equal([2727.27m, 2800m], tramos.Select(t => t.Credito));
+        Assert.Equal([2727m, 2800m], tramos.Select(t => t.Credito));
     }
 
     [Fact]
     public void LasUnidadesQueExcedenLasVendidasEnComboNoFiguranEnNingunTramo()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727.27m) };
+        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727m) };
 
         var tramos = Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 3m)]));
 
         var tramo = Assert.Single(tramos);
         Assert.Equal(1m, tramo.Cantidad);
-        Assert.Equal(2727.27m, tramo.Credito);
+        Assert.Equal(2727m, tramo.Credito);
     }
 
     [Fact]
     public void UnaSegundaLineaDelMismoArticuloNoVuelveAConsumirLoQueLaPrimeraYaTomo()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727.27m) };
+        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727m) };
 
         var tramos = DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m), new LineaDevuelta(Pancho, 1m)]);
 
@@ -189,7 +192,7 @@ public class DevolucionDeCombosTests
     [Fact]
     public void UnArticuloSinItemDeComboQuedaSinTramos()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727.27m) };
+        var vendidos = new[] { Item(1, 1, Pancho, 1m, 3000m, 2727m) };
 
         var tramos = Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Coca, 1m)]));
 
@@ -208,7 +211,7 @@ public class DevolucionDeCombosTests
     [Fact]
     public void LosItemsConCantidadNoPositivaNoSeDevuelven()
     {
-        var vendidos = new[] { Item(1, 1, Pancho, -1m, 3000m, -2727.27m) };
+        var vendidos = new[] { Item(1, 1, Pancho, -1m, 3000m, -2727m) };
 
         Assert.Empty(Assert.Single(DevolucionDeCombos.Repartir(vendidos, [new LineaDevuelta(Pancho, 1m)])));
     }

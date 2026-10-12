@@ -934,12 +934,12 @@ describe('esInstantaneaValida — combos', () => {
 describe('resolverPreviaOffline — combos', () => {
   const total = (lineas: LineaCarrito[], instantanea: InstantaneaDePos) => calcularSubtotalPrevia(lineas, resolverPreviaOffline(lineas, instantanea, LISTA).precios)
 
-  it('el ejemplo del dueño: pancho 3000 + coca 2500 con el combo a 5000 totaliza 5000 y reparte 272,73 / 227,27', () => {
+  it('el ejemplo del dueño: pancho 3000 + coca 2500 con el combo a 5000 totaliza 5000 y reparte 273 / 227', () => {
     const lineas = lineasDe([PANCHO, 1], [COCA, 1])
     const { precios, combos } = resolverPreviaOffline(lineas, instantaneaConCombos([comboPanchoCoca]), LISTA)
 
-    expect(precios['l-11'].combo).toEqual({ unidadesConsumidas: 1, ahorro: 272.73, idCombo: 7 })
-    expect(precios['l-12'].combo).toEqual({ unidadesConsumidas: 1, ahorro: 227.27, idCombo: 7 })
+    expect(precios['l-11'].combo).toEqual({ unidadesConsumidas: 1, ahorro: 273, idCombo: 7 })
+    expect(precios['l-12'].combo).toEqual({ unidadesConsumidas: 1, ahorro: 227, idCombo: 7 })
     expect(combos).toEqual([{ idCombo: 7, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }])
     expect(total(lineas, instantaneaConCombos([comboPanchoCoca]))).toBe(5000)
   })
@@ -998,7 +998,9 @@ describe('resolverPreviaOffline — combos', () => {
     const lineas = lineasDe([PANCHO, 1], [COCA, 1])
 
     expect(resolverPreviaOffline(lineas, instantaneaConCombos([{ ...comboPanchoCoca, precio: 4500 }], articulos), LISTA).combos).toEqual([])
-    expect(resolverPreviaOffline(lineas, instantaneaConCombos([{ ...comboPanchoCoca, precio: 4499.99 }], articulos), LISTA).combos).toHaveLength(1)
+    expect(resolverPreviaOffline(lineas, instantaneaConCombos([{ ...comboPanchoCoca, precio: 4499 }], articulos), LISTA).combos).toHaveLength(1)
+    // 4499,99 se cobra 4500 al peso: no es más barato que la oferta.
+    expect(resolverPreviaOffline(lineas, instantaneaConCombos([{ ...comboPanchoCoca, precio: 4499.99 }], articulos), LISTA).combos).toEqual([])
   })
 
   it('las unidades fuera del combo conservan su oferta y el total suma el combo más lo que sobra', () => {
@@ -1009,7 +1011,7 @@ describe('resolverPreviaOffline — combos', () => {
     const lineas = lineasDe([PANCHO, 2], [COCA, 1])
     const instantanea = instantaneaConCombos([{ ...comboPanchoCoca, precio: 4800 }], articulos)
 
-    expect(resolverPreviaOffline(lineas, instantanea, LISTA).precios['l-11'].combo).toMatchObject({ unidadesConsumidas: 1, ahorro: 381.82 })
+    expect(resolverPreviaOffline(lineas, instantanea, LISTA).precios['l-11'].combo).toMatchObject({ unidadesConsumidas: 1, ahorro: 382 })
     // combo 4800 + la segunda unidad de pancho con su oferta (3000 − 500).
     expect(total(lineas, instantanea)).toBe(7300)
   })

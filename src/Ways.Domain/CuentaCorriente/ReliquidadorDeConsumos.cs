@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Ways.Domain.Dinero;
 using Ways.Domain.Ventas;
 
 namespace Ways.Domain.CuentaCorriente;
@@ -33,7 +34,7 @@ public sealed record ConsumoAReliquidar(
 /// quedan <c>null</c>, <see cref="Delta"/> queda en <c>0</c>) — nunca fatal, nunca acredita.
 ///
 /// <para>En una línea re-precificada, <see cref="TotalDelDia"/> se reconstruye con este mismo
-/// detalle: <c>neto = round(Cantidad × PrecioActual, 2)</c> y
+/// detalle: <c>neto = round(Cantidad × PrecioActual)</c> al peso entero y
 /// <c>TotalDelDia = neto + CalculadorDeTotales.AjusteManualSobre(neto, AjusteManualPorcentaje)</c>.
 /// <see cref="AjusteManualPorcentaje"/> es el porcentaje manual del item que la corrida conservó
 /// (<c>null</c> = el item no tenía ajuste, o la línea fue omitida y no se re-precificó); se omite
@@ -65,7 +66,7 @@ public sealed record ResultadoDeReliquidacion(
 /// que existiera dos veces sería el defecto que convertiría esta feature en un incidente de
 /// confianza (design: Technical Approach).
 ///
-/// <para><c>totalDelDia(i) = round(cantidad × precioActual, 2, AwayFromZero)</c> — SIN descuento,
+/// <para><c>totalDelDia(i) = round(cantidad × precioActual, 0, AwayFromZero)</c> (peso entero) — SIN descuento,
 /// nunca <c>precioActual × (totalHistorico / (cantidad × precioUnitario))</c> (esa fórmula
 /// preservaría el ratio del descuento en vez de anularlo, exactamente el error que doc-01:398
 /// prohíbe). <c>delta(i) = totalDelDia(i) − totalHistorico(i)</c> decompone en el re-pricing MÁS
@@ -133,7 +134,7 @@ public static class ReliquidadorDeConsumos
                 continue;
             }
 
-            var netoNuevo = Math.Round(linea.Cantidad * precioActual.Value, 2, MidpointRounding.AwayFromZero);
+            var netoNuevo = CalculadorDeTotales.NetoDeLinea(linea.Cantidad, precioActual.Value, 0m);
             var totalDelDia = netoNuevo + CalculadorDeTotales.AjusteManualSobre(netoNuevo, linea.AjusteManualPorcentaje);
             var deltaLinea = totalDelDia - linea.TotalHistorico;
             deltaBruto += deltaLinea;
@@ -151,7 +152,7 @@ public static class ReliquidadorDeConsumos
         var factor = consumo.TotalComprobante == 0m
             ? 0m
             : Math.Min(1m, consumo.ImporteFinanciado / consumo.TotalComprobante);
-        var deltaConsumo = Math.Round(deltaBruto * factor, 2, MidpointRounding.AwayFromZero);
+        var deltaConsumo = RedondeoDePeso.APesoEntero(deltaBruto * factor);
 
         return (deltaConsumo, detallesDeLinea);
     }

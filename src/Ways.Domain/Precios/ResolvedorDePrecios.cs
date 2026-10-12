@@ -1,4 +1,5 @@
 using Ways.Domain.Common;
+using Ways.Domain.Dinero;
 
 namespace Ways.Domain.Precios;
 
@@ -10,10 +11,10 @@ namespace Ways.Domain.Precios;
 /// </summary>
 public static class ResolvedorDePrecios
 {
-    /// <summary>Redondeo <see cref="MidpointRounding.AwayFromZero"/> a 2 decimales — mismo
-    /// criterio de punto de venta que <see cref="SugeridorDePrecio.Sugerir"/> (design: Price
-    /// Resolution &amp; Rounding): evita la sorpresa de "los empates siempre redondean al
-    /// centavo par" para un valor que un cajero puede llegar a leer en pantalla.
+    /// <summary>Redondeo al peso entero con <see cref="MidpointRounding.AwayFromZero"/>
+    /// (<see cref="RedondeoDePeso"/>): el precio derivado de venta nunca lleva centavos, y evita
+    /// la sorpresa de "los empates siempre redondean al par" para un valor que un cajero puede
+    /// llegar a leer en pantalla.
     /// <paramref name="porcentaje"/> puede ser negativo (descuento) o positivo (recargo) sobre
     /// <paramref name="precioBase"/> — ambos casos son el mismo cálculo, sin rama especial.
     ///
@@ -28,7 +29,7 @@ public static class ResolvedorDePrecios
     /// </summary>
     public static decimal ResolverPrecioDerivado(decimal precioBase, decimal porcentaje)
     {
-        var resultado = Math.Round(precioBase * (1 + porcentaje / 100m), 2, MidpointRounding.AwayFromZero);
+        var resultado = RedondeoDePeso.APesoEntero(precioBase * (1 + porcentaje / 100m));
 
         if (resultado < 0)
         {

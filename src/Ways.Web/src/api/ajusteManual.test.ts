@@ -20,7 +20,12 @@ describe('calcularAjusteManual', () => {
 
   it('un porcentaje negativo da un monto negativo (descuento) y uno positivo, positivo (recargo)', () => {
     expect(calcularAjusteManual(270, -10)).toBe(-27)
-    expect(calcularAjusteManual(270, 15)).toBe(40.5)
+    expect(calcularAjusteManual(270, 14)).toBe(38)
+  })
+
+  it('el monto es un peso entero: 270 × 15 % = 40,5 sube a 41', () => {
+    expect(calcularAjusteManual(270, 15)).toBe(41)
+    expect(calcularAjusteManual(270, -15)).toBe(-41)
   })
 
   it('admite el rango completo: -100 anula el neto y 100 lo duplica', () => {
@@ -28,40 +33,39 @@ describe('calcularAjusteManual', () => {
     expect(calcularAjusteManual(80, 100)).toBe(80)
   })
 
-  it('admite 2 decimales de porcentaje', () => {
+  it('admite 2 decimales de porcentaje y redondea el monto al peso', () => {
     expect(calcularAjusteManual(200, 12.5)).toBe(25)
-    expect(calcularAjusteManual(1000, 0.01)).toBe(0.1)
-    expect(calcularAjusteManual(1000, -33.33)).toBe(-333.3)
+    expect(calcularAjusteManual(1000, 0.01)).toBe(0)
+    expect(calcularAjusteManual(1000, -33.33)).toBe(-333)
+    expect(calcularAjusteManual(3500, 0.05)).toBe(2)
   })
 
   it('redondea half-away-from-zero: un empate exacto sube en valor absoluto, con ambos signos', () => {
-    // 10,05 × 10 % = 1,005 exacto
-    expect(calcularAjusteManual(10.05, 10)).toBe(1.01)
-    expect(calcularAjusteManual(10.05, -10)).toBe(-1.01)
-    // 0,50 × 1 % = 0,005
-    expect(calcularAjusteManual(0.5, 1)).toBe(0.01)
-    expect(calcularAjusteManual(0.5, -1)).toBe(-0.01)
-    // 33,33 × 15 % = 4,9995
-    expect(calcularAjusteManual(33.33, 15)).toBe(5)
-    expect(calcularAjusteManual(33.33, -15)).toBe(-5)
+    // 5 × 10 % = 0,5; 15 × 10 % = 1,5; 35 × 10 % = 3,5 (el redondeo bancario daría 0, 2 y 4)
+    expect(calcularAjusteManual(5, 10)).toBe(1)
+    expect(calcularAjusteManual(5, -10)).toBe(-1)
+    expect(calcularAjusteManual(15, 10)).toBe(2)
+    expect(calcularAjusteManual(15, -10)).toBe(-2)
+    expect(calcularAjusteManual(35, 10)).toBe(4)
+    expect(calcularAjusteManual(35, -10)).toBe(-4)
   })
 
   // Empates exactos en los que `neto * porcentaje / 100` en punto flotante cae por DEBAJO del medio
-  // centavo y redondea para el otro lado que el servidor (que calcula en decimal): 4,10 × 15 % es
-  // 0,615 exacto pero el producto flotante da 0,6149999999999999. Los casos de arriba no los
-  // distinguen: la fórmula flotante también da 1,005, 0,005 y 4,9995 en ellos.
+  // peso y redondea para el otro lado que el servidor (que calcula en decimal): 375 × 9,2 % es
+  // 34,5 exacto pero el producto flotante da 34.49999999999999. Los casos de arriba no los
+  // distinguen: la fórmula flotante también da 0,5, 1,5 y 3,5 en ellos.
   it.each([
-    [4.1, 0.62],
-    [16.9, 2.54],
-    [33.3, 5],
-    [68.1, 10.22],
-  ])('un empate que el punto flotante pierde: %s × 15 % da %s, y el espejo negativo su opuesto', (neto, esperado) => {
-    expect(calcularAjusteManual(neto, 15)).toBe(esperado)
-    expect(calcularAjusteManual(neto, -15)).toBe(-esperado)
+    [375, 9.2, 35],
+    [375, 16.4, 62],
+    [250, 64.6, 162],
+  ])('un empate que el punto flotante pierde: %s × %s por ciento da %s, y el espejo negativo su opuesto', (neto, porcentaje, esperado) => {
+    expect((neto * porcentaje) / 100).toBeLessThan(esperado - 0.5)
+    expect(calcularAjusteManual(neto, porcentaje)).toBe(esperado)
+    expect(calcularAjusteManual(neto, -porcentaje)).toBe(-esperado)
   })
 
-  it('lo que no llega a medio centavo redondea a 0 y nunca a -0', () => {
-    const resultado = calcularAjusteManual(0.04, -10)
+  it('lo que no llega a medio peso redondea a 0 y nunca a -0', () => {
+    const resultado = calcularAjusteManual(4, -10)
     expect(resultado).toBe(0)
     expect(Object.is(resultado, -0)).toBe(false)
   })
@@ -69,6 +73,7 @@ describe('calcularAjusteManual', () => {
   it('un neto negativo (línea de devolución) invierte el signo del monto, no el del porcentaje', () => {
     expect(calcularAjusteManual(-100, -10)).toBe(10)
     expect(calcularAjusteManual(-100, 10)).toBe(-10)
+    expect(calcularAjusteManual(-1000, 0.15)).toBe(-2)
   })
 
   it('un neto en 0 no genera ajuste', () => {
@@ -97,52 +102,106 @@ describe('calcularTotalesDeLinea', () => {
     })
   })
 
-  it('redondea el bruto y el descuento cada uno a 2 decimales antes de restarlos', () => {
-    // 0,333 × 10,50 = 3,4965 → 3,50; 0,333 × 0,25 = 0,08325 → 0,08
-    const totales = calcularTotalesDeLinea({ cantidad: 0.333, precioOriginal: 10.5, descuentoUnitario: 0.25, porcentaje: null })
-    expect(totales.bruto).toBe(3.5)
-    expect(totales.descuento).toBe(0.08)
-    expect(totales.neto).toBe(3.42)
-    expect(totales.total).toBe(3.42)
+  it('la oferta x3 por 3500 (1166,66 por unidad) cobra 3500 y no 3499,98', () => {
+    expect(calcularTotalesDeLinea({ cantidad: 3, precioOriginal: 1500, descuentoUnitario: 333.34, porcentaje: null })).toEqual({
+      bruto: 4500,
+      descuento: 1000,
+      neto: 3500,
+      ajuste: 0,
+      total: 3500,
+    })
   })
 
-  // El servidor calcula en decimal. 0,7 × 1,15 es 0,805 exacto y sube a 0,81, pero el producto
-  // flotante da 0,8049999999999999 y se redondeaba a 0,80: un centavo de diferencia en el importe
-  // que el cajero ve contra el que cobra el servidor.
-  it('el bruto es el producto decimal exacto: un empate de medio centavo sube aunque el producto flotante quede por debajo', () => {
-    expect(0.7 * 1.15).toBeLessThan(0.805)
-    const totales = calcularTotalesDeLinea({ cantidad: 0.7, precioOriginal: 1.15, descuentoUnitario: 0, porcentaje: null })
-    expect(totales.bruto).toBe(0.81)
-    expect(totales.neto).toBe(0.81)
-    expect(totales.total).toBe(0.81)
+  it('el neto es el neto verdadero redondeado una vez y el descuento es bruto − neto', () => {
+    // 7 × 1166,66 = 8166,62 → 8167; el descuento verdadero 7 × 333,34 = 2333,38 no se redondea
+    // por su cuenta: es 10500 − 8167.
+    const totales = calcularTotalesDeLinea({ cantidad: 7, precioOriginal: 1500, descuentoUnitario: 333.34, porcentaje: null })
+    expect(totales).toEqual({ bruto: 10500, descuento: 2333, neto: 8167, ajuste: 0, total: 8167 })
   })
 
-  it('el descuento por oferta es el producto decimal exacto, también con más de 2 decimales por unidad', () => {
-    // 0,075 × 3 = 0,225 exacto → 0,23; el producto flotante da 0,22499999999999998.
-    expect(0.075 * 3).toBeLessThan(0.225)
-    const totales = calcularTotalesDeLinea({ cantidad: 3, precioOriginal: 10, descuentoUnitario: 0.075, porcentaje: null })
-    expect(totales.bruto).toBe(30)
-    expect(totales.descuento).toBe(0.23)
-    expect(totales.neto).toBe(29.77)
+  it('el medio del neto se aleja de cero aunque la resta flotante quede por debajo', () => {
+    // 2,3 − 0,8 = 1,5 exacto; en flotante da 1.4999999999999998 y redondearía a 1.
+    expect(2.3 - 0.8).toBeLessThan(1.5)
+    const totales = calcularTotalesDeLinea({ cantidad: 1, precioOriginal: 2.3, descuentoUnitario: 0.8, porcentaje: null })
+    expect(totales.neto).toBe(2)
+    expect(totales.total).toBe(2)
+    expect(totales.bruto).toBe(2)
+    expect(totales.descuento).toBe(0)
   })
 
-  it('un descuento por unidad de 4 decimales se redondea una sola vez, sobre el producto de la línea', () => {
-    // 0,3333 × 3 = 0,9999 → 1,00 (redondear antes el descuento unitario daría 0,33 × 3 = 0,99).
+  // El servidor calcula en decimal. 0,7 × 45 es 31,5 exacto y sube a 32, pero el producto
+  // flotante da 31.499999999999996 y se redondeaba a 31: un peso de diferencia en el importe que
+  // el cajero ve contra el que cobra el servidor.
+  it('el bruto es el producto decimal exacto: un empate de medio peso sube aunque el producto flotante quede por debajo', () => {
+    expect(0.7 * 45).toBeLessThan(31.5)
+    const totales = calcularTotalesDeLinea({ cantidad: 0.7, precioOriginal: 45, descuentoUnitario: 0, porcentaje: null })
+    expect(totales.bruto).toBe(32)
+    expect(totales.neto).toBe(32)
+    expect(totales.total).toBe(32)
+  })
+
+  it('una cantidad pesada de 3 decimales redondea el neto una sola vez', () => {
+    // 0,375 × 1999,99 = 749,99625 → 750; con +7,5 % el ajuste 56,25 baja a 56.
+    expect(calcularTotalesDeLinea({ cantidad: 0.375, precioOriginal: 1999.99, descuentoUnitario: 0, porcentaje: 7.5 })).toEqual({
+      bruto: 750,
+      descuento: 0,
+      neto: 750,
+      ajuste: 56,
+      total: 806,
+    })
+  })
+
+  it('un descuento por unidad de 4 decimales se descuenta una sola vez, sobre el producto de la línea', () => {
+    // 3 × (10 − 0,3333) = 29,0001 → 29; el descuento es 30 − 29 = 1.
     const totales = calcularTotalesDeLinea({ cantidad: 3, precioOriginal: 10, descuentoUnitario: 0.3333, porcentaje: null })
     expect(totales.descuento).toBe(1)
     expect(totales.neto).toBe(29)
   })
 
-  it('en una misma línea el bruto, el descuento y el ajuste son exactos: los tres empates suben un centavo', () => {
-    // bruto 0,7 × 3,35 = 2,345 → 2,35; descuento 0,35 × 0,7 = 0,245 → 0,25; neto 2,10;
-    // ajuste 2,10 × 15 % = 0,315 → 0,32. Con productos flotantes el bruto da 2,34 y el descuento 0,24.
-    const totales = calcularTotalesDeLinea({ cantidad: 0.7, precioOriginal: 3.35, descuentoUnitario: 0.35, porcentaje: 15 })
-    expect(totales).toEqual({ bruto: 2.35, descuento: 0.25, neto: 2.1, ajuste: 0.32, total: 2.42 })
+  it('una línea de devolución (cantidad negativa) redondea el medio alejándose de cero', () => {
+    expect(calcularTotalesDeLinea({ cantidad: -3, precioOriginal: 100, descuentoUnitario: 10, porcentaje: null })).toEqual({
+      bruto: -300,
+      descuento: -30,
+      neto: -270,
+      ajuste: 0,
+      total: -270,
+    })
+    expect(calcularTotalesDeLinea({ cantidad: -1, precioOriginal: 100.5, descuentoUnitario: 0, porcentaje: null }).total).toBe(-101)
   })
 
-  it('el neto no arrastra ruido de punto flotante', () => {
-    const totales = calcularTotalesDeLinea({ cantidad: 1, precioOriginal: 0.3, descuentoUnitario: 0.1, porcentaje: null })
-    expect(totales.neto).toBe(0.2)
+  // Mismas entradas y mismos resultados que CalculadorDeTotalesTests (servidor): si una tabla
+  // cambia sin la otra, la vista previa y el cobro dejan de coincidir.
+  it.each([
+    [{ cantidad: 3, precioOriginal: 1500, descuentoUnitario: 333.34, porcentaje: -15 }, { bruto: 4500, descuento: 1000, neto: 3500, ajuste: -525, total: 2975 }],
+    [{ cantidad: 1, precioOriginal: 999.5, descuentoUnitario: 0, porcentaje: 0.15 }, { bruto: 1000, descuento: 0, neto: 1000, ajuste: 2, total: 1002 }],
+    [{ cantidad: -1, precioOriginal: 1000, descuentoUnitario: 0, porcentaje: 0.15 }, { bruto: -1000, descuento: 0, neto: -1000, ajuste: -2, total: -1002 }],
+    [{ cantidad: 1, precioOriginal: 5, descuentoUnitario: 0, porcentaje: -10 }, { bruto: 5, descuento: 0, neto: 5, ajuste: -1, total: 4 }],
+    [{ cantidad: 3, precioOriginal: 33.33, descuentoUnitario: 1, porcentaje: -100 }, { bruto: 100, descuento: 3, neto: 97, ajuste: -97, total: 0 }],
+    [{ cantidad: 1, precioOriginal: 11, descuentoUnitario: 1.5, porcentaje: null }, { bruto: 11, descuento: 1, neto: 10, ajuste: 0, total: 10 }],
+  ])('paridad con el servidor: %j', (entrada, esperado) => {
+    expect(calcularTotalesDeLinea(entrada)).toEqual(esperado)
+  })
+})
+
+describe('calcularTotalesDeLinea con unidades de combo', () => {
+  it.each([
+    // el combo consumió toda la línea: cobra lista menos su parte
+    [{ cantidad: 1, precioOriginal: 1000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 333 }, { bruto: 1000, descuento: 333, neto: 667, ajuste: 0, total: 667 }],
+    // la oferta unitaria solo alcanza a la unidad que el combo no consumió
+    [{ cantidad: 3, precioOriginal: 1000, descuentoUnitario: 100, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 800 }, { bruto: 3000, descuento: 900, neto: 2100, ajuste: 0, total: 2100 }],
+    // cantidad fraccionaria con unidades enteras de combo
+    [{ cantidad: 2.5, precioOriginal: 100.5, descuentoUnitario: 0.5, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 100 }, { bruto: 251, descuento: 100, neto: 151, ajuste: 0, total: 151 }],
+    // empate exacto en la parte del combo: 3 × 0,35 − 0,55 = 0,5 sube a 1
+    [{ cantidad: 3, precioOriginal: 0.35, descuentoUnitario: 0, unidadesConsumidasPorCombo: 3, ahorroDeCombo: 0.55 }, { bruto: 1, descuento: 0, neto: 1, ajuste: 0, total: 1 }],
+    // el ajuste manual se aplica sobre el neto con combo
+    [{ cantidad: 3, precioOriginal: 1000, descuentoUnitario: 100, unidadesConsumidasPorCombo: 2, ahorroDeCombo: 800, porcentaje: -10 }, { bruto: 3000, descuento: 900, neto: 2100, ajuste: -210, total: 1890 }],
+  ])('paridad con CalculadorDeTotales: %j', (entrada, esperado) => {
+    expect(calcularTotalesDeLinea({ porcentaje: null, ...entrada })).toEqual(esperado)
+  })
+
+  it('sin datos de combo el resultado es el de siempre', () => {
+    const base = { cantidad: 3, precioOriginal: 1500, descuentoUnitario: 333.34, porcentaje: null }
+    expect(calcularTotalesDeLinea({ ...base, unidadesConsumidasPorCombo: 0, ahorroDeCombo: 0 })).toEqual(calcularTotalesDeLinea(base))
   })
 })
 
