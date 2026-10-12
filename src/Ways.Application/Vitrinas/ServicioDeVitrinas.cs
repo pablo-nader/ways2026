@@ -2,7 +2,9 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Organizacion;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 
@@ -22,7 +24,7 @@ namespace Ways.Application.Vitrinas;
 /// traduce al 409 <c>vitrina_ya_publicada</c>. La vitrina se lee una sola vez, adentro de la
 /// transacción y después del lock (<c>single-read-under-lock</c>).
 /// </summary>
-public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
+public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
 {
     public async Task<VitrinaAdmin> ObtenerAsync(int idEmpresa, CancellationToken ct = default)
     {
@@ -38,6 +40,7 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
                 v.Descripcion,
                 v.ColorAcento,
                 v.Tema,
+                v.IdListaPrecio,
                 TieneLogo = v.Logo != null,
                 v.LogoActualizadoEn
             })
@@ -49,7 +52,7 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
                 Vitrina.TemaOscuro, TieneLogo: false, LogoVersion: null)
             : new VitrinaAdmin(
                 Existe: true, idEmpresa, fila.Publicada, fila.Tagline, fila.Descripcion, fila.ColorAcento,
-                fila.Tema, fila.TieneLogo, Vitrina.VersionDelLogo(fila.LogoActualizadoEn));
+                fila.Tema, fila.TieneLogo, Vitrina.VersionDelLogo(fila.LogoActualizadoEn), fila.IdListaPrecio);
     }
 
     public async Task<VitrinaAdmin> GuardarAsync(
@@ -69,6 +72,13 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
 
         return await EnUnaTransaccionAsync(estrategia, idEmpresa, idTenant, async () =>
         {
+            // FOR KEY SHARE sobre la lista, después del lock del tenant: la baja de una lista toma FOR UPDATE
+            // sobre ella y cuenta sus referencias, así que o ve esta vitrina o la espera.
+            if (datos.IdListaPrecio is { } idListaPrecio)
+            {
+                await ExigirListaValidaAsync(idListaPrecio, idEmpresa, idTenant, ct);
+            }
+
             var vitrina = await LeerOCrearAsync(idEmpresa, idTenant, ct);
 
             vitrina.Publicada = publicada;
@@ -76,6 +86,7 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
             vitrina.Descripcion = descripcion;
             vitrina.ColorAcento = colorAcento;
             vitrina.Tema = tema;
+            vitrina.IdListaPrecio = datos.IdListaPrecio;
             vitrina.UpdatedAt = reloj.Ahora;
 
             await db.SaveChangesAsync(ct);
@@ -94,7 +105,7 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
     {
         var idTenant = await ObtenerTenantDeLaEmpresaAsync(idEmpresa, ct);
 
-        var declarado = TipoSinParametros(tipoDeclarado);
+        var declarado = CuerpoDeImagen.TipoSinParametros(tipoDeclarado);
         if (!Vitrina.EsTipoDeLogoAdmitido(declarado))
         {
             throw new ErrorDominio(
@@ -103,7 +114,7 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
                 415);
         }
 
-        var contenido = await LeerAcotadoAsync(cuerpo, ct);
+        var contenido = await CuerpoDeImagen.LeerAcotadoAsync(cuerpo, ct);
         var tipo = Vitrina.ValidarLogo(contenido, declarado);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
@@ -270,41 +281,28 @@ public class ServicioDeVitrinas(IWaysDbContext db, IRelojDelSistema reloj)
             return resultado;
         });
 
+    /// <summary>La lista del catálogo de la tienda tiene que existir, estar viva y activa, ser del tenant de la
+    /// empresa y ser compartida o de esta empresa. Corre dentro de la transacción, bajo el lock del tenant.</summary>
+    private async Task ExigirListaValidaAsync(int idListaPrecio, int idEmpresa, int idTenant, CancellationToken ct)
+    {
+        var viva = await guarda.BloquearSiEstaVivaAsync<ListaPrecio>(idListaPrecio, ct);
+
+        // El IdTenant se compara a mano: una escritura de la plataforma ve las listas de todos los tenants.
+        if (!viva || !await db.ListasPrecio.AnyAsync(
+                l => l.Id == idListaPrecio && l.IdTenant == idTenant && l.Activo
+                    && (l.IdEmpresa == null || l.IdEmpresa == idEmpresa),
+                ct))
+        {
+            throw new ErrorDominio(
+                "lista_invalida",
+                "La lista de precios no existe, está inactiva o no corresponde a esta empresa.",
+                400);
+        }
+    }
+
     private static VitrinaAdmin Mapear(Vitrina v) => new(
         Existe: true, v.IdEmpresa, v.Publicada, v.Tagline, v.Descripcion, v.ColorAcento, v.Tema,
-        TieneLogo: v.Logo is not null, Vitrina.VersionDelLogo(v.LogoActualizadoEn));
-
-    /// <summary><c>image/png; charset=binary</c> es <c>image/png</c>.</summary>
-    private static string? TipoSinParametros(string? contentType)
-    {
-        var tipo = contentType?.Split(';')[0].Trim().ToLowerInvariant();
-
-        return string.IsNullOrEmpty(tipo) ? null : tipo;
-    }
-
-    /// <summary>Lee a lo sumo un byte más que el máximo: alcanza para saber que se pasó sin traer el
-    /// resto del cuerpo.</summary>
-    private static async Task<byte[]> LeerAcotadoAsync(Stream cuerpo, CancellationToken ct)
-    {
-        using var memoria = new MemoryStream();
-        var buffer = new byte[16 * 1024];
-        var restante = Vitrina.TamanoMaximoDelLogo + 1;
-
-        while (restante > 0)
-        {
-            var leidos = await cuerpo.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, restante)), ct);
-
-            if (leidos == 0)
-            {
-                break;
-            }
-
-            memoria.Write(buffer, 0, leidos);
-            restante -= leidos;
-        }
-
-        return memoria.ToArray();
-    }
+        TieneLogo: v.Logo is not null, Vitrina.VersionDelLogo(v.LogoActualizadoEn), v.IdListaPrecio);
 
     /// <summary>
     /// <c>pg_advisory_xact_lock</c> sobre el tenant dueño con la MISMA clave que las bajas de

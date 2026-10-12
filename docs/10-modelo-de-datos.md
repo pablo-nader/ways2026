@@ -101,6 +101,8 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
     descripcion          text NULL,           -- hasta 2000 caracteres
     color_acento         text NULL,           -- #rrggbb en minúscula; NULL = el naranja de Ways
     tema                 text NOT NULL DEFAULT 'oscuro',   -- 'claro' | 'oscuro'
+    id_lista_precio      integer NULL,        -- lista de precios de la tienda; NULL = la default compartida
+                                              -- fk_vitrinas_lista_precio (id_lista_precio, id_tenant) -> listas_precio
     logo                 bytea NULL,          -- PNG, JPEG o WebP, hasta 1 MB; nunca SVG
     logo_content_type    text NULL,           -- lo decide el contenido, no el encabezado
     logo_actualizado_en  timestamptz NULL,    -- origen del ETag y de logoVersion
@@ -110,6 +112,7 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
 -- UNIQUE (id_empresa) WHERE deleted_at IS NULL                  -- ux_vitrinas_empresa
 -- UNIQUE (id_tenant) WHERE publicada AND deleted_at IS NULL     -- ux_vitrinas_publicada_por_tenant
 -- INDEX (id_tenant), INDEX (id_empresa, id_tenant)              -- ix_vitrinas_tenant / ix_vitrinas_empresa (soporte de las FKs)
+-- INDEX (id_lista_precio, id_tenant)                            -- ix_vitrinas_lista_precio (soporte de fk_vitrinas_lista_precio)
 -- CHECK tema IN ('claro', 'oscuro')                             -- ck_vitrinas_tema
 -- CHECK color_acento IS NULL OR color_acento ~ '^#[0-9a-f]{6}$' -- ck_vitrinas_color_acento
 -- CHECK char_length(tagline) <= 120 / char_length(descripcion) <= 2000
@@ -120,8 +123,9 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
 
 - **RLS**: `vitrinas_tenant` (estándar, `HabilitarRlsDeTenant`) más `vitrinas_publico_lectura`
   (`FOR SELECT USING (app_modo() = 'publico' AND id_tenant = app_tenant_publico() AND publicada AND
-  deleted_at IS NULL)`). Las otras dos tablas que lee el modo público son `empresas` y `puntos_venta`,
-  con `{tabla}_publico_lectura` sin la parte de publicación (doc 09).
+  deleted_at IS NULL)`). Las otras dos tablas de la landing que lee el modo público son `empresas` y
+  `puntos_venta`, con `{tabla}_publico_lectura` sin la parte de publicación; la tienda suma seis más (doc 09,
+  "Modo de acceso público").
 - **Lo que expone el modo público**: la lectura es de filas enteras, así que el lector
   (`LectorDeVitrinaPublica`) proyecta columna por columna. `GET /api/publico/vitrina` devuelve el nombre
   (`nombre_fantasia` o, si falta, `razon_social`), los textos, el tema, `tieneLogo`, `logoVersion` y, por
@@ -147,6 +151,13 @@ vitrinas (                    -- [empresa] id_tenant + id_empresa NOT NULL, como
   `If-None-Match` que coincide sin leer la columna `logo`.
 - **Baja de tenant y de empresa**: tabla `marcado` en el inventario de dependientes (guard de uso de la
   etapa 20): una empresa o un tenant con vitrina cargada no se puede dar de baja, igual que con dominios.
+- **Lista de precios de la tienda** (`id_lista_precio`): `PUT /api/empresas/{id}/vitrina` la acepta y reemplaza como
+  los demás campos (ausente = `NULL` = la default compartida del tenant). Tiene que existir, estar viva y activa,
+  ser del tenant de la empresa y ser compartida o de esa empresa; si no, `400 lista_invalida`, después del 404 de
+  la empresa y bajo el lock del tenant (la lista se toma `FOR KEY SHARE`, así que su baja o llega antes y la vitrina
+  no la referencia, o espera y el guard de uso la ve). La FK entra al inventario de dependientes: una lista que
+  usa una vitrina no se puede dar de baja (`409 *_en_uso`). `fk_vitrinas_lista_precio` → `400 lista_invalida` es el
+  backstop de una escritura cruda.
 
 ### Clasificación de artículos
 
@@ -398,9 +409,12 @@ articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
                                              -- cálculo; la compra lo pisa con el costo efectivo
     disponible_para_todas boolean NOT NULL DEFAULT true,
     activo,
+    publicado_web    boolean NOT NULL DEFAULT false, -- se ofrece en la tienda online (§3, "Tienda online");
+                                             -- por artículo: no es un campo compartido de la familia
     id_familia       integer NULL            -- familia a la que pertenece (§3, "Familias de artículos");
                                              -- FK compuesta (id_familia, id_tenant), NULL = sin familia
 );
+-- ix_articulos_publicado_web (id_tenant) WHERE publicado_web AND activo AND deleted_at IS NULL
 
 articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
     id_articulo, id_empresa, id_tenant,
@@ -435,6 +449,54 @@ familias (                    -- [tenant-wide: id_tenant, SIN id_empresa]
 
 El artículo **no tiene precio de venta**: el precio vive en las listas. Se acabaron
 `precio`, `precioEmp`, `precioOferta` y `precioCant` como columnas.
+
+### Tienda online
+
+Qué artículos muestra la tienda del dominio de un comercio, con qué precio y con qué imagen. La publicación es una
+decisión por artículo (`articulos.publicado_web`, default `false`: ningún artículo existente se publica solo) y vale
+para todo el tenant; en qué empresa se ve lo decide la disponibilidad de siempre (`disponible_para_todas` +
+`articulos_empresas`). No es un campo compartido de la familia: publicar un miembro no publica a los demás, y editar
+a la familia no lo toca.
+
+```sql
+imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como el artículo del que cuelga
+    id_imagen_articulo integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,   -- pk_imagenes_articulo
+    id_tenant          integer NOT NULL REFERENCES tenants,                    -- fk_imagenes_articulo_tenant
+    id_articulo        integer NOT NULL,                                       -- fk_imagenes_articulo_articulo
+    contenido          bytea NOT NULL,        -- PNG, JPEG o WebP, hasta 1 MB; nunca SVG
+    content_type       text NOT NULL,         -- lo decide el contenido, no el encabezado
+    actualizado_en     timestamptz NOT NULL,  -- origen del ETag y de imagenVersion
+    created_at, updated_at, deleted_at        -- baja siempre lógica
+    FOREIGN KEY (id_articulo, id_tenant) REFERENCES articulos (id_articulo, id_tenant)
+);
+-- UNIQUE (id_articulo) WHERE deleted_at IS NULL     -- ux_imagenes_articulo_articulo: una imagen viva por artículo
+-- INDEX (id_tenant), INDEX (id_articulo, id_tenant) -- ix_imagenes_articulo_tenant / _articulo (soporte de las FKs)
+-- CHECK octet_length(contenido) BETWEEN 1 AND 1048576 y content_type en ('image/png', 'image/jpeg', 'image/webp')
+--                                                   -- ck_imagenes_articulo_contenido
+```
+
+- **RLS**: `imagenes_articulo_tenant` (estándar, `HabilitarRlsDeTenant`) y, para el modo público, una policy
+  `{tabla}_publico_lectura` en seis tablas: `articulos` (`publicado_web AND activo AND deleted_at IS NULL`),
+  `articulos_empresas`, `listas_precio`, `precios`, `categorias` e `imagenes_articulo` (estas tres y la anterior
+  con `deleted_at IS NULL`). Todas `FOR SELECT` y con `id_tenant = app_tenant_publico()`; qué deja ver cada una y
+  qué decide la consulta en lugar de la policy, en doc 09 "Modo de acceso público".
+- **Imagen**: una por artículo vivo. Subir reemplaza la fila viva (mismo `id`, nuevo `actualizado_en`); quitar es
+  la baja lógica y una subida posterior crea una fila nueva, así que las bajas conservan los bytes de la imagen
+  anterior. Las valida `ValidadorDeImagen`, la misma regla que el logo de la vitrina: `413 imagen_demasiado_grande`
+  por encima de 1 MB y `415 imagen_no_admitida` para cualquier otra cosa o un tipo declarado que no coincide.
+- **Escritura** (`ServicioDeCatalogoWeb`, `GestionDeCatalogo` como editar el artículo, sin reintento): `PUT
+  /api/articulos/{id}/web` con `{ publicado }` (obligatorio: `400 publicado_requerido`; idempotente, pedir el estado
+  actual no escribe) y `PUT/DELETE /api/articulos/{id}/imagen` con la imagen como cuerpo crudo. Las tres toman
+  `FOR UPDATE` sobre la fila del artículo antes de leer lo que mutan y, ya bajo el lock, comprueban que sigue vivo
+  (404 si la baja ganó): es el único lock que toman, no entran al protocolo de locks de familias. El 404 de un artículo
+  que no se ve va primero, antes del cuerpo. `GET /api/articulos/{id}/imagen` es la vista previa del admin: `Cache-Control:
+  private, no-store`, ETag de `actualizado_en` y `304` sin leer `contenido`, aunque el artículo no esté publicado.
+  El listado, el detalle, el alta, la edición y la grilla del artículo informan `publicadoWeb` y `tieneImagen`.
+- **Backstops** (`ManejadorDeErrores`): `ux_imagenes_articulo_articulo` → `409 imagen_duplicada` (inalcanzable por
+  la API: la subida lee la imagen bajo el lock del artículo); `ck_imagenes_articulo_contenido` → `400
+  imagen_no_admitida`.
+- **Baja de tenant**: `imagenes_articulo` entra al inventario de dependientes como `marcado` (un tenant con una
+  imagen cargada no se puede dar de baja, igual que con vitrinas).
 
 ### Familias de artículos
 

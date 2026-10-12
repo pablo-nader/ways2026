@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
@@ -55,6 +56,8 @@ public class VitrinaConfiguration : IEntityTypeConfiguration<Vitrina>
             .HasDefaultValue(Vitrina.TemaOscuro)
             .IsRequired();
 
+        builder.Property(v => v.IdListaPrecio).HasColumnName("id_lista_precio");
+
         builder.Property(v => v.Logo).HasColumnName("logo").HasColumnType("bytea");
         builder.Property(v => v.LogoContentType).HasColumnName("logo_content_type").HasColumnType("text");
         builder.Property(v => v.LogoActualizadoEn).HasColumnName("logo_actualizado_en");
@@ -80,6 +83,7 @@ public class VitrinaConfiguration : IEntityTypeConfiguration<Vitrina>
         // Soporte de las FKs: los índices parciales de arriba no las cubren.
         builder.HasIndex(v => v.IdTenant, "ix_vitrinas_tenant").HasDatabaseName("ix_vitrinas_tenant");
         builder.HasIndex(v => new { v.IdEmpresa, v.IdTenant }).HasDatabaseName("ix_vitrinas_empresa");
+        builder.HasIndex(v => new { v.IdListaPrecio, v.IdTenant }).HasDatabaseName("ix_vitrinas_lista_precio");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -94,6 +98,14 @@ public class VitrinaConfiguration : IEntityTypeConfiguration<Vitrina>
             .HasForeignKey(v => new { v.IdEmpresa, v.IdTenant })
             .HasPrincipalKey(e => new { e.Id, e.IdTenant })
             .HasConstraintName("fk_vitrinas_empresa")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Opcional: NULL = la lista default del tenant. Compuesta contra la AK de listas_precio (ADR-9).
+        builder.HasOne<ListaPrecio>()
+            .WithMany()
+            .HasForeignKey(v => new { v.IdListaPrecio, v.IdTenant })
+            .HasPrincipalKey(l => new { l.Id, l.IdTenant })
+            .HasConstraintName("fk_vitrinas_lista_precio")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

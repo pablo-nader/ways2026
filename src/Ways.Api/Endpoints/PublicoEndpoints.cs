@@ -1,4 +1,5 @@
 using Microsoft.Net.Http.Headers;
+using Ways.Application.CatalogoOnline;
 using Ways.Application.Dominios;
 using Ways.Application.Vitrinas;
 using Ways.Domain.Common;
@@ -65,31 +66,52 @@ public static class PublicoEndpoints
     /// un logo reemplazado entre las dos consultas se sirve con su propio ETag. Los encabezados de caché se
     /// ponen recién cuando hay algo que servir: un 404 nunca queda cacheable.
     /// </summary>
-    internal static async Task<IResult> ServirLogoAsync(
+    internal static Task<IResult> ServirLogoAsync(
         HttpContext contexto,
         string cacheControl,
         string mensajeSinLogo,
         Func<Task<VersionDeLogo?>> obtenerVersion,
-        Func<Task<LogoPublico?>> obtenerLogo)
+        Func<Task<LogoPublico?>> obtenerLogo) =>
+        ServirImagenAsync(
+            contexto,
+            cacheControl,
+            () => SinLogo(mensajeSinLogo),
+            async () => await obtenerVersion() is { } version ? new VersionDeImagen(version.ContentType, version.ActualizadoEn) : null,
+            async () => await obtenerLogo() is { } logo ? new ImagenServida(logo.Contenido, logo.ContentType, logo.ActualizadoEn) : null);
+
+    /// <summary>
+    /// Sirve una imagen con ETag (el del logo y el de la imagen de un artículo se arman igual: ver
+    /// <see cref="EtagDelLogo"/>). Primero pregunta solo por su versión (tipo y marca de carga, sin los bytes): si
+    /// <c>If-None-Match</c> coincide contesta 304 sin llamar a <paramref name="obtenerImagen"/>, que es lo único
+    /// que lee la columna bytea. Si no coincide, trae los bytes y el ETag sale de ESA lectura, así que una imagen
+    /// reemplazada entre las dos consultas se sirve con su propio ETag. Los encabezados de caché se ponen recién
+    /// cuando hay algo que servir: un 404 nunca queda cacheable.
+    /// </summary>
+    internal static async Task<IResult> ServirImagenAsync(
+        HttpContext contexto,
+        string cacheControl,
+        Func<ErrorDominio> sinImagen,
+        Func<Task<VersionDeImagen?>> obtenerVersion,
+        Func<Task<ImagenServida?>> obtenerImagen)
     {
-        var version = await obtenerVersion() ?? throw SinLogo(mensajeSinLogo);
+        var version = await obtenerVersion() ?? throw sinImagen();
         var etag = new EntityTagHeaderValue(EtagDelLogo.De(version.ActualizadoEn));
 
         if (CoincideConLaCondicional(contexto.Request, etag))
         {
-            PonerEncabezadosDelLogo(contexto, cacheControl);
+            PonerEncabezadosDeLaImagen(contexto, cacheControl);
             contexto.Response.Headers.ETag = etag.ToString();
 
             return Results.StatusCode(StatusCodes.Status304NotModified);
         }
 
-        var logo = await obtenerLogo() ?? throw SinLogo(mensajeSinLogo);
-        PonerEncabezadosDelLogo(contexto, cacheControl);
+        var imagen = await obtenerImagen() ?? throw sinImagen();
+        PonerEncabezadosDeLaImagen(contexto, cacheControl);
 
         return Results.File(
-            logo.Contenido,
-            logo.ContentType,
-            entityTag: new EntityTagHeaderValue(EtagDelLogo.De(logo.ActualizadoEn)));
+            imagen.Contenido,
+            imagen.ContentType,
+            entityTag: new EntityTagHeaderValue(EtagDelLogo.De(imagen.ActualizadoEn)));
     }
 
     /// <summary>El tenant del dominio solo si puede servir su vitrina: el host tiene un tenant (en el de la
@@ -100,10 +122,13 @@ public static class PublicoEndpoints
     private static ErrorDominio SinLogo(string mensaje) =>
         new("logo_no_encontrado", mensaje, StatusCodes.Status404NotFound);
 
-    private static void PonerEncabezadosDelLogo(HttpContext contexto, string cacheControl)
+    internal static ErrorDominio SinImagen(string mensaje) =>
+        new("imagen_no_encontrada", mensaje, StatusCodes.Status404NotFound);
+
+    private static void PonerEncabezadosDeLaImagen(HttpContext contexto, string cacheControl)
     {
         contexto.Response.Headers.CacheControl = cacheControl;
-        // El tipo lo decidió el contenido al subirlo; que el navegador no lo reinterprete.
+        // El tipo lo decidió el contenido al subirla; que el navegador no lo reinterprete.
         contexto.Response.Headers.XContentTypeOptions = "nosniff";
     }
 

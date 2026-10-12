@@ -164,8 +164,12 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
     public async Task EnModoPublicoNoSeLeeNingunaOtraTablaDelTenant()
     {
         var e = await SembrarEscenarioAsync("rls-otras");
-        await SembrarArticuloYClienteAsync(e.A.IdTenant);
-        string[] otras = ["usuarios", "articulos", "clientes", "listas_precio", "areas", "dominios", "tenants"];
+        await SembrarArticuloYClienteAsync(e.A.IdTenant, e.PuntosVentaDeA[0]);
+
+        // articulos, listas_precio y categorias tienen policy de modo público desde la tienda online
+        // (CatalogoOnlineAislamientoTests); acá quedan las que no. stock está en la lista a propósito: es lo que
+        // un catálogo de tienda tentaría leer para mostrar disponibilidad, y la tienda no lo lee.
+        string[] otras = ["usuarios", "clientes", "areas", "dominios", "tenants", "stock", "codigos_barra"];
 
         await using (var comoTenant = await fixture.AbrirConexionCrudaAsync("tenant", e.A.IdTenant))
         {
@@ -227,10 +231,10 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal("A publicada", intacta.Tagline);
     }
 
-    /// <summary>Exactamente tres tablas con policy de modo público, todas de solo lectura: otra tabla con
-    /// una policy así, o una de escritura, rompe la igualdad.</summary>
+    /// <summary>Exactamente las nueve tablas de la landing y la tienda con policy de modo público, todas de solo
+    /// lectura: otra tabla con una policy así, o una de escritura, rompe la igualdad.</summary>
     [Fact]
-    public async Task SoloVitrinasEmpresasYPuntosVentaTienenPolicyDeModoPublicoYSonDeSoloLectura()
+    public async Task SoloLasNueveTablasDeLaLandingYLaTiendaTienenPolicyDeModoPublicoYSonDeSoloLectura()
     {
         using var _ = fixture.CreateClient();
         await using var conexion = new NpgsqlConnection(fixture.OwnerConnectionString);
@@ -250,25 +254,32 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
             }
         }
 
+        // El orden de la base depende del collation: se compara ordenado por código.
         Assert.Equal(
             [
+                "articulos:articulos_publico_lectura:SELECT",
+                "articulos_empresas:articulos_empresas_publico_lectura:SELECT",
+                "categorias:categorias_publico_lectura:SELECT",
                 "empresas:empresas_publico_lectura:SELECT",
+                "imagenes_articulo:imagenes_articulo_publico_lectura:SELECT",
+                "listas_precio:listas_precio_publico_lectura:SELECT",
+                "precios:precios_publico_lectura:SELECT",
                 "puntos_venta:puntos_venta_publico_lectura:SELECT",
                 "vitrinas:vitrinas_publico_lectura:SELECT"
             ],
-            policies);
+            policies.Order(StringComparer.Ordinal));
     }
 
     // ---- el contexto de EF ------------------------------------------------------------------------
 
     /// <summary>El interceptor deja el tenant en <c>app.tenant_publico</c> y el estándar vacío. Con el
-    /// mutante (tenant también en <c>app.tenant_id</c>) las policies estándar abren artículos, clientes y
-    /// usuarios, y las tres cuentas de abajo dejan de ser cero.</summary>
+    /// mutante (tenant también en <c>app.tenant_id</c>) las policies estándar abren stock, códigos de barra,
+    /// clientes y usuarios, y las cuatro cuentas de abajo dejan de ser cero.</summary>
     [Fact]
     public async Task ElContextoPublicoDeEfLlevaElTenantEnElGucPublicoYNoVeNadaFueraDeLasTresTablas()
     {
         var e = await SembrarEscenarioAsync("rls-ef");
-        await SembrarArticuloYClienteAsync(e.A.IdTenant);
+        await SembrarArticuloYClienteAsync(e.A.IdTenant, e.PuntosVentaDeA[0]);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Publico, e.A.IdTenant));
 
@@ -279,7 +290,8 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
             .SingleAsync();
         Assert.Equal($"publico||{e.A.IdTenant}", gucs);
 
-        Assert.Equal(0, await db.Articulos.IgnoreQueryFilters().CountAsync());
+        Assert.Equal(0, await db.Stock.IgnoreQueryFilters().CountAsync());
+        Assert.Equal(0, await db.CodigosBarra.IgnoreQueryFilters().CountAsync());
         Assert.Equal(0, await db.Clientes.IgnoreQueryFilters().CountAsync());
         Assert.Equal(0, await db.Usuarios.IgnoreQueryFilters().CountAsync());
 
@@ -486,8 +498,9 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
         await comando.ExecuteNonQueryAsync();
     }
 
-    /// <summary>Un artículo y un cliente del tenant: filas en tablas que el modo público no puede leer.</summary>
-    private async Task SembrarArticuloYClienteAsync(int idTenant)
+    /// <summary>Un artículo, un cliente, un código de barras y stock del tenant: filas en tablas que el modo
+    /// público no puede leer.</summary>
+    private async Task SembrarArticuloYClienteAsync(int idTenant, int idPuntoVenta)
     {
         var ahora = DateTimeOffset.UtcNow;
 
@@ -518,7 +531,7 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
         var idAlicuotaIva = await db.AlicuotasIva.Select(a => a.Id).FirstAsync();
         var idCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync();
 
-        db.Articulos.Add(new Articulo
+        var articulo = new Articulo
         {
             IdTenant = idTenant,
             CodigoInterno = $"V-{Guid.NewGuid():N}",
@@ -529,7 +542,8 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
             EsProducto = true,
             CreatedAt = ahora,
             UpdatedAt = ahora
-        });
+        };
+        db.Articulos.Add(articulo);
         db.Clientes.Add(new Cliente
         {
             IdTenant = idTenant,
@@ -540,6 +554,24 @@ public class VitrinaAislamientoTests(WaysApiFixture fixture) : IClassFixture<Way
             Activo = true,
             CreatedAt = ahora,
             UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        db.CodigosBarra.Add(new CodigoBarra
+        {
+            IdTenant = idTenant,
+            IdArticulo = articulo.Id,
+            Codigo = $"779{Random.Shared.NextInt64(1_000_000_000L, 9_999_999_999L)}",
+            Activo = true,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        db.Stock.Add(new Ways.Domain.Stock.Stock
+        {
+            IdTenant = idTenant,
+            IdArticulo = articulo.Id,
+            IdPuntoVenta = idPuntoVenta,
+            Cantidad = 7m
         });
         await db.SaveChangesAsync();
     }

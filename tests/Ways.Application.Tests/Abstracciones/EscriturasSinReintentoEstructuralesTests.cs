@@ -129,6 +129,14 @@ public class EscriturasSinReintentoEstructuralesTests
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "GuardarLogoAsync" },
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "QuitarLogoAsync" },
         { "Ways.Application/Vitrinas/ServicioDeVitrinas.cs", "EliminarAsync" },
+
+        // Tienda online: publicar un artículo y subir o quitar su imagen. Leen la fila bajo el FOR UPDATE del
+        // artículo y agregan la imagen si falta: un reintento sobre un commit ambiguo repetiría una escritura que
+        // sí tuvo éxito (la subida volvería a leer una fila ya escrita o ya dada de baja), sin clave de
+        // idempotencia que lo evite.
+        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "PublicarAsync" },
+        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "GuardarImagenAsync" },
+        { "Ways.Application/CatalogoOnline/ServicioDeCatalogoWeb.cs", "QuitarImagenAsync" },
     };
 
     /// <summary>

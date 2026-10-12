@@ -11,19 +11,20 @@ public class Vitrina : EntidadTenant
 {
     public const int LargoMaximoDelTagline = 120;
     public const int LargoMaximoDeLaDescripcion = 2000;
-    public const int TamanoMaximoDelLogo = 1024 * 1024;
+    public const int TamanoMaximoDelLogo = ValidadorDeImagen.TamanoMaximo;
 
     public const string TemaClaro = "claro";
     public const string TemaOscuro = "oscuro";
 
-    public const string TipoPng = "image/png";
-    public const string TipoJpeg = "image/jpeg";
-    public const string TipoWebp = "image/webp";
+    public const string TipoPng = ValidadorDeImagen.TipoPng;
+    public const string TipoJpeg = ValidadorDeImagen.TipoJpeg;
+    public const string TipoWebp = ValidadorDeImagen.TipoWebp;
 
-    private static readonly byte[] FirmaPng = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    private static readonly byte[] FirmaJpeg = [0xFF, 0xD8, 0xFF];
-    private static readonly byte[] FirmaRiff = "RIFF"u8.ToArray();
-    private static readonly byte[] FirmaWebp = "WEBP"u8.ToArray();
+    private static readonly ErroresDeImagen ErroresDelLogo = new(
+        "logo_demasiado_grande",
+        "El logo no puede pesar más de 1 MB.",
+        "logo_no_admitido",
+        "El logo tiene que ser una imagen PNG, JPEG o WebP.");
 
     public int Id { get; set; }
 
@@ -40,6 +41,10 @@ public class Vitrina : EntidadTenant
 
     public string Tema { get; set; } = TemaOscuro;
 
+    /// <summary>La lista de precios que usa el catálogo de la tienda; <c>null</c> = la lista default del
+    /// tenant. FK compuesta <c>(id_lista_precio, id_tenant)</c>.</summary>
+    public int? IdListaPrecio { get; set; }
+
     public byte[]? Logo { get; set; }
 
     /// <summary>Se guarda siempre junto con <see cref="Logo"/>: lo decidió el contenido, no el
@@ -49,7 +54,7 @@ public class Vitrina : EntidadTenant
     /// <summary>Origen del ETag del logo y de la versión que la landing agrega a su URL.</summary>
     public DateTimeOffset? LogoActualizadoEn { get; set; }
 
-    public static bool EsTipoDeLogoAdmitido(string? tipo) => tipo is TipoPng or TipoJpeg or TipoWebp;
+    public static bool EsTipoDeLogoAdmitido(string? tipo) => ValidadorDeImagen.EsTipoAdmitido(tipo);
 
     /// <summary>Segundos Unix de la última carga del logo: la versión que la landing agrega a su URL.</summary>
     public static long? VersionDelLogo(DateTimeOffset? actualizadoEn) => actualizadoEn?.ToUnixTimeSeconds();
@@ -119,52 +124,13 @@ public class Vitrina : EntidadTenant
     /// <c>null</c> para todo lo demás. SVG queda afuera a propósito: un SVG puede llevar scripts y
     /// el logo se sirve desde el mismo origen que la aplicación.
     /// </summary>
-    public static string? DetectarTipoDeLogo(ReadOnlySpan<byte> contenido)
-    {
-        if (contenido.StartsWith(FirmaPng))
-        {
-            return TipoPng;
-        }
-
-        if (contenido.StartsWith(FirmaJpeg))
-        {
-            return TipoJpeg;
-        }
-
-        // RIFF <tamaño de 4 bytes> WEBP
-        if (contenido.Length >= 12 && contenido.StartsWith(FirmaRiff) && contenido[8..12].SequenceEqual(FirmaWebp))
-        {
-            return TipoWebp;
-        }
-
-        return null;
-    }
+    public static string? DetectarTipoDeLogo(ReadOnlySpan<byte> contenido) => ValidadorDeImagen.DetectarTipo(contenido);
 
     /// <summary>
     /// Valida un logo y devuelve su tipo. El tamaño se mira primero (413
     /// <c>logo_demasiado_grande</c>); después el contenido tiene que ser PNG, JPEG o WebP y coincidir
     /// con el tipo que declaró el cliente, si declaró alguno (415 <c>logo_no_admitido</c>).
     /// </summary>
-    public static string ValidarLogo(ReadOnlySpan<byte> contenido, string? tipoDeclarado)
-    {
-        if (contenido.Length > TamanoMaximoDelLogo)
-        {
-            throw new ErrorDominio(
-                "logo_demasiado_grande",
-                "El logo no puede pesar más de 1 MB.",
-                413);
-        }
-
-        var tipo = DetectarTipoDeLogo(contenido);
-
-        if (tipo is null || tipoDeclarado is not null && !string.Equals(tipo, tipoDeclarado, StringComparison.Ordinal))
-        {
-            throw new ErrorDominio(
-                "logo_no_admitido",
-                "El logo tiene que ser una imagen PNG, JPEG o WebP.",
-                415);
-        }
-
-        return tipo;
-    }
+    public static string ValidarLogo(ReadOnlySpan<byte> contenido, string? tipoDeclarado) =>
+        ValidadorDeImagen.Validar(contenido, tipoDeclarado, ErroresDelLogo);
 }

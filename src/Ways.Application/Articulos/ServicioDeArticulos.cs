@@ -175,7 +175,8 @@ public class ServicioDeArticulos(
                         buscaPorCodigoDeProveedor && c.IdArticulo == a.Id && c.IdProveedor == idProveedorBuscado &&
                         c.Codigo == termino && db.Proveedores.Any(p => p.Id == c.IdProveedor))
                     .Select(c => c.Codigo)
-                    .FirstOrDefault()
+                    .FirstOrDefault(),
+                TieneImagen = db.ImagenesArticulo.Any(i => i.IdArticulo == a.Id)
             })
             .OrderBy(x => x.CodigoProveedor == null ? 1 : 0)
             .ThenBy(x => x.Articulo.Nombre)
@@ -188,7 +189,8 @@ public class ServicioDeArticulos(
                 x.Articulo.UnidadesPorBulto, x.Articulo.EsProducto, x.Articulo.CostoLista,
                 x.Articulo.CostoListaPor, x.Articulo.CostoListaIncluyeIva, x.Articulo.DescuentoProveedor, x.Articulo.CostoNominal, x.Articulo.DisponibleParaTodas,
                 Array.Empty<int>(), x.Articulo.Activo, x.Articulo.ControlaLote,
-                x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor))
+                x.Articulo.AcumulaEnVenta, x.Articulo.IdFamilia, x.CodigoProveedor,
+                x.Articulo.PublicadoWeb, x.TieneImagen))
             .ToListAsync(ct);
 
         if (!PuedeVerCostos)
@@ -212,7 +214,10 @@ public class ServicioDeArticulos(
                 .Select(ae => ae.IdEmpresa)
                 .ToListAsync(ct);
 
-        var detalle = Proyectar(articulo, idsEmpresas);
+        var detalle = Proyectar(articulo, idsEmpresas) with
+        {
+            TieneImagen = await db.ImagenesArticulo.AnyAsync(i => i.IdArticulo == id, ct)
+        };
         return PuedeVerCostos ? detalle : SinCostos(detalle);
     }
 
@@ -710,7 +715,8 @@ public class ServicioDeArticulos(
             await servicioDeLotes.ReconciliarAsync(idConControlDeLote, idPuntoVenta: null, ct);
         }
 
-        return Proyectar(articulo!, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
+        return Proyectar(articulo!, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>())
+            with { TieneImagen = await db.ImagenesArticulo.AnyAsync(i => i.IdArticulo == id, ct) };
     }
 
     /// <summary>Los artículos que una edición tiene bloqueados y leídos: el editado, todos los que ese
@@ -1493,5 +1499,5 @@ public class ServicioDeArticulos(
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
         a.CostoLista, a.CostoListaPor, a.CostoListaIncluyeIva, a.DescuentoProveedor, a.CostoNominal,
         a.DisponibleParaTodas, idsEmpresas, a.Activo,
-        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia);
+        a.ControlaLote, a.AcumulaEnVenta, a.IdFamilia, CodigoProveedor: null, a.PublicadoWeb);
 }
