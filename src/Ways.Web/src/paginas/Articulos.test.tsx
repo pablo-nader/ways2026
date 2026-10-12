@@ -466,6 +466,95 @@ describe('Articulos — toggle acumulaEnVenta', () => {
   })
 })
 
+describe('Articulos — artículo por importe', () => {
+  async function abrirEdicionDelUno() {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+  }
+
+  async function guardarYLeerCuerpo() {
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    return apiPutMock.mock.calls[0][1] as Record<string, unknown>
+  }
+
+  it('la unidad ofrece "Por importe"', async () => {
+    await abrirFormularioNuevo()
+
+    expect(within(screen.getByLabelText('Unidad de venta')).getByRole('option', { name: 'Por importe' })).toBeInTheDocument()
+  })
+
+  it('al elegir "Por importe" el checkbox queda deshabilitado y destildado, y aparece el selector de atajo', async () => {
+    await abrirFormularioNuevo()
+    expect(screen.queryByLabelText('Tecla de atajo del POS')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByLabelText('Unidad de venta'), 'Importe')
+
+    const acumula = screen.getByLabelText('Acumula en una sola línea al vender')
+    expect(acumula).toBeDisabled()
+    expect(acumula).not.toBeChecked()
+    const tecla = screen.getByLabelText('Tecla de atajo del POS')
+    expect(within(tecla).getAllByRole('option').map((o) => o.textContent)).toEqual(['Sin atajo', 'F5', 'F6', 'F7', 'F8'])
+  })
+
+  it('guardar un artículo editado como "Por importe" con F6 manda acumulaEnVenta false y la tecla', async () => {
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F6' }))
+    await abrirEdicionDelUno()
+
+    await userEvent.selectOptions(screen.getByLabelText('Unidad de venta'), 'Importe')
+    await userEvent.selectOptions(screen.getByLabelText('Tecla de atajo del POS'), 'F6')
+    const cuerpo = await guardarYLeerCuerpo()
+
+    expect(cuerpo).toMatchObject({ unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F6' })
+  })
+
+  it('volver a "Por unidad" devuelve el checkbox tildado, quita el selector y manda teclaAtajo null', async () => {
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1 }))
+    await abrirEdicionDelUno()
+
+    await userEvent.selectOptions(screen.getByLabelText('Unidad de venta'), 'Importe')
+    await userEvent.selectOptions(screen.getByLabelText('Tecla de atajo del POS'), 'F5')
+    await userEvent.selectOptions(screen.getByLabelText('Unidad de venta'), 'Unidad')
+
+    const acumula = screen.getByLabelText('Acumula en una sola línea al vender')
+    expect(acumula).toBeEnabled()
+    expect(acumula).toBeChecked()
+    expect(screen.queryByLabelText('Tecla de atajo del POS')).not.toBeInTheDocument()
+    const cuerpo = await guardarYLeerCuerpo()
+    expect(cuerpo).toMatchObject({ unidadVenta: 'Unidad', acumulaEnVenta: true, teclaAtajo: null })
+  })
+
+  it('guardar sin tocar un artículo por importe con tecla reenvía la tecla guardada', async () => {
+    mockearApiGet({ articulos: [articuloFixture({ id: 1, unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F7' })] })
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F7' }))
+    await abrirEdicionDelUno()
+
+    expect(screen.getByLabelText('Tecla de atajo del POS')).toHaveValue('F7')
+    expect(screen.getByLabelText('Acumula en una sola línea al vender')).toBeDisabled()
+    const cuerpo = await guardarYLeerCuerpo()
+
+    expect(cuerpo).toMatchObject({ unidadVenta: 'Importe', acumulaEnVenta: false, teclaAtajo: 'F7' })
+  })
+
+  it('una tecla ya tomada por otro artículo se avisa junto al selector y no en el banner', async () => {
+    apiPutMock.mockRejectedValue(new ErrorApi(409, 'tecla_atajo_duplicada', 'Ya hay un artículo con la tecla de atajo F8 en este tenant.'))
+    await abrirEdicionDelUno()
+
+    await userEvent.selectOptions(screen.getByLabelText('Unidad de venta'), 'Importe')
+    await userEvent.selectOptions(screen.getByLabelText('Tecla de atajo del POS'), 'F8')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('La tecla F8 ya la usa otro artículo. Elegí otra o dejá este sin atajo.')).toBeInTheDocument()
+    expect(screen.queryByText(/en este tenant/)).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByLabelText('Tecla de atajo del POS'), 'F5')
+    expect(screen.queryByText(/ya la usa otro artículo/)).not.toBeInTheDocument()
+  })
+})
+
 // ---- alícuota de IVA por defecto en un artículo nuevo (fix: elegirAlicuotaPorDefecto) ----------
 
 describe('Articulos — alícuota de IVA por defecto de un artículo nuevo', () => {

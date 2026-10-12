@@ -661,7 +661,13 @@ export type OpcionDeProveedor = {
 // junction de disponibilidad, colección de códigos de barra — ninguno encaja en el shape
 // genérico de `CatalogoListado`/`DescriptorDeCatalogo`.
 
-export type UnidadVenta = 'Unidad' | 'Peso'
+/** `Importe`: el cajero tipea el monto en vez de una cantidad; la línea lleva cantidad 1 y nunca acumula. */
+export type UnidadVenta = 'Unidad' | 'Peso' | 'Importe'
+
+/** Tecla de función del POS que agrega un artículo por importe con el monto tipeado en la caja de escaneo. */
+export type TeclaAtajo = 'F5' | 'F6' | 'F7' | 'F8'
+
+export const TECLAS_ATAJO: readonly TeclaAtajo[] = ['F5', 'F6', 'F7', 'F8']
 
 /** A qué se refiere el costo de lista que se cargó: a una unidad o a un bulto entero. */
 export type CostoListaPor = 'Unidad' | 'Bulto'
@@ -674,6 +680,7 @@ export const COSTOS_LISTA_POR: { valor: CostoListaPor; etiqueta: string }[] = [
 export const UNIDADES_VENTA: { valor: UnidadVenta; etiqueta: string }[] = [
   { valor: 'Unidad', etiqueta: 'Por unidad' },
   { valor: 'Peso', etiqueta: 'Por peso' },
+  { valor: 'Importe', etiqueta: 'Por importe' },
 ]
 
 /** `idsEmpresas` viene vacío en el listado paginado (el backend evita el N+1 de una query por
@@ -714,6 +721,8 @@ export type ArticuloListado = {
   /** `true`: volver a agregarlo en el carrito del POS suma cantidad a su línea; `false`: cada
    * agregado es una línea nueva. */
   acumulaEnVenta: boolean
+  /** Tecla de función del POS de un artículo por importe; `null` o ausente = sin atajo. Es un campo propio del artículo, no se comparte con su familia. */
+  teclaAtajo?: TeclaAtajo | null
   /** Familia a la que pertenece el artículo (`null` = sin familia), tal como está guardada: el servidor
    * no la anula aunque la fila de la familia esté dada de baja (doc 10 §3, "Familias de artículos"). */
   idFamilia: number | null
@@ -754,6 +763,8 @@ export type AltaArticulo = {
   controlaLote: boolean
   /** Ausente: en el alta el servidor asume `true`; en la edición conserva el valor guardado. */
   acumulaEnVenta?: boolean
+  /** Solo un artículo por importe la admite (400 `tecla_atajo_solo_importe`); 409 `tecla_atajo_duplicada` si otro artículo vivo ya la usa. */
+  teclaAtajo?: TeclaAtajo | null
   /** Código del proveedor habitual para este artículo; el servidor exige `idProveedorHabitual`. */
   codigoProveedor?: string | null
   /** El artículo nace como miembro de esa familia: los quince campos compartidos tienen que ser idénticos
@@ -1619,6 +1630,9 @@ export type GastoDeTurno = {
   numeroFactura: string | null
   /** Compra a la que está ligado el gasto; no `null` bloquea categoría y proveedor en la edición. */
   idComprobanteCompra: number | null
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición). */
+  idMovimientoPersonal: number | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1734,6 +1748,9 @@ export type GastoDeAdministracionListado = {
   /** `true` solo si el gasto tiene turno y ese turno sigue abierto (editar uno de un turno
    * cerrado recalcula su arqueo). */
   turnoAbierto: boolean
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
+  idMovimientoPersonal: number | null
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
@@ -2018,7 +2035,7 @@ export type ComprobanteEmitido = {
 // (design decisión 9), pago a cuenta (RC) sin ningún campo de importe propio (design decisión 6,
 // `importeAplicado = Σ importe − Σ vuelto`).
 
-export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios'
+export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios' | 'DescuentoPersonal'
 
 /** Distingue un movimiento `Ajuste` por su origen — solo viene poblado para ese tipo (design
  * decisión 8/9, espejo de `EtiquetaDeAjuste`). */

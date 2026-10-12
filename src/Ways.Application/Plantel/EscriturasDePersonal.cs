@@ -11,11 +11,22 @@ namespace Ways.Application.Plantel;
 /// </summary>
 public static class EscriturasDePersonal
 {
+    /// <summary>Saldo nuevo del personal y el cliente vinculado en el instante en que la fila quedó bloqueada.</summary>
+    public sealed record SaldoActualizado(decimal Saldo, int? IdCliente);
+
     /// <summary><c>UPDATE ... RETURNING</c> crudo: nunca vía una entidad <c>Personal</c> trackeada, que
     /// duplicaría el incremento en un reintento. <c>deleted_at IS NULL</c> en el <c>WHERE</c> hace que
     /// una baja concurrente gane limpiamente: después de esperar el lock de la fila, Postgres reevalúa
     /// el predicado y el resultado es <c>null</c> (el llamador responde 404). Devuelve el saldo nuevo.</summary>
     public static async Task<decimal?> ActualizarSaldoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, decimal importe,
+        CancellationToken ct) =>
+        (await ActualizarSaldoYLeerVinculoAsync(conexion, transaccion, idTenant, idPersonal, importe, ct))?.Saldo;
+
+    /// <summary>El mismo <c>UPDATE</c> que <see cref="ActualizarSaldoAsync"/>, que además devuelve el cliente
+    /// vinculado leído bajo el lock de la fila: una edición del vínculo espera a este <c>UPDATE</c>, así que el
+    /// pago que descuenta de la cuenta corriente usa el cliente que de verdad estaba vinculado al bloquear.</summary>
+    public static async Task<SaldoActualizado?> ActualizarSaldoYLeerVinculoAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idPersonal, decimal importe,
         CancellationToken ct)
     {
@@ -23,14 +34,19 @@ public static class EscriturasDePersonal
         comando.Transaction = transaccion;
         comando.CommandText =
             "UPDATE personal SET saldo = saldo + $1 " +
-            "WHERE id_personal = $2 AND id_tenant = $3 AND deleted_at IS NULL RETURNING saldo";
+            "WHERE id_personal = $2 AND id_tenant = $3 AND deleted_at IS NULL RETURNING saldo, id_cliente";
 
         ParametrosDeComando.Agregar(comando, importe);
         ParametrosDeComando.Agregar(comando, idPersonal);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is null ? null : Convert.ToDecimal(resultado);
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new SaldoActualizado(lector.GetDecimal(0), lector.IsDBNull(1) ? null : lector.GetInt32(1));
     }
 
     /// <summary>El ÚNICO <c>INSERT</c> del libro de personal.</summary>

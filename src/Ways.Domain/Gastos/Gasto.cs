@@ -69,4 +69,9 @@ public class Gasto : EntidadTenant
     /// <c>confirmada</c>; el vínculo es historia, nunca bloquea la anulación de la compra
     /// (design decisión 6, la regla invertida).</summary>
     public int? IdComprobanteCompra { get; set; }
+
+    /// <summary>Pago de personal que generó este gasto (el movimiento <c>pago</c> del libro de personal es la
+    /// cabecera del pago). Se escribe solo al insertar y nunca cambia: un gasto con vínculo no se edita, no se
+    /// da de baja ni se liga a una compra por sí solo, porque desalinearía los libros que el pago movió.</summary>
+    public int? IdMovimientoPersonal { get; set; }
 }

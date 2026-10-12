@@ -22,6 +22,10 @@ describe('restriccionDeCantidad', () => {
     expect(restriccionDeCantidad(null)).toEqual({ step: 0.001, min: 0.001 })
   })
 
+  it('un artículo por importe se mueve de a uno, como una unidad y no como un peso', () => {
+    expect(restriccionDeCantidad('Importe')).toEqual({ step: 1, min: 1 })
+  })
+
   it('permiteCero baja el mínimo a cero sin tocar el paso', () => {
     expect(restriccionDeCantidad('Unidad', { permiteCero: true })).toEqual({ step: 1, min: 0 })
     expect(restriccionDeCantidad('Peso', { permiteCero: true })).toEqual({ step: 0.001, min: 0 })
@@ -35,6 +39,11 @@ describe('respetaGranularidad', () => {
 
   it.each([0.5, 1.001, 2.999, 0.0001])('una unidad rechaza la fracción %s', (cantidad) => {
     expect(respetaGranularidad('Unidad', cantidad)).toBe(false)
+  })
+
+  it.each([0.5, 1.001])('un importe rechaza la fracción %s y admite el entero', (cantidad) => {
+    expect(respetaGranularidad('Importe', cantidad)).toBe(false)
+    expect(respetaGranularidad('Importe', 1)).toBe(true)
   })
 
   it.each([1, 0.001, 12.3, 12.345])('un peso admite hasta tres decimales: %s', (cantidad) => {
