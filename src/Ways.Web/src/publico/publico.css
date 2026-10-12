@@ -619,7 +619,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  column-gap: 4px;
 }
 
 .publico-cantidad-boton {
@@ -658,16 +658,16 @@
   text-align: center;
 }
 
-.publico-cantidad-campo[aria-invalid='true'] {
-  border-color: var(--pub-texto);
-  border-style: dashed;
-}
-
 .publico-cantidad-ayuda {
   flex-basis: 100%;
   margin: 4px 0 0;
   color: var(--pub-secundario);
   font-size: 0.85rem;
+}
+
+/* La región `aria-live` está siempre montada (si no, el lector no anuncia lo que aparece); vacía no ocupa lugar. */
+.publico-cantidad-ayuda:empty {
+  margin: 0;
 }
 
 .publico-carrito-lineas {

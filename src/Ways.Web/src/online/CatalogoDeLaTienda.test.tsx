@@ -59,6 +59,19 @@ function llamadas() {
   return obtenerCatalogoMock.mock.calls.map(([consulta]) => consulta)
 }
 
+/** Lo que el carrito tiene guardado en el navegador: la verdad del carrito aunque el campo muestre otra cosa. */
+function cantidadesGuardadas() {
+  const crudo = localStorage.getItem(claveDelCarrito(window.location.host))
+  const lineas = JSON.parse(crudo ?? '[]') as { idArticulo: number; cantidad: number }[]
+
+  return lineas.map(({ idArticulo, cantidad }) => ({ idArticulo, cantidad }))
+}
+
+/** La región de avisos del selector de cantidad al que pertenece el campo. */
+function avisoDe(campo: HTMLElement) {
+  return campo.closest('.publico-cantidad')?.querySelector('.publico-cantidad-ayuda') as HTMLElement
+}
+
 async function verCatalogo(catalogo: CatalogoPublico = catalogoPublico({ articulos: [martillo, clavos], categorias })) {
   obtenerVitrinaMock.mockResolvedValue(vitrina)
   obtenerCatalogoMock.mockResolvedValue(catalogo)
@@ -434,7 +447,7 @@ describe('catálogo de la tienda', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
 
-      const region = document.querySelector('[aria-live="polite"]') as HTMLElement
+      const region = document.querySelector('.publico-solo-lectura[aria-live="polite"]') as HTMLElement
       expect(region).toHaveTextContent('Martillo agregado al carrito')
     })
 
@@ -463,27 +476,120 @@ describe('catálogo de la tienda', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Agregar medio kilo más de Clavos' }))
       expect(cantidad).toHaveValue('1,5')
       await userEvent.clear(cantidad)
-      await userEvent.type(cantidad, '0,25')
+      await userEvent.type(cantidad, '0,25{Enter}')
 
       expect(cantidad).toHaveValue('0,25')
-      expect(cantidad).toHaveAttribute('aria-invalid', 'false')
+      expect(cantidadesGuardadas()).toEqual([{ idArticulo: 2, cantidad: 0.25 }])
+      expect(avisoDe(cantidad)).toBeEmptyDOMElement()
     })
 
-    it('una cantidad tipeada que la unidad no admite avisa, no cambia el carrito y al salir vuelve a la última buena', async () => {
-      await verCatalogo()
-      await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
-      await userEvent.click(screen.getByRole('button', { name: 'Agregar uno más de Martillo' }))
-      const cantidad = screen.getByRole('textbox', { name: 'Cantidad de Martillo' })
+    describe('cantidad tipeada', () => {
+      async function conMartilloEnDos() {
+        await verCatalogo()
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar Martillo al carrito' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar uno más de Martillo' }))
 
-      await userEvent.clear(cantidad)
-      await userEvent.type(cantidad, '2,5')
+        return screen.getByRole('textbox', { name: 'Cantidad de Martillo' })
+      }
 
-      expect(cantidad).toHaveAttribute('aria-invalid', 'true')
-      expect(screen.getByRole('alert')).toHaveTextContent('Ingresá una cantidad entera, hasta 999.')
-      await userEvent.tab()
-      expect(cantidad).toHaveValue('2')
-      expect(cantidad).toHaveAttribute('aria-invalid', 'false')
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      const AVISO = 'No se cambió la cantidad. Ingresá una cantidad entera, hasta 999.'
+
+      it('no se aplica ni se avisa mientras se escribe: "0" y "2," son pasos de una cantidad válida', async () => {
+        const cantidad = await conMartilloEnDos()
+
+        await userEvent.clear(cantidad)
+        await userEvent.type(cantidad, '0')
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+        await userEvent.type(cantidad, '{Backspace}2,')
+
+        expect(cantidad).toHaveValue('2,')
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 2 }])
+      })
+
+      it('al salir del campo se aplica lo tipeado', async () => {
+        const cantidad = await conMartilloEnDos()
+
+        await userEvent.clear(cantidad)
+        await userEvent.type(cantidad, '7')
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 2 }])
+        await userEvent.tab()
+
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 7 }])
+        expect(cantidad).toHaveValue('7')
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+      })
+
+      it('con Enter se aplica sin salir del campo', async () => {
+        const cantidad = await conMartilloEnDos()
+
+        await userEvent.clear(cantidad)
+        await userEvent.type(cantidad, '5{Enter}')
+
+        expect(cantidad).toHaveFocus()
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 5 }])
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar uno más de Martillo' }))
+        expect(cantidad).toHaveValue('6')
+      })
+
+      it.each([
+        ['al salir del campo', '{Tab}'],
+        ['con Enter', '{Enter}'],
+      ])('una cantidad que la unidad no admite, %s, vuelve a la última buena, no cambia el carrito y lo avisa con cortesía', async (_cuando, tecla) => {
+        const cantidad = await conMartilloEnDos()
+
+        await userEvent.clear(cantidad)
+        await userEvent.type(cantidad, `2,5${tecla}`)
+
+        expect(cantidad).toHaveValue('2')
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 2 }])
+        expect(avisoDe(cantidad)).toHaveAttribute('aria-live', 'polite')
+        expect(avisoDe(cantidad)).toHaveTextContent(AVISO)
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
+
+      it('dejar el campo vacío tampoco vale: vuelve a la última buena y avisa', async () => {
+        const cantidad = await conMartilloEnDos()
+
+        await userEvent.clear(cantidad)
+        await userEvent.tab()
+
+        expect(cantidad).toHaveValue('2')
+        expect(avisoDe(cantidad)).toHaveTextContent(AVISO)
+      })
+
+      it('el aviso se va con la próxima acción: volver a escribir, + o −', async () => {
+        const cantidad = await conMartilloEnDos()
+        const provocarElAviso = async () => {
+          await userEvent.clear(cantidad)
+          await userEvent.type(cantidad, 'x{Enter}')
+          expect(avisoDe(cantidad)).toHaveTextContent(AVISO)
+        }
+
+        await provocarElAviso()
+        await userEvent.type(cantidad, '3')
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+        await userEvent.type(cantidad, '{Enter}')
+
+        await provocarElAviso()
+        await userEvent.click(screen.getByRole('button', { name: 'Agregar uno más de Martillo' }))
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+
+        await provocarElAviso()
+        await userEvent.click(screen.getByRole('button', { name: 'Quitar uno de Martillo' }))
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+      })
+
+      it('salir del campo sin haber escrito nada no cambia nada ni avisa', async () => {
+        const cantidad = await conMartilloEnDos()
+
+        cantidad.focus()
+        await userEvent.tab()
+
+        expect(avisoDe(cantidad)).toBeEmptyDOMElement()
+        expect(cantidadesGuardadas()).toEqual([{ idArticulo: 1, cantidad: 2 }])
+      })
     })
 
     /**
@@ -509,7 +615,7 @@ describe('catálogo de la tienda', () => {
       const cantidad = screen.getByRole('textbox', { name: 'Cantidad de Martillo' })
 
       await userEvent.clear(cantidad)
-      await userEvent.type(cantidad, '999')
+      await userEvent.type(cantidad, '999{Enter}')
 
       expect(screen.getByRole('button', { name: 'Agregar uno más de Martillo' })).toBeDisabled()
     })

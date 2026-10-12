@@ -141,7 +141,7 @@ describe('panel del carrito con artículos', () => {
       expect(within(panel).getByText('Tu carrito está vacío')).toBeInTheDocument()
       expect(within(panel).getByRole('button', { name: 'Cerrar' })).toHaveFocus()
       expect(screen.getByRole('button', { name: 'Carrito, vacío' })).toBeInTheDocument()
-      expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent('Carrito vaciado')
+      expect(document.querySelector('.publico-solo-lectura[aria-live="polite"]')).toHaveTextContent('Carrito vaciado')
     })
   })
 })
