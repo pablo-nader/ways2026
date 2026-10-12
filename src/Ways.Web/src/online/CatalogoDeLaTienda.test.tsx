@@ -7,7 +7,6 @@ import { ErrorApi } from '../api/cliente'
 import type { VitrinaPublica } from '../api/tipos'
 import '../publico/publico.css'
 import { articuloPublico, catalogoPublico, categoriaPublica, diferida } from './datosDePrueba'
-import { RETARDO_DE_BUSQUEDA_MS } from './BarraDelCatalogo'
 import { Tienda } from './Tienda'
 
 const obtenerVitrinaMock = vi.fn()
@@ -160,7 +159,11 @@ describe('catálogo de la tienda', () => {
       expect(llamadas()).toHaveLength(antes)
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(RETARDO_DE_BUSQUEDA_MS)
+        await vi.advanceTimersByTimeAsync(299)
+      })
+      expect(llamadas()).toHaveLength(antes)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
       })
 
       expect(llamadas().slice(antes)).toEqual([{ buscar: 'taladro', idCategoria: null, pagina: 1, tamano: 24 }])

@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { CategoriaPublica } from '../api/publico'
 
 /** Pausa entre la última tecla y la búsqueda; Enter la salta. */
-export const RETARDO_DE_BUSQUEDA_MS = 300
+const RETARDO_DE_BUSQUEDA_MS = 300
 
 type PropsDeBarra = {
   categorias: readonly CategoriaPublica[]
