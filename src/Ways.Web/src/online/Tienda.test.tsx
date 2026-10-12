@@ -6,13 +6,15 @@ import { ErrorApi } from '../api/cliente'
 import type { VitrinaPublica } from '../api/tipos'
 import '../publico/publico.css'
 import { useCarrito } from './CarritoContext'
+import { catalogoPublico } from './datosDePrueba'
 import { Tienda } from './Tienda'
 
 const obtenerVitrinaMock = vi.fn()
+const obtenerCatalogoMock = vi.fn()
 
 vi.mock('../api/publico', async (importarOriginal) => ({
   ...(await importarOriginal<typeof import('../api/publico')>()),
-  clienteDePublico: { obtenerVitrina: () => obtenerVitrinaMock() },
+  clienteDePublico: { obtenerVitrina: () => obtenerVitrinaMock(), obtenerCatalogo: () => obtenerCatalogoMock() },
 }))
 
 const vitrina: VitrinaPublica = {
@@ -28,15 +30,18 @@ const vitrina: VitrinaPublica = {
 
 async function verTienda() {
   obtenerVitrinaMock.mockResolvedValue(vitrina)
+  obtenerCatalogoMock.mockResolvedValue(catalogoPublico())
   render(<Tienda />)
   await screen.findByRole('heading', { level: 1, name: 'El catálogo se está preparando.' })
 }
 
 beforeEach(() => {
   obtenerVitrinaMock.mockReset()
+  obtenerCatalogoMock.mockReset()
 })
 
 afterEach(() => {
+  localStorage.clear()
   document.documentElement.removeAttribute('data-bs-theme')
   document.documentElement.style.removeProperty('--vitrina-acento')
   document.title = ''
@@ -67,7 +72,7 @@ describe('Tienda', () => {
     expect(document.documentElement.style.getPropertyValue('--vitrina-acento')).toBe('#2a9d8f')
   })
 
-  it('el botón del carrito muestra la cuenta en 0 y no abre nada todavía', async () => {
+  it('el botón del carrito muestra la cuenta en 0 y no abre nada hasta que se lo pulsa', async () => {
     await verTienda()
 
     const boton = screen.getByRole('button', { name: 'Carrito, vacío' })
@@ -185,6 +190,7 @@ describe('Tienda', () => {
 
     it('al desmontar con el panel abierto no deja el scroll de la página bloqueado', async () => {
       obtenerVitrinaMock.mockResolvedValue(vitrina)
+      obtenerCatalogoMock.mockResolvedValue(catalogoPublico())
       const { unmount } = render(<Tienda />)
       await userEvent.click(await screen.findByRole('button', { name: 'Carrito, vacío' }))
       expect(document.body.style.overflow).toBe('hidden')
