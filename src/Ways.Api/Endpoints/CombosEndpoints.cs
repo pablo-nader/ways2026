@@ -18,6 +18,10 @@ public static class CombosEndpoints
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Obtiene un combo con sus componentes.");
 
+        grupo.MapGet("/{id:int}/cargable", (ServicioDeCombos servicio, int id, int? idEmpresa, CancellationToken ct) =>
+            servicio.ObtenerCargableAsync(id, idEmpresa, ct))
+        .WithSummary("Un combo activo con los artículos que completan cada componente, para cargarlo en el carrito del POS.");
+
         grupo.MapPost("/", async (ServicioDeCombos servicio, AltaCombo datos, CancellationToken ct) =>
         {
             var creado = await servicio.CrearAsync(datos, ct);
