@@ -56,7 +56,8 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("public, max-age=60", respuesta.Headers.CacheControl?.ToString());
         var catalogo = await ApoyoDeDominios.LeerJsonAsync(respuesta);
 
-        Assert.Equal(["articulos", "categorias", "pagina", "tamano", "total"], Propiedades(catalogo));
+        Assert.Equal(["articulos", "categorias", "combos", "pagina", "tamano", "total"], Propiedades(catalogo));
+        Assert.Equal(0, catalogo.GetProperty("combos").GetArrayLength());
         Assert.Equal((3, 1, 24), (catalogo.GetProperty("total").GetInt32(), catalogo.GetProperty("pagina").GetInt32(), catalogo.GetProperty("tamano").GetInt32()));
 
         // Categorías: por orden (Almacén 1, Bebidas 2), con su cuenta; la de "sin categoría" no es un chip.
@@ -892,6 +893,9 @@ public class CatalogoPublicoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         public Task<CatalogoPublico?> ObtenerAsync(int idTenant, ConsultaDeCatalogo consulta, CancellationToken ct = default) =>
             Real.ObtenerAsync(idTenant, consulta, ct);
+
+        public Task<IReadOnlyList<ComboPublico>?> ObtenerCombosAsync(int idTenant, CancellationToken ct = default) =>
+            Real.ObtenerCombosAsync(idTenant, ct);
 
         public Task<VersionDeImagen?> ObtenerVersionDeImagenAsync(int idTenant, int idArticulo, CancellationToken ct = default)
         {

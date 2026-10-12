@@ -9,8 +9,9 @@ namespace Ways.Infrastructure.Multitenancy;
 /// <see cref="AlcanceEnModoPublico"/>) y corre ahí <see cref="ConsultaDeCatalogoPublico"/>, que es quien
 /// decide qué se proyecta; este lector solo aporta el modo y el tenant. Las policies de lectura pública
 /// (<c>articulos</c>, <c>articulos_empresas</c>, <c>listas_precio</c>, <c>precios</c>, <c>categorias</c>,
-/// <c>imagenes_articulo</c>, más las tres de la vitrina) dejan ver filas enteras: nada de lo que sale de acá
-/// es una entidad, solo los records de <see cref="CatalogoPublico"/>.
+/// <c>imagenes_articulo</c>, <c>ofertas</c>, <c>ofertas_listas</c>, <c>combos</c>, <c>combos_componentes</c>, más las
+/// tres de la vitrina) dejan ver filas enteras: nada de lo que sale de acá es una entidad, solo los records de
+/// <see cref="CatalogoPublico"/> y <see cref="ComboPublico"/>.
 /// </summary>
 public sealed class LectorDeCatalogoPublico(IServiceScopeFactory alcances) : ILectorDeCatalogoPublico
 {
@@ -19,9 +20,31 @@ public sealed class LectorDeCatalogoPublico(IServiceScopeFactory alcances) : ILe
     {
         await using var alcance = AlcanceEnModoPublico.Abrir(alcances, idTenant);
 
-        return await alcance.ServiceProvider
+        var catalogo = await alcance.ServiceProvider
             .GetRequiredService<ConsultaDeCatalogoPublico>()
             .ObtenerCatalogoAsync(consulta, ct);
+
+        // Los combos viajan solo en la primera página sin búsqueda ni categoría: el visitante que filtra o pagina
+        // no los ve repetidos. Pagina es la ya acotada por la consulta.
+        if (catalogo is null || catalogo.Pagina != 1 || !string.IsNullOrWhiteSpace(consulta.Buscar) || consulta.IdCategoria is not null)
+        {
+            return catalogo;
+        }
+
+        var combos = await alcance.ServiceProvider
+            .GetRequiredService<ConsultaDeCombosPublicos>()
+            .ObtenerAsync(ct);
+
+        return catalogo with { Combos = combos ?? [] };
+    }
+
+    public async Task<IReadOnlyList<ComboPublico>?> ObtenerCombosAsync(int idTenant, CancellationToken ct = default)
+    {
+        await using var alcance = AlcanceEnModoPublico.Abrir(alcances, idTenant);
+
+        return await alcance.ServiceProvider
+            .GetRequiredService<ConsultaDeCombosPublicos>()
+            .ObtenerAsync(ct);
     }
 
     public async Task<VersionDeImagen?> ObtenerVersionDeImagenAsync(

@@ -2,7 +2,9 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
+using Ways.Application.Ofertas;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Precios;
 using static Ways.Application.Busqueda.BusquedaSinAcentos;
 
@@ -14,7 +16,8 @@ namespace Ways.Application.CatalogoOnline;
 /// donde RLS deja leer solo lo publicado del tenant del host. Quién decide qué:
 /// <list type="bullet">
 /// <item>Las policies <c>*_publico_lectura</c> deciden lo que es del tenant, está vivo y, en <c>articulos</c>,
-/// está publicado y activo (<c>publicado_web AND activo</c>), y en <c>vitrinas</c> que la vitrina está publicada.
+/// está disponible online y a la venta y activo (<c>disponible_online AND disponible_venta AND activo</c>), en
+/// <c>ofertas</c> disponible online y activa, y en <c>vitrinas</c> que la vitrina está publicada.
 /// Esas cláusulas NO se repiten acá, como en <see cref="Vitrinas.ILectorDeVitrinaPublica"/>: una prueba contra
 /// el endpoint no las distinguiría de la policy, y las prueba la conexión cruda.</item>
 /// <item>Esta clase decide lo que la policy no puede: que el artículo esté disponible para la empresa de la
@@ -23,14 +26,21 @@ namespace Ways.Application.CatalogoOnline;
 /// interno no se publica en el DTO, y buscar por él sería un oráculo sobre un dato que la tienda no muestra.</item>
 /// </list>
 ///
-/// <para><b>Precio.</b> No se reusa el motor del POS (<c>ServicioDeInstantaneaDePos</c>/<c>ServicioDeOfertas</c>):
-/// resuelve ofertas, escalones y clientes, y lee tablas que el modo público no ve. La tienda muestra el precio de
-/// lista, sin ofertas todavía. Lo que sí se reusa es la regla: el precio vigente de una lista fija es la fila con
-/// <c>vigente_desde &lt;= ahora</c> y <c>vigente_hasta</c> nulo o futuro (<c>ServicioDePrecios</c>), y el de una
-/// derivada sale de la fila de su lista base con <see cref="ResolvedorDePrecios.ResolverPrecioDerivado"/>, el mismo
-/// redondeo (2 decimales, lejos de cero). La existencia del precio se decide en SQL, antes de paginar, para que
-/// <c>total</c> y las cuentas de categoría cuenten solo artículos que se pueden vender; el monto se resuelve solo
-/// para la página.</para>
+/// <para><b>Precio.</b> No se instancia <c>ServicioDeOfertas</c> ni el motor del POS
+/// (<c>ServicioDeInstantaneaDePos</c>): necesitan el usuario de la request y leen tablas que el modo público no ve.
+/// Lo que se reusa es lo puro: el precio vigente de una lista fija es la fila con <c>vigente_desde &lt;= ahora</c> y
+/// <c>vigente_hasta</c> nulo o futuro (<c>ServicioDePrecios</c>), y el de una derivada sale de la fila de su lista base
+/// con <see cref="ResolvedorDePrecios.ResolverPrecioDerivado"/>, el mismo redondeo (2 decimales, lejos de cero). La
+/// existencia del precio se decide en SQL, antes de paginar, para que <c>total</c> y las cuentas de categoría cuenten
+/// solo artículos que se pueden vender; el monto se resuelve solo para la página.</para>
+///
+/// <para><b>Ofertas.</b> Sobre el precio de lista de cada artículo de la página se corre el resolvedor puro del
+/// dominio (<see cref="ResolvedorDeOfertas"/>) a cantidad 1, con las ofertas que la policy deja ver (disponibles online
+/// y activas), sus listas objetivo, la jerarquía de categorías y la hora local del servidor
+/// (<see cref="ServicioDeOfertas.DescomponerHoraLocal"/>, la misma que usa el POS). La lista que se le pasa al
+/// resolvedor es la ORIGINAL de la vitrina, también cuando es derivada: así una oferta dirigida a esa lista aplica. Es
+/// una vista previa por artículo: las ofertas con cantidad mínima mayor que 1 no aplican, y las escalonadas por
+/// cantidad o por familia en el carrito quedan para el checkout.</para>
 ///
 /// <para><b>Lista de la tienda.</b> La de la vitrina (<c>id_lista_precio</c>) o, si no tiene, la default compartida
 /// del tenant (<c>id_empresa IS NULL AND es_default</c>, la misma que usa la grilla del back-office). Tiene que
@@ -49,9 +59,10 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
     /// <c>OFFSET</c> negativo. Una página más allá del final del catálogo sale vacía, con el <c>total</c> real.</summary>
     public const int PaginaMaxima = 10_000;
 
-    /// <summary>La lista donde están las filas de <c>precios</c> (la propia si es fija, la base si es derivada)
-    /// y el porcentaje que se aplica a ese monto (<c>null</c> si es fija).</summary>
-    private sealed record ListaDePrecios(int IdListaConPrecios, decimal? Porcentaje);
+    /// <summary>La lista donde están las filas de <c>precios</c> (la propia si es fija, la base si es derivada),
+    /// el porcentaje que se aplica a ese monto (<c>null</c> si es fija) y la lista ORIGINAL de la tienda, la que
+    /// miran las ofertas dirigidas (<c>ofertas_listas</c>) aunque sea derivada.</summary>
+    internal sealed record ListaDePrecios(int IdListaConPrecios, decimal? Porcentaje, int IdListaOriginal);
 
     /// <summary>
     /// El catálogo de la vitrina publicada del tenant. <c>null</c> cuando no hay vitrina publicada.
@@ -139,6 +150,8 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
                 a.Nombre,
                 a.Descripcion,
                 a.IdCategoria,
+                a.IdGrupo,
+                a.IdFamilia,
                 a.UnidadVenta,
                 ImagenActualizadaEn = db.ImagenesArticulo
                     .Where(i => i.IdArticulo == a.Id)
@@ -149,19 +162,36 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
 
         var montos = await MontosVigentesAsync([.. filas.Select(f => f.Id)], idLista, ahora, ct);
 
-        var articulos = filas
+        var conPrecio = filas
             .Where(f => montos.ContainsKey(f.Id))
-            .Select(f => new ArticuloPublico(
-                f.Id,
-                f.Nombre,
-                f.Descripcion,
-                f.IdCategoria is { } idCategoria && idsVisibles.Contains(idCategoria) ? idCategoria : null,
-                lista.Porcentaje is { } porcentaje
+            .Select(f => (
+                Fila: f,
+                Precio: lista.Porcentaje is { } porcentaje
                     ? ResolvedorDePrecios.ResolverPrecioDerivado(montos[f.Id], porcentaje)
-                    : montos[f.Id],
-                f.UnidadVenta,
-                TieneImagen: f.ImagenActualizadaEn is not null,
-                ImagenVersion: f.ImagenActualizadaEn is { } actualizada ? ImagenDeArticulo.Version(actualizada) : null))
+                    : montos[f.Id]))
+            .ToList();
+
+        var ofertas = await ResolverOfertasAsync(
+            [.. conPrecio.Select(x => new ArticuloConPrecio(x.Fila.Id, x.Fila.IdCategoria, x.Fila.IdGrupo, x.Fila.IdFamilia, x.Precio))],
+            lista.IdListaOriginal, idEmpresa, ahora, ct);
+
+        var articulos = conPrecio
+            .Select(x =>
+            {
+                var oferta = ofertas.GetValueOrDefault(x.Fila.Id);
+
+                return new ArticuloPublico(
+                    x.Fila.Id,
+                    x.Fila.Nombre,
+                    x.Fila.Descripcion,
+                    x.Fila.IdCategoria is { } idCategoria && idsVisibles.Contains(idCategoria) ? idCategoria : null,
+                    oferta?.Precio ?? x.Precio,
+                    x.Fila.UnidadVenta,
+                    TieneImagen: x.Fila.ImagenActualizadaEn is not null,
+                    ImagenVersion: x.Fila.ImagenActualizadaEn is { } actualizada ? ImagenDeArticulo.Version(actualizada) : null,
+                    PrecioOriginal: oferta is null ? null : x.Precio,
+                    Oferta: oferta?.Nombre);
+            })
             .ToList();
 
         return new CatalogoPublico(categorias, articulos, total, pagina, tamano);
@@ -194,7 +224,96 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
             .FirstOrDefaultAsync(ct);
     }
 
-    private async Task<int?> EmpresaDeLaVitrinaAsync(CancellationToken ct) =>
+    /// <summary>Un artículo de la página con su precio de lista ya resuelto, listo para el resolvedor de ofertas.</summary>
+    private sealed record ArticuloConPrecio(int Id, int? IdCategoria, int? IdGrupo, int? IdFamilia, decimal Precio);
+
+    /// <summary>La oferta que rebaja un artículo: <paramref name="Precio"/> es el final, <paramref name="Nombre"/> el de la
+    /// aplicada de mayor prioridad que descuenta algo.</summary>
+    private sealed record OfertaDelArticulo(decimal Precio, string Nombre);
+
+    /// <summary>
+    /// Las ofertas que rebajan cada artículo de la página, a cantidad 1 y en la lista original de la tienda. Tres
+    /// consultas fijas (categorías, ofertas, listas de las ofertas) sin importar el tamaño de la página; el resto del
+    /// matching es <see cref="ResolvedorDeOfertas.Coincide"/> en memoria. Solo figuran los artículos cuyo precio baja:
+    /// una oferta que no descuenta (por ejemplo, un precio unitario mayor que el de lista) no cuenta.
+    /// </summary>
+    private async Task<Dictionary<int, OfertaDelArticulo>> ResolverOfertasAsync(
+        IReadOnlyList<ArticuloConPrecio> articulos, int idLista, int idEmpresa, DateTimeOffset ahora, CancellationToken ct)
+    {
+        if (articulos.Count == 0)
+        {
+            return [];
+        }
+
+        var padrePorCategoria = await db.Categorias
+            .AsNoTracking()
+            .Select(c => new { c.Id, c.IdCategoriaPadre })
+            .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+
+        var categoriasPorArticulo = articulos.ToDictionary(
+            a => a.Id,
+            a => a.IdCategoria is { } idCategoria
+                ? CadenaDeCategorias.ConstruirAncestros(idCategoria, padrePorCategoria)
+                : (IReadOnlySet<int>)new HashSet<int>());
+
+        var idsArticulo = articulos.Select(a => a.Id).ToList();
+        var idsGrupo = articulos.Where(a => a.IdGrupo.HasValue).Select(a => a.IdGrupo!.Value).Distinct().ToList();
+        var idsFamilia = articulos.Where(a => a.IdFamilia.HasValue).Select(a => a.IdFamilia!.Value).Distinct().ToList();
+        var idsCategoria = categoriasPorArticulo.Values.SelectMany(c => c).Distinct().ToList();
+
+        var ofertas = await db.Ofertas
+            .AsNoTracking()
+            .Where(o => (o.IdArticulo != null && idsArticulo.Contains(o.IdArticulo.Value))
+                || (o.IdGrupo != null && idsGrupo.Contains(o.IdGrupo.Value))
+                || (o.IdFamilia != null && idsFamilia.Contains(o.IdFamilia.Value))
+                || (o.IdCategoria != null && idsCategoria.Contains(o.IdCategoria.Value)))
+            .Where(o => o.IdEmpresa == null || o.IdEmpresa == idEmpresa)
+            .ToListAsync(ct);
+
+        if (ofertas.Count == 0)
+        {
+            return [];
+        }
+
+        var idsOferta = ofertas.Select(o => o.Id).ToList();
+        var listasPorOferta = (await db.OfertasListas
+                .AsNoTracking()
+                .Where(ol => idsOferta.Contains(ol.IdOferta))
+                .Select(ol => new { ol.IdOferta, ol.IdListaPrecio })
+                .ToListAsync(ct))
+            .GroupBy(ol => ol.IdOferta)
+            .ToDictionary(g => g.Key, g => (IReadOnlySet<int>)g.Select(x => x.IdListaPrecio).ToHashSet());
+
+        var candidatas = ofertas
+            .Select(o => new OfertaCandidata(
+                o.Id, o.Nombre, o.Prioridad, o.Acumulable,
+                ReglaDeOfertas.LeerAlcance(o), ReglaDeOfertas.LeerBeneficio(o), o.CantidadMinima,
+                o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
+                ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
+                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>()))
+            .ToList();
+
+        var (fecha, hora, diaSemana) = ServicioDeOfertas.DescomponerHoraLocal(ahora);
+        var resultado = new Dictionary<int, OfertaDelArticulo>();
+
+        foreach (var articulo in articulos)
+        {
+            var linea = new LineaAResolver(
+                articulo.Id, articulo.IdGrupo, categoriasPorArticulo[articulo.Id].ToList(), idLista, Cantidad: 1m,
+                articulo.Precio, fecha, hora, diaSemana, articulo.IdFamilia, CantidadDeFamilia: 1m);
+
+            var resolucion = ResolvedorDeOfertas.Resolver(linea, candidatas);
+
+            if (resolucion.Aplicadas.FirstOrDefault(a => a.DescuentoUnitario > 0) is { Nombre: { } nombre })
+            {
+                resultado[articulo.Id] = new OfertaDelArticulo(resolucion.PrecioFinal, nombre);
+            }
+        }
+
+        return resultado;
+    }
+
+    internal async Task<int?> EmpresaDeLaVitrinaAsync(CancellationToken ct) =>
         await db.Vitrinas.AsNoTracking().Select(v => (int?)v.IdEmpresa).FirstOrDefaultAsync(ct);
 
     /// <summary>La imagen del artículo si el artículo se ve (la policy deja solo los publicados y activos) y
@@ -207,7 +326,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
                 || db.ArticulosEmpresas.Any(ae => ae.IdArticulo == a.Id && ae.IdEmpresa == idEmpresa))
         select i;
 
-    private async Task<ListaDePrecios?> ResolverListaAsync(int idEmpresa, int? idListaDeLaVitrina, CancellationToken ct)
+    internal async Task<ListaDePrecios?> ResolverListaAsync(int idEmpresa, int? idListaDeLaVitrina, CancellationToken ct)
     {
         var visibles = db.ListasPrecio
             .AsNoTracking()
@@ -228,7 +347,7 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
 
         if (lista.Modo == ModoLista.Fija)
         {
-            return new ListaDePrecios(lista.Id, Porcentaje: null);
+            return new ListaDePrecios(lista.Id, Porcentaje: null, lista.Id);
         }
 
         if (lista.Porcentaje is not { } porcentaje || lista.IdListaBase is not { } idBase)
@@ -240,17 +359,17 @@ public class ConsultaDeCatalogoPublico(IWaysDbContext db, IRelojDelSistema reloj
             .AsNoTracking()
             .AnyAsync(l => l.Id == idBase && l.Modo == ModoLista.Fija, ct);
 
-        return baseEsFija ? new ListaDePrecios(idBase, porcentaje) : null;
+        return baseEsFija ? new ListaDePrecios(idBase, porcentaje, lista.Id) : null;
     }
 
     /// <summary>La definición de "precio vigente" de <c>ServicioDePrecios.PreciosVigentesEnLoteAsync</c>, una sola vez
     /// para la existencia del precio (que decide qué artículos aparecen) y para su monto.</summary>
-    private static Expression<Func<Precio, bool>> PrecioVigenteEn(DateTimeOffset ahora) =>
+    internal static Expression<Func<Precio, bool>> PrecioVigenteEn(DateTimeOffset ahora) =>
         p => p.VigenteDesde <= ahora && (p.VigenteHasta == null || p.VigenteHasta > ahora);
 
     /// <summary>El monto vigente de cada artículo en la lista, con el mismo desempate que
     /// <c>ServicioDePrecios.PreciosVigentesEnLoteAsync</c>: la fila que empezó más tarde.</summary>
-    private async Task<Dictionary<int, decimal>> MontosVigentesAsync(
+    internal async Task<Dictionary<int, decimal>> MontosVigentesAsync(
         List<int> idsArticulo, int idLista, DateTimeOffset ahora, CancellationToken ct)
     {
         if (idsArticulo.Count == 0)
