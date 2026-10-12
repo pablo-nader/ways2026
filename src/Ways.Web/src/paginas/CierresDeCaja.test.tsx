@@ -87,7 +87,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = {}): R
 }
 
 const RUTA_LISTA = '/caja/turnos?idPuntoVenta=7&estado=Cerrado&pagina=1&tamanio=10'
-const BOTON = 'Reimprimir ticket de cierre'
+const BOTON = 'Imprimir'
 
 beforeEach(() => {
   apiGetMock.mockReset()
@@ -181,6 +181,104 @@ describe('CierresDeCaja — listado del punto de venta', () => {
   })
 })
 
+describe('CierresDeCaja — acciones con ícono', () => {
+  it('cada fila tiene "Detalle" e "Imprimir" como botones de ícono con el tooltip igual a su nombre accesible', async () => {
+    apiGetMock.mockResolvedValue(paginaFixture([turnoFixture({ id: 501 })]))
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+
+    const fila = await screen.findByRole('row', { name: /#501/ })
+    for (const nombre of ['Detalle', 'Imprimir']) {
+      expect(within(fila).getByRole('button', { name: nombre })).toHaveAttribute('title', nombre)
+    }
+    expect(screen.queryByRole('button', { name: 'Reimprimir ticket de cierre' })).not.toBeInTheDocument()
+  })
+})
+
+describe('CierresDeCaja — detalle del cierre', () => {
+  function rutasDelDetalle(id: number, vendedor: string) {
+    return {
+      [`/caja/turnos/${id}/detalle`]: {
+        resumen: {
+          idTurnoCaja: id,
+          idMedioAncla: 1,
+          medios: [],
+          cantidadTickets: 0,
+          primerTicket: null,
+          ultimoTicket: null,
+          ingresosPorArea: [],
+          egresos: { porCategoria: [], porArea: [], retiros: 0 },
+        },
+        tickets: [],
+        gastos: [],
+        fechaRecalculo: null,
+        idEmpleadoRecalculo: null,
+      },
+      [`/caja/turnos/${id}`]: {
+        id,
+        idPuntoVenta: 7,
+        idEmpleadoApertura: 1,
+        idEmpleadoCierre: 1,
+        fechaApertura: '2026-09-16T12:00:00Z',
+        fechaCierre: '2026-09-16T20:00:00Z',
+        fondoInicial: 500,
+        estado: 'Cerrado',
+        observaciones: null,
+        arqueos: [],
+        fechaRecalculo: null,
+        idEmpleadoRecalculo: null,
+      },
+      [`/caja/turnos/${id}/resumen-de-cierre`]: resumenFixture({ idTurnoCaja: id, vendedor }),
+    }
+  }
+
+  function mockearListaYDetalle(extra: Record<string, unknown>) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === RUTA_LISTA) return Promise.resolve(paginaFixture([turnoFixture({ id: 502 }), turnoFixture({ id: 501 })]))
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([])
+      if (ruta in extra) return Promise.resolve(extra[ruta])
+      return Promise.reject(new Error(ruta))
+    })
+  }
+
+  it('"Detalle" abre el modal con el cierre de ESE turno, sin pedir el de la otra fila', async () => {
+    mockearListaYDetalle({ ...rutasDelDetalle(501, 'cajera501'), ...rutasDelDetalle(502, 'cajera502') })
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+
+    await userEvent.click(within(await screen.findByRole('row', { name: /#501/ })).getByRole('button', { name: 'Detalle' }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Detalle del cierre #501' })
+    expect(await within(dialogo).findByText('cajera501')).toBeInTheDocument()
+    expect(apiGetMock).not.toHaveBeenCalledWith('/caja/turnos/502/detalle')
+  })
+
+  it('al cerrar el modal el foco vuelve al botón "Detalle" de la fila y el modal desaparece', async () => {
+    mockearListaYDetalle(rutasDelDetalle(501, 'cajera501'))
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    const detalle = within(await screen.findByRole('row', { name: /#501/ })).getByRole('button', { name: 'Detalle' })
+    await userEvent.click(detalle)
+    const dialogo = await screen.findByRole('dialog')
+    await within(dialogo).findByText('cajera501')
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(detalle).toHaveFocus()
+  })
+
+  it('reabrir otra fila tras cerrar el modal muestra el cierre nuevo, no el anterior', async () => {
+    mockearListaYDetalle({ ...rutasDelDetalle(501, 'cajera501'), ...rutasDelDetalle(502, 'cajera502') })
+    render(<CierresDeCaja alReimprimir={vi.fn()} />)
+    await userEvent.click(within(await screen.findByRole('row', { name: /#501/ })).getByRole('button', { name: 'Detalle' }))
+    await screen.findByText('cajera501')
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    await userEvent.click(within(screen.getByRole('row', { name: /#502/ })).getByRole('button', { name: 'Detalle' }))
+
+    expect(await screen.findByText('cajera502')).toBeInTheDocument()
+    expect(screen.queryByText('cajera501')).not.toBeInTheDocument()
+  })
+})
+
 describe('CierresDeCaja — reimpresión', () => {
   it('pide el resumen de cierre del turno elegido y se lo entrega a alReimprimir', async () => {
     const resumen = resumenFixture({ idTurnoCaja: 501 })
@@ -216,7 +314,8 @@ describe('CierresDeCaja — reimpresión', () => {
     })
 
     expect(apiGetMock.mock.calls.filter(([ruta]) => ruta === '/caja/turnos/501/resumen-de-cierre')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Reimprimiendo…' })).toBeDisabled()
+    expect(boton).toHaveAttribute('aria-busy', 'true')
+    expect(boton).toBeDisabled()
     expect(within(screen.getByRole('row', { name: /#502/ })).getByRole('button', { name: BOTON })).toBeDisabled()
 
     await act(async () => {

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
 import type { PaginaDeTurnos, ResumenDeCierrePorRetiro } from '../api/tipos'
+import { BotonIcono } from '../componentes/BotonIcono'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ModalDetalleDeTurno } from '../componentes/ModalDetalleDeTurno'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 const TAMANIO_DE_PAGINA = 10
@@ -19,12 +21,13 @@ type Props = {
 
 /**
  * "Cierres de caja" del POS: los turnos cerrados del punto de venta del dispositivo, el más
- * reciente primero, para reimprimir el ticket de cierre cuando la impresora falló al cerrar. El
- * punto de venta y el estado se piden al servidor (`GET /api/caja/turnos?idPuntoVenta=&estado=Cerrado`),
- * nunca se filtran acá.
+ * reciente primero, para ver su detalle y reimprimir el ticket de cierre cuando la impresora falló
+ * al cerrar. El punto de venta y el estado se piden al servidor
+ * (`GET /api/caja/turnos?idPuntoVenta=&estado=Cerrado`), nunca se filtran acá.
  *
  * Cada lectura de la lista lleva su generación (`react-async-state` regla 2); la reimpresión es
- * una por vez (`reimprimiendoRef`, regla 11) y mientras corre quedan inertes todos los botones.
+ * una por vez (`reimprimiendoRef`, regla 11) y mientras corre quedan inertes todos los botones de imprimir.
+ * "Detalle" abre `ModalDetalleDeTurno`, que lee y descarta sus propias respuestas.
  */
 export function CierresDeCaja({ alReimprimir }: Props) {
   const { puntoVenta } = usePuntoVenta()
@@ -39,6 +42,8 @@ export function CierresDeCaja({ alReimprimir }: Props) {
   const [idReimprimiendo, setIdReimprimiendo] = useState<number | null>(null)
   const reimprimiendoRef = useRef(false)
   const [errorReimprimir, setErrorReimprimir] = useState('')
+
+  const [idDetalle, setIdDetalle] = useState<number | null>(null)
 
   useEffect(() => {
     if (idPuntoVenta === null) return
@@ -119,14 +124,15 @@ export function CierresDeCaja({ alReimprimir }: Props) {
                       <td>{formatearFechaHora(turno.fechaApertura)}</td>
                       <td>{turno.fechaCierre ? formatearFechaHora(turno.fechaCierre) : '—'}</td>
                       <td className="text-end">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          disabled={reimprimiendo}
-                          onClick={() => void reimprimir(turno.id)}
-                        >
-                          {idReimprimiendo === turno.id ? 'Reimprimiendo…' : 'Reimprimir ticket de cierre'}
-                        </button>
+                        <div className="d-flex justify-content-end gap-2">
+                          <BotonIcono icono="detalle" onClick={() => setIdDetalle(turno.id)} />
+                          <BotonIcono
+                            icono="imprimir"
+                            ocupado={idReimprimiendo === turno.id}
+                            disabled={reimprimiendo}
+                            onClick={() => void reimprimir(turno.id)}
+                          />
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -167,6 +173,7 @@ export function CierresDeCaja({ alReimprimir }: Props) {
           </>
         )}
       </Box>
+      {idDetalle !== null && <ModalDetalleDeTurno idTurno={idDetalle} onCerrar={() => setIdDetalle(null)} />}
     </div>
   )
 }
