@@ -100,10 +100,12 @@ with SELECT-only policies, restricted to `id_tenant = app_tenant_actual()`, on e
   (`24598517`). Commits `a61ba967` (la tienda honra `?categoria` y `?buscar`; imagen del artículo a `publico/`), `c17e9c06`
   (landing), plus the final commit with this document. Owner feedback: "Es re triste esa landing". Web only, no backend change.
   - Sections, in order, each hiding when its data is missing: cabecera; portada (tagline h1, chevrons, bar, two CTAs, info pills
-    horario / domicilio / "Pedidos por WhatsApp" from the first branch, and on desktop a two-column hero with an accent "sello"
+    horario / domicilio / "WhatsApp" from the first branch, and on desktop a two-column hero with an accent "sello"
     showing the horario); destacados ("Lo que vas a encontrar": up to 8 articles from `GET /api/publico/catalogo?tamano=8`, plain
-    links to `/online`, "Ver toda la tienda"); categorías (chips linking `/online?categoria=<id>`); "Quiénes somos";
-    "Cómo comprar" (01/02/03); "Dónde estamos" (branch cards with a lazy Google Maps embed); cierre ("¿Listo para pedir?" band).
+    links to `/online?buscar=<nombre>`, "Ver toda la tienda"); categorías (chips linking `/online?categoria=<id>`); "Quiénes somos";
+    "Cómo comprar" (01/02/03, copy that only promises what exists: browse, WhatsApp or ask the commerce, pickup at the local);
+    "Dónde estamos" (branch cards with a lazy, sandboxed Google Maps embed and an "Abrir en Google Maps" fallback link); cierre
+    ("¿Listo para pedir?" band when a WhatsApp number exists, "¿Querés saber más?" otherwise).
   - `/online` now starts with `?categoria=<id>` and `?buscar=<texto>` as the initial filters (`online/filtroInicial.ts`, read once
     on mount; the search box starts filled without re-sending the search).
 
@@ -310,11 +312,11 @@ before data on a light-theme commerce; render-blocking Google Fonts; no per-bran
 Route/topology: delegated bounded writer (trigger: 2+ non-trivial files).
 
 Decisions:
-- The "24" stamp rule is stricter than "the text contains 24": `atiendeLasVeinticuatroHoras` needs `24` followed by `hs`/`h`/`horas`/`/7`/`x7`
-  and not preceded by a digit, `:`, `.` or `,`, and a closing time (`8 a 24 hs`, `9-24`, `hasta las 24 hs`) does not count. Reason: "Lun a Sáb 8 a 24"
-  would otherwise print "ABIERTO 24 HS", a false claim. A bare "Abierto 24" stays as given. The owner can loosen it in `landing/horario.ts`.
+- The "24" stamp rule (superseded by judgment-day L1, see below) was first a pattern search for `24 hs` minus closing-time ranges; it missed
+  `9 hs a 24 hs`, `8hs-24hs` and mixed schedules, so it is now a full-text allow-list.
 - The stamp is `aria-hidden`: the pill already carries the full horario, so assistive tech would read it twice. It clamps to 3 lines in CSS.
-- Pills use the first branch for horario/domicilio; "Pedidos por WhatsApp" uses any branch with a usable number, the same rule as the CTA.
+- Pills use the first branch for horario/domicilio; the WhatsApp pill uses the first branch with a usable number, the same rule as the CTA (see L5 below for the
+  branch-name prefix and the screen-reader labels).
 - Catalog read: `useCatalogoDeLaLanding` (own per-effect-pass gate: unmount and the StrictMode second pass invalidate the one in flight); failure,
   404 or an empty catalog render nothing and no alert. It runs in parallel with the vitrina read and is not retried by "Reintentar".
 - Accent surfaces (sello, cierre) use `--pub-tinta-sobre-acento` for text, inverted `publico-boton-tinta` and `publico-boton-contorno-tinta` buttons, and a
@@ -338,6 +340,22 @@ New tests: `landing/Landing.secciones.test.tsx` (34), `landing/horario.test.ts`,
 | M4 | step 2 always says WhatsApp | `sin número de WhatsApp el segundo paso es con el comercio` |
 | M5 | map without the domicilio predicate | `una sucursal sin domicilio no tiene mapa`, `un domicilio en blanco no genera mapa` |
 | M6 | `idCategoria` always null in `filtroInicialDeLaUrl` | `?categoria=<id> fija la categoría`, `los dos juntos`, and the two catalog tests `?categoria=3...` |
+
+#### Judgment-day round 1 fixes (branch `pnader/landing-enriquecida-ajustes`)
+
+- **L1 (HIGH)** `landing/horario.ts`: "Abierto 24 hs" only when the whole horario (trimmed, lower-cased, trailing punctuation dropped) is one of the
+  allow-listed forms (`24 hs`, `24 horas`, `abierto las 24 horas`, `24/7`, `24x7`, optional "todos los días" prefix or suffix). Anything else shows the text as given.
+- **L2** `online/filtroInicial.ts`: `?categoria` above 2147483647 is ignored (full catalog). **L3** copy: pill "WhatsApp", steps "Mirá lo que hay en la tienda
+  online" / "Escribinos por WhatsApp con lo que necesitás" or "Consultá al comercio por lo que necesitás" / "Coordiná con el comercio el retiro en el local";
+  closing title "¿Listo para pedir?" only with a WhatsApp number, else "¿Querés saber más?". **L4** `.publico-sello-texto`: `line-height: 1.05` plus
+  `padding-top: 0.06em`. **L5** with more than one branch each pill is prefixed with its branch name; the WhatsApp pill comes from the first branch with a
+  usable number; each pill has a screen-reader-only label ("Horario:", "Dirección:", "WhatsApp:"). **L6** map `sandbox` + default referrer policy + "Abrir en
+  Google Maps" fallback link. **L7** destacados link to `/online?buscar=<nombre>`; `BarraDelCatalogo` tests prove `buscarInicial` is not re-sent.
+- Verification after the fixes (in `src/Ways.Web`): `npx tsc -b` exit 0; `npx oxlint` exit 0, no finding in landing/publico/online; `npx vite build` ok;
+  `npx vitest run src/landing src/online src/publico` 16 files, 383 tests passed; `npx vitest run` 209 files, 5888 tests passed.
+- Mutations (all red, then reverted): M7 `includes('24')` in `atiendeLasVeinticuatroHoras` (19 unit cases); M8 no int32 range check (3 cases); M9 `line-height: 0.95`
+  and M9b without `padding-top` (the sello style test); M10 `useRef('')` in `BarraDelCatalogo` (2 cases); M11 WhatsApp pill from the first branch instead of the
+  one with a number (3 cases); M12 branch prefix also on single-branch commerces (3 cases); M13 map without `sandbox` (the sandbox test).
 
 ## Delivery slices
 
