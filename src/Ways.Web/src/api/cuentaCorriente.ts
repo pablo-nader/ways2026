@@ -12,6 +12,7 @@ import { esVueltoJustificado } from './pagos'
 import { redondearImporte } from '../formato/importes'
 import type {
   ComportamientoMedioPago,
+  ClienteListado,
   ComprobanteEmitido,
   DetalleDeConsumo,
   DetalleDeLinea,
@@ -87,6 +88,21 @@ export function rangoUltimoMes(ahora: Date = new Date()): { desde: string; hasta
   return { desde, hasta }
 }
 
+/** Ventana de los últimos `dias` días hasta hoy, en fechas locales `YYYY-MM-DD`. */
+export function rangoDeLosUltimosDias(dias: number, ahora: Date = new Date()): { desde: string; hasta: string } {
+  return {
+    desde: fechaLocalAIso(new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() - dias)),
+    hasta: fechaLocalAIso(ahora),
+  }
+}
+
+/** Por qué un par de fechas `YYYY-MM-DD` (o vacías) no sirve para consultar, o `null` si sirve. */
+export function motivoDeRangoInvalido(desde: string, hasta: string): string | null {
+  if (desde === '' || hasta === '') return 'Completá las fechas Desde y Hasta para ver los movimientos.'
+  if (desde > hasta) return 'La fecha Desde no puede ser posterior a Hasta.'
+  return null
+}
+
 export const clienteDeCuentaCorriente = {
   /** `GET /api/clientes/{id}/cuenta-corriente?desde=&hasta=&historico=` — header + página en un
    * único payload (design decisión 9), 200 siempre (nunca 404, incluso para un cliente sin
@@ -138,6 +154,76 @@ export function etiquetaDeMovimiento(m: Pick<MovimientoDeCuentaCorriente, 'tipo'
  * tras un pago a cuenta antes de enviarlo (mismo criterio no-autoritativo que `arqueo.ts`). */
 export function disponibilidadPrevia(saldo: number, limiteCredito: number, creditoIlimitado: boolean): number | null {
   return creditoIlimitado ? null : limiteCredito - saldo
+}
+
+/** Nombre para mostrar de un cliente: la razón social si tiene, o nombre y apellido. */
+export function nombreCompletoDeCliente(cliente: Pick<ClienteListado, 'razonSocial' | 'nombre' | 'apellido'>): string {
+  return cliente.razonSocial ?? [cliente.nombre, cliente.apellido].filter(Boolean).join(' ')
+}
+
+/** Un saldo impreso es un dato solo si lo confirmó una lectura del servidor y no hay ventas del
+ * cliente en la cola sin enviar (que el servidor todavía no sumó). Si no se pudo leer la cola
+ * (`null`), tampoco. */
+export function esSaldoEstimado(params: { confirmado: boolean; consumoPendiente: number | null }): boolean {
+  return !params.confirmado || params.consumoPendiente === null || params.consumoPendiente > 0
+}
+
+/** Saldos que imprime el recibo de un pago a cuenta. `anterior - aplicado = nuevo` siempre. Con el saldo
+ * posterior que devolvió el servidor tras el pago, ese es el nuevo y el anterior se reconstruye; si no
+ * se pudo leer, el anterior es el que había en pantalla y el nuevo se estima restando lo aplicado.
+ * `consumoPendiente` (ventas del cliente en la cola, que ni el servidor ni la pantalla incluyen) desplaza
+ * los dos por igual. */
+export function saldosDeUnPagoACuenta(params: {
+  pagos: { importe: number; vuelto: number }[]
+  saldoEnPantalla: number
+  saldoPosterior: number | null
+  consumoPendiente?: number
+}): { anterior: number; nuevo: number } {
+  const aplicado = calcularImporteAplicado(params.pagos)
+  const pendiente = params.consumoPendiente ?? 0
+  if (params.saldoPosterior !== null) {
+    const nuevo = redondear(params.saldoPosterior + pendiente)
+    return { anterior: redondear(nuevo + aplicado), nuevo }
+  }
+  const anterior = redondear(params.saldoEnPantalla + pendiente)
+  return { anterior, nuevo: redondear(anterior - aplicado) }
+}
+
+/** Lo que el ticket de una venta dice del cliente identificado: nombre, saldo antes y después, y si es
+ * una estimación. `consumoPendiente: null` (la cola no se pudo leer) cuenta como 0 en la cuenta y marca
+ * estimado. `null` para el Consumidor Final, que no tiene cuenta. */
+export function clienteParaElTicketDeVenta(params: {
+  cliente: ClienteListado
+  pagos: { idMedioPago: number; importe: number; vuelto: number }[]
+  medios: MedioPagoListado[]
+  consumoPendiente: number | null
+  saldoConfirmado: boolean
+}): { numero: number; nombre: string; saldoAntes: number; saldoDespues: number; estimado: boolean } | null {
+  const { cliente, consumoPendiente } = params
+  if (cliente.esConsumidorFinal) return null
+  const saldos = saldosDeUnaVenta({ saldoAntes: cliente.saldo, consumoPendiente: consumoPendiente ?? 0, pagos: params.pagos, medios: params.medios })
+  return {
+    numero: cliente.numero,
+    nombre: nombreCompletoDeCliente(cliente),
+    saldoAntes: saldos.antes,
+    saldoDespues: saldos.despues,
+    estimado: esSaldoEstimado({ confirmado: params.saldoConfirmado, consumoPendiente }),
+  }
+}
+
+/** Saldo del cliente antes y después de una venta: solo lo cobrado con un medio `CuentaCorriente`
+ * se suma a la deuda; cualquier otro medio (o uno que no está en la lista) la deja igual. El antes es
+ * el saldo de pantalla más `consumoPendiente`: las ventas del cliente en la cola, sin incluir esta. */
+export function saldosDeUnaVenta(params: {
+  saldoAntes: number
+  consumoPendiente?: number
+  pagos: { idMedioPago: number; importe: number; vuelto: number }[]
+  medios: MedioPagoListado[]
+}): { antes: number; despues: number } {
+  const comportamientoPorId = new Map(params.medios.map((m) => [m.id, m.comportamiento]))
+  const aCuenta = params.pagos.filter((p) => comportamientoPorId.get(p.idMedioPago) === 'CuentaCorriente')
+  const antes = redondear(params.saldoAntes + (params.consumoPendiente ?? 0))
+  return { antes, despues: redondear(antes + calcularImporteAplicado(aCuenta)) }
 }
 
 /** Lo que muestra el chip de saldo del cliente. `limite`, `disponible` y `proporcionUsada` son `null`

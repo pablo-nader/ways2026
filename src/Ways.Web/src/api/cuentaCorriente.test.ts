@@ -5,22 +5,29 @@ import {
   aSolicitudDeReliquidacion,
   calcularImporteAplicado,
   construirQueryEstadoDeCuenta,
+  clienteParaElTicketDeVenta,
   derivarSaldoParaChip,
   disponibilidadPrevia,
+  esSaldoEstimado,
   etiquetaDeMovimiento,
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  motivoDeRangoInvalido,
+  nombreCompletoDeCliente,
   parsearDetalleDeActualizacionPrecios,
+  rangoDeLosUltimosDias,
   rangoUltimoMes,
   reliquidacionEsNoOp,
   saldoResultanteDeAjuste,
+  saldosDeUnaVenta,
+  saldosDeUnPagoACuenta,
   validarAjusteLocal,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
   type PagoACuentaParaCalculo,
 } from './cuentaCorriente'
-import type { MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion, TipoMovimientoCc } from './tipos'
+import type { ClienteListado, MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion, TipoMovimientoCc } from './tipos'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
   return {
@@ -143,6 +150,36 @@ describe('rangoUltimoMes', () => {
   it('fin de mes: 31 de julio → 30 de junio (junio tiene 30 días)', () => {
     const ahora = new Date(2026, 6, 31)
     expect(rangoUltimoMes(ahora)).toEqual({ desde: '2026-06-30', hasta: '2026-07-31' })
+  })
+})
+
+describe('rangoDeLosUltimosDias', () => {
+  it('desde = hoy − N días, hasta = hoy (fechas locales)', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2026, 7, 15))).toEqual({ desde: '2026-08-08', hasta: '2026-08-15' })
+  })
+
+  it('cruza el mes y el año sin desbordar', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2026, 0, 3))).toEqual({ desde: '2025-12-27', hasta: '2026-01-03' })
+  })
+
+  it('resta en días de calendario aunque el rango atraviese un 29 de febrero', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2028, 2, 3))).toEqual({ desde: '2028-02-25', hasta: '2028-03-03' })
+  })
+})
+
+describe('motivoDeRangoInvalido', () => {
+  it('un rango ordenado, o de un solo día, es válido', () => {
+    expect(motivoDeRangoInvalido('2026-08-01', '2026-08-15')).toBeNull()
+    expect(motivoDeRangoInvalido('2026-08-15', '2026-08-15')).toBeNull()
+  })
+
+  it('con alguna fecha vacía pide completar las dos', () => {
+    expect(motivoDeRangoInvalido('', '2026-08-15')).toBe('Completá las fechas Desde y Hasta para ver los movimientos.')
+    expect(motivoDeRangoInvalido('2026-08-01', '')).toBe('Completá las fechas Desde y Hasta para ver los movimientos.')
+  })
+
+  it('con Desde posterior a Hasta lo dice', () => {
+    expect(motivoDeRangoInvalido('2026-08-16', '2026-08-15')).toBe('La fecha Desde no puede ser posterior a Hasta.')
   })
 })
 
@@ -680,5 +717,150 @@ describe('derivarSaldoParaChip', () => {
       proporcionUsada: null,
       excedido: false,
     })
+  })
+})
+
+describe('saldosDeUnPagoACuenta', () => {
+  const pagos = [
+    { idMedioPago: 1, importe: 500, referencia: null, vuelto: 50 },
+    { idMedioPago: 2, importe: 200, referencia: 'AUT1', vuelto: 0 },
+  ]
+
+  it('con el saldo posterior del servidor, ese es el nuevo y el anterior se reconstruye sumándole lo aplicado (importes menos vueltos)', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 9999, saldoPosterior: 300 })).toEqual({ anterior: 950, nuevo: 300 })
+  })
+
+  it('sin saldo posterior, el anterior es el de pantalla y el nuevo le resta lo aplicado', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 1000, saldoPosterior: null })).toEqual({ anterior: 1000, nuevo: 350 })
+  })
+
+  it('con saldo posterior 0 (no confundido con ausente) usa ese 0', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 1000, saldoPosterior: 0 })).toEqual({ anterior: 650, nuevo: 0 })
+  })
+
+  it('con 100 pendientes en cola, el saldo posterior del servidor 150 y 650 aplicados: nuevo 250 y anterior 900 (anterior − aplicado = nuevo)', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 9999, saldoPosterior: 150, consumoPendiente: 100 })).toEqual({ anterior: 900, nuevo: 250 })
+  })
+
+  it('sin saldo posterior y con 100 pendientes: anterior 1100 (pantalla 1000 + 100) y nuevo 450', () => {
+    expect(saldosDeUnPagoACuenta({ pagos, saldoEnPantalla: 1000, saldoPosterior: null, consumoPendiente: 100 })).toEqual({ anterior: 1100, nuevo: 450 })
+  })
+
+  it('los decimales se redondean y siempre cumplen anterior - aplicado = nuevo', () => {
+    const decimales = [{ idMedioPago: 1, importe: 0.1, referencia: null, vuelto: 0 }, { idMedioPago: 2, importe: 0.2, referencia: null, vuelto: 0 }]
+    const conPosterior = saldosDeUnPagoACuenta({ pagos: decimales, saldoEnPantalla: 0, saldoPosterior: 10.15 })
+    const sinPosterior = saldosDeUnPagoACuenta({ pagos: decimales, saldoEnPantalla: 10.45, saldoPosterior: null })
+    expect(conPosterior).toEqual({ anterior: 10.45, nuevo: 10.15 })
+    expect(sinPosterior).toEqual({ anterior: 10.45, nuevo: 10.15 })
+  })
+})
+
+describe('saldosDeUnaVenta', () => {
+  const medios = [
+    medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),
+    medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' }),
+    medioFixture({ id: 3, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', admiteVuelto: false }),
+  ]
+
+  it('una venta toda en efectivo deja el saldo igual', () => {
+    const pagos = [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 500 })
+  })
+
+  it('suma al saldo solo la parte cobrada a cuenta corriente', () => {
+    const pagos = [
+      { idMedioPago: 1, importe: 300, referencia: null, vuelto: 0 },
+      { idMedioPago: 3, importe: 700, referencia: null, vuelto: 0 },
+    ]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 1200 })
+  })
+
+  it('un medio que no está en la lista no se cuenta como cuenta corriente', () => {
+    const pagos = [{ idMedioPago: 99, importe: 700, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, pagos, medios })).toEqual({ antes: 500, despues: 500 })
+  })
+
+  it('suma al saldo de pantalla lo que el cliente tiene en la cola sin enviar: 500 + 100 pendiente + 50 de esta venta = 600 → 650', () => {
+    const pagos = [{ idMedioPago: 3, importe: 50, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, consumoPendiente: 100, pagos, medios })).toEqual({ antes: 600, despues: 650 })
+  })
+
+  it('con la cola vacía (venta en línea) no cambia: 500 + 50 = 500 → 550', () => {
+    const pagos = [{ idMedioPago: 3, importe: 50, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, consumoPendiente: 0, pagos, medios })).toEqual({ antes: 500, despues: 550 })
+  })
+
+  it('una venta en efectivo con pendiente en cola deja antes = después = 600', () => {
+    const pagos = [{ idMedioPago: 1, importe: 50, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 500, consumoPendiente: 100, pagos, medios })).toEqual({ antes: 600, despues: 600 })
+  })
+
+  it('redondea la suma', () => {
+    const pagos = [{ idMedioPago: 3, importe: 0.2, referencia: null, vuelto: 0 }]
+    expect(saldosDeUnaVenta({ saldoAntes: 0.1, pagos, medios })).toEqual({ antes: 0.1, despues: 0.3 })
+  })
+})
+
+describe('nombreCompletoDeCliente', () => {
+  it('prefiere la razón social', () => {
+    expect(nombreCompletoDeCliente({ razonSocial: 'Perez Hermanos S.A.', nombre: 'Juan', apellido: 'Perez' })).toBe('Perez Hermanos S.A.')
+  })
+
+  it('sin razón social junta nombre y apellido, omitiendo el apellido ausente', () => {
+    expect(nombreCompletoDeCliente({ razonSocial: null, nombre: 'Juan', apellido: 'Perez' })).toBe('Juan Perez')
+    expect(nombreCompletoDeCliente({ razonSocial: null, nombre: 'Juan', apellido: null })).toBe('Juan')
+  })
+})
+
+describe('esSaldoEstimado', () => {
+  it('confirmado y sin pendientes es un dato; cualquier otra combinación es estimada', () => {
+    expect(esSaldoEstimado({ confirmado: true, consumoPendiente: 0 })).toBe(false)
+    expect(esSaldoEstimado({ confirmado: false, consumoPendiente: 0 })).toBe(true)
+    expect(esSaldoEstimado({ confirmado: true, consumoPendiente: 100 })).toBe(true)
+    expect(esSaldoEstimado({ confirmado: true, consumoPendiente: null })).toBe(true)
+  })
+})
+
+describe('clienteParaElTicketDeVenta', () => {
+  const medios = [
+    medioFixture({ id: 1, nombre: 'Efectivo', comportamiento: 'Efectivo' }),
+    medioFixture({ id: 3, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', admiteVuelto: false }),
+  ]
+  const cliente = { numero: 2, nombre: 'Juan', apellido: 'Perez', razonSocial: null, saldo: 500, esConsumidorFinal: false } as ClienteListado
+  const venta50 = [{ idMedioPago: 3, importe: 50, vuelto: 0 }]
+
+  it('online con la cola vacía y saldo confirmado: 500 → 550, sin estimar', () => {
+    expect(clienteParaElTicketDeVenta({ cliente, pagos: venta50, medios, consumoPendiente: 0, saldoConfirmado: true })).toEqual({
+      numero: 2,
+      nombre: 'Juan Perez',
+      saldoAntes: 500,
+      saldoDespues: 550,
+      estimado: false,
+    })
+  })
+
+  it('segunda venta a cuenta con 100 en la cola: 600 → 650, estimado', () => {
+    expect(clienteParaElTicketDeVenta({ cliente, pagos: venta50, medios, consumoPendiente: 100, saldoConfirmado: true })).toMatchObject({
+      saldoAntes: 600,
+      saldoDespues: 650,
+      estimado: true,
+    })
+  })
+
+  it('sin poder leer la cola cuenta 0 pero queda estimado', () => {
+    expect(clienteParaElTicketDeVenta({ cliente, pagos: venta50, medios, consumoPendiente: null, saldoConfirmado: true })).toMatchObject({
+      saldoAntes: 500,
+      saldoDespues: 550,
+      estimado: true,
+    })
+  })
+
+  it('un saldo no confirmado queda estimado aunque la cola esté vacía', () => {
+    expect(clienteParaElTicketDeVenta({ cliente, pagos: venta50, medios, consumoPendiente: 0, saldoConfirmado: false })).toMatchObject({ estimado: true })
+  })
+
+  it('el Consumidor Final no lleva cliente', () => {
+    const consumidorFinal = { ...cliente, esConsumidorFinal: true }
+    expect(clienteParaElTicketDeVenta({ cliente: consumidorFinal, pagos: venta50, medios, consumoPendiente: 0, saldoConfirmado: true })).toBeNull()
   })
 })

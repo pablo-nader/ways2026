@@ -6,7 +6,7 @@ import { ShellPos } from './ShellPos'
 import { ErrorApi } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, pulsoDeCajon, ticketDeVenta } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta, ticketDeVenta } from '../impresion/plantillas'
 import type {
   ArticuloEscaneado,
   ClienteListado,
@@ -579,6 +579,220 @@ describe('ShellPos — los controles de caja viven en el header, portaleados des
     await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(2))
     expect(imprimirMock.mock.calls[0][0]).toEqual(pulsoDeCajon())
     expect(imprimirMock.mock.calls[1][0]).toEqual(cierreDeTurno(resumen, CONTEXTO_DE_IMPRESION_SHELL))
+  })
+})
+
+describe('ShellPos — ticket de venta de un cliente identificado', () => {
+  const medioCuentaCorriente: MedioPagoListado = {
+    ...medioEfectivo,
+    id: 3,
+    nombre: 'Cuenta corriente',
+    orden: 3,
+    comportamiento: 'CuentaCorriente',
+    admiteVuelto: false,
+  }
+  const clienteIdentificado: ClienteListado = {
+    ...consumidorFinal,
+    id: 2,
+    numero: 2,
+    nombre: 'Juan',
+    apellido: 'Perez',
+    limiteCredito: 5000,
+    creditoIlimitado: false,
+    saldo: 500,
+    esConsumidorFinal: false,
+  }
+
+  /** Elige el cliente identificado en la cabecera del carrito y cobra $100 con el medio dado. */
+  async function venderAlClienteIdentificado(medio: MedioPagoListado) {
+    await esperarAlConsumidorFinal()
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.click(await screen.findByRole('option', { name: /Juan Perez/ }))
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medio.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medio.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText(/Venta 0007-00000001/)
+  }
+
+  function mockearClientesYMedios() {
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal, clienteIdentificado], total: 2, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioCuentaCorriente])
+      return undefined
+    })
+  }
+
+  it('una venta cobrada a cuenta corriente imprime el cliente con el saldo anterior de la pantalla y el nuevo con lo cobrado a cuenta', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    const comprobante = { ...comprobanteEmitidoFixture(), pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] }
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioCuentaCorriente)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600, estimado: true },
+      }),
+    )
+  })
+
+  it('con el saldo leído del servidor al elegir el cliente y la cola vacía, los saldos salen sin marca de estimado', async () => {
+    escritorioMock = true
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes/2') return Promise.resolve(clienteIdentificado)
+      return undefined
+    })
+    mockearClientesYMedios()
+    const base = apiGetMock.getMockImplementation()!
+    apiGetMock.mockImplementation((ruta: string) => (ruta === '/clientes/2' ? Promise.resolve(clienteIdentificado) : base(ruta)))
+    const comprobante = { ...comprobanteEmitidoFixture(), pagos: [{ idMedioPago: 3, importe: 100, referencia: null, vuelto: 0 }] }
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioCuentaCorriente)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 600, estimado: false },
+      }),
+    )
+  })
+
+  it('una venta cobrada en efectivo imprime el mismo saldo antes y después', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    const comprobante = comprobanteEmitidoFixture()
+    mockearVentaExitosa(comprobante)
+    renderShell()
+
+    await venderAlClienteIdentificado(medioEfectivo)
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente], {
+        cliente: { numero: 2, nombre: 'Juan Perez', saldoAntes: 500, saldoDespues: 500, estimado: true },
+      }),
+    )
+  })
+
+  it('el Consumidor Final imprime el ticket de siempre, sin cliente ni saldos', async () => {
+    escritorioMock = true
+    mockearClientesYMedios()
+    mockearVentaExitosa()
+    renderShell()
+
+    await completarVenta()
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(ticketDeVenta(comprobanteEmitidoFixture(), CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo, medioCuentaCorriente]))
+  })
+})
+
+describe('ShellPos — recibo del pago a cuenta', () => {
+  const clienteConDeuda: ClienteListado = {
+    ...consumidorFinal,
+    id: 2,
+    numero: 2,
+    nombre: 'Juan',
+    apellido: 'Perez',
+    limiteCredito: 5000,
+    creditoIlimitado: false,
+    saldo: 500,
+    esConsumidorFinal: false,
+  }
+
+  async function registrarPagoDe300() {
+    await esperarAlConsumidorFinal()
+    await userEvent.click(screen.getByLabelText('Cliente'))
+    await userEvent.click(await screen.findByRole('option', { name: /Juan Perez/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const pago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(pago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(pago.getByLabelText('Importe'), '300')
+    await waitFor(() => expect(pago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(pago.getByRole('button', { name: 'Registrar pago' }))
+  }
+
+  function prepararPago() {
+    const comprobante: ComprobanteEmitido = {
+      ...comprobanteEmitidoFixture(),
+      numeroVisible: '0007-00000900',
+      items: [],
+      pagos: [{ idMedioPago: 1, importe: 300, referencia: null, vuelto: 0 }],
+    }
+    let consultas = 0
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal, clienteConDeuda], total: 2, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        consultas += 1
+        const saldo = consultas === 1 ? 500 : 200
+        return Promise.resolve({
+          header: { saldo, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 5000 - saldo },
+          movimientos: [],
+          historico: false,
+          desde: null,
+          hasta: null,
+        })
+      }
+      if (ruta === '/clientes/2') return Promise.resolve(clienteConDeuda)
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/clientes/2/cuenta-corriente/pagos' ? Promise.resolve(comprobante) : Promise.resolve(undefined),
+    )
+    return comprobante
+  }
+
+  it('imprime el recibo por la cola del shell, con el cajón y los saldos del servidor', async () => {
+    escritorioMock = true
+    const comprobante = prepararPago()
+    renderShell()
+
+    await registrarPagoDe300()
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(
+      ticketDePagoACuenta(
+        { comprobante, cliente: { numero: 2, nombre: 'Juan Perez' }, saldoAnterior: 500, saldoNuevo: 200 },
+        CONTEXTO_DE_IMPRESION_SHELL,
+        [medioEfectivo],
+      ),
+    )
+  })
+
+  it('si la impresión falla el pago sigue registrado: queda el aviso con "Reimprimir", que reenvía los mismos bytes', async () => {
+    escritorioMock = true
+    prepararPago()
+    imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    renderShell()
+
+    await registrarPagoDe300()
+
+    expect(await screen.findByText('No se pudo imprimir el recibo del pago a cuenta: sin papel')).toBeInTheDocument()
+    expect(await screen.findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    const bytesOriginales = imprimirMock.mock.calls[0][0]
+
+    imprimirMock.mockResolvedValueOnce({ ok: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(2))
+    expect(imprimirMock.mock.calls[1][0]).toEqual(bytesOriginales)
   })
 })
 
