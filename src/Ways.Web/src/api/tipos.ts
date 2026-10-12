@@ -1616,6 +1616,9 @@ export type GastoDeTurno = {
   numeroFactura: string | null
   /** Compra a la que está ligado el gasto; no `null` bloquea categoría y proveedor en la edición. */
   idComprobanteCompra: number | null
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición). */
+  idMovimientoPersonal: number | null
 }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
@@ -1731,6 +1734,9 @@ export type GastoDeAdministracionListado = {
   /** `true` solo si el gasto tiene turno y ese turno sigue abierto (editar uno de un turno
    * cerrado recalcula su arqueo). */
   turnoAbierto: boolean
+  /** Pago de personal del que nació el gasto; no `null` lo vuelve inmutable (el servidor responde 409
+   * `gasto_de_pago_de_personal` a su edición, su baja y su vinculación a una compra). */
+  idMovimientoPersonal: number | null
 }
 
 /** Cuerpo de `PUT /api/gastos/{id}` y `PUT /api/gastos/administracion/{id}` — espejo de
@@ -2015,7 +2021,7 @@ export type ComprobanteEmitido = {
 // (design decisión 9), pago a cuenta (RC) sin ningún campo de importe propio (design decisión 6,
 // `importeAplicado = Σ importe − Σ vuelto`).
 
-export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios'
+export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios' | 'DescuentoPersonal'
 
 /** Distingue un movimiento `Ajuste` por su origen — solo viene poblado para ese tipo (design
  * decisión 8/9, espejo de `EtiquetaDeAjuste`). */

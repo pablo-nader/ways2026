@@ -60,7 +60,9 @@ public sealed record GastoRegistrado(
 /// editar el gasto (<c>PUT /api/gastos/{id}</c> exige el turno abierto); los campos editables
 /// (<see cref="IdProveedor"/>…<see cref="NumeroFactura"/>) permiten precargar ese formulario desde
 /// el detalle del turno sin una segunda lectura. <see cref="IdComprobanteCompra"/> le dice al POS
-/// que el gasto está ligado a una compra (categoría y proveedor quedan bloqueados en la edición).</summary>
+/// que el gasto está ligado a una compra (categoría y proveedor quedan bloqueados en la edición).
+/// <see cref="IdMovimientoPersonal"/> no nulo le dice que el gasto nació de un pago de personal: no se edita,
+/// no se da de baja ni se liga a una compra por separado (409 <c>gasto_de_pago_de_personal</c>).</summary>
 public sealed record GastoListado(
     int Id,
     int? IdPuntoVenta,
@@ -76,7 +78,8 @@ public sealed record GastoListado(
     string Concepto,
     string? Detalle,
     string? NumeroFactura,
-    int? IdComprobanteCompra);
+    int? IdComprobanteCompra,
+    int? IdMovimientoPersonal);
 
 /// <summary>Página de resultados de <c>GET /api/gastos</c> — mismo shape que
 /// <c>Ways.Application.Caja.PaginaDeTurnos</c>.</summary>
@@ -124,7 +127,9 @@ public sealed record SolicitudDeGastoDeAdministracion(
 /// JOIN (dangling-fk-read-models — un catálogo dado de baja lógica nunca puede tirar la fila ni
 /// romper el listado, el nombre simplemente sale <c>null</c>) y el número de compra ligada para
 /// trazabilidad. <see cref="TurnoAbierto"/>: <c>true</c> solo si el gasto tiene turno y ese turno
-/// sigue abierto (la edición de un gasto de caja de un turno cerrado recalcula su arqueo).</summary>
+/// sigue abierto (la edición de un gasto de caja de un turno cerrado recalcula su arqueo).
+/// <see cref="IdMovimientoPersonal"/> no nulo: el gasto nació de un pago de personal y su edición, su baja y su
+/// vinculación a una compra responden 409 <c>gasto_de_pago_de_personal</c>.</summary>
 public sealed record GastoDeAdministracionListado(
     int Id,
     DateTimeOffset Fecha,
@@ -144,7 +149,8 @@ public sealed record GastoDeAdministracionListado(
     decimal Importe,
     OrigenFondosGasto OrigenFondos,
     int? IdComprobanteCompra,
-    bool TurnoAbierto);
+    bool TurnoAbierto,
+    int? IdMovimientoPersonal);
 
 /// <summary>Página de resultados de <c>GET /api/gastos/administracion</c> — mismo shape que
 /// <see cref="PaginaDeGastos"/>.</summary>
