@@ -105,6 +105,7 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       precioDiscrepante: false,
       ajusteManualPorcentaje: linea.ajusteManualPorcentaje ?? null,
       ajusteManual: ajuste,
+      porImporte: linea.importe !== undefined,
     })
   }
 

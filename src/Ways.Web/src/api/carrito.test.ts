@@ -471,3 +471,121 @@ describe('migrarLineasDeBorrador', () => {
     expect(cantidadesEnEdicion).toEqual({})
   })
 })
+
+describe('reducirCarrito — artículo por importe', () => {
+  const articuloPorImporte = {
+    idArticulo: 500,
+    codigoInterno: '500',
+    nombre: 'Fiambrería',
+    codigoBarra: null,
+    acumulaEnVenta: false,
+    unidadVenta: 'Importe' as const,
+    importe: 150,
+  }
+
+  it('la línea nueva lleva cantidad 1 y el importe tipeado', () => {
+    const resultado = reducirCarrito([], { tipo: 'escanear', linea: articuloPorImporte, cantidad: 1, idLinea: 'f1' })
+
+    expect(resultado).toEqual([{ ...articuloPorImporte, idLinea: 'f1', cantidad: 1 }])
+  })
+
+  it('el mismo artículo dos veces deja dos líneas, aunque el escaneo diga que acumula', () => {
+    const acumulando = { ...articuloPorImporte, acumulaEnVenta: true }
+    const una = reducirCarrito([], { tipo: 'escanear', linea: acumulando, cantidad: 1, idLinea: 'f1' })
+    const dos = reducirCarrito(una, { tipo: 'escanear', linea: { ...acumulando, importe: 80 }, cantidad: 1, idLinea: 'f2' })
+
+    expect(dos.map((l) => [l.idLinea, l.cantidad, l.importe])).toEqual([
+      ['f1', 1, 150],
+      ['f2', 1, 80],
+    ])
+  })
+
+  it('idLineaDestinoDeEscaneo nunca elige una línea para un artículo por importe', () => {
+    const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, importe: 150 })]
+
+    expect(idLineaDestinoDeEscaneo(lineas, { idArticulo: 500, acumulaEnVenta: true, importe: 150 })).toBeNull()
+  })
+
+  it('editarCantidad no cambia la cantidad de una línea por importe', () => {
+    const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, importe: 150 }), lineaFixture({ idLinea: 'l2', idArticulo: 2, cantidad: 1 })]
+
+    const resultado = reducirCarrito(lineas, { tipo: 'editarCantidad', idLinea: 'f1', cantidad: 3 })
+
+    expect(resultado).toEqual(lineas)
+  })
+
+  it('editarCantidad sigue cambiando las líneas que no son por importe', () => {
+    const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, importe: 150 }), lineaFixture({ idLinea: 'l2', idArticulo: 2, cantidad: 1 })]
+
+    const resultado = reducirCarrito(lineas, { tipo: 'editarCantidad', idLinea: 'l2', cantidad: 4 })
+
+    expect(resultado[1].cantidad).toBe(4)
+  })
+
+  it('el ajuste manual se fija y se quita sobre una línea por importe', () => {
+    const lineas = [lineaFixture({ idLinea: 'f1', idArticulo: 500, importe: 150 })]
+
+    const conAjuste = reducirCarrito(lineas, { tipo: 'fijarAjusteManual', idLinea: 'f1', porcentaje: -10 })
+    expect(conAjuste[0]).toMatchObject({ importe: 150, ajusteManualPorcentaje: -10 })
+
+    const sinAjuste = reducirCarrito(conAjuste, { tipo: 'quitarAjusteManual', idLinea: 'f1' })
+    expect(sinAjuste[0].ajusteManualPorcentaje).toBeUndefined()
+    expect(sinAjuste[0].importe).toBe(150)
+  })
+})
+
+describe('migrarLineasDeBorrador — importe', () => {
+  it('conserva el importe de una línea por importe de un borrador', () => {
+    const guardada = lineaFixture({ idLinea: 'f1', idArticulo: 500, acumulaEnVenta: false, unidadVenta: 'Importe', importe: 150.5 })
+
+    const { lineas } = migrarLineasDeBorrador([guardada], {})
+
+    expect(lineas[0].importe).toBe(150.5)
+  })
+
+  it('un borrador anterior al campo carga sin importe', () => {
+    const { lineas } = migrarLineasDeBorrador([lineaFixture({ idLinea: 'abc' })], {})
+
+    expect(lineas[0]).not.toHaveProperty('importe')
+  })
+
+  it('descarta un importe que no es un número', () => {
+    const corrupta = { ...lineaFixture({ idLinea: 'abc' }), importe: '150' }
+
+    const { lineas } = migrarLineasDeBorrador([corrupta], {})
+
+    expect(lineas[0]).not.toHaveProperty('importe')
+  })
+})
+
+describe('reducirCarrito — nada se suma sobre una línea con importe', () => {
+  const lineaConImporte = lineaFixture({ idLinea: 'f1', idArticulo: 500, acumulaEnVenta: false, unidadVenta: 'Importe', importe: 150 })
+  const articuloOrdinario = {
+    idArticulo: 500,
+    codigoInterno: '500',
+    nombre: 'Fiambrería',
+    codigoBarra: null,
+    acumulaEnVenta: true,
+    unidadVenta: 'Unidad' as const,
+  }
+
+  it('el escaneo de un artículo que acumula, ahora ordinario, abre línea nueva y deja intacta la del importe', () => {
+    const resultado = reducirCarrito([lineaConImporte], { tipo: 'escanear', linea: articuloOrdinario, cantidad: 2, idLinea: 'nueva' })
+
+    expect(resultado).toHaveLength(2)
+    expect(resultado[0]).toEqual(lineaConImporte)
+    expect(resultado[1]).toMatchObject({ idLinea: 'nueva', cantidad: 2 })
+    expect(resultado[1]).not.toHaveProperty('importe')
+  })
+
+  it('con una línea con importe y otra ordinaria del mismo artículo, suma sobre la ordinaria', () => {
+    const ordinaria = lineaFixture({ idLinea: 'o1', idArticulo: 500, cantidad: 1 })
+
+    const resultado = reducirCarrito([ordinaria, lineaConImporte], { tipo: 'escanear', linea: articuloOrdinario, cantidad: 2, idLinea: 'nueva' })
+
+    expect(resultado.map((l) => [l.idLinea, l.cantidad])).toEqual([
+      ['o1', 3],
+      ['f1', 1],
+    ])
+  })
+})
