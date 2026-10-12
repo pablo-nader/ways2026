@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TIEMPO_LIMITE_DE_RED_MS } from '../pos/tiempoLimite'
 import { Pos } from './Pos'
 import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
@@ -16,6 +17,8 @@ import type {
   ArticuloListado,
   ClienteDeInstantanea,
   ClienteListado,
+  ComboCargableDeApi,
+  ComboListado,
   ComprobanteEmitido,
   EstadoDeCuenta,
   InstantaneaDePos,
@@ -7477,5 +7480,1124 @@ describe('Pos — venta offline (stage-pos-venta-offline-web)', () => {
         }
         await waitFor(() => expect(screen.queryByText(/Sin conexión — datos de hace/)).not.toBeInTheDocument())
       }))
+  })
+})
+
+describe('Pos — cargar un combo (buscador, código C y selector de familias)', () => {
+  const COCA = 1
+  const PANCHO = 2
+  const SPRITE = 3
+  const PRECIOS: Record<number, number> = { [COCA]: 2500, [PANCHO]: 3000, [SPRITE]: 2500 }
+  const NOMBRES: Record<number, string> = { [COCA]: 'Coca Cola 1L', [PANCHO]: 'Pancho', [SPRITE]: 'Sprite 1L' }
+
+  function candidato(idArticulo: number): ArticuloEscaneado {
+    return articuloEscaneadoFixture({
+      idArticulo,
+      codigoInterno: `A000${idArticulo}`,
+      nombre: NOMBRES[idArticulo],
+      codigoBarra: null,
+      unidadVenta: 'Unidad',
+    })
+  }
+
+  function listado(extra: Partial<ComboListado> = {}): ComboListado {
+    return {
+      id: 70,
+      codigo: 7,
+      nombre: 'Pancho + Coca',
+      precio: 5000,
+      idEmpresa: null,
+      activo: true,
+      componentes: [
+        { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+        { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, disponible: true },
+      ],
+      ...extra,
+    }
+  }
+
+  function cargable(extra: Partial<ComboCargableDeApi> = {}): ComboCargableDeApi {
+    return {
+      id: 70,
+      codigo: 7,
+      nombre: 'Pancho + Coca',
+      precio: 5000,
+      componentes: [
+        { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+        { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1, candidatos: [candidato(COCA)] },
+      ],
+      ...extra,
+    }
+  }
+
+  /** Un pancho fijo y una gaseosa de 2 unidades a elegir entre los candidatos dados. */
+  function cargableConFamilia(candidatosDeLaFamilia: ArticuloEscaneado[] = [candidato(COCA), candidato(SPRITE)]): ComboCargableDeApi {
+    return cargable({
+      componentes: [
+        { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+        { idArticulo: null, idFamilia: 9, nombre: 'Gaseosas', cantidad: 2, candidatos: candidatosDeLaFamilia },
+      ],
+    })
+  }
+
+  type OpcionesDeCombos = {
+    lista?: ComboListado[]
+    detalle?: ComboCargableDeApi | (() => Promise<ComboCargableDeApi>)
+    escaneo?: (ruta: string) => Promise<unknown> | undefined
+  }
+
+  /** `/combos`, `/combos/70/cargable`, el escaneo y los precios del carrito (con el combo detectado cuando están el pancho y la coca). */
+  function mockearCombos(opciones: OpcionesDeCombos = {}) {
+    mockearApiGet((ruta) => {
+      if (ruta === '/combos') return Promise.resolve(opciones.lista ?? [listado()])
+      if (ruta.startsWith('/combos/') && ruta.includes('/cargable')) {
+        const detalle = opciones.detalle ?? cargable()
+        return typeof detalle === 'function' ? detalle() : Promise.resolve(detalle)
+      }
+      return opciones.escaneo?.(ruta)
+    })
+    apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+      if (ruta !== RUTA_RESOLVER_DEL_CARRITO) return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      const lineas = (cuerpo as { lineas: { idArticulo: number }[] }).lineas
+      const ids = lineas.map((l) => l.idArticulo)
+      const conCombo = ids.includes(PANCHO) && ids.includes(COCA)
+      return Promise.resolve(
+        resolucion(
+          lineas.map((l) => ({
+            idArticulo: l.idArticulo,
+            idListaPrecio: 1,
+            precioOriginal: PRECIOS[l.idArticulo] ?? 100,
+            precioFinal: PRECIOS[l.idArticulo] ?? 100,
+            descuentoUnitario: 0,
+            aplicadas: [],
+            ...(conCombo && (l.idArticulo === PANCHO || l.idArticulo === COCA)
+              ? { combo: { unidadesConsumidas: 1, ahorro: l.idArticulo === PANCHO ? 272.73 : 227.27, idCombo: 70 } }
+              : {}),
+          })),
+          conCombo ? [{ idCombo: 70, codigo: 7, nombre: 'Pancho + Coca', veces: 1, ahorro: 500 }] : [],
+        ),
+      )
+    })
+  }
+
+  const llamadasGet = (prefijo: string) => apiGetMock.mock.calls.filter((c) => (c[0] as string).startsWith(prefijo))
+
+  async function montar() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    return screen.getByLabelText('Código escaneado') as HTMLInputElement
+  }
+
+  async function tipearYAgregar(codigo: string) {
+    await userEvent.type(screen.getByLabelText('Código escaneado'), codigo)
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  }
+
+  const filasDelCarrito = () => within(screen.getByRole('table')).getAllByRole('row').slice(1)
+  const articuloEnElCarrito = (nombre: string) => screen.findByText(nombre, { selector: 'td' })
+
+  describe('botón "Buscar combo" y modal', () => {
+    it('el botón abre el modal, se elige un combo y se agregan las líneas de sus artículos: el carrito detecta el combo', async () => {
+      mockearCombos()
+      const codigo = await montar()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Buscar combo' })
+      const opcion = await within(dialogo).findByRole('option', { name: /C7/ })
+      expect(opcion).toHaveTextContent('Pancho + Coca')
+      expect(opcion).toHaveTextContent('Pancho × 1 + Coca Cola 1L × 1')
+      await userEvent.click(opcion)
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument())
+      expect(await articuloEnElCarrito('Pancho')).toBeInTheDocument()
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByText('$ 5.000,00', { selector: 'strong' })).toBeInTheDocument())
+      expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(2)
+      expect(codigo).toHaveFocus()
+    })
+
+    it('las líneas entran por el camino del escaneo: un artículo que acumula se suma a la línea que ya está', async () => {
+      mockearCombos({
+        escaneo: (ruta) => (ruta.startsWith('/articulos/escaneo?entrada=7790001234567') ? Promise.resolve(candidato(COCA)) : undefined),
+      })
+      await montar()
+      await tipearYAgregar('7790001234567')
+      await articuloEnElCarrito('Coca Cola 1L')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+
+      await articuloEnElCarrito('Pancho')
+      const filas = filasDelCarrito()
+      expect(filas).toHaveLength(2)
+      expect(within(filas[0]).getByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(within(filas[0]).getByDisplayValue('2')).toBeInTheDocument()
+      expect(within(filas[1]).getByText('Pancho')).toBeInTheDocument()
+    })
+
+    it('F4 abre el modal; F2 no abre el de artículos encima, y Escape lo cierra devolviendo el foco al código', async () => {
+      mockearCombos()
+      const codigo = await montar()
+
+      fireEvent.keyDown(document, { key: 'F4' })
+      const dialogo = await screen.findByRole('dialog', { name: 'Buscar combo' })
+      fireEvent.keyDown(document, { key: 'F2' })
+      fireEvent.keyDown(document, { key: 'F4' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+
+      await userEvent.keyboard('{Escape}')
+
+      await waitFor(() => expect(dialogo).not.toBeInTheDocument())
+      expect(codigo).toHaveFocus()
+    })
+
+    it('F4 no abre nada con el checkout en vuelo', async () => {
+      mockearCombos()
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        if (ruta === '/ventas') return new Promise(() => {})
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+      fireEvent.keyDown(document, { key: 'F4' })
+
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+    })
+
+    it('el botón anuncia F4 y el atajo evita el comportamiento del navegador; F3 (dirección de entrega del legacy) no se toca', async () => {
+      mockearCombos()
+      await montar()
+
+      const boton = screen.getByRole('button', { name: 'Buscar combo' })
+      expect(boton).toHaveAttribute('aria-keyshortcuts', 'F4')
+      expect(boton).toHaveTextContent('Buscar combo (F4)')
+      // `fireEvent` devuelve `false` cuando algún listener llamó a `preventDefault`.
+      expect(fireEvent.keyDown(document, { key: 'F3' })).toBe(true)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(fireEvent.keyDown(document, { key: 'F4' })).toBe(false)
+      expect(await screen.findByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
+    })
+
+    it.each(['altKey', 'ctrlKey', 'metaKey'])('F4 con %s apretada es del sistema: no se evita ni abre el buscador', async (modificador) => {
+      mockearCombos()
+      await montar()
+
+      expect(fireEvent.keyDown(document, { key: 'F4', [modificador]: true })).toBe(true)
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(fireEvent.keyDown(document, { key: 'F4' })).toBe(false)
+      expect(await screen.findByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
+    })
+
+    it('F4 no abre el buscador mientras una lectura por código sigue en vuelo', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      await montar()
+      await tipearYAgregar('C7')
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+
+      fireEvent.keyDown(document, { key: 'F4' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+
+      await act(async () => resolverDetalle(cargable()))
+      await articuloEnElCarrito('Pancho')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('un combo con un componente dado de baja se muestra deshabilitado con el motivo y no agrega nada', async () => {
+      mockearCombos({
+        lista: [
+          listado({
+            componentes: [
+              { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+              { idArticulo: null, idFamilia: 9, nombre: null, cantidad: 1, disponible: false },
+            ],
+          }),
+        ],
+      })
+      await montar()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      const opcion = await screen.findByRole('option', { name: /C7/ })
+      await userEvent.click(opcion)
+
+      expect(opcion).toHaveAttribute('aria-disabled', 'true')
+      expect(opcion).toHaveTextContent('No se puede cargar: Un componente del combo ya no está disponible.')
+      expect(llamadasGet('/combos/')).toHaveLength(0)
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('si el detalle trae un componente sin artículos vendibles lo avisa en el modal y no agrega ni una línea', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: null, idFamilia: 9, nombre: 'Gaseosas', cantidad: 1, candidatos: [] },
+          ],
+        }),
+      })
+      await montar()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+
+      expect(await screen.findByText(/No se puede cargar: No hay artículos disponibles para «Gaseosas»/)).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Buscar combo' })).toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+    })
+
+    it('cerrar el modal mientras se lee el detalle: la respuesta tardía no agrega nada', async () => {
+      let resolver: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolver = r)) })
+      await montar()
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+      await waitFor(() => expect(llamadasGet('/combos/')).toHaveLength(1))
+
+      await userEvent.keyboard('{Escape}')
+      await act(async () => resolver(cargable()))
+
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('un combo de otra empresa no se ofrece', async () => {
+      mockearCombos({ lista: [listado({ idEmpresa: 99 }), listado({ id: 71, codigo: 8, nombre: 'Del local', idEmpresa: 1 })] })
+      await montar()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+      expect(await screen.findByRole('option', { name: /C8/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /C7/ })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('código C + dígitos en el input', () => {
+    it.each(['C7', 'c7'])('%s carga el combo con ese número y vacía el input', async (tipeado) => {
+      mockearCombos()
+      const codigo = await montar()
+
+      await tipearYAgregar(tipeado)
+
+      expect(await articuloEnElCarrito('Pancho')).toBeInTheDocument()
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+      expect(codigo).toHaveValue('')
+      await waitFor(() => expect(codigo).toHaveFocus())
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+    })
+
+    it('si no hay un combo con ese número sigue la búsqueda de artículos con el texto ORIGINAL (un artículo puede llamarse C12)', async () => {
+      mockearCombos({
+        lista: [listado()],
+        escaneo: (ruta) =>
+          ruta === '/articulos/escaneo?entrada=C12'
+            ? Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, codigoInterno: 'C12', nombre: 'Cable C12', codigoBarra: null }))
+            : undefined,
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C12')
+
+      expect(await screen.findByText('Cable C12')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo').map((c) => c[0])).toEqual(['/articulos/escaneo?entrada=C12'])
+      expect(llamadasGet('/combos/')).toHaveLength(0)
+      expect(codigo).toHaveValue('')
+    })
+
+    it('el texto original se conserva tal cual: c12 en minúscula llega así al escaneo', async () => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta === '/articulos/escaneo?entrada=c12' ? Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable c12' })) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar('c12')
+
+      expect(await screen.findByText('Cable c12')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo').map((c) => c[0])).toEqual(['/articulos/escaneo?entrada=c12'])
+    })
+
+    it('si la búsqueda del combo por código falla igual sigue la búsqueda de artículos, sin avisar nada si lo encuentra', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.reject(new ErrorApi(500, 'error', 'Falló.'))
+        if (ruta === '/articulos/escaneo?entrada=C7') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C7' }))
+        return undefined
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('Cable C7')).toBeInTheDocument()
+      expect(screen.queryByText(/No se pudieron leer los combos/)).not.toBeInTheDocument()
+    })
+
+    it('si la búsqueda del combo falla y el artículo tampoco existe, el aviso dice también que no se pudieron leer los combos', async () => {
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.reject(new ErrorApi(500, 'error', 'Falló.'))
+        if (ruta === '/articulos/escaneo?entrada=C7') return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe un artículo con ese código.'))
+        return undefined
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No existe un artículo con ese código. No se pudieron leer los combos.')).toBeInTheDocument()
+      expect(codigo).toHaveValue('C7')
+    })
+
+    it('un artículo que no existe, con los combos bien leídos, NO dice que no se pudieron leer', async () => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta === '/articulos/escaneo?entrada=C12' ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe un artículo con ese código.')) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar('C12')
+
+      expect(await screen.findByText('No existe un artículo con ese código.')).toBeInTheDocument()
+    })
+
+    it.each(['C012', 'C001', 'c0'])('%s no es un código de combo: va directo al artículo (puede estar codificado con ceros) y no lee combos', async (tipeado) => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta === `/articulos/escaneo?entrada=${tipeado}` ? Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: `Cable ${tipeado}` })) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar(tipeado)
+
+      expect(await screen.findByText(`Cable ${tipeado}`)).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    it('un combo encontrado cuyo detalle falla avisa el error del combo y NO cae a la búsqueda de artículos', async () => {
+      mockearCombos({
+        detalle: () => Promise.reject(new ErrorApi(500, 'error', 'No se pudo leer el detalle del combo.')),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo leer el detalle del combo.')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(screen.queryByText('Cable C7')).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(codigo).toHaveValue('C7')
+    })
+
+    it('un error que no es de la API al leer el detalle también avisa «No se pudo leer el combo C7.» y no escanea artículos', async () => {
+      mockearCombos({
+        detalle: () => Promise.reject(new TypeError('boom')),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo leer el combo C7.')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+    })
+
+    it.each(['C0', 'C1000000', 'C12X', '3*C7', 'C'])('%s no es un código de combo: no lee combos y va directo a artículos', async (tipeado) => {
+      mockearCombos({
+        escaneo: (ruta) =>
+          ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.resolve(articuloEscaneadoFixture({ nombre: `Artículo ${tipeado}` })) : undefined,
+      })
+      await montar()
+
+      await tipearYAgregar(tipeado)
+
+      expect(await screen.findByText(`Artículo ${tipeado}`)).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    it('un escaneo común no hace ninguna lectura de combos', async () => {
+      mockearCombos({
+        escaneo: (ruta) => (ruta.startsWith('/articulos/escaneo?entrada=7790001234567') ? Promise.resolve(articuloEscaneadoFixture()) : undefined),
+      })
+      await montar()
+
+      await tipearYAgregar('7790001234567')
+
+      expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    it('un combo que existe pero no se puede cargar avisa el motivo y NO cae a la búsqueda de artículos', async () => {
+      mockearCombos({
+        lista: [
+          listado({
+            componentes: [
+              { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+              { idArticulo: null, idFamilia: 9, nombre: null, cantidad: 1, disponible: false },
+            ],
+          }),
+        ],
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('Un componente del combo ya no está disponible.')).toBeInTheDocument()
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(screen.queryByText('Cable C7')).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(codigo).toHaveValue('C7')
+    })
+
+    it('un combo cuyo detalle trae un componente sin candidatos avisa el motivo y no agrega ninguna línea', async () => {
+      mockearCombos({ detalle: cargableConFamilia([]) })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No hay artículos disponibles para «Gaseosas».')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+    })
+
+    it('dos Enter en el mismo tick (antes de que el re-render deshabilite el input) cargan el combo una sola vez', async () => {
+      let resolverLista: (l: ComboListado[]) => void = () => {}
+      mockearCombos()
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return new Promise<ComboListado[]>((r) => (resolverLista = r))
+        if (ruta.startsWith('/combos/70/cargable')) return Promise.resolve(cargable())
+        return undefined
+      })
+      const codigo = await montar()
+      await userEvent.type(codigo, 'C7')
+
+      // Dentro de un solo `act` React no re-renderiza entre los dos eventos: la segunda llamada ve el `escaneando` viejo.
+      act(() => {
+        fireEvent.keyDown(codigo, { key: 'Enter' })
+        fireEvent.keyDown(codigo, { key: 'Enter' })
+      })
+      await waitFor(() => expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1))
+      await act(async () => resolverLista([listado()]))
+
+      await articuloEnElCarrito('Pancho')
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+      expect(filasDelCarrito()).toHaveLength(2)
+    })
+
+    it('si agregar las líneas del combo lanza una excepción, el escaneo termina limpio: aviso, input usable y sin buscar artículos', async () => {
+      const roto = candidato(PANCHO)
+      Object.defineProperty(roto, 'nombre', {
+        enumerable: true,
+        get() {
+          throw new Error('boom')
+        },
+      })
+      mockearCombos({
+        detalle: cargable({ componentes: [{ idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [roto] }] }),
+        escaneo: (ruta) => (ruta === '/articulos/escaneo?entrada=C7' ? Promise.resolve(articuloEscaneadoFixture({ nombre: 'Cable C7' })) : undefined),
+      })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('No se pudo cargar el combo C7.')).toBeInTheDocument()
+      expect(codigo).toBeEnabled()
+      expect(codigo).toHaveValue('C7')
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('un combo guardado como no cargable que ya se reparó se vuelve a leer antes de rechazarlo', async () => {
+      let lista = [
+        listado({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, disponible: true },
+            { idArticulo: null, idFamilia: 9, nombre: null, cantidad: 1, disponible: false },
+          ],
+        }),
+      ]
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(lista)
+        if (ruta.startsWith('/combos/70/cargable')) return Promise.resolve(cargable())
+        return undefined
+      })
+      const codigo = await montar()
+      await tipearYAgregar('C7')
+      expect(await screen.findByText('Un componente del combo ya no está disponible.')).toBeInTheDocument()
+
+      lista = [listado()]
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      expect(await articuloEnElCarrito('Pancho')).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
+      await waitFor(() => expect(codigo).toHaveValue(''))
+    })
+
+    it('un 404 al leer el detalle de un combo guardado lo olvida y sigue como «no hay combo»: el artículo con el texto original', async () => {
+      let lecturas = 0
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(lecturas++ === 0 ? [listado()] : [])
+        if (ruta.startsWith('/combos/70/cargable')) return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe el combo 70.'))
+        if (ruta === '/articulos/escaneo?entrada=C7') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C7' }))
+        return undefined
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('Cable C7')).toBeInTheDocument()
+      expect(screen.queryByText('No existe el combo 70.')).not.toBeInTheDocument()
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(llamadasGet('/combos/70/cargable')).toHaveLength(1)
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
+    })
+
+    it('si el cobro empieza mientras se lee el combo, el combo no se agrega y se avisa', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        if (ruta === '/ventas') return new Promise(() => {})
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+      await act(async () => resolverDetalle(cargable()))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('un componente con cantidad inválida deja el carrito intacto, aunque el primero sí se podía cargar', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 1.5, candidatos: [candidato(COCA)] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      expect(await screen.findByText('La cantidad de «Coca Cola 1L» no es válida.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('lista de combos de la API en memoria', () => {
+    it('dos escaneos del mismo código leen la lista una sola vez; un código que no está la refresca una vez; un escaneo común no la pide', async () => {
+      mockearCombos({
+        lista: [listado(), listado({ id: 71, codigo: 8, nombre: 'Otro' })],
+        escaneo: (ruta) => (ruta.startsWith('/articulos/escaneo?entrada=') ? Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe.')) : undefined),
+      })
+      const codigo = await montar()
+      const listas = () => llamadasGet('/combos').filter((c) => c[0] === '/combos')
+
+      await tipearYAgregar('C7')
+      await waitFor(() => expect(codigo).toHaveValue(''))
+      await tipearYAgregar('C7')
+      const filaPancho = (await articuloEnElCarrito('Pancho')).closest('tr') as HTMLElement
+      await waitFor(() => expect(within(filaPancho).getByDisplayValue('2')).toBeInTheDocument())
+      expect(listas()).toHaveLength(1)
+
+      await tipearYAgregar('C99')
+      await screen.findByText('No existe.')
+      expect(listas()).toHaveLength(2)
+
+      await userEvent.clear(codigo)
+      await tipearYAgregar('7790001234567')
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(listas()).toHaveLength(2)
+    })
+
+    it('abrir el buscador de combos refresca la lista guardada', async () => {
+      mockearCombos()
+      await montar()
+      await tipearYAgregar('C7')
+      await articuloEnElCarrito('Pancho')
+      const listas = () => llamadasGet('/combos').filter((c) => c[0] === '/combos')
+      expect(listas()).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await screen.findByRole('option', { name: /C7/ })
+
+      expect(listas()).toHaveLength(2)
+    })
+
+    it('un combo creado después de abrir la pantalla se encuentra: el código que no estaba en lo guardado refresca y lo halla', async () => {
+      let combos = [listado()]
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(combos)
+        if (ruta.startsWith('/combos/') && ruta.includes('/cargable')) return Promise.resolve(cargable())
+        return undefined
+      })
+      await montar()
+      await tipearYAgregar('C7')
+      await articuloEnElCarrito('Pancho')
+
+      combos = [listado(), listado({ id: 72, codigo: 9, nombre: 'Nuevo' })]
+      apiGetMock.mockClear()
+      mockearApiGet((ruta) => {
+        if (ruta === '/combos') return Promise.resolve(combos)
+        if (ruta === '/combos/72/cargable') return Promise.resolve(cargable({ id: 72, codigo: 9, nombre: 'Nuevo' }))
+        return undefined
+      })
+      await tipearYAgregar('C9')
+
+      await waitFor(() => expect(llamadasGet('/combos/72/cargable')).toHaveLength(1))
+    })
+  })
+
+  describe('el mismo artículo y la cantidad al cargar', () => {
+    it('un componente con cantidad 2 de un artículo que no acumula entra como UNA línea de 2 y el combo se detecta igual', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: COCA, idFamilia: null, nombre: 'Coca Cola 1L', cantidad: 2, candidatos: [{ ...candidato(COCA), acumulaEnVenta: false }] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      const filaCoca = (await articuloEnElCarrito('Coca Cola 1L')).closest('tr') as HTMLElement
+      expect(within(filaCoca).getByDisplayValue('2')).toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(2)
+      await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument())
+      const ultimaResolucion = apiPostMock.mock.calls.filter((c) => c[0] === RUTA_RESOLVER_DEL_CARRITO).at(-1)?.[1] as {
+        lineas: { idArticulo: number; cantidad: number }[]
+      }
+      expect(ultimaResolucion.lineas.map((l) => [l.idArticulo, l.cantidad])).toEqual([
+        [PANCHO, 1],
+        [COCA, 2],
+      ])
+    })
+
+    it('el mismo artículo como componente y como miembro de una familia: el carrito acumula las dos unidades y detecta el combo', async () => {
+      mockearCombos({
+        detalle: cargable({
+          componentes: [
+            { idArticulo: PANCHO, idFamilia: null, nombre: 'Pancho', cantidad: 1, candidatos: [candidato(PANCHO)] },
+            { idArticulo: null, idFamilia: 9, nombre: 'Panchos y gaseosas', cantidad: 2, candidatos: [candidato(PANCHO), candidato(COCA)] },
+          ],
+        }),
+      })
+      await montar()
+
+      await tipearYAgregar('C7')
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      await userEvent.clear(within(dialogo).getByLabelText('Pancho'))
+      await userEvent.type(within(dialogo).getByLabelText('Pancho'), '1')
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '1')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar combo' }))
+
+      await waitFor(() => expect(filasDelCarrito()).toHaveLength(2))
+      const filaPancho = (await articuloEnElCarrito('Pancho')).closest('tr') as HTMLElement
+      expect(within(filaPancho).getByDisplayValue('2')).toBeInTheDocument()
+      await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument())
+    })
+  })
+
+  describe('selector de familias', () => {
+    it('una familia con un solo candidato se agrega directo con toda su cantidad, sin selector', async () => {
+      mockearCombos({ detalle: cargableConFamilia([candidato(COCA)]) })
+      await montar()
+
+      await tipearYAgregar('C7')
+
+      await articuloEnElCarrito('Pancho')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      const filaCoca = (await articuloEnElCarrito('Coca Cola 1L')).closest('tr') as HTMLElement
+      expect(within(filaCoca).getByDisplayValue('2')).toBeInTheDocument()
+    })
+
+    it('con varios candidatos abre el selector: repartir 1 + 1, confirmar y se agrega todo el combo', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      const codigo = await montar()
+
+      await tipearYAgregar('C7')
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      const confirmar = within(dialogo).getByRole('button', { name: 'Agregar combo' })
+      expect(confirmar).toBeDisabled()
+
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '1')
+      await userEvent.clear(within(dialogo).getByLabelText('Sprite 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Sprite 1L'), '1')
+      await userEvent.click(confirmar)
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      const filas = filasDelCarrito()
+      expect(filas).toHaveLength(3)
+      expect(within(filas[0]).getByText('Pancho')).toBeInTheDocument()
+      expect(within(filas[1]).getByText('Coca Cola 1L')).toBeInTheDocument()
+      expect(within(filas[2]).getByText('Sprite 1L')).toBeInTheDocument()
+      expect(codigo).toHaveValue('')
+      await waitFor(() => expect(codigo).toHaveFocus())
+    })
+
+    it('el selector también sale del buscador, y confirmar agrega las líneas', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      await montar()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      expect(screen.queryByRole('dialog', { name: 'Buscar combo' })).not.toBeInTheDocument()
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '2{Enter}')
+
+      await waitFor(() => expect(filasDelCarrito()).toHaveLength(2))
+      const filaCoca = (await articuloEnElCarrito('Coca Cola 1L')).closest('tr') as HTMLElement
+      expect(within(filaCoca).getByDisplayValue('2')).toBeInTheDocument()
+    })
+
+    it('cancelar no agrega NADA (ni el pancho que no necesitaba elegir), deja el texto tipeado y devuelve el foco al código', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      const codigo = await montar()
+      await tipearYAgregar('C7')
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '2')
+
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(filasDelCarrito()).toHaveLength(1)
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(codigo).toHaveValue('C7')
+      await waitFor(() => expect(codigo).toHaveFocus())
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    function mockearVentaColgada() {
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_RESOLVER_DEL_CARRITO) {
+          return Promise.resolve(resolucion([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }]))
+        }
+        if (ruta === '/ventas') return new Promise(() => {})
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+    }
+
+    it('si el cobro empieza mientras se lee un combo con familias, el selector no se abre y se avisa', async () => {
+      let resolverDetalle: (c: ComboCargableDeApi) => void = () => {}
+      mockearCombos({ detalle: () => new Promise<ComboCargableDeApi>((r) => (resolverDetalle = r)) })
+      mockearVentaColgada()
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/combos/70/cargable')).toHaveLength(1))
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+      await act(async () => resolverDetalle(cargableConFamilia()))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('si el cobro empieza con el selector abierto, confirmar no agrega nada y se avisa', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      mockearVentaColgada()
+      await armarVentaLista()
+      await userEvent.type(screen.getByLabelText('Código escaneado'), 'C7')
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+      fireEvent.click(screen.getByRole('button', { name: /Cobrar/, hidden: true }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/, hidden: true })).toBeInTheDocument())
+
+      await userEvent.clear(within(dialogo).getByLabelText('Coca Cola 1L'))
+      await userEvent.type(within(dialogo).getByLabelText('Coca Cola 1L'), '2')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Agregar combo' }))
+
+      expect(await screen.findByText('No se agregó el combo: hay un cobro en curso.')).toBeInTheDocument()
+      expect(screen.queryByText('Pancho', { selector: 'td' })).not.toBeInTheDocument()
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+
+    it('Escape en el selector también descarta el combo entero', async () => {
+      mockearCombos({ detalle: cargableConFamilia() })
+      await montar()
+      await tipearYAgregar('C7')
+      await screen.findByRole('dialog', { name: 'Elegir artículos de Pancho + Coca' })
+
+      await userEvent.keyboard('{Escape}')
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(filasDelCarrito()).toHaveLength(1)
+    })
+  })
+
+  describe('desde la instantánea local', () => {
+    const articulosDeInstantanea = () => [
+      articuloDeInstantaneaFixture({ idArticulo: COCA, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', unidadVenta: 'Unidad', precioOriginal: 2500, precioFinal: 2500 }),
+      articuloDeInstantaneaFixture({ idArticulo: PANCHO, codigoInterno: 'A0002', nombre: 'Pancho', codigosBarra: [], unidadVenta: 'Unidad', precioOriginal: 3000, precioFinal: 3000 }),
+      articuloDeInstantaneaFixture({ idArticulo: SPRITE, codigoInterno: 'A0003', nombre: 'Sprite 1L', codigosBarra: [], unidadVenta: 'Unidad', idFamilia: 9, precioOriginal: 2500, precioFinal: 2500 }),
+      articuloDeInstantaneaFixture({ idArticulo: 4, codigoInterno: 'A0004', nombre: 'Pesable', codigosBarra: [], unidadVenta: 'Peso', idFamilia: 9, precioOriginal: 900, precioFinal: 900 }),
+      articuloDeInstantaneaFixture({ idArticulo: 6, codigoInterno: 'C12', nombre: 'Cable C12', codigosBarra: [], unidadVenta: 'Unidad', precioOriginal: 100, precioFinal: 100 }),
+    ]
+
+    async function montarConInstantanea(combos: InstantaneaDePos['combos'], articulos = articulosDeInstantanea()) {
+      await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos, combos }) })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: /^Sincroniz(ar ahora|ando…)$/ })
+      return screen.getByLabelText('Código escaneado') as HTMLInputElement
+    }
+
+    const comboLocal = (extra: Partial<NonNullable<InstantaneaDePos['combos']>[number]> = {}) => ({
+      idCombo: 70,
+      codigo: 7,
+      nombre: 'Pancho + Coca',
+      precio: 5000,
+      componentes: [{ idArticulo: PANCHO, cantidad: 1 }, { idArticulo: COCA, cantidad: 1 }],
+      ...extra,
+    })
+
+    it('el buscador lista y carga el combo sin ninguna llamada a la API de combos, y el carrito lo aplica con los datos locales', async () => {
+      mockearCombos()
+      await montarConInstantanea([comboLocal()])
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+
+      await articuloEnElCarrito('Pancho')
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+      await waitFor(() => expect(within(panelDatosDeLaVenta()).getByText('Combo Pancho + Coca')).toBeInTheDocument())
+      expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('C7 se resuelve contra la instantánea: ni /combos ni /articulos/escaneo', async () => {
+      mockearCombos()
+      const codigo = await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C7')
+
+      await articuloEnElCarrito('Pancho')
+      expect(llamadasGet('/combos')).toEqual([])
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(codigo).toHaveValue('')
+    })
+
+    const NO_EXISTE_EL_ARTICULO = 'No existe un artículo con ese código.'
+    const sinArticuloC13 = (ruta: string) =>
+      ruta === '/articulos/escaneo?entrada=C13' ? Promise.reject(new ErrorApi(404, 'no_encontrado', NO_EXISTE_EL_ARTICULO)) : undefined
+
+    it('con conexión, C12 que es un artículo de la instantánea (y no un combo) se agrega sin pedir combos ni artículos a la red', async () => {
+      mockearCombos()
+      const codigo = await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C12')
+
+      expect(await screen.findByText('Cable C12')).toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(codigo).toHaveValue('')
+    })
+
+    it('con conexión, un código que la instantánea no conoce prueba la API una vez y un segundo escaneo dentro de los 60 s no la vuelve a probar', async () => {
+      mockearCombos({ escaneo: sinArticuloC13 })
+      await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C13')
+      expect(await screen.findByText(NO_EXISTE_EL_ARTICULO)).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+      expect(llamadasGet('/articulos/escaneo')).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+    })
+
+    it('abrir el buscador de combos olvida los códigos ausentes: el siguiente escaneo vuelve a probar la API', async () => {
+      mockearCombos({ escaneo: sinArticuloC13 })
+      await montarConInstantanea([comboLocal()])
+      await tipearYAgregar('C13')
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(1))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+      await waitFor(() => expect(llamadasGet('/articulos/escaneo')).toHaveLength(2))
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(2)
+    })
+
+    describe('si el sondeo de la API no responde', () => {
+      /** El tope de espera es un `setTimeout` real: se simula solo después de tipear, para no frenar a `userEvent`. */
+      async function agregarYVencerElTope() {
+        await userEvent.type(screen.getByLabelText('Código escaneado'), 'C13')
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        try {
+          fireEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(TIEMPO_LIMITE_DE_RED_MS)
+          })
+        } finally {
+          vi.useRealTimers()
+        }
+      }
+
+      it('vence el tope, el artículo se busca igual y, si aparece, no se avisa nada de los combos', async () => {
+        mockearApiGet((ruta) => {
+          if (ruta === '/combos') return new Promise(() => {})
+          if (ruta === '/articulos/escaneo?entrada=C13') return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 5, nombre: 'Cable C13' }))
+          return undefined
+        })
+        await montarConInstantanea([comboLocal()])
+
+        await agregarYVencerElTope()
+
+        expect(await screen.findByText('Cable C13')).toBeInTheDocument()
+        expect(screen.queryByText(/No se pudieron leer los combos/)).not.toBeInTheDocument()
+      })
+
+      it('vence el tope y el artículo tampoco aparece: el aviso dice también que no se pudieron leer los combos', async () => {
+        mockearApiGet((ruta) => {
+          if (ruta === '/combos') return new Promise(() => {})
+          return sinArticuloC13(ruta)
+        })
+        await montarConInstantanea([comboLocal()])
+
+        await agregarYVencerElTope()
+
+        expect(await screen.findByText(`${NO_EXISTE_EL_ARTICULO} No se pudieron leer los combos.`)).toBeInTheDocument()
+      })
+    })
+
+    it('con conexión, un combo creado después de la última sincronización (la instantánea no lo tiene) se carga desde la API', async () => {
+      mockearCombos({ lista: [listado({ id: 90, codigo: 9, nombre: 'Nuevo' })], detalle: cargable({ id: 90, codigo: 9, nombre: 'Nuevo' }) })
+      const codigo = await montarConInstantanea([comboLocal()])
+
+      await tipearYAgregar('C9')
+
+      await articuloEnElCarrito('Pancho')
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+      expect(llamadasGet('/combos/90/cargable')).toHaveLength(1)
+      expect(llamadasGet('/articulos/escaneo')).toEqual([])
+      expect(codigo).toHaveValue('')
+    })
+
+    it('con conexión y una instantánea sin combos, el buscador lista los de la API', async () => {
+      mockearCombos()
+      await montarConInstantanea(undefined)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+      expect(await screen.findByRole('option', { name: /C7/ })).toBeInTheDocument()
+      expect(llamadasGet('/combos').filter((c) => c[0] === '/combos')).toHaveLength(1)
+    })
+
+    it('con conexión y una instantánea CON combos, el buscador lista los de la instantánea y no pide los de la API', async () => {
+      mockearCombos()
+      await montarConInstantanea([comboLocal({ idCombo: 80, codigo: 8, nombre: 'Solo local' })])
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+      expect(await screen.findByRole('option', { name: /C8/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /C7/ })).not.toBeInTheDocument()
+      expect(llamadasGet('/combos')).toEqual([])
+    })
+
+    describe('sin conexión', () => {
+      async function montarSinConexion(combos: InstantaneaDePos['combos']) {
+        await prepararAlmacenOffline({ instantanea: instantaneaFixture({ articulos: articulosDeInstantanea(), combos }) })
+        mockearApiGet((ruta) =>
+          ruta === '/pos/instantanea' || ruta.startsWith('/combos') || ruta.startsWith('/articulos/escaneo')
+            ? Promise.reject(new ErrorDeRed(new TypeError('Failed to fetch')))
+            : undefined,
+        )
+        renderPos()
+        await screen.findByRole('option', { name: /Consumidor Final/ })
+        await screen.findByText('Sin conexión: se vende al Consumidor Final o a un cliente de la copia local.')
+        return screen.getByLabelText('Código escaneado') as HTMLInputElement
+      }
+
+      it('un código que la instantánea no tiene NO prueba la API: cero pedidos de combos', async () => {
+        await montarSinConexion([comboLocal()])
+
+        await tipearYAgregar('C9')
+
+        expect(await screen.findByText('Sin conexión: no se encontró ese código en la última instantánea local.')).toBeInTheDocument()
+        expect(llamadasGet('/combos')).toEqual([])
+      })
+
+      it('el buscador de una instantánea sin combos queda vacío y no pide nada', async () => {
+        await montarSinConexion(undefined)
+
+        await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+
+        expect(await screen.findByText('No hay combos activos')).toBeInTheDocument()
+        expect(llamadasGet('/combos')).toEqual([])
+      })
+    })
+
+    it('los miembros de la familia salen de la instantánea y solo los de unidad: el pesable no entra, así que queda uno y se agrega directo', async () => {
+      mockearCombos()
+      await montarConInstantanea([comboLocal({ componentes: [{ idArticulo: PANCHO, cantidad: 1 }, { idFamilia: 9, cantidad: 2 }] })])
+
+      await tipearYAgregar('C7')
+
+      await articuloEnElCarrito('Sprite 1L')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByText('Pesable')).not.toBeInTheDocument()
+    })
+
+    it('un combo cuyo componente no tiene precio en la lista del cliente se ve deshabilitado con el motivo', async () => {
+      mockearCombos()
+      const articulos = articulosDeInstantanea().map((a) =>
+        a.idArticulo === COCA ? { ...a, preciosPorLista: [{ ...a.preciosPorLista[0], idListaPrecio: 99 }] } : a,
+      )
+      await montarConInstantanea([comboLocal()], articulos)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      const opcion = await screen.findByRole('option', { name: /C7/ })
+
+      expect(opcion).toHaveAttribute('aria-disabled', 'true')
+      expect(opcion).toHaveTextContent('No se puede cargar: No hay artículos disponibles para «Coca Cola 1L».')
+    })
+
+    it('sin conexión (la API de combos fallaría) todo sigue funcionando desde la instantánea', async () => {
+      mockearApiGet((ruta) => (ruta === '/combos' || ruta.startsWith('/combos/') ? Promise.reject(new ErrorDeRed(new Error('sin red'))) : undefined))
+      await montarConInstantanea([comboLocal()])
+
+      await userEvent.click(screen.getByRole('button', { name: 'Buscar combo' }))
+      await userEvent.click(await screen.findByRole('option', { name: /C7/ }))
+
+      await articuloEnElCarrito('Pancho')
+      expect(await articuloEnElCarrito('Coca Cola 1L')).toBeInTheDocument()
+    })
   })
 })

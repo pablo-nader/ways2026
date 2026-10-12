@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { calcularTotalesDeLinea } from './ajusteManual'
-import { calcularTotalesDeLineaConCombo, comboVigenteDeLinea, rotuloDeComboAplicado } from './combos'
+import { calcularTotalesDeLineaConCombo, clienteDeCombos, comboVigenteDeLinea, rotuloDeComboAplicado } from './combos'
 import { previaDeLinea } from './ventas'
 import type { LineaCarrito } from './carrito'
+import { api } from './cliente'
 import type { ResultadoDeResolucion } from './tipos'
+
+vi.mock('./cliente', async (importarOriginal) => ({
+  ...(await importarOriginal<typeof import('./cliente')>()),
+  api: { get: vi.fn() },
+}))
 
 describe('calcularTotalesDeLineaConCombo', () => {
   it('sin combo es exactamente calcularTotalesDeLinea', () => {
@@ -130,5 +136,30 @@ describe('previaDeLinea — combo', () => {
 
   it('sin resultado no hay precio ni ahorro', () => {
     expect(previaDeLinea(linea, undefined)).toEqual({ precioUnitario: null, descuentoUnitario: 0, total: null, ajusteManual: 0, ahorroDeCombo: 0 })
+  })
+})
+
+describe('clienteDeCombos', () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset()
+    vi.mocked(api.get).mockResolvedValue([])
+  })
+
+  it('listar pide GET /combos', async () => {
+    await clienteDeCombos.listar()
+
+    expect(api.get).toHaveBeenCalledWith('/combos')
+  })
+
+  it('cargable pide el detalle del combo con la empresa del punto de venta', async () => {
+    await clienteDeCombos.cargable(70, 3)
+
+    expect(api.get).toHaveBeenCalledWith('/combos/70/cargable?idEmpresa=3')
+  })
+
+  it('cargable sin empresa no manda el parámetro', async () => {
+    await clienteDeCombos.cargable(70, null)
+
+    expect(api.get).toHaveBeenCalledWith('/combos/70/cargable')
   })
 })
