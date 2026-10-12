@@ -205,3 +205,33 @@ export function copiaDeBajaDeCuenta(e: unknown, nombre: string): string {
 
   return e.message.trim() || encabezado
 }
+
+export type OpcionDeCuenta = { valor: string; etiqueta: string }
+
+/**
+ * Opciones del selector de cuenta de un medio de pago. Solo las activas, más la que el medio ya tiene aunque se haya
+ * desactivado: una cuenta inactiva no se ofrece para asignaciones nuevas, pero quitarla en silencio al editar el medio
+ * sería pisarla. Si la lectura falló (`cuentas` en null) o no trae la actual, la actual sale con el nombre que ya
+ * conoce el formulario. La empresa se nombra solo cuando las cuentas son de más de una.
+ */
+export function opcionesDeCuentas(
+  cuentas: readonly CuentaTesoreriaListado[] | null,
+  idActual: string,
+  nombreActual: string,
+  actualInactiva: boolean,
+): OpcionDeCuenta[] {
+  const lista = cuentas ?? []
+  const variasEmpresas = new Set(lista.map((c) => c.idEmpresa)).size > 1
+  const etiqueta = (nombre: string, empresa: string | null, inactiva: boolean) =>
+    `${nombre}${variasEmpresas && empresa ? ` · ${empresa}` : ''}${inactiva ? ' (inactiva)' : ''}`
+
+  const opciones = lista
+    .filter((c) => c.activo || String(c.id) === idActual)
+    .map((c) => ({ valor: String(c.id), etiqueta: etiqueta(c.nombre, c.nombreEmpresa, !c.activo) }))
+
+  if (idActual !== '' && !opciones.some((o) => o.valor === idActual)) {
+    opciones.unshift({ valor: idActual, etiqueta: etiqueta(nombreActual || `Cuenta ${idActual}`, null, actualInactiva) })
+  }
+
+  return opciones
+}

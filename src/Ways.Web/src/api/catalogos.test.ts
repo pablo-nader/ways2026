@@ -7,7 +7,7 @@ import {
   descriptorMarcas,
   descriptorMediosPago,
 } from './catalogos'
-import type { ListaPrecioListado, MedioPagoListado } from './tipos'
+import type { ListaPrecioListado, MedioPagoAdministrado } from './tipos'
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
   return {
@@ -178,7 +178,7 @@ describe('descriptorListasPrecio campo idListaBase — opcionesDesdeListado', ()
   })
 })
 
-function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
+function medioFixture(sobrescribir: Partial<MedioPagoAdministrado> = {}): MedioPagoAdministrado {
   return {
     id: 1,
     nombre: 'Transferencia',
@@ -190,6 +190,13 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
     requiereReferencia: false,
     recargoPorcentaje: null,
     porcentajeFacturacion: 0,
+    idCuentaTesoreria: null,
+    nombreCuentaTesoreria: null,
+    cuentaTesoreriaInactiva: false,
+    comisionPorcentaje: 0,
+    retencionIibbPorcentaje: 0,
+    retencionIvaPorcentaje: 0,
+    retencionGananciasPorcentaje: 0,
     ...sobrescribir,
   }
 }
@@ -222,5 +229,131 @@ describe('descriptorMediosPago.porcentajeFacturacion', () => {
   it('ida y vuelta: aValores y aAlta conservan el porcentaje', () => {
     const valores = descriptorMediosPago.aValores(medioFixture({ porcentajeFacturacion: 100 }))
     expect(descriptorMediosPago.aAlta('Transferencia', true, valores).porcentajeFacturacion).toBe(100)
+  })
+})
+
+describe('descriptorMediosPago — cuenta, comisión y retenciones', () => {
+  const claves = [
+    'idCuentaTesoreria',
+    'comisionPorcentaje',
+    'retencionIibbPorcentaje',
+    'retencionIvaPorcentaje',
+    'retencionGananciasPorcentaje',
+  ]
+
+  function valoresElectronicos(sobrescribir: Record<string, string | boolean> = {}) {
+    return { ...descriptorMediosPago.valoresPorDefecto, comportamiento: 'Electronico', ...sobrescribir }
+  }
+
+  it('los cinco campos solo se ven con comportamiento Electronico', () => {
+    for (const clave of claves) {
+      const campo = descriptorMediosPago.campos.find((c) => c.clave === clave)
+      expect(campo?.visibleSi, clave).toBeDefined()
+      expect(campo?.visibleSi?.(valoresElectronicos()), clave).toBe(true)
+      expect(campo?.visibleSi?.({ ...valoresElectronicos(), comportamiento: 'Efectivo' }), clave).toBe(false)
+      expect(campo?.visibleSi?.({ ...valoresElectronicos(), comportamiento: 'CuentaCorriente' }), clave).toBe(false)
+    }
+  })
+
+  it('los porcentajes aceptan tres decimales y la cuenta explica cómo entra lo cobrado', () => {
+    for (const clave of claves.slice(1)) {
+      expect(descriptorMediosPago.campos.find((c) => c.clave === clave)).toMatchObject({ tipo: 'numeroDecimal', paso: '0.001' })
+    }
+
+    const cuenta = descriptorMediosPago.campos.find((c) => c.clave === 'idCuentaTesoreria')
+    expect(cuenta?.ayuda).toContain('neto de la comisión y las retenciones')
+    expect(cuenta?.opcionVacia).toBe('— Sin cuenta —')
+  })
+
+  it('el alta arranca sin cuenta y con todo en 0', () => {
+    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos())
+
+    expect(alta).toMatchObject({
+      idCuentaTesoreria: null,
+      comisionPorcentaje: 0,
+      retencionIibbPorcentaje: 0,
+      retencionIvaPorcentaje: 0,
+      retencionGananciasPorcentaje: 0,
+    })
+  })
+
+  it('aValores lleva la cuenta y los porcentajes a texto y aAlta los devuelve como números', () => {
+    const item = medioFixture({
+      idCuentaTesoreria: 7,
+      nombreCuentaTesoreria: 'Mercado Pago',
+      cuentaTesoreriaInactiva: true,
+      comisionPorcentaje: 4.5,
+      retencionIibbPorcentaje: 1.25,
+      retencionIvaPorcentaje: 0.001,
+      retencionGananciasPorcentaje: 0,
+    })
+
+    const valores = descriptorMediosPago.aValores(item)
+    expect(valores).toMatchObject({
+      idCuentaTesoreria: '7',
+      nombreCuentaTesoreria: 'Mercado Pago',
+      cuentaTesoreriaInactiva: true,
+      comisionPorcentaje: '4.5',
+      retencionIibbPorcentaje: '1.25',
+      retencionIvaPorcentaje: '0.001',
+      retencionGananciasPorcentaje: '0',
+    })
+
+    expect(descriptorMediosPago.aAlta('QR', true, valores)).toMatchObject({
+      idCuentaTesoreria: 7,
+      comisionPorcentaje: 4.5,
+      retencionIibbPorcentaje: 1.25,
+      retencionIvaPorcentaje: 0.001,
+      retencionGananciasPorcentaje: 0,
+    })
+  })
+
+  it('un medio sin cuenta vuelve a mandarse sin cuenta, sin convertir el vacío en 0', () => {
+    const valores = descriptorMediosPago.aValores(medioFixture())
+
+    expect(valores.idCuentaTesoreria).toBe('')
+    expect(descriptorMediosPago.aAlta('QR', true, valores).idCuentaTesoreria).toBeNull()
+  })
+
+  it('un porcentaje vacío se manda como 0 y nunca como null', () => {
+    const alta = descriptorMediosPago.aAlta('QR', true, valoresElectronicos({ comisionPorcentaje: '', retencionIvaPorcentaje: '' }))
+
+    expect(alta.comisionPorcentaje).toBe(0)
+    expect(alta.retencionIvaPorcentaje).toBe(0)
+  })
+
+  it.each(['Efectivo', 'CuentaCorriente'])(
+    'con comportamiento %s los campos ocultos se mandan limpios aunque hayan quedado cargados',
+    (comportamiento) => {
+      const alta = descriptorMediosPago.aAlta(
+        'Caja',
+        true,
+        valoresElectronicos({
+          comportamiento,
+          idCuentaTesoreria: '7',
+          comisionPorcentaje: '4.5',
+          retencionIibbPorcentaje: '1',
+          retencionIvaPorcentaje: '2',
+          retencionGananciasPorcentaje: '3',
+        }),
+      )
+
+      expect(alta).toMatchObject({
+        idCuentaTesoreria: null,
+        comisionPorcentaje: 0,
+        retencionIibbPorcentaje: 0,
+        retencionIvaPorcentaje: 0,
+        retencionGananciasPorcentaje: 0,
+      })
+    },
+  )
+
+  it('las opciones remotas arman el selector con las cuentas leídas y conservan la actual si la lectura falló', () => {
+    const remotas = descriptorMediosPago.campos.find((c) => c.clave === 'idCuentaTesoreria')?.opcionesRemotas
+    const valores = { idCuentaTesoreria: '9', nombreCuentaTesoreria: 'Banco viejo', cuentaTesoreriaInactiva: true }
+
+    expect(remotas?.armar(null, valores)).toEqual([{ valor: '9', etiqueta: 'Banco viejo (inactiva)' }])
+    expect(remotas?.armar([], { idCuentaTesoreria: '', nombreCuentaTesoreria: '', cuentaTesoreriaInactiva: false })).toEqual([])
+    expect(remotas?.errorDeCarga).toContain('No se pudieron cargar las cuentas')
   })
 })

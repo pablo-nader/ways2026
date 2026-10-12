@@ -3,10 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaginaCatalogo } from './PaginaCatalogo'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
-import { descriptorMarcas, descriptorListasPrecio } from '../api/catalogos'
+import { descriptorMarcas, descriptorListasPrecio, descriptorMediosPago } from '../api/catalogos'
 import type { DescriptorDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import type { CatalogoListado, ListaPrecioListado, MarcaListado } from '../api/tipos'
+import type { CatalogoListado, ListaPrecioListado, MarcaListado, MedioPagoAdministrado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -626,5 +626,162 @@ describe('PaginaCatalogo — error y foco del modal', () => {
     await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
 
     expect(abrir).toHaveFocus()
+  })
+})
+
+describe('PaginaCatalogo — medios de pago con cuenta de tesorería', () => {
+  function medio(sobrescribir: Partial<MedioPagoAdministrado> = {}): MedioPagoAdministrado {
+    return {
+      id: 1,
+      nombre: 'QR',
+      activo: true,
+      idEmpresa: null,
+      orden: 1,
+      comportamiento: 'Electronico',
+      admiteVuelto: false,
+      requiereReferencia: true,
+      recargoPorcentaje: null,
+      porcentajeFacturacion: 0,
+      idCuentaTesoreria: 3,
+      nombreCuentaTesoreria: 'Mercado Pago',
+      cuentaTesoreriaInactiva: false,
+      comisionPorcentaje: 4.5,
+      retencionIibbPorcentaje: 1,
+      retencionIvaPorcentaje: 0,
+      retencionGananciasPorcentaje: 0,
+      ...sobrescribir,
+    }
+  }
+
+  function cuentaDeApi(id: number, nombre: string, activo = true) {
+    return { id, idEmpresa: 1, nombreEmpresa: 'Comercio', nombre, saldoInicial: 0, saldoActual: 0, activo, saldoInicialEditable: true }
+  }
+
+  function responder(medios: MedioPagoAdministrado[], cuentas: () => Promise<unknown>) {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/catalogos/medios-pago') ? Promise.resolve(medios) : cuentas(),
+    )
+  }
+
+  async function abrirEdicion(posicion = 0) {
+    const botones = await screen.findAllByRole('button', { name: 'Editar' })
+    await userEvent.click(botones[posicion])
+    return screen.getByRole('dialog', { name: 'Editar medio de pago' })
+  }
+
+  it('al editar un medio electrónico trae las cuentas activas y deja elegida la actual', async () => {
+    responder([medio()], () =>
+      Promise.resolve([cuentaDeApi(3, 'Mercado Pago'), cuentaDeApi(4, 'Banco'), cuentaDeApi(5, 'Vieja', false)]),
+    )
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+    const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería') as HTMLSelectElement
+    await waitFor(() => expect(within(cuenta).getByRole('option', { name: 'Banco' })).toBeInTheDocument())
+
+    expect(within(cuenta).queryByRole('option', { name: /Vieja/ })).not.toBeInTheDocument()
+    expect(within(cuenta).getByRole('option', { name: '— Sin cuenta —' })).toBeInTheDocument()
+    expect(cuenta).toHaveValue('3')
+    expect(within(dialogo).getByLabelText('Comisión (%)')).toHaveValue(4.5)
+    expect(within(dialogo).getByText(/neto de la comisión y las retenciones/)).toBeInTheDocument()
+  })
+
+  it('guardar manda la cuenta elegida y los cuatro porcentajes con tres decimales', async () => {
+    const usuario = userEvent.setup()
+    responder([medio()], () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago'), cuentaDeApi(4, 'Banco')]))
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+    const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
+    await waitFor(() => expect(within(cuenta).getByRole('option', { name: 'Banco' })).toBeInTheDocument())
+    await usuario.selectOptions(cuenta, '4')
+    const iva = within(dialogo).getByLabelText('Retención IVA (%)')
+    await usuario.clear(iva)
+    await usuario.type(iva, '0.125')
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][0]).toBe('/catalogos/medios-pago/1')
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({
+      idCuentaTesoreria: 4,
+      comisionPorcentaje: 4.5,
+      retencionIibbPorcentaje: 1,
+      retencionIvaPorcentaje: 0.125,
+      retencionGananciasPorcentaje: 0,
+    })
+  })
+
+  it('si la lectura de cuentas falla avisa, muestra la cuenta actual y el formulario se puede guardar', async () => {
+    const usuario = userEvent.setup()
+    responder([medio()], () => Promise.reject(new ErrorApi(500, 'x', 'caída')))
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+    expect(await within(dialogo).findByText(/No se pudieron cargar las cuentas de tesorería/)).toBeInTheDocument()
+    const cuenta = within(dialogo).getByLabelText('Cuenta de tesorería')
+    expect(cuenta).toHaveValue('3')
+    expect(within(cuenta).getByRole('option', { name: 'Mercado Pago' })).toBeInTheDocument()
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({ idCuentaTesoreria: 3 })
+  })
+
+  it('con comportamiento Efectivo los campos no están y lo que se manda va limpio', async () => {
+    const usuario = userEvent.setup()
+    responder([medio()], () => Promise.resolve([cuentaDeApi(3, 'Mercado Pago')]))
+    apiPutMock.mockResolvedValue(undefined)
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    const dialogo = await abrirEdicion()
+    await usuario.selectOptions(within(dialogo).getByLabelText('Comportamiento'), 'Efectivo')
+
+    expect(within(dialogo).queryByLabelText('Cuenta de tesorería')).not.toBeInTheDocument()
+    expect(within(dialogo).queryByLabelText('Comisión (%)')).not.toBeInTheDocument()
+
+    await usuario.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock.mock.calls[0][1]).toMatchObject({
+      comportamiento: 'Efectivo',
+      idCuentaTesoreria: null,
+      comisionPorcentaje: 0,
+      retencionIibbPorcentaje: 0,
+      retencionIvaPorcentaje: 0,
+      retencionGananciasPorcentaje: 0,
+    })
+  })
+
+  it('una lectura de cuentas que llega después de reabrir otro formulario no pisa al nuevo', async () => {
+    const usuario = userEvent.setup()
+    let resolverPrimera: (v: unknown) => void = () => {}
+    let llamadas = 0
+    responder(
+      [medio({ id: 1 }), medio({ id: 2, nombre: 'Otro', idCuentaTesoreria: null, nombreCuentaTesoreria: null })],
+      () => {
+        llamadas += 1
+        return llamadas === 1
+          ? new Promise((resolver) => {
+              resolverPrimera = resolver
+            })
+          : Promise.resolve([cuentaDeApi(8, 'Segunda lectura')])
+      },
+    )
+    render(<PaginaCatalogo definicion={descriptorMediosPago} />)
+
+    await abrirEdicion(0)
+    await usuario.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }))
+    await abrirEdicion(1)
+
+    const cuenta = within(screen.getByRole('dialog')).getByLabelText('Cuenta de tesorería')
+    await waitFor(() => expect(within(cuenta).getByRole('option', { name: 'Segunda lectura' })).toBeInTheDocument())
+
+    await act(async () => {
+      resolverPrimera([cuentaDeApi(7, 'Primera lectura')])
+    })
+
+    expect(within(cuenta).queryByRole('option', { name: 'Primera lectura' })).not.toBeInTheDocument()
+    expect(within(cuenta).getByRole('option', { name: 'Segunda lectura' })).toBeInTheDocument()
   })
 })

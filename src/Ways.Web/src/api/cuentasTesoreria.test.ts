@@ -11,6 +11,7 @@ import {
   errorAlGuardar,
   formularioVacio,
   nombreDeEmpresa,
+  opcionesDeCuentas,
   validarFormulario,
   type CuentaTesoreriaListado,
   type Formulario,
@@ -289,5 +290,44 @@ describe('copiaDeBajaDeCuenta', () => {
 
   it('otro 4xx rinde el mensaje del servidor', () => {
     expect(copiaDeBajaDeCuenta(new ErrorApi(400, 'otro', 'Algo pasó.'), 'MP')).toBe('Algo pasó.')
+  })
+})
+
+describe('opcionesDeCuentas', () => {
+  const activa = cuenta({ id: 1, nombre: 'Mercado Pago' })
+  const inactiva = cuenta({ id: 2, nombre: 'Banco viejo', activo: false })
+
+  it('ofrece solo las cuentas activas cuando el medio no tiene ninguna', () => {
+    expect(opcionesDeCuentas([activa, inactiva], '', '', false)).toEqual([{ valor: '1', etiqueta: 'Mercado Pago' }])
+  })
+
+  it('conserva la cuenta actual aunque esté inactiva y la marca', () => {
+    expect(opcionesDeCuentas([activa, inactiva], '2', 'Banco viejo', true)).toEqual([
+      { valor: '1', etiqueta: 'Mercado Pago' },
+      { valor: '2', etiqueta: 'Banco viejo (inactiva)' },
+    ])
+  })
+
+  it('nombra la empresa solo cuando las cuentas son de más de una', () => {
+    const deOtra = cuenta({ id: 3, idEmpresa: 8, nombreEmpresa: 'Sucursal', nombre: 'Galicia' })
+
+    expect(opcionesDeCuentas([activa], '', '', false)[0].etiqueta).toBe('Mercado Pago')
+    expect(opcionesDeCuentas([activa, deOtra], '', '', false).map((o) => o.etiqueta)).toEqual([
+      'Mercado Pago · Comercio',
+      'Galicia · Sucursal',
+    ])
+  })
+
+  it('si la lectura falló la actual sale con el nombre que el formulario ya conoce', () => {
+    expect(opcionesDeCuentas(null, '5', 'Cuenta guardada', false)).toEqual([{ valor: '5', etiqueta: 'Cuenta guardada' }])
+    expect(opcionesDeCuentas(null, '5', '', false)).toEqual([{ valor: '5', etiqueta: 'Cuenta 5' }])
+  })
+
+  it('la actual que la lectura no trae (borrada) no desaparece del selector', () => {
+    expect(opcionesDeCuentas([activa], '9', 'Se borró', false).map((o) => o.valor)).toEqual(['9', '1'])
+  })
+
+  it('sin cuenta actual y sin lectura no hay opciones', () => {
+    expect(opcionesDeCuentas(null, '', '', false)).toEqual([])
   })
 })
