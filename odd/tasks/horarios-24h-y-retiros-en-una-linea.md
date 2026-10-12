@@ -51,8 +51,10 @@ fraction-digit options).
 ## Progress / evidence
 
 - T1 done. RED: fechas.test.ts 2 failed (fechaHoraATexto not a function); GREEN: fechas + plantillas 72 passed. tsc -b --noEmit: clean. oxlint: 0 errors (pre-existing warnings only). Full vitest: 206 files / 5781 tests passed. Residual rg for toLocaleString('es-AR')/toLocaleString() in non-test code: empty. Shared helper: fechaHoraATexto (hourCycle h23); 24 call sites + 7 tests migrated. formatearHora (hour12:false) renders 00:30 on this ICU, left unchanged. T1 commit 64acac5b.
-- T2 done. RED: plantillas.test.ts 2 failed (one-line withdrawals, long free-text motive); GREEN: fechas + plantillas 73 passed. tsc clean, oxlint 0 errors, full vitest 206 files / 5782 tests passed. Long motives are truncated by the existing dosColumnas (amount stays on the line).
+- T2 done. RED: plantillas.test.ts 2 failed (one-line withdrawals, long free-text motive); GREEN: fechas + plantillas 73 passed. tsc clean, oxlint 0 errors, full vitest 206 files / 5782 tests passed. Long motives are truncated by the existing dosColumnas (amount stays on the line). T2 commit cd72b92d.
+- Judgment day (two blind judges over main..cd72b92d): no severe findings. Both raised one WARNING — `formatearHora` used `hour12: false`, which could print midnight as 24:xx on some engines; on Node ICU 78.2 it prints 00:30 either way. Aligned to `hourCycle: 'h23'` anyway in 7c32496f (plantillas tests 53 passed, tsc clean). JUDGMENT: APPROVED.
+- Review tier: RDD off (clone-local); `gentle-ai review assess` unassessable on committed work, treated as high: writer self-verification + two independent judges + parent spot check (fechas + plantillas 73 passed).
 
 ## Next step
 
-Delegate T1 + T2 to one writer.
+Open the PR. Pending outside this feature: release of Ways.Desktop so the tills get the new bundle; the recalculation mark on the reprinted closing ticket waits for the owner's answer.
