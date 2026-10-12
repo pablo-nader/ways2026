@@ -305,10 +305,15 @@ function mockearVentaExitosa(comprobante: ComprobanteEmitido = comprobanteEmitid
   })
 }
 
+/** El cliente por defecto llegó a la caja del selector de la cabecera del carrito: espera al dato, no a la caja. */
+async function esperarAlConsumidorFinal() {
+  await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue('#1 — Consumidor Final'))
+}
+
 /** Deja una venta completa emitida en pantalla (`/vender`, medio Efectivo por el total) — punto de
  * partida de los tests de impresión del ticket de venta (Fix judgment-day W1/W2). */
 async function completarVenta() {
-  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await esperarAlConsumidorFinal()
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   await screen.findByText('Coca Cola 1L')
@@ -518,7 +523,7 @@ describe('ShellPos — los controles de caja viven en el header, portaleados des
     const banner = (await screen.findByText('Almacén Demo')).closest('header') as HTMLElement
     await within(banner).findByText('Caja abierta')
 
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -771,7 +776,7 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
     imprimirMock.mockImplementationOnce(() => pendiente) // el ticket de retiro, pendiente
 
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await retirarHastaTicket('5000')
 
     // El pulso de cajón ya se mandó; el ticket de retiro es el segundo trabajo, en vuelo.
@@ -798,7 +803,7 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
     imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
     imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'impresora desconectada' })
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
 
     await cerrarCajaPorRetiro()
 
@@ -812,7 +817,7 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
     imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
     imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'impresora desconectada' })
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await cerrarCajaPorRetiro()
     await screen.findByText('No se pudo imprimir la apertura de cajón: sin papel')
     await screen.findByText('No se pudo imprimir el comprobante de cierre de turno: impresora desconectada')
@@ -829,7 +834,7 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
     mockearFlujoDeCajaDeEscritorio()
     imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await cerrarCajaPorRetiro()
     await screen.findByText('No se pudo imprimir la apertura de cajón: sin papel')
     expect(imprimirMock).toHaveBeenCalledTimes(2)
@@ -939,7 +944,7 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
 
   it('"Instalar y reiniciar" se deshabilita mientras el carrito de "Vender" tiene ítems', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const boton = await screen.findByRole('button', { name: 'Instalar y reiniciar' })
     expect(boton).toBeEnabled()
 
@@ -980,7 +985,7 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
     mockearGastosDelTurno()
     apiPostMock.mockImplementation((ruta: string) => Promise.resolve(ruta === '/gastos' ? { id: 1 } : undefined))
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await elegirDeMenu('Caja', 'Gastos')
     await screen.findByText('Este turno todavía no tiene gastos.')
 
@@ -995,7 +1000,7 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
   it('salir de "Vender" con ítems en el carrito mantiene bloqueada la instalación: el borrador sigue vivo', async () => {
     mockearGastosDelTurno()
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
@@ -1038,7 +1043,7 @@ describe('ShellPos — aviso de actualización del escritorio', () => {
 
   it('al instalar, el header y la pantalla quedan inertes', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const invoke = (globalThis as GlobalConTauri).__TAURI__!.core.invoke
     invoke.mockImplementation((comando: string) =>
       comando === 'instalar_actualizacion'
@@ -1108,7 +1113,7 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
 
   it('F1 lleva el foco al input de código sin vaciar el carrito y cancela el comportamiento por defecto', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     const campo = screen.getByLabelText('Código escaneado')
     await userEvent.type(campo, '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1124,7 +1129,7 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
 
   it('F1 desde otra pantalla vuelve a Vender con el foco en el input de código', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     mockearRutasDePos((ruta) => (ruta.startsWith('/ventas/por-turno/') ? Promise.resolve([]) : undefined))
     await elegirDeMenu('Caja', 'Ventas del turno')
     await waitFor(() => expect(screen.queryByLabelText('Código escaneado')).not.toBeInTheDocument())
@@ -1136,7 +1141,7 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
 
   it('F1 se ignora mientras hay un diálogo abierto, pero igual cancela el comportamiento por defecto', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     await elegirDeMenu('Caja', 'Cerrar turno')
     await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' })
     const campo = screen.getByLabelText('Código escaneado')
@@ -1149,7 +1154,7 @@ describe('ShellPos — header en una línea con menús Caja y Sistema', () => {
 
   it('"Cerrar turno" elegido desde otra pantalla vuelve a Vender y abre la confirmación de cierre, que no reaparece al cerrarla', async () => {
     renderShell()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await esperarAlConsumidorFinal()
     mockearRutasDePos((ruta) => (ruta.startsWith('/ventas/por-turno/') ? Promise.resolve([]) : undefined))
     await elegirDeMenu('Caja', 'Ventas del turno')
     await waitFor(() => expect(screen.queryByLabelText('Código escaneado')).not.toBeInTheDocument())

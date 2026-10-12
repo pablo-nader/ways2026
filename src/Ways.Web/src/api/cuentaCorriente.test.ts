@@ -5,6 +5,7 @@ import {
   aSolicitudDeReliquidacion,
   calcularImporteAplicado,
   construirQueryEstadoDeCuenta,
+  derivarSaldoParaChip,
   disponibilidadPrevia,
   etiquetaDeMovimiento,
   filaPagoACuentaVacia,
@@ -619,5 +620,47 @@ describe('parsearDetalleDeActualizacionPrecios', () => {
   it('Lineas que no es array da null', () => {
     const crudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: 'no-es-array' }])
     expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+})
+
+describe('derivarSaldoParaChip', () => {
+  const limitado = (saldo: number, limiteCredito: number) => derivarSaldoParaChip({ saldo, limiteCredito, creditoIlimitado: false })
+
+  it('saldo 0 con límite: barra vacía y todo el límite disponible', () => {
+    expect(limitado(0, 80000)).toEqual({ saldo: 0, limite: 80000, disponible: 80000, proporcionUsada: 0, excedido: false })
+  })
+
+  it('saldo dentro del límite: la barra se llena en saldo / límite', () => {
+    expect(limitado(5000, 80000)).toEqual({ saldo: 5000, limite: 80000, disponible: 75000, proporcionUsada: 0.0625, excedido: false })
+  })
+
+  it('saldo igual al límite: barra llena, disponible 0 y todavía no excedido', () => {
+    expect(limitado(80000, 80000)).toEqual({ saldo: 80000, limite: 80000, disponible: 0, proporcionUsada: 1, excedido: false })
+  })
+
+  it('saldo por encima del límite: excedido, barra llena y disponible negativo', () => {
+    expect(limitado(90000, 80000)).toEqual({ saldo: 90000, limite: 80000, disponible: -10000, proporcionUsada: 1, excedido: true })
+  })
+
+  it('límite 0 con deuda: excedido sin dividir por cero', () => {
+    expect(limitado(100, 0)).toEqual({ saldo: 100, limite: 0, disponible: -100, proporcionUsada: 1, excedido: true })
+  })
+
+  it('límite 0 sin deuda: barra vacía y no excedido', () => {
+    expect(limitado(0, 0)).toEqual({ saldo: 0, limite: 0, disponible: 0, proporcionUsada: 0, excedido: false })
+  })
+
+  it('saldo a favor del cliente: barra vacía, saldo tal cual y disponible por encima del límite', () => {
+    expect(limitado(-2000, 80000)).toEqual({ saldo: -2000, limite: 80000, disponible: 82000, proporcionUsada: 0, excedido: false })
+  })
+
+  it('crédito ilimitado: sin límite, sin disponible y sin barra, aunque el saldo sea enorme', () => {
+    expect(derivarSaldoParaChip({ saldo: 9_000_000, limiteCredito: 0, creditoIlimitado: true })).toEqual({
+      saldo: 9_000_000,
+      limite: null,
+      disponible: null,
+      proporcionUsada: null,
+      excedido: false,
+    })
   })
 })
