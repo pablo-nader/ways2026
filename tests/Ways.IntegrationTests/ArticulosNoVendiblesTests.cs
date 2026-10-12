@@ -406,13 +406,13 @@ public class ArticulosNoVendiblesTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.OK, emitido.StatusCode);
     }
 
-    /// <summary>Facturar un remito ya emitido cuyo artículo pasó a uso interno da 409 y el remito sigue emitido y sin
-    /// ligar; con el artículo vendible otra vez se factura. Mata la regla agregada en
-    /// <c>ServicioDeFacturacionDeRemitos.FacturarAsync</c>.</summary>
+    /// <summary>Facturar un remito ya emitido se acepta aunque su artículo haya pasado a uso interno después: la
+    /// mercadería ya salió, así que la liquidación no es una venta nueva. Mata la regla de venta si se vuelve a exigir
+    /// en <c>ServicioDeFacturacionDeRemitos.FacturarAsync</c>.</summary>
     [Fact]
-    public async Task FacturarUnRemitoConUnArticuloQueYaNoSeVendeDa409()
+    public async Task FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible()
     {
-        var ctx = await apoyo.PrepararAsync(nameof(FacturarUnRemitoConUnArticuloQueYaNoSeVendeDa409), ModoPuntoVenta.Web);
+        var ctx = await apoyo.PrepararAsync(nameof(FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible), ModoPuntoVenta.Web);
         var articulo = await apoyo.ArticuloAsync(ctx, "remito a facturar", 100m);
         var borrador = await CrearRemitoAsync(ctx, articulo);
         var emitido = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/emitir", content: null);
@@ -423,20 +423,13 @@ public class ArticulosNoVendiblesTests(WaysApiFixture fixture) : IClassFixture<W
         SolicitudDeFacturacionDeRemitos Facturacion() => new(
             ctx.IdPuntoVenta, [remito.Id], [new PagoDeVenta(ctx.IdMedioEfectivo, remito.Total, null, 0m)], null);
 
-        var rechazada = await ctx.Admin.PostAsJsonAsync("/api/remitos/facturacion", Facturacion());
-
-        Assert.Equal(HttpStatusCode.Conflict, rechazada.StatusCode);
-        Assert.Equal("articulo_no_vendible", CodigoDeError(await rechazada.Content.ReadFromJsonAsync<JsonElement>()));
-        await using (var db = apoyo.Db(ctx.IdTenant))
-        {
-            var guardado = await db.Remitos.SingleAsync(r => r.Id == remito.Id);
-            Assert.Equal((EstadoRemito.Emitido, null), (guardado.Estado, guardado.IdComprobanteVenta));
-        }
-
-        await CambiarVendibleAsync(ctx, articulo, vendible: true);
         var aceptada = await ctx.Admin.PostAsJsonAsync("/api/remitos/facturacion", Facturacion());
 
         Assert.Equal(HttpStatusCode.Created, aceptada.StatusCode);
+        await using var db = apoyo.Db(ctx.IdTenant);
+        var guardado = await db.Remitos.SingleAsync(r => r.Id == remito.Id);
+        Assert.Equal(EstadoRemito.Facturado, guardado.Estado);
+        Assert.NotNull(guardado.IdComprobanteVenta);
     }
 
     /// <summary>Lo ya cobrado offline no se reescribe: la venta de un dispositivo con número preasignado se acepta aunque

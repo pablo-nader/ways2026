@@ -542,7 +542,8 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   página sin `buscar` ni `idCategoria` (`pagina = 1` ya acotada), vacío en cualquier otra consulta;
   `GET /api/publico/combos` (anónimo, mismo `Cache-Control` y mismo `404 vitrina_no_publicada`) los devuelve siempre:
   `[{ id, nombre, precio, componentes: [{ idArticulo, nombre, cantidad, imagenVersion }] }]` ordenados por
-  nombre, con el precio fijo del combo y sin imagen propia (sin el `codigo` del combo: es el atajo de la caja y la tienda
+  nombre, con el precio fijo del combo redondeado al peso entero (el que cobra el motor de la venta: un combo de 199,40 se lista a
+  199) y sin imagen propia (sin el `codigo` del combo: es el atajo de la caja y la tienda
   no lo muestra). Un combo aparece si está disponible online, activo y vivo
   (la policy), es de todo el tenant o de la empresa de la vitrina, y TODOS sus componentes son artículos (sin familia)
   disponibles online y a la venta, activos, disponibles para esa empresa, con precio vigente en la lista de la tienda y
@@ -573,8 +574,8 @@ imagenes_articulo (           -- [tenant-wide: id_tenant, SIN id_empresa], como 
   usan las compras y el back-office); y de la tienda (la policy de `articulos`). `ReglaDeArticuloVendible` rechaza con `409
   articulo_no_vendible` (con el nombre del artículo) una línea de venta (`ServicioDeVentas.EmitirAsync`), de presupuesto
   o de remito al guardar el borrador, y otra vez cuando el documento se concreta, para que un borrador viejo no la
-  esquive: al convertir un presupuesto en venta, al emitir un remito y al facturar remitos (un remito emitido cuyo
-  artículo pasó a uso interno no se factura mientras siga así; se puede anular). Quedan fuera de la regla en la venta,
+  esquive: al convertir un presupuesto en venta, y al emitir un remito (facturar remitos ya emitidos no la
+  vuelve a exigir: la mercadería ya salió y la liquidación no se frena por un cambio de bandera posterior). Quedan fuera de la regla en la venta,
   como ya lo hace la de cantidades por unidad de venta, la que un dispositivo ya cobró offline (`NumeroPreasignado`) y la
   devolución (signo negativo): cambiar la bandera no reescribe lo ya vendido. Como una devolución puede ser de un
   artículo que después pasó a uso interno, `GET /api/articulos/escaneo` y la búsqueda de la caja

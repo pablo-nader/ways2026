@@ -173,15 +173,15 @@ Route: delegated fix actor (one). Commits: `d5c526f4` (L1 to L3), and the second
   applied, 404 for a missing or soft-deleted id; the raw-JSON combo PUT is 200 and keeps `true`).
 - L2: `incluirNoVendibles` on `/escaneo` (both branches, `activo` still required) and on the sale search. Tests in
   `ArticulosNoVendiblesTests`.
-- L3: the rule at presupuesto conversion, remito emission and remito invoicing. Tests `ConvertirUnPresupuestoViejo...`,
-  `EmitirUnRemitoViejo...`, `FacturarUnRemito...`, each with the control that sells again once the article is sellable.
+- L3: the rule at presupuesto conversion and remito emission (the remito invoicing part was reverted in round 2, see below).
+  Tests `ConvertirUnPresupuestoViejo...`, `EmitirUnRemitoViejo...`, each with the control that sells again once the article is sellable.
 - L4: `ConsultaDeCombosPublicos` excludes a combo that does not save; the shared price path is
   `ConsultaDeCatalogoPublico.PreciosFinalesAsync`. Tests `UnComboSoloFiguraSiCobraMenosQue...` and
   `ConUnaListaDerivadaElAhorroSeMideContraElPrecioDerivado`; the existing combo fixtures that did not save were repriced.
 - L5: `ComboPublico.Codigo` removed; the exact-shape assertion of the endpoint JSON no longer lists `codigo`.
 - L6: `CatalogoPublicoOfertasTests` for the `grupo` and `familia` scopes, the hour window and the weekday (the seed helper grew
   `idGrupo`, `idFamilia`, `horaDesde`, `horaHasta`, `diasSemana`). The hour and weekday tests derive their expectation from the
-  local clock (the morning/afternoon pair always has exactly one winner), so they are not time dependent.
+  local clock (the morning/afternoon pair always has exactly one winner); round 2 replaced that with a fixed server clock.
 - L7: `LectorDeCatalogoPublico` decides "no search" with `ConsultaDeCatalogoPublico.Normalizar` (now public); `?buscar=%01` and
   `?buscar=%01%02%20` carry the combos like an unfiltered page.
 - L8: the constraint about the shared engines was added to Constraints.
@@ -196,12 +196,36 @@ Mutation evidence (mutate, run the named class, revert; every row red in the nam
 | sale search without the `incluirNoVendibles` override / `/escaneo` endpoint ignoring the parameter | `...LaBusquedaConIncluirNoVendibles...` / `...ElEscaneoConIncluirNoVendiblesResuelve...` |
 | conversion exempt again from the rule | `...ConvertirUnPresupuestoViejo...` |
 | rule also applied to offline sales (`NumeroPreasignado`) | `...LaVentaOfflineYaCobradaSeAcepta...` (pre-existing test) |
-| remito emission without the rule / remito invoicing without the rule | `...EmitirUnRemitoViejo...` / `...FacturarUnRemito...` |
+| remito emission without the rule | `...EmitirUnRemitoViejo...` (the invoicing half of this row was superseded in round 2) |
 | combo saving test `<=` / no peso rounding / no component quantity / filter removed / offers ignored / derived list ignored (six runs) | `CombosPublicosTests.UnComboSoloFiguraSiCobraMenos...`, `...ConUnaListaDerivadaElAhorro...`, `ElCatalogoYElEndpointDanLosMismosCombos` |
 | lector with `IsNullOrWhiteSpace` | `CombosPublicosTests.ElCatalogoLlevaLosCombosSoloEnLaPrimeraPaginaSinFiltros` |
 | offers: no `grupo` clause / group not wired / no `familia` clause / family not wired / hour shifted 12 h / weekday shifted one (six runs) | `CatalogoPublicoOfertasTests.UnaOfertaDeGrupo...`, `...UnaOfertaDeFamilia...`, `...LaVentanaHoraria...`, `...LosDiasDeSemana...` |
 
 L5 has no separate mutant: the field is removed from the record, and the exact-shape assertion over the endpoint JSON is the guard.
+
+### Judgment-day round 2 fixes (informational)
+
+- R2-1: `ServicioDeFacturacionDeRemitos.FacturarAsync` no longer applies `ReglaDeArticuloVendible` (and its now unused `using` and
+  article read are gone): the goods of an emitted remito already left, so settling it must not be blocked by a later flag change.
+  The rule stays on remito emission, presupuesto conversion and sales. The test `FacturarUnRemitoConUnArticuloQueYaNoSeVendeDa409`
+  became `FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible` (201, remito `facturado` and linked).
+  docs/10 updated.
+- R2-2: `ComboPublico.Precio` is now `RedondeoDePeso.APesoEntero(combo.Precio)`, the price the sale engine charges and the one the
+  savings test already used; documented in the record, the query and docs/10. `UnComboSoloFiguraSiCobraMenos...` asserts the listed
+  prices (`[150, 199, 199, 350, 140]`, the 199.4 combo lists 199).
+- R2-3: the clock-dependent offer tests (hour window, weekday, date window) no longer read `DateTime.Now` for the expectation. The
+  fixture supports a per-test clock (`WithWebHostBuilder` replacing `IRelojDelSistema`, the pattern of `ServicioDePresupuestosTests`),
+  so they run with a server clock fixed on the first Wednesday after today at 10:00 local (and 15:00 for the hour window), built
+  with `TimeZoneInfo.Local` because the offer resolver converts with it. The date is forward so prices seeded with the real clock
+  are already in force; only the weekday and hour matter to the assertions.
+
+Mutation evidence (round 2; mutate, run the named test, revert; each red, green after the revert):
+
+| Clause mutated | Killed by |
+|---|---|
+| rule re-added to the invoicing of remitos | `ArticulosNoVendiblesTests.FacturarUnRemitoEmitidoSeAceptaAunqueElArticuloHayaDejadoDeSerVendible` |
+| combo projection returns the raw `Precio` | `CombosPublicosTests.UnComboSoloFiguraSiCobraMenosQueSusComponentesAlPrecioDeLaTienda` |
+| hour window shifted 12 h / weekday shifted one (fixed clock) | `CatalogoPublicoOfertasTests.LaVentanaHorariaDeLaOfertaSeEvaluaConLaHoraLocal` / `...LosDiasDeSemanaDeLaOfertaSeEvaluanConElDiaLocal` |
 
 ### Deviations from the brief
 
@@ -224,9 +248,9 @@ L5 has no separate mutant: the field is removed from the record, and the exact-s
    `ReglaDeArticuloVendible.Exigir` (pure, `Ways.Domain.Articulos`) is called from `ServicioDeVentas.EmitirAsync`, from
    `ServicioDePresupuestos.ResolverYMaterializarAsync` and from `ServicioDeRemitos.ResolverYMaterializarAsync` (create/edit of
    the draft). Judgment-day L3 closed the old-draft bypass: the rule is exercised again when the document is concretized,
-   in `EmitirAsync` when a presupuesto is converted (`IdPresupuestoOrigen`), in `ServicioDeRemitos.EmitirAsync` and in
-   `ServicioDeFacturacionDeRemitos.FacturarAsync` (a remito already emitted whose article became internal-use is not invoiced
-   while it stays so; it can still be annulled). In `EmitirAsync` the rule is exempt only for a sale a device already charged
+   in `EmitirAsync` when a presupuesto is converted (`IdPresupuestoOrigen`) and in `ServicioDeRemitos.EmitirAsync`
+   (round 2 removed the third site, `ServicioDeFacturacionDeRemitos.FacturarAsync`: invoicing an already-emitted remito
+   settles goods that already left, it is not a new sale). In `EmitirAsync` the rule is exempt only for a sale a device already charged
    offline (`NumeroPreasignado`) and for returns (negative sign); the quantity-by-unit rule keeps its three exemptions. The 409
    message names the article (name and internal code).
 4. **The sale search is `GET /api/articulos?soloVendibles=true`** (new optional parameter of the generic listing, the one

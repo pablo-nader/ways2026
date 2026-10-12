@@ -49,7 +49,8 @@ public record ArticuloPublico(
 /// <paramref name="ImagenVersion"/> es el mismo contador que el de <see cref="ArticuloPublico"/> (<c>null</c> sin imagen).</summary>
 public record ComponenteDeComboPublico(int IdArticulo, string Nombre, decimal Cantidad, long? ImagenVersion);
 
-/// <summary>Un combo de la tienda: <paramref name="Precio"/> es el precio fijo del conjunto. No tiene imagen propia;
+/// <summary>Un combo de la tienda: <paramref name="Precio"/> es el precio fijo del conjunto redondeado al peso entero,
+/// el mismo que cobra el motor de la venta (<c>RedondeoDePeso.APesoEntero</c>). No tiene imagen propia;
 /// la tarjeta muestra las de sus componentes. No lleva el código del combo: es el atajo de la caja y la tienda no lo
 /// muestra.</summary>
 public record ComboPublico(

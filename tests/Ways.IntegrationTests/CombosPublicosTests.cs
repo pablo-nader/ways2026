@@ -176,6 +176,10 @@ public class CombosPublicosTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(
             ["01 más barato", "04 un peso menos", "05 se redondea hacia abajo y ahorra", "07 ahorra por la cantidad", "09 gana a pesar de la oferta"],
             Nombres(combos));
+        // El precio listado es el que cobra el motor: el combo de 199,4 se publica a 199.
+        Assert.Equal(
+            [150m, 199m, 199m, 350m, 140m],
+            [.. combos.EnumerateArray().Select(c => c.GetProperty("precio").GetDecimal())]);
     }
 
     /// <summary>Con una lista derivada el costo de los componentes es el derivado (100 + 10% = 110 cada uno): un combo
