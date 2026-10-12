@@ -88,6 +88,21 @@ export function rangoUltimoMes(ahora: Date = new Date()): { desde: string; hasta
   return { desde, hasta }
 }
 
+/** Ventana de los últimos `dias` días hasta hoy, en fechas locales `YYYY-MM-DD`. */
+export function rangoDeLosUltimosDias(dias: number, ahora: Date = new Date()): { desde: string; hasta: string } {
+  return {
+    desde: fechaLocalAIso(new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() - dias)),
+    hasta: fechaLocalAIso(ahora),
+  }
+}
+
+/** Por qué un par de fechas `YYYY-MM-DD` (o vacías) no sirve para consultar, o `null` si sirve. */
+export function motivoDeRangoInvalido(desde: string, hasta: string): string | null {
+  if (desde === '' || hasta === '') return 'Completá las fechas Desde y Hasta para ver los movimientos.'
+  if (desde > hasta) return 'La fecha Desde no puede ser posterior a Hasta.'
+  return null
+}
+
 export const clienteDeCuentaCorriente = {
   /** `GET /api/clientes/{id}/cuenta-corriente?desde=&hasta=&historico=` — header + página en un
    * único payload (design decisión 9), 200 siempre (nunca 404, incluso para un cliente sin

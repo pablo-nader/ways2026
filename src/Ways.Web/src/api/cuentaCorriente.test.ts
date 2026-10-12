@@ -11,8 +11,10 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  motivoDeRangoInvalido,
   nombreCompletoDeCliente,
   parsearDetalleDeActualizacionPrecios,
+  rangoDeLosUltimosDias,
   rangoUltimoMes,
   reliquidacionEsNoOp,
   saldoResultanteDeAjuste,
@@ -145,6 +147,36 @@ describe('rangoUltimoMes', () => {
   it('fin de mes: 31 de julio → 30 de junio (junio tiene 30 días)', () => {
     const ahora = new Date(2026, 6, 31)
     expect(rangoUltimoMes(ahora)).toEqual({ desde: '2026-06-30', hasta: '2026-07-31' })
+  })
+})
+
+describe('rangoDeLosUltimosDias', () => {
+  it('desde = hoy − N días, hasta = hoy (fechas locales)', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2026, 7, 15))).toEqual({ desde: '2026-08-08', hasta: '2026-08-15' })
+  })
+
+  it('cruza el mes y el año sin desbordar', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2026, 0, 3))).toEqual({ desde: '2025-12-27', hasta: '2026-01-03' })
+  })
+
+  it('resta en días de calendario aunque el rango atraviese un 29 de febrero', () => {
+    expect(rangoDeLosUltimosDias(7, new Date(2028, 2, 3))).toEqual({ desde: '2028-02-25', hasta: '2028-03-03' })
+  })
+})
+
+describe('motivoDeRangoInvalido', () => {
+  it('un rango ordenado, o de un solo día, es válido', () => {
+    expect(motivoDeRangoInvalido('2026-08-01', '2026-08-15')).toBeNull()
+    expect(motivoDeRangoInvalido('2026-08-15', '2026-08-15')).toBeNull()
+  })
+
+  it('con alguna fecha vacía pide completar las dos', () => {
+    expect(motivoDeRangoInvalido('', '2026-08-15')).toBe('Completá las fechas Desde y Hasta para ver los movimientos.')
+    expect(motivoDeRangoInvalido('2026-08-01', '')).toBe('Completá las fechas Desde y Hasta para ver los movimientos.')
+  })
+
+  it('con Desde posterior a Hasta lo dice', () => {
+    expect(motivoDeRangoInvalido('2026-08-16', '2026-08-15')).toBe('La fecha Desde no puede ser posterior a Hasta.')
   })
 })
 

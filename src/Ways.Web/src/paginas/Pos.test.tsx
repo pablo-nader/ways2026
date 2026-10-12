@@ -10,7 +10,7 @@ import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi, ErrorDeRed } from '../api/cliente'
 import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual } from '../api/entornoTauri'
 import { ROL } from '../api/tipos'
-import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
+import { cierreDeTurno, pulsoDeCajon, ticketDePagoACuenta } from '../impresion/plantillas'
 import type {
   ArticuloDeInstantanea,
   ArticuloEscaneado,
@@ -2240,6 +2240,96 @@ describe('Pos — modal de cuenta corriente (stage-pos-adjustments)', () => {
     // El nuevo saldo (200) deja lugar bajo el límite (400) para la fila de $100 ya cargada.
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
     expect(screen.queryByText('El pago supera el límite de crédito del cliente.')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — recibo del pago a cuenta en el escritorio', () => {
+  const CONTEXTO = { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' }
+  const MEDIOS_DEL_POS = [medioEfectivo, medioTarjeta, medioCuentaCorriente]
+
+  /** Cliente de la venta con saldo 500; el servidor informa `saldoTrasElPago` en la segunda consulta
+   * (o rechaza esa consulta si es `null`). */
+  function prepararPago(saldoTrasElPago: number | null, comprobante: ComprobanteEmitido) {
+    let llamadasEstado = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/clientes/2/cuenta-corriente')) {
+        llamadasEstado += 1
+        if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoDeCuentaFixture())
+        if (saldoTrasElPago === null) return Promise.reject(new Error('sin red'))
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoDeCuentaFixture({ header: { saldo: saldoTrasElPago, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 5000 - saldoTrasElPago } }),
+        )
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/2/cuenta-corriente/pagos') return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  async function pagar(cajaDeEscritorio?: CajaDeEscritorio) {
+    renderPos('/pos', { cajaDeEscritorio })
+    await esperarAlConsumidorFinal()
+    await buscarYElegirCliente('perez', /Juan Pérez/)
+    await userEvent.click(screen.getByRole('button', { name: 'Ver detalle' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+    await screen.findByText('$ 500,00', { selector: '.fs-5' })
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Ingresar pago a cuenta' })
+    const modalDePago = within(screen.getAllByRole('dialog').at(-1)!)
+    await userEvent.selectOptions(modalDePago.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(modalDePago.getByLabelText('Importe'), '300')
+    await waitFor(() => expect(modalDePago.getByRole('button', { name: 'Registrar pago' })).toBeEnabled())
+    await userEvent.click(modalDePago.getByRole('button', { name: 'Registrar pago' }))
+    await screen.findByRole('heading', { name: 'Cuenta corriente' })
+  }
+
+  const comprobanteDePago = comprobanteEmitidoFixture({
+    id: 900,
+    numeroVisible: '0007-00000900',
+    idCliente: 2,
+    items: [],
+    subtotal: 0,
+    total: 0,
+    pagos: [{ idMedioPago: medioEfectivo.id, importe: 300, referencia: null, vuelto: 0 }],
+  })
+  const clienteDelRecibo = { numero: 2, nombre: 'Juan Pérez' }
+
+  it('encola un único recibo con el saldo posterior que informó el servidor y el anterior reconstruido, con el pulso del cajón', async () => {
+    prepararPago(150, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar(caja)
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    const [descripcion, bytes] = vi.mocked(caja.encolarImpresion).mock.calls[0]
+    expect(descripcion).toBe('el recibo del pago a cuenta')
+    expect(bytes).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 450, saldoNuevo: 150 }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+    expect(Array.from(bytes.slice(-11, -6))).toEqual([0x1b, 0x70, 0x00, 25, 250])
+  })
+
+  it('si la consulta posterior falla, imprime con el saldo de la pantalla como anterior y le resta lo aplicado', async () => {
+    prepararPago(null, comprobanteDePago)
+    const caja: CajaDeEscritorio = { contexto: CONTEXTO, encolarImpresion: vi.fn() }
+
+    await pagar(caja)
+
+    await waitFor(() => expect(caja.encolarImpresion).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(caja.encolarImpresion).mock.calls[0][1]).toEqual(
+      ticketDePagoACuenta({ comprobante: comprobanteDePago, cliente: clienteDelRecibo, saldoAnterior: 500, saldoNuevo: 200 }, CONTEXTO, MEDIOS_DEL_POS),
+    )
+  })
+
+  it('fuera del escritorio registra el pago sin imprimir nada', async () => {
+    prepararPago(200, comprobanteDePago)
+
+    await pagar()
+
+    expect(await screen.findByText('Pago registrado: comprobante 0007-00000900.')).toBeInTheDocument()
+    expect(await screen.findByText('$ 200,00', { selector: '.fs-5' })).toBeInTheDocument()
   })
 })
 
