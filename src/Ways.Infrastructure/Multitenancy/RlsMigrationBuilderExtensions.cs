@@ -77,6 +77,52 @@ public static partial class RlsMigrationBuilderExtensions
     }
 
     /// <summary>
+    /// Crea <c>app_tenant_publico()</c>, el tenant del modo de acceso <c>publico</c>. Es una función y
+    /// un GUC distintos de <c>app_tenant_actual()</c>/<c>app.tenant_id</c> A PROPÓSITO: las policies
+    /// <c>{tabla}_tenant</c> de <see cref="HabilitarRlsDeTenant"/> no miran el modo, así que si el
+    /// modo público trajera su tenant en <c>app.tenant_id</c> esas policies le abrirían todas las
+    /// tablas del comercio, con lectura y escritura.
+    /// </summary>
+    public static void CrearFuncionDeTenantPublico(this MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.Sql(
+            """
+            CREATE FUNCTION app_tenant_publico() RETURNS integer LANGUAGE sql STABLE AS
+            $$ SELECT NULLIF(current_setting('app.tenant_publico', true), '')::int $$;
+            """);
+    }
+
+    public static void QuitarFuncionDeTenantPublico(this MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("DROP FUNCTION IF EXISTS app_tenant_publico();");
+
+    /// <summary>
+    /// Agrega la policy de lectura pública de <paramref name="tabla"/>: solo <c>SELECT</c>, solo en
+    /// modo <c>publico</c> y solo las filas del tenant del host. <paramref name="condicionAdicional"/>
+    /// es SQL fijo del llamador (nunca un valor derivado de datos) y estrecha la lectura, por ejemplo
+    /// <c>publicada</c>. La tabla ya tiene que tener RLS habilitado.
+    /// </summary>
+    public static void HabilitarLecturaPublica(
+        this MigrationBuilder migrationBuilder, string tabla, string? condicionAdicional = null)
+    {
+        ValidarIdentificadorDeTabla(tabla);
+
+        var adicional = condicionAdicional is null ? string.Empty : $" AND {condicionAdicional}";
+
+        migrationBuilder.Sql(
+            $"""
+            CREATE POLICY {tabla}_publico_lectura ON {tabla}
+                FOR SELECT USING (app_modo() = 'publico' AND id_tenant = app_tenant_publico(){adicional});
+            """);
+    }
+
+    public static void QuitarLecturaPublica(this MigrationBuilder migrationBuilder, string tabla)
+    {
+        ValidarIdentificadorDeTabla(tabla);
+
+        migrationBuilder.Sql($"DROP POLICY IF EXISTS {tabla}_publico_lectura ON {tabla};");
+    }
+
+    /// <summary>
     /// Activa RLS en un catálogo <c>[global]</c> (sin <c>id_tenant</c>) con el patrón
     /// "lectura para todos, escritura solo para la plataforma" — override de ADR-11
     /// (design.md, decisión del usuario 2026-08-01, DB CHANGE GATE #4): el dato de referencia

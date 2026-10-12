@@ -444,6 +444,35 @@ public class ManejadorDeErrores(
                     "El tenant ya tiene otro dominio principal. Reintentá la operación.",
                     "dominio_principal_duplicado"),
 
+            // Vitrinas (db-error-backstops): ux_vitrinas_publicada_por_tenant — a lo sumo una vitrina
+            // publicada por tenant. ServicioDeVitrinas serializa las escrituras del tenant con un lock y
+            // NO hace pre-chequeo: la segunda publicación llega a este índice y esta rama ES el camino
+            // normal de ese 409, no un backstop de carrera. Exact-match ANTES del brazo genérico.
+            { SqlState: "23505", ConstraintName: string uxVitrinaPublicada }
+                when string.Equals(uxVitrinaPublicada, "ux_vitrinas_publicada_por_tenant", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "Ya hay otra empresa del comercio con la vitrina publicada. Despublicala antes de publicar esta.",
+                    "vitrina_ya_publicada"),
+
+            // ux_vitrinas_empresa — una vitrina viva por empresa. El upsert la lee bajo el mismo lock, así
+            // que bajo operación normal esta rama es inalcanzable: queda como backstop de esquema ante una
+            // escritura fuera de banda.
+            { SqlState: "23505", ConstraintName: string uxVitrinaEmpresa }
+                when string.Equals(uxVitrinaEmpresa, "ux_vitrinas_empresa", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "La empresa ya tiene una vitrina. Reintentá la operación.",
+                    "vitrina_duplicada"),
+
+            // Imagen del artículo (db-error-backstops): ux_imagenes_articulo_articulo — una imagen viva por
+            // artículo. ServicioDeCatalogoWeb toma FOR UPDATE sobre el artículo y lee la imagen bajo ese lock, así
+            // que bajo operación normal esta rama es inalcanzable: queda como backstop de esquema ante una
+            // escritura fuera de banda. Exact-match ANTES del brazo genérico.
+            { SqlState: "23505", ConstraintName: string uxImagenArticulo }
+                when string.Equals(uxImagenArticulo, "ux_imagenes_articulo_articulo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict,
+                    "El artículo ya tiene una imagen. Reintentá la operación.",
+                    "imagen_duplicada"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -496,6 +525,42 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El host no es válido: indicá solo el nombre de dominio, sin https:// ni rutas.",
                     "host_invalido"),
+
+            // Vitrinas: Vitrina.Normalizar* y Vitrina.ValidarLogo validan antes de escribir, así que ningún
+            // CHECK se alcanza por la API; son backstops de esquema para una escritura cruda. Los tres de
+            // texto repiten los códigos de dominio (tema_invalido, color_invalido, texto_demasiado_largo).
+            // El del logo NO: la API contesta 413 logo_demasiado_grande y 415 logo_no_admitido, y este
+            // backstop contesta 400 logo_no_admitido para cualquier logo fuera del CHECK.
+            { SqlState: "23514", ConstraintName: "ck_vitrinas_tema" } =>
+                (StatusCodes.Status400BadRequest, "El tema tiene que ser claro u oscuro.", "tema_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_vitrinas_color_acento" } =>
+                (StatusCodes.Status400BadRequest,
+                    "El color de acento tiene que ser un valor hexadecimal con la forma #rrggbb.",
+                    "color_invalido"),
+
+            { SqlState: "23514", ConstraintName: "ck_vitrinas_tagline_largo" or "ck_vitrinas_descripcion_largo" } =>
+                (StatusCodes.Status400BadRequest, "Un texto de la vitrina supera el largo máximo.", "texto_demasiado_largo"),
+
+            { SqlState: "23514", ConstraintName: "ck_vitrinas_logo" } =>
+                (StatusCodes.Status400BadRequest,
+                    "El logo tiene que ser una imagen PNG, JPEG o WebP de hasta 1 MB.",
+                    "logo_no_admitido"),
+
+            // Imagen del artículo: ImagenDeArticulo.Validar contesta 413 imagen_demasiado_grande y 415
+            // imagen_no_admitida antes de escribir; este backstop contesta 400 imagen_no_admitida para cualquier
+            // imagen fuera del CHECK que llegue por una escritura cruda.
+            { SqlState: "23514", ConstraintName: "ck_imagenes_articulo_contenido" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La imagen tiene que ser PNG, JPEG o WebP de hasta 1 MB.",
+                    "imagen_no_admitida"),
+
+            // La lista de la tienda de una vitrina: ServicioDeVitrinas la valida y la bloquea antes de escribir
+            // (lista_invalida); una lista que desaparece igual llega acá y contesta el mismo código.
+            { SqlState: "23503", ConstraintName: "fk_vitrinas_lista_precio" } =>
+                (StatusCodes.Status400BadRequest,
+                    "La lista de precios no existe, está inactiva o no corresponde a esta empresa.",
+                    "lista_invalida"),
 
             // stage-pos-reserva-de-numeracion (db-error-backstops, DB CHANGE GATE aprobado):
             // ck_reservas_numeracion_rango ("hasta >= desde"). AsignadorDeNumeroComprobante.

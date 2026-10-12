@@ -50,6 +50,7 @@ public static class EtiquetasDeTablas
             ["familias"] = "familias de artículos",
             ["gastos"] = "gastos",
             ["grupos"] = "grupos",
+            ["imagenes_articulo"] = "imágenes de artículos",
             ["items_comprobante_compra"] = "compras",
             ["items_comprobante_venta"] = "ventas",
             ["items_orden_compra"] = "órdenes de compra",
@@ -79,6 +80,7 @@ public static class EtiquetasDeTablas
             ["stock_lotes"] = "stock por lote",
             ["turnos_caja"] = "turnos de caja",
             ["usuarios"] = "usuarios",
+            ["vitrinas"] = "vitrinas",
         }.ToFrozenDictionary(StringComparer.Ordinal);
 
     /// <summary>La etiqueta de una tabla, o <see cref="Generica"/> si no tiene una propia.</summary>

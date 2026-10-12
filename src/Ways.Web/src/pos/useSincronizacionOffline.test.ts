@@ -2346,3 +2346,161 @@ describe('useSincronizacionOffline — venta local a un cliente identificado', (
     )
   })
 })
+
+// --- Combos (T5a): el payload encolado lleva el combo, tal como lo vio la vista previa -------------
+
+describe('useSincronizacionOffline — venta offline con combos', () => {
+  const PANCHO = 2
+  const COCA = 1
+  const comboPanchoCoca = {
+    idCombo: 7,
+    codigo: 7,
+    nombre: 'Pancho + Coca',
+    precio: 5000,
+    componentes: [{ idArticulo: PANCHO, cantidad: 1 }, { idArticulo: COCA, cantidad: 1 }],
+  }
+  const instantaneaConCombo = (sobrescribir: Partial<InstantaneaDePos> = {}) =>
+    instantaneaFixture({
+      articulos: [
+        articuloFixture({ idArticulo: COCA, precioOriginal: 2500, precioFinal: 2500, unidadVenta: 'Unidad' }),
+        articuloFixture({ idArticulo: PANCHO, codigosBarra: ['7790002222222'], nombre: 'Pancho', precioOriginal: 3000, precioFinal: 3000, unidadVenta: 'Unidad' }),
+      ],
+      combos: [comboPanchoCoca],
+      ...sobrescribir,
+    })
+  const lineasPanchoYCoca = (cantidadPancho = 1) => [
+    { idArticulo: COCA, cantidad: 1, codigoBarra: '7790001234567', idLote: null },
+    { idArticulo: PANCHO, cantidad: cantidadPancho, codigoBarra: '7790002222222', idLote: null },
+  ]
+
+  async function encolar(instantanea: InstantaneaDePos, lineas = lineasPanchoYCoca(), almacen = almacenFake()) {
+    await guardarLocal(almacen, instantanea)
+    await guardarBloque(almacen, bloqueFixture({ proximo: 150, hasta: 200 }))
+    const { result, unmount } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+    await waitFor(() => expect(result.current.instantanea).not.toBeNull())
+    await act(async () => {
+      await result.current.encolarVentaOffline({
+        solicitudBase: solicitudFixture({ lineas }),
+        esConsumidorFinal: true,
+        idListaPrecio: LISTA_CF,
+        pagos: [{ comportamiento: 'Efectivo', importe: 100 }],
+      })
+    })
+    unmount()
+    return { almacen, lineas: (await leerOutbox(almacen))[0].solicitud.lineas ?? [] }
+  }
+
+  it('cada línea que un combo consumió sale con precio bruto, descuento de oferta y los tres campos del combo', async () => {
+    const { lineas } = await encolar(instantaneaConCombo())
+
+    expect(lineas).toEqual([
+      expect.objectContaining({ idArticulo: COCA, precioUnitario: 2500, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, precioUnitario: 3000, descuentoUnitario: 0, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
+    ])
+  })
+
+  it('las tres llegan juntas o ninguna: una línea que el combo no consumió no trae ninguna', async () => {
+    const sobrante = [...lineasPanchoYCoca(), { idArticulo: 3, cantidad: 1, codigoBarra: '3', idLote: null }]
+    const instantanea = instantaneaConCombo({
+      articulos: [
+        ...instantaneaConCombo().articulos,
+        articuloFixture({ idArticulo: 3, codigosBarra: ['3'], precioOriginal: 10, precioFinal: 10, unidadVenta: 'Unidad' }),
+      ],
+    })
+
+    const { lineas } = await encolar(instantanea, sobrante)
+
+    const consumidas = lineas.filter((l) => l.idCombo !== undefined)
+    expect(consumidas.map((l) => l.idArticulo)).toEqual([COCA, PANCHO])
+    for (const l of consumidas) {
+      expect(l.unidadesConsumidasPorCombo).toBeDefined()
+      expect(l.ahorroDeCombo).toBeDefined()
+    }
+    const libre = lineas.find((l) => l.idArticulo === 3)
+    expect(libre).not.toHaveProperty('idCombo')
+    expect(libre).not.toHaveProperty('ahorroDeCombo')
+    expect(libre).not.toHaveProperty('unidadesConsumidasPorCombo')
+  })
+
+  it('una instantánea sin combos encola el payload de siempre, sin ningún campo de combo', async () => {
+    const { lineas } = await encolar(instantaneaConCombo({ combos: undefined }))
+
+    for (const l of lineas) {
+      expect(l).not.toHaveProperty('idCombo')
+      expect(l).not.toHaveProperty('ahorroDeCombo')
+      expect(l).not.toHaveProperty('unidadesConsumidasPorCombo')
+    }
+  })
+
+  it('el total del payload (fórmula del servidor) es el de la vista previa de la misma instantánea', async () => {
+    const instantanea = instantaneaConCombo()
+    const { lineas } = await encolar(instantanea)
+    const carrito = lineas.map((l) => ({ idLinea: `l-${l.idArticulo}`, idArticulo: l.idArticulo, codigoInterno: '', nombre: '', codigoBarra: l.codigoBarra, acumulaEnVenta: true, cantidad: l.cantidad }))
+    const precios = resolverPreciosOffline(carrito, instantanea, LISTA_CF)
+
+    const totalDeLaPrevia = carrito.reduce((suma, l) => suma + (previaDeLinea(l, precios[l.idLinea]).total ?? 0), 0)
+    const totalDelPayload = lineas.reduce((suma, l) => {
+      const bruto = (l.precioUnitario ?? 0) * l.cantidad
+      const descuento = (l.descuentoUnitario ?? 0) * (l.cantidad - (l.unidadesConsumidasPorCombo ?? 0)) + (l.ahorroDeCombo ?? 0)
+      return suma + bruto - descuento
+    }, 0)
+
+    expect(totalDeLaPrevia).toBe(5000)
+    expect(Math.round(totalDelPayload * 100) / 100).toBe(totalDeLaPrevia)
+  })
+
+  it('al drenar se envía lo encolado tal cual, aunque la instantánea haya cambiado: nunca se reconstruye', async () => {
+    const { almacen, lineas: encoladas } = await encolar(instantaneaConCombo())
+    await guardarLocal(almacen, instantaneaConCombo({ combos: [{ ...comboPanchoCoca, precio: 1 }] }))
+    emitirMock.mockResolvedValue({ id: 1 })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.outboxCount).toBe(0))
+    expect(emitirMock).toHaveBeenCalledTimes(1)
+    expect((emitirMock.mock.calls[0][0] as SolicitudDeVenta).lineas).toEqual(encoladas)
+  })
+
+  it('una instantánea de la red con un combo malformado se adopta igual: se guarda con los buenos y la copia local no queda vieja', async () => {
+    const almacen = almacenFake()
+    await guardarLocal(almacen, instantaneaConCombo({ momento: '2026-09-20T09:00:00.000Z', combos: [] }))
+    const conBasura = { ...instantaneaConCombo({ momento: '2026-09-20T11:00:00.000Z' }), combos: [7, comboPanchoCoca] }
+    obtenerInstantaneaMock.mockResolvedValue({ modificada: true, cuerpo: conBasura, etag: 'e2' })
+
+    const { result } = renderHook(() => useSincronizacionOffline({ idPuntoVenta: 7, activo: true, almacen, intervaloMs: 60_000 }))
+
+    await waitFor(() => expect(result.current.instantanea?.momento).toBe('2026-09-20T11:00:00.000Z'))
+    expect(result.current.instantanea?.combos).toEqual([comboPanchoCoca])
+    expect((await leerInstantaneaLocal(almacen))?.instantanea.combos).toEqual([comboPanchoCoca])
+  })
+
+  it('una copia guardada con un combo malformado entre buenos vende igual: el bueno se aplica al payload', async () => {
+    const guardada = { ...instantaneaConCombo(), combos: [null, comboPanchoCoca] } as unknown as InstantaneaDePos
+
+    const { lineas } = await encolar(guardada)
+
+    expect(lineas).toEqual([
+      expect.objectContaining({ idArticulo: COCA, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 227, idCombo: 7 }),
+      expect.objectContaining({ idArticulo: PANCHO, unidadesConsumidasPorCombo: 1, ahorroDeCombo: 273, idCombo: 7 }),
+    ])
+  })
+
+  it('con una parte de combo de fracción de centavo, el documento se encola sin campos de combo (el servidor la rechazaría)', async () => {
+    const subcentavo = instantaneaConCombo({
+      articulos: [
+        articuloFixture({ idArticulo: COCA, precioOriginal: 2, precioFinal: 2, unidadVenta: 'Unidad' }),
+        articuloFixture({ idArticulo: PANCHO, codigosBarra: ['7790002222222'], nombre: 'Pancho', precioOriginal: 0.005, precioFinal: 0.005, unidadVenta: 'Unidad' }),
+      ],
+      combos: [{ ...comboPanchoCoca, precio: 1 }],
+    })
+
+    const { lineas } = await encolar(subcentavo)
+
+    expect(lineas).toHaveLength(2)
+    for (const l of lineas) {
+      expect(l).not.toHaveProperty('idCombo')
+      expect(l).not.toHaveProperty('ahorroDeCombo')
+      expect(l).not.toHaveProperty('unidadesConsumidasPorCombo')
+    }
+  })
+})

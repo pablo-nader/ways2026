@@ -19,6 +19,7 @@ import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
 import { Descargar } from './paginas/Descargar'
 import { Dominios } from './paginas/Dominios'
+import { Vitrina } from './paginas/Vitrina'
 import { Empresas } from './paginas/Empresas'
 import { EquiposPos } from './paginas/EquiposPos'
 import { Existencias } from './paginas/Existencias'
@@ -591,6 +592,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
                   <PuntosVenta />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/vitrina"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
+                  <Vitrina />
                 </RutaProtegida>
               }
             />

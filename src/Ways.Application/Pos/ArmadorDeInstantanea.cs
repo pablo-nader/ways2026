@@ -1,6 +1,7 @@
 using Ways.Application.Ofertas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Combos;
 
 namespace Ways.Application.Pos;
 
@@ -138,6 +139,46 @@ public static class ArmadorDeInstantanea
         }
 
         return resultado;
+    }
+
+    /// <summary>
+    /// Los combos que el dispositivo puede completar sin red con los <paramref name="articulos"/> de esta misma
+    /// instantánea. Un combo solo viaja ENTERO: si algún componente no se puede vender, el combo completo se descarta
+    /// (uno parcial haría creer al dispositivo que puede armarlo). Un componente artículo es vendible si figura en la
+    /// instantánea (activo y con precio en alguna lista) y se vende por unidad: como en la venta online
+    /// (<c>CombosEnVenta</c>), un artículo pesable nunca consume ni es consumido por un combo. Un componente familia
+    /// es vendible si algún artículo vendible de la instantánea tiene esa familia (la misma regla de emparejamiento que
+    /// la venta online, que compara la familia del artículo); una familia dada de baja deja de contar cuando sus
+    /// artículos dejan de figurar. Las cantidades que el motor no puede usar (no enteras o no positivas) también
+    /// descartan el combo. <c>null</c> si no queda ninguno, para que la clave se omita en el JSON.
+    /// </summary>
+    public static IReadOnlyList<ComboDeInstantanea>? ArmarCombos(
+        IReadOnlyList<ComboCandidato> candidatos, IReadOnlyList<ArticuloDeInstantanea> articulos)
+    {
+        var porUnidad = articulos.Where(a => a.UnidadVenta == UnidadVenta.Unidad).ToList();
+        var idsArticulo = porUnidad.Select(a => a.IdArticulo).ToHashSet();
+        var idsFamilia = porUnidad.Where(a => a.IdFamilia.HasValue).Select(a => a.IdFamilia!.Value).ToHashSet();
+
+        var combos = candidatos
+            .Where(c => c.Componentes.Count > 0
+                && c.Componentes.All(m =>
+                    m.Cantidad > 0 && m.Cantidad == decimal.Truncate(m.Cantidad)
+                    && ((m.IdArticulo is { } idArticulo && idsArticulo.Contains(idArticulo))
+                        || (m.IdFamilia is { } idFamilia && idsFamilia.Contains(idFamilia)))))
+            .OrderBy(c => c.Id)
+            .Select(c => new ComboDeInstantanea(
+                c.Id,
+                c.Codigo,
+                c.Nombre,
+                c.Precio,
+                [.. c.Componentes
+                    .OrderBy(m => m.IdArticulo is null)
+                    .ThenBy(m => m.IdArticulo)
+                    .ThenBy(m => m.IdFamilia)
+                    .Select(m => new ComponenteDeComboDeInstantanea(m.IdArticulo, m.IdFamilia, m.Cantidad))]))
+            .ToList();
+
+        return combos.Count == 0 ? null : combos;
     }
 
     /// <summary>

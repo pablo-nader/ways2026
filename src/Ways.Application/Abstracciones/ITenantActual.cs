@@ -19,7 +19,14 @@ public enum ModoDeAcceso
 
     /// <summary>Único modo permitido antes de resolver la sesión: <c>POST /api/auth/login</c>,
     /// que solo puede leer y actualizar <c>usuarios</c>.</summary>
-    Login
+    Login,
+
+    /// <summary>Lectura anónima de lo que un comercio publica en su dominio (la vitrina): solo
+    /// <c>SELECT</c>, sobre tres tablas y de un único tenant, el del host. El tenant viaja en su
+    /// propio GUC (<c>app.tenant_publico</c>), no en <c>app.tenant_id</c>: las policies estándar de
+    /// aislamiento no miran el modo, y con el tenant en <c>app.tenant_id</c> este modo vería todas
+    /// las tablas del comercio.</summary>
+    Publico
 }
 
 /// <summary>
@@ -28,7 +35,8 @@ public enum ModoDeAcceso
 /// </summary>
 public interface ITenantActual
 {
-    /// <summary><c>null</c> cuando <see cref="Modo"/> no es <see cref="ModoDeAcceso.Tenant"/>.</summary>
+    /// <summary><c>null</c> cuando <see cref="Modo"/> no es <see cref="ModoDeAcceso.Tenant"/> ni
+    /// <see cref="ModoDeAcceso.Publico"/>.</summary>
     int? Id { get; }
 
     ModoDeAcceso Modo { get; }

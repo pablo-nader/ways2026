@@ -11,14 +11,14 @@ public sealed class TenantActualFijo : ITenantActual
 {
     public TenantActualFijo(ModoDeAcceso modo, int? idTenant)
     {
-        if (modo == ModoDeAcceso.Tenant && idTenant is null)
+        if (modo is ModoDeAcceso.Tenant or ModoDeAcceso.Publico && idTenant is null)
         {
             throw new InvalidOperationException(
-                $"{nameof(ModoDeAcceso.Tenant)} requiere un id_tenant.");
+                $"{modo} requiere un id_tenant.");
         }
 
         Modo = modo;
-        Id = modo == ModoDeAcceso.Tenant ? idTenant : null;
+        Id = modo is ModoDeAcceso.Tenant or ModoDeAcceso.Publico ? idTenant : null;
     }
 
     public int? Id { get; }

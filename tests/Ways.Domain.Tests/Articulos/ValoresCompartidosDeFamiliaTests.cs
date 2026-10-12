@@ -54,7 +54,8 @@ public class ValoresCompartidosDeFamiliaTests
         "descripcion",
         "id_marca",
         "activo",
-        "disponible_para_todas"
+        "disponible_para_todas",
+        "publicado_web"
     ];
 
     /// <summary>Cambia UNA sola columna compartida a un valor distinto del de <see cref="CrearArticulo"/>.</summary>
@@ -100,7 +101,8 @@ public class ValoresCompartidosDeFamiliaTests
             ["descripcion"] = a => a.Descripcion = "Otra descripción",
             ["id_marca"] = a => a.IdMarca = 93,
             ["activo"] = a => a.Activo = false,
-            ["disponible_para_todas"] = a => a.DisponibleParaTodas = false
+            ["disponible_para_todas"] = a => a.DisponibleParaTodas = false,
+            ["publicado_web"] = a => a.PublicadoWeb = true
         };
 
     public static TheoryData<string> CamposCompartidos() => DatosDe(ColumnasCompartidas);
@@ -259,7 +261,7 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Empty(distintos);
     }
 
-    /// <summary>Origen y destino difieren en TODO (los quince compartidos y los seis propios, más la
+    /// <summary>Origen y destino difieren en TODO (los quince compartidos y los siete propios, más la
     /// familia): después de aplicar, el destino tiene los quince del origen y conserva intactos sus
     /// propios, su familia, su identidad y sus sellos de auditoría.</summary>
     [Fact]
@@ -288,6 +290,7 @@ public class ValoresCompartidosDeFamiliaTests
         Assert.Equal(antes.IdMarca, destino.IdMarca);
         Assert.Equal(antes.Activo, destino.Activo);
         Assert.Equal(antes.DisponibleParaTodas, destino.DisponibleParaTodas);
+        Assert.Equal(antes.PublicadoWeb, destino.PublicadoWeb);
 
         Assert.Equal(antes.IdFamilia, destino.IdFamilia);
         Assert.Equal(antes.Id, destino.Id);
@@ -330,7 +333,8 @@ public class ValoresCompartidosDeFamiliaTests
             nameof(Articulo.Descripcion),
             nameof(Articulo.IdMarca),
             nameof(Articulo.Activo),
-            nameof(Articulo.DisponibleParaTodas)
+            nameof(Articulo.DisponibleParaTodas),
+            nameof(Articulo.PublicadoWeb)
         ];
 
         string[] estructurales =

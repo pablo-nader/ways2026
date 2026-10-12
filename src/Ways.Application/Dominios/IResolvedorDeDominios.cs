@@ -1,7 +1,11 @@
 namespace Ways.Application.Dominios;
 
-/// <summary>El tenant al que apunta un dominio verificado.</summary>
-public sealed record DominioResuelto(int IdTenant, string NombreComercio);
+/// <summary>
+/// El tenant al que apunta un dominio verificado. <paramref name="TenantPuedeOperar"/> es <c>false</c>
+/// para un tenant suspendido: el dominio sigue resolviendo (el login lo rechaza por su cuenta), pero lo
+/// que se publica en él no se sirve.
+/// </summary>
+public sealed record DominioResuelto(int IdTenant, string NombreComercio, bool TenantPuedeOperar);
 
 /// <summary>
 /// Traduce un host al tenant dueño. Solo resuelve dominios verificados y vivos; para cualquier otro

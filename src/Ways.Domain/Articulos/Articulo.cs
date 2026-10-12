@@ -62,6 +62,12 @@ public class Articulo : EntidadTenant
 
     public bool Activo { get; set; } = true;
 
+    /// <summary><c>true</c> ⇒ el artículo se ofrece en el catálogo público de la vitrina del comercio. Es una
+    /// decisión por artículo y vale para todo el tenant: en qué empresa se ve lo decide la disponibilidad
+    /// (<see cref="DisponibleParaTodas"/> + <see cref="ArticuloEmpresa"/>). Default <c>false</c>: ningún
+    /// artículo existente se publica solo. No es un campo compartido de la familia.</summary>
+    public bool PublicadoWeb { get; set; }
+
     /// <summary>Etapa 12 (proposal decisión 1, gate §E): <c>true</c> ⇒ todo movimiento de stock
     /// de este artículo (venta, compra, transferencia, ajuste, conteo, decomiso, anulación)
     /// tiene que llevar un lote — el control efectivo también exige el parámetro de empresa

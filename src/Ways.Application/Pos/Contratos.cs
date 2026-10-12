@@ -89,6 +89,32 @@ public sealed record ClienteDeInstantanea(
     bool CreditoIlimitado);
 
 /// <summary>
+/// Un componente de un combo de la instantánea: exactamente uno entre <see cref="IdArticulo"/> e
+/// <see cref="IdFamilia"/> viaja (el otro queda ausente), con su <see cref="Cantidad"/> (entero, mayor a cero). El
+/// componente familia se empareja con <see cref="ArticuloDeInstantanea.IdFamilia"/>.
+/// </summary>
+public sealed record ComponenteDeComboDeInstantanea(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? IdArticulo,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? IdFamilia,
+    decimal Cantidad);
+
+/// <summary>
+/// Un combo vigente que el dispositivo puede completar sin red: <see cref="Codigo"/> es el número que se tipea tras la
+/// <c>C</c>, <see cref="Precio"/> el del conjunto completo y <see cref="Componentes"/> el conjunto entero, con los
+/// artículos primero (por id) y las familias después (por id). Un combo con algún componente que la instantánea no
+/// puede vender (artículo inactivo, sin precio, que no se vende por unidad o dado de baja; familia sin ningún artículo
+/// vendible) no viaja: ver <see cref="ArmadorDeInstantanea.ArmarCombos"/>.
+/// </summary>
+public sealed record ComboDeInstantanea(
+    int IdCombo,
+    int Codigo,
+    string Nombre,
+    decimal Precio,
+    IReadOnlyList<ComponenteDeComboDeInstantanea> Componentes);
+
+/// <summary>
 /// Respuesta de <c>GET /api/pos/instantanea?version=2</c>: todo lo que el checkout de un punto de
 /// venta de escritorio necesita para cotizar y vender SIN red, para SU PROPIO punto de venta
 /// (<c>PoliticaDeModoDePuntoVenta</c>, reusada tal cual). Completa y sin paginar: cada precio quedó
@@ -96,6 +122,11 @@ public sealed record ClienteDeInstantanea(
 /// sucesivas. <see cref="Momento"/> queda fuera de la etiqueta de contenido
 /// (<see cref="EtiquetaDeInstantanea"/>), así que dos pedidos con el mismo contenido comparten ETag
 /// y el segundo puede responder <c>304</c>.
+///
+/// <see cref="Combos"/> son los combos activos del punto de venta (de su empresa o de todo el tenant) que el
+/// dispositivo puede completar con los artículos de esta misma instantánea, ascendentes por id de combo. Ausente (no
+/// <c>[]</c>) si no hay ninguno: así una instantánea sin combos es byte por byte la de antes y su etiqueta de contenido
+/// no cambia al desplegar la funcionalidad.
 /// </summary>
 public sealed record InstantaneaDePos(
     DateTimeOffset Momento,
@@ -103,7 +134,9 @@ public sealed record InstantaneaDePos(
     IReadOnlyList<ArticuloDeInstantanea> Articulos,
     IReadOnlyList<ClienteDeInstantanea> Clientes,
     IReadOnlyList<MedioPagoDeInstantanea> MediosDePago,
-    decimal ToleranciaPago);
+    decimal ToleranciaPago,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ComboDeInstantanea>? Combos = null);
 
 /// <summary>
 /// Artículo del formato original de la instantánea (pedido sin <c>?version=2</c>): precio plano

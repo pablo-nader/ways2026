@@ -1,3 +1,5 @@
+using Ways.Application.Ventas;
+
 namespace Ways.Application.Combos;
 
 /// <summary>
@@ -49,3 +51,18 @@ public sealed record EdicionCombo(
     int? IdEmpresa,
     IReadOnlyList<ComponenteDeSolicitudDeCombo>? Componentes,
     bool? Activo);
+
+/// <summary>
+/// Un componente de un combo listo para cargarse en el carrito del POS. <see cref="Candidatos"/> son los artículos con los
+/// que se puede completar, con la misma forma que devuelve el escaneo (<c>cantidad = 1</c>, sin código de barra): para
+/// un componente de artículo, ese artículo; para uno de familia, sus miembros vivos, activos y por unidad. Vacía cuando
+/// el componente no se puede vender (referencia colgada, artículo inactivo o pesable, familia sin miembros vendibles):
+/// el cliente muestra el combo como no cargable. <see cref="Nombre"/> es el del artículo o de la familia, <c>null</c> si
+/// esa fila fue dada de baja.
+/// </summary>
+public sealed record ComponenteCargable(
+    int? IdArticulo, int? IdFamilia, string? Nombre, decimal Cantidad, IReadOnlyList<ArticuloEscaneado> Candidatos);
+
+/// <summary>Un combo activo con sus componentes en el orden en que se armó, para que el POS agregue sus líneas.</summary>
+public sealed record ComboCargable(
+    int Id, int Codigo, string Nombre, decimal Precio, IReadOnlyList<ComponenteCargable> Componentes);

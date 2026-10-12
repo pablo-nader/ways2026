@@ -603,3 +603,66 @@ describe('alPerderLaSesion: distingue una sesión que terminó de un login falli
     desuscribir()
   })
 })
+
+describe('api.putBinario (cuerpo crudo de un archivo)', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  afterEach(() => {
+    quitarPuenteTauri()
+    establecerTokenDeSesionBearer(null)
+  })
+
+  it('manda el archivo tal cual con su propio Content-Type y no el JSON de siempre', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true, json: () => Promise.resolve({ existe: true }) }))
+    const logo = new File(['bytes'], 'logo.png', { type: 'image/png' })
+
+    const respuesta = await api.putBinario('/empresas/3/vitrina/logo', logo)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/empresas/3/vitrina/logo')
+    expect(init.method).toBe('PUT')
+    expect(init.body).toBe(logo)
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('image/png')
+    expect((init.headers as Record<string, string>).Accept).toBe('application/json')
+    expect(respuesta).toEqual({ existe: true })
+  })
+
+  it('un archivo sin tipo conocido sale como application/octet-stream y no como JSON', async () => {
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true }))
+
+    await api.putBinario('/algo', new Blob(['x']))
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/octet-stream')
+  })
+
+  it('un rechazo del servidor llega como ErrorApi con su código', async () => {
+    fetchMock.mockResolvedValue(
+      respuestaMock({
+        status: 413,
+        ok: false,
+        json: () => Promise.resolve({ title: 'El logo no puede pesar más de 1 MB.', codigo: 'logo_demasiado_grande' }),
+      }),
+    )
+
+    await expect(api.putBinario('/algo', new File(['x'], 'a.png', { type: 'image/png' }))).rejects.toMatchObject({
+      estado: 413,
+      codigo: 'logo_demasiado_grande',
+    })
+  })
+
+  it('bajo Tauri con sesión adjunta el bearer igual que el resto de las escrituras', async () => {
+    instalarPuenteTauri()
+    establecerTokenDeSesionBearer('un-token')
+    fetchMock.mockResolvedValue(respuestaMock({ status: 200, ok: true }))
+
+    await api.putBinario('/algo', new File(['x'], 'a.png', { type: 'image/png' }))
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer un-token')
+  })
+})

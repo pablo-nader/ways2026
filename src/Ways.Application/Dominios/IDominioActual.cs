@@ -18,4 +18,10 @@ public interface IDominioActual
 
     /// <summary>Nombre del comercio (el del tenant); <c>null</c> en un host de la plataforma.</summary>
     string? NombreComercio { get; }
+
+    /// <summary><c>true</c> cuando el tenant dueño del dominio puede operar (<c>Tenant.PuedeOperar</c>: no
+    /// está suspendido ni dado de baja). Lo que se sirve sin sesión en el dominio lo exige; <c>false</c> en
+    /// un host de la plataforma, donde no hay tenant. Viene de la resolución del host, así que un cambio de
+    /// estado del tenant tarda en verse lo que dura su caché (<see cref="IResolvedorDeDominios"/>).</summary>
+    bool TenantPuedeOperar { get; }
 }

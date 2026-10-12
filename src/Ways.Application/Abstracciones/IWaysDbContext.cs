@@ -38,6 +38,8 @@ public interface IWaysDbContext
 
     DbSet<Dominio> Dominios { get; }
 
+    DbSet<Vitrina> Vitrinas { get; }
+
     // stage-desktop-pos: expuesto desde esta slice — ServicioDeDispositivos es el primer
     // consumidor de Application.
     DbSet<Dispositivo> Dispositivos { get; }
@@ -72,6 +74,8 @@ public interface IWaysDbContext
     DbSet<CodigoBarra> CodigosBarra { get; }
     DbSet<CodigoProveedor> CodigosProveedor { get; }
     DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
+
+    DbSet<ImagenDeArticulo> ImagenesArticulo { get; }
     DbSet<Precio> Precios { get; }
 
     DbSet<Familia> Familias { get; }

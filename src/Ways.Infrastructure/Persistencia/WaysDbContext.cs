@@ -43,6 +43,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // administra y ResolvedorDeDominios los lee para resolver el tenant desde el host.
     public DbSet<Dominio> Dominios => Set<Dominio>();
 
+    // Identidad pública de una empresa (landing del comercio): la escribe ServicioDeVitrinas y la
+    // lee LectorDeVitrinaPublica en modo de acceso publico.
+    public DbSet<Vitrina> Vitrinas => Set<Vitrina>();
+
     // stage-desktop-pos: dispositivo de escritorio vinculado a un punto de venta.
     // ServicioDeDispositivos es el primer (y único) consumidor de Application.
     public DbSet<Dispositivo> Dispositivos => Set<Dispositivo>();
@@ -81,6 +85,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<CodigoBarra> CodigosBarra => Set<CodigoBarra>();
     public DbSet<CodigoProveedor> CodigosProveedor => Set<CodigoProveedor>();
     public DbSet<ArticuloEmpresa> ArticulosEmpresas => Set<ArticuloEmpresa>();
+
+    // Imagen del artículo en el catálogo público: la escribe ServicioDeCatalogoWeb y la lee el catálogo
+    // público en modo de acceso publico.
+    public DbSet<ImagenDeArticulo> ImagenesArticulo => Set<ImagenDeArticulo>();
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();
 

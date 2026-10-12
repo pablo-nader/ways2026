@@ -288,6 +288,8 @@ app.MapearAprovisionamiento();
 app.MapearDominios();
 app.MapearPublico();
 app.MapearOrganizacion();
+// Vitrina de cada empresa (landing del comercio): administración bajo GestionDeOrganizacion.
+app.MapearVitrinas();
 // stage-desktop-pos: vinculación de dispositivos de escritorio + su login por usuario.
 app.MapearDispositivos();
 app.MapearClientes();

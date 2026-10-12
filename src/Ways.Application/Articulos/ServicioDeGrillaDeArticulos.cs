@@ -175,7 +175,7 @@ public class ServicioDeGrillaDeArticulos(
     private ArticuloGrillaFila Proyectar(FilaCandidata c, decimal? precio) => new(
         c.Id, c.CodigoInterno, c.Nombre, precio,
         PuedeVerCostos ? c.CostoNominal : null, c.IdProveedorHabitual,
-        EtiquetaProveedor(c.ProveedorNombreFantasia, c.ProveedorRazonSocial), c.Activo);
+        EtiquetaProveedor(c.ProveedorNombreFantasia, c.ProveedorRazonSocial), c.Activo, c.PublicadoWeb, c.TieneImagen);
 
     /// <summary>Regla de etiqueta de proveedor (spec de la slice, compartida con el selector de
     /// proveedor del front): <c>NombreFantasia</c> cuando no es nulo NI blanco, si no
@@ -247,7 +247,8 @@ public class ServicioDeGrillaDeArticulos(
                 a.Id, a.CodigoInterno, a.Nombre, proveedor != null ? a.IdProveedorHabitual : null,
                 proveedor != null ? proveedor.NombreFantasia : null,
                 proveedor != null ? proveedor.RazonSocial : null,
-                a.Activo, a.CostoNominal);
+                a.Activo, a.CostoNominal, a.PublicadoWeb,
+                db.ImagenesArticulo.Any(i => i.IdArticulo == a.Id));
     }
 
     private readonly record struct ListaDefault(int Id, string Nombre);
@@ -260,5 +261,7 @@ public class ServicioDeGrillaDeArticulos(
         string? ProveedorNombreFantasia,
         string? ProveedorRazonSocial,
         bool Activo,
-        decimal? CostoNominal);
+        decimal? CostoNominal,
+        bool PublicadoWeb,
+        bool TieneImagen);
 }

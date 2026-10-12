@@ -83,7 +83,7 @@ POS online and offline (snapshot, local engine, combo search, `C` code), POS rel
 - [x] T3 — Online sale. `id_combo` on the item; combos applied in the decide phase of
   `ServicioDeVentas.EmitirAsync` after ofertas (D1); line-amount discount through
   `CalculadorDeTotales`; query-budget guard updated on purpose. Route: delegated (writer).
-- [ ] T3b — Preview and offline (split out of T3, 2026-10-11). `POST /api/ofertas/resolver`
+- [x] T3b — Preview and offline (split out of T3, 2026-10-11). `POST /api/ofertas/resolver`
   (document aggregation) returns the combo share so the POS cart shows the same total the
   server will charge; offline request line carries the combo fields, and the discrepancy audit
   and `ExigirMismoContenido` understand them. Route: delegated (writer).
@@ -220,6 +220,108 @@ Created 2026-10-11. Branch `pnader/combos-stock-discount-2180c2`, fast-forwarded
      only for positive-sign documents), so half a pancho can be returned.
   6. NCX of a sale WITHOUT combos still credits today's list and ofertas, not what was paid.
 
+- Delivered and merged 2026-10-11: #381 (T2), #382 (T3), #386 (CI cap), #390 (TNC).
+- T3b implemented on `pnader/combos-pos-servidor` — commits `6a185c47` and `dd16c95c`
+  (judgment fixes). Route: delegated writer. Contract for the TypeScript port:
+  - Preview: `POST /api/ofertas/resolver-con-combos` (sibling route; `/resolver` returns a bare
+    array and is unchanged). Same body as `/resolver`. Response `{ lineas: [ …fields of
+    /resolver…, combo?: { unidadesConsumidas:int, ahorro:decimal (LINE amount), idCombo:int } ],
+    combos: [ { idCombo, codigo, nombre, veces, ahorro } ] }`; `combo` key absent on lines no
+    combo consumed. Line net = round(cantidad × precioOriginal) − (round(descuentoUnitario ×
+    (cantidad − unidadesConsumidas)) + ahorro). The client MUST send the point of sale's
+    `idEmpresa` and the customer's `idListaPrecio` on every line; mixed values → 400
+    `empresa_inconsistente` / `lista_inconsistente`. `agregacion: PorLinea` → `combos: []`.
+  - Snapshot `GET /api/pos/instantanea?version=2`: optional top-level `combos` (key omitted
+    when none): `{ idCombo, codigo, nombre, precio, componentes: [{ idArticulo? | idFamilia?,
+    cantidad }] }`, combos by ascending id, article components before family ones. A combo is
+    sent whole or not at all: dropped if a component cannot be sold offline.
+  - Offline line: `unidadesConsumidasPorCombo?:int`, `ahorroDeCombo?:decimal`, `idCombo?:int`,
+    all three or none, only with offline `precioUnitario`, never on credit notes (400
+    `combo_offline_no_admitido|incompleto|invalido`). Stored literally. Unknown combo id →
+    amounts kept, `id_combo` null, audited. The discrepancy audit compares against the
+    server's own detection; `PrecioDiscrepante` is also true for combo-only differences. The
+    three fields are not part of `ExigirMismoContenido`.
+  Observed (fix actor): build 0 errors; Application 820/820; `SuperficieDeAutorizacion` 5/5;
+  integration `Combos|VentaOffline|OfertasResolucion|Instantanea|VentasCheckout` 315/315;
+  writer run before fixes `Combos|Ventas|Venta|Ofertas|Instantanea|Pos` 992/992. After merging
+  main (parent): build 0 errors, Application 820/820, Domain 1219/1219. Query pins in
+  `CombosConsultasTests`: offline sale 21 / 20 / 19, preview 6 / 5. No RED (implementation
+  first); 39 mutants killed, two survivors fixed.
+- Judgment-day, T3b: round 1 — 1 CRITICAL (one judge, deterministic, confirmed by running the
+  test): the new POST route was missing from the allow-list of
+  `SuperficieDeAutorizacionTests`, CI would have failed. Fixed with the allow-list entry and a
+  Vendedor-role test. Also fixed: Q2 preview trusts the request's empresa (documented as a
+  contract requirement, mixed lists rejected, divergence pinned by a test), Q3 query costs
+  pinned, Q4 overflow order, Q5 `combo_esperado` null, Q6 docs, Q7 test code. Scoped
+  re-judgment: both judges, all resolved, 0 CRITICAL → APPROVED.
+- Skills loop: the same miss three times (golden inventory in T1, `RemoveRange` allow-list in
+  T2, endpoint allow-list in T3b) → new project skill `structural-guard-tests`.
+- Rollout note: a device that does not apply combos (older POS build or snapshot) selling a
+  cart that matches an active combo is recorded at what it charged and audited as discrepant.
+  Another reason for T4 (the screen that creates combos) to ship after the POS release.
+
+- T3b delivered and merged: PR pablo-nader/ways2026#394.
+- T5 split (2026-10-11): T5a cart pricing and display (this entry), T5b combo entry ("Buscar
+  combo", `C` + digits, family member picker), T5c Desktop bump + `pos-v*` tag.
+- T5a implemented on `pnader/combos-pos-carrito` — commits `4f1e9beb` and `c15a6ac3`
+  (judgment fixes). Route: delegated writer, web only. `src/Ways.Web/src/pos/motorDeCombos.ts`
+  is the TypeScript port of `ResolvedorDeCombos` in exact `bigint` arithmetic; every C# engine
+  test case is mirrored with the same numbers. One shared rule, `resolverDocumentoOffline`
+  (`pos/instantaneaOffline.ts`), feeds the offline preview, the queued payload and the
+  synthetic ticket; the line formula is `calcularTotalesDeLineaConCombo` (`api/combos.ts`).
+  Online, the cart preview calls `resolver-con-combos` (it already sent the point of sale's
+  empresa and the customer's list) and falls back to `/ofertas/resolver` on 404/405. UI: a
+  badge on each consumed line and one row per applied combo in "Datos de la venta"; no new
+  buttons. Snapshot combos are sanitized (a malformed one is dropped, the snapshot stays
+  valid). A combo block with more units than the line is ignored until the preview
+  re-resolves. A share with more than 2 decimals drops combos for that offline document.
+  The printed ticket shows the combo only inside the per-line "Descuento" (the template
+  prints no oferta names either). Observed (fix actor, from `src/Ways.Web`): `tsc -b` clean;
+  lint 0 errors; `vitest run src/pos src/api` 1646/1646; `Pos.test.tsx` 281/281; whole suite
+  4847/4848 — the one failure, `NuevaFamilia.test.tsx` timing out at 5 s under load, passed
+  alone (49/49) and again in the parent's run. Parent: `ventas.ts` aligned with
+  `comboVigenteDeLinea` inline, `tsc -b` clean, `ventas.test.ts` + `NuevaFamilia.test.tsx`
+  92/92. RED observed for the engine suite only; mutation evidence for the rest.
+- Judgment-day, T5a: round 1 — 0 CRITICAL; both judges traced engine parity against the C#
+  code line by line. Confirmed and fixed: R1 malformed combos invalidated the whole snapshot,
+  R2 badge name with several combos, R3 no fallback against a server without the route; plus
+  R4–R9 (stale combo on a reduced quantity, sub-cent shares, comments, dead guard, test gaps,
+  `idOferta` on the synthetic item). Scoped re-judgment: both judges, all resolved, 0 CRITICAL
+  → APPROVED.
+
+- T5a delivered and merged: PR pablo-nader/ways2026#396.
+- T5b implemented on `pnader/combos-pos-carga` — commits `de2b14aa`, `d545b395` (judgment
+  round 1) and `1bb75683` (round 2). Route: delegated writer.
+  - Server: `GET /api/combos/{id}/cargable?idEmpresa=` (POS roles, 3 constant queries): each
+    component with its candidate articles in the scan's article shape (no cost fields); family
+    candidates are live active per-unit members; an unsellable component has no candidates;
+    404 for a missing, inactive, soft-deleted, other-tenant or other-empresa combo.
+  - Web: "Buscar combo (F4)" next to "Buscar artículo (F2)" opens a modal (code, name, price,
+    components; filter; keyboard). F4, not F3: F3 is the legacy "Dirección de entrega" key that
+    `docs/05` says to keep; F4 was unimplemented in the legacy POS. Typing the canonical code
+    `^[cC]([1-9]\d{0,5})$` loads the combo; `C012` is an article code. A family component with
+    several candidates opens one picker for the whole combo; the combo is added whole or not
+    at all, through the same path as a scanned article.
+  - Lookup order (local-first): snapshot combo → snapshot article (no combo request) → online
+    API probe (5 s limit; a miss is not asked again for that code for 60 s; cleared when the
+    modal opens) → article lookup. Offline: snapshot only. Web without snapshot: cached API
+    list, then articles. A combo that exists only on the server loses to a snapshot article
+    with the same code until the next sync (documented).
+  Observed (fix actor, round 2, from `src/Ways.Web`): `tsc -b` clean; lint 0 errors;
+  `src/pos src/api src/componentes` 1986/1986; `Pos.test.tsx` 347/347; whole suite 5016/5016.
+  Writer (server): build 0 errors, Application 835/835, integration
+  `Combos|SuperficieDeAutorizacion` 228/228. No RED (implementation first); mutation evidence
+  for every clause, including the double-Enter guard observed RED without its ref.
+- Judgment-day, T5b: round 1 — 0 CRITICAL; fixed S1 leading zeros, S2 swallowed read failures,
+  S3 re-entrancy and gating, S4 source, S5 list cache, S6 shortcut, S7 tests, S8 docs. Round-1
+  re-judgment: all resolved, but both judges found a WARNING caused by the fix itself (a
+  `C<n>` scan waited on the network before the local lookup). Round 2 fixed it (U1) plus stale
+  cache (U2), modifier keys (U3), catch coverage (U4). Final re-judgment: both judges, all
+  resolved, nothing blocking → APPROVED. Left as info: the web source without a snapshot has
+  no time limit on its list read; Shift+F4 still opens the modal.
+- Skills loop: no new skill; the round-1 regression (a fix that put the network in front of a
+  local answer) is the existing local-first rule, restated in doc 10.
+
 ## Next step
 
-PR for TNC (slice 4); then T3b.
+PR for T5b (slice 7); then T4 (back-office screen) and T5c (Desktop bump + `pos-v*` tag).
