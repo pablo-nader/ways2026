@@ -2,8 +2,10 @@
  * Instantánea offline del POS (stage-pos-venta-offline-web, Parte A/B): persistencia local de
  * `GET /api/pos/instantanea?version=2` + la resolución pura de escaneo/precio/cliente contra esa
  * instantánea cuando no hay red. Espeja la semántica del servidor (decisión del backend: "el
- * dispositivo nunca vuelve a evaluar ofertas offline") — nunca reimplementa el motor de reglas,
- * solo lee el precio ya congelado que trajo la instantánea para la lista del cliente.
+ * dispositivo nunca vuelve a evaluar ofertas offline"): el precio es el ya congelado que trajo la
+ * instantánea para la lista del cliente y las ofertas nunca se reevalúan. La única regla que el
+ * dispositivo SÍ evalúa offline son los combos (`motorDeCombos.ts`): dependen de la composición del
+ * carrito, que solo existe en el dispositivo, así que no se pueden congelar de antemano en un precio.
  */
 import type { AlmacenClaveValor, AlmacenDeClavesMultiples } from './almacenPos'
 import type {
@@ -11,6 +13,9 @@ import type {
   ArticuloEscaneado,
   ClienteDeInstantanea,
   ClienteListado,
+  ComboAplicadoEnPrevia,
+  ComboDeInstantanea,
+  ComboDeLinea,
   EscalonDeCantidad,
   EscalonDeFamilia,
   InstantaneaDePos,
@@ -24,6 +29,7 @@ import type { PreciosPorLinea } from '../api/ventas'
 import { DECIMALES_DE_PESO } from '../api/cantidadPorUnidad'
 import { redondearImporte } from '../formato/importes'
 import { normalizarParaBuscar } from '../formato/texto'
+import { resolverCombos, tieneMasDeDosDecimales, type ComboCandidato, type LineaParaCombos } from './motorDeCombos'
 
 /** Clave versionada: la instantánea anterior a los precios por lista quedó guardada bajo
  * `'instantanea'` con otra forma y nunca se lee — se vuelve a descargar entera. */
@@ -55,7 +61,7 @@ export async function leerInstantaneaLocal(almacen: AlmacenClaveValor): Promise<
   if (typeof guardada.verificadaEn !== 'string') return null
   return {
     version: 2,
-    instantanea: guardada.instantanea,
+    instantanea: sanearCombosDeInstantanea(guardada.instantanea),
     etag: typeof guardada.etag === 'string' ? guardada.etag : null,
     verificadaEn: guardada.verificadaEn,
   }
@@ -93,6 +99,22 @@ function esArticulo(valor: unknown): boolean {
   )
 }
 
+function esNumeroOAusente(valor: unknown): boolean {
+  return valor == null || typeof valor === 'number'
+}
+
+/** Solo lo que el motor y la vista previa leen: `codigo` es un rótulo y se tolera ausente. */
+function esCombo(valor: unknown): valor is ComboDeInstantanea {
+  return (
+    esObjeto(valor) &&
+    typeof valor.idCombo === 'number' &&
+    typeof valor.nombre === 'string' &&
+    typeof valor.precio === 'number' &&
+    Array.isArray(valor.componentes) &&
+    valor.componentes.every((c) => esObjeto(c) && typeof c.cantidad === 'number' && esNumeroOAusente(c.idArticulo) && esNumeroOAusente(c.idFamilia))
+  )
+}
+
 function esCliente(valor: unknown): boolean {
   return (
     esObjeto(valor) &&
@@ -118,7 +140,21 @@ export function esInstantaneaValida(valor: unknown): valor is InstantaneaDePos {
     valor.articulos.every(esArticulo) &&
     Array.isArray(valor.clientes) &&
     valor.clientes.every(esCliente)
+    // `combos` NO se valida acá: una malformada no invalida la instantánea (un dispositivo sin copia no
+    // podría vender offline y uno con copia se quedaría con una vieja para siempre); se sanea al adoptarla
+    // o leerla (`sanearCombosDeInstantanea`).
   )
+}
+
+/**
+ * Deja en la instantánea solo los combos bien formados: cada combo malformado se descarta y un `combos`
+ * que no es una lista se trata como ausente. El resto de la instantánea no se toca. Se aplica donde la
+ * instantánea se adopta (respuesta de la red) o se lee del almacén, antes de que nada la cotice.
+ */
+export function sanearCombosDeInstantanea(instantanea: InstantaneaDePos): InstantaneaDePos {
+  const { combos, ...resto } = instantanea
+  if (combos === undefined) return instantanea
+  return Array.isArray(combos) ? { ...resto, combos: combos.filter(esCombo) } : resto
 }
 
 // --- Parseo de escaneo, espejo EXACTO de `Ways.Domain.Ventas.ParserDeEscaneo` -------------------
@@ -299,29 +335,100 @@ export function preciosVigentesDeLasLineas(
   })
 }
 
+/** Precios de una línea con el combo que la consumió, si lo hay. */
+export type PreciosDeLineaConCombo = PreciosVigentesOffline & { combo?: ComboDeLinea }
+
+/** Los combos de la instantánea como candidatos del motor. */
+function candidatosDeCombos(combos: readonly ComboDeInstantanea[]): ComboCandidato[] {
+  return combos.map((c) => ({ id: c.idCombo, nombre: c.nombre, precio: c.precio, componentes: c.componentes, codigo: c.codigo }))
+}
+
+/**
+ * Precio de cada línea del documento con los combos de la instantánea aplicados, en el orden de las líneas
+ * (`null` donde `preciosVigentesDeLasLineas` no tiene precio), y los combos que se aplicaron.
+ *
+ * ÚNICO lugar donde se aplica la regla de combos offline — la consumen la vista previa del carrito, el
+ * payload encolado y el ticket sintético, como `preciosVigentesDeLasLineas` con la regla de precio. Mismas
+ * exclusiones que el servidor (`CombosEnVenta.Detectar`): quedan fuera de la detección los artículos cuya
+ * unidad de venta no es `Unidad` (la unidad decide, nunca la cantidad; una unidad ausente es `Peso`), las
+ * líneas sin precio y las de descuento de oferta negativo. La compuerta de cantidades enteras la aplica el
+ * motor. Una instantánea sin `combos` devuelve los precios vigentes tal cual.
+ */
+export function resolverDocumentoOffline(
+  lineas: readonly { idArticulo: number; cantidad: number }[],
+  instantanea: InstantaneaDePos,
+  idListaPrecio: number,
+): { lineas: (PreciosDeLineaConCombo | null)[]; combos: ComboAplicadoEnPrevia[] } {
+  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
+  const candidatos = candidatosDeCombos(instantanea.combos ?? [])
+  if (candidatos.length === 0) return { lineas: vigentes, combos: [] }
+
+  const porId = indicePorArticulo(instantanea)
+  const entrada: LineaParaCombos[] = []
+  lineas.forEach((linea, i) => {
+    const precios = vigentes[i]
+    const articulo = porId.get(linea.idArticulo)
+    if (!precios || !articulo || articulo.unidadVenta !== 'Unidad' || precios.descuentoUnitario < 0) return
+    entrada.push({
+      indice: i,
+      idArticulo: linea.idArticulo,
+      idFamilia: articulo.idFamilia ?? null,
+      cantidad: linea.cantidad,
+      precioLista: precios.precioOriginal,
+      descuentoUnitarioDeOferta: precios.descuentoUnitario,
+    })
+  })
+
+  const resolucion = resolverCombos(entrada, candidatos)
+  // El servidor rechaza una parte de combo con más de dos decimales (`combo_offline_invalido`) y la venta
+  // encolada quedaría varada. Con precios de dos decimales no ocurre; con un precio de fracción de centavo, el
+  // documento se cotiza, se encola y se imprime como si no hubiera combos: una sola regla para los tres.
+  if (resolucion.lineas.some((l) => tieneMasDeDosDecimales(l.ahorroDeCombo))) return { lineas: vigentes, combos: [] }
+  const conCombo: (PreciosDeLineaConCombo | null)[] = [...vigentes]
+  for (const consumo of resolucion.lineas) {
+    const precios = vigentes[consumo.indice]
+    if (precios) {
+      conCombo[consumo.indice] = {
+        ...precios,
+        combo: { unidadesConsumidas: consumo.unidadesConsumidas, ahorro: consumo.ahorroDeCombo, idCombo: Math.min(...consumo.idsDeCombo) },
+      }
+    }
+  }
+  return {
+    lineas: conCombo,
+    combos: resolucion.combos.map((c) => ({ idCombo: c.idCombo, codigo: c.codigo ?? 0, nombre: c.nombre, veces: c.veces, ahorro: c.ahorro })),
+  }
+}
+
 /**
  * Resuelve el precio de cada línea del carrito contra la instantánea local, en la lista del
  * cliente de la venta — mismo shape de salida que `indexarResolucionPorLinea` (indexado por
  * `idLinea`), así que `previaDeLinea`/`calcularSubtotalPrevia` siguen funcionando sin cambios
  * vengan los precios de la red o de la instantánea. Una línea cuyo artículo no está en la
  * instantánea o no tiene precio en esa lista queda ausente del índice — el mismo tratamiento que
- * un artículo sin precio en la resolución online.
+ * un artículo sin precio en la resolución online. Las líneas que un combo consumió traen `combo`
+ * y `combos` lista los aplicados, como `POST /api/ofertas/resolver-con-combos`.
  *
  * La cantidad de cada línea y la de su familia en el carrito eligen el precio vigente
- * (`preciosVigentesDeLasLineas`).
+ * (`preciosVigentesDeLasLineas`); los combos se aplican después (`resolverDocumentoOffline`).
  */
-export function resolverPreciosOffline(
+export function resolverPreviaOffline(
   lineas: LineaCarrito[],
   instantanea: InstantaneaDePos,
   idListaPrecio: number,
-): PreciosPorLinea {
-  const vigentes = preciosVigentesDeLasLineas(lineas, instantanea, idListaPrecio)
-  const indice: PreciosPorLinea = {}
+): { precios: PreciosPorLinea; combos: ComboAplicadoEnPrevia[] } {
+  const resolucion = resolverDocumentoOffline(lineas, instantanea, idListaPrecio)
+  const precios: PreciosPorLinea = {}
   lineas.forEach((linea, i) => {
-    const precios = vigentes[i]
-    if (precios) indice[linea.idLinea] = { idArticulo: linea.idArticulo, idListaPrecio, ...precios }
+    const resuelto = resolucion.lineas[i]
+    if (resuelto) precios[linea.idLinea] = { idArticulo: linea.idArticulo, idListaPrecio, ...resuelto }
   })
-  return indice
+  return { precios, combos: resolucion.combos }
+}
+
+/** Solo los precios de `resolverPreviaOffline`, para quien no muestra los combos aplicados. */
+export function resolverPreciosOffline(lineas: LineaCarrito[], instantanea: InstantaneaDePos, idListaPrecio: number): PreciosPorLinea {
+  return resolverPreviaOffline(lineas, instantanea, idListaPrecio).precios
 }
 
 /** `true` si TODAS las líneas tienen precio en la lista pedida dentro de la instantánea — la

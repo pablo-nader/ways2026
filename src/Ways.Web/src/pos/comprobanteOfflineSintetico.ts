@@ -9,14 +9,14 @@
  *
  * Espeja pixel a pixel la fórmula de `Ways.Domain.Ventas.CalculadorDeTotales.Calcular`: bruto de
  * línea = cantidad × precio ORIGINAL (lista, antes de descuento), descuento = descuentoUnitario ×
- * cantidad, neto = bruto − descuento, y el ajuste manual de la línea (porcentaje con signo) se
+ * (cantidad − unidades que consumió un combo) + el ahorro del combo (`calcularTotalesDeLineaConCombo`), neto = bruto − descuento, y el ajuste manual de la línea (porcentaje con signo) se
  * aplica sobre ese neto: total de línea = neto + ajuste (`calcularTotalesDeLinea`).
  * `subtotal`/`descuentoTotal` del comprobante son la suma de esas mismas columnas;
  * `descuentoManualTotal`/`recargoManualTotal` separan los ajustes por el signo del porcentaje y
  * `total = subtotal − descuentoTotal − descuentoManualTotal + recargoManualTotal` — nunca un
  * cálculo alternativo.
  *
- * El descuento por unidad y la oferta salen de `preciosVigentesDeLasLineas` sobre el precio de la
+ * El descuento por unidad, la oferta y el combo salen de `resolverDocumentoOffline` sobre el precio de la
  * lista de la venta (no del precio plano), con la cantidad de la línea y la de su familia en el
  * carrito: este módulo lee la instantánea DIRECTO, no el `ResultadoDeResolucion` que ya
  * resolvió la vista previa, así que sin ese lookup el ticket impreso quedaría con el descuento de
@@ -28,8 +28,9 @@
  * y NINGÚN consumidor de este comprobante sintético (`VentaFinalizada`, `ticketDeVenta`) lee esos
  * dos campos — verificado contra ambos archivos antes de fijar este contrato.
  */
-import { preciosVigentesDeLasLineas } from './instantaneaOffline'
-import { calcularTotalesDeLinea, totalesDeAjusteManual } from '../api/ajusteManual'
+import { resolverDocumentoOffline } from './instantaneaOffline'
+import { totalesDeAjusteManual } from '../api/ajusteManual'
+import { calcularTotalesDeLineaConCombo } from '../api/combos'
 import type { LineaCarrito } from '../api/carrito'
 import type { ComprobanteEmitido, InstantaneaDePos, ItemEmitido, PagoDeVenta } from '../api/tipos'
 import { redondearImporte } from '../formato/importes'
@@ -56,7 +57,7 @@ export type ParametrosDeComprobanteOfflineSintetico = {
 export function construirComprobanteOfflineSintetico(params: ParametrosDeComprobanteOfflineSintetico): ComprobanteEmitido | null {
   const porId = new Map(params.instantanea.articulos.map((a) => [a.idArticulo, a]))
 
-  const vigentes = preciosVigentesDeLasLineas(params.lineas, params.instantanea, params.idListaPrecio)
+  const vigentes = resolverDocumentoOffline(params.lineas, params.instantanea, params.idListaPrecio).lineas
 
   let subtotal = 0
   let descuentoTotal = 0
@@ -69,11 +70,12 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
     const precios = vigentes[indice]
     if (!articulo || !precios) return null
 
-    const { bruto, descuento, ajuste, total } = calcularTotalesDeLinea({
+    const { bruto, descuento, ajuste, total } = calcularTotalesDeLineaConCombo({
       cantidad: linea.cantidad,
       precioOriginal: precios.precioOriginal,
       descuentoUnitario: precios.descuentoUnitario,
       porcentaje: linea.ajusteManualPorcentaje,
+      combo: precios.combo,
     })
     subtotal += bruto
     descuentoTotal += descuento
@@ -86,7 +88,9 @@ export function construirComprobanteOfflineSintetico(params: ParametrosDeComprob
       codigoBarra: linea.codigoBarra,
       idArea: 0,
       idListaPrecio: 0,
-      idOferta: precios.aplicadas[0]?.idOferta ?? null,
+      // Como el servidor: una línea que los combos consumieron entera no lleva oferta.
+      idOferta: precios.combo?.unidadesConsumidas === linea.cantidad ? null : (precios.aplicadas[0]?.idOferta ?? null),
+      idCombo: precios.combo?.idCombo ?? null,
       idAlicuotaIva: articulo.idAlicuotaIva,
       porcentajeIva: articulo.porcentajeIva,
       cantidad: linea.cantidad,
